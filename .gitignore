@@ -1,0 +1,36 @@
+# Dependencies
+/vendor
+/backend/vendor
+/frontend/node_modules
+node_modules/
+
+# Builds
+/frontend/build
+/backend/public/build
+/backend/public/hot
+
+# Environment / secrets
+.env
+.env.backup
+.env.production
+*.key
+
+# Laravel storage & cache
+/backend/storage/*.key
+/backend/bootstrap/cache/*.php
+
+# Logs
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.fleet/
+
+# Scratch / debug scripts
+/backend/_check.php
+/backend/_count_import.php
+/backend/_nullcheck.php
+/backend/_serialcheck.php
