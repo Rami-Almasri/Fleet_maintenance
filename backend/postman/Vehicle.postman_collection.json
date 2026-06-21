@@ -1,0 +1,98 @@
+{
+  "info": {
+    "name": "Vehicle",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      { "key": "token", "value": "{{token}}", "type": "string" }
+    ]
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://127.0.0.1:8000/api", "type": "string" },
+    { "key": "token", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "List Vehicles",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Accept", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{base_url}}/Vehicle",
+          "host": ["{{base_url}}"],
+          "path": ["Vehicle"]
+        }
+      }
+    },
+    {
+      "name": "Show Vehicle",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Accept", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{base_url}}/Vehicle/1",
+          "host": ["{{base_url}}"],
+          "path": ["Vehicle", "1"]
+        }
+      }
+    },
+    {
+      "name": "Create Vehicle",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Accept", "value": "application/json" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{base_url}}/Vehicle",
+          "host": ["{{base_url}}"],
+          "path": ["Vehicle"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"code\": \"VH-001\",\n    \"vin\": \"1HGCM82633A004352\",\n    \"plate_no\": \"ABC-1234\",\n    \"make\": \"Toyota\",\n    \"model\": \"Camry\",\n    \"year\": 2023,\n    \"color\": \"White\",\n    \"status\": \"in_service\",\n    \"odometer\": 15000,\n    \"purchase_date\": \"2023-05-10\",\n    \"purchase_cost\": 25000,\n    \"currency\": \"USD\",\n    \"notes\": \"First vehicle\",\n    \"branch_id\": 1\n}"
+        }
+      }
+    },
+    {
+      "name": "Update Vehicle",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Accept", "value": "application/json" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{base_url}}/Vehicle/1",
+          "host": ["{{base_url}}"],
+          "path": ["Vehicle", "1"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"status\": \"in_maintenance\",\n    \"odometer\": 18500\n}"
+        }
+      }
+    },
+    {
+      "name": "Delete Vehicle",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          { "key": "Accept", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{base_url}}/Vehicle/1",
+          "host": ["{{base_url}}"],
+          "path": ["Vehicle", "1"]
+        }
+      }
+    }
+  ]
+}

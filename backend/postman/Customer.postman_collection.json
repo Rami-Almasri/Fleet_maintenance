@@ -1,0 +1,42 @@
+{
+  "info": {
+    "name": "Customer",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": { "type": "bearer", "bearer": [ { "key": "token", "value": "{{token}}", "type": "string" } ] },
+  "variable": [
+    { "key": "base_url", "value": "http://127.0.0.1:8000/api", "type": "string" },
+    { "key": "token", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "List Customers",
+      "request": { "method": "GET", "header": [ { "key": "Accept", "value": "application/json" } ],
+        "url": { "raw": "{{base_url}}/Customer", "host": ["{{base_url}}"], "path": ["Customer"] } }
+    },
+    {
+      "name": "Show Customer",
+      "request": { "method": "GET", "header": [ { "key": "Accept", "value": "application/json" } ],
+        "url": { "raw": "{{base_url}}/Customer/1", "host": ["{{base_url}}"], "path": ["Customer", "1"] } }
+    },
+    {
+      "name": "Create Customer",
+      "request": { "method": "POST",
+        "header": [ { "key": "Accept", "value": "application/json" }, { "key": "Content-Type", "value": "application/json" } ],
+        "url": { "raw": "{{base_url}}/Customer", "host": ["{{base_url}}"], "path": ["Customer"] },
+        "body": { "mode": "raw", "raw": "{\n    \"customer_no\": \"WEB-001\",\n    \"name_en\": \"John Smith\",\n    \"nationality\": \"UK\",\n    \"mobile1\": \"+971500000000\",\n    \"debit\": 0,\n    \"credit\": 0\n}" } }
+    },
+    {
+      "name": "Update Customer",
+      "request": { "method": "POST",
+        "header": [ { "key": "Accept", "value": "application/json" }, { "key": "Content-Type", "value": "application/json" } ],
+        "url": { "raw": "{{base_url}}/Customer/1", "host": ["{{base_url}}"], "path": ["Customer", "1"] },
+        "body": { "mode": "raw", "raw": "{\n    \"mobile1\": \"+971511111111\"\n}" } }
+    },
+    {
+      "name": "Delete Customer",
+      "request": { "method": "DELETE", "header": [ { "key": "Accept", "value": "application/json" } ],
+        "url": { "raw": "{{base_url}}/Customer/1", "host": ["{{base_url}}"], "path": ["Customer", "1"] } }
+    }
+  ]
+}

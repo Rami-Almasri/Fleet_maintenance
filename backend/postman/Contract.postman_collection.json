@@ -1,0 +1,42 @@
+{
+  "info": {
+    "name": "Contract",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": { "type": "bearer", "bearer": [ { "key": "token", "value": "{{token}}", "type": "string" } ] },
+  "variable": [
+    { "key": "base_url", "value": "http://127.0.0.1:8000/api", "type": "string" },
+    { "key": "token", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "List Contracts (paginated)",
+      "request": { "method": "GET", "header": [ { "key": "Accept", "value": "application/json" } ],
+        "url": { "raw": "{{base_url}}/Contract", "host": ["{{base_url}}"], "path": ["Contract"] } }
+    },
+    {
+      "name": "Show Contract",
+      "request": { "method": "GET", "header": [ { "key": "Accept", "value": "application/json" } ],
+        "url": { "raw": "{{base_url}}/Contract/1", "host": ["{{base_url}}"], "path": ["Contract", "1"] } }
+    },
+    {
+      "name": "Create Contract",
+      "request": { "method": "POST",
+        "header": [ { "key": "Accept", "value": "application/json" }, { "key": "Content-Type", "value": "application/json" } ],
+        "url": { "raw": "{{base_url}}/Contract", "host": ["{{base_url}}"], "path": ["Contract"] },
+        "body": { "mode": "raw", "raw": "{\n    \"contract_no\": \"WEB-9001\",\n    \"contract_type\": \"R\",\n    \"vehicle_id\": 1,\n    \"customer_id\": 1,\n    \"day_price\": 200,\n    \"out_date\": \"2026-06-09\",\n    \"days\": 3,\n    \"contract_balance\": 600\n}" } }
+    },
+    {
+      "name": "Update Contract",
+      "request": { "method": "POST",
+        "header": [ { "key": "Accept", "value": "application/json" }, { "key": "Content-Type", "value": "application/json" } ],
+        "url": { "raw": "{{base_url}}/Contract/1", "host": ["{{base_url}}"], "path": ["Contract", "1"] },
+        "body": { "mode": "raw", "raw": "{\n    \"in_date\": \"2026-06-12\",\n    \"contract_balance\": 0\n}" } }
+    },
+    {
+      "name": "Delete Contract",
+      "request": { "method": "DELETE", "header": [ { "key": "Accept", "value": "application/json" } ],
+        "url": { "raw": "{{base_url}}/Contract/1", "host": ["{{base_url}}"], "path": ["Contract", "1"] } }
+    }
+  ]
+}

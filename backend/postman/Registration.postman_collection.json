@@ -1,0 +1,42 @@
+{
+  "info": {
+    "name": "Registration (vehicle registration + insurance)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": { "type": "bearer", "bearer": [ { "key": "token", "value": "{{token}}", "type": "string" } ] },
+  "variable": [
+    { "key": "base_url", "value": "http://127.0.0.1:8000/api", "type": "string" },
+    { "key": "token", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "List Registrations",
+      "request": { "method": "GET", "header": [ { "key": "Accept", "value": "application/json" } ],
+        "url": { "raw": "{{base_url}}/Registration", "host": ["{{base_url}}"], "path": ["Registration"] } }
+    },
+    {
+      "name": "Show Registration",
+      "request": { "method": "GET", "header": [ { "key": "Accept", "value": "application/json" } ],
+        "url": { "raw": "{{base_url}}/Registration/1", "host": ["{{base_url}}"], "path": ["Registration", "1"] } }
+    },
+    {
+      "name": "Create Registration",
+      "request": { "method": "POST",
+        "header": [ { "key": "Accept", "value": "application/json" }, { "key": "Content-Type", "value": "application/json" } ],
+        "url": { "raw": "{{base_url}}/Registration", "host": ["{{base_url}}"], "path": ["Registration"] },
+        "body": { "mode": "raw", "raw": "{\n    \"vehicle_id\": 1,\n    \"chasis_no\": \"WAUZZZFUXSN033098\",\n    \"expiry_date\": \"2027-04-22\",\n    \"status\": \"Registered\",\n    \"fines_count\": 0,\n    \"fines_amount\": 0,\n    \"insurance_company_id\": 1,\n    \"insurance_expiry\": \"2027-06-18\"\n}" } }
+    },
+    {
+      "name": "Update Registration",
+      "request": { "method": "POST",
+        "header": [ { "key": "Accept", "value": "application/json" }, { "key": "Content-Type", "value": "application/json" } ],
+        "url": { "raw": "{{base_url}}/Registration/1", "host": ["{{base_url}}"], "path": ["Registration", "1"] },
+        "body": { "mode": "raw", "raw": "{\n    \"expiry_date\": \"2028-04-22\",\n    \"status\": \"Renewed\"\n}" } }
+    },
+    {
+      "name": "Delete Registration",
+      "request": { "method": "DELETE", "header": [ { "key": "Accept", "value": "application/json" } ],
+        "url": { "raw": "{{base_url}}/Registration/1", "host": ["{{base_url}}"], "path": ["Registration", "1"] } }
+    }
+  ]
+}

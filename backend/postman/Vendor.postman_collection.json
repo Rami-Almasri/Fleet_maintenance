@@ -1,0 +1,72 @@
+{
+  "info": {
+    "name": "Vendor",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      { "key": "token", "value": "{{token}}", "type": "string" }
+    ]
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://127.0.0.1:8000/api", "type": "string" },
+    { "key": "token", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "List Vendors",
+      "request": {
+        "method": "GET",
+        "header": [ { "key": "Accept", "value": "application/json" } ],
+        "url": { "raw": "{{base_url}}/Vendor", "host": ["{{base_url}}"], "path": ["Vendor"] }
+      }
+    },
+    {
+      "name": "Show Vendor",
+      "request": {
+        "method": "GET",
+        "header": [ { "key": "Accept", "value": "application/json" } ],
+        "url": { "raw": "{{base_url}}/Vendor/1", "host": ["{{base_url}}"], "path": ["Vendor", "1"] }
+      }
+    },
+    {
+      "name": "Create Vendor",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Accept", "value": "application/json" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": { "raw": "{{base_url}}/Vendor", "host": ["{{base_url}}"], "path": ["Vendor"] },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"name\": \"Deals On Wheels Auto\",\n    \"type\": \"garage\",\n    \"phone\": \"+971500000000\",\n    \"email\": \"info@garage.ae\",\n    \"active\": true\n}"
+        }
+      }
+    },
+    {
+      "name": "Update Vendor",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Accept", "value": "application/json" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": { "raw": "{{base_url}}/Vendor/1", "host": ["{{base_url}}"], "path": ["Vendor", "1"] },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"rating\": 4.5,\n    \"active\": true\n}"
+        }
+      }
+    },
+    {
+      "name": "Delete Vendor",
+      "request": {
+        "method": "DELETE",
+        "header": [ { "key": "Accept", "value": "application/json" } ],
+        "url": { "raw": "{{base_url}}/Vendor/1", "host": ["{{base_url}}"], "path": ["Vendor", "1"] }
+      }
+    }
+  ]
+}

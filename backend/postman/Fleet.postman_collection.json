@@ -1,0 +1,27 @@
+{
+  "info": {
+    "name": "Fleet (expiry insights)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": { "type": "bearer", "bearer": [ { "key": "token", "value": "{{token}}", "type": "string" } ] },
+  "variable": [
+    { "key": "base_url", "value": "http://127.0.0.1:8000/api", "type": "string" },
+    { "key": "token", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Expiring soon (registration / insurance)",
+      "request": {
+        "method": "GET",
+        "header": [ { "key": "Accept", "value": "application/json" } ],
+        "url": {
+          "raw": "{{base_url}}/Fleet/expiring?days=30",
+          "host": ["{{base_url}}"],
+          "path": ["Fleet", "expiring"],
+          "query": [ { "key": "days", "value": "30" } ]
+        },
+        "description": "Cars whose registration or insurance is expired or expires within N days, most-urgent first."
+      }
+    }
+  ]
+}

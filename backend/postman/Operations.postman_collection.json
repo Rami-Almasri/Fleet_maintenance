@@ -1,0 +1,75 @@
+{
+  "info": {
+    "name": "Operations (vehicle state changes)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": { "type": "bearer", "bearer": [ { "key": "token", "value": "{{token}}", "type": "string" } ] },
+  "variable": [
+    { "key": "base_url", "value": "http://127.0.0.1:8000/api", "type": "string" },
+    { "key": "token", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Current operation (open contract) of a vehicle",
+      "request": {
+        "method": "GET",
+        "header": [ { "key": "Accept", "value": "application/json" } ],
+        "url": { "raw": "{{base_url}}/Vehicle/1/operation", "host": ["{{base_url}}"], "path": ["Vehicle", "1", "operation"] }
+      }
+    },
+    {
+      "name": "Start RENT",
+      "request": {
+        "method": "POST",
+        "header": [ { "key": "Accept", "value": "application/json" }, { "key": "Content-Type", "value": "application/json" } ],
+        "url": { "raw": "{{base_url}}/Vehicle/1/operation", "host": ["{{base_url}}"], "path": ["Vehicle", "1", "operation"] },
+        "body": { "mode": "raw", "raw": "{\n    \"category\": \"rent\",\n    \"customer_id\": 1,\n    \"out_milage\": 24600,\n    \"out_fuel\": \"4\",\n    \"day_price\": 200,\n    \"driver_out\": \"Ali\",\n    \"remarks\": \"3-day rental\"\n}" }
+      }
+    },
+    {
+      "name": "Start MAINTENANCE",
+      "request": {
+        "method": "POST",
+        "header": [ { "key": "Accept", "value": "application/json" }, { "key": "Content-Type", "value": "application/json" } ],
+        "url": { "raw": "{{base_url}}/Vehicle/1/operation", "host": ["{{base_url}}"], "path": ["Vehicle", "1", "operation"] },
+        "body": { "mode": "raw", "raw": "{\n    \"category\": \"maintenance\",\n    \"remarks\": \"going to AL TAKHASUS garage - AC repair\"\n}" }
+      }
+    },
+    {
+      "name": "Start TEST DRIVE",
+      "request": {
+        "method": "POST",
+        "header": [ { "key": "Accept", "value": "application/json" }, { "key": "Content-Type", "value": "application/json" } ],
+        "url": { "raw": "{{base_url}}/Vehicle/1/operation", "host": ["{{base_url}}"], "path": ["Vehicle", "1", "operation"] },
+        "body": { "mode": "raw", "raw": "{\n    \"category\": \"test_drive\",\n    \"driver_out\": \"customer\",\n    \"remarks\": \"test drive\"\n}" }
+      }
+    },
+    {
+      "name": "Start TRANSFER",
+      "request": {
+        "method": "POST",
+        "header": [ { "key": "Accept", "value": "application/json" }, { "key": "Content-Type", "value": "application/json" } ],
+        "url": { "raw": "{{base_url}}/Vehicle/1/operation", "host": ["{{base_url}}"], "path": ["Vehicle", "1", "operation"] },
+        "body": { "mode": "raw", "raw": "{\n    \"category\": \"transfer\",\n    \"remarks\": \"move to branch B\"\n}" }
+      }
+    },
+    {
+      "name": "Start SALE PREP",
+      "request": {
+        "method": "POST",
+        "header": [ { "key": "Accept", "value": "application/json" }, { "key": "Content-Type", "value": "application/json" } ],
+        "url": { "raw": "{{base_url}}/Vehicle/1/operation", "host": ["{{base_url}}"], "path": ["Vehicle", "1", "operation"] },
+        "body": { "mode": "raw", "raw": "{\n    \"category\": \"sale_prep\",\n    \"remarks\": \"prep for sale - detailing\"\n}" }
+      }
+    },
+    {
+      "name": "Close operation (return)",
+      "request": {
+        "method": "POST",
+        "header": [ { "key": "Accept", "value": "application/json" }, { "key": "Content-Type", "value": "application/json" } ],
+        "url": { "raw": "{{base_url}}/Contract/3165/close", "host": ["{{base_url}}"], "path": ["Contract", "3165", "close"] },
+        "body": { "mode": "raw", "raw": "{\n    \"in_milage\": 24850,\n    \"in_fuel\": \"3\",\n    \"driver_in\": \"Sami\",\n    \"contract_balance\": 0,\n    \"remarks\": \"returned OK\"\n}" }
+      }
+    }
+  ]
+}

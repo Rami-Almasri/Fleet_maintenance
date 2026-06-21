@@ -1,0 +1,98 @@
+{
+  "info": {
+    "name": "Driver",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      { "key": "token", "value": "{{token}}", "type": "string" }
+    ]
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://127.0.0.1:8000/api", "type": "string" },
+    { "key": "token", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "List Drivers",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Accept", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{base_url}}/Driver",
+          "host": ["{{base_url}}"],
+          "path": ["Driver"]
+        }
+      }
+    },
+    {
+      "name": "Show Driver",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Accept", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{base_url}}/Driver/1",
+          "host": ["{{base_url}}"],
+          "path": ["Driver", "1"]
+        }
+      }
+    },
+    {
+      "name": "Create Driver",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Accept", "value": "application/json" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{base_url}}/Driver",
+          "host": ["{{base_url}}"],
+          "path": ["Driver"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"name\": \"Ahmed Ali\",\n    \"employee_code\": \"EMP-001\",\n    \"license_no\": \"DL-998877\",\n    \"license_class\": \"B\",\n    \"license_expiry\": \"2028-04-15\",\n    \"phone\": \"+962790000000\",\n    \"status\": \"active\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Update Driver",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Accept", "value": "application/json" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{base_url}}/Driver/1",
+          "host": ["{{base_url}}"],
+          "path": ["Driver", "1"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"phone\": \"+962791111111\",\n    \"status\": \"suspended\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Delete Driver",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          { "key": "Accept", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{base_url}}/Driver/1",
+          "host": ["{{base_url}}"],
+          "path": ["Driver", "1"]
+        }
+      }
+    }
+  ]
+}
