@@ -1,0 +1,240 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+    Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  /* Soft, premium app backdrop (a faint indigo wash on near-white). */
+  background-color: #f6f7fb;
+  background-image:
+    radial-gradient(60rem 60rem at 110% -10%, rgb(99 102 241 / 0.07), transparent 60%),
+    radial-gradient(50rem 50rem at -10% 110%, rgb(139 92 246 / 0.06), transparent 55%);
+  background-attachment: fixed;
+}
+
+/* Brand accent text selection. */
+::selection {
+  background: rgb(99 102 241 / 0.22);
+}
+
+/* Slim, modern scrollbars. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(148 163 184 / 0.5) transparent;
+}
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgb(148 163 184 / 0.5);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgb(100 116 139 / 0.7);
+  background-clip: content-box;
+}
+
+/* Dark sidebar gets a subtle dark scrollbar. */
+.sidebar-scroll {
+  scrollbar-color: rgb(255 255 255 / 0.15) transparent;
+}
+.sidebar-scroll::-webkit-scrollbar-thumb {
+  background: rgb(255 255 255 / 0.14);
+  background-clip: content-box;
+}
+
+/* Shimmer sweep for skeletons / loading accents. */
+.shimmer {
+  position: relative;
+  overflow: hidden;
+}
+.shimmer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background-image: linear-gradient(
+    90deg,
+    transparent,
+    rgb(255 255 255 / 0.55),
+    transparent
+  );
+  animation: shimmer 1.6s infinite;
+}
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+/* ---- Reusable motion layer (used across all pages) ---------------------- */
+
+/* Staggered table-row entrance: add `stagger-rows` to a <table>. */
+@keyframes rowIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+.stagger-rows tbody tr {
+  opacity: 0;
+  animation: rowIn 0.5s cubic-bezier(0.21, 1.02, 0.73, 1) forwards;
+}
+.stagger-rows tbody tr:nth-child(1) { animation-delay: 0.03s; }
+.stagger-rows tbody tr:nth-child(2) { animation-delay: 0.06s; }
+.stagger-rows tbody tr:nth-child(3) { animation-delay: 0.09s; }
+.stagger-rows tbody tr:nth-child(4) { animation-delay: 0.12s; }
+.stagger-rows tbody tr:nth-child(5) { animation-delay: 0.15s; }
+.stagger-rows tbody tr:nth-child(6) { animation-delay: 0.18s; }
+.stagger-rows tbody tr:nth-child(7) { animation-delay: 0.21s; }
+.stagger-rows tbody tr:nth-child(8) { animation-delay: 0.24s; }
+.stagger-rows tbody tr:nth-child(9) { animation-delay: 0.27s; }
+.stagger-rows tbody tr:nth-child(10) { animation-delay: 0.30s; }
+.stagger-rows tbody tr:nth-child(n + 11) { animation-delay: 0.33s; }
+
+/* Generic staggered children (e.g. card grids): add `stagger` to the container. */
+.stagger > * {
+  opacity: 0;
+  animation: rowIn 0.5s cubic-bezier(0.21, 1.02, 0.73, 1) forwards;
+}
+.stagger > *:nth-child(1) { animation-delay: 0.04s; }
+.stagger > *:nth-child(2) { animation-delay: 0.09s; }
+.stagger > *:nth-child(3) { animation-delay: 0.14s; }
+.stagger > *:nth-child(4) { animation-delay: 0.19s; }
+.stagger > *:nth-child(5) { animation-delay: 0.24s; }
+.stagger > *:nth-child(6) { animation-delay: 0.29s; }
+.stagger > *:nth-child(n + 7) { animation-delay: 0.34s; }
+
+/* Lift on hover — for clickable cards/tiles. */
+.hover-lift {
+  transition: transform 0.22s cubic-bezier(0.21, 1.02, 0.73, 1), box-shadow 0.22s ease;
+}
+.hover-lift:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 18px 40px -18px rgb(15 23 42 / 0.28);
+}
+
+/* Brand gradient text — for hero headings. */
+.text-gradient {
+  background-image: linear-gradient(92deg, #6366f1, #8b5cf6 55%, #d946ef);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Thin animated scroll-progress bar (top of the viewport). */
+.scroll-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 50;
+  height: 3px;
+  background-image: linear-gradient(90deg, #6366f1, #8b5cf6, #d946ef);
+  box-shadow: 0 0 10px rgb(139 92 246 / 0.6);
+  transition: width 0.1s linear;
+}
+
+/* ---- Aurora backdrop: slow drifting color field behind the whole app ---- */
+.aurora {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+}
+.aurora__blob {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(70px);
+  opacity: 0.5;
+  will-change: transform;
+}
+.aurora__blob--1 {
+  top: -12%;
+  right: -6%;
+  width: 42rem;
+  height: 42rem;
+  background: radial-gradient(circle at 30% 30%, rgb(99 102 241 / 0.5), transparent 62%);
+  animation: drift1 26s ease-in-out infinite;
+}
+.aurora__blob--2 {
+  bottom: -18%;
+  left: -8%;
+  width: 38rem;
+  height: 38rem;
+  background: radial-gradient(circle at 60% 40%, rgb(139 92 246 / 0.45), transparent 62%);
+  animation: drift2 32s ease-in-out infinite;
+}
+.aurora__blob--3 {
+  top: 35%;
+  left: 45%;
+  width: 30rem;
+  height: 30rem;
+  background: radial-gradient(circle at 50% 50%, rgb(217 70 239 / 0.28), transparent 62%);
+  animation: drift3 38s ease-in-out infinite;
+}
+@keyframes drift1 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(-5rem, 4rem) scale(1.12); }
+}
+@keyframes drift2 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(6rem, -3rem) scale(1.08); }
+}
+@keyframes drift3 {
+  0%, 100% { transform: translate(-50%, 0) scale(1); }
+  50% { transform: translate(-40%, -4rem) scale(1.15); }
+}
+
+/* Frosted-glass surface (used by the header & floating panels). */
+.glass {
+  background-color: rgb(255 255 255 / 0.72);
+  backdrop-filter: saturate(180%) blur(14px);
+  -webkit-backdrop-filter: saturate(180%) blur(14px);
+}
+
+/* Tooltip bubble for the collapsed icon-rail sidebar. */
+.rail-tip {
+  position: absolute;
+  left: calc(100% + 0.65rem);
+  top: 50%;
+  transform: translateY(-50%) scale(0.9);
+  white-space: nowrap;
+  border-radius: 0.55rem;
+  background: #0f172a;
+  color: #fff;
+  padding: 0.3rem 0.6rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  box-shadow: 0 8px 24px -8px rgb(15 23 42 / 0.5);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.16s ease, transform 0.16s ease;
+  z-index: 50;
+}
+.group:hover > .rail-tip {
+  opacity: 1;
+  transform: translateY(-50%) scale(1);
+}
+
+/* Respect reduced-motion preferences. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
