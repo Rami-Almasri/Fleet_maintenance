@@ -1,0 +1,8 @@
+﻿check,value,meaning
+total_type_U_contracts,4936,"maintenance contracts (ContractType = U)"
+"  with linked maintenance info",0,"U contracts that have a contract_id-linked maintenance row"
+"  with NO maintenance info",4936,"U contracts that are empty shells"
+"  with same out=in date AND time",34,"U contracts sharing the cancelled shape"
+"  flagged cancelled (status_no=5)",34,"U contracts OM marks cancelled"
+maintenances_table_total_rows,26145,"all maintenance log rows"
+"  linked to a contract (contract_id set)",0,"how many are joined to ANY contract"

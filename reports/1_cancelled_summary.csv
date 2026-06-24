@@ -1,0 +1,9 @@
+﻿check,value,meaning
+total_contracts,38786,"all contracts in DB"
+"rule_match (out=in date AND time)",1399,"contracts matching your cancelled rule"
+"  of which status_no = 5",1361,"rule matches that ARE flagged cancelled by OM"
+"  of which status_no != 5",38,"rule matches that are NOT cancelled (false positives)"
+"total status_no = 5",1361,"OM authoritative cancelled count"
+"  status_no=5 NOT matching rule",0,"cancelled contracts your rule would MISS"
+"VERDICT: every status_no=5 has same date+time?",YES,"is status_no=5 a subset of the rule"
+"VERDICT: every same-date+time is status_no=5?",NO,"is the rule exact, or over-broad"
