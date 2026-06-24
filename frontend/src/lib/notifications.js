@@ -56,6 +56,7 @@ export const ICONS = {
   oil: 'M5 21h14M7 21V10l3-3h7l-2 6h-2l1-6M4 14h6m-6 3h6',
   check: 'M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z',
   alert: 'M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z',
+  'trend-down': 'M3 7l6 6 4-4 8 8m0 0h-6m6 0v-6',
 };
 
 export const iconPath = (key) => ICONS[key] || ICONS.bell;
@@ -64,6 +65,7 @@ export const iconPath = (key) => ICONS[key] || ICONS.bell;
 export const CATEGORY_LABEL = {
   operations: 'Operations',
   maintenance: 'Maintenance',
+  finance: 'Finance',
   fleet: 'Fleet',
   data: 'Data',
   system: 'System',

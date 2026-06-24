@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Contract;
+use App\Models\Maintenance;
 use App\Models\User;
 use App\Models\Vehicle;
 use App\Models\VehicleRegistration;
@@ -30,6 +31,7 @@ class NotificationScanner
     public function __construct(
         private DashboardService $dashboard,
         private MaintenanceReturnService $returns,
+        private RealProfitService $realProfit,
     ) {}
 
     /**
@@ -78,6 +80,8 @@ class NotificationScanner
             ->concat($this->expiringDocuments())
             ->concat($this->serviceDue())
             ->concat($this->pendingApprovals())
+            ->concat($this->negativeYield())
+            ->concat($this->highMaintenanceCost())
             ->all();
     }
 
@@ -251,6 +255,71 @@ class NotificationScanner
                 'key'      => 'approval:' . $c->id,
                 'icon'     => 'check',
                 'meta'     => ['contract_no' => $c->contract_no, 'plate' => $c->vehicle?->plate_no],
+            ]);
+    }
+
+    /**
+     * "Money pit" cars: over the trailing window their Real Net Profit is below what they cost
+     * to maintain — a financial leak worth surfacing. Reuses the exact list the dashboard and
+     * Foresight page show, so the alert can never drift from the page. Keyed per vehicle so a
+     * car that recovers and slips back later is a genuinely new condition.
+     */
+    private function negativeYield(): Collection
+    {
+        return collect($this->realProfit->negativeYieldVehicles())
+            ->take(self::CAP)
+            ->map(fn ($r) => [
+                'type'     => 'negative_yield',
+                'category' => 'finance',
+                'severity' => 'warning',
+                'title'    => 'Negative yield · nets −AED ' . number_format(abs((float) $r['net_yield'])),
+                'body'     => trim(($r['code'] ? '#' . $r['code'] . ' ' : '') . ($r['car'] ?: 'Vehicle')
+                                . ($r['plate'] ? ' (' . $r['plate'] . ')' : '')
+                                . ' — earned AED ' . number_format((float) $r['real_net_profit'])
+                                . ' but cost AED ' . number_format((float) $r['maintenance_spend'])
+                                . ' to maintain over ' . $r['window_months'] . ' mo.'),
+                'url'      => '/maintenance-foresight',
+                'key'      => 'negative_yield:' . $r['vehicle_id'],
+                'icon'     => 'trend-down',
+                'meta'     => ['plate' => $r['plate'], 'net_yield' => $r['net_yield']],
+            ]);
+    }
+
+    /**
+     * A single recent workshop bill over the approval threshold — one repair eating the margin.
+     * Bounded to the last 30 days so the feed stays current; keyed per event so each new costly
+     * repair nags once. Critical at 3× the threshold.
+     */
+    private function highMaintenanceCost(): Collection
+    {
+        $threshold = (float) config('fleet.maintenance_approval_threshold', 500);
+        $floor     = now()->subDays(30)->toDateString();
+
+        return Maintenance::query()
+            ->whereIn('origin', Maintenance::WORKSHOP_LOG_ORIGINS)
+            ->whereNotNull('vehicle_id')
+            ->whereNotNull('out_date')
+            ->whereDate('out_date', '>=', $floor)
+            ->where('cost', '>', $threshold)
+            ->with('vehicle')
+            ->orderByDesc('out_date')
+            ->limit(self::CAP)
+            ->get()
+            ->map(fn (Maintenance $m) => [
+                'type'     => 'high_maintenance_cost',
+                'category' => 'finance',
+                'severity' => (float) $m->cost >= $threshold * 3 ? 'critical' : 'warning',
+                'title'    => 'High repair cost · AED ' . number_format((float) $m->cost),
+                'body'     => trim(($m->vehicle ? trim($m->vehicle->make . ' ' . $m->vehicle->model) : 'Vehicle')
+                                . ($m->vehicle?->plate_no ? ' (' . $m->vehicle->plate_no . ')' : '')
+                                . ' — ' . ($m->service_main ?: 'repair')
+                                . ' on ' . optional($m->out_date)->toDateString()
+                                . ' cost AED ' . number_format((float) $m->cost)
+                                . ' (over the AED ' . number_format($threshold) . ' threshold).'),
+                'url'      => '/maintenance',
+                'key'      => 'high_maint_cost:' . $m->id,
+                'icon'     => 'wrench',
+                'meta'     => ['plate' => $m->vehicle?->plate_no, 'cost' => (float) $m->cost],
             ]);
     }
 

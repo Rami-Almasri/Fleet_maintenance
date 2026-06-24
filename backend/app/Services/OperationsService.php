@@ -2,8 +2,11 @@
 
 namespace App\Services;
 
+use App\Exceptions\RentalActiveException;
 use App\Exceptions\ReservationConflictException;
 use App\Models\Contract;
+use App\Models\Maintenance;
+use App\Models\PolicyOverrideAudit;
 use App\Models\Vehicle;
 use App\Services\MaintenanceAnalyticsService;
 use Carbon\Carbon;
@@ -54,10 +57,40 @@ class OperationsService
         $force = (bool) ($data['force'] ?? false);
         unset($data['force']);
 
+        // Manager-only "Rental-First" override: a reason code (and the acting user, snapshot
+        // by the controller) signals an intentional, audited maintenance-over-rental override.
+        $overrideReason = $data['override_reason'] ?? null;
+        $overrideNotes  = $data['override_notes'] ?? null;
+        $overrideById   = $data['override_by_id'] ?? null;
+        $overrideByName = $data['override_by_name'] ?? null;
+        unset($data['override_reason'], $data['override_notes'], $data['override_by_id'], $data['override_by_name']);
+
         // Only renting is blocked by expired docs / restricted status.
         // Maintenance / transfer / sale_prep are allowed so you can still move the car to renew or dispose it.
         if ($category === 'rent') {
             $this->validation->assertCanRent($vehicle);
+        }
+
+        // "Rental-First" policy: never open a maintenance (type-U) contract while a car is on a
+        // live rental — workshop visits during a rental are logged against that rental instead.
+        // Staff are hard-blocked; a manager can override with a reason code (audited below).
+        $blockedRental = null;
+        if ($category === 'maintenance') {
+            $blockedRental = $vehicle->contracts()
+                ->where('contract_type', 'C')->currentlyOpen()
+                ->orderByDesc('id')->first();
+            if ($blockedRental && ! $overrideReason) {
+                throw new RentalActiveException(
+                    'This car is on an active rental. Log the workshop visit on the rental instead — '
+                    . 'opening a maintenance contract needs a manager override.',
+                    [
+                        'contract_id' => $blockedRental->id,
+                        'contract_no' => $blockedRental->contract_no,
+                        'customer'    => $blockedRental->customer?->name,
+                        'out_date'    => optional($blockedRental->out_date)->toDateString(),
+                    ]
+                );
+            }
         }
 
         // Don't pull a reserved car into the garage if the maintenance window clashes
@@ -66,7 +99,7 @@ class OperationsService
             $this->assertNoReservationConflict($vehicle, $data['expected_return_date'] ?? null);
         }
 
-        return DB::transaction(function () use ($vehicle, $category, $data) {
+        return DB::transaction(function () use ($vehicle, $category, $data, $blockedRental, $overrideReason, $overrideNotes, $overrideById, $overrideByName) {
             // 1. a car can only be in one place at a time -> close prior open contract(s)
             $this->closeOpenContracts($vehicle);
 
@@ -97,6 +130,25 @@ class OperationsService
                 $maint['maintenance_reason_id'] = $reason?->id;
 
                 $contract->maintenance()->create($maint);
+            }
+
+            // 2b. an overridden "Rental-First" block -> record who allowed it and why
+            if ($category === 'maintenance' && $blockedRental && $overrideReason) {
+                PolicyOverrideAudit::create([
+                    'user_id'            => $overrideById,
+                    'user_name'          => $overrideByName,
+                    'vehicle_id'         => $vehicle->id,
+                    'plate'              => $vehicle->plate_no,
+                    'action'             => 'maintenance_over_active_rental',
+                    'reason_code'        => $overrideReason,
+                    'reason_label'       => PolicyOverrideAudit::REASON_CODES[$overrideReason] ?? $overrideReason,
+                    'notes'              => $overrideNotes,
+                    'rental_contract_id' => $blockedRental->id,
+                    'rental_contract_no' => $blockedRental->contract_no,
+                    'result_contract_id' => $contract->id,
+                    'result_contract_no' => $contract->contract_no,
+                    'created_at'         => now(),
+                ]);
             }
 
             // 3. reflect the current movement on the vehicle
@@ -231,13 +283,23 @@ class OperationsService
         $openCar = fn (string $type) => Contract::where('contract_type', $type)
             ->currentlyOpen()->whereNotNull('vehicle_id')->distinct()->pluck('vehicle_id')->all();
 
-        $maint = $openCar('U');
-        $rent  = array_values(array_diff($openCar('C'), $maint));   // a car in the garage isn't "rented"
+        $maintContract = $openCar('U');
+        $rent  = array_values(array_diff($openCar('C'), $maintContract));   // a car in the garage isn't "rented"
         $busy  = Contract::currentlyOpen()->whereNotNull('vehicle_id')->distinct()->pluck('vehicle_id')->all();
 
-        return DB::transaction(function () use ($maint, $rent, $busy) {
+        // Cars in the garage on a hand-entered workshop event but with NO open contract: a manual
+        // OUT/Follow-up/… event keeps the car "In Maintenance" so the sync doesn't reset it to
+        // available. ONE definition (manualOnlyGarageVehicleIds) is reused by the dashboard KPI,
+        // donut, /maintenance board and foresight, so every surface agrees on the same cars.
+        $manualOnly = $this->manualOnlyGarageVehicleIds();
+        $maint = array_values(array_unique(array_merge($maintContract, $manualOnly)));
+
+        // A car kept busy ONLY by its garage log must not also be force-freed in step 1.
+        $busyOrGarage = array_values(array_unique(array_merge($busy, $manualOnly)));
+
+        return DB::transaction(function () use ($maint, $rent, $busyOrGarage) {
             // 1) no open movement at all → available
-            $available = Vehicle::whereNotIn('id', $busy ?: [0])
+            $available = Vehicle::whereNotIn('id', $busyOrGarage ?: [0])
                 ->where('operational_status', '!=', 'available')
                 ->update(['operational_status' => 'available']);
 
@@ -260,6 +322,93 @@ class OperationsService
 
             return ['available' => $available, 'rented' => $rented, 'maintenance' => $maintenance];
         });
+    }
+
+    /**
+     * Re-derive ONE vehicle's operational_status — used as the trigger after a hand-entered
+     * workshop event is added / edited / deleted. Precedence is identical to the fleet-wide
+     * reconcile, so a manual event and a later sync can never leave the car in two minds:
+     *
+     *   left the fleet (sold/disposed/returned)        → available
+     *   open maintenance contract (type-U)             → maintenance
+     *   open rental contract (type-C)                  → rented   (Rental-First: never stomped)
+     *   open web movement (test/transfer/sale_prep)    → left as-is (OperationsService owns it)
+     *   else, latest manual garage event still open    → maintenance
+     *   else                                           → available
+     *
+     * @return string the resulting operational_status
+     */
+    public function reconcileVehicleOperationalStatus(Vehicle $vehicle): string
+    {
+        $vid     = $vehicle->id;
+        $openOf  = fn (string $type) => Contract::where('contract_type', $type)
+            ->currentlyOpen()->where('vehicle_id', $vid)->exists();
+        $hasOpen = Contract::currentlyOpen()->where('vehicle_id', $vid)->exists();
+
+        if (in_array($vehicle->status, self::LEFT_FLEET_STATUSES, true)) {
+            $status = 'available';
+        } elseif ($openOf('U')) {
+            $status = 'maintenance';
+        } elseif ($openOf('C')) {
+            $status = 'rented';
+        } elseif ($hasOpen) {
+            // An open web movement (test / transfer / sale_prep) owns the status — don't override.
+            return $vehicle->operational_status;
+        } else {
+            $status = $this->manualGarageVehicleIds([$vid]) ? 'maintenance' : 'available';
+        }
+
+        if ($vehicle->operational_status !== $status) {
+            $vehicle->update(['operational_status' => $status]);
+        }
+
+        return $status;
+    }
+
+    /**
+     * Vehicle ids whose MOST-RECENT hand-entered workshop event is still open (stage ≠ 'IN'),
+     * i.e. the car is physically in the garage on a manual log row. Mirrors the board's
+     * "latest event wins" rule, so an old OUT left behind a newer IN never counts.
+     *
+     * @param  array<int>|null  $vehicleIds  limit to these vehicles (null = whole fleet)
+     * @return array<int>
+     */
+    public function manualGarageVehicleIds(?array $vehicleIds = null): array
+    {
+        return Maintenance::query()
+            ->where('origin', Maintenance::ORIGIN_MANUAL)
+            ->whereNotNull('vehicle_id')
+            ->when($vehicleIds, fn ($q) => $q->whereIn('vehicle_id', $vehicleIds))
+            // keep only each car's latest manual event …
+            ->whereRaw('maintenances.id = (
+                select m2.id from maintenances m2
+                where m2.vehicle_id = maintenances.vehicle_id
+                  and m2.origin = ?
+                order by m2.out_date desc, m2.id desc
+                limit 1
+            )', [Maintenance::ORIGIN_MANUAL])
+            // … and only if that latest event has NOT come back.
+            ->where('event_status', '<>', 'IN')
+            ->pluck('vehicle_id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+    }
+
+    /**
+     * Manual-garage cars (latest hand-entered event still open) that have NO open contract of any
+     * kind — the set that should count as "In Maintenance" on every surface (dashboard KPI, donut,
+     * /maintenance board, foresight exclusion). A car with an open rental/maintenance/web contract
+     * is already represented by that contract, so it's excluded here to avoid double-counting and
+     * to match the per-vehicle cascade (which only lets a manual event decide when no contract is
+     * open).
+     *
+     * @return array<int>
+     */
+    public function manualOnlyGarageVehicleIds(): array
+    {
+        $busy = Contract::currentlyOpen()->whereNotNull('vehicle_id')->distinct()->pluck('vehicle_id')->all();
+
+        return array_values(array_diff($this->manualGarageVehicleIds(), $busy));
     }
 
     /** Close every still-open contract for a vehicle. */
