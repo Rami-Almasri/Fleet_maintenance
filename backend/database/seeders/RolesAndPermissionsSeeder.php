@@ -27,7 +27,9 @@ class RolesAndPermissionsSeeder extends Seeder
         'vendors.view', 'vendors.manage',
         'customers.view', 'customers.manage',
         'contracts.view', 'contracts.manage',
+        'billing.view', 'billing.manage',    // invoices + payments/receipts (website-native billing)
         'operations.manage',                 // start/close vehicle movements
+        'operations.override',               // manager-only: override the "Rental-First" block (maintenance contract on a rented car)
         'maintenance.view', 'maintenance.approve', 'maintenance.manage', // manage = create/edit/delete workshop events
         'registration.view', 'registration.manage',
         'insights.view',                     // anomalies, data-health, status-mismatch, sheet↔api diff
@@ -49,16 +51,18 @@ class RolesAndPermissionsSeeder extends Seeder
             'vendors.view', 'vendors.manage',
             'customers.view', 'customers.manage',
             'contracts.view', 'contracts.manage',
-            'operations.manage',
+            'billing.view', 'billing.manage',
+            'operations.manage', 'operations.override',
             'maintenance.view', 'maintenance.approve', 'maintenance.manage',
             'registration.view', 'registration.manage',
             'insights.view', 'dashboard.view', 'sync.run',
         ],
-        // Day-to-day desk: rentals, customers, moving cars in/out.
+        // Day-to-day desk: rentals, customers, moving cars in/out, taking payments.
         'operations' => [
             'vehicles.view', 'drivers.view',
             'customers.view', 'customers.manage',
             'contracts.view', 'contracts.manage',
+            'billing.view', 'billing.manage',
             'operations.manage',
             'registration.view', 'maintenance.view', 'dashboard.view',
         ],
@@ -68,15 +72,16 @@ class RolesAndPermissionsSeeder extends Seeder
             'maintenance.view', 'maintenance.approve', 'maintenance.manage',
             'registration.view', 'insights.view', 'dashboard.view',
         ],
-        // Billing / accounts: customer financials and contract values.
+        // Billing / accounts: customer financials, invoices and payments.
         'finance' => [
             'vehicles.view', 'customers.view', 'customers.manage',
-            'contracts.view', 'insights.view', 'dashboard.view',
+            'contracts.view', 'billing.view', 'billing.manage',
+            'insights.view', 'dashboard.view',
         ],
         // Read-only across the board.
         'viewer' => [
             'vehicles.view', 'drivers.view', 'vendors.view',
-            'customers.view', 'contracts.view', 'registration.view',
+            'customers.view', 'contracts.view', 'billing.view', 'registration.view',
             'maintenance.view', 'insights.view', 'dashboard.view',
         ],
     ];

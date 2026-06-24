@@ -42,3 +42,11 @@ Schedule::command('notifications:scan')
     ->withoutOverlapping();
 
 Schedule::command('notifications:scan')->dailyAt('03:10');
+
+// After the nightly contract sync, re-anchor every car's Global Mileage Baseline and heal its
+// odometer from contract history (out/in mileage). Runs late enough that om:sync (03:00, in the
+// background) has imported the day's fresh handovers, so the baseline + correction reflect them.
+// Mileage drops / implausible jumps it finds surface on the /anomalies dashboard.
+Schedule::command('mileage:scan --apply')
+    ->dailyAt('03:45')
+    ->withoutOverlapping();

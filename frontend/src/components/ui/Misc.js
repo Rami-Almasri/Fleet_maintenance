@@ -58,9 +58,9 @@ export function SearchInput({ value, onChange, placeholder = 'Search…', classN
 }
 
 // Reusable card wrapper for tables/sections.
-export function Card({ children, className = '' }) {
+export function Card({ children, className = '', id }) {
   return (
-    <div className={`overflow-hidden rounded-2xl border border-slate-200/60 bg-white shadow-soft ${className}`}>
+    <div id={id} className={`overflow-hidden rounded-2xl border border-slate-200/60 bg-white shadow-soft ${className}`}>
       {children}
     </div>
   );

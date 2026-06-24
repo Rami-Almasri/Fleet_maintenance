@@ -87,9 +87,11 @@ body {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: none; }
 }
+/* fill-mode `both`: shows the hidden `from` keyframe during the delay and holds the
+   visible `to` keyframe after — so a row is NEVER left stuck invisible if the browser
+   skips the entrance animation (e.g. long/off-screen lists). Resting state stays visible. */
 .stagger-rows tbody tr {
-  opacity: 0;
-  animation: rowIn 0.5s cubic-bezier(0.21, 1.02, 0.73, 1) forwards;
+  animation: rowIn 0.5s cubic-bezier(0.21, 1.02, 0.73, 1) both;
 }
 .stagger-rows tbody tr:nth-child(1) { animation-delay: 0.03s; }
 .stagger-rows tbody tr:nth-child(2) { animation-delay: 0.06s; }
@@ -105,8 +107,7 @@ body {
 
 /* Generic staggered children (e.g. card grids): add `stagger` to the container. */
 .stagger > * {
-  opacity: 0;
-  animation: rowIn 0.5s cubic-bezier(0.21, 1.02, 0.73, 1) forwards;
+  animation: rowIn 0.5s cubic-bezier(0.21, 1.02, 0.73, 1) both;
 }
 .stagger > *:nth-child(1) { animation-delay: 0.04s; }
 .stagger > *:nth-child(2) { animation-delay: 0.09s; }

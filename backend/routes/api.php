@@ -11,8 +11,12 @@ use App\Http\Controllers\DriverController;
 use App\Http\Controllers\FleetController;
 use App\Http\Controllers\MaintenanceController;
 use App\Http\Controllers\MaintenanceReturnController;
+use App\Http\Controllers\ProfitabilityController;
+use App\Http\Controllers\FinancialConflictController;
+use App\Http\Controllers\ReconciliationController;
 use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\OperationController;
+use App\Http\Controllers\OverrideAuditController;
 use App\Http\Controllers\StatusMismatchController;
 use App\Http\Controllers\SyncController;
 use App\Http\Controllers\SyncAuditController;
@@ -20,6 +24,7 @@ use App\Http\Controllers\VehicleController;
 use App\Http\Controllers\VehicleCsvSyncController;
 use App\Http\Controllers\VehicleRegistrationController;
 use App\Http\Controllers\VendorController;
+use App\Http\Controllers\CostCaptureController;
 use App\Http\Controllers\WorkshopEventController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
@@ -41,9 +46,12 @@ Route::prefix('auth')->controller(AuthController::class)->group(function () {
 Route::middleware('auth:sanctum')->prefix('Vehicle')->controller(VehicleController::class)->group(function () {
 
     Route::get('/', 'index')->middleware('permission:vehicles.view');
+    Route::get('/utilization', 'utilization')->middleware('permission:insights.view');   // fleet rented/maintenance/idle days (static — must precede /{vehicle})
+    Route::get('/mileage-reconciliation', 'mileageReconciliation')->middleware('permission:insights.view'); // system odometer vs scanner value (static — must precede /{vehicle})
     Route::get('/{vehicle}/profile', 'profile')->middleware('permission:vehicles.view');   // full car profile: registration, insurance, fines, contracts
     Route::get('/{vehicle}', 'show')->middleware('permission:vehicles.view');
     Route::post('/', 'store')->middleware('permission:vehicles.manage');
+    Route::post('/{vehicle}/apply-baseline', 'applyBaseline')->middleware('permission:vehicles.manage'); // adopt the scanner's validated odometer for one car
     Route::post('/{vehicle}', 'update')->middleware('permission:vehicles.manage');
     Route::delete('/{vehicle}', 'destroy')->middleware('permission:vehicles.manage');
 });
@@ -83,6 +91,26 @@ Route::middleware('auth:sanctum')->prefix('Contract')->controller(ContractContro
     Route::delete('/{contract}', 'destroy')->middleware('permission:contracts.manage');
 });
 
+// Invoices CRUD — website-created (manual) invoices coexist with OfficeManager-synced ones.
+// Reads return both ledgers; writes only ever touch manual invoices (the controller guards
+// origin). ?contract_id= scopes the list to one contract (the Contract Detail panel).
+Route::middleware('auth:sanctum')->prefix('Invoice')->controller(\App\Http\Controllers\InvoiceController::class)->group(function () {
+    Route::get('/', 'index')->middleware('permission:billing.view');
+    Route::post('/', 'store')->middleware('permission:billing.manage');
+    Route::get('/{invoice}', 'show')->middleware('permission:billing.view');
+    Route::post('/{invoice}', 'update')->middleware('permission:billing.manage');
+    Route::delete('/{invoice}', 'destroy')->middleware('permission:billing.manage');
+});
+
+// Payments / Receipts CRUD — the collection side of a contract, recorded on the website.
+Route::middleware('auth:sanctum')->prefix('Payment')->controller(\App\Http\Controllers\PaymentController::class)->group(function () {
+    Route::get('/', 'index')->middleware('permission:billing.view');
+    Route::post('/', 'store')->middleware('permission:billing.manage');
+    Route::get('/{payment}', 'show')->middleware('permission:billing.view');
+    Route::post('/{payment}', 'update')->middleware('permission:billing.manage');
+    Route::delete('/{payment}', 'destroy')->middleware('permission:billing.manage');
+});
+
 // Contract Exchange — detect & link "car swaps" (customer returns one car, takes another).
 // Static `exchanges/pending` (3 segments) and `{contract}/exchange/*` don't collide with the
 // 2-segment `Contract/{contract}` above, so registration order here is safe.
@@ -112,6 +140,11 @@ Route::middleware('auth:sanctum')->prefix('notifications')->controller(Notificat
     Route::delete('/{id}', 'destroy');         // dismiss one
 });
 
+// Override Audit — read-only trail of "Rental-First" policy overrides (maintenance contract
+// opened on a rented car). Gated by operations.override so only managers/admins see it.
+Route::middleware(['auth:sanctum', 'permission:operations.override'])
+    ->get('Operations/overrides', [OverrideAuditController::class, 'index']);
+
 // Fleet insights
 Route::middleware('auth:sanctum')->controller(FleetController::class)->group(function () {
     Route::get('Fleet/expiring', 'expiring')->middleware('permission:dashboard.view');               // cars with registration/insurance expiring within ?days=N
@@ -133,6 +166,10 @@ Route::middleware(['auth:sanctum', 'permission:sync.run'])->controller(SyncAudit
     Route::get('Sync/audit/{syncRun}', 'show');
 });
 
+// Maintenance Foresight: predict failures before they happen + simulate the cost of inaction
+Route::middleware(['auth:sanctum', 'permission:maintenance.view'])->get('Maintenance/foresight', [MaintenanceController::class, 'foresight']);
+// Drill-down behind a Foresight cost line: every priced repair of one issue across the fleet
+Route::middleware(['auth:sanctum', 'permission:maintenance.view'])->get('Maintenance/issue-history', [MaintenanceController::class, 'issueHistory']);
 // Maintenance cost intelligence (service averages + vendor price comparison)
 Route::middleware(['auth:sanctum', 'permission:maintenance.view'])->get('Maintenance/analytics', [MaintenanceController::class, 'analytics']);
 // Recurring faults: cars repeatedly in for the same issue (scenario step 8)
@@ -162,11 +199,34 @@ Route::middleware('auth:sanctum')->prefix('Maintenance/events')->controller(Work
     Route::delete('/{workshopEvent}', 'destroy')->middleware('permission:maintenance.manage');
 });
 
+// Quick Cost Input — recent repairs missing a cost + one-tap cost entry that re-computes the
+// vehicle's Real-Net-Profit yield (closes the understated-spend gap behind Negative Yield).
+// Static prefix, registered before any `Maintenance/{x}` wildcard.
+Route::middleware('auth:sanctum')->prefix('Maintenance/cost-capture')->controller(CostCaptureController::class)->group(function () {
+    Route::get('/', 'index')->middleware('permission:maintenance.view');
+    Route::post('/{workshopEvent}', 'store')->middleware('permission:maintenance.manage');
+});
+
 // Fleet anomalies / exceptional cases (data conflicts + operational gaps)
 Route::middleware(['auth:sanctum', 'permission:insights.view'])->get('Anomalies', [AnomalyController::class, 'index']);
 
 // Data health: incomplete/broken records (cars without VIN/mileage, contracts without a car, …)
 Route::middleware(['auth:sanctum', 'permission:insights.view'])->get('DataHealth', [DataHealthController::class, 'index']);
+
+// Fleet-wide operational profitability per car: rental income (type-R, ex-VAT) − maintenance cost
+Route::middleware(['auth:sanctum', 'permission:insights.view'])->get('Profitability', [ProfitabilityController::class, 'index']);
+
+// Financial conflicts: broken invoices only — VAT math errors, invoice↔contract mismatches,
+// overlapping/double billing. The accounting clean-up hub.
+Route::middleware(['auth:sanctum', 'permission:insights.view'])->get('FinancialConflicts', [FinancialConflictController::class, 'index']);
+
+// Financial Reconciliation (read-only MVP): bridge ONE contract to the official accounting system —
+// Fleet ledger vs. real cash collected (/reports/balance) vs. booked vouchers (/accounts/vouchers),
+// with a tolerance-aware verdict. Resolve by ?contract_no= or ?contract_id=. Hits the live API.
+Route::middleware(['auth:sanctum', 'permission:insights.view'])->get('Reconciliation', [ReconciliationController::class, 'show']);
+// Fleet-wide Net Profit for one month (cash basis): Σ net collected on rentals − Σ maintenance cost,
+// computed from synced data (no live API hammering). ?month= & ?year= default to the current month.
+Route::middleware(['auth:sanctum', 'permission:insights.view'])->get('Reconciliation/fleet', [ReconciliationController::class, 'fleet']);
 
 // Vehicle status vs. contract reality mismatches (status out of step with open contracts)
 Route::middleware(['auth:sanctum', 'permission:insights.view'])->get('StatusMismatch', [StatusMismatchController::class, 'index']);

@@ -79,17 +79,27 @@ const NAV_SECTIONS = [
       { name: 'Vehicles', to: '/vehicles', icon: 'M5 17h14M5 17a2 2 0 0 1-2-2v-3l2-5a2 2 0 0 1 2-1.4h8A2 2 0 0 1 19 7l2 5v3a2 2 0 0 1-2 2M7 17v1a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-1m14 0v1a1 1 0 0 1-1 1h0a1 1 0 0 1-1-1v-1M7 12h10', desc: 'Every car in the fleet. The OfficeManager API is the sole source of which cars exist; the sheet only enriches matched cars. Click a row to open its full profile.' },
       { name: 'Customers', to: '/customers', icon: 'M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0zM3 21v-1a6 6 0 0 1 6-6h6a6 6 0 0 1 6 6v1', desc: 'All customers with their contact details and available wallet (carried-forward credit). Open a customer to see their contracts and balance history.' },
       { name: 'Drivers', to: '/drivers', icon: 'M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM6 21v-1a6 6 0 0 1 6-6 6 6 0 0 1 6 6v1M3 9l2 2 3-3', desc: 'Fleet drivers with their licence number, expiry and status. Add, edit or suspend drivers; expiring licences are flagged.' },
-      { name: 'Contracts', to: '/contracts', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z', desc: 'Rental contracts synced from OfficeManager — all open contracts plus the last 3 months of closed ones. Open or closed status is detected on each sync.' },
       { name: 'Registrations', to: '/registrations', icon: 'M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Vehicle registration & legal status: insurance, Mulkiya, mortgage, RTA fines and status. Each field is sourced from the system that owns it (API, F Insurance, or F RTA).' },
     ],
   },
   {
-    title: 'Operations',
+    title: 'Rentals',
     items: [
+      { name: 'Contracts', to: '/contracts', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z', desc: 'Rental contracts synced from OfficeManager — all open contracts plus the last 3 months of closed ones. Open or closed status is detected on each sync.' },
       { name: 'Overdue Rentals', to: '/overdue-rentals', icon: 'M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Open contracts that are past their expected return date — the cars that should be back but are not.' },
+      { name: 'Payments', to: '/payments', icon: 'M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 0 0 3-3V8a3 3 0 0 0-3-3H6a3 3 0 0 0-3 3v8a3 3 0 0 0 3 3z', desc: 'Payments / receipts recorded on the website — every collection against a contract. Invoice and payment entry happens here and on each contract; the platform owns this billing data.' },
+    ],
+  },
+  {
+    title: 'Maintenance',
+    items: [
       { name: 'Maintenance', to: '/maintenance', icon: 'M11 4a4 4 0 0 0-1 7.9V20a2 2 0 1 0 4 0v-8.1A4 4 0 0 0 11 4zM14.5 4.5l-2 2 3 3 2-2', desc: 'Live repair board: current repair status, garage, issues and priority per car. Read from the latest event for each car in the N-Maintenance sheet log.' },
+      { name: 'Foresight', to: '/maintenance-foresight', icon: 'M9.66 17h4.68M12 3v1m6.36 1.64-.7.7M21 12h-1M4 12H3m3.34-5.66-.7-.7M7 17a5 5 0 1 1 10 0', desc: 'Predictive maintenance: cars showing early mechanical warning signs (service overdue, chronic faults, aging battery) caught before they fail — with the downtime, parts-wait risk and lost rental revenue estimated from the fleet’s own repair history.' },
       { name: 'Return Check', to: '/maintenance-returns', icon: 'M3 12a9 9 0 1 0 9-9 9 9 0 0 0-9 9zm0 0H1m2 0 3-3m-3 3 3 3M16 12l-4 4-2-2', desc: 'Cars the N-Maintenance sheet shows are back from the garage but whose maintenance contract is still open in OfficeManager — these contracts just need closing.' },
       { name: 'Approvals', to: '/maintenance-approvals', icon: 'M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Maintenance items waiting for sign-off before work proceeds.' },
+      { name: 'Cost Capture', to: '/cost-capture', icon: 'M12 8c-1.7 0-3 .9-3 2s1.3 2 3 2 3 .9 3 2-1.3 2-3 2m0-8V6m0 12v-2m9-4a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Quick Cost Input: recent repairs with no cost recorded. Enter the amount in one tap to fix each vehicle’s repair spend and re-check its Negative-Yield flag — the tool for closing the understated-spend gap.' },
+      { name: 'Damage & Accidents', to: '/damage-accidents', icon: 'M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z', desc: 'Damage and accident records shown as-is per vehicle. Fault is colored red/green based on the liable party and insurance.' },
+      { name: 'Cost Analytics', to: '/maintenance-analytics', icon: 'M3 3v18h18M7 15l3-3 3 3 5-5', desc: 'Maintenance cost trends and breakdowns across the fleet — spend by car, garage, and over time.' },
       { name: 'Garages', to: '/garages', icon: 'M3 9l9-6 9 6v11a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z', desc: 'Garages where fleet cars are serviced, with the work routed to each.' },
       { name: 'Vendors', to: '/vendors', icon: 'M3 9l1-5h16l1 5M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M3 9h18M9 20v-6h6v6', desc: 'Suppliers and service vendors referenced by maintenance and contracts.' },
     ],
@@ -97,19 +107,29 @@ const NAV_SECTIONS = [
   {
     title: 'Insights',
     items: [
-      { name: 'Cost Analytics', to: '/maintenance-analytics', icon: 'M3 3v18h18M7 15l3-3 3 3 5-5', desc: 'Maintenance cost trends and breakdowns across the fleet — spend by car, garage, and over time.' },
-      { name: 'Damage & Accidents', to: '/damage-accidents', icon: 'M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z', desc: 'Damage and accident records shown as-is per vehicle. Fault is colored red/green based on the liable party and insurance.' },
+      { name: 'Profitability', to: '/profitability', icon: 'M12 8c-1.7 0-3 .9-3 2s1.3 2 3 2 3 .9 3 2-1.3 2-3 2m0-8V6m0 12v-2m9-4a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Operational profit per car across the whole fleet — rental income (type-R, ex-VAT) minus logged maintenance cost. Sorted best-to-worst to spot top assets and liabilities.' },
+      { name: 'Fleet Utilization', to: '/fleet-utilization', icon: 'M3 3v18h18M7 15l3-3 3 3 5-5M8 21V9m4 12V5m4 16v-7', desc: 'Per-car split of owned time into rented, in-maintenance, and idle days — utilization and downtime % against how long you have owned each car, with rent lost to downtime. Filter by period (e.g. last month) and sort to find the cars stuck in the workshop.' },
+      { name: 'Financial Conflicts', to: '/financial-conflicts', icon: 'M12 8c-1.7 0-3 .9-3 2s1.3 2 3 2 3 .9 3 2-1.3 2-3 2m0-8V6m0 12v-2M5 21h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2z', desc: 'Accounting clean-up hub: only the broken invoices — VAT that does not add up, invoices that disagree with their contract, and overlapping (double) billing.' },
+      { name: 'Reconciliation', to: '/financial-reconciliation', icon: 'M8 7h12m0 0-4-4m4 4-4 4M16 17H4m0 0 4 4m-4-4 4-4', desc: 'Bridge one contract to the official accounting system: its Fleet ledger side-by-side with the real cash collected (accounting receipts) and the vouchers booked against it. A fee/rounding tolerance keeps the noise out, so you’re only alerted on significant gaps. Read-only MVP.' },
+      { name: 'Net Profit', to: '/net-profit', icon: 'M3 3v18h18M7 14l3-3 3 3 5-6', desc: 'Fleet-wide cash-basis Net Profit for a month: total net cash collected on rentals returned in the month, minus the cost of maintenance contracts closed in the month. Step through months to compare. Built from synced figures for speed — use Reconcile on a single contract to verify its real cash live.' },
+    ],
+  },
+  {
+    title: 'Data Quality',
+    items: [
       { name: 'Exceptional Cases', to: '/anomalies', icon: 'M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z', desc: 'Data conflicts and operational gaps surfaced by nine automated checks — places where fleet data disagrees with itself or with reality.' },
-      { name: 'Data Health', to: '/data-health', icon: 'M3 12h4l2 5 4-12 2 7h6', desc: 'Overall data quality signals: missing fields, stale records, and coverage across the sources.' },
       { name: 'Status Mismatch', to: '/status-mismatch', icon: 'M16 3h5v5M21 3l-7 7M8 21H3v-5M3 21l7-7', desc: 'Cars whose status disagrees between sources — e.g. rented in one system but available in another.' },
+      { name: 'Data Health', to: '/data-health', icon: 'M3 12h4l2 5 4-12 2 7h6', desc: 'Overall data quality signals: missing fields, stale records, and coverage across the sources.' },
+      { name: 'Mileage Reconciliation', to: '/mileage-reconciliation', icon: 'M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'System odometer vs. the Mileage-Baseline scanner\'s validated value. Review the gap on each car and adopt the scanner value before making the scanner the sole authority.' },
+      { name: 'Sheet ↔ API Diff', to: '/sheet-api-diff', icon: 'M9 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h4M15 4h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4M9 8h6M9 12h6M9 16h6', desc: 'Side-by-side comparison of the canonical "Faster" sheet against the OfficeManager API, matched by VIN, to spot vehicles that differ.' },
     ],
   },
   {
     title: 'System',
     items: [
-      { name: 'Sheet ↔ API Diff', to: '/sheet-api-diff', icon: 'M9 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h4M15 4h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4M9 8h6M9 12h6M9 16h6', desc: 'Side-by-side comparison of the canonical "Faster" sheet against the OfficeManager API, matched by VIN, to spot vehicles that differ.' },
       { name: 'Data Sync', to: '/sync', icon: 'M4 4v6h6M20 20v-6h-6M20 9A8 8 0 0 0 6.3 5.3L4 8m16 8-2.3 2.7A8 8 0 0 1 4 15', desc: 'Run and monitor data syncs from OfficeManager and the sheets, with per-phase status and summaries.' },
       { name: 'Sync Audit', to: '/sync-audit', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-6 9 2 2 4-4', desc: 'Read-only history of CMD sync runs: how many contracts each execution scanned, updated, and auto-corrected (e.g. stale dates cleared).' },
+      { name: 'Override Audit', to: '/override-audit', icon: 'M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z', desc: 'Read-only trail of "Rental-First" policy overrides: every time a manager opened a maintenance contract on a car that still had a live rental — who allowed it and why.' },
     ],
   },
 ];
@@ -127,21 +147,31 @@ const NAV_PERMISSIONS = {
   '/customers': 'customers.view',
   '/drivers': 'drivers.view',
   '/contracts': 'contracts.view',
+  '/payments': 'billing.view',
   '/registrations': 'registration.view',
   '/overdue-rentals': 'dashboard.view',
   '/maintenance': 'maintenance.view',
+  '/maintenance-foresight': 'maintenance.view',
+  '/cost-capture': 'maintenance.manage',
   '/maintenance-returns': 'maintenance.view',
   '/maintenance-approvals': 'maintenance.approve',
   '/garages': 'maintenance.view',
   '/vendors': 'vendors.view',
   '/maintenance-analytics': 'maintenance.view',
   '/damage-accidents': 'maintenance.view',
+  '/profitability': 'insights.view',
+  '/fleet-utilization': 'insights.view',
   '/anomalies': 'insights.view',
   '/data-health': 'insights.view',
+  '/mileage-reconciliation': 'insights.view',
+  '/financial-conflicts': 'insights.view',
+  '/financial-reconciliation': 'insights.view',
+  '/net-profit': 'insights.view',
   '/status-mismatch': 'insights.view',
   '/sheet-api-diff': 'insights.view',
   '/sync': 'sync.run',
   '/sync-audit': 'sync.run',
+  '/override-audit': 'operations.override',
 };
 
 // Quick actions surfaced at the top of the command palette. `run` receives a
@@ -225,6 +255,47 @@ function NavItem({ item, onNavigate, collapsed }) {
   );
 }
 
+// A nav section with a collapsible header (accordion). In the lg icon-rail
+// (`collapsed`) there are no labels to click, so the section just renders its
+// items with a thin divider, exactly as before. `open` is forced true for the
+// section holding the current page so you always see where you are.
+function NavSection({ section, collapsed, open, onToggle, onNavigate }) {
+  return (
+    <div>
+      {collapsed ? (
+        <>
+          {/* below lg the drawer is full-width, so the label still shows */}
+          <p className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-600 lg:hidden">
+            {section.title}
+          </p>
+          <div className="mx-auto mb-1.5 hidden h-px w-6 bg-white/10 lg:block" />
+        </>
+      ) : (
+        <button
+          type="button"
+          onClick={onToggle}
+          className="group/sec mb-0.5 flex w-full items-center justify-between rounded-lg px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-600 transition hover:text-slate-400"
+        >
+          <span>{section.title}</span>
+          <svg
+            className={`h-3.5 w-3.5 text-slate-600 transition-transform duration-200 group-hover/sec:text-slate-400 ${open ? '' : '-rotate-90'}`}
+            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
+          >
+            <path d="M6 9l6 6 6-6" />
+          </svg>
+        </button>
+      )}
+      {(collapsed || open) && (
+        <div className="space-y-0.5">
+          {section.items.map((item) => (
+            <NavItem key={item.name} item={item} onNavigate={onNavigate} collapsed={collapsed} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function AppLayout() {
   const { user, logout } = useAuth();
   const { can } = usePermissions();
@@ -241,6 +312,17 @@ export default function AppLayout() {
   const [helpOpen, setHelpOpen] = useState(false);
   // Desktop sidebar collapse (icon-rail), remembered across sessions.
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('fv:rail') === '1');
+  // Which nav sections are collapsed (accordion), remembered across sessions.
+  const [collapsedSections, setCollapsedSections] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('fv:navsections') || '[]')); } catch { return new Set(); }
+  });
+  const toggleSection = (title) =>
+    setCollapsedSections((prev) => {
+      const next = new Set(prev);
+      next.has(title) ? next.delete(title) : next.add(title);
+      localStorage.setItem('fv:navsections', JSON.stringify([...next]));
+      return next;
+    });
   // Recently visited pages (paths), most-recent first — feeds the command palette.
   const [recents, setRecents] = useState(() => {
     try { return JSON.parse(localStorage.getItem('fv:recents') || '[]'); } catch { return []; }
@@ -288,6 +370,9 @@ export default function AppLayout() {
   const current = [...ALL_ITEMS]
     .filter((i) => (i.to === '/' ? location.pathname === '/' : location.pathname.startsWith(i.to)))
     .sort((a, b) => b.to.length - a.to.length)[0];
+
+  // The section holding the current page — kept open even if the user collapsed it.
+  const activeSectionTitle = visibleSections.find((s) => s.items.includes(current))?.title;
 
   const initial = (user?.name || '?').charAt(0).toUpperCase();
   const pageName = current?.name;
@@ -340,18 +425,14 @@ export default function AppLayout() {
         {/* Nav */}
         <nav className="sidebar-scroll flex-1 space-y-5 overflow-y-auto px-3 py-5">
           {visibleSections.map((section) => (
-            <div key={section.title}>
-              <p className={`px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-600 ${collapsed ? 'lg:hidden' : ''}`}>
-                {section.title}
-              </p>
-              {/* a thin divider stands in for the section label when collapsed */}
-              {collapsed && <div className="mx-auto mb-1.5 hidden h-px w-6 bg-white/10 lg:block" />}
-              <div className="space-y-0.5">
-                {section.items.map((item) => (
-                  <NavItem key={item.name} item={item} onNavigate={() => setOpen(false)} collapsed={collapsed} />
-                ))}
-              </div>
-            </div>
+            <NavSection
+              key={section.title}
+              section={section}
+              collapsed={collapsed}
+              open={!collapsedSections.has(section.title) || section.title === activeSectionTitle}
+              onToggle={() => toggleSection(section.title)}
+              onNavigate={() => setOpen(false)}
+            />
           ))}
         </nav>
 
