@@ -9,8 +9,13 @@ use App\Models\Vehicle;
 use App\Http\Requests\StoreVehicleRequest;
 use App\Http\Requests\UpdateVehicleRequest;
 use App\Http\Resources\VehicleResource;
+use App\Services\FleetUtilizationService;
 use App\Services\MaintenanceAnalyticsService;
+use App\Services\MileageBaselineService;
+use App\Services\RealProfitService;
 use App\Services\VehicleService;
+use Carbon\Carbon;
+use Illuminate\Http\Request;
 
 class VehicleController extends Controller
 {
@@ -31,6 +36,120 @@ class VehicleController extends Controller
         } catch (\Exception $e) {
             return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
         }
+    }
+
+    /**
+     * Fleet Utilization: per-car split of calendar time into rented / in-maintenance / idle over a
+     * window, with days owned as the denominator. `period` picks a preset window (or pass explicit
+     * from/to); `status=all` includes sold/disposed cars for historical analysis.
+     */
+    public function utilization(Request $request, FleetUtilizationService $utilization)
+    {
+        try {
+            [$from, $to] = $this->resolveWindow(
+                $request->query('period', 'last_12m'),
+                $request->query('from'),
+                $request->query('to'),
+            );
+            $statuses = $this->resolveStatuses($request->query('statuses'), $request->query('status'));
+
+            return ResponseHelper::SuccessResponse(
+                $utilization->report($from, $to, $statuses),
+                "Fleet utilization retrieved successfully",
+                200
+            );
+        } catch (\Exception $e) {
+            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+        }
+    }
+
+    /**
+     * Data Reconciliation: cars whose STORED odometer disagrees with the Mileage-Baseline scanner's
+     * validated reading by more than ?min_diff km (default 100). The review queue behind the
+     * Mileage Reconciliation page, where each gap can be manually adopted via applyBaseline().
+     */
+    public function mileageReconciliation(Request $request, MileageBaselineService $mileage)
+    {
+        try {
+            $minDiff    = max(0, (int) $request->query('min_diff', MileageBaselineService::ROLLBACK_FLOOR_KM));
+            $includeAll = filter_var($request->query('all', false), FILTER_VALIDATE_BOOLEAN);
+
+            return ResponseHelper::SuccessResponse(
+                $mileage->reconciliation($minDiff, $includeAll),
+                "Mileage reconciliation retrieved successfully",
+                200
+            );
+        } catch (\Exception $e) {
+            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+        }
+    }
+
+    /**
+     * "Apply Baseline" — force this car's odometer to the scanner's validated value (manual,
+     * per-car approval before making the scanner the sole authority). Writes the baseline anchor
+     * too. Gated by vehicles.manage.
+     */
+    public function applyBaseline(Vehicle $vehicle, MileageBaselineService $mileage)
+    {
+        try {
+            return ResponseHelper::SuccessResponse(
+                $mileage->applyOne($vehicle),
+                "Odometer updated to the scanner value",
+                200
+            );
+        } catch (\Exception $e) {
+            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+        }
+    }
+
+    /**
+     * Turn a period preset (or explicit dates) into a [from, to] window. `all` / lifetime → [null, null].
+     *
+     * @return array{0:?string,1:?string}
+     */
+    private function resolveWindow(string $period, ?string $from, ?string $to): array
+    {
+        if ($from || $to) {
+            return [$from ?: null, $to ?: null];
+        }
+        $today = Carbon::today();
+
+        return match ($period) {
+            'this_month' => [$today->copy()->startOfMonth()->toDateString(), null],
+            'last_month' => [$today->copy()->subMonthNoOverflow()->startOfMonth()->toDateString(), $today->copy()->subMonthNoOverflow()->endOfMonth()->toDateString()],
+            'last_3m'    => [$today->copy()->subMonthsNoOverflow(3)->toDateString(), null],
+            'last_6m'    => [$today->copy()->subMonthsNoOverflow(6)->toDateString(), null],
+            'last_12m'   => [$today->copy()->subMonthsNoOverflow(12)->toDateString(), null],
+            'all'        => [null, null],
+            default      => [null, null],
+        };
+    }
+
+    /** The operational fleet: cars that can actually be rented or sent for maintenance. */
+    private const OPERATIONAL_STATUSES = ['rented', 'ready', 'out_of_order', 'returned'];
+
+    /**
+     * Resolve which vehicle statuses to include. An explicit `statuses` CSV wins; otherwise default
+     * to the operational fleet (so sold / suspended / disposed / office-use are hidden unless asked).
+     * Legacy `status=all` (or an explicit "all" in the CSV) means every status → null.
+     *
+     * @return array<int,string>|null  null = no status filter (all)
+     */
+    private function resolveStatuses(?string $statuses, ?string $legacy): ?array
+    {
+        if ($statuses !== null && trim($statuses) !== '') {
+            $list = array_values(array_unique(array_filter(array_map('trim', explode(',', $statuses)))));
+            if (in_array('all', $list, true)) {
+                return null;
+            }
+
+            return $list ?: self::OPERATIONAL_STATUSES;
+        }
+        if ($legacy === 'all') {
+            return null;
+        }
+
+        return self::OPERATIONAL_STATUSES;
     }
 
     /**
@@ -63,12 +182,48 @@ class VehicleController extends Controller
     /**
      * Full car profile: specs + registration/insurance + fines + contract history.
      */
-    public function profile(Vehicle $vehicle, MaintenanceAnalyticsService $analytics)
+    public function profile(Vehicle $vehicle, MaintenanceAnalyticsService $analytics, RealProfitService $profit)
     {
         try {
             $vehicle->load('registration.insuranceCompany');
             $contracts = $vehicle->contracts()->with('customer')->latest('id')->get();
             $reg = $vehicle->registration;
+
+            // Lifetime Profit Bridge for this one car (gross revenue − operating − maintenance = net),
+            // straight from the shared RealProfitService engine so it matches the fleet table & yield.
+            $bridge = $profit->vehicleBridge([$vehicle->id])[$vehicle->id] ?? [
+                'rent_billed' => 0.0, 'discount' => 0.0, 'realized_usage' => 0.0,
+                'gross_revenue' => 0.0, 'operating_cost' => 0.0, 'maintenance' => 0.0,
+                'net_profit' => 0.0, 'contracts' => 0,
+            ];
+
+            // Per-rental-contract contributions — the full working behind the bridge, so clicking
+            // "Lifetime Net Profit" shows EVERY contract that summed into it (newest first).
+            $profitContracts = $contracts->where('contract_type', 'C')
+                ->map(function ($c) use ($profit) {
+                    $p = $profit->contractProfit($c);
+
+                    return [
+                        'id'             => $c->id,
+                        'contract_no'    => $c->contract_no,
+                        'out_date'       => optional($c->out_date)->toDateString(),
+                        'in_date'        => optional($c->in_date)->toDateString(),
+                        'customer'       => $c->customer?->name_en,
+                        'rent_billed'    => round((float) $c->rents_debit, 2),
+                        'discount'       => round((float) $c->contract_discount, 2),
+                        'realized_usage' => $p['realized_usage'],
+                        'operating_cost' => $p['operating_cost'],
+                        'net'            => round((float) $p['real_net_profit'], 2),
+                    ];
+                })
+                ->sortByDesc('out_date')
+                ->values();
+
+            // How many workshop repairs actually carried a cost into the maintenance line.
+            $maintCostedVisits = Maintenance::whereIn('origin', Maintenance::WORKSHOP_LOG_ORIGINS)
+                ->where('vehicle_id', $vehicle->id)
+                ->where('cost', '>', 0)
+                ->count();
 
             // Current availability = the car's single open contract (if any).
             $open = $vehicle->openContract()->with(['customer', 'maintenance.vendor'])->first();
@@ -173,18 +328,24 @@ class VehicleController extends Controller
             // Timeline of every workshop event for this car (built from the same loaded rows).
             $maintenanceLog = $sheetEvents
                 ->map(fn ($m) => [
-                    'id'       => $m->id,
-                    'event'    => $m->event_status,
-                    'date'     => optional($m->out_date)->toDateString()
+                    'id'        => $m->id,
+                    'event'     => $m->event_status,
+                    'date'      => optional($m->out_date)->toDateString()
                                    ?? optional($m->follow_date)->toDateString()
                                    ?? optional($m->actual_in_date)->toDateString(),
-                    'garage'   => $m->vendor?->name ?: $m->garage,
-                    'type'     => $m->maintenance_type,
-                    'severity' => $m->severity,
-                    'damage'   => $m->damage_location,
-                    'driver'   => $m->driver,
-                    'notes'    => $m->maintenance_notes,
-                    'cost'     => $m->cost,
+                    // actual return date — shown on the event when it differs from the out date
+                    'actual_in' => optional($m->actual_in_date)->toDateString(),
+                    'garage'    => $m->vendor?->name ?: $m->garage,
+                    'type'      => $m->maintenance_type,
+                    // the real fault: MAIN area(s) + SUP detail(s) recorded for the visit
+                    'main'      => $m->service_main,
+                    'sup'       => $m->service_sup,
+                    'issues'    => $analytics->sheetIssueTags($m),
+                    'severity'  => $m->severity,
+                    'damage'    => $m->damage_location,
+                    'driver'    => $m->driver,
+                    'notes'     => $m->maintenance_notes,
+                    'cost'      => $m->cost,
                 ])->values();
 
             $data = [
@@ -221,7 +382,27 @@ class VehicleController extends Controller
                 'stats' => [
                     'contracts_count'   => $contracts->count(),
                     'open_count'        => $contracts->where('state', 'open')->whereNull('in_date')->count(),
-                    'lifetime_income'   => round($contracts->sum(fn ($c) => (float) $c->contract_income), 2),
+                    // Lifetime Net Profit + the gross→net Profit Bridge — what the car generated on
+                    // paper vs. what was actually pocketed (RealProfitService, the single source).
+                    'lifetime_net_profit' => $bridge['net_profit'],
+                    // A NEW car (in fleet, never rented) shows "New — not yet rented" instead of AED 0,
+                    // so a brand-new addition is never mistaken for a non-performer.
+                    'is_new'              => $contracts->where('contract_type', 'C')->isEmpty()
+                                              && ! in_array($vehicle->status, ['sold', 'disposed'], true),
+                    // Full gross→net working, incl. the sub-sums (rent − discount + usage = gross) and
+                    // counts, so the "Lifetime Net Profit" drill-down can show exactly how it was built.
+                    'profit_bridge'       => [
+                        'rent_billed'        => $bridge['rent_billed'],
+                        'discount'           => $bridge['discount'],
+                        'realized_usage'     => $bridge['realized_usage'],
+                        'gross_revenue'      => $bridge['gross_revenue'],
+                        'operating_cost'     => $bridge['operating_cost'],
+                        'maintenance'        => $bridge['maintenance'],
+                        'net_profit'         => $bridge['net_profit'],
+                        'rentals'            => $bridge['contracts'],
+                        'maintenance_visits' => $maintCostedVisits,
+                    ],
+                    'profit_contracts'    => $profitContracts,
                     'maintenance_count' => $maintenance->count(),
                     'maintenance_total' => round($maintenance->sum('total'), 2),
                     'maintenance_events' => $maintenanceLog->count(),

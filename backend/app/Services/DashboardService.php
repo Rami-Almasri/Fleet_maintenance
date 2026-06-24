@@ -4,8 +4,11 @@ namespace App\Services;
 
 use App\Models\Contract;
 use App\Models\Customer;
+use App\Models\Maintenance;
 use App\Models\Vehicle;
 use App\Models\VehicleRegistration;
+use Carbon\Carbon;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Read-only KPIs for the dashboard. Each figure is a single COUNT/SUM query —
@@ -13,6 +16,12 @@ use App\Models\VehicleRegistration;
  */
 class DashboardService
 {
+    public function __construct(
+        private RealProfitService $realProfit,
+        private OperationsService $operations,
+    ) {
+    }
+
     /**
      * @return array{
      *   total_outstanding_balance: float,
@@ -31,9 +40,50 @@ class DashboardService
             'active_contracts'          => $this->activeContracts(),
             'expiring_registrations'    => $this->expiringRegistrations($expiringDays),
             'vehicles_for_sale'         => $this->vehiclesForSale(),
+            'negative_yield'            => $this->negativeYield(),
+            'uncosted_repairs'          => $this->uncostedRepairs(),
             'pending_approvals'         => $this->pendingApprovals(),
             'fleet_status'              => $this->fleetStatus(),
         ];
+    }
+
+    /**
+     * Vehicles flagged "Negative Yield" — Real Net Profit over the trailing window is below their
+     * maintenance/repair spend, i.e. they cost more to keep than they earn (sell candidates).
+     * Returns the count, the window, and the worst offenders for the homepage.
+     *
+     * @return array{count:int, window_months:int, worst:array<int,array<string,mixed>>}
+     */
+    public function negativeYield(int $limit = 5): array
+    {
+        $rows = $this->realProfit->negativeYieldVehicles();
+
+        return [
+            'count'         => count($rows),
+            'window_months' => RealProfitService::YIELD_MONTHS,
+            'worst'         => array_slice($rows, 0, $limit),
+        ];
+    }
+
+    /**
+     * Recent repair VISITS (vehicle|out_date) within the yield window that have NO cost on any
+     * row — the size of the "understated spend" gap, and the count behind Quick Cost Input.
+     */
+    public function uncostedRepairs(): int
+    {
+        $cutoff = Carbon::today()->subMonths(RealProfitService::YIELD_MONTHS)->toDateString();
+
+        $visits = DB::table('maintenances')
+            ->whereIn('origin', Maintenance::WORKSHOP_LOG_ORIGINS)
+            ->whereNotNull('vehicle_id')
+            ->whereNotNull('out_date')
+            ->whereDate('out_date', '>=', $cutoff)
+            ->groupBy('vehicle_id', 'out_date')
+            ->havingRaw('COALESCE(SUM(cost),0) = 0')
+            ->select('vehicle_id')
+            ->get();
+
+        return $visits->count();
     }
 
     /** Maintenance jobs over the threshold awaiting manual approval. */
@@ -81,6 +131,9 @@ class DashboardService
                 Contract::where('contract_type', 'U')->currentlyOpen()
                     ->whereNotNull('vehicle_id')->pluck('vehicle_id')
             )
+            // Cars in the garage on a hand-entered workshop event with no open contract — same
+            // set the KPI and the /maintenance board count, so the donut never disagrees.
+            ->merge($this->operations->manualOnlyGarageVehicleIds())
             ->unique();
         $maintByStatus = Vehicle::whereIn('id', $maintIds)
             ->selectRaw('status, count(*) c')->groupBy('status')->pluck('c', 'status');
@@ -128,10 +181,16 @@ class DashboardService
         return Contract::upcomingReservation()->whereNotNull('vehicle_id')->distinct()->count('vehicle_id');
     }
 
-    /** Cars currently in the garage (open maintenance contracts, not yet returned). */
+    /**
+     * Cars currently in the garage: open maintenance contracts PLUS cars in on a hand-entered
+     * workshop event with no contract. One definition, shared with the donut and the board.
+     */
     public function carsInMaintenance(): int
     {
-        return Contract::where('contract_type', 'U')->currentlyOpen()->count();
+        $contractCars = Contract::where('contract_type', 'U')->currentlyOpen()
+            ->whereNotNull('vehicle_id')->distinct()->count('vehicle_id');
+
+        return $contractCars + count($this->operations->manualOnlyGarageVehicleIds());
     }
 
     /**

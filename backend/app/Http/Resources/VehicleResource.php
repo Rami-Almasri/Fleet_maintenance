@@ -81,6 +81,9 @@ class VehicleResource extends JsonResource
             "last_service_odometer" => $this->last_service_odometer,
             "service_interval_km" => $this->service_interval_km,
             "service_status" => $this->serviceStatus(),
+            // Global Mileage Baseline: the earliest contract reading the odometer is anchored to.
+            "baseline_odometer" => $this->baseline_odometer,
+            "baseline_synced_at" => $this->baseline_synced_at,
             "replacement_due_date" => $this->replacement_due_date,
             "notes" => $this->notes,
             "origin" => $this->origin,

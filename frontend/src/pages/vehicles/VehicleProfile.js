@@ -1,7 +1,8 @@
 import { Fragment, useCallback, useEffect, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../../api/client';
 import useFetch from '../../hooks/useFetch';
+import { usePermissions } from '../../hooks/usePermissions';
 import { useToast } from '../../components/ui/Toast';
 import Badge, { VehicleStatusBadge, ContractTypeBadge, ContractStateBadge } from '../../components/ui/Badge';
 import Button from '../../components/ui/Button';
@@ -93,6 +94,19 @@ function Field({ label, value }) {
   );
 }
 
+// One line of the Lifetime Net Profit working: a label (+ optional hint) and a right-aligned amount.
+function BridgeLine({ label, hint, value, labelClass = 'text-slate-600', valueClass = 'text-slate-900' }) {
+  return (
+    <div className="flex items-baseline justify-between gap-4">
+      <dt className={labelClass}>
+        {label}
+        {hint && <span className="ml-2 hidden text-xs font-normal text-slate-400 sm:inline">{hint}</span>}
+      </dt>
+      <dd className={`tabular-nums font-medium ${valueClass}`}>{value}</dd>
+    </div>
+  );
+}
+
 function CoverageRow({ label, date, days }) {
   const b = dayBadge(days);
   return (
@@ -119,10 +133,17 @@ const STAT_TONE = {
   red: { bg: 'bg-red-50 text-red-600', text: 'text-red-600' },
 };
 
-function Stat({ label, value, icon, tone = 'gray', format, highlight }) {
+function Stat({ label, value, icon, tone = 'gray', format, highlight, text, onClick }) {
   const t = STAT_TONE[tone] || STAT_TONE.gray;
+  const clickable = typeof onClick === 'function';
   return (
-    <div className="hover-lift rounded-2xl border border-slate-200/60 bg-white px-5 py-4 shadow-soft">
+    <div
+      onClick={onClick}
+      role={clickable ? 'button' : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onKeyDown={clickable ? (e) => (e.key === 'Enter' || e.key === ' ') && onClick() : undefined}
+      className={`hover-lift rounded-2xl border border-slate-200/60 bg-white px-5 py-4 shadow-soft ${clickable ? 'cursor-pointer transition hover:border-indigo-300 hover:ring-2 hover:ring-indigo-500/10 focus:outline-none focus:ring-2 focus:ring-indigo-500/30' : ''}`}
+    >
       <div className="flex items-center justify-between gap-2">
         <p className="text-xs font-medium text-slate-500">{label}</p>
         {icon && (
@@ -131,9 +152,19 @@ function Stat({ label, value, icon, tone = 'gray', format, highlight }) {
           </span>
         )}
       </div>
-      <p className={`mt-1.5 text-2xl font-bold tracking-tight ${highlight ? t.text : 'text-slate-900'}`}>
-        <CountUp value={value} format={format} />
-      </p>
+      {text ? (
+        <p className="mt-2 text-sm font-semibold text-blue-600">{text}</p>
+      ) : (
+        <p className={`mt-1.5 text-2xl font-bold tracking-tight ${highlight ? t.text : 'text-slate-900'}`}>
+          <CountUp value={value} format={format} />
+        </p>
+      )}
+      {clickable && (
+        <p className="mt-1 flex items-center gap-1 text-[11px] font-medium text-indigo-500">
+          View breakdown
+          <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+        </p>
+      )}
     </div>
   );
 }
@@ -156,17 +187,24 @@ export default function VehicleProfile() {
     return data.data;
   }, [id]);
   const { data, loading, error, reload } = useFetch(fetcher, [id]);
+  const navigate = useNavigate();
   const toast = useToast();
   const [vendors, setVendors] = useState([]);
   const [maintOpen, setMaintOpen] = useState(false);
   const [maintForm, setMaintForm] = useState({ vendor_id: '', expected_return_date: '' });
   const [conflict, setConflict] = useState(null); // reservation clash returned by the API (409)
+  const [rentalBlock, setRentalBlock] = useState(null); // "Rental-First" block returned by the API (409)
+  const [override, setOverride] = useState({ reason: '', notes: '' }); // manager override of the rental block
   const [busy, setBusy] = useState(false);
+  const { can } = usePermissions();
+  const canOverride = can('operations.override'); // manager-level: may open maintenance on a rented car
   const [openVisits, setOpenVisits] = useState({}); // expanded maintenance-history rows (by visit id)
   const [logEvent, setLogEvent] = useState(null); // maintenance-log event opened in the detail modal
   const [showAllVisits, setShowAllVisits] = useState(false); // collapse the Maintenance History table by default
   const [showAllLog, setShowAllLog] = useState(false); // collapse the Maintenance Log timeline by default
   const [showAllContracts, setShowAllContracts] = useState(false); // collapse the Contract History table by default
+  const [contractType, setContractType] = useState('all'); // Contract History type filter: all | C | U | R
+  const [bridgeOpen, setBridgeOpen] = useState(false); // "how is Lifetime Net Profit calculated" drill-down
 
   const VISITS_PREVIEW = 5;    // rows shown before "Show all"
   const LOG_PREVIEW = 4;       // timeline events shown before "Show all"
@@ -174,11 +212,47 @@ export default function VehicleProfile() {
 
   const toggleVisit = (vid) => setOpenVisits((o) => ({ ...o, [vid]: !o[vid] }));
 
+  // Deep-dive: arriving from Maintenance Foresight with ?event=<id> highlights that exact
+  // workshop event (the worst-case offender) so the user can see what actually happened.
+  const [searchParams] = useSearchParams();
+  const highlightEventId = searchParams.get('event');
+
   useEffect(() => { api.get('/Vendor').then((r) => setVendors(r.data.data || [])).catch(() => {}); }, []);
 
-  const closeMaint = () => { setMaintOpen(false); setConflict(null); };
+  // When deep-diving to a specific event, expand the full log and scroll it into view.
+  useEffect(() => {
+    if (!highlightEventId || !data) return undefined;
+    setShowAllLog(true);
+    const t = setTimeout(() => {
+      const el = document.getElementById(`log-event-${highlightEventId}`);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 300);
+    return () => clearTimeout(t);
+  }, [highlightEventId, data]);
 
-  const sendToMaintenance = async (force = false) => {
+  // Arriving from Fleet Utilization with ?focus=maintenance jumps straight to the Maintenance Log.
+  const focus = searchParams.get('focus');
+  useEffect(() => {
+    if (focus !== 'maintenance' || !data) return undefined;
+    setShowAllLog(true);
+    const t = setTimeout(() => {
+      document.getElementById('maintenance-log')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 300);
+    return () => clearTimeout(t);
+  }, [focus, data]);
+
+  const closeMaint = () => {
+    setMaintOpen(false);
+    setConflict(null);
+    setRentalBlock(null);
+    setOverride({ reason: '', notes: '' });
+  };
+
+  const sendToMaintenance = async ({ force = false, withOverride = false } = {}) => {
+    if (withOverride && !override.reason) { toast.error('Select a reason for the override'); return; }
+    if (withOverride && override.reason === 'other' && !override.notes.trim()) {
+      toast.error('Add a note explaining the override'); return;
+    }
     setBusy(true);
     try {
       await api.post(`/Vehicle/${id}/operation`, {
@@ -186,15 +260,25 @@ export default function VehicleProfile() {
         vendor_id: maintForm.vendor_id || undefined,
         expected_return_date: maintForm.expected_return_date || undefined,
         force: force || undefined,
+        // manager-only "Rental-First" override (opens maintenance on a rented car, audited)
+        override_reason: withOverride ? override.reason : undefined,
+        override_notes: withOverride && override.notes.trim() ? override.notes.trim() : undefined,
       });
-      toast.success('Car sent to maintenance');
-      setMaintOpen(false);
-      setConflict(null);
+      toast.success(withOverride ? 'Maintenance contract opened — override logged' : 'Car sent to maintenance');
+      closeMaint();
       setMaintForm({ vendor_id: '', expected_return_date: '' });
       reload();
     } catch (e) {
       const res = e.response;
-      if (res?.status === 409 && res.data?.data?.conflict) {
+      if (res?.status === 409 && res.data?.data?.rental_block) {
+        // "Rental-First" policy: car is on a live rental — show it and offer a manager override
+        setRentalBlock({
+          message: res.data.message,
+          rental: res.data.data.rental || {},
+          reasons: res.data.data.override_reasons || [],
+        });
+        setConflict(null);
+      } else if (res?.status === 409 && res.data?.data?.conflict) {
         // car is reserved and the timing clashes — show it and let the operator override
         setConflict({ message: res.data.message, reservations: res.data.data.reservations || [] });
       } else {
@@ -237,6 +321,15 @@ export default function VehicleProfile() {
   // Newest first — sort by the most recent date on the contract (out, falling back to in).
   const contractTime = (c) => { const t = new Date(c.out_date || c.in_date || 0).getTime(); return isNaN(t) ? 0 : t; };
   const sortedContracts = [...contracts].sort((a, b) => contractTime(b) - contractTime(a));
+  // Contract History type filter — only offer the types this vehicle actually has.
+  const contractTypeCounts = contracts.reduce((acc, c) => { acc[c.contract_type] = (acc[c.contract_type] || 0) + 1; return acc; }, {});
+  const contractFilters = [
+    { key: 'all', label: 'All', count: contracts.length },
+    { key: 'C', label: 'Rental', count: contractTypeCounts.C || 0 },
+    { key: 'U', label: 'Maintenance', count: contractTypeCounts.U || 0 },
+    { key: 'R', label: 'Booking', count: contractTypeCounts.R || 0 },
+  ].filter((f) => f.key === 'all' || f.count > 0);
+  const filteredContracts = contractType === 'all' ? sortedContracts : sortedContracts.filter((c) => c.contract_type === contractType);
   const maintenance = data.maintenance || [];
   const maintenanceLog = data.maintenance_log || [];
   const analytics = data.maintenance_analytics || [];
@@ -324,8 +417,8 @@ export default function VehicleProfile() {
         {/* Stats */}
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           <Stat label="Total Contracts" value={stats.contracts_count} tone="indigo" icon="M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z" />
-          <Stat label="Open Now" value={stats.open_count} tone="emerald" highlight={stats.open_count > 0} icon="M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" />
-          <Stat label="Lifetime Income" value={stats.lifetime_income} format={aed} tone="emerald" icon="M12 8c-1.7 0-3 .9-3 2s1.3 2 3 2 3 .9 3 2-1.3 2-3 2m0-8V6m0 12v-2m9-4a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" />
+          <Stat label="Open Now" value={stats.open_count} tone="emerald" highlight={stats.open_count > 0} onClick={av.open_contract_id ? () => navigate(`/contracts/${av.open_contract_id}`) : undefined} icon="M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" />
+          <Stat label="Lifetime Net Profit" value={stats.lifetime_net_profit} format={aed} text={stats.is_new ? 'New — not yet rented' : undefined} tone={Number(stats.lifetime_net_profit) < 0 ? 'red' : 'emerald'} highlight onClick={stats.is_new ? undefined : () => setBridgeOpen(true)} icon="M12 8c-1.7 0-3 .9-3 2s1.3 2 3 2 3 .9 3 2-1.3 2-3 2m0-8V6m0 12v-2m9-4a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" />
           <Stat label="Outstanding Fines" value={reg ? reg.fines_count : 0} tone="red" highlight={reg && reg.fines_count > 0} icon="M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
         </div>
 
@@ -388,12 +481,25 @@ export default function VehicleProfile() {
             <Badge tone="gray">{num(maintenance.length)} {maintenance.length === 1 ? 'visit' : 'visits'}</Badge>
           </div>
 
-          {/* All-time spend KPI */}
-          <div className="px-6 py-4">
-            <div className="inline-flex flex-col rounded-2xl border border-amber-100 bg-amber-50 px-5 py-4">
-              <span className="text-xs font-medium text-amber-700">Total Maintenance Spent (All-time)</span>
-              <span className="mt-1 text-2xl font-bold tracking-tight text-amber-900">{aed2(stats.maintenance_total)}</span>
-              <span className="mt-0.5 text-xs text-amber-600">across {num(stats.maintenance_count)} {Number(stats.maintenance_count) === 1 ? 'visit' : 'visits'}</span>
+          {/* At-a-glance summary — spend & cadence */}
+          <div className="grid grid-cols-2 gap-3 px-6 py-4 sm:grid-cols-4">
+            <div className="rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3">
+              <span className="text-[11px] font-medium uppercase tracking-wide text-amber-700">Total spent · all-time</span>
+              <span className="mt-1 block text-2xl font-bold tracking-tight text-amber-900">{aed2(stats.maintenance_total)}</span>
+            </div>
+            <div className="rounded-2xl border border-gray-100 bg-gray-50/70 px-4 py-3">
+              <span className="text-[11px] font-medium uppercase tracking-wide text-gray-500">Visits</span>
+              <span className="mt-1 block text-2xl font-bold tracking-tight text-gray-900">{num(stats.maintenance_count)}</span>
+            </div>
+            <div className="rounded-2xl border border-gray-100 bg-gray-50/70 px-4 py-3">
+              <span className="text-[11px] font-medium uppercase tracking-wide text-gray-500">Avg / visit</span>
+              <span className="mt-1 block text-2xl font-bold tracking-tight text-gray-900">
+                {aed2(Number(stats.maintenance_count) > 0 ? Number(stats.maintenance_total) / Number(stats.maintenance_count) : 0)}
+              </span>
+            </div>
+            <div className="rounded-2xl border border-gray-100 bg-gray-50/70 px-4 py-3">
+              <span className="text-[11px] font-medium uppercase tracking-wide text-gray-500">Last visit</span>
+              <span className="mt-1 block text-2xl font-bold tracking-tight text-gray-900">{maintenance[0]?.date ? fmtDate(maintenance[0].date) : '—'}</span>
             </div>
           </div>
 
@@ -447,7 +553,7 @@ export default function VehicleProfile() {
                             {(!m.tags || m.tags.length === 0) && <span className="text-xs text-gray-300">—</span>}
                           </div>
                         </td>
-                        <td className="px-6 py-3 text-right font-medium text-gray-900">{aed2(m.total)}</td>
+                        <td className={`px-6 py-3 text-right ${Number(m.total) > 0 ? 'font-semibold text-gray-900' : 'text-gray-300'}`}>{aed2(m.total)}</td>
                       </tr>
                       {open && expandable && (
                         <tr className="bg-slate-50/60">
@@ -497,7 +603,7 @@ export default function VehicleProfile() {
 
         {/* Maintenance Log — a timeline of every workshop event for this car. Click any event for full detail. */}
         {maintenanceLog.length > 0 && (
-          <Card>
+          <Card id="maintenance-log" className="scroll-mt-28">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-6 py-4">
               <div>
                 <h3 className="text-base font-semibold text-slate-900">Maintenance Log</h3>
@@ -514,8 +620,9 @@ export default function VehicleProfile() {
                   const tone = EVENT_TONE[m.event] || 'gray';
                   const st = EVENT_STYLE[tone] || EVENT_STYLE.gray;
                   const icon = EVENT_ICON[m.event] || DEFAULT_EVENT_ICON;
+                  const isHit = String(m.id) === String(highlightEventId);
                   return (
-                    <li key={m.id} className="relative flex gap-4">
+                    <li key={m.id} id={`log-event-${m.id}`} className="relative flex scroll-mt-28 gap-4">
                       {/* timeline marker — now an icon chip */}
                       <span className={`relative z-10 mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full ring-4 ring-white ${st.soft} ${st.text}`}>
                         <svg className="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={icon} /></svg>
@@ -525,20 +632,32 @@ export default function VehicleProfile() {
                       <button
                         type="button"
                         onClick={() => setLogEvent(m)}
-                        className={`group min-w-0 flex-1 rounded-2xl border border-slate-200/60 bg-white p-4 text-left shadow-soft transition-all duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-card hover:ring-2 ${st.ring} focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400`}
+                        className={`group min-w-0 flex-1 rounded-2xl border bg-white p-4 text-left shadow-soft transition-all duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-card hover:ring-2 ${st.ring} focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${isHit ? 'border-red-300 bg-red-50/40 ring-2 ring-red-400' : 'border-slate-200/60'}`}
                       >
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div className="flex flex-wrap items-center gap-2">
                             <Badge tone={tone}>{m.event || '—'}</Badge>
+                            {isHit && <Badge tone="red">🚩 Worst-case downtime — investigate</Badge>}
                             {(m.type || m.severity) && (
                               <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">{m.type || m.severity}</span>
                             )}
                           </div>
                           <div className="flex items-center gap-2">
-                            <span className="text-xs font-medium text-slate-400">{m.date ? fmtDate(m.date) : 'No date'}</span>
+                            <span className="text-xs font-medium text-slate-400">
+                              {m.date ? fmtDate(m.date) : 'No date'}
+                              {m.actual_in && m.actual_in !== m.date && <span className="text-emerald-500"> → back {fmtDate(m.actual_in)}</span>}
+                            </span>
                             <svg className="h-4 w-4 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 5l7 7-7 7" /></svg>
                           </div>
                         </div>
+
+                        {/* the real fault — MAIN area(s) recorded for the visit (the "problem", not just the type) */}
+                        {m.main && (
+                          <p className="mt-2 text-sm font-semibold text-slate-800">{m.main}</p>
+                        )}
+                        {m.sup && (
+                          <p className="mt-0.5 line-clamp-1 text-xs text-slate-500">{m.sup}</p>
+                        )}
 
                         <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
                           {m.garage && (
@@ -634,9 +753,28 @@ export default function VehicleProfile() {
 
         {/* Contract history */}
         <Card>
-          <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
-            <h3 className="text-base font-semibold text-gray-900">Contract History</h3>
-            <Badge tone="gray">{num(contracts.length)} total</Badge>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-6 py-4">
+            <div className="flex items-center gap-2">
+              <h3 className="text-base font-semibold text-gray-900">Contract History</h3>
+              <Badge tone="gray">{num(contracts.length)} total</Badge>
+            </div>
+            {/* Type filter — only shows when the vehicle has more than one type to switch between */}
+            {contractFilters.length > 2 && (
+              <div className="inline-flex rounded-lg bg-gray-100 p-0.5">
+                {contractFilters.map((f) => (
+                  <button
+                    key={f.key}
+                    type="button"
+                    onClick={() => { setContractType(f.key); setShowAllContracts(false); }}
+                    className={`rounded-md px-2.5 py-1 text-xs font-medium transition ${
+                      contractType === f.key ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-800'
+                    }`}
+                  >
+                    {f.label} <span className="tabular-nums opacity-60">{f.count}</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-100 text-sm stagger-rows">
@@ -654,7 +792,7 @@ export default function VehicleProfile() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {(showAllContracts ? sortedContracts : sortedContracts.slice(0, CONTRACTS_PREVIEW)).map((c) => (
+                {(showAllContracts ? filteredContracts : filteredContracts.slice(0, CONTRACTS_PREVIEW)).map((c) => (
                   <tr key={c.id} className="hover:bg-gray-50/60">
                     <td className="px-6 py-3 font-medium">
                       <Link to={`/contracts/${c.id}`} className="text-indigo-600 hover:text-indigo-700">#{c.contract_no || c.id}</Link>
@@ -675,20 +813,22 @@ export default function VehicleProfile() {
                     </td>
                   </tr>
                 ))}
-                {contracts.length === 0 && (
-                  <tr><td colSpan="9" className="px-6 py-8 text-center text-gray-400">No contracts for this vehicle.</td></tr>
+                {filteredContracts.length === 0 && (
+                  <tr><td colSpan="9" className="px-6 py-8 text-center text-gray-400">
+                    {contracts.length === 0 ? 'No contracts for this vehicle.' : 'No contracts of this type.'}
+                  </td></tr>
                 )}
               </tbody>
             </table>
           </div>
-          {contracts.length > CONTRACTS_PREVIEW && (
+          {filteredContracts.length > CONTRACTS_PREVIEW && (
             <div className="border-t border-gray-100 px-6 py-3 text-center">
               <button
                 type="button"
                 onClick={() => setShowAllContracts((s) => !s)}
                 className="inline-flex items-center gap-1.5 text-sm font-medium text-indigo-600 transition hover:text-indigo-700"
               >
-                {showAllContracts ? 'Show less' : `Show all ${num(contracts.length)} contracts`}
+                {showAllContracts ? 'Show less' : `Show all ${num(filteredContracts.length)} contracts`}
                 <svg className={`h-4 w-4 transition-transform ${showAllContracts ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 9l-7 7-7-7" /></svg>
               </button>
             </div>
@@ -705,13 +845,67 @@ export default function VehicleProfile() {
         footer={(
           <>
             <Button variant="secondary" onClick={closeMaint} disabled={busy}>Cancel</Button>
-            {conflict
-              ? <Button variant="danger" onClick={() => sendToMaintenance(true)} loading={busy}>Send anyway</Button>
-              : <Button onClick={() => sendToMaintenance(false)} loading={busy}>Send to Maintenance</Button>}
+            {rentalBlock
+              ? (canOverride && (
+                  <Button
+                    variant="danger"
+                    onClick={() => sendToMaintenance({ withOverride: true, force: true })}
+                    loading={busy}
+                    disabled={!override.reason || (override.reason === 'other' && !override.notes.trim())}
+                  >
+                    Override &amp; open maintenance
+                  </Button>
+                ))
+              : conflict
+                ? <Button variant="danger" onClick={() => sendToMaintenance({ force: true })} loading={busy}>Send anyway</Button>
+                : <Button onClick={() => sendToMaintenance({})} loading={busy}>Send to Maintenance</Button>}
           </>
         )}
       >
         <div className="space-y-4">
+          {rentalBlock && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm">
+              <p className="font-medium text-amber-800">⛔ This car is on an active rental</p>
+              <p className="mt-1 text-amber-700">{rentalBlock.message}</p>
+              {rentalBlock.rental?.contract_no && (
+                <p className="mt-2 text-xs text-amber-700">
+                  Rental {rentalBlock.rental.contract_no}
+                  {rentalBlock.rental.customer ? ` — ${rentalBlock.rental.customer}` : ''}
+                  {rentalBlock.rental.out_date ? ` · out ${fmtDate(rentalBlock.rental.out_date)}` : ''}
+                </p>
+              )}
+              {canOverride ? (
+                <div className="mt-3 space-y-2 border-t border-amber-200 pt-3">
+                  <p className="text-xs font-medium text-amber-800">
+                    Manager override — this closes the rental and opens a maintenance contract. Pick a reason; it is written to the override audit trail.
+                  </p>
+                  <select
+                    className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                    value={override.reason}
+                    onChange={(e) => setOverride((o) => ({ ...o, reason: e.target.value }))}
+                  >
+                    <option value="">Select a reason…</option>
+                    {rentalBlock.reasons.map((r) => (
+                      <option key={r.code} value={r.code}>{r.label}</option>
+                    ))}
+                  </select>
+                  {override.reason === 'other' && (
+                    <textarea
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                      rows={2}
+                      placeholder="Explain the override…"
+                      value={override.notes}
+                      onChange={(e) => setOverride((o) => ({ ...o, notes: e.target.value }))}
+                    />
+                  )}
+                </div>
+              ) : (
+                <p className="mt-3 border-t border-amber-200 pt-3 text-xs text-amber-700">
+                  Only a manager can override this. Log the workshop visit on the active rental instead, or ask a manager to open the maintenance contract.
+                </p>
+              )}
+            </div>
+          )}
           {conflict && (
             <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm">
               <p className="font-medium text-red-700">⚠ This car is reserved</p>
@@ -726,7 +920,9 @@ export default function VehicleProfile() {
               <p className="mt-2 text-xs text-gray-500">Set an expected return date before the reservation starts, or press <span className="font-medium">Send anyway</span> to override.</p>
             </div>
           )}
-          <p className="text-sm text-gray-500">This closes any open rental and opens a maintenance record — the car immediately shows as "in maintenance".</p>
+          {!rentalBlock && (
+            <p className="text-sm text-gray-500">This opens a maintenance record — the car immediately shows as "in maintenance". (A car on a live rental can't be sent to maintenance; log the visit on the rental instead.)</p>
+          )}
           <label className="block">
             <span className="mb-1 block text-sm font-medium text-gray-700">Garage</span>
             <SearchSelect
@@ -785,6 +981,15 @@ export default function VehicleProfile() {
                 )}
               </div>
 
+              {/* the real fault — MAIN area(s) + SUP detail(s) recorded for the visit */}
+              {(logEvent.main || logEvent.sup) && (
+                <div className="rounded-xl bg-slate-50/70 p-4 ring-1 ring-inset ring-slate-100">
+                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Problem</p>
+                  {logEvent.main && <p className="text-sm font-semibold text-slate-800">{logEvent.main}</p>}
+                  {logEvent.sup && <p className="mt-0.5 text-sm text-slate-600">{logEvent.sup}</p>}
+                </div>
+              )}
+
               {/* facts grid */}
               <div className="grid grid-cols-1 gap-x-8 sm:grid-cols-2">
                 <Field label="Event" value={logEvent.event} />
@@ -792,6 +997,7 @@ export default function VehicleProfile() {
                 <Field label="Garage" value={logEvent.garage} />
                 <Field label="Returned" value={logEvent.actual_in ? fmtDate(logEvent.actual_in) : '—'} />
                 <Field label="Type" value={logEvent.type} />
+                <Field label="Damage" value={logEvent.damage} />
                 <Field label="Severity" value={logEvent.severity} />
                 <Field label="Cost" value={logEvent.cost != null ? aed2(logEvent.cost) : '—'} />
                 {logEvent.contract_id && (
@@ -818,6 +1024,95 @@ export default function VehicleProfile() {
                 <div className="rounded-xl bg-slate-50/70 p-4 ring-1 ring-inset ring-slate-100">
                   <NotesList text={logEvent.notes} />
                 </div>
+              </div>
+            </div>
+          );
+        })()}
+      </Modal>
+
+      {/* "How is Lifetime Net Profit calculated" — the full working behind the headline figure. */}
+      <Modal
+        open={bridgeOpen}
+        onClose={() => setBridgeOpen(false)}
+        size="xl"
+        title="How Lifetime Net Profit is calculated"
+        subtitle={`${[v.make, v.model].filter(Boolean).join(' ')}${v.plate_no ? ` · ${v.plate_no}` : ''}`}
+        footer={<Button variant="secondary" onClick={() => setBridgeOpen(false)}>Close</Button>}
+      >
+        {(() => {
+          const pb = stats.profit_bridge || {};
+          const pc = stats.profit_contracts || [];
+          return (
+            <div className="space-y-6">
+              {/* The gross→net chain, with every sub-sum shown. */}
+              <div className="rounded-2xl border border-slate-200/60 bg-slate-50/60 p-5">
+                <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">The formula</p>
+                <dl className="space-y-2 text-sm">
+                  <BridgeLine label="Rent billed" hint="Σ rental charges (rents_debit)" value={aed2(pb.rent_billed)} />
+                  <BridgeLine label="− Discount" hint="Σ discounts given" value={`− ${aed2(pb.discount)}`} valueClass="text-slate-500" />
+                  <BridgeLine label="+ Realized usage" hint="COLLECTED km / fuel / cardoo / extra-driver / CDW / GPS / co-driver" value={`+ ${aed2(pb.realized_usage)}`} valueClass="text-slate-700" />
+                  <div className="!mt-2 border-t border-dashed border-slate-200 pt-2">
+                    <BridgeLine label="= Gross Revenue" value={aed2(pb.gross_revenue)} labelClass="font-semibold text-slate-900" valueClass="font-semibold text-slate-900" />
+                  </div>
+                  <BridgeLine label="− Operating costs" hint="Sales commissions + co-driver fees" value={`− ${aed2(pb.operating_cost)}`} valueClass="text-slate-500" />
+                  <BridgeLine label="− Maintenance" hint={`Workshop repairs${pb.maintenance_visits ? ` · ${num(pb.maintenance_visits)} costed visit${pb.maintenance_visits === 1 ? '' : 's'}` : ''}`} value={`− ${aed2(pb.maintenance)}`} valueClass="text-amber-600" />
+                  <div className="!mt-3 border-t border-slate-300 pt-3">
+                    <BridgeLine
+                      label="= Lifetime Net Profit"
+                      labelClass="text-base font-bold text-slate-900"
+                      value={aed2(pb.net_profit)}
+                      valueClass={`text-base font-bold ${Number(pb.net_profit) < 0 ? 'text-red-600' : 'text-emerald-600'}`}
+                    />
+                  </div>
+                </dl>
+                <p className="mt-3 text-xs text-slate-400">
+                  Rentals counted: {num(pb.rentals)}. Maintenance is taken at the car level (workshop log) so it is never double-counted. VAT, deposits and damages are excluded.
+                </p>
+              </div>
+
+              {/* Every rental contract that summed into Gross Revenue − Operating. */}
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Per-contract working ({num(pc.length)} rental{pc.length === 1 ? '' : 's'})
+                </p>
+                {pc.length === 0 ? (
+                  <p className="rounded-xl bg-slate-50/70 p-4 text-sm text-slate-500 ring-1 ring-inset ring-slate-100">No rental contracts.</p>
+                ) : (
+                  <div className="max-h-[22rem] overflow-auto rounded-xl ring-1 ring-inset ring-slate-200">
+                    <table className="min-w-full divide-y divide-slate-100 text-sm">
+                      <thead className="sticky top-0 bg-slate-50 text-[11px] uppercase tracking-wide text-slate-500">
+                        <tr>
+                          <th className="px-3 py-2 text-left font-semibold">Contract</th>
+                          <th className="px-3 py-2 text-left font-semibold">Out</th>
+                          <th className="px-3 py-2 text-right font-semibold">Rent</th>
+                          <th className="px-3 py-2 text-right font-semibold">Disc.</th>
+                          <th className="px-3 py-2 text-right font-semibold">Usage</th>
+                          <th className="px-3 py-2 text-right font-semibold">Oper.</th>
+                          <th className="px-3 py-2 text-right font-semibold">Net</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-50">
+                        {pc.map((c) => (
+                          <tr key={c.id} className="hover:bg-slate-50/60">
+                            <td className="px-3 py-2">
+                              <Link to={`/contracts/${c.id}`} className="font-medium text-indigo-600 hover:text-indigo-700">#{c.contract_no || c.id}</Link>
+                              {c.customer && <div className="text-xs text-slate-400">{c.customer}</div>}
+                            </td>
+                            <td className="px-3 py-2 text-slate-500">{c.out_date ? fmtDate(c.out_date) : '—'}</td>
+                            <td className="px-3 py-2 text-right tabular-nums text-slate-700">{aed2(c.rent_billed)}</td>
+                            <td className="px-3 py-2 text-right tabular-nums text-slate-400">{c.discount ? `− ${aed2(c.discount)}` : '—'}</td>
+                            <td className="px-3 py-2 text-right tabular-nums text-slate-700">{c.realized_usage ? `+ ${aed2(c.realized_usage)}` : '—'}</td>
+                            <td className="px-3 py-2 text-right tabular-nums text-slate-400">{c.operating_cost ? `− ${aed2(c.operating_cost)}` : '—'}</td>
+                            <td className={`px-3 py-2 text-right tabular-nums font-semibold ${Number(c.net) < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{aed2(c.net)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                <p className="mt-2 text-xs text-slate-400">
+                  Per-contract Net = Rent − Discount + Usage − Operating. These sum to Gross Revenue − Operating above; subtract car-level Maintenance to reach Lifetime Net Profit.
+                </p>
               </div>
             </div>
           );

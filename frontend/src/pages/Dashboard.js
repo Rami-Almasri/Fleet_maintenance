@@ -110,6 +110,8 @@ export default function Dashboard() {
     { label: 'Active Contracts', key: 'active_contracts', caption: 'Cars currently out', ring: 'bg-blue-50 text-blue-600', to: '/contracts', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z' },
     { label: 'Expiring Documents', key: 'expiring_registrations', caption: 'Registration / insurance ≤ 7 days', ring: 'bg-amber-50 text-amber-600', to: '/registrations', icon: 'M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z' },
     { label: 'Vehicles For Sale', key: 'vehicles_for_sale', caption: 'Flagged for disposal', ring: 'bg-violet-50 text-violet-600', to: '/vehicles', icon: 'M20.6 13.4 12 22l-9-9V3h10l7.6 7.6a2 2 0 0 1 0 2.8zM7 7h.01' },
+    { label: 'Negative Yield', key: 'negative_yield', value: (k) => k.negative_yield?.count, caption: 'Real net profit below repair cost (12mo)', ring: 'bg-red-50 text-red-600', to: '/maintenance-foresight', icon: 'M13 17h8m0 0v-8m0 8l-8-8-4 4-6-6' },
+    { label: 'Repairs Without Cost', key: 'uncosted_repairs', caption: 'Tap to enter repair amounts (12mo)', ring: 'bg-indigo-50 text-indigo-600', to: '/cost-capture', icon: 'M12 8c-1.7 0-3 .9-3 2s1.3 2 3 2 3 .9 3 2-1.3 2-3 2m0-8V6m0 12v-2' },
   ];
 
   return (
@@ -200,7 +202,7 @@ export default function Dashboard() {
                 <div>
                   <p className="text-sm font-medium text-gray-500">{card.label}</p>
                   <p className="mt-2 text-3xl font-bold tracking-tight text-gray-900">
-                    {loading ? <span className="inline-block h-8 w-24 animate-pulse rounded bg-gray-100" /> : <CountUp value={Number(kpis[card.key] || 0)} />}
+                    {loading ? <span className="inline-block h-8 w-24 animate-pulse rounded bg-gray-100" /> : <CountUp value={Number((card.value ? card.value(kpis) : kpis[card.key]) || 0)} />}
                   </p>
                 </div>
                 <span className={`flex h-11 w-11 items-center justify-center rounded-xl transition group-hover:scale-110 ${card.ring}`}>

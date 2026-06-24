@@ -129,14 +129,24 @@ class VehicleImporter
             // The OM API runs FIRST and is authoritative for identity/operational data, so the
             // sheet must not clobber it: keep any existing value for those fields and only fill
             // them when the API left them empty. The sheet owns make/model (always overwritten
-            // above) plus color + purchase price (which the API doesn't carry). --overwrite (or
-            // a listed VIN) forces a full refresh from the sheet.
+            // above) plus color.
             if (! ($overwriteEnrichment || in_array(strtoupper($vin), $overwriteVins, true))) {
-                foreach (['year', 'plate_no', 'odometer', 'status', 'color', 'category', 'purchase_price', 'purchase_date'] as $field) {
+                foreach (['year', 'plate_no', 'odometer', 'status', 'color', 'category'] as $field) {
                     if ($existing->{$field} !== null && $existing->{$field} !== '') {
                         unset($data[$field]);
                         $preserved++;
                     }
+                }
+            }
+
+            // purchase_price + purchase_date: the FASTER Asset sheet is their single source of
+            // truth, so a real sheet value ALWAYS wins (even over a prior value) — this is what
+            // lets a correction in the master sheet flow automatically on every sync. But a BLANK
+            // sheet cell must never wipe an existing value (e.g. a PurchaseDate the API supplied
+            // for a car the sheet hasn't priced yet), so drop the field when the sheet gave null.
+            foreach (['purchase_price', 'purchase_date'] as $field) {
+                if (array_key_exists($field, $data) && $data[$field] === null) {
+                    unset($data[$field]);
                 }
             }
 
