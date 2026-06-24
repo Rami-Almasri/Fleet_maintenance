@@ -2,21 +2,14 @@ import { useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api/client';
 import useFetch from '../hooks/useFetch';
-import { Card, PageHeader, Spinner } from '../components/ui/Misc';
+import { Card, PageHeader } from '../components/ui/Misc';
+import MetricCard, { MetricGrid } from '../components/ui/MetricCard';
+import DataTable, { SectionCard } from '../components/ui/Table';
+import { MetricGridSkeleton } from '../components/ui/Skeleton';
+import Icon from '../components/ui/Icon';
 import { aed2, fmtDate, num } from '../lib/format';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-// A headline metric tile.
-function Metric({ label, value, tone = 'text-slate-900', hint, big }) {
-  return (
-    <div className="rounded-2xl border border-slate-200/60 bg-white px-5 py-4 shadow-soft">
-      <p className="text-xs font-medium text-slate-500">{label}</p>
-      <p className={`mt-1 font-bold tracking-tight tabular-nums ${big ? 'text-3xl' : 'text-2xl'} ${tone}`}>{value}</p>
-      {hint && <p className="mt-0.5 text-xs text-slate-400">{hint}</p>}
-    </div>
-  );
-}
 
 export default function FleetNetProfit() {
   const now = new Date();
@@ -52,19 +45,25 @@ export default function FleetNetProfit() {
 
         {/* Month stepper */}
         <div className="flex items-center justify-center gap-3">
-          <button onClick={() => step(-1)} className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 shadow-sm transition hover:bg-slate-50" aria-label="Previous month">
+          <button onClick={() => step(-1)} className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 shadow-sm transition hover:bg-slate-50 active:scale-95" aria-label="Previous month">
             <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 19l-7-7 7-7" /></svg>
           </button>
           <span className="min-w-[10rem] text-center text-lg font-semibold text-slate-800">{MONTHS[month - 1]} {year}</span>
-          <button onClick={() => step(1)} disabled={isCurrent} className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 shadow-sm transition hover:bg-slate-50 disabled:opacity-40" aria-label="Next month">
+          <button onClick={() => step(1)} disabled={isCurrent} className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 shadow-sm transition hover:bg-slate-50 active:scale-95 disabled:opacity-40" aria-label="Next month">
             <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 5l7 7-7 7" /></svg>
           </button>
         </div>
 
         {error && <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error}</div>}
-        {loading && <div className="flex justify-center py-16"><Spinner className="h-8 w-8" /></div>}
 
-        {data && t && (
+        {loading && (
+          <>
+            <div className="shimmer h-32 rounded-2xl bg-slate-100" />
+            <MetricGridSkeleton count={3} />
+          </>
+        )}
+
+        {data && t && !loading && (
           <>
             {/* Headline */}
             <Card className={`ring-1 ${netPositive ? 'ring-emerald-200' : 'ring-red-200'}`}>
@@ -73,7 +72,7 @@ export default function FleetNetProfit() {
                 <p className={`mt-1 text-4xl font-bold tracking-tight tabular-nums ${netPositive ? 'text-emerald-600' : 'text-red-600'}`}>
                   {aed2(t.net_profit)}
                 </p>
-                <p className="mt-2 text-sm text-slate-500">
+                <p className="mt-2 inline-flex flex-wrap items-center justify-center gap-x-1 text-sm text-slate-500">
                   Net collected <span className="font-semibold text-slate-700">{aed2(t.net_collected)}</span>
                   {' − '}Maintenance cost <span className="font-semibold text-slate-700">{aed2(t.maintenance_cost)}</span>
                 </p>
@@ -81,86 +80,93 @@ export default function FleetNetProfit() {
             </Card>
 
             {/* Components */}
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <Metric label="Net Collected" value={aed2(t.net_collected)} tone="text-emerald-600" hint={`${num(data.counts.rentals)} rentals returned · billed ${aed2(t.billed)}`} />
-              <Metric label="Maintenance Cost" value={aed2(t.maintenance_cost)} tone="text-amber-600" hint={`${num(data.counts.maintenance)} maintenance contracts closed`} />
-              <Metric label="Net Profit" value={aed2(t.net_profit)} tone={netPositive ? 'text-emerald-600' : 'text-red-600'} big hint={t.workshop_cost ? `Workshop-log spend (ref): ${aed2(t.workshop_cost)}` : 'Cash basis'} />
-            </div>
+            <MetricGrid cols={3}>
+              <MetricCard
+                label="Net Collected"
+                value={aed2(t.net_collected)}
+                tone="emerald"
+                icon={<Icon.Coins className="h-5 w-5" />}
+                hint={`${num(data.counts.rentals)} rentals returned · billed ${aed2(t.billed)}`}
+                tooltip="Cash actually collected on rentals returned this month (recorded collected − refunds)."
+              />
+              <MetricCard
+                label="Maintenance Cost"
+                value={aed2(t.maintenance_cost)}
+                tone="amber"
+                icon={<Icon.Wrench className="h-5 w-5" />}
+                hint={`${num(data.counts.maintenance)} maintenance contracts closed`}
+                tooltip="Total cost of maintenance (type-U) contracts closed within this month."
+              />
+              <MetricCard
+                label="Net Profit"
+                value={aed2(t.net_profit)}
+                tone={netPositive ? 'emerald' : 'red'}
+                icon={<Icon.Scale className="h-5 w-5" />}
+                big
+                hint={t.workshop_cost ? `Workshop-log spend (ref): ${aed2(t.workshop_cost)}` : 'Cash basis'}
+                tooltip="Net collected minus maintenance cost, on a cash basis."
+              />
+            </MetricGrid>
 
             {/* Basis note */}
-            <div className="rounded-xl bg-blue-50/60 px-4 py-3 text-xs text-blue-700 ring-1 ring-inset ring-blue-600/15">
-              The fleet rollup uses <span className="font-semibold">synced figures</span> (net collected ≈ recorded collected − refunds), not a live accounting call per contract — so it stays fast at fleet scale.
-              To verify the <span className="font-semibold">real cash</span> for any single contract, open it and use <span className="font-semibold">Reconcile</span>.
+            <div className="flex items-start gap-2.5 rounded-xl bg-blue-50/60 px-4 py-3 text-xs text-blue-700 ring-1 ring-inset ring-blue-600/15">
+              <Icon.Info className="mt-px h-4 w-4 shrink-0 text-blue-500" />
+              <p>
+                The fleet rollup uses <span className="font-semibold">synced figures</span> (net collected ≈ recorded collected − refunds), not a live accounting call per contract — so it stays fast at fleet scale.
+                To verify the <span className="font-semibold">real cash</span> for any single contract, open it and use <span className="font-semibold">Reconcile</span>.
+              </p>
             </div>
 
             {/* Top rentals by net collected */}
-            <Card>
-              <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
-                <h3 className="text-base font-semibold text-slate-900">Top rentals — net collected</h3>
-                <span className="text-xs text-slate-400">{num(data.counts.rentals)} total{data.counts.rentals > data.list_cap ? ` · showing top ${data.list_cap}` : ''}</span>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-slate-100 text-sm">
-                  <thead className="bg-slate-50/60">
-                    <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      <th className="px-6 py-3">Contract</th>
-                      <th className="px-6 py-3">Customer</th>
-                      <th className="px-6 py-3">Returned</th>
-                      <th className="px-6 py-3 text-right">Billed</th>
-                      <th className="px-6 py-3 text-right">Net Collected</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-50">
-                    {data.rentals.map((r) => (
-                      <tr key={r.id} className="hover:bg-slate-50/60">
-                        <td className="px-6 py-3 font-medium">
-                          <Link to={`/contracts/${r.id}`} className="text-indigo-600 hover:text-indigo-700">#{r.contract_no || r.id}</Link>
-                          {r.vehicle && <span className="ml-2 text-xs text-slate-400">{r.vehicle}</span>}
-                        </td>
-                        <td className="px-6 py-3 text-slate-600">{r.customer || '—'}</td>
-                        <td className="px-6 py-3 text-slate-500">{fmtDate(r.in_date)}</td>
-                        <td className="px-6 py-3 text-right tabular-nums text-slate-500">{aed2(r.billed)}</td>
-                        <td className="px-6 py-3 text-right tabular-nums font-semibold text-emerald-600">{aed2(r.net_collected)}</td>
-                      </tr>
-                    ))}
-                    {data.rentals.length === 0 && <tr><td colSpan="5" className="px-6 py-8 text-center text-slate-400">No rentals returned this month.</td></tr>}
-                  </tbody>
-                </table>
-              </div>
-            </Card>
+            <SectionCard
+              title="Top rentals — net collected"
+              actions={<span className="text-xs text-slate-400">{num(data.counts.rentals)} total{data.counts.rentals > data.list_cap ? ` · showing top ${data.list_cap}` : ''}</span>}
+            >
+              <DataTable
+                rows={data.rentals}
+                rowKey={(r) => r.id}
+                empty="No rentals returned this month."
+                columns={[
+                  {
+                    key: 'contract', header: 'Contract', cellClass: 'font-medium',
+                    render: (r) => (
+                      <>
+                        <Link to={`/contracts/${r.id}`} className="text-indigo-600 hover:text-indigo-700">#{r.contract_no || r.id}</Link>
+                        {r.vehicle && <span className="ml-2 text-xs text-slate-400">{r.vehicle}</span>}
+                      </>
+                    ),
+                  },
+                  { key: 'customer', header: 'Customer', render: (r) => r.customer || '—' },
+                  { key: 'returned', header: 'Returned', cellClass: 'text-slate-500', render: (r) => fmtDate(r.in_date) },
+                  { key: 'billed', header: 'Billed', align: 'right', cellClass: 'tabular-nums text-slate-500', render: (r) => aed2(r.billed) },
+                  {
+                    key: 'net', header: 'Net Collected', align: 'right', tooltip: 'Cash collected after refunds.',
+                    cellClass: 'tabular-nums font-semibold text-emerald-600', render: (r) => aed2(r.net_collected),
+                  },
+                ]}
+              />
+            </SectionCard>
 
             {/* Top maintenance by cost */}
-            <Card>
-              <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
-                <h3 className="text-base font-semibold text-slate-900">Top maintenance — cost</h3>
-                <span className="text-xs text-slate-400">{num(data.counts.maintenance)} total{data.counts.maintenance > data.list_cap ? ` · showing top ${data.list_cap}` : ''}</span>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-slate-100 text-sm">
-                  <thead className="bg-slate-50/60">
-                    <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      <th className="px-6 py-3">Contract</th>
-                      <th className="px-6 py-3">Vehicle</th>
-                      <th className="px-6 py-3">Closed</th>
-                      <th className="px-6 py-3 text-right">Cost</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-50">
-                    {data.maintenance.map((m) => (
-                      <tr key={m.id} className="hover:bg-slate-50/60">
-                        <td className="px-6 py-3 font-medium">
-                          <Link to={`/contracts/${m.id}`} className="text-indigo-600 hover:text-indigo-700">#{m.contract_no || m.id}</Link>
-                        </td>
-                        <td className="px-6 py-3 text-slate-600">{m.vehicle || '—'}</td>
-                        <td className="px-6 py-3 text-slate-500">{fmtDate(m.in_date)}</td>
-                        <td className="px-6 py-3 text-right tabular-nums font-semibold text-amber-600">{aed2(m.cost)}</td>
-                      </tr>
-                    ))}
-                    {data.maintenance.length === 0 && <tr><td colSpan="4" className="px-6 py-8 text-center text-slate-400">No maintenance contracts closed this month.</td></tr>}
-                  </tbody>
-                </table>
-              </div>
-            </Card>
+            <SectionCard
+              title="Top maintenance — cost"
+              actions={<span className="text-xs text-slate-400">{num(data.counts.maintenance)} total{data.counts.maintenance > data.list_cap ? ` · showing top ${data.list_cap}` : ''}</span>}
+            >
+              <DataTable
+                rows={data.maintenance}
+                rowKey={(r) => r.id}
+                empty="No maintenance contracts closed this month."
+                columns={[
+                  {
+                    key: 'contract', header: 'Contract', cellClass: 'font-medium',
+                    render: (m) => <Link to={`/contracts/${m.id}`} className="text-indigo-600 hover:text-indigo-700">#{m.contract_no || m.id}</Link>,
+                  },
+                  { key: 'vehicle', header: 'Vehicle', render: (m) => m.vehicle || '—' },
+                  { key: 'closed', header: 'Closed', cellClass: 'text-slate-500', render: (m) => fmtDate(m.in_date) },
+                  { key: 'cost', header: 'Cost', align: 'right', cellClass: 'tabular-nums font-semibold text-amber-600', render: (m) => aed2(m.cost) },
+                ]}
+              />
+            </SectionCard>
           </>
         )}
       </div>

@@ -2,7 +2,12 @@ import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api/client';
 import useFetch from '../hooks/useFetch';
-import { Card, PageHeader, Spinner, EmptyState } from '../components/ui/Misc';
+import { Card, PageHeader } from '../components/ui/Misc';
+import MetricCard, { MetricGrid } from '../components/ui/MetricCard';
+import DataTable, { SectionCard } from '../components/ui/Table';
+import { MetricGridSkeleton, Skeleton } from '../components/ui/Skeleton';
+import { Tooltip } from '../components/ui/Tooltip';
+import Icon from '../components/ui/Icon';
 import { aed2, num } from '../lib/format';
 
 const PERIODS = [
@@ -30,21 +35,10 @@ function SplitBar({ rented, maintenance, idle }) {
   const seg = (v, cls, label) =>
     v > 0 ? <div className={cls} style={{ width: `${((v / total) * 100).toFixed(1)}%` }} title={`${label}: ${num(v)} days`} /> : null;
   return (
-    <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-slate-100 ring-1 ring-inset ring-slate-200">
+    <div className="flex h-2.5 w-full min-w-[7rem] overflow-hidden rounded-full bg-slate-100 ring-1 ring-inset ring-slate-200">
       {seg(rented, 'bg-emerald-500', 'Rented')}
       {seg(maintenance, 'bg-red-500', 'In maintenance')}
       {seg(idle, 'bg-slate-300', 'Idle')}
-    </div>
-  );
-}
-
-function Kpi({ label, value, sub, accent = 'white' }) {
-  const tone = { white: 'text-white', red: 'text-red-300', emerald: 'text-emerald-300', amber: 'text-amber-300' }[accent];
-  return (
-    <div className="rounded-2xl bg-white/5 p-4 ring-1 ring-inset ring-white/10 backdrop-blur">
-      <p className="text-xs font-medium text-white/55">{label}</p>
-      <p className={`mt-1 text-2xl font-bold tracking-tight ${tone}`}>{value}</p>
-      {sub && <p className="mt-0.5 text-xs text-white/45">{sub}</p>}
     </div>
   );
 }
@@ -104,27 +98,78 @@ export default function FleetUtilization() {
           subtitle="For every car: how its days split between earning on rent, sitting in the workshop, and idle — measured from its In-Service Date (first rental), not purchase. Onboarding time before the first rental is excluded so new cars aren't branded as downtime."
         />
 
+        {/* Context line — fleet scope for the selected window */}
+        {loading ? (
+          <Skeleton className="h-5 w-2/3" />
+        ) : (
+          <p className="flex flex-wrap items-center gap-x-1.5 text-sm text-slate-500">
+            <Tooltip content="Performance is anchored on each car's In-Service Date (first rental). Time owned before the first rental is excluded so new cars aren't penalized as downtime.">
+              <span className="cursor-help font-medium text-slate-600 underline decoration-dotted underline-offset-2">
+                {win.lifetime ? 'Since each car’s In-Service Date (first rental)' : `Window ${win.from} → ${win.to}`}
+              </span>
+            </Tooltip>
+            <span>·</span>
+            <span className="font-semibold text-slate-700">{num(s.cars || 0)}</span> cars,
+            <span className="font-semibold text-red-600">{num(s.cars_in_maintenance || 0)}</span> saw the workshop
+            {s.pending_service > 0 && (
+              <>
+                ,
+                <Tooltip content="Purchased but not yet rented — no performance metrics until the first rental contract.">
+                  <span className="cursor-help font-semibold text-amber-600">{num(s.pending_service)} pending service</span>
+                </Tooltip>
+              </>
+            )}
+            .
+          </p>
+        )}
+
         {/* Hero KPIs */}
-        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 p-6 shadow-card sm:p-8">
-          <div className="pointer-events-none absolute -right-16 -top-20 h-64 w-64 rounded-full bg-indigo-500/20 blur-3xl" />
-          <div className="relative">
-            <p className="text-sm font-medium text-white/70">
-              {win.lifetime ? 'Since each car’s In-Service Date (first rental)' : `Window ${win.from} → ${win.to}`} ·{' '}
-              <span className="font-bold text-white">{num(s.cars || 0)}</span> cars,{' '}
-              <span className="font-bold text-red-300">{num(s.cars_in_maintenance || 0)}</span> saw the workshop
-              {s.pending_service > 0 && (
-                <>, <span className="font-bold text-amber-300">{num(s.pending_service)}</span> pending service</>
-              )}.
-            </p>
-            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-              <Kpi label="Avg utilization" value={pct(s.avg_utilization_pct)} accent="emerald" sub="of in-service days on rent" />
-              <Kpi label="Avg downtime" value={pct(s.avg_downtime_pct)} accent="red" sub="of in-service days in workshop" />
-              <Kpi label="Maintenance days" value={num(s.total_days_maintenance || 0)} sub="fleet total in window" />
-              <Kpi label="Idle days" value={num(s.total_days_idle || 0)} accent="amber" sub="available, not earning" />
-              <Kpi label="Rent lost to downtime" value={aed2(s.revenue_lost_downtime || 0)} accent="red" sub="downtime × daily rate" />
-            </div>
-          </div>
-        </div>
+        {loading ? (
+          <MetricGridSkeleton count={5} />
+        ) : (
+          <MetricGrid cols={5}>
+            <MetricCard
+              label="Avg utilization"
+              value={pct(s.avg_utilization_pct)}
+              tone="emerald"
+              icon={<Icon.Percent className="h-5 w-5" />}
+              hint="of in-service days on rent"
+              tooltip="Utilization %: share of each car's in-service days that were on a paid rental, averaged across the fleet. Higher is better."
+            />
+            <MetricCard
+              label="Avg downtime"
+              value={pct(s.avg_downtime_pct)}
+              tone="red"
+              icon={<Icon.Wrench className="h-5 w-5" />}
+              hint="of in-service days in workshop"
+              tooltip="Downtime %: share of in-service days spent in the workshop with no active rental (true downtime), averaged across the fleet."
+            />
+            <MetricCard
+              label="Maintenance days"
+              value={num(s.total_days_maintenance || 0)}
+              tone="slate"
+              icon={<Icon.Clock className="h-5 w-5" />}
+              hint="fleet total in window"
+              tooltip="Total workshop days across the fleet in this window (days with no active rental)."
+            />
+            <MetricCard
+              label="Idle days"
+              value={num(s.total_days_idle || 0)}
+              tone="amber"
+              icon={<Icon.Activity className="h-5 w-5" />}
+              hint="available, not earning"
+              tooltip="Days a car was available (not rented, not in the workshop) — capacity that earned nothing."
+            />
+            <MetricCard
+              label="Rent lost to downtime"
+              value={aed2(s.revenue_lost_downtime || 0)}
+              tone="red"
+              icon={<Icon.Cash className="h-5 w-5" />}
+              hint="downtime × daily rate"
+              tooltip="Estimated rent foregone while cars sat in the workshop: downtime days × each car's daily rate."
+            />
+          </MetricGrid>
+        )}
 
         {/* Controls */}
         <Card className="p-4">
@@ -152,12 +197,15 @@ export default function FleetUtilization() {
                   <option key={o.key} value={o.key}>{o.label}</option>
                 ))}
               </select>
-              <input
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="Search plate / model…"
-                className="w-44 rounded-lg border-slate-200 bg-white py-1.5 px-3 text-sm text-slate-700 ring-1 ring-inset ring-slate-200 focus:ring-indigo-400"
-              />
+              <div className="relative">
+                <Icon.Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <input
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  placeholder="Search plate / model…"
+                  className="w-44 rounded-lg border-slate-200 bg-white py-1.5 pl-8 pr-3 text-sm text-slate-700 ring-1 ring-inset ring-slate-200 focus:ring-indigo-400"
+                />
+              </div>
             </div>
           </div>
 
@@ -201,94 +249,131 @@ export default function FleetUtilization() {
         </Card>
 
         {/* Table */}
-        {loading ? (
-          <div className="flex justify-center py-24"><Spinner className="h-8 w-8" /></div>
-        ) : error ? (
+        {error ? (
           <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error}</div>
-        ) : rows.length === 0 ? (
-          <EmptyState title="No cars" message="No vehicles match this filter." />
         ) : (
-          <Card className="overflow-hidden p-0">
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-slate-100 text-sm">
-                <thead className="bg-slate-50/60">
-                  <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    <th className="px-4 py-2.5">Car</th>
-                    <th className="px-4 py-2.5 text-right">In service</th>
-                    <th className="px-4 py-2.5 text-right">Rented</th>
-                    <th className="px-4 py-2.5 text-right">Maintenance</th>
-                    <th className="px-4 py-2.5 text-right">Idle</th>
-                    <th className="px-4 py-2.5 w-40">Split</th>
-                    <th className="px-4 py-2.5 text-right">Rent lost</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-50">
-                  {rows.map((c) => (
-                    <tr key={c.vehicle_id} className="hover:bg-slate-50/50">
-                      <td className="px-4 py-2.5">
-                        <Link to={`/vehicles/${c.vehicle_id}`} className="font-semibold text-indigo-600 hover:text-indigo-700">
-                          {c.plate || c.code || `#${c.vehicle_id}`}
-                        </Link>
-                        {c.pending_service && (
-                          <span className="ml-2 inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700 ring-1 ring-inset ring-amber-200" title="Purchased but not yet rented — no performance metrics until its first rental contract.">
-                            Pending service
-                          </span>
-                        )}
-                        {c.car && <span className="block text-xs text-slate-400">{[c.car, c.year].filter(Boolean).join(' · ')}</span>}
-                      </td>
-                      <td className="px-4 py-2.5 text-right tabular-nums text-slate-600">
-                        {days(c.days_in_service)}
-                        {c.owned_since && (
-                          <span className="block text-[11px] text-slate-400" title={`In service since ${c.in_service_date || '—'} · owned since ${c.owned_since}`}>
-                            owned {days(c.days_owned)}
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-2.5 text-right tabular-nums">
-                        <span className="font-medium text-emerald-600">{days(c.days_rented)}</span>
-                        <span className="block text-[11px] text-slate-400">{pct(c.utilization_pct)}</span>
-                      </td>
-                      <td className="px-4 py-2.5 text-right tabular-nums">
-                        <span className={`font-medium ${c.downtime_pct >= 15 ? 'text-red-600' : 'text-slate-700'}`}>{days(c.days_maintenance)}</span>
-                        <span className="block text-[11px] text-slate-400">
-                          {pct(c.downtime_pct)}
-                          {c.maintenance_visits > 0 ? (
-                            <>
-                              {' · '}
-                              <Link
-                                to={`/vehicles/${c.vehicle_id}?focus=maintenance`}
-                                title="See this car's workshop visits"
-                                className="font-medium text-indigo-600 underline decoration-dotted underline-offset-2 hover:text-indigo-700"
-                              >
-                                {num(c.maintenance_visits)} visits
-                              </Link>
-                            </>
-                          ) : (
-                            ` · ${num(c.maintenance_visits)} visits`
-                          )}
-                          {c.onboarding_visits > 0 && (
-                            <span className="text-slate-400" title={`${num(c.onboarding_visits)} workshop visit(s) happened during onboarding, before the first rental — excluded here but shown in the car's lifetime total on its profile (${num((c.maintenance_visits || 0) + c.onboarding_visits)} lifetime).`}>
-                              {' '}(+{num(c.onboarding_visits)} onboarding)
-                            </span>
-                          )}
+          <SectionCard
+            title="Per-car breakdown"
+            actions={!loading && <span className="text-xs text-slate-400">{num(rows.length)} cars</span>}
+          >
+            <DataTable
+              rows={rows}
+              rowKey={(c) => c.vehicle_id}
+              loading={loading}
+              empty="No vehicles match this filter."
+              highlightRow={(c) => c.downtime_pct >= 15 || (c.utilization_pct != null && c.utilization_pct < 20)}
+              columns={[
+                {
+                  key: 'car',
+                  header: 'Car',
+                  render: (c) => (
+                    <>
+                      <Link to={`/vehicles/${c.vehicle_id}`} className="font-semibold text-indigo-600 hover:text-indigo-700">
+                        {c.plate || c.code || `#${c.vehicle_id}`}
+                      </Link>
+                      {c.pending_service && (
+                        <span className="ml-2 inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700 ring-1 ring-inset ring-amber-200" title="Purchased but not yet rented — no performance metrics until its first rental contract.">
+                          Pending service
                         </span>
-                        {c.days_maintenance_on_rent > 0 && (
-                          <span className="block text-[11px] font-medium text-emerald-600" title="Workshop days that fell inside an active rental — paid by the customer, so counted as rented, not downtime.">
-                            +{num(c.days_maintenance_on_rent)}d paid on rent
+                      )}
+                      {c.car && <span className="block text-xs text-slate-400">{[c.car, c.year].filter(Boolean).join(' · ')}</span>}
+                    </>
+                  ),
+                },
+                {
+                  key: 'in_service',
+                  header: 'In service',
+                  align: 'right',
+                  tooltip: 'In-Service anchor: days since the car\'s first rental. Onboarding time before the first rental is excluded.',
+                  cellClass: 'tabular-nums text-slate-600',
+                  render: (c) => (
+                    <>
+                      {days(c.days_in_service)}
+                      {c.owned_since && (
+                        <span className="block text-[11px] text-slate-400" title={`In service since ${c.in_service_date || '—'} · owned since ${c.owned_since}`}>
+                          owned {days(c.days_owned)}
+                        </span>
+                      )}
+                    </>
+                  ),
+                },
+                {
+                  key: 'rented',
+                  header: 'Rented',
+                  align: 'right',
+                  tooltip: 'Days on a paid rental, and the resulting Utilization % (rented ÷ in-service days).',
+                  cellClass: 'tabular-nums',
+                  render: (c) => (
+                    <>
+                      <span className="font-medium text-emerald-600">{days(c.days_rented)}</span>
+                      <span className="block text-[11px] text-slate-400">{pct(c.utilization_pct)}</span>
+                    </>
+                  ),
+                },
+                {
+                  key: 'maintenance',
+                  header: 'Maintenance',
+                  align: 'right',
+                  tooltip: 'Workshop days with no active rental (true downtime), plus visit count and any onboarding visits excluded from this window.',
+                  cellClass: 'tabular-nums',
+                  render: (c) => (
+                    <>
+                      <span className={`font-medium ${c.downtime_pct >= 15 ? 'text-red-600' : 'text-slate-700'}`}>{days(c.days_maintenance)}</span>
+                      <span className="block text-[11px] text-slate-400">
+                        {pct(c.downtime_pct)}
+                        {c.maintenance_visits > 0 ? (
+                          <>
+                            {' · '}
+                            <Link
+                              to={`/vehicles/${c.vehicle_id}?focus=maintenance`}
+                              title="See this car's workshop visits"
+                              className="font-medium text-indigo-600 underline decoration-dotted underline-offset-2 hover:text-indigo-700"
+                            >
+                              {num(c.maintenance_visits)} visits
+                            </Link>
+                          </>
+                        ) : (
+                          ` · ${num(c.maintenance_visits)} visits`
+                        )}
+                        {c.onboarding_visits > 0 && (
+                          <span className="text-slate-400" title={`${num(c.onboarding_visits)} workshop visit(s) happened during onboarding, before the first rental — excluded here but shown in the car's lifetime total on its profile (${num((c.maintenance_visits || 0) + c.onboarding_visits)} lifetime).`}>
+                            {' '}(+{num(c.onboarding_visits)} onboarding)
                           </span>
                         )}
-                      </td>
-                      <td className="px-4 py-2.5 text-right tabular-nums text-slate-500">{days(c.days_idle)}</td>
-                      <td className="px-4 py-2.5">
-                        <SplitBar rented={c.days_rented} maintenance={c.days_maintenance} idle={c.days_idle || 0} />
-                      </td>
-                      <td className="px-4 py-2.5 text-right tabular-nums text-slate-600">{c.revenue_lost_downtime != null ? aed2(c.revenue_lost_downtime) : '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Card>
+                      </span>
+                      {c.days_maintenance_on_rent > 0 && (
+                        <span className="block text-[11px] font-medium text-emerald-600" title="Workshop days that fell inside an active rental — paid by the customer, so counted as rented, not downtime.">
+                          +{num(c.days_maintenance_on_rent)}d paid on rent
+                        </span>
+                      )}
+                    </>
+                  ),
+                },
+                {
+                  key: 'idle',
+                  header: 'Idle',
+                  align: 'right',
+                  tooltip: 'Available days that earned nothing (not rented, not in the workshop).',
+                  cellClass: 'tabular-nums text-slate-500',
+                  render: (c) => days(c.days_idle),
+                },
+                {
+                  key: 'split',
+                  header: 'Split',
+                  headerClass: 'w-40',
+                  render: (c) => <SplitBar rented={c.days_rented} maintenance={c.days_maintenance} idle={c.days_idle || 0} />,
+                },
+                {
+                  key: 'rent_lost',
+                  header: 'Rent lost',
+                  align: 'right',
+                  tooltip: 'Estimated rent foregone to downtime: downtime days × the car\'s daily rate.',
+                  cellClass: 'tabular-nums text-slate-600',
+                  render: (c) => (c.revenue_lost_downtime != null ? aed2(c.revenue_lost_downtime) : '—'),
+                },
+              ]}
+            />
+          </SectionCard>
         )}
       </div>
     </div>

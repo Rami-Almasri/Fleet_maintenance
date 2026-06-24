@@ -1,4 +1,6 @@
 import { aed2 } from '../lib/format';
+import { InfoTip } from './ui/Tooltip';
+import Icon from './ui/Icon';
 
 /**
  * The "Profit Bridge" — the gross→net reconciliation that lets you instantly distinguish what a car
@@ -23,7 +25,15 @@ export default function ProfitBridge({ bridge, fmt = aed2, title, netLabel = 'Li
 
   return (
     <div className={`rounded-2xl border border-slate-200/60 bg-white px-5 py-4 shadow-soft ${className}`}>
-      {title && <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</p>}
+      {title && (
+        <div className="mb-3 flex items-center gap-2">
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-100 text-indigo-600">
+            <Icon.Scale className="h-4 w-4" />
+          </span>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</p>
+          <InfoTip content="Gross revenue minus maintenance and operating costs equals net profit — what the asset actually pocketed." />
+        </div>
+      )}
       <dl className="space-y-2 text-sm">
         <Row label="Gross Lifetime Revenue" value={fmt(gross)} hint="Rent − discount + collected usage" valueClass="text-slate-900" />
         <Row label="− Total Maintenance Costs" value={fmt(maintenance)} hint="Sum of all recorded repairs" valueClass="text-amber-600" />
@@ -33,7 +43,7 @@ export default function ProfitBridge({ bridge, fmt = aed2, title, netLabel = 'Li
             label={`= ${netLabel}`}
             value={fmt(net)}
             labelClass="font-semibold text-slate-900"
-            valueClass={`text-base font-bold ${netPositive ? 'text-emerald-600' : 'text-red-600'}`}
+            valueClass={`text-base font-bold tabular-nums ${netPositive ? 'text-emerald-600' : 'text-red-600'}`}
           />
         </div>
       </dl>

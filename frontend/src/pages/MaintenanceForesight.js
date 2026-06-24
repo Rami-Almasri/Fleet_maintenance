@@ -5,6 +5,11 @@ import useFetch from '../hooks/useFetch';
 import Badge from '../components/ui/Badge';
 import Modal from '../components/ui/Modal';
 import { Card, PageHeader, Spinner, EmptyState } from '../components/ui/Misc';
+import MetricCard, { MetricGrid } from '../components/ui/MetricCard';
+import DataTable, { SectionCard } from '../components/ui/Table';
+import { MetricGridSkeleton, Skeleton } from '../components/ui/Skeleton';
+import { Tooltip, InfoTip } from '../components/ui/Tooltip';
+import Icon from '../components/ui/Icon';
 import { aed2, num } from '../lib/format';
 
 const TIER = {
@@ -47,23 +52,6 @@ function ConfidenceBadge({ level, samples }) {
   );
 }
 
-// A KPI tile for the hero band.
-function Kpi({ label, value, sub, accent = 'white' }) {
-  const tone = {
-    white: 'text-white',
-    red: 'text-red-300',
-    amber: 'text-amber-300',
-    emerald: 'text-emerald-300',
-  }[accent];
-  return (
-    <div className="rounded-2xl bg-white/5 p-4 ring-1 ring-inset ring-white/10 backdrop-blur">
-      <p className="text-xs font-medium text-white/55">{label}</p>
-      <p className={`mt-1 text-2xl font-bold tracking-tight ${tone}`}>{value}</p>
-      {sub && <p className="mt-0.5 text-xs text-white/45">{sub}</p>}
-    </div>
-  );
-}
-
 function ForesightCard({ c, onIssue }) {
   const t = TIER[c.tier] || TIER.watch;
   return (
@@ -83,8 +71,16 @@ function ForesightCard({ c, onIssue }) {
                 {c.plate || c.code || `#${c.vehicle_id}`}
               </Link>
               <Badge tone={t.tone}>{t.label}</Badge>
-              {c.parts_wait_risk && <Badge tone="violet" title="This kind of repair has kept cars stuck for weeks before">⏳ May wait for parts</Badge>}
-              {c.negative_yield && <Badge tone="red" title="Real net profit over the last 12 months is below its repair spend — it costs more to keep than it earns">📉 Negative yield</Badge>}
+              {c.parts_wait_risk && (
+                <Tooltip content="Parts-wait risk — this kind of repair has kept cars stuck in the garage for weeks before, often waiting on parts.">
+                  <Badge tone="violet">⏳ May wait for parts</Badge>
+                </Tooltip>
+              )}
+              {c.negative_yield && (
+                <Tooltip content="Negative Yield — real net profit over the last 12 months is below its repair spend, so it costs more to keep than it earns.">
+                  <Badge tone="red">📉 Negative yield</Badge>
+                </Tooltip>
+              )}
             </div>
             <p className="mt-1 text-sm text-slate-500">
               {[c.car, c.year].filter(Boolean).join(' · ')}
@@ -93,7 +89,10 @@ function ForesightCard({ c, onIssue }) {
           </div>
         </div>
         <div className="shrink-0 rounded-xl bg-red-50 px-3.5 py-2 text-right ring-1 ring-inset ring-red-100">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-red-400">Money at risk</p>
+          <p className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-red-400">
+            Money at risk
+            <InfoTip content="Cost of inaction — the rent we stand to lose while this car sits in the garage if it breaks down." />
+          </p>
           <p className="text-xl font-extrabold tracking-tight text-red-600">{aed2(c.revenue_at_risk)}</p>
         </div>
       </div>
@@ -148,7 +147,10 @@ function ForesightCard({ c, onIssue }) {
       </div>
 
       {/* What it could cost */}
-      <p className="mt-5 mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">If it goes into the garage</p>
+      <p className="mt-5 mb-2 inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+        If it goes into the garage
+        <InfoTip content="Cost of inaction — the projected downtime, lost rent and repair bill if this car is left until it breaks down." />
+      </p>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label="Time off the road" value={`${c.predicted_downtime_days} days`} sub={c.worst_case_days ? `up to ${c.worst_case_days} days` : null} />
         <Stat label="Rent per day" value={aed2(c.daily_rate)} sub="lost while in the garage" />
@@ -181,7 +183,10 @@ function ForesightCard({ c, onIssue }) {
           <p className="text-lg font-bold text-slate-700">{aed2(c.maintenance_spend || 0)}</p>
         </div>
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Net yield</p>
+          <p className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+            Net yield
+            <InfoTip content="Net yield = real net profit − repair spend over the same window. Negative means the car earned less than it cost to repair." />
+          </p>
           <p className={`text-lg font-bold ${(c.net_yield ?? 0) >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{c.net_yield != null ? aed2(c.net_yield) : '—'}</p>
         </div>
         {c.negative_yield && (
@@ -400,7 +405,6 @@ export default function MaintenanceForesight() {
     return tier === 'all' ? list : list.filter((c) => c.tier === tier);
   }, [data, tier]);
 
-  if (loading) return <div className="flex justify-center py-24"><Spinner className="h-8 w-8" /></div>;
   if (error) {
     return (
       <div className="mx-auto max-w-3xl px-4 py-12">
@@ -429,198 +433,228 @@ export default function MaintenanceForesight() {
           subtitle="Cars that may break down soon — caught early. The time off the road and lost money are worked out from your own repair history."
         />
 
-        {/* Hero band */}
-        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 p-6 shadow-card sm:p-8">
-          <div className="pointer-events-none absolute -right-16 -top-20 h-64 w-64 rounded-full bg-indigo-500/20 blur-3xl" />
-          <div className="pointer-events-none absolute -bottom-24 left-1/4 h-64 w-64 rounded-full bg-violet-500/10 blur-3xl" />
-          <div className="relative">
-            <p className="text-sm font-medium text-white/70">
-              We are watching <span className="font-bold text-white">{num(s.flagged || 0)}</span> cars that may break down soon.
-              If we ignore them, that's about <span className="font-bold text-amber-300">{num(s.downtime_days || 0)}</span> days with cars stuck in the garage.
-            </p>
-            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-              <Kpi label="Cars to check" value={num(s.flagged || 0)} sub="before they break" />
-              <Kpi label="Fix now" value={num(s.act_now || 0)} accent="red" sub="urgent" />
-              <Kpi label="Money at risk" value={aed2(s.revenue_at_risk || 0)} accent="amber" sub="lost rent if they break" />
-              <Kpi label="May wait for parts" value={num(s.parts_wait_cars || 0)} accent="white" sub="could get stuck" />
-              <Kpi label="Worst-case loss" value={aed2(s.parts_wait_exposure || 0)} accent="red" sub="if they get stuck on parts" />
+        {/* Loading — KPI skeletons + a placeholder for the at-risk grid (keeps layout stable). */}
+        {loading && (
+          <>
+            <MetricGridSkeleton count={5} />
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <Skeleton className="h-80 rounded-2xl" />
+              <Skeleton className="h-80 rounded-2xl" />
             </div>
-          </div>
-        </div>
+          </>
+        )}
 
-        {/* Cars stuck the longest — one row per workshop VISIT (de-duped). A visit with several
-            faults shows once, with its main problem + a "+N more" count, not one row per fault. */}
-        {sessions.length > 0 && (
-          <Card className="p-6">
-            <div className="mb-1 flex items-center gap-2">
-              <span className="text-lg">🅿️</span>
-              <h3 className="text-sm font-semibold text-slate-900">Cars stuck the longest</h3>
-            </div>
-            <p className="mb-4 text-xs text-slate-500">
-              One line per workshop visit — the longest stays, regardless of how many problems were fixed in the same session.
-              <span className="font-medium text-slate-600"> Click a row to open the exact car and repair.</span>
+        {!loading && (
+          <>
+            {/* Context line — what we're watching and the downtime at stake. */}
+            <p className="text-sm text-slate-500">
+              Watching <span className="font-semibold text-slate-900">{num(s.flagged || 0)}</span> cars that may break down soon.
+              Ignored, that's about <span className="font-semibold text-amber-600">{num(s.downtime_days || 0)}</span> days with cars stuck in the garage.
             </p>
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-slate-100 text-sm">
-                <thead className="bg-slate-50/60">
-                  <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    <th className="px-4 py-2">Car</th>
-                    <th className="px-4 py-2">Workshop</th>
-                    <th className="px-4 py-2">In → Out</th>
-                    <th className="px-4 py-2 text-right">Stuck</th>
-                    <th className="px-4 py-2">Problem(s)</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-50">
-                  {sessions.map((v, i) => {
-                    const to = `/vehicles/${v.vehicle_id}?event=${v.event_id}`;
-                    const extra = (v.issue_count || 1) - 1;
-                    return (
-                      <tr key={i} className="hover:bg-slate-50/60">
-                        <td className="px-4 py-2">
-                          <Link to={to} className="font-medium text-indigo-600 hover:text-indigo-700">{v.plate}</Link>
+
+            {/* Headline KPIs */}
+            <MetricGrid cols={5}>
+              <MetricCard
+                label="Cars to check"
+                value={num(s.flagged || 0)}
+                tone="amber"
+                icon={<Icon.Car className="h-5 w-5" />}
+                hint="before they break"
+                tooltip="Cars flagged by Foresight as at risk of an imminent breakdown — service due, chronic faults or battery age."
+              />
+              <MetricCard
+                label="Fix now"
+                value={num(s.act_now || 0)}
+                tone="red"
+                icon={<Icon.Alert className="h-5 w-5" />}
+                hint="urgent"
+                tooltip="The most urgent tier — act now to avoid an unplanned breakdown."
+              />
+              <MetricCard
+                label="Money at risk"
+                value={aed2(s.revenue_at_risk || 0)}
+                tone="amber"
+                icon={<Icon.Coins className="h-5 w-5" />}
+                hint="lost rent if they break"
+                tooltip="Cost of inaction — total rent we stand to lose while these cars sit in the garage if they break down."
+              />
+              <MetricCard
+                label="May wait for parts"
+                value={num(s.parts_wait_cars || 0)}
+                tone="violet"
+                icon={<Icon.Clock className="h-5 w-5" />}
+                hint="could get stuck"
+                tooltip="Parts-wait risk — cars whose likely repair has historically kept vehicles stuck for weeks waiting on parts."
+              />
+              <MetricCard
+                label="Worst-case loss"
+                value={aed2(s.parts_wait_exposure || 0)}
+                tone="red"
+                icon={<Icon.Activity className="h-5 w-5" />}
+                hint="if they get stuck on parts"
+                tooltip="Worst-case cost of inaction — lost rent if the parts-wait cars end up stuck in the garage."
+              />
+            </MetricGrid>
+
+            {/* Cars stuck the longest — one row per workshop VISIT (de-duped). A visit with several
+                faults shows once, with its main problem + a "+N more" count, not one row per fault. */}
+            {sessions.length > 0 && (
+              <SectionCard
+                title="🅿️ Cars stuck the longest"
+                subtitle="One line per workshop visit — the longest stays, regardless of how many problems were fixed in the session. Click a row to open the exact car and repair."
+              >
+                <DataTable
+                  rows={sessions}
+                  rowKey={(v) => `${v.vehicle_id}-${v.event_id}`}
+                  highlightRow={(v) => v.days >= 14}
+                  empty="No long workshop stays recorded."
+                  columns={[
+                    {
+                      key: 'car', header: 'Car', cellClass: 'font-medium',
+                      render: (v) => (
+                        <Link to={`/vehicles/${v.vehicle_id}?event=${v.event_id}`} className="group block" onClick={(e) => e.stopPropagation()}>
+                          <span className="text-indigo-600 group-hover:text-indigo-700">{v.plate}</span>
                           {v.car && <span className="text-slate-400"> · {v.car}</span>}
-                        </td>
-                        <td className="px-4 py-2 text-slate-600">{v.garage || '—'}</td>
-                        <td className="px-4 py-2 text-slate-500">{v.out_date} → {v.actual_in_date}</td>
-                        <td className="px-4 py-2 text-right font-semibold text-red-600">{v.days} days</td>
-                        <td className="px-4 py-2">
-                          <span className="font-medium text-slate-700">{v.primary}</span>
-                          {extra > 0 && (
-                            <span className="ml-1.5 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-slate-500" title={(v.issues || []).join(', ')}>
-                              +{extra} more
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-        )}
+                        </Link>
+                      ),
+                    },
+                    { key: 'garage', header: 'Workshop', render: (v) => v.garage || '—' },
+                    { key: 'window', header: 'In → Out', cellClass: 'text-slate-500', render: (v) => `${v.out_date} → ${v.actual_in_date}` },
+                    {
+                      key: 'days', header: 'Stuck', align: 'right', tooltip: 'Calendar days the car spent off the road for this visit.',
+                      cellClass: 'tabular-nums font-semibold text-red-600', render: (v) => `${v.days} days`,
+                    },
+                    {
+                      key: 'problems', header: 'Problem(s)',
+                      render: (v) => {
+                        const extra = (v.issue_count || 1) - 1;
+                        return (
+                          <span>
+                            <span className="font-medium text-slate-700">{v.primary}</span>
+                            {extra > 0 && (
+                              <span className="ml-1.5 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-slate-500" title={(v.issues || []).join(', ')}>
+                                +{extra} more
+                              </span>
+                            )}
+                          </span>
+                        );
+                      },
+                    },
+                  ]}
+                />
+              </SectionCard>
+            )}
 
-        {/* Problems that keep cars stuck the longest — per-PROBLEM frequency (each fault counted
-            every time it occurs), so you know which parts fail most and should be pre-ordered. */}
-        {parts.length > 0 && (
-          <Card className="p-6">
-            <div className="mb-1 flex items-center gap-2">
-              <span className="text-lg">⏳</span>
-              <h3 className="text-sm font-semibold text-slate-900">Problems that keep cars stuck the longest</h3>
-            </div>
-            <p className="mb-4 text-xs text-slate-500">
-              Per problem (not per visit): how often each fault shows up and its typical/longest stay when it's the main job — so you know which parts to pre-order. "Times" counts every occurrence, even when a fault shared a visit; "Longest" is credited to the visit's main problem.
-              <span className="font-medium text-slate-600"> Click a "longest" number to jump to the exact car and repair.</span>
-            </p>
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-slate-100 text-sm">
-                <thead className="bg-slate-50/60">
-                  <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    <th className="px-4 py-2">Problem</th>
-                    <th className="px-4 py-2 text-right">Times</th>
-                    <th className="px-4 py-2 text-right">Usual</th>
-                    <th className="px-4 py-2 text-right">Longest</th>
-                    <th className="px-4 py-2">Worst car</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-50">
-                  {parts.map((p, i) => {
-                    const o = p.offender;
-                    const to = o ? `/vehicles/${o.vehicle_id}?event=${o.event_id}` : null;
-                    return (
-                      <tr key={i}>
-                        <td className="px-4 py-2 font-medium text-slate-900">{p.issue}</td>
-                        <td className="px-4 py-2 text-right text-slate-600">{p.visits}</td>
-                        <td className="px-4 py-2 text-right text-slate-600">{p.avg_days} days</td>
-                        <td className="px-4 py-2 text-right">
-                          {to ? (
-                            <Link
-                              to={to}
-                              title={`Check: ${o.plate}${o.car ? ` (${o.car})` : ''} · ${o.out_date} → ${o.actual_in_date}${o.garage ? ` at ${o.garage}` : ''}`}
-                              className="inline-flex items-center gap-1 font-semibold text-red-600 underline decoration-dotted underline-offset-2 hover:text-red-700"
-                            >
-                              {p.max_days} days
-                              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 5l7 7-7 7" /></svg>
-                            </Link>
-                          ) : (
-                            <span className="font-semibold text-red-600">{p.max_days} days</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-2">
-                          {o ? (
-                            <Link to={to} className="group block">
-                              <span className="font-medium text-indigo-600 group-hover:text-indigo-700">{o.plate}</span>
-                              {o.car && <span className="text-slate-400"> · {o.car}</span>}
-                              {o.garage && <span className="block text-xs text-slate-400">at {o.garage} · {o.out_date} → {o.actual_in_date}</span>}
-                            </Link>
-                          ) : (
-                            <span className="text-slate-300">—</span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-        )}
+            {/* Problems that keep cars stuck the longest — per-PROBLEM frequency (each fault counted
+                every time it occurs), so you know which parts fail most and should be pre-ordered. */}
+            {parts.length > 0 && (
+              <SectionCard
+                title="⏳ Problems that keep cars stuck the longest"
+                subtitle={'Per problem: how often each fault shows up and its typical/longest stay when it is the main job — so you know which parts to pre-order. "Times" counts every occurrence; "Longest" is credited to the visit’s main problem. Click a "longest" number to jump to the car and repair.'}
+              >
+                <DataTable
+                  rows={parts}
+                  rowKey={(p) => p.issue}
+                  highlightRow={(p) => p.max_days >= 14}
+                  empty="No recurring parts-wait problems recorded."
+                  columns={[
+                    { key: 'issue', header: 'Problem', cellClass: 'font-medium text-slate-900', render: (p) => p.issue },
+                    {
+                      key: 'visits', header: 'Times', align: 'right', tooltip: 'Every occurrence of this fault, even when it shared a visit with other repairs.',
+                      cellClass: 'tabular-nums', render: (p) => p.visits,
+                    },
+                    { key: 'avg_days', header: 'Usual', align: 'right', cellClass: 'tabular-nums', render: (p) => `${p.avg_days} days` },
+                    {
+                      key: 'max_days', header: 'Longest', align: 'right', cellClass: 'tabular-nums',
+                      render: (p) => {
+                        const o = p.offender;
+                        const to = o ? `/vehicles/${o.vehicle_id}?event=${o.event_id}` : null;
+                        return to ? (
+                          <Link
+                            to={to}
+                            title={`Check: ${o.plate}${o.car ? ` (${o.car})` : ''} · ${o.out_date} → ${o.actual_in_date}${o.garage ? ` at ${o.garage}` : ''}`}
+                            className="inline-flex items-center gap-1 font-semibold text-red-600 underline decoration-dotted underline-offset-2 hover:text-red-700"
+                          >
+                            {p.max_days} days
+                            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 5l7 7-7 7" /></svg>
+                          </Link>
+                        ) : (
+                          <span className="font-semibold text-red-600">{p.max_days} days</span>
+                        );
+                      },
+                    },
+                    {
+                      key: 'offender', header: 'Worst car',
+                      render: (p) => {
+                        const o = p.offender;
+                        const to = o ? `/vehicles/${o.vehicle_id}?event=${o.event_id}` : null;
+                        return o ? (
+                          <Link to={to} className="group block">
+                            <span className="font-medium text-indigo-600 group-hover:text-indigo-700">{o.plate}</span>
+                            {o.car && <span className="text-slate-400"> · {o.car}</span>}
+                            {o.garage && <span className="block text-xs text-slate-400">at {o.garage} · {o.out_date} → {o.actual_in_date}</span>}
+                          </Link>
+                        ) : (
+                          <span className="text-slate-300">—</span>
+                        );
+                      },
+                    },
+                  ]}
+                />
+              </SectionCard>
+            )}
 
-        {/* Workshop stalling — garages holding cars hostage */}
-        {stalling.length > 0 && (
-          <Card className="p-6">
-            <div className="mb-1 flex items-center gap-2">
-              <span className="text-lg">⛔</span>
-              <h3 className="text-sm font-semibold text-slate-900">Garages that keep cars too long</h3>
-            </div>
-            <p className="mb-4 text-xs text-slate-500">
-              Garages that took the <span className="font-medium text-slate-600">same car in 3 or more times within 10 days for the same problem</span> — they are slow or waiting for parts, not the car's fault. Push these garages, not the car.
-            </p>
-            <div className="space-y-3">
-              {stalling.map((w, i) => (
-                <div key={i} className="rounded-xl border border-amber-200 bg-amber-50/40 p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="font-semibold text-slate-900">{w.vendor}</span>
-                    <span className="text-xs text-slate-500">{w.incidents} time{w.incidents === 1 ? '' : 's'} · {w.cars} car{w.cars === 1 ? '' : 's'}</span>
+            {/* Workshop stalling — garages holding cars hostage */}
+            {stalling.length > 0 && (
+              <SectionCard
+                title="⛔ Garages that keep cars too long"
+                subtitle="Garages that took the same car in 3+ times within 10 days for the same problem — slow or waiting on parts, not the car's fault. Push these garages, not the car."
+                bodyClass="space-y-3 p-5"
+              >
+                {stalling.map((w, i) => (
+                  <div key={i} className="rounded-xl border border-amber-200 bg-amber-50/40 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-semibold text-slate-900">{w.vendor}</span>
+                      <span className="text-xs text-slate-500">{w.incidents} time{w.incidents === 1 ? '' : 's'} · {w.cars} car{w.cars === 1 ? '' : 's'}</span>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {w.samples.map((sm, j) => (
+                        <Link key={j} to={`/vehicles/${sm.vehicle_id}`} className="inline-flex items-center gap-1.5 rounded-full bg-white px-2.5 py-1 text-xs ring-1 ring-inset ring-amber-200 transition hover:ring-amber-300">
+                          <span className="font-medium text-indigo-600">{sm.plate}</span>
+                          <span className="text-slate-500">{sm.issue}</span>
+                          <span className="font-semibold text-amber-700">{sm.visits} times in {sm.span_days} days</span>
+                        </Link>
+                      ))}
+                    </div>
                   </div>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {w.samples.map((sm, j) => (
-                      <Link key={j} to={`/vehicles/${sm.vehicle_id}`} className="inline-flex items-center gap-1.5 rounded-full bg-white px-2.5 py-1 text-xs ring-1 ring-inset ring-amber-200 transition hover:ring-amber-300">
-                        <span className="font-medium text-indigo-600">{sm.plate}</span>
-                        <span className="text-slate-500">{sm.issue}</span>
-                        <span className="font-semibold text-amber-700">{sm.visits} times in {sm.span_days} days</span>
-                      </Link>
-                    ))}
-                  </div>
-                </div>
+                ))}
+              </SectionCard>
+            )}
+
+            {/* Tier filter */}
+            <div className="flex flex-wrap gap-2">
+              {FILTERS.map((f) => (
+                <button
+                  key={f.key}
+                  onClick={() => setTier(f.key)}
+                  className={`rounded-full px-4 py-1.5 text-sm font-medium ring-1 ring-inset transition ${
+                    tier === f.key ? 'bg-slate-900 text-white ring-slate-900' : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  {f.label} <span className={tier === f.key ? 'text-white/60' : 'text-slate-400'}>· {num(f.n || 0)}</span>
+                </button>
               ))}
             </div>
-          </Card>
-        )}
 
-        {/* Tier filter */}
-        <div className="flex flex-wrap gap-2">
-          {FILTERS.map((f) => (
-            <button
-              key={f.key}
-              onClick={() => setTier(f.key)}
-              className={`rounded-full px-4 py-1.5 text-sm font-medium ring-1 ring-inset transition ${
-                tier === f.key ? 'bg-slate-900 text-white ring-slate-900' : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'
-              }`}
-            >
-              {f.label} <span className={tier === f.key ? 'text-white/60' : 'text-slate-400'}>· {num(f.n || 0)}</span>
-            </button>
-          ))}
-        </div>
-
-        {/* Cards */}
-        {cars.length === 0 ? (
-          <EmptyState title="All good" message="No cars need attention here right now." />
-        ) : (
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            {cars.map((c) => <ForesightCard key={c.vehicle_id} c={c} onIssue={setIssue} />)}
-          </div>
+            {/* Cards */}
+            {cars.length === 0 ? (
+              <EmptyState title="All good" message="No cars need attention here right now." />
+            ) : (
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                {cars.map((c) => <ForesightCard key={c.vehicle_id} c={c} onIssue={setIssue} />)}
+              </div>
+            )}
+          </>
         )}
       </div>
 

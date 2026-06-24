@@ -4,7 +4,10 @@ import api from '../api/client';
 import Button from '../components/ui/Button';
 import { Input } from '../components/ui/Field';
 import { useToast } from '../components/ui/Toast';
-import { Card, PageHeader, Spinner, EmptyState } from '../components/ui/Misc';
+import { Card, PageHeader, EmptyState } from '../components/ui/Misc';
+import MetricCard, { MetricGrid } from '../components/ui/MetricCard';
+import { Skeleton } from '../components/ui/Skeleton';
+import Icon from '../components/ui/Icon';
 import { aed2, fmtDate, num } from '../lib/format';
 
 /**
@@ -71,19 +74,39 @@ export default function QuickCostInput() {
           <Link to="/maintenance-foresight" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">View Foresight →</Link>
         </PageHeader>
 
-        <div className="flex flex-wrap items-center gap-3 text-sm">
-          <span className="inline-flex items-center gap-2 rounded-full bg-amber-50 px-3 py-1 font-medium text-amber-700 ring-1 ring-inset ring-amber-200">
-            {num(repairs.length)} repairs awaiting cost
-          </span>
-          {done > 0 && (
-            <span className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 font-medium text-emerald-700 ring-1 ring-inset ring-emerald-200">
-              {num(done)} costed this session ✓
-            </span>
-          )}
-        </div>
+        <MetricGrid cols={2}>
+          <MetricCard
+            label="Awaiting Cost"
+            value={num(repairs.length)}
+            tone="amber"
+            icon={<Icon.Wrench className="h-5 w-5" />}
+            hint={`Recent repairs (last ${windowMonths} months) with no cost recorded`}
+            tooltip="Repairs found in the workshop log that carry no cost — these understate spend and hide Negative-Yield vehicles."
+          />
+          <MetricCard
+            label="Costed This Session"
+            value={num(done)}
+            tone={done > 0 ? 'emerald' : 'slate'}
+            icon={<Icon.Check className="h-5 w-5" />}
+            hint={done > 0 ? 'Repair spend & Negative-Yield flags updated' : 'Enter an amount on any repair below'}
+            tooltip="Repairs you have costed since opening this page. Each save instantly re-computes that vehicle's Real-Net-Profit yield."
+          />
+        </MetricGrid>
 
         {loading ? (
-          <div className="flex justify-center py-20"><Spinner className="h-8 w-8 text-indigo-500" /></div>
+          <div className="space-y-3">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <Card key={i} className="p-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0 space-y-2">
+                    <Skeleton className="h-4 w-40" />
+                    <Skeleton className="h-3 w-64" />
+                  </div>
+                  <Skeleton className="h-10 w-56 shrink-0 rounded-xl" />
+                </div>
+              </Card>
+            ))}
+          </div>
         ) : repairs.length === 0 ? (
           <Card className="p-2">
             <EmptyState

@@ -3,28 +3,36 @@ import { Link } from 'react-router-dom';
 import api from '../api/client';
 import useFetch from '../hooks/useFetch';
 import Badge from '../components/ui/Badge';
-import { Card, PageHeader, Spinner, EmptyState } from '../components/ui/Misc';
+import { PageHeader, EmptyState } from '../components/ui/Misc';
+import MetricCard, { MetricGrid } from '../components/ui/MetricCard';
+import DataTable, { SectionCard } from '../components/ui/Table';
+import { MetricGridSkeleton } from '../components/ui/Skeleton';
+import Icon from '../components/ui/Icon';
+import { Tooltip } from '../components/ui/Tooltip';
 import { usePageStat } from '../components/PageStat';
 import { num } from '../lib/format';
 
+// Per-severity presentation: tone (Badge/MetricCard), a one-word label for the
+// section header, and whether such a row is "the worst" (used to highlight rows).
 const SEV = {
-  critical: { tone: 'red', dot: 'bg-red-500', label: 'Money at risk', ring: 'ring-red-200', head: 'bg-red-50/60 border-red-100 text-red-700' },
-  warning: { tone: 'amber', dot: 'bg-amber-500', label: 'Books off', ring: 'ring-amber-200', head: 'bg-amber-50/60 border-amber-100 text-amber-700' },
-  info: { tone: 'blue', dot: 'bg-blue-500', label: 'Minor', ring: 'ring-blue-200', head: 'bg-blue-50/60 border-blue-100 text-blue-700' },
+  critical: { tone: 'red', label: 'Money at risk' },
+  warning: { tone: 'amber', label: 'Books off' },
+  info: { tone: 'blue', label: 'Minor' },
 };
 
 // The "open" link for a conflict row: contract → car.
 function RowLink({ it }) {
   if (it.contract_id) return <Link to={`/contracts/${it.contract_id}`} className="text-xs font-medium text-indigo-600 hover:text-indigo-700">Contract →</Link>;
   if (it.vehicle_id) return <Link to={`/vehicles/${it.vehicle_id}`} className="text-xs font-medium text-indigo-600 hover:text-indigo-700">Car →</Link>;
-  return <span className="text-gray-300">—</span>;
+  return <span className="text-slate-300">—</span>;
 }
 
+// Invoice identity cell: invoice number + contract / plate / car context line.
 function Record({ it }) {
   return (
     <div>
-      <span className="font-medium text-gray-900">#{it.invoice_no}</span>
-      <div className="text-xs text-gray-400">
+      <span className="font-medium text-slate-900">#{it.invoice_no}</span>
+      <div className="text-xs text-slate-400">
         {it.contract_no ? `Contract ${it.contract_no}` : '—'}
         {it.plate ? ` · ${it.plate}` : ''}
         {it.car ? ` · ${it.car}` : ''}
@@ -33,59 +41,44 @@ function Record({ it }) {
   );
 }
 
+// One conflict type → a SectionCard wrapping a DataTable of its broken invoices.
 function Group({ g }) {
   const sev = SEV[g.severity] || SEV.warning;
+  const isCritical = g.severity === 'critical';
   return (
-    <Card className={`ring-1 ${sev.ring}`}>
-      <div className={`border-b px-6 py-4 ${sev.head}`}>
-        <div className="flex items-center justify-between gap-4">
-          <h3 className="flex items-center gap-2 text-base font-semibold">
-            <span className={`h-2.5 w-2.5 rounded-full ${sev.dot}`} />
-            {g.title}
-            <Badge tone={sev.tone}>{num(g.count)}</Badge>
-          </h3>
-          <span className="text-xs font-medium uppercase tracking-wide opacity-70">{sev.label}</span>
-        </div>
-        <p className="mt-1 text-xs font-normal text-gray-500">{g.description}</p>
-      </div>
-
-      <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-gray-100 text-sm">
-          <thead className="bg-gray-50/60">
-            <tr className="text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-              <th className="px-6 py-3">Invoice</th>
-              <th className="px-6 py-3">Conflict</th>
-              <th className="px-6 py-3 text-right">Amount</th>
-              <th className="px-6 py-3 text-right">Open</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-50">
-            {g.items.map((it, i) => (
-              <tr key={i} className="hover:bg-gray-50/60">
-                <td className="px-6 py-3"><Record it={it} /></td>
-                <td className="px-6 py-3 text-gray-600">{it.detail}</td>
-                <td className="px-6 py-3 text-right tabular-nums text-gray-700">{it.amount ? `AED ${it.amount}` : <span className="text-gray-300">—</span>}</td>
-                <td className="px-6 py-3 text-right"><RowLink it={it} /></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+    <SectionCard
+      title={
+        <span className="inline-flex items-center gap-2">
+          <span className={`h-2.5 w-2.5 rounded-full ${isCritical ? 'bg-red-500' : g.severity === 'warning' ? 'bg-amber-500' : 'bg-blue-500'}`} />
+          {g.title}
+          <Badge tone={sev.tone}>{num(g.count)}</Badge>
+        </span>
+      }
+      subtitle={g.description}
+      actions={<span className="text-xs font-medium uppercase tracking-wide text-slate-400">{sev.label}</span>}
+    >
+      <DataTable
+        rows={g.items}
+        // No stable id on a conflict row; DataTable falls back to the array index (matches prior key).
+        // Flag the money-at-risk groups so the worst rows draw the eye.
+        highlightRow={() => isCritical}
+        empty="Nothing to show."
+        columns={[
+          { key: 'invoice', header: 'Invoice', render: (it) => <Record it={it} /> },
+          { key: 'detail', header: 'Conflict', render: (it) => it.detail },
+          {
+            key: 'amount', header: 'Amount', align: 'right', cellClass: 'tabular-nums text-slate-700',
+            render: (it) => (it.amount ? `AED ${it.amount}` : <span className="text-slate-300">—</span>),
+          },
+          { key: 'open', header: 'Open', align: 'right', render: (it) => <RowLink it={it} /> },
+        ]}
+      />
       {g.shown < g.count && (
-        <div className="border-t border-gray-100 px-6 py-2 text-xs text-gray-400">
+        <div className="border-t border-slate-100 px-5 py-2 text-xs text-slate-400">
           Showing the first {num(g.shown)} of {num(g.count)}.
         </div>
       )}
-    </Card>
-  );
-}
-
-function Stat({ label, value, tone = 'text-gray-900' }) {
-  return (
-    <div className="rounded-2xl border border-gray-100 bg-white px-5 py-4 shadow-sm ring-1 ring-gray-900/5">
-      <p className="text-xs font-medium text-gray-500">{label}</p>
-      <p className={`mt-1 text-2xl font-bold tracking-tight ${tone}`}>{value}</p>
-    </div>
+    </SectionCard>
   );
 }
 
@@ -106,9 +99,8 @@ export default function FinancialConflicts() {
     hint: `${critical} of ${total} financial conflicts are money-at-risk`,
   });
 
-  if (loading) return <div className="flex justify-center py-24"><Spinner className="h-8 w-8" /></div>;
-
   const groups = (data?.groups || []).filter((g) => g.count > 0);
+  const clean = !loading && !error && groups.length === 0;
 
   return (
     <div className="py-8">
@@ -119,16 +111,86 @@ export default function FinancialConflicts() {
           <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error}</div>
         )}
 
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          <Stat label="Total conflicts" value={num(data?.total_conflicts)} />
-          <Stat label="🔴 Money at risk" value={num(data?.critical)} tone="text-red-600" />
-          <Stat label="🟡 Books off" value={num(data?.warning)} tone="text-amber-600" />
-          <Stat label="Conflict types" value={num(data?.flagged_groups)} />
-        </div>
+        {/* Summary counts per conflict type. Problem counts go red/amber; a zero
+            count is reassuring emerald. */}
+        {loading ? (
+          <MetricGridSkeleton count={4} />
+        ) : (
+          <MetricGrid cols={4}>
+            <MetricCard
+              label="Total conflicts"
+              value={num(data?.total_conflicts)}
+              tone={total ? 'slate' : 'emerald'}
+              icon={<Icon.Invoice className="h-5 w-5" />}
+              tooltip="Every broken invoice across all conflict types — the size of the clean-up backlog."
+            />
+            <MetricCard
+              label="Money at risk"
+              value={num(data?.critical)}
+              tone={critical ? 'red' : 'emerald'}
+              icon={<Icon.Cash className="h-5 w-5" />}
+              tooltip="Critical conflicts where real money is exposed — e.g. double-billing (the same period billed twice) or an invoice that disagrees with its contract."
+            />
+            <MetricCard
+              label="Books off"
+              value={num(data?.warning)}
+              tone={(data?.warning || 0) ? 'amber' : 'emerald'}
+              icon={<Icon.Scale className="h-5 w-5" />}
+              tooltip="Bookkeeping errors that don't directly lose money but make the ledger inconsistent — e.g. VAT math that doesn't add up."
+            />
+            <MetricCard
+              label="Conflict types"
+              value={num(data?.flagged_groups)}
+              tone={(data?.flagged_groups || 0) ? 'amber' : 'emerald'}
+              icon={<Icon.Alert className="h-5 w-5" />}
+              tooltip="How many distinct categories of problem are currently flagged."
+            />
+          </MetricGrid>
+        )}
 
-        {groups.length === 0
-          ? <Card><EmptyState title="Books are clean 🎉" message="Every invoice adds up, matches its contract, and bills a non-overlapping period." /></Card>
-          : groups.map((g) => <Group key={g.key} g={g} />)}
+        {/* Glossary of the technical terms used in the conflict groups below. */}
+        {!loading && !clean && (
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-xl bg-slate-50/70 px-4 py-3 text-xs text-slate-500 ring-1 ring-inset ring-slate-900/5">
+            <span className="font-medium text-slate-600">Terms:</span>
+            <Tooltip content="The invoice's VAT line doesn't equal the taxable base × the VAT rate — the tax math doesn't add up.">
+              <span className="cursor-help underline decoration-dotted">VAT math</span>
+            </Tooltip>
+            <Tooltip content="The vehicle the invoice points at, after matching it back to the contract's actual car (not just the raw label on the invoice).">
+              <span className="cursor-help underline decoration-dotted">Resolved vehicle</span>
+            </Tooltip>
+            <Tooltip content="Two invoices charge for the same car over time windows that intersect.">
+              <span className="cursor-help underline decoration-dotted">Overlap</span>
+            </Tooltip>
+            <Tooltip content="The same rental period billed more than once — real money charged twice.">
+              <span className="cursor-help underline decoration-dotted">Double-billing</span>
+            </Tooltip>
+          </div>
+        )}
+
+        {loading ? (
+          <SectionCard title="Conflicts">
+            <DataTable
+              loading
+              rows={[]}
+              columns={[
+                { key: 'invoice', header: 'Invoice' },
+                { key: 'detail', header: 'Conflict' },
+                { key: 'amount', header: 'Amount', align: 'right' },
+                { key: 'open', header: 'Open', align: 'right' },
+              ]}
+            />
+          </SectionCard>
+        ) : clean ? (
+          <SectionCard>
+            <EmptyState
+              title="Books are clean 🎉"
+              message="Every invoice adds up, matches its contract, and bills a non-overlapping period."
+              icon={<Icon.Check className="h-7 w-7 text-emerald-500" />}
+            />
+          </SectionCard>
+        ) : (
+          groups.map((g) => <Group key={g.key} g={g} />)
+        )}
       </div>
     </div>
   );

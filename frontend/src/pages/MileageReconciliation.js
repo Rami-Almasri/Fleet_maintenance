@@ -6,7 +6,9 @@ import { usePermissions } from '../hooks/usePermissions';
 import Badge from '../components/ui/Badge';
 import Button from '../components/ui/Button';
 import { useToast } from '../components/ui/Toast';
-import { Card, PageHeader, Spinner, EmptyState } from '../components/ui/Misc';
+import { Card, PageHeader, EmptyState } from '../components/ui/Misc';
+import { Tooltip, InfoTip } from '../components/ui/Tooltip';
+import { Skeleton } from '../components/ui/Skeleton';
 import { usePageStat } from '../components/PageStat';
 import { num } from '../lib/format';
 
@@ -77,10 +79,16 @@ function ReconCard({ row, applied, busy, canApply, onApply }) {
           <svg className="h-5 w-5 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
             <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14M13 6l6 6-6 6" />
           </svg>
-          <div className="text-right" title={row.baseline != null ? `Start-mileage baseline: ${km(row.baseline)}` : undefined}>
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Scanner value</p>
-            <p className="mt-0.5 text-xl font-bold tabular-nums text-emerald-600">{km(row.scanner_value)}</p>
-          </div>
+          <Tooltip
+            content={row.baseline != null
+              ? `Start-mileage baseline: ${km(row.baseline)}. The trusted odometer the scanner rebuilt from contract history.`
+              : 'The trusted odometer the scanner rebuilt from contract history.'}
+          >
+            <div className="text-right">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Scanner value</p>
+              <p className="mt-0.5 text-xl font-bold tabular-nums text-emerald-600">{km(row.scanner_value)}</p>
+            </div>
+          </Tooltip>
         </div>
 
         {/* Gap + action */}
@@ -89,9 +97,11 @@ function ReconCard({ row, applied, busy, canApply, onApply }) {
           {ov ? (
             <span className="text-xs font-semibold text-emerald-600">Applied ✓</span>
           ) : actionable && canApply ? (
-            <Button size="sm" loading={busy === row.vehicle_id} disabled={!!busy} onClick={() => onApply(row)}>
-              Apply baseline
-            </Button>
+            <Tooltip content="Overwrite the stored system odometer with the scanner value (the start-mileage baseline rebuilt from contract history).">
+              <Button size="sm" loading={busy === row.vehicle_id} disabled={!!busy} onClick={() => onApply(row)}>
+                Apply baseline
+              </Button>
+            </Tooltip>
           ) : actionable && !canApply ? (
             <span className="text-xs text-gray-300">No permission</span>
           ) : null}
@@ -149,7 +159,7 @@ export default function MileageReconciliation() {
   // backend emits ('matching' is stored as 'correct' on each row).
   const segments = [
     { key: 'needs_review',     status: 'needs_review',     value: s.needs_review,     bar: 'bg-amber-400',   dot: 'bg-amber-400',   label: 'Needs review' },
-    { key: 'within_tolerance', status: 'within_tolerance', value: s.within_tolerance, bar: 'bg-blue-400',    dot: 'bg-blue-400',    label: 'Within 100 km' },
+    { key: 'within_tolerance', status: 'within_tolerance', value: s.within_tolerance, bar: 'bg-blue-400',    dot: 'bg-blue-400',    label: 'Within 100 km', tip: 'Within tolerance: the system odometer is within ±100 km of the scanner value, so no action is needed.' },
     { key: 'matching',         status: 'correct',          value: s.matching,         bar: 'bg-emerald-400', dot: 'bg-emerald-400', label: 'Already matching' },
     { key: 'no_history',       status: 'no_history',       value: s.no_history,       bar: 'bg-gray-300',    dot: 'bg-gray-300',    label: 'No history' },
   ];
@@ -227,21 +237,23 @@ export default function MileageReconciliation() {
             {segments.map((seg) => {
               const isActive = statusFilter === seg.status;
               return (
-                <button
-                  key={seg.key}
-                  type="button"
-                  onClick={() => setStatusFilter(isActive ? null : seg.status)}
-                  disabled={seg.value === 0}
-                  className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-sm transition disabled:cursor-not-allowed disabled:opacity-40 ${
-                    isActive
-                      ? 'bg-white shadow-sm ring-2 ring-indigo-400'
-                      : 'ring-1 ring-transparent hover:bg-white/70 hover:ring-gray-200'
-                  }`}
-                >
-                  <span className={`h-2.5 w-2.5 rounded-full ${seg.dot}`} />
-                  <span className="font-bold tabular-nums text-gray-800">{num(seg.value)}</span>
-                  <span className="text-gray-500">{seg.label}</span>
-                </button>
+                <span key={seg.key} className="inline-flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setStatusFilter(isActive ? null : seg.status)}
+                    disabled={seg.value === 0}
+                    className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-sm transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                      isActive
+                        ? 'bg-white shadow-sm ring-2 ring-indigo-400'
+                        : 'ring-1 ring-transparent hover:bg-white/70 hover:ring-gray-200'
+                    }`}
+                  >
+                    <span className={`h-2.5 w-2.5 rounded-full ${seg.dot}`} />
+                    <span className="font-bold tabular-nums text-gray-800">{num(seg.value)}</span>
+                    <span className="text-gray-500">{seg.label}</span>
+                  </button>
+                  {seg.tip && <InfoTip content={seg.tip} />}
+                </span>
               );
             })}
             {statusFilter && (
@@ -288,7 +300,25 @@ export default function MileageReconciliation() {
 
         {/* The list */}
         {loading ? (
-          <div className="flex justify-center py-24"><Spinner className="h-8 w-8" /></div>
+          <div className="grid gap-4 md:grid-cols-2">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="relative overflow-hidden rounded-2xl border border-slate-200/70 bg-white p-5 pl-6 shadow-soft ring-1 ring-slate-900/5">
+                <span className="absolute inset-y-0 left-0 w-1.5 bg-slate-100" />
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 space-y-2">
+                    <Skeleton className="h-5 w-24" />
+                    <Skeleton className="h-3 w-32" />
+                  </div>
+                  <Skeleton className="h-5 w-20 rounded-full" />
+                </div>
+                <Skeleton className="mt-4 h-16 w-full rounded-xl" />
+                <div className="mt-4 flex items-center justify-between gap-3">
+                  <Skeleton className="h-6 w-32 rounded-full" />
+                  <Skeleton className="h-7 w-24 rounded-lg" />
+                </div>
+              </div>
+            ))}
+          </div>
         ) : displayedRows.length === 0 ? (
           <Card>
             <EmptyState

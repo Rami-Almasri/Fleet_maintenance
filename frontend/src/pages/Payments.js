@@ -6,10 +6,13 @@ import { useToast } from '../components/ui/Toast';
 import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
 import Modal from '../components/ui/Modal';
-import { Card, PageHeader, Spinner, EmptyState, SearchInput } from '../components/ui/Misc';
+import { PageHeader, SearchInput } from '../components/ui/Misc';
+import MetricCard, { MetricGrid } from '../components/ui/MetricCard';
+import DataTable, { SectionCard } from '../components/ui/Table';
+import Icon from '../components/ui/Icon';
 import { Input, Select, Textarea } from '../components/ui/Field';
 import { PAYMENT_METHODS } from '../components/ContractPayments';
-import { aed2, fmtDate } from '../lib/format';
+import { aed2, fmtDate, num } from '../lib/format';
 
 const methodLabel = (v) => PAYMENT_METHODS.find((m) => m.value === v)?.label || v || '—';
 const EMPTY = { amount: '', paid_on: '', method: 'cash', reference: '', notes: '' };
@@ -150,72 +153,104 @@ export default function Payments() {
     }
   };
 
+  // Page-level rollup for the KPI tiles (sum of the receipts visible on this page).
+  const pageTotal = rows.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+
   return (
     <div className="py-8">
       <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
         <PageHeader title="Payments / Receipts" subtitle="Every collection recorded on the website, across all contracts.">
           <SearchInput value={search} onChange={setSearch} placeholder="Search receipt, ref, method, customer…" className="w-72" />
-          {canManage && <Button onClick={openNew}>+ Record payment</Button>}
+          {canManage && (
+            <Button onClick={openNew}>
+              <Icon.Plus className="h-4 w-4" /> Record payment
+            </Button>
+          )}
         </PageHeader>
 
-        <Card>
-          {loading ? (
-            <div className="flex justify-center py-16"><Spinner className="h-7 w-7" /></div>
-          ) : rows.length === 0 ? (
-            <EmptyState title="No payments yet" message={canManage ? 'Record the first receipt with “+ Record payment”.' : 'Nothing has been recorded yet.'} />
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-100 text-sm">
-                <thead className="bg-gray-50/60">
-                  <tr className="text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                    <th className="px-4 py-3">Receipt</th>
-                    <th className="px-4 py-3">Date</th>
-                    <th className="px-4 py-3">Contract</th>
-                    <th className="px-4 py-3">Customer</th>
-                    <th className="px-4 py-3">Method</th>
-                    <th className="px-4 py-3 text-right">Amount</th>
-                    {canManage && <th className="px-4 py-3 text-right">Actions</th>}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {rows.map((p) => (
-                    <tr key={p.id} className="hover:bg-gray-50/50">
-                      <td className="px-4 py-3 font-medium text-gray-900">
-                        {p.payment_ref || '—'}
-                        {p.reference && <p className="mt-0.5 text-xs font-normal text-gray-400">Ref: {p.reference}</p>}
-                      </td>
-                      <td className="px-4 py-3 text-gray-500">{fmtDate(p.paid_on)}</td>
-                      <td className="px-4 py-3">
-                        {p.contract ? (
-                          <Link to={`/contracts/${p.contract.id}`} className="text-indigo-600 hover:text-indigo-700">
-                            {p.contract.contract_no || `#${p.contract.id}`}
-                          </Link>
-                        ) : '—'}
-                        {p.invoice?.number && <span className="ml-1.5 text-xs text-gray-400">→ {p.invoice.number}</span>}
-                      </td>
-                      <td className="px-4 py-3 text-gray-600">{p.customer?.name_en || (p.customer ? `#${p.customer.customer_no}` : '—')}</td>
-                      <td className="px-4 py-3 capitalize text-gray-600">{methodLabel(p.method)}</td>
-                      <td className="px-4 py-3 text-right font-medium text-emerald-600">{aed2(p.amount)}</td>
-                      {canManage && (
-                        <td className="px-4 py-3 text-right">
-                          <span className="inline-flex gap-2">
-                            <button onClick={() => openEdit(p)} className="text-xs font-medium text-indigo-600 hover:text-indigo-700">Edit</button>
-                            <span className="text-gray-200">·</span>
-                            <button onClick={() => remove(p)} className="text-xs font-medium text-red-500 hover:text-red-600">Delete</button>
-                          </span>
-                        </td>
-                      )}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Card>
+        <MetricGrid cols={3}>
+          <MetricCard
+            label="Total Receipts"
+            value={num(meta.total)}
+            tone="indigo"
+            icon={<Icon.Card className="h-5 w-5" />}
+            hint={debounced ? `Matching “${debounced}”` : 'Across all contracts'}
+            tooltip="Total number of payment receipts recorded on the website (across all pages)."
+          />
+          <MetricCard
+            label="On This Page"
+            value={num(rows.length)}
+            tone="slate"
+            icon={<Icon.Invoice className="h-5 w-5" />}
+            hint={meta.last_page > 1 ? `Page ${meta.page} of ${meta.last_page}` : 'All on one page'}
+            tooltip="Receipts shown on the current page."
+          />
+          <MetricCard
+            label="Collected (page)"
+            value={aed2(pageTotal)}
+            tone="emerald"
+            icon={<Icon.Coins className="h-5 w-5" />}
+            hint="Sum of receipts on this page"
+            tooltip="Sum of the payment amounts visible on the current page only — not the full ledger."
+          />
+        </MetricGrid>
+
+        <SectionCard
+          title="Receipts"
+          actions={<span className="text-xs text-slate-400">{num(meta.total)} payment{meta.total === 1 ? '' : 's'}</span>}
+        >
+          <DataTable
+            rows={rows}
+            rowKey={(p) => p.id}
+            loading={loading}
+            empty={canManage ? 'No payments yet — record the first receipt with “Record payment”.' : 'Nothing has been recorded yet.'}
+            columns={[
+              {
+                key: 'receipt', header: 'Receipt', cellClass: 'font-medium text-slate-900',
+                render: (p) => (
+                  <>
+                    {p.payment_ref || '—'}
+                    {p.reference && <p className="mt-0.5 text-xs font-normal text-slate-400">Ref: {p.reference}</p>}
+                  </>
+                ),
+              },
+              { key: 'date', header: 'Date', cellClass: 'text-slate-500', render: (p) => fmtDate(p.paid_on) },
+              {
+                key: 'contract', header: 'Contract',
+                render: (p) => (
+                  <>
+                    {p.contract ? (
+                      <Link to={`/contracts/${p.contract.id}`} className="text-indigo-600 hover:text-indigo-700">
+                        {p.contract.contract_no || `#${p.contract.id}`}
+                      </Link>
+                    ) : '—'}
+                    {p.invoice?.number && <span className="ml-1.5 text-xs text-slate-400">→ {p.invoice.number}</span>}
+                  </>
+                ),
+              },
+              { key: 'customer', header: 'Customer', render: (p) => p.customer?.name_en || (p.customer ? `#${p.customer.customer_no}` : '—') },
+              { key: 'method', header: 'Method', cellClass: 'capitalize', render: (p) => methodLabel(p.method) },
+              {
+                key: 'amount', header: 'Amount', align: 'right',
+                cellClass: 'tabular-nums font-semibold text-emerald-600', render: (p) => aed2(p.amount),
+              },
+              ...(canManage ? [{
+                key: 'actions', header: 'Actions', align: 'right',
+                render: (p) => (
+                  <span className="inline-flex gap-2">
+                    <button onClick={() => openEdit(p)} className="text-xs font-medium text-indigo-600 hover:text-indigo-700">Edit</button>
+                    <span className="text-slate-200">·</span>
+                    <button onClick={() => remove(p)} className="text-xs font-medium text-red-500 hover:text-red-600">Delete</button>
+                  </span>
+                ),
+              }] : []),
+            ]}
+          />
+        </SectionCard>
 
         {/* Pager */}
         {!loading && meta.last_page > 1 && (
-          <div className="flex items-center justify-between text-sm text-gray-500">
+          <div className="flex items-center justify-between text-sm text-slate-500">
             <span>{meta.total} payment{meta.total === 1 ? '' : 's'}</span>
             <span className="inline-flex items-center gap-3">
               <Button variant="secondary" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>Previous</Button>
@@ -242,38 +277,38 @@ export default function Payments() {
         <div className="space-y-4">
           {/* Contract picker — create only; on edit the contract is fixed */}
           {editing ? (
-            <div className="rounded-xl bg-gray-50 px-4 py-3 text-sm ring-1 ring-inset ring-gray-100">
-              <span className="text-gray-500">Contract</span>{' '}
-              <span className="font-medium text-gray-900">{editing.contract?.contract_no || `#${editing.contract?.id}`}</span>
+            <div className="rounded-xl bg-slate-50 px-4 py-3 text-sm ring-1 ring-inset ring-slate-100">
+              <span className="text-slate-500">Contract</span>{' '}
+              <span className="font-medium text-slate-900">{editing.contract?.contract_no || `#${editing.contract?.id}`}</span>
             </div>
           ) : contract ? (
             <div className="flex items-center justify-between rounded-xl bg-indigo-50 px-4 py-3 text-sm ring-1 ring-inset ring-indigo-100">
               <span>
-                <span className="text-gray-500">Contract</span>{' '}
-                <span className="font-semibold text-gray-900">{contract.contract_no || `#${contract.id}`}</span>
+                <span className="text-slate-500">Contract</span>{' '}
+                <span className="font-semibold text-slate-900">{contract.contract_no || `#${contract.id}`}</span>
                 {contract.contract_type && <Badge tone="indigo" className="ml-2">{contract.contract_type}</Badge>}
               </span>
               <button onClick={() => setContract(null)} className="text-xs font-medium text-indigo-600 hover:text-indigo-700">Change</button>
             </div>
           ) : (
             <div>
-              <span className="mb-1 block text-sm font-medium text-gray-700">Contract <span className="text-red-500">*</span></span>
+              <span className="mb-1 block text-sm font-medium text-slate-700">Contract <span className="text-red-500">*</span></span>
               <SearchInput value={cQuery} onChange={setCQuery} placeholder="Search by contract no, plate, or customer…" />
               {cQuery.trim() && (
-                <div className="mt-2 max-h-48 overflow-auto rounded-lg border border-gray-200">
+                <div className="mt-2 max-h-48 overflow-auto rounded-lg border border-slate-200">
                   {cLoading ? (
-                    <div className="px-3 py-2 text-sm text-gray-400">Searching…</div>
+                    <div className="px-3 py-2 text-sm text-slate-400">Searching…</div>
                   ) : cResults.length === 0 ? (
-                    <div className="px-3 py-2 text-sm text-gray-400">No matching contracts</div>
+                    <div className="px-3 py-2 text-sm text-slate-400">No matching contracts</div>
                   ) : cResults.map((ct) => (
                     <button
                       key={ct.id}
                       type="button"
                       onClick={() => { setContract(ct); setCQuery(''); setCResults([]); }}
-                      className="block w-full px-3 py-2 text-left hover:bg-gray-50"
+                      className="block w-full px-3 py-2 text-left hover:bg-slate-50"
                     >
-                      <span className="text-sm font-medium text-gray-900">{ct.contract_no || `#${ct.id}`}</span>
-                      <span className="ml-2 text-xs text-gray-400">
+                      <span className="text-sm font-medium text-slate-900">{ct.contract_no || `#${ct.id}`}</span>
+                      <span className="ml-2 text-xs text-slate-400">
                         {ct.contract_type} · {ct.customer?.name_en || ct.vehicle?.plate_no || ''}
                       </span>
                     </button>
