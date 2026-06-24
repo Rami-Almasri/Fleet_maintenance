@@ -1,9 +1,10 @@
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../../api/client';
 import useFetch from '../../hooks/useFetch';
 import Badge, { ContractTypeBadge, ContractStateBadge } from '../../components/ui/Badge';
 import { Card, Spinner } from '../../components/ui/Misc';
+import CustomerReconciliation from '../../components/CustomerReconciliation';
 import { useCountUp } from '../../components/ui/Gauge';
 import { aed2, fmtDate, num } from '../../lib/format';
 
@@ -57,6 +58,7 @@ export default function CustomerProfile() {
     return data.data;
   }, [id]);
   const { data, loading, error } = useFetch(fetcher, [id]);
+  const [showAllContracts, setShowAllContracts] = useState(false);
 
   if (loading) return <div className="flex justify-center py-24"><Spinner className="h-8 w-8" /></div>;
   if (error || !data) {
@@ -70,7 +72,13 @@ export default function CustomerProfile() {
 
   const c = data.customer;
   const contracts = data.contracts || [];
+  // Rental history is collapsed to the most recent few; "Show more" reveals the rest.
+  const CONTRACTS_PREVIEW = 6;
+  const shownContracts = showAllContracts ? contracts : contracts.slice(0, CONTRACTS_PREVIEW);
+  const hiddenContracts = contracts.length - shownContracts.length;
   const stats = data.stats || {};
+  const categoryLedger = data.category_ledger || [];
+  const ledgerTotals = data.ledger_totals;
   const balance = Number(c.balance || 0);
   const wallet = Number(c.available_wallet ?? Math.max(0, -balance));
   const initials = (c.name_en || '?').trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase() || '?';
@@ -169,6 +177,9 @@ export default function CustomerProfile() {
           </Card>
         </div>
 
+        {/* Per-category account reconciliation rolled up across all contracts */}
+        <CustomerReconciliation ledger={categoryLedger} totals={ledgerTotals} />
+
         {/* Rental history — a timeline of this customer's contracts */}
         <Card>
           <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
@@ -185,7 +196,7 @@ export default function CustomerProfile() {
             <div className="relative px-6 py-6">
               <span aria-hidden className="pointer-events-none absolute bottom-8 left-10 top-8 w-px bg-slate-200" />
               <ol className="stagger space-y-4">
-                {contracts.map((ct) => {
+                {shownContracts.map((ct) => {
                   const open = ct.state === 'open';
                   return (
                     <li key={ct.id} className="relative flex gap-4">
@@ -216,6 +227,19 @@ export default function CustomerProfile() {
                   );
                 })}
               </ol>
+
+              {contracts.length > CONTRACTS_PREVIEW && (
+                <div className="mt-5 flex justify-center">
+                  <button
+                    type="button"
+                    onClick={() => setShowAllContracts((v) => !v)}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-600 shadow-soft transition hover:border-slate-300 hover:text-slate-900"
+                  >
+                    {showAllContracts ? 'Show less' : `Show ${hiddenContracts} more`}
+                    <svg className={`h-4 w-4 transition-transform ${showAllContracts ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 9l-7 7-7-7" /></svg>
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </Card>
