@@ -3,8 +3,12 @@
 namespace App\Services;
 
 use App\Models\Contract;
+use App\Models\Invoice;
 use App\Models\Maintenance;
 use App\Models\Vehicle;
+use Illuminate\Support\Facades\DB;
+
+// MileageBaselineService is the source of the two mileage-chain checks below.
 
 /**
  * Detects "exceptional cases" — data conflicts and operational gaps that shouldn't
@@ -17,8 +21,13 @@ class AnomalyService
     /** Max example rows returned per group (the count is always the true total). */
     private const CAP = 100;
 
-    public function __construct(private ContractExchangeService $exchanges)
-    {
+    /** A workshop visit longer than this (out → return) is treated as an impossible/mis-keyed date. */
+    private const MAX_VISIT_DAYS = 180;
+
+    public function __construct(
+        private ContractExchangeService $exchanges,
+        private MileageBaselineService $mileage,
+    ) {
     }
 
     private const TYPE_LABEL = [
@@ -33,9 +42,15 @@ class AnomalyService
             $this->doubleBooked(),
             $this->disposedButActive(),
             $this->returnedBeforePickup(),
+            $this->billingDateMismatch(),
             // --- Gaps & stale data ---
             $this->forSaleButOut(),
+            $this->implausibleWorkshopVisit(),
+            $this->mileageRollback(),
+            $this->mileageJump(),
+            $this->workshopDuringRental(),
             $this->closedWithoutReturn(),
+            $this->longOpenRental(),
             $this->staleOpen(),
             $this->openWithoutPickup(),
             $this->maintenanceWithoutGarage(),
@@ -125,6 +140,70 @@ class AnomalyService
         );
     }
 
+    /**
+     * Invoices whose BILLED contract window (ContractOutDate / ContractInDate on the
+     * invoice) disagrees with the out/in dates we recorded on the contract itself.
+     * Compared on the date portion (both stored as dates). Only invoices that carry a
+     * contract date AND are linked to a contract can be checked — rows still null from
+     * before the financials backfill are simply skipped, so the check fills in as the
+     * invoice sync repopulates them.
+     */
+    private function billingDateMismatch(): array
+    {
+        $base = Invoice::query()
+            ->join('contracts', 'invoices.contract_id', '=', 'contracts.id')
+            ->where(function ($q) {
+                $q->where(function ($q) {
+                    $q->whereNotNull('invoices.contract_out_date')
+                        ->whereNotNull('contracts.out_date')
+                        ->whereColumn('invoices.contract_out_date', '<>', 'contracts.out_date');
+                })->orWhere(function ($q) {
+                    $q->whereNotNull('invoices.contract_in_date')
+                        ->whereNotNull('contracts.in_date')
+                        ->whereColumn('invoices.contract_in_date', '<>', 'contracts.in_date');
+                });
+            });
+
+        $count = (clone $base)->distinct()->count('invoices.id');
+
+        $rows = (clone $base)
+            ->select('invoices.*')
+            ->with(['contract.vehicle', 'contract.customer'])
+            ->orderByDesc('invoices.invoice_date')
+            ->limit(self::CAP)
+            ->get();
+
+        $items = $rows->map(function (Invoice $inv) {
+            $c = $inv->contract;
+            $diffs = [];
+            if ($inv->contract_out_date && $c?->out_date && ! $inv->contract_out_date->isSameDay($c->out_date)) {
+                $diffs[] = 'out: recorded ' . $c->out_date->toDateString() . ' vs billed ' . $inv->contract_out_date->toDateString();
+            }
+            if ($inv->contract_in_date && $c?->in_date && ! $inv->contract_in_date->isSameDay($c->in_date)) {
+                $diffs[] = 'in: recorded ' . $c->in_date->toDateString() . ' vs billed ' . $inv->contract_in_date->toDateString();
+            }
+
+            return [
+                'vehicle_id'  => $c?->vehicle_id,
+                'plate'       => $c?->vehicle?->plate_no,
+                'car'         => $c?->vehicle ? trim($c->vehicle->make . ' ' . $c->vehicle->model) : null,
+                'contract_id' => $c?->id,
+                'contract_no' => $c?->contract_no,
+                'customer_id' => $c?->customer_id,
+                'customer'    => $c?->customer?->name_en ?: ($c?->customer?->customer_no ? '#' . $c->customer->customer_no : null),
+                'out_date'    => optional($c?->out_date)->toDateString(),
+                'in_date'     => optional($c?->in_date)->toDateString(),
+                'detail'      => 'Invoice #' . $inv->invoice_no . ' — ' . implode(' · ', $diffs),
+            ];
+        })->all();
+
+        return $this->group(
+            'billing_date_mismatch', 'Billing dates ≠ contract dates', 'warning',
+            'The contract out/in dates billed on an invoice do not match the out/in dates we recorded on the contract. Usually the contract was edited or re-synced after it was billed; reconcile so rental days and revenue line up with the actual rental period.',
+            $count, $items
+        );
+    }
+
     /** A car flagged for sale that is still out on an open contract (softer warning). */
     private function forSaleButOut(): array
     {
@@ -145,6 +224,182 @@ class AnomalyService
         );
     }
 
+    /**
+     * Reconciliation between the two sources behind Fleet Utilization: a workshop visit (maintenance
+     * sheet / manual log) that overlaps a still-OPEN rental contract for the same car.
+     *
+     * The utilization math credits an overlapping day to the rental (contract-based priority), so
+     * these days count as RENTED, not downtime. That is correct for a genuine accident-during-rental
+     * (the customer keeps paying) but wrong for a stale rental that was never closed — there the car
+     * actually sat in the garage. Both are surfaced here to confirm rather than trust silently.
+     *
+     * Overlap = the visit's return is on/after the open rental's pickup (the open rental runs to today,
+     * so any later visit falls inside it). Visits are de-duplicated to one row per (car, visit day).
+     */
+    private function workshopDuringRental(): array
+    {
+        $base = DB::table('maintenances as m')
+            ->join('contracts as c', function ($j) {
+                $j->on('c.vehicle_id', '=', 'm.vehicle_id')
+                    ->on('m.actual_in_date', '>=', 'c.out_date')   // visit ended on/after the rental started
+                    ->where('c.contract_type', 'C')
+                    ->whereNull('c.in_date')                       // rental still open
+                    ->whereNotNull('c.out_date');
+            })
+            ->whereIn('m.origin', Maintenance::WORKSHOP_LOG_ORIGINS)
+            ->whereNotNull('m.out_date')
+            ->whereNotNull('m.actual_in_date');
+
+        // True total = distinct (car, visit-out-date) pairs, so multi-row visits count once.
+        $count = DB::query()->fromSub(
+            (clone $base)->select('m.vehicle_id', 'm.out_date')->distinct(),
+            't'
+        )->count();
+
+        $rows = (clone $base)
+            ->leftJoin('vehicles as v', 'v.id', '=', 'm.vehicle_id')
+            ->leftJoin('customers as cu', 'cu.id', '=', 'c.customer_id')
+            ->select(
+                'm.vehicle_id', 'm.out_date as visit_out', 'm.actual_in_date as visit_in',
+                'm.service_main', 'm.service_sup',
+                'c.id as contract_id', 'c.contract_no', 'c.out_date as c_out', 'c.customer_id',
+                'v.plate_no', 'v.make', 'v.model', 'cu.name_en', 'cu.customer_no'
+            )
+            ->orderByDesc('m.out_date')
+            ->limit(self::CAP * 4)   // over-fetch so PHP de-dup can still reach CAP distinct visits
+            ->get();
+
+        $items = [];
+        $seen = [];
+        foreach ($rows as $r) {
+            $key = $r->vehicle_id . '|' . substr((string) $r->visit_out, 0, 10);
+            if (isset($seen[$key])) {
+                continue;
+            }
+            $seen[$key] = true;
+            if (count($items) >= self::CAP) {
+                break;
+            }
+            $issue = $r->service_main ?: ($r->service_sup ?: 'workshop visit');
+            $items[] = [
+                'vehicle_id'  => $r->vehicle_id,
+                'plate'       => $r->plate_no,
+                'car'         => $r->make ? trim($r->make . ' ' . $r->model) : null,
+                'contract_id' => $r->contract_id,
+                'contract_no' => $r->contract_no,
+                'customer_id' => $r->customer_id,
+                'customer'    => $r->name_en ?: ($r->customer_no ? '#' . $r->customer_no : null),
+                'out_date'    => substr((string) $r->c_out, 0, 10),
+                'in_date'     => null,
+                'tag'         => 'In shop while rented',
+                'detail'      => 'Workshop visit ' . substr((string) $r->visit_out, 0, 10) . ' → '
+                    . substr((string) $r->visit_in, 0, 10) . ' (' . $issue . ') fell inside OPEN rental #'
+                    . $r->contract_no . ' (out ' . substr((string) $r->c_out, 0, 10) . ', still open). '
+                    . 'Utilization counts these days as rented — confirm the customer was billed, or close the rental if the car was actually off-rent.',
+            ];
+        }
+
+        return $this->group(
+            'workshop_during_rental', 'In the shop during an active rental', 'warning',
+            'A workshop visit from the maintenance sheet overlaps a still-OPEN rental contract for the same car. Fleet Utilization credits those days as rented (the contract wins the overlap), which is right for an accident during an active rental but wrong for a rental that was never closed. Confirm each: bill the customer, or close the stale rental so the days count as downtime instead.',
+            $count, $items
+        );
+    }
+
+    /**
+     * A workshop visit with an IMPOSSIBLE return date — in the future, or implausibly long after the
+     * out date (≥ MAX_VISIT_DAYS). Almost always a mis-keyed return (often a wrong year: the sheet
+     * writes a bare "5/14" that, parsed against the current year, lands ~365 days out). Such a row
+     * silently inflates the car's downtime and "in shop while rented" days on Fleet Utilization, so it
+     * is surfaced immediately rather than discovered later through skewed metrics. The importer now
+     * anchors year-less dates to the out_date year ([[maintenance-data-architecture]]); this is the
+     * safety net for anything that still slips through.
+     */
+    private function implausibleWorkshopVisit(): array
+    {
+        $base = Maintenance::query()
+            ->whereIn('origin', Maintenance::WORKSHOP_LOG_ORIGINS)
+            ->whereNotNull('out_date')
+            ->whereNotNull('actual_in_date')
+            ->where(function ($q) {
+                $q->whereRaw('DATEDIFF(actual_in_date, out_date) >= ?', [self::MAX_VISIT_DAYS])
+                    ->orWhereDate('actual_in_date', '>', now()->toDateString());
+            });
+
+        $rows = (clone $base)->with('vehicle')
+            ->orderByRaw('DATEDIFF(actual_in_date, out_date) DESC')
+            ->limit(self::CAP)->get();
+
+        $items = $rows->map(function (Maintenance $m) {
+            $v      = $m->vehicle;
+            $out    = $m->out_date->toDateString();
+            $in     = $m->actual_in_date->toDateString();
+            $days   = (int) abs($m->out_date->diffInDays($m->actual_in_date));
+            $future = $m->actual_in_date->gt(now());
+            $issue  = $m->service_main ?: ($m->service_sup ?: ($m->garage ?: 'workshop visit'));
+
+            $detail = $future
+                ? "Return date $in is in the FUTURE (out $out) — impossible for a completed visit; almost certainly a mis-keyed date."
+                : "Out $out → return $in = $days days in the workshop — implausibly long, almost certainly a mis-keyed return date (e.g. a wrong year). It inflates downtime / \"in shop while rented\" until corrected in the sheet.";
+
+            return [
+                'vehicle_id'  => $m->vehicle_id,
+                'plate'       => $v?->plate_no ?: $m->plate,
+                'car'         => $v ? trim($v->make . ' ' . $v->model) : $m->car_label,
+                'contract_id' => null,
+                'contract_no' => null,
+                'customer_id' => null,
+                'customer'    => null,
+                'out_date'    => $out,
+                'in_date'     => $in,
+                'tag'         => $future ? 'Future return' : $days . 'd visit',
+                'detail'      => $detail . ' (' . $issue . ')',
+            ];
+        })->all();
+
+        return $this->group(
+            'implausible_workshop_visit', 'Impossible workshop visit dates', 'warning',
+            'A workshop visit whose return date is impossible — in the future, or implausibly long after the out date (≥ ' . self::MAX_VISIT_DAYS . ' days). Almost always a mis-keyed return date (commonly a wrong year, e.g. a bare "5/14" read as next year), which silently inflates a car\'s downtime and "in shop while rented" days on Fleet Utilization until fixed at the source.',
+            (clone $base)->count(), $items
+        );
+    }
+
+    /**
+     * Mileage ran BACKWARDS: a later handover reading is lower than an earlier accepted one for
+     * the same car. Impossible on a real odometer — one of the two readings was mis-typed. The
+     * Global Mileage Baseline excludes these readings when healing the odometer; this surfaces
+     * them so the wrong one gets fixed at the source. Computed from contract history by
+     * MileageBaselineService (rentals + type-'U' maintenance contracts both count).
+     */
+    private function mileageRollback(): array
+    {
+        $rows  = $this->mileage->rollbacks();
+        $items = array_slice($rows, 0, self::CAP);
+
+        return $this->group(
+            'mileage_rollback', 'Mileage ran backwards', 'warning',
+            'A later odometer reading is LOWER than an earlier one for the same car — impossible on a real odometer, so one of the two handover readings (out/in mileage) was mis-typed. These readings are ignored when the Global Mileage Baseline heals the live odometer; fix the wrong reading on its contract.',
+            count($rows), $items
+        );
+    }
+
+    /**
+     * Implausible mileage JUMP: two consecutive accepted readings differ by more than a car could
+     * realistically travel in the elapsed time (> MAX_KM_PER_DAY, with a floor to cut noise) —
+     * almost always a typo or an extra digit. Excluded from odometer healing until corrected.
+     */
+    private function mileageJump(): array
+    {
+        $rows  = $this->mileage->jumps();
+        $items = array_slice($rows, 0, self::CAP);
+
+        return $this->group(
+            'mileage_jump', 'Implausible mileage jump', 'warning',
+            'Two consecutive odometer readings for the same car differ by more than the car could plausibly travel between them (over ' . number_format(MileageBaselineService::MAX_KM_PER_DAY) . ' km/day) — almost always a typo or an extra digit. These readings are excluded from Global Mileage Baseline odometer healing until corrected at the source.',
+            count($rows), $items
+        );
+    }
+
     /** Closed contracts where the car went out but no return date was ever recorded. */
     private function closedWithoutReturn(): array
     {
@@ -160,6 +415,41 @@ class AnomalyService
         return $this->group(
             'closed_no_return', 'Closed without a return date', 'warning',
             'The contract is closed and the car was handed out, but no return (in) date was logged. Contracts with no pickup date at all are excluded (those are usually cancelled quotes).',
+            (clone $base)->count(), $items
+        );
+    }
+
+    /**
+     * Rental contracts (type 'C') open for MORE than 30 days with no in_date — the car is still
+     * booked out on paper. A genuine long-term rental is fine, but most are forgotten open contracts
+     * that were never closed; left unchecked they keep accruing "Rental Days" and skew Fleet
+     * Utilization. The extreme tail (open over a YEAR) is listed separately under "Stale open
+     * contracts", so this band is 30 days … 1 year and each contract appears in exactly one group.
+     */
+    private function longOpenRental(): array
+    {
+        $base = Contract::currentlyOpen()
+            ->where('contract_type', 'C')
+            ->whereNotNull('out_date')
+            ->where('out_date', '<', now()->subDays(30))
+            ->where('out_date', '>=', now()->subDays(365));
+
+        $rows = (clone $base)->with(['vehicle', 'customer'])->orderBy('out_date')->limit(self::CAP)->get();
+
+        $items = $rows->map(function ($c) {
+            $days = (int) abs($c->out_date->diffInDays(now()));
+
+            return $this->contractRow(
+                $c,
+                'Open ' . $days . ' days — car went out ' . $c->out_date->toDateString()
+                . ' with no return recorded. Close it if the car is back, or confirm it is a genuine '
+                . 'long-term rental; until then it keeps accruing rental days.'
+            );
+        })->all();
+
+        return $this->group(
+            'long_open_rental', 'Rentals open 30+ days', 'warning',
+            'A rental contract has been open more than 30 days with no return (in) date. Usually a forgotten open contract that should be closed — left open it inflates Rental Days and skews Fleet Utilization. Genuine long-term rentals are expected, so this is a prompt to confirm, not necessarily an error. Rentals open more than a year appear under "Stale open contracts".',
             (clone $base)->count(), $items
         );
     }

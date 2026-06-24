@@ -107,6 +107,9 @@ class Vehicle extends Model
         'last_service_odometer',
         'service_interval_km',
         'service_synced_at',
+        // --- Global Mileage Baseline (anchored to the earliest contract reading) ---
+        'baseline_odometer',
+        'baseline_synced_at',
         'replacement_due_date',
         'notes',
         'external_id',
@@ -131,6 +134,8 @@ class Vehicle extends Model
         'last_service_odometer' => 'integer',
         'service_interval_km' => 'integer',
         'service_synced_at' => 'datetime',
+        'baseline_odometer' => 'integer',
+        'baseline_synced_at' => 'datetime',
         'hour_rent_value' => 'decimal:2',
         'day_rent_value' => 'decimal:2',
         'week_rent_value' => 'decimal:2',
