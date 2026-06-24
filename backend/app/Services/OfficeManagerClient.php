@@ -127,4 +127,33 @@ class OfficeManagerClient
     {
         return $this->paginate('invoices', $filters);
     }
+
+    /**
+     * Accounting voucher HEADERS linked to a rental contract. The API joins on
+     * RelativeRecordNo == ContractSerial (the contract record-type family), so pass the
+     * contract's SERIAL, not its number. Headers only — there is NO debit/credit amount on a
+     * voucher; presence proves the contract was posted to the books, nothing more. The filtered
+     * result is tiny, so a single fetch is enough (no pagination needed).
+     *
+     * @param array{contract_serial?:int,from_date?:string,to_date?:string,group_no?:int,receipt_no?:int} $filters
+     * @return array{items: array<int,array<string,mixed>>, total: int}
+     */
+    public function accountsVouchers(array $filters = []): array
+    {
+        return $this->fetchOnce('accounts/vouchers', $filters);
+    }
+
+    /**
+     * Cash-receipts journal — the ONLY amount-bearing accounting feed (Date, Customer, Amount,
+     * Journal, Payment Type = Receive/Send). Filter by contract_no / customer_no (+ optional date
+     * range). NOTE: the API's only_with_card flag defaults to TRUE (card receipts only); we force
+     * it false here so cash/bank receipts are included too — pass it explicitly to override.
+     *
+     * @param array{contract_no?:int,customer_no?:int,from_date?:string,to_date?:string,only_with_card?:string} $filters
+     * @return array{items: array<int,array<string,mixed>>, total: int}
+     */
+    public function balanceReceipts(array $filters = []): array
+    {
+        return $this->fetchOnce('reports/balance', array_merge(['only_with_card' => 'false'], $filters));
+    }
 }

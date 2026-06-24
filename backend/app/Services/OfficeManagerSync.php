@@ -503,12 +503,16 @@ class OfficeManagerSync
             $progress($totalWindows, $totalWindows);
         }
 
+        $odometersBumped = 0;
         if (! $dryRun) {
             // rebuild every customer's cached balance from the new contracts
             app(AccountingService::class)->recalcAllCustomers();
             // refresh each car's live operational_status (rented / in maintenance / available)
             // from the freshly-imported open contracts — the API's StatusNo can't tell us this.
             app(OperationsService::class)->reconcileAllOperationalStatus();
+            // bring each car's odometer up to its freshest contract handover reading — the
+            // car-card Milage lags behind the real OutMilage/InMilage the branch records.
+            $odometersBumped = $this->reconcileOdometersFromContracts();
             // persist the auto-corrections (cleared stale fields) for the Sync Audit page
             $this->persistCorrections();
         }
@@ -523,9 +527,51 @@ class OfficeManagerSync
                 'failed_windows'          => $failedWindows,
                 'dry_run'                 => $dryRun,
                 'corrections'            => count($this->corrections),
+                'odometers_bumped'       => $odometersBumped,
                 'null_overwrites_prevented' => $this->nullOverwriteCount,
                 'null_overwrite_samples'  => $this->nullOverwriteSamples,
             ];
+    }
+
+    /**
+     * Refresh each car's odometer from its freshest contract handover reading.
+     *
+     * The car-card `Milage` (set by importFleetVehicles) is only as current as the last time
+     * the card itself was edited in OfficeManager, so it lags behind the real mileage the branch
+     * records at every handover — OutMilage when the car leaves, InMilage when it returns. The
+     * truest "current odometer" is therefore the reading on the car's MOST RECENT contract.
+     *
+     * We take the reading from the latest handover EVENT by date — every contract contributes an
+     * out event (OutDate, OutMilage) and, once returned, an in event (InDate, InMilage); the most
+     * recent of those across all the car's contracts is the live odometer. Selecting by date (not
+     * by the largest number) is deliberate: OM's history carries one-off mileage typos — including
+     * an OutMilage typed higher than the same contract's InMilage, which a "max" rule would import
+     * forever. Zero/placeholder readings are ignored, odometers can't run backwards so we only ever
+     * raise the value, and web-origin cars (created on the website) are skipped.
+     *
+     * @return int  number of vehicles whose odometer was raised
+     */
+    protected function reconcileOdometersFromContracts(): int
+    {
+        return DB::update(<<<'SQL'
+            UPDATE vehicles v
+            JOIN (
+                SELECT vehicle_id, milage AS reading FROM (
+                    SELECT vehicle_id, milage,
+                           ROW_NUMBER() OVER (PARTITION BY vehicle_id ORDER BY ev_date DESC, milage DESC) AS rn
+                    FROM (
+                        SELECT vehicle_id, out_date AS ev_date, out_milage AS milage
+                        FROM contracts WHERE vehicle_id IS NOT NULL AND out_date IS NOT NULL AND out_milage > 0
+                        UNION ALL
+                        SELECT vehicle_id, in_date AS ev_date, in_milage AS milage
+                        FROM contracts WHERE vehicle_id IS NOT NULL AND in_date IS NOT NULL AND in_milage > 0
+                    ) ev
+                ) ranked WHERE rn = 1
+            ) r ON r.vehicle_id = v.id
+            SET v.odometer = r.reading
+            WHERE r.reading > v.odometer
+              AND (v.origin IS NULL OR v.origin <> 'web')
+        SQL);
     }
 
     /** Bulk-write this run's auto-corrections into sync_corrections, linked to the run. */
@@ -723,6 +769,13 @@ class OfficeManagerSync
                 'extra_driver_credit'  => $money('ExtraDriverCredit'),
                 'vat_credit'           => $money('VatCredit'),
                 'deposit_credit'       => $money('DepositCredit'),
+
+                // --- Cardoo charge (its own debit/credit + a separate deposit hold) ---
+                // OM itemises this alongside the buckets above; it's part of ContractDebit/
+                // ContractCredit, so mapping it makes those grand totals reconcile.
+                'cardoo_debit'         => $money('CardooDebit'),
+                'cardoo_credit'        => $money('CardooCredit'),
+                'cardoo_deposit'       => $money('CardooDepositAmount'),
 
                 // --- totals & adjustments ---
                 'contract_debit'       => $money('ContractDebit'),
@@ -1032,6 +1085,20 @@ class OfficeManagerSync
                             'total_value'     => $this->num($row['InvoiceTotalValue'] ?? null),
                             'vat_value'       => $this->num($row['InvoiceVatValue'] ?? null),
                             'total_after_vat' => $this->num($row['TotalAfterVat'] ?? null),
+                            // Discount baked into the total: OM computes TotalAfterVat as
+                            // (Value − Discount) + VAT, so without this a discounted invoice
+                            // looks like "value + vat != total". period_* is the real per-
+                            // invoice billing window (better than invoice_date + rent_days).
+                            'discount'             => $this->num($row['Discount'] ?? null),
+                            'total_after_discount' => $this->num($row['TotalAfterDiscount'] ?? null),
+                            'period_from'          => $this->date($row['InvoiceperiodFromDate'] ?? null),
+                            'period_to'            => $this->date($row['InvoiceperiodToDate'] ?? null),
+                            // Contract window AS BILLED (for the date-anomaly check) + rental terms.
+                            'contract_out_date' => $this->date($row['ContractOutDate'] ?? null),
+                            'contract_in_date'  => $this->date($row['ContractInDate'] ?? null),
+                            'rent_days'         => is_numeric($row['RentDays'] ?? null) ? (int) $row['RentDays'] : null,
+                            'net_rate'          => $this->num($row['RentDayRate'] ?? null),
+                            'car_serial'        => is_numeric($row['RaCarSerialNo'] ?? null) ? (int) $row['RaCarSerialNo'] : null,
                             'synced_at'       => now(),
                             'origin'          => 'api',
                         ],
@@ -1063,9 +1130,11 @@ class OfficeManagerSync
         }
 
         if (! $dryRun) {
-            // roll invoice totals up into each contract's debit + balance
-            $contractsBilled = $this->rollupContractDebit();
-            app(AccountingService::class)->recalcAllCustomers();
+            // Invoices are recorded per-contract but are NOT the AR source: OfficeManager's
+            // /contracts carries the authoritative accrued debit, so we only refresh each
+            // customer's cached balance from it. (A partial, periodically-billed invoice set
+            // must never understate an open rental's debit and inflate "wallet" credit.)
+            $contractsBilled = $this->refreshBalancesAfterInvoices();
         }
 
         return compact('created', 'updated', 'linked')
@@ -1077,27 +1146,35 @@ class OfficeManagerSync
         $created = 0; $updated = 0;
         DB::transaction(function () use ($buffer, &$created, &$updated) {
             foreach ($buffer as $b) {
-                $inv = Invoice::updateOrCreate(['invoice_no' => $b['invoice_no']], $b['data']);
+                // Sync Guard: only ever match/upsert API-origin invoices. Manual invoices
+                // created on the website (origin 'manual', invoice_no NULL, ref 'M-…') are
+                // the platform's own source of truth and must never be touched by the import.
+                $inv = Invoice::where('origin', 'api')
+                    ->updateOrCreate(['invoice_no' => $b['invoice_no']], $b['data']);
                 $inv->wasRecentlyCreated ? $created++ : $updated++;
             }
         });
         return [$created, $updated];
     }
 
-    /** Set each contract's debit/balance from the sum of its invoices. @return int contracts updated */
-    protected function rollupContractDebit(): int
+    /**
+     * Refresh every customer's cached balance after an invoice import — self-correcting,
+     * so the import never leaves balances stale (no separate recalc needed).
+     *
+     * NOTE (2026-06-21): this used to OVERWRITE each contract's contract_debit/balance with
+     * the SUM of its invoices. That corrupted open, periodically-billed rentals: only part of
+     * the term is invoiced, so the partial invoice sum UNDERSTATED the contract's accrued debit
+     * and inflated the customer's credit ("Available Wallet"). OfficeManager's /contracts is the
+     * authoritative AR source, so invoices no longer touch contract_debit — they're recorded
+     * per-contract (Financials / net margin) but the customer balance is computed from the
+     * contracts' own debit/credit. See AccountingService::recalcAllCustomers().
+     *
+     * @return int contracts that have at least one linked invoice (for the run summary)
+     */
+    protected function refreshBalancesAfterInvoices(): int
     {
-        DB::statement("
-            UPDATE contracts c
-            JOIN (
-                SELECT contract_id, ROUND(SUM(total_after_vat), 2) AS billed
-                FROM invoices
-                WHERE contract_id IS NOT NULL
-                GROUP BY contract_id
-            ) t ON t.contract_id = c.id
-            SET c.contract_debit   = t.billed,
-                c.contract_balance = t.billed - COALESCE(c.contract_credit, 0)
-        ");
+        app(AccountingService::class)->recalcAllCustomers();
+
         return (int) DB::table('invoices')->whereNotNull('contract_id')->distinct()->count('contract_id');
     }
 
