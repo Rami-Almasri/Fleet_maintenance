@@ -8,7 +8,12 @@ import Button from '../components/ui/Button';
 import SearchSelect from '../components/ui/SearchSelect';
 import { Select } from '../components/ui/Field';
 import WorkshopEvents from '../components/WorkshopEvents';
-import { Card, PageHeader, Spinner, EmptyState } from '../components/ui/Misc';
+import { PageHeader, EmptyState } from '../components/ui/Misc';
+import { SectionCard } from '../components/ui/Table';
+import MetricCard, { MetricGrid } from '../components/ui/MetricCard';
+import { MetricGridSkeleton, Skeleton } from '../components/ui/Skeleton';
+import { InfoTip } from '../components/ui/Tooltip';
+import Icon from '../components/ui/Icon';
 import Modal from '../components/ui/Modal';
 import { usePageStat } from '../components/PageStat';
 import { aed2, fmtDate, num } from '../lib/format';
@@ -209,15 +214,6 @@ function ManageModal({ open, car, vehicles, onClose }) {
   );
 }
 
-function Kpi({ label, value, tone }) {
-  return (
-    <div className="rounded-2xl border border-gray-100 bg-white px-5 py-4 shadow-sm ring-1 ring-gray-900/5">
-      <p className="text-xs font-medium text-gray-500">{label}</p>
-      <p className={`mt-1 text-2xl font-bold tracking-tight ${tone}`}>{value}</p>
-    </div>
-  );
-}
-
 // One labelled cell in a card's facts grid.
 function Fact({ label, hint, children }) {
   return (
@@ -395,7 +391,18 @@ export function MaintenanceBoardPanel({ publishStat = false, manageable = false 
     hint: `${criticalCars} of ${totalCars} cars in the garage are critical priority`,
   } : {});
 
-  if (loading) return <div className="flex justify-center py-24"><Spinner className="h-8 w-8" /></div>;
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <MetricGridSkeleton count={4} />
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-72 rounded-2xl" />
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   const cars = data?.cars || [];
   const s = data?.summary || {};
@@ -432,70 +439,115 @@ export function MaintenanceBoardPanel({ publishStat = false, manageable = false 
           </div>
         )}
 
-        {/* SLA timeliness summary */}
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          <Kpi label="In maintenance" value={num(s.total)} tone="text-gray-900" />
-          <Kpi label="🟢 On track" value={num(s.on_track)} tone="text-emerald-600" />
-          <Kpi label="🟡 At risk" value={num(s.at_risk)} tone="text-amber-600" />
-          <Kpi label="🔴 Overdue" value={num(s.breached)} tone="text-red-600" />
-        </div>
+        {/* SLA timeliness summary (timeliness = is each car back on time?) */}
+        <MetricGrid cols={4}>
+          <MetricCard
+            label="In maintenance"
+            value={num(s.total)}
+            tone="slate"
+            icon={<Icon.Wrench className="h-5 w-5" />}
+            hint="Cars currently in the garage"
+            tooltip="Total cars with an open maintenance contract or a live workshop event."
+          />
+          <MetricCard
+            label="On track"
+            value={num(s.on_track)}
+            tone="emerald"
+            icon={<Icon.Check className="h-5 w-5" />}
+            hint="Within expected return window"
+            tooltip="Cars whose repair is still inside its expected return window (SLA on track)."
+          />
+          <MetricCard
+            label="At risk"
+            value={num(s.at_risk)}
+            tone="amber"
+            icon={<Icon.Clock className="h-5 w-5" />}
+            hint="Nearing the return deadline"
+            tooltip="Cars approaching their expected return date — at risk of breaching the SLA."
+          />
+          <MetricCard
+            label="Overdue"
+            value={num(s.breached)}
+            tone="red"
+            icon={<Icon.Alert className="h-5 w-5" />}
+            hint="Past expected return"
+            tooltip="Cars past their expected return date — the maintenance SLA is breached."
+          />
+        </MetricGrid>
 
-        {/* Priority filter (severity of the maintenance situation) */}
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="mr-1 text-xs font-medium uppercase tracking-wide text-gray-500">Priority</span>
-          {priorityFilters.map((f) => (
-            <button
-              key={f.key || 'all'}
-              onClick={() => setPriority(f.key)}
-              className={`rounded-full px-3 py-1 text-xs font-medium ring-1 transition ${
-                priority === f.key
-                  ? 'bg-indigo-600 text-white ring-indigo-600'
-                  : 'bg-white text-gray-600 ring-gray-300 hover:bg-gray-50'
-              }`}
-            >
-              {f.label}{f.n != null ? ` (${num(f.n)})` : ''}
-            </button>
-          ))}
-        </div>
-
-        {/* Workshop-stage filter (live OUT / IN / Follow-up flow from the maintenance log) */}
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="mr-1 text-xs font-medium uppercase tracking-wide text-gray-500">Stage</span>
-          {stageFilters.map((f) => (
-            <button
-              key={f.key || 'all'}
-              onClick={() => setStage(f.key)}
-              className={`rounded-full px-3 py-1 text-xs font-medium ring-1 transition ${
-                stage === f.key
-                  ? 'bg-indigo-600 text-white ring-indigo-600'
-                  : 'bg-white text-gray-600 ring-gray-300 hover:bg-gray-50'
-              }`}
-            >
-              {f.label}{f.n != null ? ` (${num(f.n)})` : ''}
-            </button>
-          ))}
-        </div>
-
-        {shown.length > 0 ? (
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {shown.map((c) => (
-              <MaintenanceCard
-                key={c.id}
-                c={c}
-                canManage={canManage}
-                onLog={setLogCar}
-                onManage={(car) => setManage({ car })}
-              />
+        <SectionCard
+          title="In the garage"
+          subtitle={`${num(shown.length)} of ${num(cars.length)} cars shown`}
+          actions={
+            <span className="hidden items-center gap-1.5 text-xs text-slate-400 sm:inline-flex">
+              <Icon.Filter className="h-4 w-4" />
+              Filter by priority &amp; stage
+            </span>
+          }
+          bodyClass="p-4 sm:p-5 space-y-4"
+        >
+          {/* Priority filter (severity of the maintenance situation) */}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="mr-1 inline-flex items-center gap-1 text-xs font-medium uppercase tracking-wide text-slate-500">
+              Priority
+              <InfoTip content="Severity of the maintenance situation, derived from the sheet reason keywords (critical / special / minor / routine)." />
+            </span>
+            {priorityFilters.map((f) => (
+              <button
+                key={f.key || 'all'}
+                onClick={() => setPriority(f.key)}
+                className={`rounded-full px-3 py-1 text-xs font-medium ring-1 transition ${
+                  priority === f.key
+                    ? 'bg-indigo-600 text-white ring-indigo-600'
+                    : 'bg-white text-slate-600 ring-slate-300 hover:bg-slate-50'
+                }`}
+              >
+                {f.label}{f.n != null ? ` (${num(f.n)})` : ''}
+              </button>
             ))}
           </div>
-        ) : (
-          <Card>
+
+          {/* Workshop-stage filter (live OUT / IN / Follow-up flow from the maintenance log) */}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="mr-1 inline-flex items-center gap-1 text-xs font-medium uppercase tracking-wide text-slate-500">
+              Stage
+              <InfoTip content="Live workshop stage from the maintenance-sheet event log (OUT / IN / Follow up …) — where the car is in the repair flow." />
+            </span>
+            {stageFilters.map((f) => (
+              <button
+                key={f.key || 'all'}
+                onClick={() => setStage(f.key)}
+                className={`rounded-full px-3 py-1 text-xs font-medium ring-1 transition ${
+                  stage === f.key
+                    ? 'bg-indigo-600 text-white ring-indigo-600'
+                    : 'bg-white text-slate-600 ring-slate-300 hover:bg-slate-50'
+                }`}
+              >
+                {f.label}{f.n != null ? ` (${num(f.n)})` : ''}
+              </button>
+            ))}
+          </div>
+
+          {shown.length > 0 ? (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {shown.map((c) => (
+                <MaintenanceCard
+                  key={c.id}
+                  c={c}
+                  canManage={canManage}
+                  onLog={setLogCar}
+                  onManage={(car) => setManage({ car })}
+                />
+              ))}
+            </div>
+          ) : (
             <EmptyState
-              title={cars.length === 0 ? 'No cars in maintenance' : `No ${priority} maintenance`}
-              message={cars.length === 0 ? 'Nothing is currently in the garage.' : 'No cars match this priority filter.'}
+              icon={<Icon.Wrench className="h-7 w-7" />}
+              title={cars.length === 0 ? 'No cars in maintenance' : `No ${priority || 'matching'} maintenance`}
+              message={cars.length === 0 ? 'Nothing is currently in the garage.' : 'No cars match the selected filters.'}
             />
-          </Card>
-        )}
+          )}
+        </SectionCard>
 
         <GarageLog car={logCar} onClose={() => setLogCar(null)} />
 

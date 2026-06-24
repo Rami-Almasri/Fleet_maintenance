@@ -9,8 +9,12 @@ import Button from '../../components/ui/Button';
 import Modal from '../../components/ui/Modal';
 import { Input } from '../../components/ui/Field';
 import SearchSelect from '../../components/ui/SearchSelect';
-import { Card, Spinner } from '../../components/ui/Misc';
-import { useCountUp } from '../../components/ui/Gauge';
+import { Card } from '../../components/ui/Misc';
+import MetricCard, { MetricGrid } from '../../components/ui/MetricCard';
+import DataTable, { SectionCard } from '../../components/ui/Table';
+import { Skeleton, MetricGridSkeleton } from '../../components/ui/Skeleton';
+import { InfoTip } from '../../components/ui/Tooltip';
+import Icon from '../../components/ui/Icon';
 import { aed, aed2, fmtDate, dayBadge, num } from '../../lib/format';
 
 // Battery is due for change one year after it was last changed.
@@ -85,10 +89,13 @@ const PRIO = {
   routine: { label: 'Routine', tone: 'green', emoji: '🟢' },
 };
 
-function Field({ label, value }) {
+function Field({ label, value, tip }) {
   return (
     <div className="flex justify-between gap-4 py-1.5 text-sm">
-      <span className="text-gray-500">{label}</span>
+      <span className="flex items-center gap-1.5 text-gray-500">
+        {label}
+        {tip && <InfoTip content={tip} />}
+      </span>
       <span className="text-right font-medium text-gray-900">{value ?? '—'}</span>
     </div>
   );
@@ -116,55 +123,6 @@ function CoverageRow({ label, date, days }) {
         <p className="text-xs text-gray-400">{fmtDate(date)}</p>
       </div>
       <Badge tone={b.tone}>{b.text === '—' ? 'None' : b.text}</Badge>
-    </div>
-  );
-}
-
-// A number that rolls up from 0 on mount.
-function CountUp({ value, format }) {
-  const v = useCountUp(Number(value) || 0);
-  return <>{format ? format(v) : Math.round(v).toLocaleString()}</>;
-}
-
-const STAT_TONE = {
-  gray: { bg: 'bg-slate-100 text-slate-500', text: 'text-slate-900' },
-  indigo: { bg: 'bg-indigo-50 text-indigo-600', text: 'text-slate-900' },
-  emerald: { bg: 'bg-emerald-50 text-emerald-600', text: 'text-emerald-600' },
-  red: { bg: 'bg-red-50 text-red-600', text: 'text-red-600' },
-};
-
-function Stat({ label, value, icon, tone = 'gray', format, highlight, text, onClick }) {
-  const t = STAT_TONE[tone] || STAT_TONE.gray;
-  const clickable = typeof onClick === 'function';
-  return (
-    <div
-      onClick={onClick}
-      role={clickable ? 'button' : undefined}
-      tabIndex={clickable ? 0 : undefined}
-      onKeyDown={clickable ? (e) => (e.key === 'Enter' || e.key === ' ') && onClick() : undefined}
-      className={`hover-lift rounded-2xl border border-slate-200/60 bg-white px-5 py-4 shadow-soft ${clickable ? 'cursor-pointer transition hover:border-indigo-300 hover:ring-2 hover:ring-indigo-500/10 focus:outline-none focus:ring-2 focus:ring-indigo-500/30' : ''}`}
-    >
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-xs font-medium text-slate-500">{label}</p>
-        {icon && (
-          <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${t.bg}`}>
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={icon} /></svg>
-          </span>
-        )}
-      </div>
-      {text ? (
-        <p className="mt-2 text-sm font-semibold text-blue-600">{text}</p>
-      ) : (
-        <p className={`mt-1.5 text-2xl font-bold tracking-tight ${highlight ? t.text : 'text-slate-900'}`}>
-          <CountUp value={value} format={format} />
-        </p>
-      )}
-      {clickable && (
-        <p className="mt-1 flex items-center gap-1 text-[11px] font-medium text-indigo-500">
-          View breakdown
-          <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
-        </p>
-      )}
     </div>
   );
 }
@@ -303,7 +261,24 @@ export default function VehicleProfile() {
   };
 
   if (loading) {
-    return <div className="flex justify-center py-24"><Spinner className="h-8 w-8" /></div>;
+    return (
+      <div className="py-8">
+        <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
+          {/* hero placeholder */}
+          <Skeleton className="h-44 w-full rounded-3xl" />
+          {/* stats placeholder */}
+          <MetricGridSkeleton count={4} />
+          {/* specs + registration placeholder */}
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+            <Skeleton className="h-72 rounded-2xl lg:col-span-2" />
+            <Skeleton className="h-72 rounded-2xl" />
+          </div>
+          {/* table placeholders */}
+          <Skeleton className="h-64 w-full rounded-2xl" />
+          <Skeleton className="h-64 w-full rounded-2xl" />
+        </div>
+      </div>
+    );
   }
   if (error || !data) {
     return (
@@ -415,12 +390,41 @@ export default function VehicleProfile() {
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          <Stat label="Total Contracts" value={stats.contracts_count} tone="indigo" icon="M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z" />
-          <Stat label="Open Now" value={stats.open_count} tone="emerald" highlight={stats.open_count > 0} onClick={av.open_contract_id ? () => navigate(`/contracts/${av.open_contract_id}`) : undefined} icon="M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" />
-          <Stat label="Lifetime Net Profit" value={stats.lifetime_net_profit} format={aed} text={stats.is_new ? 'New — not yet rented' : undefined} tone={Number(stats.lifetime_net_profit) < 0 ? 'red' : 'emerald'} highlight onClick={stats.is_new ? undefined : () => setBridgeOpen(true)} icon="M12 8c-1.7 0-3 .9-3 2s1.3 2 3 2 3 .9 3 2-1.3 2-3 2m0-8V6m0 12v-2m9-4a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" />
-          <Stat label="Outstanding Fines" value={reg ? reg.fines_count : 0} tone="red" highlight={reg && reg.fines_count > 0} icon="M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
-        </div>
+        <MetricGrid cols={4}>
+          <MetricCard
+            label="Total Contracts"
+            value={num(stats.contracts_count)}
+            tone="indigo"
+            icon={<Icon.Invoice className="h-5 w-5" />}
+            hint="Lifetime rentals, bookings & maintenance"
+          />
+          <MetricCard
+            label="Open Now"
+            value={num(stats.open_count)}
+            tone={stats.open_count > 0 ? 'blue' : 'slate'}
+            icon={<Icon.Check className="h-5 w-5" />}
+            hint={stats.open_count > 0 ? 'Live contract on this car' : 'No open contract'}
+            onClick={av.open_contract_id ? () => navigate(`/contracts/${av.open_contract_id}`) : undefined}
+          />
+          <MetricCard
+            label="Lifetime Net Profit"
+            value={stats.is_new ? 'New' : aed(stats.lifetime_net_profit)}
+            tone={stats.is_new ? 'slate' : Number(stats.lifetime_net_profit) < 0 ? 'red' : 'emerald'}
+            icon={<Icon.Cash className="h-5 w-5" />}
+            big
+            hint={stats.is_new ? 'Not yet rented' : 'Gross revenue − operating − maintenance · tap for breakdown'}
+            tooltip="Reverse-engineered Net Profit: rent billed − discount + realized usage − operating costs − car-level maintenance. VAT, deposits & damages excluded."
+            onClick={stats.is_new ? undefined : () => setBridgeOpen(true)}
+          />
+          <MetricCard
+            label="Outstanding Fines"
+            value={num(reg ? reg.fines_count : 0)}
+            tone={reg && reg.fines_count > 0 ? 'red' : 'slate'}
+            icon={<Icon.Alert className="h-5 w-5" />}
+            hint={reg ? aed2(reg.fines_amount) : 'No registration record'}
+            tooltip="Traffic violations / fines from the RTA source, owned by F RTA."
+          />
+        </MetricGrid>
 
         {/* Specs + Registration */}
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
@@ -433,22 +437,22 @@ export default function VehicleProfile() {
                 <Field label="Year" value={v.year} />
                 <Field label="Color" value={v.color} />
                 <Field label="Category" value={v.category} />
-                <Field label="Odometer" value={v.odometer != null ? `${num(v.odometer)} km` : '—'} />
+                <Field label="Odometer" value={v.odometer != null ? `${num(v.odometer)} km` : '—'} tip="Self-healing global mileage baseline — anchored to the earliest contract reading, never rolls back." />
               </div>
               <div>
                 <Field label="Source" value={v.source} />
-                <Field label="Purchase Price" value={v.purchase_price ? aed2(v.purchase_price) : '—'} />
-                <Field label="Purchase Date" value={fmtDate(v.purchase_date)} />
+                <Field label="Purchase Price" value={v.purchase_price ? aed2(v.purchase_price) : '—'} tip="From the FASTER Asset sheet (single source of truth for purchase price/date)." />
+                <Field label="Purchase Date" value={fmtDate(v.purchase_date)} tip="When the car was acquired (owned_since) — metadata, not the in-service / first-rental anchor." />
                 <Field label="Replacement Due" value={fmtDate(v.replacement_due_date)} />
                 <Field label="Warranty End" value={fmtDate(v.warranty_end_date)} />
                 {/* API car card: battery last-replacement date (only battery field OM exposes). */}
                 <Field label="Battery Last Changed" value={fmtDate(v.battery_last_changed)} />
                 {/* Battery is due one year after the last change. */}
-                <Field label="Next Battery Change" value={fmtDate(batteryNextChange(v.battery_last_changed))} />
+                <Field label="Next Battery Change" value={fmtDate(batteryNextChange(v.battery_last_changed))} tip="Due one year after the last battery change." />
                 {/* Oil Change sheet: per-car interval (Validity) + last-service baseline. */}
-                <Field label="Service Interval (Validity)" value={v.service_interval_km != null ? `${num(v.service_interval_km)} km` : '—'} />
+                <Field label="Service Interval (Validity)" value={v.service_interval_km != null ? `${num(v.service_interval_km)} km` : '—'} tip="Per-car km service interval from the Oil Change sheet (Validity)." />
                 <Field label="Last Change" value={v.last_service_odometer != null ? `${num(v.last_service_odometer)} km` : '—'} />
-                <Field label="Service Status" value={serviceStatusText(v.service_status)} />
+                <Field label="Service Status" value={serviceStatusText(v.service_status)} tip="Strict km-based service-due verdict: odometer vs last-service baseline + interval." />
               </div>
             </div>
           </Card>
@@ -474,35 +478,41 @@ export default function VehicleProfile() {
           </Card>
         </div>
 
+        {/* Maintenance spend & cadence — at-a-glance */}
+        <MetricGrid cols={4}>
+          <MetricCard
+            label="Maintenance Spent · all-time"
+            value={aed2(stats.maintenance_total)}
+            tone="amber"
+            icon={<Icon.Wrench className="h-5 w-5" />}
+            hint="Total workshop cost on this car"
+          />
+          <MetricCard
+            label="Visits"
+            value={num(stats.maintenance_count)}
+            tone="slate"
+            icon={<Icon.Activity className="h-5 w-5" />}
+          />
+          <MetricCard
+            label="Avg / visit"
+            value={aed2(Number(stats.maintenance_count) > 0 ? Number(stats.maintenance_total) / Number(stats.maintenance_count) : 0)}
+            tone="slate"
+            icon={<Icon.Chart className="h-5 w-5" />}
+          />
+          <MetricCard
+            label="Last visit"
+            value={maintenance[0]?.date ? fmtDate(maintenance[0].date) : '—'}
+            tone="slate"
+            icon={<Icon.Clock className="h-5 w-5" />}
+          />
+        </MetricGrid>
+
         {/* Maintenance history — the full "story" for this car */}
-        <Card>
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-6 py-4">
-            <h3 className="text-base font-semibold text-gray-900">Maintenance History</h3>
-            <Badge tone="gray">{num(maintenance.length)} {maintenance.length === 1 ? 'visit' : 'visits'}</Badge>
-          </div>
-
-          {/* At-a-glance summary — spend & cadence */}
-          <div className="grid grid-cols-2 gap-3 px-6 py-4 sm:grid-cols-4">
-            <div className="rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3">
-              <span className="text-[11px] font-medium uppercase tracking-wide text-amber-700">Total spent · all-time</span>
-              <span className="mt-1 block text-2xl font-bold tracking-tight text-amber-900">{aed2(stats.maintenance_total)}</span>
-            </div>
-            <div className="rounded-2xl border border-gray-100 bg-gray-50/70 px-4 py-3">
-              <span className="text-[11px] font-medium uppercase tracking-wide text-gray-500">Visits</span>
-              <span className="mt-1 block text-2xl font-bold tracking-tight text-gray-900">{num(stats.maintenance_count)}</span>
-            </div>
-            <div className="rounded-2xl border border-gray-100 bg-gray-50/70 px-4 py-3">
-              <span className="text-[11px] font-medium uppercase tracking-wide text-gray-500">Avg / visit</span>
-              <span className="mt-1 block text-2xl font-bold tracking-tight text-gray-900">
-                {aed2(Number(stats.maintenance_count) > 0 ? Number(stats.maintenance_total) / Number(stats.maintenance_count) : 0)}
-              </span>
-            </div>
-            <div className="rounded-2xl border border-gray-100 bg-gray-50/70 px-4 py-3">
-              <span className="text-[11px] font-medium uppercase tracking-wide text-gray-500">Last visit</span>
-              <span className="mt-1 block text-2xl font-bold tracking-tight text-gray-900">{maintenance[0]?.date ? fmtDate(maintenance[0].date) : '—'}</span>
-            </div>
-          </div>
-
+        <SectionCard
+          title="Maintenance History"
+          subtitle="Each visit, newest first · tap a row to see its workshop events."
+          actions={<Badge tone="gray">{num(maintenance.length)} {maintenance.length === 1 ? 'visit' : 'visits'}</Badge>}
+        >
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-100 text-sm stagger-rows">
               <thead className="bg-gray-50/60">
@@ -599,7 +609,7 @@ export default function VehicleProfile() {
               </button>
             </div>
           )}
-        </Card>
+        </SectionCard>
 
         {/* Maintenance Log — a timeline of every workshop event for this car. Click any event for full detail. */}
         {maintenanceLog.length > 0 && (
@@ -703,126 +713,108 @@ export default function VehicleProfile() {
 
         {/* Cost analysis — per-service price trend & vs-fleet comparison */}
         {analytics.length > 0 && (
-          <Card>
-            <div className="border-b border-gray-100 px-6 py-4">
-              <h3 className="text-base font-semibold text-gray-900">Cost Analysis</h3>
-              <p className="mt-0.5 text-xs text-gray-400">Latest price vs the previous one, and this car vs the fleet average.</p>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-100 text-sm stagger-rows">
-                <thead className="bg-gray-50/60">
-                  <tr className="text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                    <th className="px-6 py-3">Service</th>
-                    <th className="px-6 py-3 text-center">Visits</th>
-                    <th className="px-6 py-3 text-right">Latest</th>
-                    <th className="px-6 py-3 text-right">Trend (vs previous)</th>
-                    <th className="px-6 py-3 text-right">This car avg</th>
-                    <th className="px-6 py-3 text-right">Fleet avg</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {analytics.map((s) => {
+          <SectionCard
+            title="Cost Analysis"
+            subtitle="Latest price vs the previous one, and this car vs the fleet average."
+          >
+            <DataTable
+              rows={analytics}
+              rowKey={(s) => s.service}
+              columns={[
+                { key: 'service', header: 'Service', cellClass: 'font-medium text-slate-900', render: (s) => s.service },
+                { key: 'visits', header: 'Visits', align: 'center', cellClass: 'text-slate-500', render: (s) => s.visits },
+                { key: 'latest', header: 'Latest', align: 'right', cellClass: 'tabular-nums font-medium text-slate-900', render: (s) => aed2(s.latest_cost) },
+                {
+                  key: 'trend', header: 'Trend (vs previous)', align: 'right',
+                  tooltip: 'Change from the previous recorded price for this service. Red = more expensive, green = cheaper.',
+                  cellClass: 'tabular-nums font-medium',
+                  render: (s) => {
                     const arrow = s.trend === 'up' ? '▲' : s.trend === 'down' ? '▼' : '–';
-                    const tone = s.trend === 'up' ? 'text-red-600' : s.trend === 'down' ? 'text-emerald-600' : 'text-gray-400';
+                    const tone = s.trend === 'up' ? 'text-red-600' : s.trend === 'down' ? 'text-emerald-600' : 'text-slate-400';
+                    return <span className={tone}>{s.delta != null ? `${arrow} ${aed2(Math.abs(s.delta))}` : '—'}</span>;
+                  },
+                },
+                { key: 'avg', header: 'This car avg', align: 'right', cellClass: 'tabular-nums text-slate-700', render: (s) => aed2(s.avg_cost) },
+                {
+                  key: 'fleet', header: 'Fleet avg', align: 'right',
+                  tooltip: 'Average cost of this service across the whole fleet — to spot a car being over- or under-charged.',
+                  cellClass: 'tabular-nums text-slate-700',
+                  render: (s) => {
                     const vsFleet = (s.fleet_avg != null && s.avg_cost != null) ? s.avg_cost - s.fleet_avg : null;
                     return (
-                      <tr key={s.service} className="hover:bg-gray-50/60">
-                        <td className="px-6 py-3 font-medium text-gray-900">{s.service}</td>
-                        <td className="px-6 py-3 text-center text-gray-500">{s.visits}</td>
-                        <td className="px-6 py-3 text-right font-medium text-gray-900">{aed2(s.latest_cost)}</td>
-                        <td className={`px-6 py-3 text-right font-medium ${tone}`}>
-                          {s.delta != null ? `${arrow} ${aed2(Math.abs(s.delta))}` : '—'}
-                        </td>
-                        <td className="px-6 py-3 text-right text-gray-700">{aed2(s.avg_cost)}</td>
-                        <td className="px-6 py-3 text-right text-gray-700">
-                          {s.fleet_avg != null ? aed2(s.fleet_avg) : '—'}
-                          {vsFleet != null && vsFleet !== 0 && (
-                            <span className={`ml-1 text-xs ${vsFleet > 0 ? 'text-red-500' : 'text-emerald-600'}`}>
-                              {vsFleet > 0 ? '(above)' : '(below)'}
-                            </span>
-                          )}
-                        </td>
-                      </tr>
+                      <>
+                        {s.fleet_avg != null ? aed2(s.fleet_avg) : '—'}
+                        {vsFleet != null && vsFleet !== 0 && (
+                          <span className={`ml-1 text-xs ${vsFleet > 0 ? 'text-red-500' : 'text-emerald-600'}`}>
+                            {vsFleet > 0 ? '(above)' : '(below)'}
+                          </span>
+                        )}
+                      </>
                     );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </Card>
+                  },
+                },
+              ]}
+            />
+          </SectionCard>
         )}
 
         {/* Contract history */}
-        <Card>
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-6 py-4">
-            <div className="flex items-center gap-2">
-              <h3 className="text-base font-semibold text-gray-900">Contract History</h3>
+        <SectionCard
+          title="Contract History"
+          actions={(
+            <div className="flex items-center gap-3">
               <Badge tone="gray">{num(contracts.length)} total</Badge>
+              {/* Type filter — only shows when the vehicle has more than one type to switch between */}
+              {contractFilters.length > 2 && (
+                <div className="inline-flex rounded-lg bg-slate-100 p-0.5">
+                  {contractFilters.map((f) => (
+                    <button
+                      key={f.key}
+                      type="button"
+                      onClick={() => { setContractType(f.key); setShowAllContracts(false); }}
+                      className={`rounded-md px-2.5 py-1 text-xs font-medium transition ${
+                        contractType === f.key ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'
+                      }`}
+                    >
+                      {f.label} <span className="tabular-nums opacity-60">{f.count}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
-            {/* Type filter — only shows when the vehicle has more than one type to switch between */}
-            {contractFilters.length > 2 && (
-              <div className="inline-flex rounded-lg bg-gray-100 p-0.5">
-                {contractFilters.map((f) => (
-                  <button
-                    key={f.key}
-                    type="button"
-                    onClick={() => { setContractType(f.key); setShowAllContracts(false); }}
-                    className={`rounded-md px-2.5 py-1 text-xs font-medium transition ${
-                      contractType === f.key ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-800'
-                    }`}
-                  >
-                    {f.label} <span className="tabular-nums opacity-60">{f.count}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-100 text-sm stagger-rows">
-              <thead className="bg-gray-50/60">
-                <tr className="text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                  <th className="px-6 py-3">Contract</th>
-                  <th className="px-6 py-3">Customer</th>
-                  <th className="px-6 py-3">Type</th>
-                  <th className="px-6 py-3">State</th>
-                  <th className="px-6 py-3">Out</th>
-                  <th className="px-6 py-3">In</th>
-                  <th className="px-6 py-3 text-right">Debit</th>
-                  <th className="px-6 py-3 text-right">Credit</th>
-                  <th className="px-6 py-3 text-right">Balance</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {(showAllContracts ? filteredContracts : filteredContracts.slice(0, CONTRACTS_PREVIEW)).map((c) => (
-                  <tr key={c.id} className="hover:bg-gray-50/60">
-                    <td className="px-6 py-3 font-medium">
-                      <Link to={`/contracts/${c.id}`} className="text-indigo-600 hover:text-indigo-700">#{c.contract_no || c.id}</Link>
-                    </td>
-                    <td className="px-6 py-3">
-                      {c.customer_id
-                        ? <Link to={`/customers/${c.customer_id}`} className="text-indigo-600 hover:text-indigo-700">{c.customer || `#${c.customer_id}`}</Link>
-                        : <span className="text-gray-400">—</span>}
-                    </td>
-                    <td className="px-6 py-3"><ContractTypeBadge type={c.contract_type} /></td>
-                    <td className="px-6 py-3"><ContractStateBadge state={c.state} /></td>
-                    <td className="px-6 py-3 text-gray-500">{fmtDate(c.out_date)}</td>
-                    <td className="px-6 py-3 text-gray-500">{fmtDate(c.in_date)}</td>
-                    <td className="px-6 py-3 text-right text-gray-600">{aed2(c.debit)}</td>
-                    <td className="px-6 py-3 text-right text-gray-600">{aed2(c.credit)}</td>
-                    <td className="px-6 py-3 text-right">
-                      <Badge tone={Number(c.balance) > 0 ? 'red' : Number(c.balance) < 0 ? 'green' : 'gray'}>{aed2(c.balance)}</Badge>
-                    </td>
-                  </tr>
-                ))}
-                {filteredContracts.length === 0 && (
-                  <tr><td colSpan="9" className="px-6 py-8 text-center text-gray-400">
-                    {contracts.length === 0 ? 'No contracts for this vehicle.' : 'No contracts of this type.'}
-                  </td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+          )}
+        >
+          <DataTable
+            rows={showAllContracts ? filteredContracts : filteredContracts.slice(0, CONTRACTS_PREVIEW)}
+            rowKey={(c) => c.id}
+            empty={contracts.length === 0 ? 'No contracts for this vehicle.' : 'No contracts of this type.'}
+            highlightRow={(c) => !c.in_date}
+            columns={[
+              {
+                key: 'contract', header: 'Contract', cellClass: 'font-medium',
+                render: (c) => <Link to={`/contracts/${c.id}`} className="text-indigo-600 hover:text-indigo-700">#{c.contract_no || c.id}</Link>,
+              },
+              {
+                key: 'customer', header: 'Customer',
+                render: (c) => c.customer_id
+                  ? <Link to={`/customers/${c.customer_id}`} className="text-indigo-600 hover:text-indigo-700">{c.customer || `#${c.customer_id}`}</Link>
+                  : <span className="text-slate-400">—</span>,
+              },
+              { key: 'type', header: 'Type', render: (c) => <ContractTypeBadge type={c.contract_type} /> },
+              { key: 'state', header: 'State', render: (c) => <ContractStateBadge state={c.state} /> },
+              { key: 'out', header: 'Out', cellClass: 'text-slate-500', render: (c) => fmtDate(c.out_date) },
+              { key: 'in', header: 'In', cellClass: 'text-slate-500', render: (c) => fmtDate(c.in_date) },
+              { key: 'debit', header: 'Debit', align: 'right', cellClass: 'tabular-nums text-slate-600', render: (c) => aed2(c.debit) },
+              { key: 'credit', header: 'Credit', align: 'right', cellClass: 'tabular-nums text-slate-600', render: (c) => aed2(c.credit) },
+              {
+                key: 'balance', header: 'Balance', align: 'right',
+                tooltip: 'Debit − credit on the contract. Red = customer owes, green = credit due to customer.',
+                render: (c) => <Badge tone={Number(c.balance) > 0 ? 'red' : Number(c.balance) < 0 ? 'green' : 'gray'}>{aed2(c.balance)}</Badge>,
+              },
+            ]}
+          />
           {filteredContracts.length > CONTRACTS_PREVIEW && (
-            <div className="border-t border-gray-100 px-6 py-3 text-center">
+            <div className="border-t border-slate-100 px-6 py-3 text-center">
               <button
                 type="button"
                 onClick={() => setShowAllContracts((s) => !s)}
@@ -833,7 +825,7 @@ export default function VehicleProfile() {
               </button>
             </div>
           )}
-        </Card>
+        </SectionCard>
       </div>
 
       {/* Send to Maintenance */}
