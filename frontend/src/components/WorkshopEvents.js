@@ -27,9 +27,16 @@ const LEVEL = {
 
 const EMPTY = {
   event_status: 'OUT', vendor_id: '', out_date: '', expected_return_date: '',
-  follow_date: '', cost: '', responsible: '', maintenance_type: '', severity: '',
-  maintenance_notes: '',
+  follow_date: '', actual_in_date: '', cost: '', responsible: '', maintenance_type: '', severity: '',
+  visit_context: '', maintenance_notes: '',
 };
+
+// "Rental-First" tag. Only 'routine' is kept off the foresight Act-now / Chronic lists.
+const VISIT_CONTEXTS = [
+  { value: '', label: 'Standard repair' },
+  { value: 'routine', label: 'Routine service (oil, filters, periodic)' },
+  { value: 'accident_rental', label: 'Accident repair (during a live rental)' },
+];
 
 /**
  * The garage log for one vehicle, owned by the dashboard. Lists every workshop event
@@ -105,10 +112,12 @@ export default function WorkshopEvents({ vehicleId, contractId, defaultDate, exp
       out_date: ev.out_date || '',
       expected_return_date: ev.expected_return_date || '',
       follow_date: ev.follow_date || '',
+      actual_in_date: ev.actual_in_date || '',
       cost: ev.cost ?? '',
       responsible: ev.responsible || '',
       maintenance_type: ev.maintenance_type || '',
       severity: ev.severity || '',
+      visit_context: ev.visit_context || '',
       maintenance_notes: ev.notes || '',
     });
     setTags(Array.isArray(ev.issues) ? ev.issues : []);
@@ -135,10 +144,12 @@ export default function WorkshopEvents({ vehicleId, contractId, defaultDate, exp
         out_date: form.out_date || null,
         expected_return_date: form.expected_return_date || null,
         follow_date: form.follow_date || null,
+        actual_in_date: form.actual_in_date || null,
         cost: form.cost === '' ? null : Number(form.cost),
         responsible: form.responsible || null,
         maintenance_type: form.maintenance_type || null,
         severity: form.severity || null,
+        visit_context: form.visit_context || null,
         maintenance_notes: form.maintenance_notes || null,
       };
       if (editing) {
@@ -201,6 +212,8 @@ export default function WorkshopEvents({ vehicleId, contractId, defaultDate, exp
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge tone={STAGE_TONE[ev.stage] || 'slate'}>{ev.stage || '—'}</Badge>
                     {lvl && <Badge tone={lvl.tone}>{lvl.emoji} {lvl.label}</Badge>}
+                    {ev.visit_context === 'routine' && <Badge tone="green" title="Planned upkeep — excluded from foresight Act-now/Chronic">Routine</Badge>}
+                    {ev.visit_context === 'accident_rental' && <Badge tone="amber" title="Accident repair logged during a live rental">Accident · rental</Badge>}
                     {/* No SLA / "Overdue" badge here: this is a historical garage log (a car
                         often goes back for another visit). Live overdue lives on the board. */}
                     {!ev.editable && <Badge tone="gray" title="Synced from the Google Sheet — read-only here">📄 Sheet</Badge>}
@@ -307,6 +320,35 @@ export default function WorkshopEvents({ vehicleId, contractId, defaultDate, exp
             <Input label="Out date" type="date" value={form.out_date} onChange={set('out_date')} error={err('out_date')} />
             <Input label="Expected return" type="date" value={form.expected_return_date} onChange={set('expected_return_date')} error={err('expected_return_date')} />
             <Input label="Follow-up date" type="date" value={form.follow_date} onChange={set('follow_date')} error={err('follow_date')} />
+          </div>
+
+          {/* Closing the event ('IN') is guarded: cost, vendor and the returned date are mandatory
+              so profit can be tracked and a garage can be held accountable. */}
+          {form.event_status === 'IN' && (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
+              <p className="mb-3 text-xs font-medium text-emerald-700">
+                Closing this event — Cost, Garage/Vendor and the Returned date are required to keep profit tracking accurate.
+              </p>
+              <Input
+                label="Returned date (Actual In) *"
+                type="date"
+                value={form.actual_in_date}
+                onChange={set('actual_in_date')}
+                error={err('actual_in_date')}
+              />
+            </div>
+          )}
+
+          <div>
+            <Select label="Visit context" value={form.visit_context} onChange={set('visit_context')} error={err('visit_context')}>
+              {VISIT_CONTEXTS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+            </Select>
+            {form.visit_context === 'routine' && (
+              <p className="mt-1 text-xs text-emerald-600">Planned upkeep — kept off the “Act now”/“Chronic” foresight lists.</p>
+            )}
+            {form.visit_context === 'accident_rental' && (
+              <p className="mt-1 text-xs text-amber-600">Logged on the car; the rental keeps running (billing isn’t interrupted).</p>
+            )}
           </div>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">

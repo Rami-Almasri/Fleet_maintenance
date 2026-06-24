@@ -39,6 +39,14 @@ class Maintenance extends Model
     /** Workshop stages (event_status) the dashboard manages; 'IN' means the car came back. */
     public const STAGES = ['OUT', 'IN', 'Follow up', 'Change', 'Delay', 'Test', 'Under Test'];
 
+    /**
+     * "Rental-First" visit context. Only 'routine' changes behaviour (excluded from the
+     * foresight Chronic / Act-now signals); 'accident_rental' and 'standard' count as before,
+     * as does a null (untagged) value. See [[rental-first-policy]] in project memory.
+     */
+    public const VISIT_CONTEXTS = ['routine', 'accident_rental', 'standard'];
+    public const CONTEXT_ROUTINE = 'routine';
+
     protected $fillable = [
         'contract_id',
         'vehicle_id',
@@ -67,6 +75,7 @@ class Maintenance extends Model
         'charge_to',
         'garage',
         'maintenance_type',
+        'visit_context',
         'service_main',
         'service_sup',
         'damage_location',

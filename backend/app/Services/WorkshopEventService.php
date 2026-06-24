@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Contract;
 use App\Models\Maintenance;
+use App\Models\Vehicle;
 use App\Models\Vendor;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
@@ -26,8 +27,10 @@ use Illuminate\Support\Facades\DB;
  */
 class WorkshopEventService
 {
-    public function __construct(protected MaintenanceAnalyticsService $analytics)
-    {
+    public function __construct(
+        protected MaintenanceAnalyticsService $analytics,
+        protected OperationsService $operations,
+    ) {
     }
 
     /**
@@ -75,6 +78,9 @@ class WorkshopEventService
             $this->fill($event, $data);
             $event->save();
 
+            // Cascade: a new garage event drives the car's live availability (in garage / freed).
+            $this->cascadeOperationalStatus($event->vehicle_id);
+
             return $event->load(['vendor', 'reason', 'vehicle:id,plate_no,make,model']);
         });
     }
@@ -82,8 +88,16 @@ class WorkshopEventService
     public function update(array $data, Maintenance $event): Maintenance
     {
         return DB::transaction(function () use ($data, $event) {
+            $previousVehicleId = $event->vehicle_id;
             $this->fill($event, $data);
             $event->save();
+
+            // Cascade for both the new vehicle and (if it was re-pointed) the old one, so neither
+            // is left showing a stale "In Maintenance" after the event moved or closed ('IN').
+            $this->cascadeOperationalStatus($event->vehicle_id);
+            if ($previousVehicleId && $previousVehicleId !== $event->vehicle_id) {
+                $this->cascadeOperationalStatus($previousVehicleId);
+            }
 
             return $event->refresh()->load(['vendor', 'reason', 'vehicle:id,plate_no,make,model']);
         });
@@ -91,7 +105,28 @@ class WorkshopEventService
 
     public function destroy(Maintenance $event): void
     {
-        $event->delete();
+        $vehicleId = $event->vehicle_id;
+        DB::transaction(function () use ($event, $vehicleId) {
+            $event->delete();
+            // Cascade: removing the last open garage event may free the car.
+            $this->cascadeOperationalStatus($vehicleId);
+        });
+    }
+
+    /**
+     * Re-derive ONE vehicle's live operational_status after its garage log changed.
+     * Contracts still win (an open rental/maintenance contract is the source of truth); the
+     * manual event only decides availability when no governing contract is open — and the
+     * fleet-wide reconcile uses the same rule, so a later sync won't undo this.
+     */
+    protected function cascadeOperationalStatus(?int $vehicleId): void
+    {
+        if (! $vehicleId) {
+            return;
+        }
+        if ($vehicle = Vehicle::find($vehicleId)) {
+            $this->operations->reconcileVehicleOperationalStatus($vehicle);
+        }
     }
 
     /**
@@ -103,11 +138,11 @@ class WorkshopEventService
     {
         // Direct passthrough columns (whatever the request supplied).
         foreach ([
-            'vehicle_id', 'vendor_id', 'event_status', 'maintenance_type',
+            'vehicle_id', 'vendor_id', 'event_status', 'maintenance_type', 'visit_context',
             'service_main', 'service_sup', 'damage_location', 'severity',
             'responsible', 'approved_by', 'liable_party', 'charge_to', 'driver',
             'spare_part', 'invoice_no', 'cost', 'cost_notes', 'maintenance_notes',
-            'out_date', 'expected_return_date', 'follow_date', 'base_on',
+            'out_date', 'expected_return_date', 'follow_date', 'actual_in_date', 'base_on',
         ] as $key) {
             if (array_key_exists($key, $data)) {
                 $event->{$key} = $data[$key] === '' ? null : $data[$key];

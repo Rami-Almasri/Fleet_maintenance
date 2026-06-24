@@ -119,6 +119,7 @@ class MaintenanceSheetImporter
                 }
 
                 $data = ['origin' => $origin, 'car_label' => $car, 'plate' => $plate];
+                $rawDates = [];
                 foreach ($map as $col => $field) {
                     if ($field === 'car') {
                         continue;
@@ -128,13 +129,25 @@ class MaintenanceSheetImporter
                         continue;
                     }
                     if (in_array($field, self::DATE_FIELDS, true)) {
-                        $data[$field] = $this->date($val);
+                        $rawDates[$field] = $val;   // resolved after the loop with out_date as the year anchor
                     } elseif ($field === 'cost') {
                         $data[$field] = $this->money($val);
                     } elseif (in_array($field, self::LONG_TEXT_FIELDS, true)) {
                         $data[$field] = $val;
                     } else {
                         $data[$field] = mb_substr($val, 0, 250); // varchar(255) columns
+                    }
+                }
+
+                // Resolve dates AFTER the row is read so the return/follow dates can inherit the
+                // out_date's year. The sheet often writes a return as a bare "5/14" (no year); parsed
+                // alone that lands on TODAY's year (e.g. 2026), inventing a return a year in the future
+                // and a phantom ~365-day workshop visit. Anchored to out_date it stays correct, rolling
+                // forward only for genuine year-boundary returns (a Dec out → Jan return).
+                $data['out_date'] = isset($rawDates['out_date']) ? $this->date($rawDates['out_date']) : null;
+                foreach (['expected_return_date', 'follow_date', 'actual_in_date'] as $depDate) {
+                    if (isset($rawDates[$depDate])) {
+                        $data[$depDate] = $this->date($rawDates[$depDate], $data['out_date']);
                     }
                 }
 
@@ -389,7 +402,13 @@ class MaintenanceSheetImporter
         return md5(implode('|', $parts));
     }
 
-    protected function date($s): ?string
+    /**
+     * Parse a sheet date cell to 'Y-m-d'. When the cell carries NO explicit 4-digit year
+     * (e.g. a bare "5/14") and an $anchor date is given, the year is taken from $anchor instead
+     * of defaulting to the current year — so a return cell inherits its out_date's year. A result
+     * that lands before the anchor rolls forward one year (a genuine Dec → Jan return).
+     */
+    protected function date($s, ?string $anchor = null): ?string
     {
         $s = trim((string) $s);
         if ($s === '') {
@@ -397,11 +416,13 @@ class MaintenanceSheetImporter
         }
         // Collapse odd spacing so "2026  Apr 7" still matches a fixed format.
         $norm = preg_replace('/\s+/', ' ', $s);
+        $hasYear = (bool) preg_match('/\d{4}/', $norm);
 
         // The sheet writes dates year-first with a text month, e.g. "2026 Apr 07" —
         // a form Carbon::parse() rejects, so it would silently drop the date. Try
         // those explicit formats first; anything else falls through to the permissive
-        // parser below (unchanged behavior for dates that already worked).
+        // parser below (unchanged behavior for dates that already worked). These all carry
+        // an explicit year, so anchoring never applies here.
         foreach (['Y M d', 'Y M j', 'Y F d', 'Y F j'] as $fmt) {
             try {
                 $d = Carbon::createFromFormat('!' . $fmt, $norm);
@@ -416,10 +437,28 @@ class MaintenanceSheetImporter
 
         try {
             $d = Carbon::parse($norm);
-            return $d->year < 1990 || $d->year > 2100 ? null : $d->format('Y-m-d');
         } catch (Throwable $e) {
             return null;
         }
+        if ($d->year < 1990 || $d->year > 2100) {
+            return null;
+        }
+
+        // Year-less cell: inherit the anchor's year instead of today's, rolling forward a year
+        // only if the result would otherwise precede the anchor (out → next-year return).
+        if (! $hasYear && $anchor !== null) {
+            try {
+                $a = Carbon::parse($anchor);
+                $d = $d->copy()->year($a->year);
+                if ($d->lt($a)) {
+                    $d->addYear();
+                }
+            } catch (Throwable $e) {
+                // anchor unparseable — fall back to the un-anchored date
+            }
+        }
+
+        return $d->format('Y-m-d');
     }
 
     protected function money($s): ?float

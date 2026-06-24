@@ -7,8 +7,11 @@ use App\Models\Contract;
 use App\Models\Invoice;
 use App\Models\Maintenance;
 use App\Models\MaintenanceReason;
+use App\Models\Vehicle;
 use App\Services\MaintenanceAnalyticsService;
+use App\Services\MaintenanceForesightService;
 use App\Services\MaintenanceIncidentService;
+use App\Services\OperationsService;
 
 class MaintenanceController extends Controller
 {
@@ -38,7 +41,7 @@ class MaintenanceController extends Controller
      * contracts) with its garage, issues, due date, cost and a traffic-light SLA
      * status (green on_track / yellow at_risk / red breached).
      */
-    public function board(MaintenanceAnalyticsService $analytics)
+    public function board(MaintenanceAnalyticsService $analytics, OperationsService $operations)
     {
         try {
             $open = Contract::where('contract_type', 'U')
@@ -46,6 +49,14 @@ class MaintenanceController extends Controller
                 ->with(['vehicle', 'maintenance.vendor', 'maintenance.reason', 'items'])
                 ->orderBy('out_date')
                 ->get();
+
+            // Cars in the garage on a hand-entered workshop event with NO open contract — they have
+            // no type-U contract to anchor a board card, so we synthesise one per car below. Same
+            // set the dashboard KPI / donut count, so the board total agrees with them.
+            $manualVehicleIds = array_values(array_diff(
+                $operations->manualOnlyGarageVehicleIds(),
+                $open->pluck('vehicle_id')->filter()->all()
+            ));
 
             // OfficeManager carries no maintenance detail for type-U contracts, so a car's
             // current garage visit (status / garage / issues / notes) is read from the
@@ -61,14 +72,17 @@ class MaintenanceController extends Controller
             // Maintenance and financials are no longer separate silos: for every car on the
             // board we pre-roll its LIFETIME income and maintenance expense (two grouped
             // queries, keyed by vehicle_id — no N+1), so each row can show a Net Margin.
-            //   Income  = ex-VAT value of every invoice linked to the car's contracts
-            //             (via Invoice.contract_id -> contracts.vehicle_id; VAT is a
-            //             pass-through tax, not revenue, so total_value not total_after_vat).
+            //   Income  = ex-VAT value of invoices on the car's RENTAL contracts only —
+            //             contract_type 'C' ("rent"; NOT 'R', which is "booking"). VAT is a
+            //             pass-through tax, not revenue, so total_value not total_after_vat;
+            //             maintenance ('U') reimbursement invoices are NOT fleet revenue.
             //   Expense = every maintenance event cost logged for the car (maintenances.cost).
-            $vehicleIds = $open->pluck('vehicle_id')->filter()->unique()->values()->all();
+            $vehicleIds = $open->pluck('vehicle_id')->filter()
+                ->merge($manualVehicleIds)->unique()->values()->all();
 
             $income = Invoice::query()
                 ->join('contracts', 'invoices.contract_id', '=', 'contracts.id')
+                ->where('contracts.contract_type', 'C')
                 ->whereIn('contracts.vehicle_id', $vehicleIds ?: [0])
                 ->groupBy('contracts.vehicle_id')
                 ->selectRaw('contracts.vehicle_id as vid, SUM(invoices.total_value) as total')
@@ -117,6 +131,7 @@ class MaintenanceController extends Controller
 
                 return [
                     'id'                   => $c->id,
+                    'is_contract'          => true,
                     'contract_no'          => $c->contract_no,
                     'vehicle_id'           => $c->vehicle_id,
                     'plate'                => $c->vehicle?->plate_no,
@@ -162,6 +177,92 @@ class MaintenanceController extends Controller
                     'net_margin'               => round($vehicleIncome - $vehicleSpend, 2),
                 ];
             })->values();
+
+            // --- Contract-less garage cards: cars in on a hand-entered workshop event only -------
+            // Build one card per such car from its manual event run (most recent OUT → now), so a
+            // workshop visit logged without a maintenance contract still shows on the board.
+            if ($manualVehicleIds) {
+                $manualEvents = Maintenance::query()
+                    ->where('origin', Maintenance::ORIGIN_MANUAL)
+                    ->whereIn('vehicle_id', $manualVehicleIds)
+                    ->with(['vendor', 'reason', 'vehicle'])
+                    ->orderBy('out_date')->orderBy('id')
+                    ->get()
+                    ->groupBy('vehicle_id');
+
+                $manualCars = collect($manualVehicleIds)->map(function ($vid) use ($manualEvents, $analytics, $income, $spend) {
+                    $seq = $manualEvents[$vid] ?? collect();
+                    if ($seq->isEmpty()) {
+                        return null;
+                    }
+                    // The current open run = events since the last 'IN' (the car's latest trip out).
+                    $lastInIdx = $seq->search(fn ($e) => $e->event_status === 'IN');
+                    $run     = $lastInIdx === false ? $seq : $seq->slice($lastInIdx + 1)->values();
+                    $run     = $run->isEmpty() ? $seq : $run;
+                    $latest  = $run->last();
+                    $vehicle = $latest->vehicle;
+
+                    $tags     = $analytics->sheetIssueTags($latest);
+                    $notes    = $latest->maintenance_notes;
+                    $garage   = $latest->vendor?->name ?: $latest->garage;
+                    $expected = $latest->expected_return_date;
+
+                    $sla = $analytics->slaStatus($latest->out_date, $expected, [
+                        'linked'   => true,
+                        'returned' => false,   // by definition the latest event is not 'IN'
+                    ]);
+
+                    $priority = ($latest->maintenance_reason_id && $latest->reason)
+                        ? ['level' => $latest->reason->level, 'matched' => $latest->reason->reason_en]
+                        : $analytics->classifyPriority($tags, $notes);
+
+                    $cost          = round((float) $run->sum('cost'), 2);
+                    $vehicleIncome = round((float) ($income[$vid] ?? 0), 2);
+                    $vehicleSpend  = round((float) ($spend[$vid] ?? 0), 2);
+
+                    return [
+                        'id'                   => 'm' . $vid,   // string id → no collision with contract ids
+                        'is_contract'          => false,
+                        'contract_no'          => null,
+                        'vehicle_id'           => (int) $vid,
+                        'plate'                => $vehicle?->plate_no,
+                        'car'                  => $vehicle ? trim($vehicle->make . ' ' . $vehicle->model) : null,
+                        'garage'               => $garage,
+                        'issues'               => $tags,
+                        'notes'                => $notes,
+                        'responsible'          => $latest->responsible,
+                        'type'                 => $latest->maintenance_type,
+                        'stage'                => $latest->event_status,
+                        'events'               => $run->map(fn ($e) => [
+                            'stage'                => $e->event_status,
+                            'out_date'             => optional($e->out_date)->toDateString(),
+                            'expected_return_date' => optional($e->expected_return_date)->toDateString(),
+                            'actual_in_date'       => optional($e->actual_in_date)->toDateString(),
+                            'garage'               => $e->vendor?->name ?: $e->garage,
+                            'services'             => $analytics->sheetIssueTags($e),
+                            'notes'                => $e->maintenance_notes,
+                            'cost'                 => $e->cost ? (float) $e->cost : null,
+                        ])->all(),
+                        'out_date'             => optional($latest->out_date)->toDateString(),
+                        'in_date'              => null,
+                        'due_sheet'            => optional($latest->expected_return_date)->toDateString(),
+                        'sheet_back'           => optional($latest->actual_in_date)->toDateString(),
+                        'expected_return_date' => optional($expected)->toDateString(),
+                        'due'                  => $sla['due'],
+                        'days_out'             => $sla['days_out'],
+                        'overdue_days'         => $sla['overdue_days'],
+                        'status'               => $sla['status'],
+                        'priority'             => $priority['level'],
+                        'priority_matched'     => $priority['matched'],
+                        'cost'                 => $cost ?: null,
+                        'vehicle_income'           => $vehicleIncome,
+                        'vehicle_maintenance_cost' => $vehicleSpend,
+                        'net_margin'               => round($vehicleIncome - $vehicleSpend, 2),
+                    ];
+                })->filter()->values();
+
+                $cars = $cars->concat($manualCars)->values();
+            }
 
             $summary = [
                 'total'    => $cars->count(),
@@ -298,6 +399,47 @@ class MaintenanceController extends Controller
             return ResponseHelper::SuccessResponse(
                 $analytics->recurringFaults(3),
                 "Recurring faults retrieved successfully",
+                200
+            );
+        } catch (\Exception $e) {
+            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+        }
+    }
+
+    /**
+     * Maintenance Foresight: catch cars BEFORE they break (service overdue, chronic faults,
+     * aging battery) and simulate the cost of inaction — predicted downtime, parts-wait risk,
+     * lost rental revenue, and the saving from acting early. The "be ready" board.
+     */
+    public function foresight(MaintenanceForesightService $foresight)
+    {
+        try {
+            return ResponseHelper::SuccessResponse(
+                $foresight->report(),
+                "Maintenance foresight retrieved successfully",
+                200
+            );
+        } catch (\Exception $e) {
+            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+        }
+    }
+
+    /**
+     * Drill-down behind a Foresight cost line: every workshop repair across the WHOLE
+     * fleet that fixed a given issue, with its all-in cost — "show me where we fixed
+     * this, on any car, and what it cost". Reconciles with the card's "avg · n repairs".
+     */
+    public function issueHistory(\Illuminate\Http\Request $request, MaintenanceForesightService $foresight)
+    {
+        try {
+            $issue = trim((string) $request->query('issue', ''));
+            if ($issue === '') {
+                return ResponseHelper::FailureResponse(null, 'An issue is required.', 422);
+            }
+
+            return ResponseHelper::SuccessResponse(
+                $foresight->issueHistory($issue),
+                "Issue repair history retrieved successfully",
                 200
             );
         } catch (\Exception $e) {

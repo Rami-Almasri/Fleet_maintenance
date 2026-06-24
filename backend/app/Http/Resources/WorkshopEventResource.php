@@ -53,6 +53,7 @@ class WorkshopEventResource extends JsonResource
             'service_main'         => $this->service_main,
             'service_sup'          => $this->service_sup,
             'maintenance_type'     => $this->maintenance_type,
+            'visit_context'        => $this->visit_context,        // routine | accident_rental | standard | null
             'damage_location'      => $this->damage_location,
             'severity'             => $this->severity,
 

@@ -2,12 +2,16 @@
 
 namespace App\Http\Requests;
 
+use App\Http\Requests\Concerns\GuardsWorkshopEventClose;
 use App\Models\Maintenance;
+use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
 class StoreWorkshopEventRequest extends FormRequest
 {
+    use GuardsWorkshopEventClose;
+
     public function authorize(): bool
     {
         return true; // route is gated by permission:maintenance.manage
@@ -29,12 +33,16 @@ class StoreWorkshopEventRequest extends FormRequest
             'service_sup'          => ['nullable', 'string', 'max:255'],
 
             'maintenance_type'     => ['nullable', 'string', 'max:100'],
+            // "Rental-First" tag: routine service vs accident-during-rental vs standard.
+            'visit_context'        => ['nullable', Rule::in(Maintenance::VISIT_CONTEXTS)],
             'damage_location'      => ['nullable', 'string', 'max:255'],
             'severity'             => ['nullable', 'string', 'max:50'],
 
             'out_date'             => ['nullable', 'date'],
             'expected_return_date' => ['nullable', 'date'],
             'follow_date'          => ['nullable', 'date'],
+            // The return date — required by the guardrail when the event is closed ('IN').
+            'actual_in_date'       => ['nullable', 'date'],
 
             'responsible'          => ['nullable', 'string', 'max:150'],
             'approved_by'          => ['nullable', 'string', 'max:150'],
@@ -49,5 +57,11 @@ class StoreWorkshopEventRequest extends FormRequest
             'cost_notes'           => ['nullable', 'string'],
             'maintenance_notes'    => ['nullable', 'string'],
         ];
+    }
+
+    /** Block closing the event ('IN') unless cost, vendor and the return date are set. */
+    public function withValidator(Validator $validator): void
+    {
+        $validator->after(fn () => $this->guardWorkshopClose($validator));
     }
 }

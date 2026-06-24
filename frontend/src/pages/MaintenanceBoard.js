@@ -128,7 +128,9 @@ function ManageModal({ open, car, vehicles, onClose }) {
   useEffect(() => {
     if (!open) return;
     setVehicleId(car?.vehicle_id ? String(car.vehicle_id) : '');
-    setContractId(car?.id ? String(car.id) : '');
+    // A contract-less garage card has a synthetic id ('m<vid>'), not a real contract — scope the
+    // manage view to the whole car so it doesn't pass a bogus contract id to the events API.
+    setContractId(car?.is_contract === false ? '' : (car?.id ? String(car.id) : ''));
     setContracts([]);
   }, [open, car]);
 
@@ -212,6 +214,137 @@ function Kpi({ label, value, tone }) {
     <div className="rounded-2xl border border-gray-100 bg-white px-5 py-4 shadow-sm ring-1 ring-gray-900/5">
       <p className="text-xs font-medium text-gray-500">{label}</p>
       <p className={`mt-1 text-2xl font-bold tracking-tight ${tone}`}>{value}</p>
+    </div>
+  );
+}
+
+// One labelled cell in a card's facts grid.
+function Fact({ label, hint, children }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+        {label}
+        {hint && <span className="ml-1 font-normal normal-case text-gray-300">· {hint}</span>}
+      </dt>
+      <dd className="mt-0.5 truncate text-xs font-medium text-gray-700">{children}</dd>
+    </div>
+  );
+}
+
+// One car in the garage, as a card. Replaces a single dense table row — same data,
+// same interactions (click Stage → garage log, Manage → events CRUD), laid out for
+// scanning instead of side-scrolling. `onLog`/`onManage` mirror the old row buttons.
+function MaintenanceCard({ c, canManage, onLog, onManage }) {
+  const light = LIGHT[c.status] || LIGHT.unknown;
+  const prio = PRIORITY[c.priority] || PRIORITY.routine;
+  const stg = stageInfo(c.stage || 'unknown');
+  const hasEvents = c.events && c.events.length > 0;
+
+  return (
+    <div className="group relative flex flex-col overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-soft ring-1 ring-slate-900/5 transition hover:-translate-y-0.5 hover:shadow-md">
+      {/* Left accent bar = SLA status traffic light */}
+      <span className={`absolute inset-y-0 left-0 w-1.5 ${light.dot}`} />
+
+      <div className="flex flex-col gap-3 p-4 pl-5">
+        {/* Header: plate + car, with priority on the right */}
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Link
+                to={c.is_contract === false ? `/vehicles/${c.vehicle_id}` : `/contracts/${c.id}`}
+                className="text-base font-semibold text-indigo-600 hover:text-indigo-700"
+              >
+                {c.plate || (c.is_contract === false ? `#${c.vehicle_id}` : `#${c.contract_no || c.id}`)}
+              </Link>
+              {c.is_contract === false && (
+                <Badge tone="amber" title="In the garage on a logged workshop event — no maintenance contract">log</Badge>
+              )}
+              {c.type && <Badge tone="slate">{c.type}</Badge>}
+            </div>
+            <p className="mt-0.5 truncate text-xs text-gray-400">{c.car || '—'}</p>
+          </div>
+          <span
+            className="shrink-0"
+            title={c.priority_matched ? `Matched keyword: "${c.priority_matched}"` : 'No critical/minor keywords — treated as routine'}
+          >
+            <Badge tone={prio.tone}>{prio.emoji} {prio.label}</Badge>
+          </span>
+        </div>
+
+        {/* Status + live stage + days out */}
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-gray-50 px-2.5 py-1 ring-1 ring-inset ring-gray-200">
+            <span className={`h-2 w-2 rounded-full ${light.dot}`} />
+            <span className="text-xs font-medium text-gray-600">{light.text}</span>
+            {c.overdue_days > 0 && <span className="text-xs font-semibold text-red-500">+{c.overdue_days}d</span>}
+          </span>
+          <button
+            type="button"
+            onClick={() => onLog(c)}
+            className="group/stage inline-flex items-center gap-1.5"
+            title="Click to see the full garage log from the sheet"
+          >
+            <Badge tone={stg.tone}>{stg.label}</Badge>
+            {hasEvents && (
+              <span className="text-[10px] font-medium text-indigo-500 opacity-0 transition group-hover/stage:opacity-100">
+                log →
+              </span>
+            )}
+          </button>
+          {c.days_out != null && (
+            <span className="ml-auto text-xs font-medium text-gray-500">{c.days_out}d out</span>
+          )}
+        </div>
+        <PingPong events={c.events} />
+
+        {/* Issues + note */}
+        <div>
+          <div className="flex flex-wrap gap-1">
+            {(c.issues || []).slice(0, 6).map((t) => <Badge key={t} tone="indigo">{t}</Badge>)}
+            {(!c.issues || c.issues.length === 0) && <span className="text-xs text-gray-300">No issues logged</span>}
+          </div>
+          {c.notes && (
+            <p className="mt-1.5 line-clamp-2 text-xs leading-relaxed text-gray-400" title={c.notes}>{c.notes}</p>
+          )}
+        </div>
+
+        {/* Facts grid */}
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-2.5 border-t border-gray-100 pt-3">
+          <Fact label="Garage">{c.garage || <span className="text-gray-300">—</span>}</Fact>
+          <Fact label="Cost">{c.cost ? aed2(c.cost) : <span className="text-gray-300">—</span>}</Fact>
+          <Fact label="Out" hint="API">{c.out_date ? fmtDate(c.out_date) : <span className="text-gray-300">—</span>}</Fact>
+          <Fact label="In" hint="API">{c.in_date ? fmtDate(c.in_date) : <span className="text-gray-300">—</span>}</Fact>
+          <Fact label="Due" hint="sheet">{c.due_sheet ? fmtDate(c.due_sheet) : <span className="text-gray-300">—</span>}</Fact>
+          <Fact label="Back" hint="sheet">{c.sheet_back ? fmtDate(c.sheet_back) : <span className="text-gray-300">—</span>}</Fact>
+          <div className="col-span-2 min-w-0">
+            <dt className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+              Net margin <span className="font-normal normal-case text-gray-300">· car lifetime</span>
+            </dt>
+            <dd className="mt-0.5">
+              {c.net_margin != null ? (
+                <span
+                  className={`text-sm font-semibold ${c.net_margin >= 0 ? 'text-emerald-600' : 'text-red-600'}`}
+                  title={`Income ${aed2(c.vehicle_income || 0)}  −  maintenance ${aed2(c.vehicle_maintenance_cost || 0)}`}
+                >
+                  {c.net_margin >= 0 ? '+' : '−'}{aed2(Math.abs(c.net_margin))}
+                </span>
+              ) : <span className="text-xs text-gray-300">—</span>}
+            </dd>
+          </div>
+        </dl>
+
+        {canManage && (
+          <div className="flex justify-end border-t border-gray-100 pt-3">
+            <button
+              type="button"
+              onClick={() => onManage(c)}
+              className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-medium text-indigo-600 transition hover:bg-indigo-100"
+            >
+              Manage events
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -343,120 +476,26 @@ export function MaintenanceBoardPanel({ publishStat = false, manageable = false 
           ))}
         </div>
 
-        <Card>
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-100 text-sm">
-              <thead className="bg-gray-50/60">
-                <tr className="text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                  <th className="whitespace-nowrap px-3 py-3">Status</th>
-                  <th className="whitespace-nowrap px-3 py-3">Stage</th>
-                  <th className="whitespace-nowrap px-3 py-3">Priority</th>
-                  <th className="whitespace-nowrap px-3 py-3">Car</th>
-                  <th className="whitespace-nowrap px-3 py-3">Type</th>
-                  <th className="whitespace-nowrap px-3 py-3">Garage</th>
-                  <th className="px-3 py-3">Issues</th>
-                  <th className="whitespace-nowrap px-3 py-3">Out <span className="font-normal normal-case text-gray-400">· API</span></th>
-                  <th className="whitespace-nowrap px-3 py-3">In <span className="font-normal normal-case text-gray-400">· API</span></th>
-                  <th className="whitespace-nowrap px-3 py-3">Due <span className="font-normal normal-case text-gray-400">· sheet</span></th>
-                  <th className="whitespace-nowrap px-3 py-3">Back <span className="font-normal normal-case text-gray-400">· sheet</span></th>
-                  <th className="whitespace-nowrap px-3 py-3 text-center">Days out</th>
-                  <th className="whitespace-nowrap px-3 py-3 text-right">Cost</th>
-                  <th className="whitespace-nowrap px-3 py-3 text-right">Net margin <span className="font-normal normal-case text-gray-400">· car lifetime</span></th>
-                  {canManage && <th className="whitespace-nowrap px-3 py-3 text-right">Manage</th>}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {shown.map((c) => {
-                  const light = LIGHT[c.status] || LIGHT.unknown;
-                  const prio = PRIORITY[c.priority] || PRIORITY.routine;
-                  const stg = stageInfo(c.stage || 'unknown');
-                  return (
-                    <tr key={c.id} className="hover:bg-gray-50/60">
-                      <td className="px-3 py-3">
-                        <span className="inline-flex items-center gap-2">
-                          <span className={`h-2.5 w-2.5 rounded-full ${light.dot}`} />
-                          <span className="text-xs font-medium text-gray-600">{light.text}</span>
-                          {c.overdue_days > 0 && <span className="text-xs text-red-500">+{c.overdue_days}d</span>}
-                        </span>
-                      </td>
-                      <td className="px-3 py-3">
-                        <button
-                          type="button"
-                          onClick={() => setLogCar(c)}
-                          className="group text-left"
-                          title="Click to see the full garage log from the sheet"
-                        >
-                          <Badge tone={stg.tone}>{stg.label}</Badge>
-                          <PingPong events={c.events} />
-                          {c.events && c.events.length > 0 && (
-                            <span className="mt-0.5 block text-[10px] font-medium text-indigo-500 opacity-0 transition group-hover:opacity-100">
-                              View log →
-                            </span>
-                          )}
-                        </button>
-                      </td>
-                      <td className="px-3 py-3">
-                        <span title={c.priority_matched ? `Matched keyword: "${c.priority_matched}"` : 'No critical/minor keywords — treated as routine'}>
-                          <Badge tone={prio.tone}>{prio.emoji} {prio.label}</Badge>
-                        </span>
-                      </td>
-                      <td className="px-3 py-3">
-                        <Link to={`/contracts/${c.id}`} className="font-medium text-indigo-600 hover:text-indigo-700">{c.plate || `#${c.contract_no || c.id}`}</Link>
-                        <div className="text-xs text-gray-400">{c.car || '—'}</div>
-                      </td>
-                      <td className="px-3 py-3">
-                        {c.type ? <Badge tone="slate">{c.type}</Badge> : <span className="text-gray-300">—</span>}
-                      </td>
-                      <td className="px-3 py-3 text-gray-700">{c.garage || <span className="text-gray-300">—</span>}</td>
-                      <td className="px-3 py-3">
-                        <div className="flex flex-wrap gap-1">
-                          {(c.issues || []).slice(0, 4).map((t) => <Badge key={t} tone="indigo">{t}</Badge>)}
-                          {(!c.issues || c.issues.length === 0) && <span className="text-xs text-gray-300">—</span>}
-                        </div>
-                        {c.notes && (
-                          <p className="mt-1 max-w-xs truncate text-xs text-gray-400" title={c.notes}>{c.notes}</p>
-                        )}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-3 text-gray-500">{c.out_date ? fmtDate(c.out_date) : '—'}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-gray-500">{c.in_date ? fmtDate(c.in_date) : <span className="text-gray-300">—</span>}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-gray-500">{c.due_sheet ? fmtDate(c.due_sheet) : <span className="text-gray-300">—</span>}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-gray-500">{c.sheet_back ? fmtDate(c.sheet_back) : <span className="text-gray-300">—</span>}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-center font-medium text-gray-700">{c.days_out != null ? `${c.days_out}d` : '—'}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-right text-gray-700">{c.cost ? aed2(c.cost) : '—'}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-right">
-                        {c.net_margin != null ? (
-                          <span
-                            className={`font-semibold ${c.net_margin >= 0 ? 'text-emerald-600' : 'text-red-600'}`}
-                            title={`Income ${aed2(c.vehicle_income || 0)}  −  maintenance ${aed2(c.vehicle_maintenance_cost || 0)}`}
-                          >
-                            {c.net_margin >= 0 ? '+' : '−'}{aed2(Math.abs(c.net_margin))}
-                          </span>
-                        ) : <span className="text-gray-300">—</span>}
-                      </td>
-                      {canManage && (
-                        <td className="whitespace-nowrap px-3 py-3 text-right">
-                          <button
-                            type="button"
-                            onClick={() => setManage({ car: c })}
-                            className="text-xs font-medium text-indigo-600 hover:text-indigo-700"
-                          >
-                            Manage
-                          </button>
-                        </td>
-                      )}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+        {shown.length > 0 ? (
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {shown.map((c) => (
+              <MaintenanceCard
+                key={c.id}
+                c={c}
+                canManage={canManage}
+                onLog={setLogCar}
+                onManage={(car) => setManage({ car })}
+              />
+            ))}
           </div>
-          {shown.length === 0 && (
+        ) : (
+          <Card>
             <EmptyState
               title={cars.length === 0 ? 'No cars in maintenance' : `No ${priority} maintenance`}
               message={cars.length === 0 ? 'Nothing is currently in the garage.' : 'No cars match this priority filter.'}
             />
-          )}
-        </Card>
+          </Card>
+        )}
 
         <GarageLog car={logCar} onClose={() => setLogCar(null)} />
 
