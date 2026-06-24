@@ -71,6 +71,9 @@ class Contract extends Model
         'extra_driver_credit',
         'vat_credit',
         'deposit_credit',
+        'cardoo_debit',
+        'cardoo_credit',
+        'cardoo_deposit',
         'contract_debit',
         'contract_credit',
         'contract_balance',
@@ -197,10 +200,16 @@ class Contract extends Model
         return $this->hasMany(MaintenanceItem::class);
     }
 
-    /** Invoices (charges) billed on this contract, from the OfficeManager API. */
+    /** Invoices (charges) billed on this contract — OfficeManager-synced + website-created. */
     public function invoices(): HasMany
     {
         return $this->hasMany(Invoice::class);
+    }
+
+    /** Payments / receipts recorded against this contract (the collection side). */
+    public function payments(): HasMany
+    {
+        return $this->hasMany(Payment::class);
     }
 
     // ---- Exchange chaining ---------------------------------------------------

@@ -67,7 +67,7 @@ class ContractController extends Controller
             // The /api/v1/contracts import now stores the full row (financials + real
             // in/out dates), so the page is complete straight from our DB — no live
             // per-view enrichment needed.
-            $contract->load(['customer', 'vehicle', 'maintenance.vendor', 'items', 'invoices']);
+            $contract->load(['customer', 'vehicle', 'maintenance.vendor', 'items', 'invoices', 'payments.invoice']);
             // The garage often lives in the workshop event log, not on the contract header —
             // resolve "where the car is / was last" so the detail page never shows a blank garage.
             if ($contract->contract_type === 'U') {

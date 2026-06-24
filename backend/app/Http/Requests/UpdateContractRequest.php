@@ -95,6 +95,10 @@ class UpdateContractRequest extends FormRequest
             'vat_credit' => 'nullable|numeric',
             'deposit_credit' => 'nullable|numeric',
 
+            'cardoo_debit' => 'nullable|numeric',
+            'cardoo_credit' => 'nullable|numeric',
+            'cardoo_deposit' => 'nullable|numeric',
+
             'contract_debit' => 'nullable|numeric',
             'contract_credit' => 'nullable|numeric',
             'contract_balance' => 'nullable|numeric',

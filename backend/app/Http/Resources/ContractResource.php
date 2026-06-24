@@ -47,15 +47,55 @@ class ContractResource extends JsonResource
                 "notes" => $i->notes,
             ])->values()),
             "maintenance_total" => $this->whenLoaded('items', fn () => round((float) $this->items->sum('cost'), 2)),
-            // invoices (charges) from the OfficeManager API
+            // invoices (charges) — OfficeManager-synced (origin 'api') + website-created
+            // (origin 'manual'). Manual ones are editable in place; api ones are read-only.
             "invoices" => $this->whenLoaded('invoices', fn () => $this->invoices->map(fn ($i) => [
+                "id"              => $i->id,
                 "invoice_no"      => $i->invoice_no,
+                "invoice_ref"     => $i->invoice_ref,
+                "number"          => $i->invoice_ref ?: ($i->invoice_no ? '#'.$i->invoice_no : null),
+                "origin"          => $i->origin,
+                "editable"        => $i->origin === 'manual',
                 "date"            => optional($i->invoice_date)->toDateString(),
+                "rent_days"       => $i->rent_days,
+                "net_rate"        => $i->net_rate,
                 "total_value"     => $i->total_value,
                 "vat_value"       => $i->vat_value,
+                "discount"        => $i->discount,
                 "total_after_vat" => $i->total_after_vat,
+                "period_from"     => optional($i->period_from)->toDateString(),
+                "period_to"       => optional($i->period_to)->toDateString(),
+                "notes"           => $i->notes,
             ])->values()),
             "invoices_total" => $this->whenLoaded('invoices', fn () => round((float) $this->invoices->sum('total_after_vat'), 2)),
+            // Sum of discounts baked into the contract's invoices — surfaced so the Financials
+            // card can show a "Discount applied" line and the billed math reads cleanly.
+            "invoices_discount" => $this->whenLoaded('invoices', fn () => round((float) $this->invoices->sum('discount'), 2)),
+
+            // payments / receipts (the collection side), website-recorded
+            "payments" => $this->whenLoaded('payments', fn () => $this->payments->map(fn ($p) => [
+                "id"          => $p->id,
+                "payment_ref" => $p->payment_ref,
+                "invoice_id"  => $p->invoice_id,
+                "invoice_ref" => optional($p->invoice)->invoice_ref ?: (optional($p->invoice)->invoice_no ? '#'.$p->invoice->invoice_no : null),
+                "amount"      => $p->amount,
+                "paid_on"     => optional($p->paid_on)->toDateString(),
+                "method"      => $p->method,
+                "reference"   => $p->reference,
+                "notes"       => $p->notes,
+                "recorded_by" => $p->recorded_by,
+                "editable"    => $p->origin === 'manual',
+            ])->values()),
+            "payments_total" => $this->whenLoaded('payments', fn () => round((float) $this->payments->sum('amount'), 2)),
+
+            // Native account summary — the website-controlled balance going forward:
+            //   billed (sum of every invoice, after VAT) − paid (sum of every payment).
+            // Surfaced only on the detail view (both relations loaded).
+            "billed_total" => $this->whenLoaded('invoices', fn () => round((float) $this->invoices->sum('total_after_vat'), 2)),
+            "outstanding_balance" => $this->when(
+                $this->relationLoaded('invoices') && $this->relationLoaded('payments'),
+                fn () => round((float) $this->invoices->sum('total_after_vat') - (float) $this->payments->sum('amount'), 2)
+            ),
 
             "day_price" => $this->day_price,
             "week_price" => $this->week_price,
@@ -105,6 +145,10 @@ class ContractResource extends JsonResource
             "extra_driver_credit" => $this->extra_driver_credit,
             "vat_credit" => $this->vat_credit,
             "deposit_credit" => $this->deposit_credit,
+
+            "cardoo_debit" => $this->cardoo_debit,
+            "cardoo_credit" => $this->cardoo_credit,
+            "cardoo_deposit" => $this->cardoo_deposit,
 
             "contract_debit" => $this->contract_debit,
             "contract_credit" => $this->contract_credit,
