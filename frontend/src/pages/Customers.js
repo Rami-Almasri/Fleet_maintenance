@@ -9,7 +9,11 @@ import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import ConfirmDialog from '../components/ui/ConfirmDialog';
 import Pagination from '../components/ui/Pagination';
-import { Card, PageHeader, SearchInput, TableSkeleton, EmptyState } from '../components/ui/Misc';
+import { PageHeader, SearchInput } from '../components/ui/Misc';
+import MetricCard, { MetricGrid } from '../components/ui/MetricCard';
+import DataTable, { SectionCard } from '../components/ui/Table';
+import { MetricGridSkeleton } from '../components/ui/Skeleton';
+import Icon from '../components/ui/Icon';
 import { usePageStat } from '../components/PageStat';
 import { aed2, num } from '../lib/format';
 import CustomerForm, { customerToForm, cleanPayload } from './customers/CustomerForm';
@@ -127,81 +131,131 @@ export default function Customers() {
     hint: `${inCredit} of ${list.length} customers have wallet credit available`,
   });
 
+  // Headline aggregates over the full list (derived directly from per-customer balance).
+  const owedCount = useMemo(() => list.filter((c) => Number(c.balance || 0) > 0).length, [list]);
+  const walletTotal = useMemo(
+    () => list.reduce((s, c) => { const v = Number(c.balance || 0); return v < 0 ? s + Math.abs(v) : s; }, 0),
+    [list]
+  );
+  const owedTotal = useMemo(
+    () => list.reduce((s, c) => { const v = Number(c.balance || 0); return v > 0 ? s + v : s; }, 0),
+    [list]
+  );
+
   return (
     <div className="py-8">
       <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
         <PageHeader title="Customers" subtitle={loading ? 'Loading…' : `${num(filtered.length)} of ${num(list.length)} customers`}>
           {canManage && (
             <Button onClick={openCreate}>
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 5v14M5 12h14" />
-              </svg>
+              <Icon.Plus className="h-4 w-4" />
               Add Customer
             </Button>
           )}
         </PageHeader>
 
-        <SearchInput
-          value={search}
-          onChange={(v) => { setSearch(v); setPage(1); }}
-          placeholder="Search name, mobile, email, passport, license…"
-        />
+        {/* Summary metrics */}
+        {loading ? (
+          <MetricGridSkeleton count={4} />
+        ) : (
+          <MetricGrid cols={4}>
+            <MetricCard
+              label="Total Customers"
+              value={num(list.length)}
+              tone="indigo"
+              icon={<Icon.Users className="h-5 w-5" />}
+              hint={search ? `${num(filtered.length)} match the search` : 'Across the fleet'}
+            />
+            <MetricCard
+              label="In Credit"
+              value={num(inCredit)}
+              tone="emerald"
+              icon={<Icon.Coins className="h-5 w-5" />}
+              hint={list.length ? `${Math.round((inCredit / list.length) * 100)}% of customers` : '—'}
+              tooltip="Customers carrying wallet credit — money paid in advance, available toward their next rental."
+            />
+            <MetricCard
+              label="Wallet Credit"
+              value={aed2(walletTotal)}
+              tone="green"
+              icon={<Icon.Cash className="h-5 w-5" />}
+              hint="Total carried-forward credit held"
+              tooltip="Sum of all advance payments customers have on file (negative balances)."
+            />
+            <MetricCard
+              label="Outstanding"
+              value={aed2(owedTotal)}
+              tone={owedTotal > 0 ? 'red' : 'slate'}
+              icon={<Icon.Invoice className="h-5 w-5" />}
+              hint={`${num(owedCount)} customer${owedCount === 1 ? '' : 's'} owing`}
+              tooltip="Total amount owed across all customers (positive balances)."
+            />
+          </MetricGrid>
+        )}
 
         {error && (
           <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error}</div>
         )}
 
-        <Card>
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-100 text-sm stagger-rows">
-              <thead className="bg-gray-50/60">
-                <tr className="text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                  <th className="px-6 py-3">Customer</th>
-                  <th className="px-6 py-3">Mobile</th>
-                  <th className="px-6 py-3">Contracts</th>
-                  <th className="px-6 py-3">Balance</th>
-                  <th className="px-6 py-3 text-right">Actions</th>
-                </tr>
-              </thead>
-
-              {loading ? (
-                <TableSkeleton cols={5} />
-              ) : (
-                <tbody className="divide-y divide-gray-50">
-                  {paged.map((c) => {
-                    const b = balanceBadge(c.balance);
-                    return (
-                      <tr key={c.id} className="hover:bg-gray-50/60">
-                        <td className="px-6 py-3">
-                          <Link to={`/customers/${c.id}`} className="font-medium text-indigo-600 hover:text-indigo-700">{c.name_en || '—'}</Link>
-                          <div className="text-xs text-gray-400">#{c.customer_no || c.id}</div>
-                        </td>
-                        <td className="px-6 py-3 text-gray-600">{c.mobile1 || '—'}</td>
-                        <td className="px-6 py-3 text-gray-600">{num(c.contracts_count)}</td>
-                        <td className="px-6 py-3"><Badge tone={b.tone}>{b.text}</Badge></td>
-                        <td className="px-6 py-3">
-                          <div className="flex justify-end gap-2">
-                            <Link to={`/customers/${c.id}`}>
-                              <Button variant="secondary" size="sm">View</Button>
-                            </Link>
-                            {canManage && <Button variant="secondary" size="sm" onClick={() => openEdit(c)}>Edit</Button>}
-                            {canManage && <Button variant="ghost" size="sm" className="text-red-600 hover:bg-red-50" onClick={() => setToDelete(c)}>Delete</Button>}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              )}
-            </table>
-
-            {!loading && filtered.length === 0 && <EmptyState title="No customers found" message="Try a different search." />}
-          </div>
+        <SectionCard
+          title="All Customers"
+          subtitle={loading ? undefined : `${num(filtered.length)} shown`}
+          actions={
+            <div className="w-full sm:w-80">
+              <SearchInput
+                value={search}
+                onChange={(v) => { setSearch(v); setPage(1); }}
+                placeholder="Search name, mobile, email, passport, license…"
+              />
+            </div>
+          }
+        >
+          <DataTable
+            rows={paged}
+            rowKey={(c) => c.id}
+            loading={loading}
+            skeletonRows={PAGE_SIZE}
+            empty="No customers found. Try a different search."
+            highlightRow={(c) => Number(c.balance || 0) > 0}
+            columns={[
+              {
+                key: 'customer', header: 'Customer', cellClass: 'font-medium',
+                render: (c) => (
+                  <>
+                    <Link to={`/customers/${c.id}`} className="text-indigo-600 hover:text-indigo-700">{c.name_en || '—'}</Link>
+                    <div className="text-xs text-slate-400">#{c.customer_no || c.id}</div>
+                  </>
+                ),
+              },
+              { key: 'mobile', header: 'Mobile', cellClass: 'text-slate-500', render: (c) => c.mobile1 || '—' },
+              {
+                key: 'contracts', header: 'Contracts', align: 'right', cellClass: 'tabular-nums text-slate-500',
+                render: (c) => num(c.contracts_count),
+              },
+              {
+                key: 'balance', header: 'Balance', align: 'right',
+                tooltip: 'Positive = amount owed. Negative = wallet credit (advance paid, available toward the next rental).',
+                render: (c) => { const b = balanceBadge(c.balance); return <Badge tone={b.tone}>{b.text}</Badge>; },
+              },
+              {
+                key: 'actions', header: 'Actions', align: 'right',
+                render: (c) => (
+                  <div className="flex justify-end gap-2">
+                    <Link to={`/customers/${c.id}`}>
+                      <Button variant="secondary" size="sm">View</Button>
+                    </Link>
+                    {canManage && <Button variant="secondary" size="sm" onClick={() => openEdit(c)}>Edit</Button>}
+                    {canManage && <Button variant="ghost" size="sm" className="text-red-600 hover:bg-red-50" onClick={() => setToDelete(c)}>Delete</Button>}
+                  </div>
+                ),
+              },
+            ]}
+          />
 
           {!loading && filtered.length > 0 && (
             <Pagination page={safePage} pageCount={pageCount} total={filtered.length} pageSize={PAGE_SIZE} onPage={setPage} />
           )}
-        </Card>
+        </SectionCard>
       </div>
 
       {/* Create / Edit modal */}

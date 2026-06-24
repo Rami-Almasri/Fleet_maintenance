@@ -8,8 +8,12 @@ import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import ConfirmDialog from '../components/ui/ConfirmDialog';
 import Pagination from '../components/ui/Pagination';
-import { Card, PageHeader, SearchInput, TableSkeleton, EmptyState } from '../components/ui/Misc';
+import { PageHeader, SearchInput } from '../components/ui/Misc';
 import { Select } from '../components/ui/Field';
+import MetricCard, { MetricGrid } from '../components/ui/MetricCard';
+import DataTable, { SectionCard } from '../components/ui/Table';
+import { MetricGridSkeleton } from '../components/ui/Skeleton';
+import Icon from '../components/ui/Icon';
 import { usePageStat } from '../components/PageStat';
 import VehicleForm, { VEHICLE_STATUSES, vehicleToForm, cleanPayload } from './vehicles/VehicleForm';
 
@@ -66,6 +70,7 @@ export default function Vehicles() {
   const rentedCount = useMemo(() => active.filter((v) => v.rented).length, [active]);
   const reservedCount = useMemo(() => active.filter((v) => v.reserved).length, [active]);
   const availableCount = useMemo(() => active.filter((v) => v.available).length, [active]);
+  const resetFilters = (fn) => { fn(); setPage(1); };
   const toggleFlag = (f) => resetFilters(() => setFlag((cur) => (cur === f ? '' : f)));
 
   // Floating page gauge: share of the active fleet that's available to rent.
@@ -79,8 +84,6 @@ export default function Vehicles() {
   const pageCount = Math.ceil(filtered.length / PAGE_SIZE) || 1;
   const safePage = Math.min(page, pageCount);
   const paged = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
-
-  const resetFilters = (fn) => { fn(); setPage(1); };
 
   const openCreate = () => {
     setEditing(null);
@@ -137,6 +140,65 @@ export default function Vehicles() {
     }
   };
 
+  // Vehicle list columns — presentation only; all values come straight from the row.
+  const columns = [
+    {
+      key: 'plate', header: 'Plate No.', cellClass: 'font-medium',
+      render: (v) => (
+        <Link to={`/vehicles/${v.id}`} className="text-indigo-600 hover:text-indigo-700">{v.plate_no || '—'}</Link>
+      ),
+    },
+    {
+      key: 'makeModel', header: 'Make / Model', cellClass: 'text-slate-700',
+      render: (v) => [v.make, v.model].filter(Boolean).join(' ') || '—',
+    },
+    {
+      key: 'year', header: 'Year', align: 'right', cellClass: 'tabular-nums text-slate-500',
+      render: (v) => v.year || '—',
+    },
+    {
+      key: 'vin', header: 'VIN', cellClass: 'font-mono text-xs text-slate-500',
+      render: (v) => v.vin,
+    },
+    {
+      // Car status = the OfficeManager lifecycle status (status_no).
+      key: 'status', header: 'Car Status',
+      tooltip: 'OfficeManager lifecycle status (status_no) — the car’s standing in the fleet, e.g. ready, sold, out of order.',
+      render: (v) => (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <VehicleStatusBadge status={v.status} />
+          {v.for_sale && <Badge tone="amber">🏷️ For sale</Badge>}
+        </div>
+      ),
+    },
+    {
+      // Contract status = the car's live movement from its open contract.
+      key: 'contractStatus', header: 'Contract Status',
+      tooltip: 'Live operational status derived from the car’s open contract (rented, in maintenance, reserved) — distinct from the OM lifecycle status.',
+      render: (v) => (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <OperationalBadge status={v.operational_status} />
+          {v.reserved && <Badge tone="violet">📅 Reserved</Badge>}
+          {!v.operational_status && !v.reserved && <span className="text-slate-400">—</span>}
+        </div>
+      ),
+    },
+    {
+      key: 'actions', header: 'Actions', align: 'right', headerClass: 'sr-only',
+      render: (v) => (
+        <div className="flex justify-end gap-2">
+          <Link to={`/vehicles/${v.id}`}>
+            <Button variant="secondary" size="sm">View</Button>
+          </Link>
+          <Button variant="secondary" size="sm" onClick={() => openEdit(v)}>Edit</Button>
+          <Button variant="ghost" size="sm" className="text-red-600 hover:bg-red-50" onClick={() => setToDelete(v)}>
+            Delete
+          </Button>
+        </div>
+      ),
+    },
+  ];
+
   return (
     <div className="py-8">
       <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
@@ -145,128 +207,92 @@ export default function Vehicles() {
           subtitle={loading ? 'Loading…' : `${filtered.length} of ${list.length} vehicles`}
         >
           <Button onClick={openCreate}>
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 5v14M5 12h14" />
-            </svg>
+            <Icon.Plus className="h-4 w-4" />
             Add New Vehicle
           </Button>
         </PageHeader>
 
-        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
-          <SearchInput
-            className="flex-1"
-            value={search}
-            onChange={(v) => resetFilters(() => setSearch(v))}
-            placeholder="Search plate, VIN, make or model…"
-          />
-          <Select className="sm:w-52" value={status} onChange={(e) => resetFilters(() => setStatus(e.target.value))}>
-            <option value="">All statuses</option>
-            {VEHICLE_STATUSES.map((s) => (
-              <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>
-            ))}
-          </Select>
-          <Button
-            variant={flag === 'available' ? 'primary' : 'secondary'}
-            onClick={() => toggleFlag('available')}
-            title="Cars with no open contract — free to rent out or send for maintenance"
-          >
-            ✅ Available{availableCount > 0 ? ` (${availableCount})` : ''}
-          </Button>
-          <Button
-            variant={flag === 'reserved' ? 'primary' : 'secondary'}
-            onClick={() => toggleFlag('reserved')}
-            title="Cars with an open reservation/booking"
-          >
-            📅 Reserved{reservedCount > 0 ? ` (${reservedCount})` : ''}
-          </Button>
-          <Button
-            variant={flag === 'rented' ? 'primary' : 'secondary'}
-            onClick={() => toggleFlag('rented')}
-            title="Cars currently out on rent"
-          >
-            🔑 Rented{rentedCount > 0 ? ` (${rentedCount})` : ''}
-          </Button>
-          <Button
-            variant={flag === 'maint' ? 'primary' : 'secondary'}
-            onClick={() => toggleFlag('maint')}
-            title="Cars currently in the garage"
-          >
-            🔧 In maintenance{maintCount > 0 ? ` (${maintCount})` : ''}
-          </Button>
-        </div>
+        {/* Quick-filter KPI tiles — each card toggles its live-movement filter (sold/disposed excluded). */}
+        {loading ? (
+          <MetricGridSkeleton count={4} />
+        ) : (
+          <MetricGrid cols={4}>
+            <MetricCard
+              label="Available"
+              value={availableCount}
+              tone={flag === 'available' ? 'emerald' : 'slate'}
+              icon={<Icon.Check className="h-5 w-5" />}
+              hint="Free to rent or send for maintenance"
+              tooltip="Cars with no open contract — free to rent out or send for maintenance."
+              onClick={() => toggleFlag('available')}
+            />
+            <MetricCard
+              label="Reserved"
+              value={reservedCount}
+              tone={flag === 'reserved' ? 'violet' : 'slate'}
+              icon={<Icon.Calendar className="h-5 w-5" />}
+              hint="Open reservation / booking"
+              tooltip="Cars with an open reservation/booking."
+              onClick={() => toggleFlag('reserved')}
+            />
+            <MetricCard
+              label="Rented"
+              value={rentedCount}
+              tone={flag === 'rented' ? 'blue' : 'slate'}
+              icon={<Icon.Car className="h-5 w-5" />}
+              hint="Currently out on rent"
+              tooltip="Cars currently out on rent."
+              onClick={() => toggleFlag('rented')}
+            />
+            <MetricCard
+              label="In maintenance"
+              value={maintCount}
+              tone={flag === 'maint' ? 'amber' : 'slate'}
+              icon={<Icon.Wrench className="h-5 w-5" />}
+              hint="Currently in the garage"
+              tooltip="Cars currently in the garage."
+              onClick={() => toggleFlag('maint')}
+            />
+          </MetricGrid>
+        )}
 
         {error && (
           <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error}</div>
         )}
 
-        <Card>
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-100 text-sm stagger-rows">
-              <thead className="bg-gray-50/60">
-                <tr className="text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                  <th className="px-6 py-3">Plate No.</th>
-                  <th className="px-6 py-3">Make / Model</th>
-                  <th className="px-6 py-3">Year</th>
-                  <th className="px-6 py-3">VIN</th>
-                  <th className="px-6 py-3">Car Status</th>
-                  <th className="px-6 py-3">Contract Status</th>
-                  <th className="px-6 py-3 text-right">Actions</th>
-                </tr>
-              </thead>
-
-              {loading ? (
-                <TableSkeleton cols={7} />
-              ) : (
-                <tbody className="divide-y divide-gray-50">
-                  {paged.map((v) => (
-                    <tr key={v.id} className="hover:bg-gray-50/60">
-                      <td className="px-6 py-3 font-medium">
-                        <Link to={`/vehicles/${v.id}`} className="text-indigo-600 hover:text-indigo-700">{v.plate_no || '—'}</Link>
-                      </td>
-                      <td className="px-6 py-3 text-gray-700">{[v.make, v.model].filter(Boolean).join(' ') || '—'}</td>
-                      <td className="px-6 py-3 text-gray-500">{v.year || '—'}</td>
-                      <td className="px-6 py-3 font-mono text-xs text-gray-500">{v.vin}</td>
-                      {/* Car status = the OfficeManager lifecycle status (status_no). */}
-                      <td className="px-6 py-3">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <VehicleStatusBadge status={v.status} />
-                          {v.for_sale && <Badge tone="amber">🏷️ For sale</Badge>}
-                        </div>
-                      </td>
-                      {/* Contract status = the car's live movement from its open contract. */}
-                      <td className="px-6 py-3">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <OperationalBadge status={v.operational_status} />
-                          {v.reserved && <Badge tone="violet">📅 Reserved</Badge>}
-                          {!v.operational_status && !v.reserved && <span className="text-gray-400">—</span>}
-                        </div>
-                      </td>
-                      <td className="px-6 py-3">
-                        <div className="flex justify-end gap-2">
-                          <Link to={`/vehicles/${v.id}`}>
-                            <Button variant="secondary" size="sm">View</Button>
-                          </Link>
-                          <Button variant="secondary" size="sm" onClick={() => openEdit(v)}>Edit</Button>
-                          <Button variant="ghost" size="sm" className="text-red-600 hover:bg-red-50" onClick={() => setToDelete(v)}>
-                            Delete
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              )}
-            </table>
-
-            {!loading && filtered.length === 0 && (
-              <EmptyState title="No vehicles found" message="Try adjusting your search or filters." />
-            )}
-          </div>
+        <SectionCard
+          title="Fleet"
+          subtitle={loading ? 'Loading…' : `${filtered.length} of ${list.length} vehicles`}
+          actions={
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <SearchInput
+                className="sm:w-72"
+                value={search}
+                onChange={(v) => resetFilters(() => setSearch(v))}
+                placeholder="Search plate, VIN, make or model…"
+              />
+              <Select className="sm:w-48" value={status} onChange={(e) => resetFilters(() => setStatus(e.target.value))}>
+                <option value="">All statuses</option>
+                {VEHICLE_STATUSES.map((s) => (
+                  <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>
+                ))}
+              </Select>
+            </div>
+          }
+        >
+          <DataTable
+            columns={columns}
+            rows={paged}
+            rowKey={(v) => v.id}
+            loading={loading}
+            skeletonRows={PAGE_SIZE}
+            empty="No vehicles found. Try adjusting your search or filters."
+          />
 
           {!loading && filtered.length > 0 && (
             <Pagination page={safePage} pageCount={pageCount} total={filtered.length} pageSize={PAGE_SIZE} onPage={setPage} />
           )}
-        </Card>
+        </SectionCard>
       </div>
 
       {/* Create / Edit modal */}
