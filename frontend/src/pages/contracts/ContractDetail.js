@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import api from '../../api/client';
 import useFetch from '../../hooks/useFetch';
@@ -7,6 +7,9 @@ import Button from '../../components/ui/Button';
 import { Card, Spinner } from '../../components/ui/Misc';
 import ExchangeChainPanel from '../../components/ExchangeChainPanel';
 import WorkshopEvents from '../../components/WorkshopEvents';
+import ContractInvoices from '../../components/ContractInvoices';
+import ContractPayments from '../../components/ContractPayments';
+import BillingReconciliation from '../../components/BillingReconciliation';
 import { aed2, fmtDate, fmtTime, combineDateTime, fmtDuration, num } from '../../lib/format';
 
 // Renders a card with a label/value grid. Pairs = [[label, value], ...]
@@ -29,6 +32,76 @@ function Section({ title, pairs }) {
 }
 
 const money = (v) => (v === null || v === undefined || v === '' ? null : aed2(v));
+
+// Verdict styling for the contract-level Net Profit / reconciliation badge.
+const RECON_STATUS = {
+  reconciled: { label: 'Reconciled', tone: 'green', ring: 'ring-emerald-200', sub: 'Net cash collected matches the amount billed, within tolerance.' },
+  review: { label: 'Needs review', tone: 'amber', ring: 'ring-amber-200', sub: 'Gap is beyond the 2% fee/rounding tolerance — worth a look.' },
+  exception: { label: 'Exception', tone: 'red', ring: 'ring-red-200', sub: 'A reconciliation problem was found — open the audit.' },
+  error: { label: 'Unavailable', tone: 'gray', ring: 'ring-slate-200', sub: 'Could not read the accounting feed (the server may be slow). Open Reconcile to retry.' },
+};
+
+const ICON_RECONCILE = 'M8 7h12m0 0-4-4m4 4-4 4M16 17H4m0 0 4 4m-4-4 4-4';
+
+/**
+ * Daily-glance Net Profit for one contract = Net Collected − Billed, reconciled live against the
+ * accounting system. Shows the headline figure + a Reconciled / Needs Review / Exception badge, with
+ * the full audit one click away (the Reconcile button). The live call is async so the rest of the
+ * page stays instantly usable; a slow/again-fragile OfficeManager server degrades to "Unavailable".
+ */
+function NetProfitCard({ contractId, contractNo }) {
+  const [state, setState] = useState({ loading: true, error: '', data: null });
+
+  useEffect(() => {
+    let active = true;
+    setState({ loading: true, error: '', data: null });
+    api.get('/Reconciliation', { params: { contract_id: contractId } })
+      .then((r) => { if (active) setState({ loading: false, error: '', data: r.data.data }); })
+      .catch((e) => { if (active) setState({ loading: false, error: e.response?.data?.message || e.message || 'Lookup failed', data: null }); });
+    return () => { active = false; };
+  }, [contractId]);
+
+  const d = state.data;
+  const r = d?.reconciliation;
+  const netProfit = r ? Number(r.cash_gap) : null;   // net collected − billed
+  const st = r ? (RECON_STATUS[r.status] || RECON_STATUS.review) : RECON_STATUS.error;
+  const positive = Number(netProfit) >= 0;
+
+  return (
+    <Card className={`ring-1 ${r ? st.ring : 'ring-slate-200/60'}`}>
+      <div className="flex flex-wrap items-center justify-between gap-4 px-6 py-5">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Net Profit</p>
+            {!state.loading && <Badge tone={st.tone}>{st.label}</Badge>}
+          </div>
+          {state.loading ? (
+            <div className="mt-2 flex items-center gap-2 text-slate-400"><Spinner className="h-5 w-5" /><span className="text-sm">Reconciling against accounting…</span></div>
+          ) : state.error ? (
+            <p className="mt-2 text-sm text-red-600">Couldn’t reconcile: {state.error}</p>
+          ) : (
+            <>
+              <p className={`mt-1 text-3xl font-bold tracking-tight ${positive ? 'text-emerald-600' : 'text-red-600'}`}>
+                {netProfit > 0 ? '+' : ''}{aed2(netProfit)}
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                Net collected {aed2(d.cash.net)} − billed {aed2(d.fleet.billed)}. {st.sub}
+              </p>
+            </>
+          )}
+        </div>
+        <Link
+          to={`/financial-reconciliation?contract_no=${contractNo}`}
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-white px-4 py-2 text-sm font-semibold text-indigo-600 shadow-sm ring-1 ring-inset ring-slate-200 transition hover:bg-slate-50 hover:ring-slate-300"
+          title="Open the full reconciliation audit for this contract"
+        >
+          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d={ICON_RECONCILE} /></svg>
+          Reconcile
+        </Link>
+      </div>
+    </Card>
+  );
+}
 
 const ICON_CAL = 'M8 7V3m8 4V3M4 11h16M5 5h14a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z';
 const ICON_CLOCK = 'M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0z';
@@ -85,7 +158,7 @@ export default function ContractDetail() {
     const { data } = await api.get(`/Contract/${id}`);
     return data.data;
   }, [id]);
-  const { data: c, loading, error } = useFetch(fetcher, [id]);
+  const { data: c, loading, error, reload } = useFetch(fetcher, [id]);
 
   if (loading) return <div className="flex justify-center py-24"><Spinner className="h-8 w-8" /></div>;
   if (error || !c) {
@@ -257,6 +330,10 @@ export default function ContractDetail() {
           </div>
         </div>
 
+        {/* Net Profit — the daily-glance figure (Net Collected − Billed), reconciled live against
+            the accounting system, with the full audit one click away. Rentals/bookings only. */}
+        {c.contract_no && !isMaintenance && <NetProfitCard contractId={id} contractNo={c.contract_no} />}
+
         {/* Stat tiles */}
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           {stats.map((s) => (
@@ -273,6 +350,10 @@ export default function ContractDetail() {
             </div>
           ))}
         </div>
+
+        {/* Billing reconciliation — per-category Charged/Settled/Outstanding (reconciles to
+            the Balance) + the invoice discount proof. Rentals only; nothing recomputed. */}
+        {!isMaintenance && <BillingReconciliation contract={c} />}
 
         {/* Lifecycle timeline */}
         <Lifecycle
@@ -422,44 +503,11 @@ export default function ContractDetail() {
           />
         )}
 
-        {c.invoices?.length > 0 && (
-          <Card className="p-6">
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Invoices</h3>
-              <span className="text-sm text-gray-600">{c.invoices.length} invoice{c.invoices.length === 1 ? '' : 's'}</span>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-100 text-sm">
-                <thead className="bg-gray-50/60">
-                  <tr className="text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                    <th className="px-4 py-2">Invoice #</th>
-                    <th className="px-4 py-2">Date</th>
-                    <th className="px-4 py-2 text-right">Value</th>
-                    <th className="px-4 py-2 text-right">VAT</th>
-                    <th className="px-4 py-2 text-right">Total</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {c.invoices.map((inv) => (
-                    <tr key={inv.invoice_no}>
-                      <td className="px-4 py-2 font-medium text-gray-900">#{inv.invoice_no}</td>
-                      <td className="px-4 py-2 text-gray-500">{fmtDate(inv.date)}</td>
-                      <td className="px-4 py-2 text-right text-gray-600">{aed2(inv.total_value)}</td>
-                      <td className="px-4 py-2 text-right text-gray-600">{aed2(inv.vat_value)}</td>
-                      <td className="px-4 py-2 text-right font-medium text-gray-900">{aed2(inv.total_after_vat)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-                <tfoot>
-                  <tr className="border-t border-gray-200">
-                    <td className="px-4 py-2 font-semibold text-gray-700" colSpan="4">Total billed</td>
-                    <td className="px-4 py-2 text-right font-bold text-gray-900">{aed2(c.invoices_total ?? c.invoices.reduce((s, i) => s + Number(i.total_after_vat || 0), 0))}</td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-          </Card>
-        )}
+        {/* Invoices & payments side-by-side — charges (left) and collection (right). */}
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+          <ContractInvoices contract={c} onChanged={reload} />
+          <ContractPayments contract={c} onChanged={reload} />
+        </div>
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <Section title="Parties" pairs={[
@@ -492,6 +540,7 @@ export default function ContractDetail() {
                 ['Breaches', money(c.breachs_debit)], ['Extra charges', money(c.extra_charges_debit)], ['KM', money(c.km_debit)],
                 ['Fuel', money(c.fuel_debit)], ['GPS', money(c.gps_debit)], ['CDW', money(c.cdw_debit)],
                 ['Extra driver', money(c.extra_driver_debit)], ['VAT', money(c.vat_debit)], ['Deposit', money(c.deposit_debit)],
+                ['Cardoo', money(c.cardoo_debit)],
               ]} />
 
               <Section title="Credit Breakdown" pairs={[
@@ -499,12 +548,14 @@ export default function ContractDetail() {
                 ['Breaches', money(c.breachs_credit)], ['Extra charges', money(c.extra_charges_credit)], ['KM', money(c.km_credit)],
                 ['Fuel', money(c.fuel_credit)], ['GPS', money(c.gps_credit)], ['CDW', money(c.cdw_credit)],
                 ['Extra driver', money(c.extra_driver_credit)], ['VAT', money(c.vat_credit)], ['Deposit', money(c.deposit_credit)],
+                ['Cardoo', money(c.cardoo_credit)],
               ]} />
 
               <Section title="Totals & Adjustments" pairs={[
                 ['Contract Debit', money(c.contract_debit)], ['Contract Credit', money(c.contract_credit)], ['Balance', money(c.contract_balance)],
                 ['Refunds', money(c.contract_refunds)], ['Discount', money(c.contract_discount)], ['Bad Debts', money(c.contract_bad_debts)],
                 ['Deposit', money(c.contract_deposit)], ['Commissions', money(c.contract_commissions)], ['Income', money(c.contract_income)],
+                ['Cardoo Deposit', money(c.cardoo_deposit)],
               ]} />
             </>
           )}
