@@ -4,7 +4,9 @@ import { usePermissions } from '../hooks/usePermissions';
 import { useToast } from './ui/Toast';
 import Button from './ui/Button';
 import Modal from './ui/Modal';
-import { Card } from './ui/Misc';
+import DataTable, { SectionCard } from './ui/Table';
+import MetricCard, { MetricGrid } from './ui/MetricCard';
+import Icon from './ui/Icon';
 import { Input, Select, Textarea } from './ui/Field';
 import { aed2, fmtDate } from '../lib/format';
 
@@ -107,67 +109,75 @@ export default function ContractPayments({ contract, onChanged }) {
     }
   };
 
-  return (
-    <Card className="p-6">
-      <div className="mb-4 flex items-center justify-between">
-        <div>
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Payments / Receipts</h3>
-          <p className="mt-0.5 text-xs text-gray-400">What has been collected against this contract — newest first.</p>
-        </div>
-        {canManage && <Button variant="secondary" onClick={openNew}>+ Add payment</Button>}
-      </div>
+  // Columns for the receipts list — amount right-aligned with tabular figures; the
+  // actions column is only rendered for managers (preserves the permission gate).
+  const columns = [
+    {
+      key: 'receipt', header: 'Receipt', cellClass: 'font-medium text-slate-900',
+      render: (p) => (
+        <>
+          {p.payment_ref || '—'}
+          {p.reference && <p className="mt-0.5 text-xs font-normal text-slate-400">Ref: {p.reference}</p>}
+          {p.notes && <p className="mt-0.5 text-xs font-normal text-slate-400">{p.notes}</p>}
+        </>
+      ),
+    },
+    { key: 'date', header: 'Date', cellClass: 'text-slate-500', render: (p) => fmtDate(p.paid_on) },
+    { key: 'method', header: 'Method', cellClass: 'capitalize text-slate-600', render: (p) => methodLabel(p.method) },
+    {
+      key: 'invoice', header: 'For invoice', cellClass: 'text-slate-500', tooltip: 'Invoice this receipt is tied to, or contract-level if none.',
+      render: (p) => p.invoice_ref || <span className="text-slate-300">—</span>,
+    },
+    {
+      key: 'amount', header: 'Amount', align: 'right', cellClass: 'tabular-nums font-medium text-emerald-600',
+      render: (p) => aed2(p.amount),
+    },
+    ...(canManage ? [{
+      key: 'actions', header: 'Actions', align: 'right',
+      render: (p) => (
+        <span className="inline-flex gap-2">
+          <button onClick={() => openEdit(p)} className="text-xs font-medium text-indigo-600 hover:text-indigo-700">Edit</button>
+          <span className="text-slate-200">·</span>
+          <button onClick={() => remove(p)} className="text-xs font-medium text-red-500 hover:text-red-600">Delete</button>
+        </span>
+      ),
+    }] : []),
+  ];
 
-      {payments.length === 0 ? (
-        <p className="rounded-xl border border-dashed border-gray-200 bg-gray-50/40 px-4 py-3 text-center text-xs text-gray-400">
-          No payments recorded yet{canManage ? ' — use “+ Add payment” above.' : '.'}
-        </p>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-100 text-sm">
-            <thead className="bg-gray-50/60">
-              <tr className="text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                <th className="px-4 py-2">Receipt</th>
-                <th className="px-4 py-2">Date</th>
-                <th className="px-4 py-2">Method</th>
-                <th className="px-4 py-2">For invoice</th>
-                <th className="px-4 py-2 text-right">Amount</th>
-                {canManage && <th className="px-4 py-2 text-right">Actions</th>}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50">
-              {payments.map((p) => (
-                <tr key={p.id}>
-                  <td className="px-4 py-2 font-medium text-gray-900">
-                    {p.payment_ref || '—'}
-                    {p.reference && <p className="mt-0.5 text-xs font-normal text-gray-400">Ref: {p.reference}</p>}
-                    {p.notes && <p className="mt-0.5 text-xs font-normal text-gray-400">{p.notes}</p>}
-                  </td>
-                  <td className="px-4 py-2 text-gray-500">{fmtDate(p.paid_on)}</td>
-                  <td className="px-4 py-2 capitalize text-gray-600">{methodLabel(p.method)}</td>
-                  <td className="px-4 py-2 text-gray-500">{p.invoice_ref || <span className="text-gray-300">—</span>}</td>
-                  <td className="px-4 py-2 text-right font-medium text-emerald-600">{aed2(p.amount)}</td>
-                  {canManage && (
-                    <td className="px-4 py-2 text-right">
-                      <span className="inline-flex gap-2">
-                        <button onClick={() => openEdit(p)} className="text-xs font-medium text-indigo-600 hover:text-indigo-700">Edit</button>
-                        <span className="text-gray-200">·</span>
-                        <button onClick={() => remove(p)} className="text-xs font-medium text-red-500 hover:text-red-600">Delete</button>
-                      </span>
-                    </td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr className="border-t border-gray-200">
-                <td className="px-4 py-2 font-semibold text-gray-700" colSpan="4">Total paid</td>
-                <td className="px-4 py-2 text-right font-bold text-emerald-700">{aed2(total)}</td>
-                {canManage && <td />}
-              </tr>
-            </tfoot>
-          </table>
-        </div>
+  return (
+    <div className="space-y-5">
+      {/* Summary — total collected against this contract. */}
+      {payments.length > 0 && (
+        <MetricGrid cols={3}>
+          <MetricCard
+            label="Total paid"
+            value={aed2(total)}
+            tone="emerald"
+            icon={<Icon.Cash className="h-5 w-5" />}
+            hint={`${payments.length} receipt${payments.length === 1 ? '' : 's'}`}
+            tooltip="Sum of all payments / receipts recorded against this contract."
+          />
+        </MetricGrid>
       )}
+
+      <SectionCard
+        title="Payments / Receipts"
+        subtitle="What has been collected against this contract — newest first."
+        actions={canManage ? <Button variant="secondary" size="sm" onClick={openNew}><Icon.Plus className="h-4 w-4" /> Add payment</Button> : null}
+      >
+        {payments.length === 0 ? (
+          <div className="px-5 py-10 text-center text-sm text-slate-400">
+            No payments recorded yet{canManage ? ' — use “Add payment” above.' : '.'}
+          </div>
+        ) : (
+          <DataTable
+            columns={columns}
+            rows={payments}
+            rowKey={(p) => p.id}
+            empty="No payments recorded yet."
+          />
+        )}
+      </SectionCard>
 
       <Modal
         open={open}
@@ -202,6 +212,6 @@ export default function ContractPayments({ contract, onChanged }) {
           <Textarea label="Notes" rows={2} value={form.notes} onChange={set('notes')} error={err('notes')} />
         </div>
       </Modal>
-    </Card>
+    </div>
   );
 }

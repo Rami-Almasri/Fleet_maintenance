@@ -5,7 +5,9 @@ import { useToast } from './ui/Toast';
 import Button from './ui/Button';
 import Badge from './ui/Badge';
 import Modal from './ui/Modal';
-import { Card } from './ui/Misc';
+import DataTable, { SectionCard } from './ui/Table';
+import MetricCard, { MetricGrid } from './ui/MetricCard';
+import Icon from './ui/Icon';
 import { Input, Textarea } from './ui/Field';
 import { aed2, fmtDate } from '../lib/format';
 
@@ -125,102 +127,123 @@ export default function ContractInvoices({ contract, onChanged }) {
     }
   };
 
+  // Columns for the invoice list — numbers right-aligned with tabular figures so they
+  // line up; the actions column is only rendered for managers (preserves permissions).
+  const columns = [
+    {
+      key: 'number', header: 'Invoice', cellClass: 'font-medium text-slate-900',
+      render: (inv) => (
+        <>
+          <span className="inline-flex items-center gap-1.5">
+            {inv.number}
+            <Badge tone={inv.origin === 'manual' ? 'indigo' : 'gray'}>{inv.origin === 'manual' ? 'Web' : 'OM'}</Badge>
+          </span>
+          {inv.notes && <p className="mt-0.5 text-xs font-normal text-slate-400">{inv.notes}</p>}
+        </>
+      ),
+    },
+    { key: 'date', header: 'Date', cellClass: 'text-slate-500', render: (inv) => fmtDate(inv.date) },
+    { key: 'value', header: 'Value', align: 'right', cellClass: 'tabular-nums text-slate-600', render: (inv) => aed2(inv.total_value) },
+    {
+      key: 'vat', header: 'VAT', align: 'right', tooltip: 'VAT charged on the post-discount base.',
+      cellClass: 'tabular-nums text-slate-600', render: (inv) => aed2(inv.vat_value),
+    },
+    {
+      key: 'discount', header: 'Discount', align: 'right', cellClass: 'tabular-nums text-amber-700',
+      render: (inv) => (Number(inv.discount) > 0 ? `− ${aed2(inv.discount)}` : <span className="text-slate-300">—</span>),
+    },
+    {
+      key: 'total', header: 'Total', align: 'right', tooltip: 'Total after VAT for this invoice.',
+      cellClass: 'tabular-nums font-medium text-slate-900', render: (inv) => aed2(inv.total_after_vat),
+    },
+    ...(canManage ? [{
+      key: 'actions', header: 'Actions', align: 'right',
+      render: (inv) => (
+        inv.editable ? (
+          <span className="inline-flex gap-2">
+            <button onClick={() => openEdit(inv)} className="text-xs font-medium text-indigo-600 hover:text-indigo-700">Edit</button>
+            <span className="text-slate-200">·</span>
+            <button onClick={() => remove(inv)} className="text-xs font-medium text-red-500 hover:text-red-600">Delete</button>
+          </span>
+        ) : (
+          <span className="text-xs text-slate-300">Synced</span>
+        )
+      ),
+    }] : []),
+  ];
+
   return (
-    <Card className="p-6">
-      <div className="mb-4 flex items-center justify-between">
-        <div>
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Invoices</h3>
-          <p className="mt-0.5 text-xs text-gray-400">
-            Charges billed on this contract. Website invoices (M-…) are editable; OfficeManager ones are read-only.
-          </p>
-        </div>
-        {canManage && <Button variant="secondary" onClick={openNew}>+ Add invoice</Button>}
-      </div>
-
-      {invoices.length === 0 ? (
-        <p className="rounded-xl border border-dashed border-gray-200 bg-gray-50/40 px-4 py-3 text-center text-xs text-gray-400">
-          No invoices yet{canManage ? ' — use “+ Add invoice” above.' : '.'}
-        </p>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-100 text-sm">
-            <thead className="bg-gray-50/60">
-              <tr className="text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                <th className="px-4 py-2">Invoice</th>
-                <th className="px-4 py-2">Date</th>
-                <th className="px-4 py-2 text-right">Value</th>
-                <th className="px-4 py-2 text-right">VAT</th>
-                <th className="px-4 py-2 text-right">Discount</th>
-                <th className="px-4 py-2 text-right">Total</th>
-                {canManage && <th className="px-4 py-2 text-right">Actions</th>}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50">
-              {invoices.map((inv) => (
-                <tr key={inv.id ?? inv.number}>
-                  <td className="px-4 py-2 font-medium text-gray-900">
-                    <span className="inline-flex items-center gap-1.5">
-                      {inv.number}
-                      <Badge tone={inv.origin === 'manual' ? 'indigo' : 'gray'}>{inv.origin === 'manual' ? 'Web' : 'OM'}</Badge>
-                    </span>
-                    {inv.notes && <p className="mt-0.5 text-xs font-normal text-gray-400">{inv.notes}</p>}
-                  </td>
-                  <td className="px-4 py-2 text-gray-500">{fmtDate(inv.date)}</td>
-                  <td className="px-4 py-2 text-right text-gray-600">{aed2(inv.total_value)}</td>
-                  <td className="px-4 py-2 text-right text-gray-600">{aed2(inv.vat_value)}</td>
-                  <td className="px-4 py-2 text-right text-amber-700">{Number(inv.discount) > 0 ? `− ${aed2(inv.discount)}` : <span className="text-gray-300">—</span>}</td>
-                  <td className="px-4 py-2 text-right font-medium text-gray-900">{aed2(inv.total_after_vat)}</td>
-                  {canManage && (
-                    <td className="px-4 py-2 text-right">
-                      {inv.editable ? (
-                        <span className="inline-flex gap-2">
-                          <button onClick={() => openEdit(inv)} className="text-xs font-medium text-indigo-600 hover:text-indigo-700">Edit</button>
-                          <span className="text-gray-200">·</span>
-                          <button onClick={() => remove(inv)} className="text-xs font-medium text-red-500 hover:text-red-600">Delete</button>
-                        </span>
-                      ) : (
-                        <span className="text-xs text-gray-300">Synced</span>
-                      )}
-                    </td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr className="border-t border-gray-200">
-                <td className="px-4 py-2 font-semibold text-gray-700" colSpan="5">Total billed</td>
-                <td className="px-4 py-2 text-right font-bold text-gray-900">{aed2(totals.billed)}</td>
-                {canManage && <td />}
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-      )}
-
-      {/* How the Total billed is reached — the ex-VAT charges, the discount, then VAT on the
-          post-discount base. Explains why it's NOT simply rent − discount. */}
+    <div className="space-y-5">
+      {/* Summary stats — ex-VAT charges, discount applied, and the total billed (with VAT). */}
       {invoices.length > 0 && (
-        <div className="mt-3">
-          <button type="button" onClick={() => setShowMath((v) => !v)} className="inline-flex items-center gap-1.5 text-xs font-medium text-indigo-600 hover:text-indigo-700">
-            <svg className={`h-3.5 w-3.5 transition-transform ${showMath ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 5l7 7-7 7" /></svg>
-            How is the Total billed calculated?
-          </button>
-          {showMath && (
-            <div className="mt-2 max-w-md rounded-xl border border-gray-100 bg-gray-50/50 p-4">
-              <dl className="space-y-1 text-sm">
-                <div className="flex justify-between"><dt className="text-gray-500">Charges (ex-VAT)</dt><dd className="font-medium text-gray-800">{aed2(totals.value)}</dd></div>
-                <div className="flex justify-between text-amber-700"><dt>Less: discount / credit notes</dt><dd className="font-medium">− {aed2(totals.discount)}</dd></div>
-                <div className="flex justify-between border-t border-gray-200 pt-1 text-gray-600"><dt>Net (ex-VAT)</dt><dd className="font-medium">{aed2(totals.value - totals.discount)}</dd></div>
-                <div className="flex justify-between text-gray-600"><dt>Plus: VAT <span className="text-gray-400">(on the post-discount amount)</span></dt><dd className="font-medium">+ {aed2(totals.vat)}</dd></div>
-                <div className="flex justify-between border-t border-gray-200 pt-1 text-base font-semibold text-gray-900"><dt>Total billed</dt><dd>{aed2(totals.billed)}</dd></div>
-              </dl>
-              <p className="mt-2 text-xs text-gray-500">
-                It isn't rent − discount: the “Charges (ex-VAT)” line bundles every ex-VAT charge (rent, Salik, damages, fuel…), and VAT is then added on the discounted amount.
-              </p>
-            </div>
-          )}
-        </div>
+        <MetricGrid cols={3}>
+          <MetricCard
+            label="Charges (ex-VAT)"
+            value={aed2(totals.value)}
+            tone="slate"
+            icon={<Icon.Invoice className="h-5 w-5" />}
+            tooltip="Sum of every ex-VAT charge (rent, Salik, damages, fuel…) on this contract."
+          />
+          <MetricCard
+            label="Discount"
+            value={totals.discount > 0 ? `− ${aed2(totals.discount)}` : aed2(0)}
+            tone="amber"
+            icon={<Icon.Percent className="h-5 w-5" />}
+            tooltip="Discounts / credit notes applied before VAT."
+          />
+          <MetricCard
+            label="Total billed"
+            value={aed2(totals.billed)}
+            tone="emerald"
+            icon={<Icon.Coins className="h-5 w-5" />}
+            tooltip="Net (ex-VAT) after discount, plus VAT on the discounted amount."
+          />
+        </MetricGrid>
       )}
+
+      <SectionCard
+        title="Invoices"
+        subtitle="Charges billed on this contract. Website invoices (M-…) are editable; OfficeManager ones are read-only."
+        actions={canManage ? <Button variant="secondary" size="sm" onClick={openNew}><Icon.Plus className="h-4 w-4" /> Add invoice</Button> : null}
+      >
+        {invoices.length === 0 ? (
+          <div className="px-5 py-10 text-center text-sm text-slate-400">
+            No invoices yet{canManage ? ' — use “Add invoice” above.' : '.'}
+          </div>
+        ) : (
+          <>
+            <DataTable
+              columns={columns}
+              rows={invoices}
+              rowKey={(inv) => inv.id ?? inv.number}
+              empty="No invoices yet."
+            />
+
+            {/* How the Total billed is reached — the ex-VAT charges, the discount, then VAT on the
+                post-discount base. Explains why it's NOT simply rent − discount. */}
+            <div className="px-5 py-4">
+              <button type="button" onClick={() => setShowMath((v) => !v)} className="inline-flex items-center gap-1.5 text-xs font-medium text-indigo-600 hover:text-indigo-700">
+                <svg className={`h-3.5 w-3.5 transition-transform ${showMath ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 5l7 7-7 7" /></svg>
+                How is the Total billed calculated?
+              </button>
+              {showMath && (
+                <div className="mt-2 max-w-md rounded-xl border border-slate-100 bg-slate-50/50 p-4">
+                  <dl className="space-y-1 text-sm">
+                    <div className="flex justify-between"><dt className="text-slate-500">Charges (ex-VAT)</dt><dd className="font-medium text-slate-800 tabular-nums">{aed2(totals.value)}</dd></div>
+                    <div className="flex justify-between text-amber-700"><dt>Less: discount / credit notes</dt><dd className="font-medium tabular-nums">− {aed2(totals.discount)}</dd></div>
+                    <div className="flex justify-between border-t border-slate-200 pt-1 text-slate-600"><dt>Net (ex-VAT)</dt><dd className="font-medium tabular-nums">{aed2(totals.value - totals.discount)}</dd></div>
+                    <div className="flex justify-between text-slate-600"><dt>Plus: VAT <span className="text-slate-400">(on the post-discount amount)</span></dt><dd className="font-medium tabular-nums">+ {aed2(totals.vat)}</dd></div>
+                    <div className="flex justify-between border-t border-slate-200 pt-1 text-base font-semibold text-slate-900"><dt>Total billed</dt><dd className="tabular-nums">{aed2(totals.billed)}</dd></div>
+                  </dl>
+                  <p className="mt-2 text-xs text-slate-500">
+                    It isn't rent − discount: the “Charges (ex-VAT)” line bundles every ex-VAT charge (rent, Salik, damages, fuel…), and VAT is then added on the discounted amount.
+                  </p>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </SectionCard>
 
       <Modal
         open={open}
@@ -249,13 +272,13 @@ export default function ContractInvoices({ contract, onChanged }) {
           <Textarea label="Notes" rows={2} value={form.notes} onChange={set('notes')} error={err('notes')} placeholder="What is this invoice for?" />
 
           {/* Live computed summary */}
-          <div className="rounded-xl bg-gray-50 px-4 py-3 text-sm ring-1 ring-inset ring-gray-100">
-            <div className="flex justify-between py-0.5"><span className="text-gray-500">After discount</span><span className="font-medium text-gray-800">{aed2(preview.afterDiscount)}</span></div>
-            <div className="flex justify-between py-0.5"><span className="text-gray-500">VAT</span><span className="font-medium text-gray-800">{aed2(preview.vat)}</span></div>
-            <div className="mt-1 flex justify-between border-t border-gray-200 pt-1.5"><span className="font-semibold text-gray-700">Total (after VAT)</span><span className="font-bold text-gray-900">{aed2(preview.total)}</span></div>
+          <div className="rounded-xl bg-slate-50 px-4 py-3 text-sm ring-1 ring-inset ring-slate-100">
+            <div className="flex justify-between py-0.5"><span className="text-slate-500">After discount</span><span className="font-medium text-slate-800 tabular-nums">{aed2(preview.afterDiscount)}</span></div>
+            <div className="flex justify-between py-0.5"><span className="text-slate-500">VAT</span><span className="font-medium text-slate-800 tabular-nums">{aed2(preview.vat)}</span></div>
+            <div className="mt-1 flex justify-between border-t border-slate-200 pt-1.5"><span className="font-semibold text-slate-700">Total (after VAT)</span><span className="font-bold text-slate-900 tabular-nums">{aed2(preview.total)}</span></div>
           </div>
         </div>
       </Modal>
-    </Card>
+    </div>
   );
 }
