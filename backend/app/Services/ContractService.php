@@ -4,14 +4,16 @@ namespace App\Services;
 
 use App\Models\Contract;
 use App\Models\Maintenance;
+use App\Models\Vehicle;
+use App\Services\ContractEligibilityService;
 use App\Services\MaintenanceAnalyticsService;
 use Illuminate\Support\Facades\DB;
 
 class ContractService
 {
-    public function __construct()
-    {
-        //
+    public function __construct(
+        private ContractEligibilityService $eligibility,
+    ) {
     }
     /**
      * Paginated contracts with optional filters.
@@ -53,6 +55,7 @@ class ContractService
             ->orderByDesc('id')
             ->paginate(50);
     }
+
     /** Maintenance header fields that live on the `maintenances` table, not on contracts. */
     private const MAINTENANCE_FIELDS = [
         'vendor_id', 'maintenance_tags', 'responsible',
@@ -61,6 +64,15 @@ class ContractService
 
     public function store(array $data)
     {
+        // Booking gate: Red and Yellow are refused; Orange requires (and records) a customer-
+        // condition acknowledgment. Returns the acknowledgment columns to stamp on the contract.
+        $ack = $this->eligibility->assertEligibleForContract($data);
+        unset(
+            $data['condition_acknowledged'], $data['condition_ack_by'],
+            $data['manager_override'], $data['override_by'], $data['override_reason'],
+        );
+        $data = array_merge($data, $ack);
+
         return DB::transaction(function () use ($data) {
             $items = $data['items'] ?? null;
             unset($data['items']);
@@ -195,7 +207,10 @@ class ContractService
     public function nextWebContractNo(): string
     {
         $prefix = 'W-';
-        $max = (int) Contract::where('contract_no', 'like', $prefix.'%')
+        // withTrashed(): the (contract_no, contract_type) unique index still holds soft-deleted rows,
+        // so a number we skip here would collide at insert. Count trashed rows to stay strictly ahead.
+        $max = (int) Contract::withTrashed()
+            ->where('contract_no', 'like', $prefix.'%')
             ->pluck('contract_no')
             ->map(fn ($no) => (int) preg_replace('/\D/', '', $no))
             ->max();
