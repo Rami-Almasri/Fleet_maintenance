@@ -33,7 +33,7 @@ import RootCausePicker, { rootCausesComplete } from './RootCausePicker';
 import FaultHistoryInsight from './FaultHistoryInsight';
 import LineItemsEditor, { serializeLineItems, lineItemsUnlinked, invoiceVarianceBlocked, lineItemsHaveZeroCost } from './LineItemsEditor';
 import { compressImage, formatBytes } from '../../lib/imageCompression';
-import { evaluateContinuity, needsConfirm, needsNote, stageIgnoresTolerance, STAGE } from '../../lib/odometerContinuity';
+import { evaluateContinuity, needsConfirm, needsNote, isHardBlocked, stageIgnoresTolerance, stageRequiresIncrease, STAGE } from '../../lib/odometerContinuity';
 import OdometerContinuityHint from './OdometerContinuityHint';
 
 // Persisted enum values — these are CONTRACT with the backend and never localize.
@@ -53,12 +53,13 @@ const MAINTENANCE_TYPES = [
 const FAULT_SEVERITY_OPTS = [
   { value: 'critical', emoji: '🔴' },
   { value: 'moderate', emoji: '🟡' },
+  { value: 'high', emoji: '🟠' },
   { value: 'routine', emoji: '🟢' },
 ];
 
 // Submit-button tone per action (visual only). The footer further overrides this
 // for the branching decisions (reinspect pass/fail, decide requires/clear).
-const baseTone = (action) => (action === 'ready' ? 'success' : 'primary');
+const baseTone = (action) => (['ready', 'serviced'].includes(action) ? 'success' : 'primary');
 
 // Compact "who/when" timestamp for the follow-up log: relative for recent notes, an absolute
 // date+time once they age past a day. `t` localizes the relative phrasing.
@@ -195,6 +196,7 @@ const Req = () => <span className="text-red-500"> *</span>;
 // a glance (matching the board chip the supervisor sees downstream).
 const SEVERITY_STYLE = {
   critical: 'border-red-500 bg-red-50 text-red-800 ring-1 ring-red-500',
+  high: 'border-orange-500 bg-orange-50 text-orange-800 ring-1 ring-orange-500',
   moderate: 'border-amber-500 bg-amber-50 text-amber-800 ring-1 ring-amber-500',
   routine: 'border-emerald-500 bg-emerald-50 text-emerald-800 ring-1 ring-emerald-500',
 };
@@ -202,7 +204,7 @@ const SEVERITY_STYLE = {
 // is rendered read-only: the forced level keeps its colour, the others dim, and none respond to clicks.
 function FaultSeverityPicker({ value, onChange, t, locked = false }) {
   return (
-    <div className="grid grid-cols-3 gap-2">
+    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
       {FAULT_SEVERITY_OPTS.map((p) => {
         const active = value === p.value;
         return (
@@ -246,6 +248,20 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
     () => (ticket?.findings || []).map((f) => f.text).filter(Boolean),
     [ticket],
   );
+
+  // Reality-check data — the car's LIVE oil/battery/tyre status, so the Decide/Garage-finding step can
+  // warn the moment a routine keyword (Oil Change, Battery Replacement, Tire Rotation/Change) is tapped
+  // while the car's own status says it isn't actually due. Best-effort: only fetched for the two steps
+  // that render FindingsPicker, and a fetch failure just means the warning silently stays off.
+  const [diagConditions, setDiagConditions] = useState([]);
+  useEffect(() => {
+    if (!ticket?.id || (action !== 'decide' && action !== 'finding')) return undefined;
+    let alive = true;
+    api.get(`/maintenance-tickets/${ticket.id}/diagnostic-context`)
+      .then((r) => { if (alive) setDiagConditions(r.data?.data?.conditions || []); })
+      .catch(() => { if (alive) setDiagConditions([]); });
+    return () => { alive = false; };
+  }, [ticket?.id, action]);
 
   // ---- form state (one bag; only the relevant keys are read per action) ----
   const [vehicleId, setVehicleId] = useState('');
@@ -358,7 +374,9 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
       case 'start': return STAGE.TEST;
       // Decide — the end-of-test-drive reading, forward from the start anchor (same TEST rule).
       case 'decide': return STAGE.TEST;
-      case 'dispatch':
+      // Awaiting Pickup — the driver collects the car from OUR PARK, so it shouldn't have moved: strict match.
+      case 'dispatch': return STAGE.PARK_PICKUP;
+      // Recovery is an emergency tow of a broken-down car (often from off-site) — keep the generic pickup rule.
       case 'recovery': return STAGE.PICKUP;
       case 'receive': return STAGE.GARAGE_IN;
       // Collect-from-garage — the car leaves the garage: garage-OUT continuity (forward = a road test,
@@ -375,10 +393,13 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
     () => (contStage ? evaluateContinuity(odometer, prevOdometer, contStage) : null),
     [contStage, odometer, prevOdometer],
   );
-  // Context-aware tolerance: a site↔garage move (receive/ready) is a deliberate road trip, so the mileage
+  // Context-aware tolerance: a site↔garage move (receive) is a deliberate road trip, so the mileage
   // INCREASE is expected — we waive the ±10 km note/confirm nag for it. Internal checks (test/pickup/
   // re-inspection) keep the rule. A backward reading still flags a Discrepancy on every stage.
-  const ignoreOdoTolerance = stageIgnoresTolerance(contStage);
+  // Collect-from-garage is the EXCEPTION: although it uses the garage-out classification (so a forward
+  // delta still reads "Garage test drive"), we keep it STRICT — the driver captures this reading by hand,
+  // so a big/typo gap (e.g. 849991 vs 84999) must force the confirm + note, never be silently waived.
+  const ignoreOdoTolerance = stageIgnoresTolerance(contStage) && action !== 'collectFromGarage';
   const odoNeedsConfirm = needsConfirm(continuity?.status, ignoreOdoTolerance);
   // A reading more than 10 km off the previous one (either direction) demands a written note — UNLESS this
   // is a garage transfer, where a big forward gap is the whole point of the trip. This also forces the
@@ -388,26 +409,33 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   // The odometer gate for the current step: the acknowledgment (when required) AND the note (when a big
   // gap demands it) must both be satisfied before the step can submit. Steps with no odometer capture
   // have continuity === null, so both requirements are false and this is a no-op.
-  const odoGateBlocked = (odoAckRequired && !odoConfirmed) || (odoNoteRequired && !odoNote.trim());
+  // A strict-increase violation (garage intake ≤ pickup) is a hard block — it can't be acked away, so it
+  // gates submit on its own regardless of the soft ack/note requirements. Mirrors the backend guard.
+  const odoGateBlocked = isHardBlocked(continuity) || (odoAckRequired && !odoConfirmed) || (odoNoteRequired && !odoNote.trim());
 
   // A changed reading invalidates a prior acknowledgment + note — re-confirm/re-explain the new value.
   useEffect(() => { setOdoConfirmed(false); setOdoNote(''); }, [odometer]);
 
-  // Test-drive START (open / start): the car hasn't been driven yet, so the reading at this moment
-  // IS the car's last recorded mileage. Pre-fill the field with the "Previous Odometer" so it reads
-  // 0 km driven / Verified by default; the inspector only overrides it if the dashboard differs.
-  // Seeds once per (action, vehicle) via a ref, so switching cars re-seeds but typing/clearing is
-  // never clobbered.
+  // Auto-complete the reading on EVERY odometer-capturing stage (contStage != null): pre-fill the field
+  // with the "Previous Odometer" the system expects so the step opens reading 0 km delta / Verified by
+  // default. On test-drive START the car genuinely hasn't moved, so that's the true value; on the later
+  // handoffs (dispatch, arrival, garage-out, re-inspection, end-of-test-drive) it's a convenient starting
+  // point the operator confirms or overrides — a typed change immediately re-runs the continuity verdict.
+  // Seeds once per (action, vehicle) via a ref, so switching cars re-seeds but typing/clearing is never
+  // clobbered.
   const seededOdoFor = useRef(null);
   useEffect(() => {
-    if ((action === 'start' || action === 'open') && prevOdometer != null) {
+    // A strict-increase stage (garage intake) is the exception: seeding reading = previous would open the
+    // step on an invalid equal value (an instant hard block), so we leave it blank and let the driver type
+    // the true, higher arrival reading — the "Previous Odometer" hint still shows what it must exceed.
+    if (contStage && prevOdometer != null && !stageRequiresIncrease(contStage)) {
       const key = `${action}:${ticket?.vehicle_id ?? vehicleId ?? ''}`;
       if (seededOdoFor.current !== key) {
         seededOdoFor.current = key;
         setOdometer(String(prevOdometer));
       }
     }
-  }, [action, prevOdometer, ticket, vehicleId]);
+  }, [action, contStage, prevOdometer, ticket, vehicleId]);
 
   // Re-inspection, per-fault. Open faults (not completed/cancelled) become the checklist the inspector
   // signs off. With faults present, the outcome is DERIVED (any fault still broken → fail); a legacy
@@ -503,6 +531,10 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
             variance_explanation: varianceExplanation.trim() || null,
           },
         };
+      case 'serviced':
+        // On-Site (mobile) lane — the entire back-half of the workflow collapsed into one step:
+        // no garage, no re-inspection, no QA. Cost/vendor/notes are all optional.
+        return { url: `${base}/${ticket.id}/mark-serviced`, body: { notes: notes || null, cost: cost === '' ? null : Number(cost), vendor_id: vendorId ? Number(vendorId) : null } };
       case 'requestinvoice':
         // Path A — ask the garage for an itemised invoice (the team is alerted to chase it).
         return { url: `${base}/${ticket.id}/request-invoice`, body: {} };
@@ -718,6 +750,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
       case 'recovery': return t('workflow.success.recovery', { who });
       case 'receive': return t('workflow.success.receive', { who });
       case 'ready': return t('workflow.success.ready', { who });
+      case 'serviced': return t('workflow.success.serviced', { who });
       case 'finding': return t('workflow.success.finding', { who });
       case 'reinspect': return reFail ? t('workflow.success.reinspectFail', { who }) : t(deferInvoice ? 'workflow.success.reinspectAwaitInvoice' : 'workflow.success.reinspectPass', { who });
       case 'typechange': return t('workflow.success.typechange', { who, type: t(`workflow.type.${maintType}`) });
@@ -770,7 +803,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
         {ticket?.findings?.length > 0 && action !== 'decide' && (
           <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3">
             <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{t('workflow.field.findings')}</p>
-            <FindingsList findings={ticket.findings} />
+            <FindingsList findings={ticket.findings} tasks={ticket.tasks} />
           </div>
         )}
 
@@ -867,7 +900,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
             </div>
             <div>
               <span className="mb-1.5 block text-sm font-medium text-slate-700">{t('workflow.field.findingsTapAll')}</span>
-              <FindingsPicker catalog={findingsCatalog} keywordMeta={keywordMeta} value={symptoms} onChange={setSymptoms} locked={lockedFindings} />
+              <FindingsPicker catalog={findingsCatalog} keywordMeta={keywordMeta} value={symptoms} onChange={setSymptoms} locked={lockedFindings} suggested={ticket?.suggested_findings || []} statusConditions={diagConditions} />
             </div>
             {/* Symptom → Root-Cause — the mandatory diagnostic step: name the probable cause per symptom */}
             {symptoms.length > 0 && (
@@ -1031,12 +1064,18 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
               {photoTile}
             </div>
 
-            {/* Garage is read-only here — it's the supervisor's pre-assigned choice; the driver cannot change it. */}
+            {/* Garage is read-only here — it's the supervisor's pre-assigned choice; the driver cannot change it.
+                On a garage-to-garage transfer the car's current garage stays in `garage` (where it physically
+                is) while the supervisor's chosen destination sits in `transfer_to_garage` — the driver must
+                drive to that NEW garage, so it wins here. */}
             <div>
               <span className="mb-1 block text-sm font-medium text-slate-700">{t('workflow.field.destinationGarage')}</span>
               <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm">
                 <Icon.Wrench className="h-4 w-4 shrink-0 text-slate-400" />
-                <span className="font-medium text-slate-700">{ticket?.garage || t('workflow.hint.garageNotAssigned')}</span>
+                <span className="font-medium text-slate-700">{ticket?.transfer_to_garage || ticket?.garage || t('workflow.hint.garageNotAssigned')}</span>
+                {ticket?.transfer_to_garage && ticket?.garage && (
+                  <span className="text-[11px] text-slate-400">{t('workflow.hint.movingFromGarage', { garage: ticket.garage })}</span>
+                )}
                 <span className="ms-auto text-[11px] text-slate-400">{t('workflow.hint.garageBySupervisor')}</span>
               </div>
             </div>
@@ -1203,6 +1242,29 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
               <Input label={t('workflow.field.repairCostAed')} type="number" min="0" value={cost} onChange={(e) => setCost(e.target.value)} placeholder={t('workflow.ph.costExample')} />
             )}
           </>
+        )}
+
+        {/* On-Site (mobile) lane — the single completion step: no garage, no re-inspection, no QA.
+            Cost, vendor and notes are all optional (there may be no vendor at all). */}
+        {action === 'serviced' && (
+          <div className="space-y-3">
+            <div className="rounded-lg bg-teal-50/70 px-3 py-2 text-sm text-teal-700 ring-1 ring-inset ring-teal-600/10">
+              {t('workflow.serviced.hint')}
+            </div>
+            <Input
+              label={t('workflow.serviced.costLabel')}
+              type="number"
+              min="0"
+              value={cost}
+              onChange={(e) => setCost(e.target.value)}
+              placeholder={t('workflow.ph.costExample')}
+            />
+            <div>
+              <span className="mb-1 block text-sm font-medium text-slate-700">{t('workflow.serviced.vendorLabel')}</span>
+              <SearchSelect value={vendorId} onChange={setVendorId} options={garageOptions} placeholder={t('workflow.ph.pickGarage')} />
+            </div>
+            <Textarea label={t('workflow.field.notesOptional')} value={notes} onChange={(e) => setNotes(e.target.value)} />
+          </div>
         )}
 
         {/* PATH A — ask the garage for an itemised invoice. Garages aren't app users, so this alerts
@@ -1436,7 +1498,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
           <>
             <div>
               <span className="mb-1.5 block text-sm font-medium text-slate-700">{t('workflow.field.newGarageIssues')}</span>
-              <FindingsPicker catalog={findingsCatalog} keywordMeta={keywordMeta} value={findingTags} onChange={setFindingTags} locked={lockedFindings} />
+              <FindingsPicker catalog={findingsCatalog} keywordMeta={keywordMeta} value={findingTags} onChange={setFindingTags} locked={lockedFindings} statusConditions={diagConditions} />
             </div>
             {/* Symptom → Root-Cause — diagnose each garage-found issue (mandatory where a cause-list exists) */}
             {findingTags.length > 0 && (

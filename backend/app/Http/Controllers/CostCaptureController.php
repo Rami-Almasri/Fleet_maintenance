@@ -102,7 +102,7 @@ class CostCaptureController extends Controller
                 'window_months' => RealProfitService::YIELD_MONTHS,
             ], 'Uncosted repairs retrieved successfully', 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -139,7 +139,7 @@ class CostCaptureController extends Controller
                 'became_negative' => ! $wasNeg && $isNeg,
             ], 'Repair cost saved successfully', 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 }

@@ -1,0 +1,34 @@
+// Front-end feature switches.
+//
+// SHOW_FINANCIALS — "Financial Decoupling" (added 2026-06-29, pre-demo).
+// While this is `false`, every COMPUTED money display is hidden across the UI:
+// account balances, customer wallets / deposits, invoice & payment totals, and
+// maintenance cost / net-margin calculations. This avoids showing figures that
+// could be inconsistent while the backend reconciliation for the API sync is
+// still being aligned.
+//
+// What this does NOT do: it never removes operational record-keeping. Invoice
+// upload, workshop-event CRUD and payment entry all keep working — only the
+// rolled-up money NUMBERS are hidden from view.
+//
+// To restore all financial widgets after the demo / once the backend is aligned,
+// flip this single flag back to `true`.
+export const SHOW_FINANCIALS = false;
+
+// SHOW_VIDEO_REVIEW — "Supervisor Video-Review" gate (parked 2026-07-04, pre-launch).
+// While this is `false`, every UI element for the video-review stage is hidden: the
+// "Video Review" board lane (repair_review), the Video Evidence upload/watch panel on
+// the ticket drawer, and the approve / request-re-fix affordances. The backend behaves
+// in lock-step (config/features.php → video_review): "Mark Ready" flows straight to the
+// final re-inspection gate, so no ticket ever lands in this stage.
+//
+// The architecture is intact — flip this back to `true` (and FEATURE_VIDEO_REVIEW=true
+// on the backend) to re-enable the whole gate exactly as it was.
+export const SHOW_VIDEO_REVIEW = false;
+
+// DEMO_MODE — arms the admin-only Simulation Panel (added 2026-07-06, for team demos).
+// While `false`, the "Simulation" entry is hidden from the sidebar so the panel stays out of the
+// way in normal use. Flip to `true` to surface it for a demo. This is only the UI mirror — the
+// backend independently refuses every simulation action unless FEATURE_DEMO_MODE=true is also set
+// (config/features.php → demo_mode), so a stray page open can never touch data on its own.
+export const DEMO_MODE = false;

@@ -30,7 +30,7 @@ class ExchangeController extends Controller
 
             return ResponseHelper::SuccessResponse($data, 'Pending exchange links retrieved', 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -43,7 +43,7 @@ class ExchangeController extends Controller
                 'candidates' => $this->exchanges->candidatesFor($contract),
             ], 'Exchange context retrieved', 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -73,9 +73,9 @@ class ExchangeController extends Controller
                 'carried_balance' => $child->carried_balance,
             ], 'Contracts linked', 200);
         } catch (\InvalidArgumentException $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 422);
+            return ResponseHelper::fromException($e);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -89,7 +89,7 @@ class ExchangeController extends Controller
                 'chain' => $this->exchanges->chain($child),
             ], 'Exchange link removed', 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 }

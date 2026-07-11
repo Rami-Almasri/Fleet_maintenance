@@ -1,38 +1,35 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import api from '../api/client';
 import { usePermissions } from '../hooks/usePermissions';
 import { useToast } from './ui/Toast';
 import Button from './ui/Button';
 import Badge from './ui/Badge';
 import Modal from './ui/Modal';
-import DataTable, { SectionCard } from './ui/Table';
-import MetricCard, { MetricGrid } from './ui/MetricCard';
+import { SectionCard } from './ui/Table';
+import SearchSelect from './ui/SearchSelect';
 import Icon from './ui/Icon';
-import { Input, Textarea } from './ui/Field';
-import { aed2, fmtDate } from '../lib/format';
+import { Input, Textarea, Select } from './ui/Field';
+import { fmtDate } from '../lib/format';
 
-const VAT_DEFAULT = 5;
-const EMPTY = { invoice_date: '', total_value: '', vat_percentage: '5', discount: '', period_from: '', period_to: '', notes: '' };
-
-// Derive the VAT % a stored invoice was built with, so editing it doesn't silently
-// re-rate the figures. after-discount base = value − discount.
-function pctOf(inv) {
-  const base = Number(inv.total_value || 0) - Number(inv.discount || 0);
-  if (!base) return String(VAT_DEFAULT);
-  return String(Math.round((Number(inv.vat_value || 0) / base) * 100));
-}
+// A blank service record. Money fields are gone — this is a Technical Service Log now.
+const EMPTY = { invoice_date: '', vendor_id: '', notes: '', items: [{ description: '', category_key: '' }] };
 
 /**
- * The invoices (charges) on a contract — both the legacy OfficeManager ones (read-only)
- * and the website's own manual ones (origin 'manual', editable). Users with billing.manage
- * can add a manual invoice to ANY contract (rental, maintenance, booking) and edit/delete
- * the manual ones. VAT and the total are computed live from value − discount.
+ * The Service Records on a contract — a money-FREE technical log of the parts/services done on the
+ * car (e.g. "Oil Filter", "Brake Pads"), each stamped with its date and the garage. Users with
+ * billing.manage can add/edit/delete website records; OfficeManager-synced rows are read-only and
+ * only shown when they actually carry work items. Feeds the per-vehicle Service History.
  */
 export default function ContractInvoices({ contract, onChanged }) {
   const { can } = usePermissions();
   const toast = useToast();
   const canManage = can('billing.manage');
-  const invoices = useMemo(() => contract.invoices || [], [contract.invoices]);
+
+  // Only the technical records: website ones, plus any synced row that carries work items.
+  const records = useMemo(
+    () => (contract.invoices || []).filter((i) => i.origin === 'manual' || (i.items?.length)),
+    [contract.invoices],
+  );
 
   const today = new Date().toISOString().slice(0, 10);
   const [open, setOpen] = useState(false);
@@ -40,243 +37,201 @@ export default function ContractInvoices({ contract, onChanged }) {
   const [form, setForm] = useState(EMPTY);
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
-  const [showMath, setShowMath] = useState(false);
 
-  const set = (f) => (e) => setForm((s) => ({ ...s, [f]: e.target.value }));
+  const [garages, setGarages] = useState([]);
+  const [categories, setCategories] = useState([]); // findings catalog → category options
+
+  // Garage list + the Findings category vocabulary (so each work item can be tagged consistently).
+  useEffect(() => {
+    let alive = true;
+    Promise.all([
+      api.get('/Vendor').then((r) => r.data?.data).catch(() => []),
+      api.get('/maintenance-tickets/findings-catalog').then((r) => r.data?.data?.categories).catch(() => []),
+    ]).then(([g, cats]) => {
+      if (!alive) return;
+      const all = Array.isArray(g) ? g : g?.items || [];
+      const shops = all.filter((x) => x.type === 'garage');
+      setGarages(shops.length ? shops : all);
+      setCategories(Array.isArray(cats) ? cats : []);
+    });
+    return () => { alive = false; };
+  }, []);
+
+  const garageOptions = useMemo(() => garages.map((g) => ({ id: g.id, label: g.name, sub: g.phone || g.type })), [garages]);
+  const catLabel = useMemo(() => Object.fromEntries(categories.map((c) => [c.key, c.title || c.label || c.key])), [categories]);
+
   const err = (f) => errors[f]?.[0] || '';
+  const set = (f) => (e) => setForm((s) => ({ ...s, [f]: e.target.value }));
 
-  // Live VAT/total preview — mirrors the backend math exactly.
-  const preview = useMemo(() => {
-    const value = Number(form.total_value) || 0;
-    const disc = Number(form.discount) || 0;
-    const pct = form.vat_percentage === '' ? VAT_DEFAULT : Number(form.vat_percentage) || 0;
-    const afterDiscount = +(value - disc).toFixed(2);
-    const vat = +((afterDiscount * pct) / 100).toFixed(2);
-    return { afterDiscount, vat, total: +(afterDiscount + vat).toFixed(2) };
-  }, [form]);
-
-  const totals = useMemo(() => ({
-    billed: contract.invoices_total ?? invoices.reduce((s, i) => s + Number(i.total_after_vat || 0), 0),
-    discount: contract.invoices_discount ?? invoices.reduce((s, i) => s + Number(i.discount || 0), 0),
-    value: invoices.reduce((s, i) => s + Number(i.total_value || 0), 0),
-    vat: invoices.reduce((s, i) => s + Number(i.vat_value || 0), 0),
-  }), [contract, invoices]);
+  // ── work-item rows ──
+  const setItem = (i, f, v) => setForm((s) => ({ ...s, items: s.items.map((it, idx) => (idx === i ? { ...it, [f]: v } : it)) }));
+  const addItem = () => setForm((s) => ({ ...s, items: [...s.items, { description: '', category_key: '' }] }));
+  const removeItem = (i) => setForm((s) => ({ ...s, items: s.items.length > 1 ? s.items.filter((_, idx) => idx !== i) : s.items }));
 
   const openNew = () => {
     setEditing(null);
-    setForm({ ...EMPTY, invoice_date: today });
+    setForm({ ...EMPTY, invoice_date: today, items: [{ description: '', category_key: '' }] });
     setErrors({});
     setOpen(true);
   };
 
-  const openEdit = (inv) => {
-    setEditing(inv);
+  const openEdit = (rec) => {
+    setEditing(rec);
     setForm({
-      invoice_date: inv.date || '',
-      total_value: inv.total_value ?? '',
-      vat_percentage: pctOf(inv),
-      discount: inv.discount ?? '',
-      period_from: inv.period_from || '',
-      period_to: inv.period_to || '',
-      notes: inv.notes || '',
+      invoice_date: rec.date || '',
+      vendor_id: rec.vendor_id ? String(rec.vendor_id) : '',
+      notes: rec.notes || '',
+      items: rec.items?.length ? rec.items.map((it) => ({ description: it.description, category_key: it.category_key || '' })) : [{ description: '', category_key: '' }],
     });
     setErrors({});
     setOpen(true);
   };
 
   const submit = async () => {
+    const items = form.items.map((it) => ({ description: it.description.trim(), category_key: it.category_key || null })).filter((it) => it.description);
+    if (!items.length) { toast.error('Add at least one part or service.'); return; }
     setSaving(true);
     setErrors({});
     try {
       const payload = {
         contract_id: contract.id,
         invoice_date: form.invoice_date || null,
-        total_value: form.total_value === '' ? 0 : Number(form.total_value),
-        vat_percentage: form.vat_percentage === '' ? null : Number(form.vat_percentage),
-        discount: form.discount === '' ? 0 : Number(form.discount),
-        period_from: form.period_from || null,
-        period_to: form.period_to || null,
+        vendor_id: form.vendor_id ? Number(form.vendor_id) : null,
         notes: form.notes || null,
+        items,
       };
       if (editing) {
         await api.post(`/Invoice/${editing.id}`, payload);
-        toast.success('Invoice updated');
+        toast.success('Service record updated');
       } else {
         await api.post('/Invoice', payload);
-        toast.success('Invoice added');
+        toast.success('Service record added');
       }
       setOpen(false);
       onChanged?.();
     } catch (e) {
       const r = e.response?.data;
       if (r?.errors) { setErrors(r.errors); toast.error('Please fix the highlighted fields'); }
-      else toast.error(r?.message || r?.msg || 'Could not save the invoice');
+      else toast.error(r?.message || r?.msg || 'Could not save the service record');
     } finally {
       setSaving(false);
     }
   };
 
-  const remove = async (inv) => {
-    if (!window.confirm(`Delete invoice ${inv.number}? This cannot be undone.`)) return;
+  const remove = async (rec) => {
+    if (!window.confirm(`Delete service record ${rec.number}? This cannot be undone.`)) return;
     try {
-      await api.delete(`/Invoice/${inv.id}`);
-      toast.success('Invoice deleted');
+      await api.delete(`/Invoice/${rec.id}`);
+      toast.success('Service record deleted');
       onChanged?.();
     } catch (e) {
-      toast.error(e.response?.data?.message || 'Could not delete the invoice');
+      toast.error(e.response?.data?.message || 'Could not delete the record');
     }
   };
 
-  // Columns for the invoice list — numbers right-aligned with tabular figures so they
-  // line up; the actions column is only rendered for managers (preserves permissions).
-  const columns = [
-    {
-      key: 'number', header: 'Invoice', cellClass: 'font-medium text-slate-900',
-      render: (inv) => (
-        <>
-          <span className="inline-flex items-center gap-1.5">
-            {inv.number}
-            <Badge tone={inv.origin === 'manual' ? 'indigo' : 'gray'}>{inv.origin === 'manual' ? 'Web' : 'OM'}</Badge>
-          </span>
-          {inv.notes && <p className="mt-0.5 text-xs font-normal text-slate-400">{inv.notes}</p>}
-        </>
-      ),
-    },
-    { key: 'date', header: 'Date', cellClass: 'text-slate-500', render: (inv) => fmtDate(inv.date) },
-    { key: 'value', header: 'Value', align: 'right', cellClass: 'tabular-nums text-slate-600', render: (inv) => aed2(inv.total_value) },
-    {
-      key: 'vat', header: 'VAT', align: 'right', tooltip: 'VAT charged on the post-discount base.',
-      cellClass: 'tabular-nums text-slate-600', render: (inv) => aed2(inv.vat_value),
-    },
-    {
-      key: 'discount', header: 'Discount', align: 'right', cellClass: 'tabular-nums text-amber-700',
-      render: (inv) => (Number(inv.discount) > 0 ? `− ${aed2(inv.discount)}` : <span className="text-slate-300">—</span>),
-    },
-    {
-      key: 'total', header: 'Total', align: 'right', tooltip: 'Total after VAT for this invoice.',
-      cellClass: 'tabular-nums font-medium text-slate-900', render: (inv) => aed2(inv.total_after_vat),
-    },
-    ...(canManage ? [{
-      key: 'actions', header: 'Actions', align: 'right',
-      render: (inv) => (
-        inv.editable ? (
-          <span className="inline-flex gap-2">
-            <button onClick={() => openEdit(inv)} className="text-xs font-medium text-indigo-600 hover:text-indigo-700">Edit</button>
-            <span className="text-slate-200">·</span>
-            <button onClick={() => remove(inv)} className="text-xs font-medium text-red-500 hover:text-red-600">Delete</button>
-          </span>
-        ) : (
-          <span className="text-xs text-slate-300">Synced</span>
-        )
-      ),
-    }] : []),
-  ];
-
   return (
     <div className="space-y-5">
-      {/* Summary stats — ex-VAT charges, discount applied, and the total billed (with VAT). */}
-      {invoices.length > 0 && (
-        <MetricGrid cols={3}>
-          <MetricCard
-            label="Charges (ex-VAT)"
-            value={aed2(totals.value)}
-            tone="slate"
-            icon={<Icon.Invoice className="h-5 w-5" />}
-            tooltip="Sum of every ex-VAT charge (rent, Salik, damages, fuel…) on this contract."
-          />
-          <MetricCard
-            label="Discount"
-            value={totals.discount > 0 ? `− ${aed2(totals.discount)}` : aed2(0)}
-            tone="amber"
-            icon={<Icon.Percent className="h-5 w-5" />}
-            tooltip="Discounts / credit notes applied before VAT."
-          />
-          <MetricCard
-            label="Total billed"
-            value={aed2(totals.billed)}
-            tone="emerald"
-            icon={<Icon.Coins className="h-5 w-5" />}
-            tooltip="Net (ex-VAT) after discount, plus VAT on the discounted amount."
-          />
-        </MetricGrid>
-      )}
-
       <SectionCard
-        title="Invoices"
-        subtitle="Charges billed on this contract. Website invoices (M-…) are editable; OfficeManager ones are read-only."
-        actions={canManage ? <Button variant="secondary" size="sm" onClick={openNew}><Icon.Plus className="h-4 w-4" /> Add invoice</Button> : null}
+        title="Service Records"
+        subtitle="Parts & services done on this car — a technical log (no charges). Feeds the vehicle's Service History."
+        actions={canManage ? <Button variant="secondary" size="sm" onClick={openNew}><Icon.Plus className="h-4 w-4" /> Add service record</Button> : null}
       >
-        {invoices.length === 0 ? (
+        {records.length === 0 ? (
           <div className="px-5 py-10 text-center text-sm text-slate-400">
-            No invoices yet{canManage ? ' — use “Add invoice” above.' : '.'}
+            No service records yet{canManage ? ' — use “Add service record” above.' : '.'}
           </div>
         ) : (
-          <>
-            <DataTable
-              columns={columns}
-              rows={invoices}
-              rowKey={(inv) => inv.id ?? inv.number}
-              empty="No invoices yet."
-            />
-
-            {/* How the Total billed is reached — the ex-VAT charges, the discount, then VAT on the
-                post-discount base. Explains why it's NOT simply rent − discount. */}
-            <div className="px-5 py-4">
-              <button type="button" onClick={() => setShowMath((v) => !v)} className="inline-flex items-center gap-1.5 text-xs font-medium text-indigo-600 hover:text-indigo-700">
-                <svg className={`h-3.5 w-3.5 transition-transform ${showMath ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 5l7 7-7 7" /></svg>
-                How is the Total billed calculated?
-              </button>
-              {showMath && (
-                <div className="mt-2 max-w-md rounded-xl border border-slate-100 bg-slate-50/50 p-4">
-                  <dl className="space-y-1 text-sm">
-                    <div className="flex justify-between"><dt className="text-slate-500">Charges (ex-VAT)</dt><dd className="font-medium text-slate-800 tabular-nums">{aed2(totals.value)}</dd></div>
-                    <div className="flex justify-between text-amber-700"><dt>Less: discount / credit notes</dt><dd className="font-medium tabular-nums">− {aed2(totals.discount)}</dd></div>
-                    <div className="flex justify-between border-t border-slate-200 pt-1 text-slate-600"><dt>Net (ex-VAT)</dt><dd className="font-medium tabular-nums">{aed2(totals.value - totals.discount)}</dd></div>
-                    <div className="flex justify-between text-slate-600"><dt>Plus: VAT <span className="text-slate-400">(on the post-discount amount)</span></dt><dd className="font-medium tabular-nums">+ {aed2(totals.vat)}</dd></div>
-                    <div className="flex justify-between border-t border-slate-200 pt-1 text-base font-semibold text-slate-900"><dt>Total billed</dt><dd className="tabular-nums">{aed2(totals.billed)}</dd></div>
-                  </dl>
-                  <p className="mt-2 text-xs text-slate-500">
-                    It isn't rent − discount: the “Charges (ex-VAT)” line bundles every ex-VAT charge (rent, Salik, damages, fuel…), and VAT is then added on the discounted amount.
-                  </p>
+          <ul className="divide-y divide-slate-100">
+            {records.map((rec) => (
+              <li key={rec.id ?? rec.number} className="px-5 py-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2 text-sm">
+                      <span className="inline-flex items-center gap-1.5 text-slate-500">
+                        <Icon.Calendar className="h-3.5 w-3.5 text-slate-400" /> {rec.date ? fmtDate(rec.date) : 'No date'}
+                      </span>
+                      {rec.garage && (
+                        <span className="inline-flex items-center gap-1.5 font-medium text-slate-700">
+                          <Icon.Wrench className="h-3.5 w-3.5 text-slate-400" /> {rec.garage}
+                        </span>
+                      )}
+                      <Badge tone={rec.origin === 'manual' ? 'indigo' : 'gray'}>{rec.origin === 'manual' ? 'Web' : 'OM'}</Badge>
+                    </div>
+                    {rec.items?.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {rec.items.map((it) => (
+                          <span key={it.id} className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">
+                            {it.description}
+                            {it.category_key && <span className="text-slate-400">· {catLabel[it.category_key] || it.category_key}</span>}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {rec.notes && <p className="mt-1.5 text-xs text-slate-400">{rec.notes}</p>}
+                  </div>
+                  {canManage && rec.editable && (
+                    <span className="inline-flex shrink-0 gap-2">
+                      <button onClick={() => openEdit(rec)} className="text-xs font-medium text-indigo-600 hover:text-indigo-700">Edit</button>
+                      <span className="text-slate-200">·</span>
+                      <button onClick={() => remove(rec)} className="text-xs font-medium text-red-500 hover:text-red-600">Delete</button>
+                    </span>
+                  )}
                 </div>
-              )}
-            </div>
-          </>
+              </li>
+            ))}
+          </ul>
         )}
       </SectionCard>
 
       <Modal
         open={open}
         onClose={() => setOpen(false)}
-        title={editing ? `Edit invoice ${editing.number}` : 'Add invoice'}
-        subtitle="VAT and the total are computed from value − discount"
+        title={editing ? `Edit service record ${editing.number}` : 'Add service record'}
+        subtitle="Log the parts/services done — and the garage that did them"
         size="lg"
         footer={(
           <>
             <Button variant="secondary" onClick={() => setOpen(false)} disabled={saving}>Cancel</Button>
-            <Button onClick={submit} loading={saving}>{editing ? 'Save changes' : 'Add invoice'}</Button>
+            <Button onClick={submit} loading={saving}>{editing ? 'Save changes' : 'Add record'}</Button>
           </>
         )}
       >
         <div className="space-y-4">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <Input label="Invoice date" type="date" value={form.invoice_date} onChange={set('invoice_date')} error={err('invoice_date')} />
-            <Input label="Value (before VAT)" type="number" step="0.01" min="0" value={form.total_value} onChange={set('total_value')} error={err('total_value')} required />
-            <Input label="VAT %" type="number" step="0.01" min="0" max="100" value={form.vat_percentage} onChange={set('vat_percentage')} error={err('vat_percentage')} />
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Input label="Service date" type="date" value={form.invoice_date} onChange={set('invoice_date')} error={err('invoice_date')} />
+            <div>
+              <span className="mb-1 block text-sm font-medium text-slate-700">Garage</span>
+              <SearchSelect value={form.vendor_id} onChange={(v) => setForm((s) => ({ ...s, vendor_id: v }))} options={garageOptions} placeholder="Pick the garage…" />
+            </div>
           </div>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <Input label="Discount" type="number" step="0.01" min="0" value={form.discount} onChange={set('discount')} error={err('discount')} />
-            <Input label="Period from" type="date" value={form.period_from} onChange={set('period_from')} error={err('period_from')} />
-            <Input label="Period to" type="date" value={form.period_to} onChange={set('period_to')} error={err('period_to')} />
-          </div>
-          <Textarea label="Notes" rows={2} value={form.notes} onChange={set('notes')} error={err('notes')} placeholder="What is this invoice for?" />
 
-          {/* Live computed summary */}
-          <div className="rounded-xl bg-slate-50 px-4 py-3 text-sm ring-1 ring-inset ring-slate-100">
-            <div className="flex justify-between py-0.5"><span className="text-slate-500">After discount</span><span className="font-medium text-slate-800 tabular-nums">{aed2(preview.afterDiscount)}</span></div>
-            <div className="flex justify-between py-0.5"><span className="text-slate-500">VAT</span><span className="font-medium text-slate-800 tabular-nums">{aed2(preview.vat)}</span></div>
-            <div className="mt-1 flex justify-between border-t border-slate-200 pt-1.5"><span className="font-semibold text-slate-700">Total (after VAT)</span><span className="font-bold text-slate-900 tabular-nums">{aed2(preview.total)}</span></div>
+          <div>
+            <span className="mb-1.5 block text-sm font-medium text-slate-700">Parts / services done</span>
+            <div className="space-y-2">
+              {form.items.map((it, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <Input
+                    className="flex-1"
+                    value={it.description}
+                    onChange={(e) => setItem(i, 'description', e.target.value)}
+                    placeholder="e.g. Oil Filter, Brake Pads, Airbag Sensor"
+                  />
+                  <Select className="w-40" value={it.category_key} onChange={(e) => setItem(i, 'category_key', e.target.value)}>
+                    <option value="">Category…</option>
+                    {categories.map((c) => <option key={c.key} value={c.key}>{c.title || c.label || c.key}</option>)}
+                  </Select>
+                  <button type="button" onClick={() => removeItem(i)} className="rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-500" title="Remove">
+                    <Icon.X className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <button type="button" onClick={addItem} className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-700">
+              <Icon.Plus className="h-3.5 w-3.5" /> Add another item
+            </button>
           </div>
+
+          <Textarea label="Notes (optional)" rows={2} value={form.notes} onChange={set('notes')} error={err('notes')} placeholder="Anything else about this visit…" />
         </div>
       </Modal>
     </div>

@@ -84,9 +84,10 @@ export const REASON_TONE = { test_drive: 'violet', customer_reported: 'amber', p
 // mandatory diagnostic grade is shown FIRST on every ticket surface, so a supervisor reads how
 // urgent the garage dispatch is before anything else.
 export const SEVERITY_CHIP = {
-  red:   'bg-red-50 text-red-700 ring-red-200',
-  amber: 'bg-amber-50 text-amber-700 ring-amber-200',
-  green: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
+  red:    'bg-red-50 text-red-700 ring-red-200',
+  orange: 'bg-orange-50 text-orange-700 ring-orange-200',
+  amber:  'bg-amber-50 text-amber-700 ring-amber-200',
+  green:  'bg-emerald-50 text-emerald-700 ring-emerald-200',
 };
 
 // The "In Workshop" stage — the only point at which faults can be managed (worked / marked fixed).

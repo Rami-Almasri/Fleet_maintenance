@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Observers\PaymentObserver;
+use Illuminate\Database\Eloquent\Attributes\ObservedBy;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -10,7 +12,10 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * A payment / receipt recorded on the website — the credit (collection) side of a
  * contract. Anchored to a contract, optionally to a single invoice. Sum of a
  * contract's payments, netted against its invoices, is its real outstanding balance.
+ *
+ * Payments feed the customer's balance/wallet via PaymentObserver.
  */
+#[ObservedBy(PaymentObserver::class)]
 class Payment extends Model
 {
     use HasFactory;

@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>نظام إدارة الأسطول — كتالوج حالات الاستخدام</title>
+<style>
+  :root{
+    --navy:#0b1f3a; --navy-2:#12305c; --cyan:#0bb4c4; --cyan-dk:#087f8c;
+    --ink:#1a2433; --muted:#5b6b82; --line:#e6ebf2; --bg:#f4f7fb; --card:#ffffff;
+    --ok:#059669; --plan:#7c3aed;
+  }
+  *{box-sizing:border-box}
+  body{margin:0; background:var(--bg); color:var(--ink);
+    font:15.5px/1.7 'Segoe UI','Tahoma','Cairo',-apple-system,Arial,sans-serif}
+  .wrap{max-width:1080px; margin:0 auto; padding:0 22px 80px}
+
+  header{background:linear-gradient(225deg,var(--navy) 0%,var(--navy-2) 60%,var(--cyan-dk) 140%);
+    color:#fff; padding:44px 0 40px; box-shadow:0 10px 30px rgba(11,31,58,.25)}
+  header .wrap{padding-bottom:0}
+  .eyebrow{font-size:13px; color:var(--cyan); font-weight:700; margin:0 0 8px}
+  h1{margin:0; font-size:31px; font-weight:800; line-height:1.3}
+  .sub{margin:10px 0 0; color:#c7d6ea; font-size:15.5px}
+  .stat{display:flex; gap:26px; flex-wrap:wrap; margin-top:22px}
+  .stat .n{font-size:30px; font-weight:800; color:#fff; line-height:1}
+  .stat .l{font-size:12.5px; color:#9fb6d4; margin-top:4px}
+
+  .legend{background:var(--card); border:1px solid var(--line); border-radius:12px;
+    padding:12px 18px; margin:-42px 0 22px; display:flex; gap:22px; flex-wrap:wrap; align-items:center;
+    box-shadow:0 8px 24px rgba(11,31,58,.08); font-size:13.5px; color:var(--muted)}
+  .dot{display:inline-block; width:10px; height:10px; border-radius:50%; margin-inline-end:6px; vertical-align:middle}
+  .dot.ok{background:var(--ok)} .dot.plan{background:var(--plan)}
+
+  .cat{margin:30px 0 0}
+  .cat-h{display:flex; align-items:center; gap:12px; margin:0 0 4px}
+  .cat-h .ico{font-size:22px}
+  .cat-h h2{margin:0; font-size:20px; font-weight:800; color:var(--navy)}
+  .cat-h .cnt{margin-inline-start:auto; background:#eef4fb; color:var(--navy-2);
+    border-radius:999px; padding:3px 12px; font-size:12.5px; font-weight:700}
+  .cat-line{height:2px; background:linear-gradient(90deg,var(--cyan),transparent); margin:6px 0 16px; border-radius:2px}
+
+  .grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(330px,1fr)); gap:12px}
+  .uc{background:var(--card); border:1px solid var(--line); border-radius:11px; padding:13px 15px;
+    box-shadow:0 3px 10px rgba(11,31,58,.04); position:relative}
+  .uc.plan{border-inline-start:3px solid var(--plan)}
+  .uc-h{display:flex; align-items:flex-start; gap:8px; margin-bottom:5px; flex-wrap:wrap}
+  .uc-t{font-weight:800; color:var(--navy); font-size:15px}
+  .en{color:var(--cyan-dk); font-weight:600; font-size:12px; direction:ltr; unicode-bidi:embed}
+  .route{margin-inline-start:auto; background:#0f1e33; color:#8fe3ec; border-radius:6px;
+    padding:1px 8px; font:11.5px/1.6 'JetBrains Mono',ui-monospace,Consolas,monospace;
+    direction:ltr; unicode-bidi:embed; white-space:nowrap}
+  .uc-d{margin:0; font-size:13.5px; color:#41506a; line-height:1.6}
+  code{background:#eef2f7; border:1px solid #e0e7ef; border-radius:4px; padding:0 5px;
+    font:12px 'JetBrains Mono',ui-monospace,Consolas,monospace; color:#0b3a63;
+    direction:ltr; unicode-bidi:embed; display:inline-block}
+
+  .planbanner{background:#f5f3ff; border:1px solid #ddd6fe; border-inline-start:4px solid var(--plan);
+    border-radius:11px; padding:14px 18px; margin:34px 0 16px; color:#5b21b6; font-size:14.5px}
+  .planbanner b{color:#6d28d9}
+
+  footer{color:var(--muted); font-size:12.5px; text-align:center; margin-top:40px}
+  @media print{body{background:#fff} header{box-shadow:none} .uc,.legend{box-shadow:none} .cat{break-inside:avoid}}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <p class="eyebrow">نظام إدارة الأسطول · كتالوج شامل</p>
+    <h1>حالات الاستخدام في النظام</h1>
+    <p class="sub">كل ما يقوم به النظام اليوم — مُصنَّفاً حسب المجال — مع قسم منفصل لِما هو قيد التخطيط (دورة حياة الأسطول، النسخة 3).</p>
+    <div class="stat">
+      <div><div class="n">‏57+</div><div class="l">حالة استخدام مبنية</div></div>
+      <div><div class="n">‏10</div><div class="l">مجالات وظيفية</div></div>
+      <div><div class="n">‏6</div><div class="l">مراحل قيد التخطيط</div></div>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="legend">
+    <span><span class="dot ok"></span> مبنية وتعمل الآن</span>
+    <span><span class="dot plan"></span> قيد التخطيط (النسخة 3 — بانتظار اعتماد عمر)</span>
+    <span>· الرقاقة السوداء = مسار الصفحة/الواجهة</span>
+  </div>
+
+  <!-- 1 -->
+  <section class="cat">
+    <div class="cat-h"><span class="ico">📊</span><h2>لوحة القيادة والتحليلات التشغيلية</h2><span class="cnt">4 حالات</span></div>
+    <div class="cat-line"></div>
+    <div class="grid">
+      <div class="uc"><div class="uc-h"><span class="uc-t">لوحة القيادة الرئيسية</span><span class="route">/dashboard</span></div><p class="uc-d">حالة الأسطول (متاح/مؤجَّر/صيانة) مشتقّة من العقود كمصدر واحد، مع كاش مُدار بمفاتيح مُصدَّرة (TTL 60/600ث).</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">الحالات الاستثنائية</span><span class="en">Anomalies</span><span class="route">/anomalies</span></div><p class="uc-d">تعارضات بيانات الأسطول + الفجوات التشغيلية (‏11+ فحصاً) بعرض مجموعات عام.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">آلة الزمن — الحالة في يوم</span><span class="route">/fleet-utilization</span></div><p class="uc-d">اختر سيارة + يوماً ← حالتها (مؤجَّرة/ورشة/خاملة) مع مؤشرات KPI عدّادة.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">استغلال الأسطول والسعة الميتة</span></div><p class="uc-d">يحسب الصيانة من عقود النوع U، ويكشف «السعة الميتة» (أصل عالق بالورشة وهو على عقد مدفوع).</p></div>
+    </div>
+  </section>
+
+  <!-- 2 -->
+  <section class="cat">
+    <div class="cat-h"><span class="ico">🚗</span><h2>الأسطول والمركبات</h2><span class="cnt">9 حالات</span></div>
+    <div class="cat-line"></div>
+    <div class="grid">
+      <div class="uc"><div class="uc-h"><span class="uc-t">ملف السيارة</span><span class="route">/Vehicle/{id}</span></div><p class="uc-d">بطاقة غنية + تاريخ الخدمة + جسر الربحية (إجمالي←صافي) لكل مركبة.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">تدرّج الحالة البصري</span><span class="en">Condition Grade</span></div><p class="uc-d">أخضر/برتقالي/أصفر/أحمر (افتراضي أخضر). الأحمر يُجمِّد ويُخفى من المتاح؛ البرتقالي/الأصفر يبقى قابلاً للتأجير مع إقرار موثَّق.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">خط الأساس العالمي للممشى</span></div><p class="uc-d">عدّاد ذاتي التصحيح مرتكز لأقدم قراءة عقد + فحوص شذوذ (rollback/jump) عبر <code>mileage:scan</code>.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">تدقيق سلسلة الممشى</span><span class="route">/mileage-chain-audit</span></div><p class="uc-d">تسليم العداد من عقد لعقد (تطابق/عدم تطابق/مفقود) + تصحيح سريع غير هدّام.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">مصادر بيانات التسجيل</span></div><p class="uc-d">API يملك التأمين، وشيت التأمين يملك الملكية/الرهن، وشيت RTA يملك المخالفات/الحالة.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">مفتاح هوية الأسطول</span></div><p class="uc-d">تعريف سياراتنا عبر <code>CarOwnerNo</code> لا <code>TrafficID</code> (المشترك بين 60+ مالكاً).</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">مقارنة السيارات: شيت ↔ API</span></div><p class="uc-d">القائمة المرجعية من تبويب «Faster» تُطابَق بالـ VIN لصفحات المقارنة والإثراء.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">قاعدة مصدر السيارات</span></div><p class="uc-d">الـ API هو المصدر الوحيد لوجود السيارة؛ الشيت يُثري المتطابق فقط ولا يخلق سيارات وهمية.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">مصدر سعر الشراء</span></div><p class="uc-d">شيت الأصول (FASTER) مصدر وحيد لسعر/تاريخ الشراء، يُوصل بالـ VIN؛ الشيت يفوز عند وجود قيمة والفراغ لا يمسح.</p></div>
+    </div>
+  </section>
+
+  <!-- 3 -->
+  <section class="cat">
+    <div class="cat-h"><span class="ico">📄</span><h2>العقود والتأجير والعملاء</h2><span class="cnt">6 حالات</span></div>
+    <div class="cat-line"></div>
+    <div class="grid">
+      <div class="uc"><div class="uc-h"><span class="uc-t">فهرس العقود</span><span class="route">/contracts</span></div><p class="uc-d">C إيجار / R حجز / U صيانة، مع فلاتر الحالة والرصيد والبحث.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">بوابة الحجز حسب الحالة ✅</span></div><p class="uc-d">الأحمر يُمنع؛ البرتقالي/الأصفر يتطلّب إقراراً موثَّقاً على العقد (<code>condition_ack_*</code>) — <b>منفَّذة فعلاً</b>.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">محفظة العميل</span><span class="en">Wallet</span></div><p class="uc-d">رصيد مدفوع مُرحَّل من عقود سابقة يُطبَّق تلقائياً على العقد الجديد.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">تبديل العقود / تبادل السيارات</span></div><p class="uc-d">سلاسل تبديل السيارة (<code>parent_contract_id</code>)، كشف ±48 ساعة، حمل رصيد تسجيلي، حارس عميل وهمي.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">الفوترة — فواتير ومدفوعات</span></div><p class="uc-d">فواتير يدوية M- ومدفوعات P- على أي عقد؛ الرصيد = المفوتر − المدفوع، مع حارس مزامنة OM.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">إثراء أسماء العملاء</span></div><p class="uc-d">مزامنة الأسماء بالجملة من endpoint قائمة OM لحلّ العملاء بلا أسماء.</p></div>
+    </div>
+  </section>
+
+  <!-- 4 -->
+  <section class="cat">
+    <div class="cat-h"><span class="ico">🔧</span><h2>الصيانة — الأساسيات والبيانات</h2><span class="cnt">9 حالات</span></div>
+    <div class="cat-line"></div>
+    <div class="grid">
+      <div class="uc"><div class="uc-h"><span class="uc-t">لوحة الصيانة</span><span class="route">/maintenance</span></div><p class="uc-d">حالة الإصلاح/الكراج/الأعطال/الأولوية من آخر حدث لكل سيارة في سجل شيت N-Maintenance.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">عقود الصيانة (النوع U)</span></div><p class="uc-d">بنود الفاتورة، المورّد، ووسوم الأعطال لكل زيارة ورشة.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">معمارية بيانات الصيانة</span></div><p class="uc-d">شيت N-Maintenance أساسي، مملوك أيضاً بأحداث ورشة يدوية؛ مرجعية MAIN→Reason.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">تسوية الإرجاع</span><span class="route">/maintenance-returns</span></div><p class="uc-d">الشيت يظهر رجوع السيارة بينما عقد الصيانة ما زال مفتوحاً — سطح لإقفاله.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">قاعدة ربط العقد ↔ الصيانة</span></div><p class="uc-d">مطابقة صارمة (سيارة + نافذة تاريخ)؛ IN=رجعت، بلا تطابق=«No Log» — تقتل الفوات الوهمي على اللوحة.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">الصيانة أثناء الإيجار</span></div><p class="uc-d">«الإيجار هو الملك»: تداخل صيانة∩إيجار وقتُ إيجار؛ أيام الورشة = الصيانة − الإيجار. لا حظر ولا مخالفات.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">حالات العملاء</span><span class="en">Customer Cases</span></div><p class="uc-d">تبويب ثانٍ يُستورد كأصل customer-sheet (عناوينه مضلِّلة، يُخرَّط بالمحتوى).</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">تنبؤ الصيانة</span><span class="route">/maintenance-foresight</span></div><p class="uc-d">التقاط السيارات قبل العطل (خدمة/مزمن/بطارية) + محاكاة التوقّف وانتظار القطع وكلفة التقاعس.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">فاصل خدمة الزيت</span><span class="en">Oil Change</span></div><p class="uc-d">فاصل الكيلومترات لكل سيارة (VALIDITY) من تبويب مخصص، والباقي من الـ API.</p></div>
+    </div>
+  </section>
+
+  <!-- 5 -->
+  <section class="cat">
+    <div class="cat-h"><span class="ico">⚙️</span><h2>محرك سير عمل الصيانة (التذاكر)</h2><span class="cnt">18 حالة</span></div>
+    <div class="cat-line"></div>
+    <div class="grid">
+      <div class="uc"><div class="uc-h"><span class="uc-t">محرك سير عمل الصيانة</span><span class="route">/maintenance-tickets</span></div><p class="uc-d">دورة حياة التذكرة (مفتّش→مشرف→سائق→كراج→إعادة فحص) بدل الواتساب، مع فصل الصلاحيات.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">إنشاء/تعديل/حذف أحداث الورشة</span></div><p class="uc-d">صفوف صيانة من الموقع (<code>origin=manual</code>)؛ كلمة مفتاحية→حالة؛ مزامنة الشيت اختيارية.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">كتالوج الأعطال</span><span class="en">Findings</span></div><p class="uc-d">مكتبة كلمات مفتاحية مركزية + FindingsPicker (اختيار متعدد + مخصص) في خطوتَي الاختبار والكراج.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">تدقيق أحداث سجل السيارة</span></div><p class="uc-d">جدول <code>vehicle_log_events</code>: كل انتقال يُسجَّل، منفصلاً عن الصيانة حتى لا يوجد ازدواج تكلفة.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">تفويض المشرف</span><span class="en">Delegation</span></div><p class="uc-d">المشرف يفوّض سائقاً (يعيد استخدام <code>assigned_driver_id</code>) عبر <code>maintenance.delegate</code>.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">درجة خطورة العطل</span><span class="en">Fault Severity</span></div><p class="uc-d">تصنيف تشخيصي إلزامي للمفتّش (🔴/🟡/🟢) في خطوة القرار + شارة وفلتر على اللوحة.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">طبقة إعادة الفحص QC</span></div><p class="uc-d">الفشل يُرجع السيارة للمشرف (لا لنفس الكراج) بشارة لوم الكراج + حالة <code>reinspection_failed</code>.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">قواعد استمرارية العداد</span></div><p class="uc-d">تفاوت +5كم، حكم لكل مرحلة (موثَّق/تباين/اختبار قيادة) عبر OdometerContinuityService.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">استقبال الشكاوى</span><span class="en">Complaint</span></div><p class="uc-d">العمليات تسجّل شكوى عميل ← تذكرة تُولد مباشرة في <code>inspection_pending</code>، وتُنبِّه المشرفين والمفتّش.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">تحليلات أداء الصيانة</span></div><p class="uc-d">زمن لكل عطل، كلفة مؤجلة (الإقفال بلا تكلفة)، ومراقب الأعطال المزمنة.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">تشخيص العَرَض ← السبب الجذري</span></div><p class="uc-d">قاعدة معرفة <code>fault_causes</code> + RootCausePicker إلزامي لكل عَرَض؛ الأسباب المخصصة تُعلَّق للمشرف.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">نموذج حاوية المهام</span></div><p class="uc-d">التذكرة حاوية <code>maintenance_tasks</code> لكل عطل، لكن كراج واحد؛ <code>routeTicketToGarage</code> يوزّع الكل.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">بوابة ضمان الجودة</span><span class="en">QA gate</span></div><p class="uc-d">الإصلاحات المعقدة: حالة <code>pending_qa</code> وجولات اختبار (صورة عداد + نجاح/فشل)، ومؤشر «أيام في QA».</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">بوابة مراجعة فيديو المشرف</span></div><p class="uc-d">حالة <code>repair_review</code>: رفع فيديو أدلة الكراج (<code>maintenance_media</code>) + موافقة→QA / طلب إعادة→كراج.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">بنود الصيانة (قطع + عمالة)</span></div><p class="uc-d">أسطر قطع/عمالة (كمية×سعر)، ضمان/متانة (installed_on+أشهر)، جاهزة لأودو؛ جمع تلقائي للتكلفة.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">مكتبة مخاطر الكلمات</span><span class="route">/finding-keywords</span></div><p class="uc-d">إدارة كلمات الأعطال (config→DB) بمخاطر لكل كلمة (🔴/🟡/🟢).</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">ملاحظة صيانة قديمة تلقائية</span></div><p class="uc-d">إقفال التذكرة يولّد ملخصاً بصيغة السجل القديمة من خطوات التذكرة، يظهر في كل واجهات التاريخ.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">الزمن في المرحلة</span><span class="en">Time-in-Stage</span></div><p class="uc-d">بطاقات اللوحة تعرض زمن المرحلة الحالية + تنبيه SLA أحمر (انتظار توزيع >4س) عبر <code>last_state_change_at</code>.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">لوحة تبديل الصيانة</span><span class="route">/maintenance-swap</span></div><p class="uc-d">كانبان: تعيين سيارة بديلة حين تحتاج سيارة مؤجَّرة الورشة (جدول <code>maintenance_swaps</code>).</p></div>
+    </div>
+  </section>
+
+  <!-- 6 -->
+  <section class="cat">
+    <div class="cat-h"><span class="ico">🚚</span><h2>اللوجستيك وحركة المركبات</h2><span class="cnt">5 حالات</span></div>
+    <div class="cat-line"></div>
+    <div class="grid">
+      <div class="uc"><div class="uc-h"><span class="uc-t">توزيع اللوجستيك</span><span class="route">/logistics</span></div><p class="uc-d">توجيه سيارة لوجهة، إشعار «طابور مهامي» للمُكلَّف، وشبكة تعرض «قيد النقل إلى X».</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">اللوجستيك كمصدر وحيد</span><span class="en">Canonical</span></div><p class="uc-d"><code>LogisticsTask</code> المكان الوحيد لكل حركات المركبة + «أين السيارة؟» (ping/reply).</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">دورة المطالبة ذهاب-إياب</span></div><p class="uc-d">dispatched→en_route→picked_up→delivered→returned؛ استلام GPS + صور عداد قبل/بعد إلزامية لرحلات الكراج.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">الموقع الحيّ الموحّد</span></div><p class="uc-d">التذكرة تُبلّغ موقع السيارة الحيّ (🚚 قيد النقل / 🔧 في الورشة) من الحالة + الكراج + الحركة النشطة.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">لوحة حضور الفريق</span><span class="route">/team-presence</span></div><p class="uc-d">«مَن أين»: متاح/مشغول لكل شخص + السبب (نقل/صيانة/فحص)، مشتقّ من العمل المملوك لا الحضور.</p></div>
+    </div>
+  </section>
+
+  <!-- 7 -->
+  <section class="cat">
+    <div class="cat-h"><span class="ico">📷</span><h2>الفحص والأضرار</h2><span class="cnt">2 حالة</span></div>
+    <div class="cat-line"></div>
+    <div class="grid">
+      <div class="uc"><div class="uc-h"><span class="uc-t">سير عمل فحص السيارة</span><span class="en">Inspection</span></div><p class="uc-d">التقاط مخطط السيارة بنقاط ساخنة + توثيق أضرار (نوع/شدة/ملاحظة) + شريط قبل/بعد؛ جدول <code>inspection_records</code> وواجهة S3 (بانتظار الربط بالعقود الحقيقية).</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">سجل الأضرار والحوادث</span><span class="route">/damage-accidents</span></div><p class="uc-d">سجلات أضرار/حوادث مثبَّتة بالسيارة، ولون الخطأ (أحمر/أخضر) من <code>liable_party</code> + التأمين.</p></div>
+    </div>
+  </section>
+
+  <!-- 8 -->
+  <section class="cat">
+    <div class="cat-h"><span class="ico">💰</span><h2>المالية والربحية</h2><span class="cnt">6 حالات</span></div>
+    <div class="cat-line"></div>
+    <div class="grid">
+      <div class="uc"><div class="uc-h"><span class="uc-t">محرك صافي الربح الحقيقي</span></div><p class="uc-d">يعكس دخل OM المبهم (إيجار+كم+سائق إضافي+بنزين+Cardoo)، وعلَم «العائد السلبي» على التنبؤ ولوحة القيادة.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">التسوية المالية</span><span class="route">/financial-reconciliation</span></div><p class="uc-d">جسر العقود إلى API المحاسبة (سندات ترويسة فقط)؛ صافي ربح لكل عقد وشهري للأسطول (للقراءة فقط).</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">التعارضات المالية</span><span class="route">/financial-conflicts</span></div><p class="uc-d">مركز تنظيف الفواتير المكسورة فقط (حساب VAT، تعارض فاتورة↔عقد، ازدواج فوترة).</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">تكامل ماليات الفواتير</span></div><p class="uc-d">صافي هامش لكل سيارة على /maintenance (دخل R بلا VAT − كلفة الصيانة) + فحص شذوذ تاريخ الفوترة.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">سجل الخدمة وفصل الماليات</span></div><p class="uc-d">رفع الفاتورة كسجل خدمة فني بلا أموال؛ كل واجهات المال مخفية خلف علَم <code>SHOW_FINANCIALS</code>.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">مرساة بدء الخدمة</span><span class="en">In-Service</span></div><p class="uc-d">نسبة الأداء مرتكزة لتاريخ أول إيجار لا الشراء؛ بلا إيجار = «بانتظار الخدمة».</p></div>
+    </div>
+  </section>
+
+  <!-- 9 -->
+  <section class="cat">
+    <div class="cat-h"><span class="ico">🔄</span><h2>المزامنة والبيانات والتنبيهات</h2><span class="cnt">10 حالات</span></div>
+    <div class="cat-line"></div>
+    <div class="grid">
+      <div class="uc"><div class="uc-h"><span class="uc-t">مصدر OfficeManager API</span></div><p class="uc-d">الـ API هو المصدر الوحيد للعقود الآن؛ الشيتات تقاعدت.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">استراتيجية مزامنة العقود</span></div><p class="uc-d">فلاتر OM (status_no، OutDate فقط)؛ مزامنة كل المفتوح + آخر 3 أشهر مغلق + كشف الإغلاق.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">مشغّل المزامنة CLI</span></div><p class="uc-d"><code>sync-fleet</code>: حراس لكل مرحلة (<code>fleet:refresh</code>، <code>om:sync</code>) + ملخص ودلالات رمز الخروج.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">إعادة استيراد مضبوطة</span></div><p class="uc-d">إعادة استيراد OM محمية بنسخة احتياطية (<code>--from/--to/--dry-run</code> + مُدقِّق الزومبي).</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">قاعدة البيانات والنسخ الاحتياطي</span></div><p class="uc-d">القاعدة الحيّة MySQL «laravel» عبر XAMPP؛ <code>php artisan db:backup</code>.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">تدقيق المزامنة والتصحيح التلقائي</span><span class="route">/sync-audit</span></div><p class="uc-d">«خلاصة تغييرات»: بطاقات عقود جديدة + فروق حقلية was→now؛ يمسح القيم القديمة العالقة.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">التنبيهات الفورية</span><span class="en">Notifications</span></div><p class="uc-d">جرس داخل التطبيق: إشعارات DB، polling، كواشف <code>notifications:scan</code>، جاهز للبثّ.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">كاش تجميعات لوحة القيادة</span></div><p class="uc-d">قراءات مُخزَّنة (مفاتيح مُصدَّرة)، <code>flushCache()</code> عند <code>om:sync</code>، وحالة الأسطول مُجمَّعة بـ SQL.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">معالجة أخطاء API موحّدة</span></div><p class="uc-d"><code>ResponseHelper::fromException</code> (يخرِّط رموز الحالة، يسجّل 5xx، لا تسريب في الإنتاج) بدل ~132 التقاطاً.</p></div>
+      <div class="uc"><div class="uc-h"><span class="uc-t">حواجز سلامة البيانات</span></div><p class="uc-d">حارس إقفال أحداث الورشة (كلفة/مورّد/تاريخ رجوع)، تعاقب الحالة التشغيلية، وتنبيهات تسرّب مالي.</p></div>
+    </div>
+  </section>
+
+  <!-- 10 -->
+  <section class="cat">
+    <div class="cat-h"><span class="ico">🔐</span><h2>الصلاحيات والوصول</h2><span class="cnt">حالة واحدة</span></div>
+    <div class="cat-line"></div>
+    <div class="grid">
+      <div class="uc"><div class="uc-h"><span class="uc-t">الأدوار والصلاحيات</span><span class="en">RBAC / Spatie</span></div><p class="uc-d">اصطلاح <code>resource.action</code>، 7 أدوار، تجاوز super-admin، مُشاهد عند التسجيل، أمر <code>user:role</code>.</p></div>
+    </div>
+  </section>
+
+  <!-- PLANNED -->
+  <div class="planbanner">
+    <b>قيد التخطيط — دورة حياة الأسطول المتكاملة (النسخة 3):</b> ست مراحل بانتظار اعتماد عمر. البرمجة متوقّفة حتى تصل إجاباته (التوقيع مقابل OTP، خيارات نموذج الأضرار، مهلة حجز المخالفات). التفاصيل الكاملة في <code>Integrated-Fleet-Lifecycle-Plan-AR.html</code>.
+  </div>
+  <section class="cat">
+    <div class="cat-h"><span class="ico">🗺️</span><h2>خارطة الطريق — المراحل القادمة</h2><span class="cnt">6 مراحل</span></div>
+    <div class="cat-line"></div>
+    <div class="grid">
+      <div class="uc plan"><div class="uc-h"><span class="uc-t">المرحلة 1 — تسليم محكم</span></div><p class="uc-d">بوابة جاهزية (9 فحوص) + قائمة صور إلزامية (16 بنداً) عند التسليم/الاستلام + توقيع العميل/OTP.</p></div>
+      <div class="uc plan"><div class="uc-h"><span class="uc-t">المرحلة 2 — تقييم الأضرار والحوادث</span></div><p class="uc-d">نموذج تقييم أضرار مُهيكل (مسؤولية/تقدير/قرار) + تصنيف الحوادث التسعة أثناء الإيجار.</p></div>
+      <div class="uc plan"><div class="uc-h"><span class="uc-t">المرحلة 2.5 — حماية العميل والوديعة</span></div><p class="uc-d">سجل الوديعة + حجز المخالفات/السالك بعد الإرجاع + وسم مخاطر العميل (طبقة حماية النقد).</p></div>
+      <div class="uc plan"><div class="uc-h"><span class="uc-t">المرحلة 3 — جسر توجيه الكراج</span></div><p class="uc-d">ربط محرك تقييم الكراجات بمسار التوزيع + التقاط سبب التجاوز + إكمال المعايير الثمانية.</p></div>
+      <div class="uc plan"><div class="uc-h"><span class="uc-t">المرحلة 4 — المالية ومصفوفة الموافقات</span></div><p class="uc-d">عرض سعر ثم موافقة متدرّجة حسب المبلغ (مشرف/مدير/GM) + تنبيه البيع/الاستبدال.</p></div>
+      <div class="uc plan"><div class="uc-h"><span class="uc-t">المرحلة 5 — ضمان الجودة واختبار القيادة</span></div><p class="uc-d">قائمة فحص QA إلزامية لكل تذكرة + اختبار قيادة مشروط + تنبيهات 7/14 يوماً والجاهزية.</p></div>
+    </div>
+  </section>
+
+  <footer>نظام إدارة الأسطول · كتالوج حالات الاستخدام · 2026-07-01</footer>
+
+</div>
+</body>
+</html>

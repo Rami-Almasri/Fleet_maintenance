@@ -25,11 +25,11 @@ class SyncAuditController extends Controller
 
             return ResponseHelper::SuccessResponse(['runs' => $runs], 'Sync history retrieved', 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
-    /** One run + the exact corrections it made (capped), for the details view. */
+    /** One run + its full change feed (new records + update diffs) and corrections. */
     public function show(SyncRun $syncRun)
     {
         try {
@@ -38,13 +38,33 @@ class SyncAuditController extends Controller
                 ->limit(500)
                 ->get(['contract_id', 'contract_no', 'external_id', 'field', 'old_value', 'action']);
 
+            // New contracts this run created — full record in `snapshot`.
+            $insertsTotal = $syncRun->changes()->where('operation', 'insert')->count();
+            $inserts = $syncRun->changes()
+                ->where('operation', 'insert')
+                ->orderByDesc('id')
+                ->limit(200)
+                ->get(['contract_id', 'contract_no', 'external_id', 'snapshot']);
+
+            // Existing contracts whose fields actually changed — only the diff in `changes`.
+            $updatesTotal = $syncRun->changes()->where('operation', 'update')->count();
+            $updates = $syncRun->changes()
+                ->where('operation', 'update')
+                ->orderByDesc('changed_count')->orderBy('contract_no')
+                ->limit(300)
+                ->get(['contract_id', 'contract_no', 'external_id', 'changes', 'changed_count']);
+
             return ResponseHelper::SuccessResponse([
-                'run'              => $this->summary($syncRun->loadCount('corrections')),
-                'corrections'      => $corrections,
+                'run'               => $this->summary($syncRun->loadCount('corrections')),
+                'inserts'           => $inserts,
+                'inserts_total'     => $insertsTotal,
+                'updates'           => $updates,
+                'updates_total'     => $updatesTotal,
+                'corrections'       => $corrections,
                 'corrections_shown' => $corrections->count(),
             ], 'Sync run detail retrieved', 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 

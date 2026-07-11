@@ -26,7 +26,7 @@ class DriverController extends Controller
             $result = DriverResource::collection($driver);
             return ResponseHelper::SuccessResponse($result, "Driver retrieved successfully", 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -40,7 +40,7 @@ class DriverController extends Controller
             $result = DriverResource::make($driver);
             return ResponseHelper::SuccessResponse($result, "Driver created successfully", 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -53,7 +53,7 @@ class DriverController extends Controller
             $result = DriverResource::make($driver->load('user'));
             return ResponseHelper::SuccessResponse($result, "Driver retrieved successfully", 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -67,7 +67,7 @@ class DriverController extends Controller
             $result = DriverResource::make($driver);
             return ResponseHelper::SuccessResponse($result, "Driver updated successfully", 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -80,7 +80,7 @@ class DriverController extends Controller
             $this->driverService->destroy($driver);
             return ResponseHelper::SuccessResponse(null, "Driver deleted successfully", 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 }

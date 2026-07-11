@@ -84,7 +84,10 @@ class MaintenanceForesightService
         $cars = [];
 
         Vehicle::query()
-            ->whereNotIn('status', ['disposed', 'sold'])
+            // Foresight only plans for cars that can actually earn: Ready (OM status 2) or
+            // Rented (OM status 3). Everything else — sold, disposed, under_maintenance,
+            // out_of_order, suspended, etc. — is irrelevant to upcoming maintenance planning.
+            ->whereIn('status', Vehicle::ACTIVE_STATUSES)
             ->orderBy('code')
             ->chunkById(500, function ($vehicles) use (&$cars, $intel, $fleet, $inGarage) {
                 foreach ($vehicles as $v) {
@@ -389,6 +392,8 @@ class MaintenanceForesightService
                 'type'     => 'chronic_fault',
                 'tier'     => $tier,
                 'label'    => 'Keeps coming back: ' . $issue,
+                'issue'    => $issue,   // clean fault name, for a de-duplicated headline
+                'count'    => $eps,     // how many separate visits for this exact fault
                 'basis'    => $basis,   // plain hint: why this counts as a repeat
                 'detail'   => 'Went to the garage ' . $eps . ' times for ' . $issue . '. The same problem keeps coming back.',
                 'evidence' => $intel['vehicle_issue_evidence'][$v->id][$issue] ?? [],   // contracts + gaps behind it
@@ -403,6 +408,7 @@ class MaintenanceForesightService
                 'type'   => 'frequent_breakdowns',
                 'tier'   => $episodeTotal >= 7 ? 'plan_soon' : 'watch',
                 'label'  => 'Breaks down a lot',
+                'count'  => $episodeTotal,   // total separate workshop visits
                 'detail' => 'Went to the garage ' . $episodeTotal . ' different times. This car breaks down more than the others.',
             ];
             foreach (($intel['vehicle_last_issues'][$v->id] ?? []) as $li) {
@@ -423,6 +429,36 @@ class MaintenanceForesightService
                 ];
                 $issueCandidates['battery'] = max($issueCandidates['battery'] ?? 0, 2);
             }
+        }
+
+        // --- Signal 5: visual condition grade (Abu Marouf) -------------------------
+        // Orange (cosmetic), Yellow (maintenance-needed) and Red (critical/grounded) all
+        // surface here so a flagged car shows up in the Maintenance Forecast. Only Orange STAYS
+        // in the rental pool; Yellow & Red are both grounded (see VehicleResource + booking
+        // guard), so a Yellow/Red car appears in the forecast AND is pulled from Available.
+        if (in_array($v->condition_grade, ['orange', 'yellow', 'red'], true)) {
+            $meta = [
+                'orange' => [
+                    'tier' => 'watch', 'label' => 'Graded Orange — cosmetic issues', 'key' => 'bodywork', 'weight' => 3,
+                    'fallback' => 'Minor scratches / cosmetic issues logged. Still rentable; flag them to the customer at handover.',
+                ],
+                'yellow' => [
+                    'tier' => 'plan_soon', 'label' => 'Graded Yellow — maintenance needed', 'key' => 'general', 'weight' => 4,
+                    'fallback' => 'Showing symptoms — blocked from renting until repaired. Route it to the garage.',
+                ],
+                'red' => [
+                    'tier' => 'act_now', 'label' => 'Graded Red — critical / grounded', 'key' => 'general', 'weight' => 6,
+                    'fallback' => 'Unsafe or a major fault — grounded from rental until it is repaired.',
+                ],
+            ][$v->condition_grade];
+
+            $signals[] = [
+                'type'   => 'condition_grade',
+                'tier'   => $meta['tier'],
+                'label'  => $meta['label'],
+                'detail' => trim((string) $v->condition_note) ?: $meta['fallback'],
+            ];
+            $issueCandidates[$meta['key']] = max($issueCandidates[$meta['key']] ?? 0, $meta['weight']);
         }
 
         if (empty($signals)) {
@@ -466,6 +502,8 @@ class MaintenanceForesightService
             'year'                    => $v->year,
             'odometer'                => $v->odometer !== null ? (int) $v->odometer : null,
             'operational_status'      => $v->operational_status,
+            'condition_grade'         => $v->condition_grade,
+            'condition_note'          => $v->condition_note,
             'tier'                    => $tier,
             'signals'                 => $signals,
             'context'                 => $context,
@@ -1099,20 +1137,14 @@ class MaintenanceForesightService
         ];
     }
 
-    /** Vehicle ids with an OPEN maintenance (type-U) contract — already in the shop. */
+    /**
+     * Vehicle ids already in the shop — the canonical maintenance set (open U-contract, manual
+     * garage event, OR open workflow ticket). These are excluded from predictions: a car with an
+     * OPEN workflow ticket is already being handled, so Foresight must not also flag it "act now".
+     */
     private function vehiclesCurrentlyInGarage(): array
     {
-        return Contract::where('contract_type', 'U')
-            ->currentlyOpen()
-            ->pluck('vehicle_id')
-            ->filter()
-            // Cars in on a hand-entered workshop event (no contract) are already in the shop too,
-            // so they're not "predictions" — same set the dashboard/board count as in maintenance.
-            ->merge($this->operations->manualOnlyGarageVehicleIds())
-            ->unique()
-            ->flip()
-            ->map(fn () => true)
-            ->all();
+        return array_fill_keys($this->operations->vehiclesInMaintenance(), true);
     }
 
     /**

@@ -8,6 +8,7 @@ use App\Models\InspectorPadFlag;
 use App\Models\Maintenance;
 use App\Models\MaintenanceLineItem;
 use App\Models\MaintenanceSwap;
+use App\Models\OdometerBlockEvent;
 use App\Models\User;
 use App\Models\Vehicle;
 use App\Models\VehicleLogEvent;
@@ -134,6 +135,7 @@ class MaintenanceWorkflowService
         private VehicleLogService $log,
         private OdometerContinuityService $continuity,
         private LogisticsDispatchService $logistics,
+        private DiagnosticGateService $gate,
     ) {}
 
     /**
@@ -144,10 +146,16 @@ class MaintenanceWorkflowService
      * The caller owns the SAVE (this only mutates the in-memory attribute) so the flag rides along with
      * the transition's own write inside its DB transaction — no extra query.
      *
+     * A BACKWARD "discrepancy" (an odometer that ran backwards — a real data error that is nonetheless
+     * accepted, unlike the hard-blocked strict-match stages) also fires a supervisor/controller bell here,
+     * so a suspicious reading isn't only visible passively on the drawer / oversight board. Pass $actor so
+     * the alert can name who entered it. Notifying inside the caller's transaction is fine: the reading was
+     * accepted, so the txn commits and the notification persists with it.
+     *
      * @param  string  $flagKey  where to file it: 'test_drive' | 'dispatch' | 'receive' | 'return'
      * @param  string  $stage    which rule applies: an OdometerContinuityService::STAGE_* constant
      */
-    private function recordOdometerFlag(Maintenance $ticket, string $flagKey, int $reading, ?int $previous, string $stage, ?string $note = null): array
+    private function recordOdometerFlag(Maintenance $ticket, string $flagKey, int $reading, ?int $previous, string $stage, ?string $note = null, ?User $actor = null): array
     {
         $flag  = $this->continuity->evaluate($reading, $previous, $stage);
         // Context-aware tolerance: a site↔garage / garage↔garage move is a deliberate road trip, so a
@@ -168,7 +176,144 @@ class MaintenanceWorkflowService
         $flags[$flagKey] = $flag;
         $ticket->odometer_flags = $flags;
 
+        // A backward reading was recorded — alert the supervisors/controllers so it's actively chased, not
+        // just left on the audit board. (The hard-blocked strict-match stages never reach here as a
+        // discrepancy — they throw and are logged via logOdometerBlock instead.)
+        if (($flag['status'] ?? null) === OdometerContinuityService::STATUS_DISCREPANCY) {
+            $this->notifyOdometerDiscrepancy($ticket, $flagKey, $flag, $actor);
+        }
+
         return $flag;
+    }
+
+    /**
+     * Alert supervisors + controllers that a BACKWARD odometer reading was recorded (an accepted, non-blocked
+     * discrepancy — an odometer can't run backwards, so it's a data error worth chasing). Best-effort: audit
+     * notification must never break the transition. Its sibling for REJECTED attempts is logOdometerBlock().
+     */
+    private function notifyOdometerDiscrepancy(Maintenance $ticket, string $flagKey, array $flag, ?User $actor): void
+    {
+        try {
+            $vehicle  = $ticket->loadMissing('vehicle')->vehicle;
+            $reading  = (int) ($flag['reading'] ?? 0);
+            $previous = $flag['previous'] ?? null;
+            $this->notifier->notifyByAnyPermission([self::NOTIFY_DISPATCHER, self::NOTIFY_CONTROLLERS], [
+                'type'     => 'odometer_discrepancy',
+                'category' => 'maintenance',
+                'severity' => 'warning',
+                'title'    => '↩️ Odometer ran backwards · ' . $this->label($vehicle),
+                'body'     => trim(($actor?->name ?? $ticket->responsible ?? 'Someone') . ' recorded ' . number_format($reading) . ' km'
+                              . ($previous !== null ? ' — below the previous ' . number_format((int) $previous) . ' km' : '')
+                              . ' at ' . $this->blockStageLabel($flagKey) . '. An odometer can’t run backwards — please verify.'),
+                'url'      => $this->link($ticket),
+                'key'      => 'odo_discrepancy:' . $ticket->id . ':' . $flagKey . ':' . $reading,
+                'icon'     => 'alert-triangle',
+                'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no, 'stage' => $flagKey, 'reading' => $reading, 'previous' => $previous, 'by' => $actor?->name],
+            ], $actor?->id);
+        } catch (\Throwable $e) {
+            report($e);
+        }
+    }
+
+    /**
+     * Strict-match odometer gate for the internal park spot-checks — "Being Inspected" (the inspector's
+     * test capture) and "Awaiting Pickup" (the driver collecting the car for the garage). The car hasn't
+     * moved, so the reading must equal the previous stage's; a 1..TOLERANCE km forward drift is allowed
+     * ONLY with a written note (which then surfaces on the /oversight/mileage board for a supervisor to
+     * audit the "authorized" deviation); a backward reading or a jump beyond the buffer is rejected outright
+     * as a typo or an unauthorised move. A no-op when there is no previous reading to compare against.
+     * Mirrors the frontend hard block in odometerContinuity.js — throwing here keeps the rule enforced even
+     * if a client bypasses the modal.
+     */
+    private function assertStrictMatch(Maintenance $ticket, ?User $actor, string $flagKey, int $reading, ?int $previous, string $stage, ?string $note, string $field): void
+    {
+        if ($previous === null) {
+            return; // nothing to match against — this reading anchors the chain
+        }
+        $flag = $this->continuity->evaluate($reading, $previous, $stage);
+
+        if ($flag['status'] === OdometerContinuityService::STATUS_EXACT) {
+            $delta = (int) $flag['delta'];
+            // Audit the rejected attempt BEFORE throwing — the transition rolls back and leaves no trace on
+            // the ticket, so this is the only record that someone tried to force an out-of-range value.
+            $this->logOdometerBlock($ticket, $actor, $flagKey, $reading, $previous, $delta, OdometerContinuityService::STATUS_EXACT, $note);
+            throw new WorkflowTransitionException(
+                'The reading must match the previous stage (' . number_format($previous) . ' km) — up to '
+                . OdometerContinuityService::TOLERANCE_KM . ' km higher is allowed with a note. '
+                . number_format($reading) . ' km is ' . abs($delta) . ' km '
+                . ($delta < 0 ? 'lower' : 'higher') . '; re-check the dial.',
+                ['field' => $field]
+            );
+        }
+
+        if ($flag['status'] === OdometerContinuityService::STATUS_AUTHORIZED && trim((string) $note) === '') {
+            // A missing note is a form-completion nudge, NOT an unauthorised value — don't audit it as a block.
+            throw new WorkflowTransitionException(
+                'This reading is ' . (int) $flag['delta'] . ' km above the previous stage — add a short note explaining why before continuing.',
+                ['field' => 'odometer_note']
+            );
+        }
+    }
+
+    /**
+     * Persist a REJECTED odometer attempt (an out-of-range / backward strict-match reading, or a garage
+     * arrival that wasn't higher than pickup) and alert supervisors + controllers. Because the caller is
+     * about to throw and roll its transition back, this runs OUTSIDE that transaction (every strict gate is
+     * checked BEFORE the DB::transaction opens) so the audit row survives the rejection. Both the write and
+     * the notify are best-effort — audit logging must never break the (already-failing) request path. The
+     * row is surfaced on /oversight/mileage alongside the recorded odometer_flags.
+     */
+    private function logOdometerBlock(Maintenance $ticket, ?User $actor, string $flagKey, int $reading, ?int $previous, ?int $delta, string $status, ?string $note): void
+    {
+        try {
+            OdometerBlockEvent::create([
+                'maintenance_id' => $ticket->id,
+                'vehicle_id'     => $ticket->vehicle_id,
+                'stage_key'      => $flagKey,
+                'status'         => $status,
+                'previous'       => $previous,
+                'reading'        => $reading,
+                'delta'          => $delta,
+                'note'           => is_string($note) && trim($note) !== '' ? mb_substr(trim($note), 0, 2000) : null,
+                'actor_id'       => $actor?->id,
+            ]);
+        } catch (\Throwable $e) {
+            report($e);
+        }
+
+        try {
+            $vehicle = $ticket->loadMissing('vehicle')->vehicle;
+            $this->notifier->notifyByAnyPermission([self::NOTIFY_DISPATCHER, self::NOTIFY_CONTROLLERS], [
+                'type'     => 'odometer_blocked',
+                'category' => 'maintenance',
+                'severity' => 'warning',
+                'title'    => '🚫 Odometer entry blocked · ' . $this->label($vehicle),
+                'body'     => trim(($actor?->name ?? 'Someone') . ' tried to enter ' . number_format($reading) . ' km'
+                              . ($previous !== null ? ' (expected ' . number_format($previous) . ' km)' : '')
+                              . ' at ' . $this->blockStageLabel($flagKey) . ' — rejected by the odometer rules.'),
+                'url'      => $this->link($ticket),
+                'key'      => 'odo_block:' . $ticket->id . ':' . $flagKey . ':' . $reading,
+                'icon'     => 'alert-triangle',
+                'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no, 'stage' => $flagKey, 'reading' => $reading, 'previous' => $previous, 'by' => $actor?->name],
+            ], $actor?->id);
+        } catch (\Throwable $e) {
+            report($e);
+        }
+    }
+
+    /** Human label for a blocked-attempt capture stage (mirrors WorkflowOversightController::STAGE_MAP). */
+    private function blockStageLabel(string $flagKey): string
+    {
+        return match ($flagKey) {
+            'test_drive' => 'Being Inspected (test drive)',
+            'report'     => 'Being Inspected (decide)',
+            'dispatch'   => 'Awaiting Pickup',
+            'receive'    => 'Garage Arrival',
+            'return'     => 'Collected from Garage',
+            'transfer'   => 'Garage Transfer',
+            'reinspect'  => 'Re-Inspection Sign-off',
+            default      => 'an odometer stage',
+        };
     }
 
     /**
@@ -180,12 +325,12 @@ class MaintenanceWorkflowService
      * The odometer_flags mutation is left UNSAVED so it rides along with the caller's own transfer write
      * (rollbackForGarageTransfer) — no extra query; the vehicle heal is saved here.
      */
-    public function recordGarageTransferOdometer(Maintenance $ticket, int $odometer, ?string $note = null): array
+    public function recordGarageTransferOdometer(Maintenance $ticket, int $odometer, ?string $note = null, ?User $actor = null): array
     {
         $vehicle  = $ticket->vehicle;
         $previous = $vehicle && $vehicle->odometer !== null ? (int) $vehicle->odometer : null;
 
-        $flag = $this->recordOdometerFlag($ticket, 'transfer', $odometer, $previous, OdometerContinuityService::STAGE_TRANSFER, $note);
+        $flag = $this->recordOdometerFlag($ticket, 'transfer', $odometer, $previous, OdometerContinuityService::STAGE_TRANSFER, $note, $actor);
 
         if ($vehicle) {
             $this->applyTestOdometer($vehicle, $odometer); // forward-only heal, mirrors the test-drive anchor
@@ -222,6 +367,124 @@ class MaintenanceWorkflowService
             $this->cascade($ticket->vehicle_id);
             // The custodian is alerted directly by the transport task (dispatchForMaintenanceTransfer),
             // so no broad "confirm arrival" ping is raised here — the move owns the hand-off.
+        });
+    }
+
+    /**
+     * PLANNED garage transfer — the car is physically AT its current garage and the Supervisor is moving
+     * it to another one. Unlike the pre-arrival re-route (a plain destination change), the ground truth is
+     * preserved: `vendor_id` KEEPS pointing at the garage the car is at, and only the intended DESTINATION
+     * is recorded (`transfer_to_vendor_id`). The ticket drops to "Awaiting Pickup" so a driver collects the
+     * car; the actual hand-over (fault stints + vendor re-point) is deferred to the destination arrival
+     * check-in (markUnderRepair), keeping the single-garage invariant intact for the whole leg. Mirrors
+     * assignDispatch's driver-delegation overlay + pickup alert, so a transfer flows through the same
+     * pickup → in-transit → arrival path as a first dispatch. The odometer flag was already stamped
+     * (recordGarageTransferOdometer) and rides along with this save.
+     */
+    public function beginGarageTransfer(Maintenance $ticket, Vendor $dest, ?int $driverId, ?string $reason, User $actor): Maintenance
+    {
+        $fromGarage = $ticket->garage ?: $ticket->vendor?->name;
+
+        $driver = $driverId ? User::find($driverId) : null;
+        if ($driverId && ! $driver) {
+            throw new WorkflowTransitionException('That driver no longer exists — pick another.', ['field' => 'assigned_to_id']);
+        }
+        if ($driver && ! $driver->can('maintenance.logistics')) {
+            throw new WorkflowTransitionException('That user is not a driver — pick someone who can pick up cars.', ['field' => 'assigned_to_id']);
+        }
+
+        return DB::transaction(function () use ($ticket, $dest, $driver, $reason, $actor, $fromGarage) {
+            // Record ONLY the destination — vendor_id stays the garage the car is physically at.
+            $ticket->transfer_to_vendor_id = $dest->id;
+
+            // The car is leaving its current garage → stop that garage's repair clock and clear the stale
+            // arrival/pickup readings; a fresh pickup reading is captured at collection (dispatch()) and a
+            // fresh arrival reading at the destination check-in (markUnderRepair).
+            $ticket->repair_started_at = null;
+            $ticket->repair_started_by = null;
+            $ticket->receive_odometer  = null;
+            $ticket->dispatch_odometer = null;
+            $ticket->event_status      = 'OUT'; // still physically out (sitting at a garage)
+
+            // Release the PREVIOUS custodian. Whoever brought the car to this garage has finished their leg —
+            // their task ends once they've delivered it here. The onward move is a brand-new pickup that ANY
+            // driver can step in and claim ("I'll take it"). If we left the old dispatched_by/driver on the
+            // ticket, the destination arrival check-in (markUnderRepair's custody gate) would stay locked to
+            // that first driver and force the hand-off back through him. Clearing it makes the transfer a
+            // clean open pickup: whoever collects the car next (dispatch()) becomes the sole custodian who
+            // must confirm its arrival at the destination garage.
+            $ticket->dispatched_by = null;
+            $ticket->dispatched_at = null;
+            $ticket->driver        = null;
+
+            // Assign the pickup driver (same delegation overlay assignDispatch uses) when one is named — that
+            // is the person designated to receive the car. With none named the pickup is open to the pool, so
+            // clear any stale delegation from the previous leg rather than leaving the old driver attached.
+            if ($driver) {
+                $ticket->assigned_driver_id = $driver->id;
+                $ticket->delegation_task    = Maintenance::DELEGATION_PICKUP;
+                $ticket->delegation_status  = Maintenance::DELEGATION_ASSIGNED;
+                $ticket->delegated_by       = $actor->id;
+                $ticket->delegated_at       = Carbon::now();
+            } else {
+                $ticket->assigned_driver_id = null;
+                $ticket->delegation_task    = null;
+                $ticket->delegation_status  = null;
+                $ticket->delegated_by       = null;
+                $ticket->delegated_at       = null;
+            }
+
+            $ticket->workflow_status = Maintenance::WF_AWAITING_DISPATCH; // "Awaiting Pickup"
+            $ticket->save(); // booted() re-stamps last_state_change_at → a fresh Awaiting-Pickup clock
+
+            if ($driver) {
+                $ticket->watchers()->syncWithoutDetaching([
+                    $driver->id => ['added_by' => $actor->id, 'reason' => 'delegated'],
+                ]);
+            }
+
+            $this->cascade($ticket->vehicle_id);
+
+            $this->log->record($ticket, VehicleLogEvent::EVENT_GARAGE_ASSIGNED, $actor, [
+                'description' => 'Transfer requested — car at ' . ($fromGarage ?: 'the garage') . ' → ' . $dest->name
+                    . ($reason ? ' · ' . $reason : '')
+                    . ($driver ? ', pickup by ' . $driver->name : ', pickup open to the pool')
+                    . ' (by ' . $actor->name . ')',
+                'meta' => ['from_garage' => $fromGarage, 'to_garage' => $dest->name, 'to_vendor_id' => $dest->id, 'reason' => $reason, 'driver_id' => $driver?->id, 'transfer' => true],
+            ]);
+
+            // Alert whoever picks up next — the named driver directly, or the whole Driver pool.
+            $vehicle = $ticket->loadMissing('vehicle')->vehicle;
+            if ($driver) {
+                $this->notifier->notifyUser($driver, [
+                    'type'     => 'maint_pickup_assigned',
+                    'category' => 'maintenance',
+                    'severity' => 'warning',
+                    'title'    => trim('🔀 Transfer pickup · ' . $this->label($vehicle)),
+                    'body'     => trim($actor->name . ' assigned you to move ' . $this->label($vehicle)
+                                    . ' from ' . ($fromGarage ?: 'its garage') . ' to ' . $dest->name
+                                    . ' — collect it and capture the odometer.'),
+                    'url'      => $this->link($ticket),
+                    'key'      => 'maint_wf:' . $ticket->id . ':awaiting_dispatch:' . $driver->id,
+                    'icon'     => 'truck',
+                    'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no, 'from_garage' => $fromGarage, 'garage' => $dest->name, 'transfer' => true, 'assigned_by' => $actor->name],
+                ]);
+            } else {
+                $this->notifier->notifyByPermission(self::NOTIFY_LOGISTICS, [
+                    'type'     => 'maint_pickup_ready',
+                    'category' => 'maintenance',
+                    'severity' => 'warning',
+                    'title'    => trim('🔀 Transfer ready for pickup · ' . $this->label($vehicle)),
+                    'body'     => trim($this->label($vehicle) . ' is being moved from ' . ($fromGarage ?: 'its garage')
+                                    . ' to ' . $dest->name . ' — collect it and capture the odometer.'),
+                    'url'      => $this->link($ticket),
+                    'key'      => 'maint_wf:' . $ticket->id . ':awaiting_dispatch',
+                    'icon'     => 'truck',
+                    'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no, 'from_garage' => $fromGarage, 'garage' => $dest->name, 'transfer' => true],
+                ], $actor->id);
+            }
+
+            return $ticket->load($this->eager());
         });
     }
 
@@ -319,7 +582,7 @@ class MaintenanceWorkflowService
      * Dedup (don't re-task a car already in the pipeline) is the caller's job (the command checks
      * openWorkflow); here we only assert the car is still active fleet before writing.
      *
-     * @param array{note?:?string} $opts
+     * @param array{note?:?string, suggested_findings?:?array} $opts
      */
     public function systemRequestInspection(Vehicle $vehicle, array $opts = []): Maintenance
     {
@@ -333,6 +596,10 @@ class MaintenanceWorkflowService
             $ticket->trigger_reason     = Maintenance::TRIGGER_PERIODIC;
             $ticket->visit_context      = Maintenance::CONTEXT_ROUTINE; // planned service → foresight ignores it
             $ticket->customer_complaint = $this->clean($opts['note'] ?? 'Routine service due (mileage).');
+            // Ready-entry-point chips for the Decide step (see DiagnosticGateService::dueChecks) — the
+            // exact Findings-catalog keywords this ticket was raised for, so the Inspector taps to
+            // confirm instead of hunting the picker for what the agenda note already told him to check.
+            $ticket->suggested_findings = array_values(array_filter($opts['suggested_findings'] ?? []));
             $ticket->event_status       = 'IN';   // a requested inspection is not a garage event
             $ticket->requested_by       = null;    // system-generated, no human requester
             $ticket->requested_at       = Carbon::now();
@@ -383,13 +650,17 @@ class MaintenanceWorkflowService
         $odoNote      = $data['odometer_note'] ?? null;
         $vehicle      = $ticket->loadMissing('vehicle')->vehicle;
 
+        // "Being Inspected" strict-match gate: the car is still in our park, so the start-of-drive reading
+        // must match its current mileage (a +1..5 km drift needs a note; a bigger/backward gap is blocked).
+        $this->assertStrictMatch($ticket, $actor, 'test_drive', $testOdometer, $vehicle?->odometer !== null ? (int) $vehicle->odometer : null, OdometerContinuityService::STAGE_TEST, $odoNote, 'test_odometer');
+
         return DB::transaction(function () use ($ticket, $vehicle, $actor, $testOdometer, $odoNote) {
             $ticket->workflow_status = Maintenance::WF_INSPECTION_DIAGNOSTIC;
             $ticket->event_status    = 'IN';
             $ticket->test_odometer   = $testOdometer; // start-of-drive anchor
             // Continuity check against the car's current mileage BEFORE we heal it forward (the heal runs
             // after save, so $vehicle->odometer here is still the prior reading).
-            $this->recordOdometerFlag($ticket, 'test_drive', $testOdometer, $vehicle?->odometer !== null ? (int) $vehicle->odometer : null, OdometerContinuityService::STAGE_TEST, $odoNote);
+            $this->recordOdometerFlag($ticket, 'test_drive', $testOdometer, $vehicle?->odometer !== null ? (int) $vehicle->odometer : null, OdometerContinuityService::STAGE_TEST, $odoNote, $actor);
             $ticket->inspected_by    = $actor->id;
             $ticket->inspected_at    = Carbon::now();
             $ticket->test_started_at = Carbon::now(); // downtime clock starts at the test drive
@@ -451,6 +722,15 @@ class MaintenanceWorkflowService
         // The odometer reading is mandatory before the test drive — the chain's start anchor.
         $testOdometer = $this->requireTestOdometer($data);
 
+        // "Being Inspected" strict-match gate — the car is still in our park, so the start reading must match
+        // its current mileage. Runs BEFORE the ticket is created, so a blocked attempt spawns no ticket; the
+        // audit row is logged against the vehicle (maintenance_id null). A transient ticket carries the
+        // vehicle so the block logger/notifier can name the car without a save.
+        $guardCtx = new Maintenance();
+        $guardCtx->vehicle_id = $vehicleId;
+        $guardCtx->setRelation('vehicle', $vehicle);
+        $this->assertStrictMatch($guardCtx, $actor, 'test_drive', $testOdometer, $vehicle->odometer !== null ? (int) $vehicle->odometer : null, OdometerContinuityService::STAGE_TEST, $data['odometer_note'] ?? null, 'test_odometer');
+
         return DB::transaction(function () use ($vehicle, $vehicleId, $reason, $data, $actor, $testOdometer) {
             $ticket = new Maintenance();
             $ticket->origin          = Maintenance::ORIGIN_MANUAL;
@@ -459,7 +739,7 @@ class MaintenanceWorkflowService
             $ticket->trigger_reason  = $reason;
             $ticket->test_odometer   = $testOdometer; // start-of-drive anchor
             // Continuity check against the car's current mileage BEFORE it's healed forward (see below).
-            $this->recordOdometerFlag($ticket, 'test_drive', $testOdometer, $vehicle->odometer !== null ? (int) $vehicle->odometer : null, OdometerContinuityService::STAGE_TEST, $data['odometer_note'] ?? null);
+            $this->recordOdometerFlag($ticket, 'test_drive', $testOdometer, $vehicle->odometer !== null ? (int) $vehicle->odometer : null, OdometerContinuityService::STAGE_TEST, $data['odometer_note'] ?? null, $actor);
 
             // A periodic visit is planned service → tag 'routine' so foresight's Chronic/Act-now
             // signals ignore it (see [[rental-first-policy]]). A reported fault stays standard.
@@ -1091,7 +1371,8 @@ class MaintenanceWorkflowService
             $rank  = [
                 Maintenance::FAULT_SEVERITY_ROUTINE  => 1,
                 Maintenance::FAULT_SEVERITY_MODERATE => 2,
-                Maintenance::FAULT_SEVERITY_CRITICAL => 3,
+                Maintenance::FAULT_SEVERITY_HIGH     => 3,
+                Maintenance::FAULT_SEVERITY_CRITICAL => 4,
             ];
             $faultSeverity = Maintenance::FAULT_SEVERITY_ROUTINE;
             foreach ($flags as $flag) {
@@ -1234,6 +1515,31 @@ class MaintenanceWorkflowService
         return [$row->root_cause, $row->id];
     }
 
+    /**
+     * Reality-check a finding's text against the car's LIVE diagnostic status. Non-null only when the
+     * text is one of the monitored routines (Oil Change / Battery Replacement / Tire Rotation / Tire
+     * Change) AND the vehicle's actual status says it is NOT due right now — someone is logging a
+     * scheduled service the car doesn't need. Stamped onto the finding at creation time (before
+     * completing it would roll the reminder forward and change the status), so it stays an honest
+     * snapshot of what was true the moment it was reported.
+     *
+     * @return array{status:string,summary:string}|null
+     */
+    private function statusConflictFor(string $text, ?Vehicle $vehicle): ?array
+    {
+        $serviceType = Maintenance::routineServiceTypeFor($text);
+        if (! $serviceType || ! $vehicle) {
+            return null;
+        }
+
+        $status = $this->gate->routineStatus($vehicle, $serviceType);
+        if (($status['status'] ?? null) !== 'ok') {
+            return null; // due/overdue (correctly flagged) or no_data (unknown) — no conflict to report
+        }
+
+        return ['status' => 'ok', 'summary' => $status['summary'] ?? null];
+    }
+
     /** Map a findings keyword to its catalog category (engine / brakes / …); null if unknown. Cached. */
     private function categoryForSymptom(?string $symptomLabel): ?string
     {
@@ -1342,6 +1648,13 @@ class MaintenanceWorkflowService
         $reportOdo  = isset($report['report_odometer']) && is_numeric($report['report_odometer']) ? (int) $report['report_odometer'] : null;
         $reportNote = $report['odometer_note'] ?? null;
 
+        // "Being Inspected" strict-match gate at the Decide step: the end-of-test-drive reading is measured
+        // against the start-of-drive anchor — a short test loop of up to 5 km is allowed with a note, more
+        // (or a backward reading) is blocked as a mis-read or an unauthorised long drive.
+        if ($reportOdo !== null && $reportOdo > 0) {
+            $this->assertStrictMatch($ticket, $actor, 'report', $reportOdo, $ticket->test_odometer !== null ? (int) $ticket->test_odometer : null, OdometerContinuityService::STAGE_TEST, $reportNote, 'report_odometer');
+        }
+
         return DB::transaction(function () use ($ticket, $payload, $target, $requiresMaintenance, $actor, $faultSeverity, $causeChoices, $repairLocation, $reportOdo, $reportNote) {
             $ticket->test_drive_report = $payload;
 
@@ -1349,8 +1662,9 @@ class MaintenanceWorkflowService
             // stay attributable ("Inspector-Identified") through every later stage of the workflow.
             // Each carries its resolved root cause (label + canonical fault_causes id) for analytics
             // + the eventual Odoo sync; a custom cause is recorded for admin review inside resolve().
+            $vehicleForCheck = $ticket->loadMissing('vehicle')->vehicle;
             $ticket->findings = collect($payload['symptoms'])
-                ->map(function ($text) use ($actor, $payload, $causeChoices) {
+                ->map(function ($text) use ($actor, $payload, $causeChoices, $vehicleForCheck) {
                     $choice = $causeChoices[FaultCause::normalizeKey($text)] ?? null;
                     [$cause, $causeId] = $choice
                         ? $this->resolveFaultCause($text, $choice['label'], $choice['id'], $actor)
@@ -1364,6 +1678,10 @@ class MaintenanceWorkflowService
                         'root_cause_id' => $causeId,
                         'by'            => $actor->name,
                         'at'            => Carbon::now()->toIso8601String(),
+                        // Reality-check against the live diagnostic status — non-null only when this text
+                        // is a monitored routine (oil/battery/tyres) AND the car's actual status says it
+                        // is NOT due. Surfaces as an inline warning now, and a Data Health audit row later.
+                        'status_check'  => $this->statusConflictFor($text, $vehicleForCheck),
                     ];
                 })->values()->all();
 
@@ -1388,7 +1706,7 @@ class MaintenanceWorkflowService
             // car's canonical mileage forward (the drive moved the meter). Continuity vs the start anchor.
             if ($reportOdo !== null && $reportOdo > 0) {
                 $ticket->report_odometer = $reportOdo;
-                $this->recordOdometerFlag($ticket, 'report', $reportOdo, $ticket->test_odometer !== null ? (int) $ticket->test_odometer : null, OdometerContinuityService::STAGE_TEST, $reportNote);
+                $this->recordOdometerFlag($ticket, 'report', $reportOdo, $ticket->test_odometer !== null ? (int) $ticket->test_odometer : null, OdometerContinuityService::STAGE_TEST, $reportNote, $actor);
             }
             $ticket->workflow_status = $target;
             $ticket->save();
@@ -1776,14 +2094,19 @@ class MaintenanceWorkflowService
             ]);
         }
 
-        return DB::transaction(function () use ($ticket, $odometer, $vendor, $data, $actor) {
+        // "Awaiting Pickup" strict-match gate: the car is still in our park until the driver takes it, so the
+        // pickup reading must match the last recorded mileage (the test-drive anchor, else the live odometer)
+        // — a +1..5 km drift needs a note; a bigger or backward gap is blocked as a typo / unauthorised move.
+        $lastRecorded = $ticket->test_odometer
+            ?? ($ticket->loadMissing('vehicle')->vehicle?->odometer !== null ? (int) $ticket->vehicle->odometer : null);
+        $this->assertStrictMatch($ticket, $actor, 'dispatch', $odometer, $lastRecorded, OdometerContinuityService::STAGE_PARK_PICKUP, $data['odometer_note'] ?? null, 'dispatch_odometer');
+
+        return DB::transaction(function () use ($ticket, $odometer, $vendor, $data, $actor, $lastRecorded) {
             $ticket->dispatch_odometer = $odometer;
-            // Pickup continuity: the reading must be >= the last recorded mileage (the test-drive anchor,
-            // else the car's live odometer). A big forward jump is nudged as 'check'; a backward reading
-            // is flagged 'discrepancy' for the Supervisor. Non-blocking — the pickup always proceeds.
-            $lastRecorded = $ticket->test_odometer
-                ?? ($ticket->loadMissing('vehicle')->vehicle?->odometer !== null ? (int) $ticket->vehicle->odometer : null);
-            $this->recordOdometerFlag($ticket, 'dispatch', $odometer, $lastRecorded, OdometerContinuityService::STAGE_PICKUP, $data['odometer_note'] ?? null);
+            // Pickup continuity (strict-match park stage): recorded against the same last-recorded anchor the
+            // gate above checked. An in-range drift stamps 'authorized_deviation' (+ its note) for the
+            // /oversight/mileage audit board; an exact match is 'verified'.
+            $this->recordOdometerFlag($ticket, 'dispatch', $odometer, $lastRecorded, OdometerContinuityService::STAGE_PARK_PICKUP, $data['odometer_note'] ?? null, $actor);
             $ticket->vendor_id         = $vendor->id;
             $ticket->garage            = $vendor->name;   // denormalised label the board shows
             $ticket->driver            = $actor->name;    // the Driver who took the car to the garage
@@ -1913,7 +2236,7 @@ class MaintenanceWorkflowService
             // Pickup continuity — identical to a driver dispatch: >= the last recorded mileage, else flagged.
             $lastRecorded = $ticket->test_odometer
                 ?? ($ticket->loadMissing('vehicle')->vehicle?->odometer !== null ? (int) $ticket->vehicle->odometer : null);
-            $this->recordOdometerFlag($ticket, 'dispatch', $odometer, $lastRecorded, OdometerContinuityService::STAGE_PICKUP, $data['odometer_note'] ?? null);
+            $this->recordOdometerFlag($ticket, 'dispatch', $odometer, $lastRecorded, OdometerContinuityService::STAGE_PICKUP, $data['odometer_note'] ?? null, $actor);
 
             $ticket->vendor_id           = $vendor->id;
             $ticket->garage              = $vendor->name;
@@ -2005,11 +2328,41 @@ class MaintenanceWorkflowService
             ]);
         }
 
+        // The car was driven to the garage, so the arrival reading MUST be higher than the pickup
+        // reading — an equal-or-lower value is an error or a mis-keyed entry, not a valid arrival.
+        // (Skipped when there's no pickup reading to compare against, e.g. a ticket with no dispatch.)
+        $pickup = $ticket->dispatch_odometer !== null ? (int) $ticket->dispatch_odometer : null;
+        if ($pickup !== null && $odometer <= $pickup) {
+            // Audit the rejected arrival reading before throwing (the check-in rolls back, leaving no trace).
+            $this->logOdometerBlock($ticket, $actor, 'receive', $odometer, $pickup, $odometer - $pickup, 'must_increase', $data['odometer_note'] ?? null);
+            throw new WorkflowTransitionException(
+                'The arrival odometer (' . number_format($odometer) . ' km) must be higher than the pickup reading ('
+                    . number_format($pickup) . ' km) — the car was driven to the garage. Re-check the reading.',
+                ['field' => 'receive_odometer']
+            );
+        }
+
         return DB::transaction(function () use ($ticket, $data, $actor, $odometer) {
+            // ── Deferred Garage Hand-over ─────────────────────────────────────────────────────────
+            // If this arrival is the destination of a PLANNED transfer, the car has now physically reached
+            // the new garage — perform the hand-over the transfer request deliberately deferred: move every
+            // open fault's stint to the destination and re-point the ticket's single current garage. Only
+            // now does vendor_id stop pointing at the garage the car left. (No-op on a first arrival, when
+            // there's no pending transfer.) Runs FIRST so the arrival logging below reads the new garage.
+            if ($ticket->transfer_to_vendor_id && (int) $ticket->transfer_to_vendor_id !== (int) $ticket->vendor_id) {
+                $dest = Vendor::find($ticket->transfer_to_vendor_id);
+                if ($dest) {
+                    app(MaintenanceTaskService::class)->routeTicketToGarage($ticket, $dest->id, 'Arrived on transfer', $actor, $odometer);
+                    $ticket->vendor_id = $dest->id;
+                    $ticket->garage    = $dest->name; // denormalised label the board shows
+                }
+            }
+            $ticket->transfer_to_vendor_id = null; // the move is complete — clear the pending destination
+
             $ticket->receive_odometer = $odometer;
             // Garage-intake continuity vs the pickup reading: the drive to the garage moves the meter
             // forward (fine), only a backward reading is a discrepancy.
-            $this->recordOdometerFlag($ticket, 'receive', $odometer, $ticket->dispatch_odometer, OdometerContinuityService::STAGE_GARAGE_IN, $data['odometer_note'] ?? null);
+            $this->recordOdometerFlag($ticket, 'receive', $odometer, $ticket->dispatch_odometer, OdometerContinuityService::STAGE_GARAGE_IN, $data['odometer_note'] ?? null, $actor);
             if (array_key_exists('garage_feedback', $data)) {
                 $ticket->garage_feedback = $this->clean($data['garage_feedback']);
             }
@@ -2133,7 +2486,8 @@ class MaintenanceWorkflowService
         }
 
         return DB::transaction(function () use ($ticket, $clean, $actor) {
-            $added = $clean->map(function ($f) use ($actor) {
+            $vehicle = $ticket->loadMissing('vehicle')->vehicle;
+            $added = $clean->map(function ($f) use ($actor, $vehicle) {
                 [$cause, $causeId] = $this->resolveFaultCause($f['text'], $f['root_cause'], $f['root_cause_id'], $actor);
 
                 return [
@@ -2144,12 +2498,12 @@ class MaintenanceWorkflowService
                     'root_cause_id' => $causeId,
                     'by'            => $actor->name,
                     'at'            => Carbon::now()->toIso8601String(),
+                    'status_check'  => $this->statusConflictFor($f['text'], $vehicle),
                 ];
             });
             $ticket->findings = collect($ticket->findings ?? [])->concat($added)->values()->all();
             $ticket->save();
 
-            $vehicle = $ticket->loadMissing('vehicle')->vehicle;
             $this->notifier->notifyByPermission(self::NOTIFY_CONTROLLERS, [
                 'type'     => 'maint_garage_finding',
                 'category' => 'maintenance',
@@ -2205,9 +2559,9 @@ class MaintenanceWorkflowService
                 // With no intake to compare, fall back to a plain forward-continuity check against the last
                 // reading (pickup, else the test anchor).
                 if ($ticket->receive_odometer !== null) {
-                    $this->recordOdometerFlag($ticket, 'return', $odometer, $ticket->receive_odometer, OdometerContinuityService::STAGE_GARAGE_OUT, $data['odometer_note'] ?? null);
+                    $this->recordOdometerFlag($ticket, 'return', $odometer, $ticket->receive_odometer, OdometerContinuityService::STAGE_GARAGE_OUT, $data['odometer_note'] ?? null, $actor);
                 } else {
-                    $this->recordOdometerFlag($ticket, 'return', $odometer, $ticket->dispatch_odometer ?? $ticket->test_odometer, OdometerContinuityService::STAGE_RETURN, $data['odometer_note'] ?? null);
+                    $this->recordOdometerFlag($ticket, 'return', $odometer, $ticket->dispatch_odometer ?? $ticket->test_odometer, OdometerContinuityService::STAGE_RETURN, $data['odometer_note'] ?? null, $actor);
                 }
             }
             if (array_key_exists('garage_feedback', $data)) {
@@ -2391,7 +2745,7 @@ class MaintenanceWorkflowService
             if ($odometer >= 1) {
                 $ticket->return_odometer = $odometer;
                 $prev = $ticket->receive_odometer ?? $ticket->dispatch_odometer ?? $ticket->test_odometer;
-                $this->recordOdometerFlag($ticket, 'return', $odometer, $prev !== null ? (int) $prev : null, OdometerContinuityService::STAGE_GARAGE_OUT, $data['odometer_note'] ?? null);
+                $this->recordOdometerFlag($ticket, 'return', $odometer, $prev !== null ? (int) $prev : null, OdometerContinuityService::STAGE_GARAGE_OUT, $data['odometer_note'] ?? null, $actor);
             }
             $ticket->picked_up_from_garage_at = Carbon::now();
             $ticket->picked_up_from_garage_by = $actor->id;
@@ -2587,7 +2941,7 @@ class MaintenanceWorkflowService
         if ($reinspectOdo !== null && $reinspectOdo > 0) {
             $prev = $ticket->return_odometer ?? $ticket->receive_odometer ?? $ticket->dispatch_odometer ?? $ticket->test_odometer;
             $ticket->reinspect_odometer = $reinspectOdo; // its own column → a distinct row in the mileage timeline
-            $this->recordOdometerFlag($ticket, 'reinspect', $reinspectOdo, $prev !== null ? (int) $prev : null, OdometerContinuityService::STAGE_RETURN, $data['odometer_note'] ?? null);
+            $this->recordOdometerFlag($ticket, 'reinspect', $reinspectOdo, $prev !== null ? (int) $prev : null, OdometerContinuityService::STAGE_RETURN, $data['odometer_note'] ?? null, $actor);
             if ($vehicle = $ticket->loadMissing('vehicle')->vehicle) {
                 $this->applyTestOdometer($vehicle, $reinspectOdo); // forward-only heal, mirrors the other capture points
             }

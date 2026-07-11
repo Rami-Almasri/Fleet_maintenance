@@ -10,7 +10,9 @@ import WorkshopEvents from '../../components/WorkshopEvents';
 import ContractInvoices from '../../components/ContractInvoices';
 import ContractPayments from '../../components/ContractPayments';
 import BillingReconciliation from '../../components/BillingReconciliation';
+import ReadinessPanel from '../../components/readiness/ReadinessPanel';
 import { aed2, fmtDate, fmtTime, combineDateTime, fmtDuration, num } from '../../lib/format';
+import { SHOW_FINANCIALS } from '../../config/features';
 
 // Renders a card with a label/value grid. Pairs = [[label, value], ...]
 function Section({ title, pairs }) {
@@ -256,19 +258,20 @@ export default function ContractDetail() {
     if (so) heldDuration = `${so} so far`;
   }
 
+  // Money tiles (Total Cost / Debit / Credit / Balance / Deposit) only render while financials are on.
   const stats = isMaintenance
     ? [
-        { label: 'Total Cost', value: aed2(c.maintenance_total ?? c.contract_debit), accent: 'amber', icon: 'M12 8c-1.7 0-3 .9-3 2s1.3 2 3 2 3 .9 3 2-1.3 2-3 2m0-8V6m0 12v-2m9-4a9 9 0 1 1-18 0 9 9 0 0 1 18 0z' },
+        ...(SHOW_FINANCIALS ? [{ label: 'Total Cost', value: aed2(c.maintenance_total ?? c.contract_debit), accent: 'amber', icon: 'M12 8c-1.7 0-3 .9-3 2s1.3 2 3 2 3 .9 3 2-1.3 2-3 2m0-8V6m0 12v-2m9-4a9 9 0 1 1-18 0 9 9 0 0 1 18 0z' }] : []),
         { label: garageLabel || 'Garage', value: garageName || '—', small: true, accent: 'indigo', icon: 'M3 9l9-6 9 6v11a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z' },
         { label: 'Days in Garage', value: daysInGarage != null ? `${daysInGarage}d` : '—', accent: 'indigo', icon: ICON_CLOCK },
         { label: 'Status', value: mStatus?.label || '—', tone: mStatus?.tone, small: true, icon: ICON_CHECK, accent: mStatus?.badge === 'green' ? 'emerald' : mStatus?.badge === 'red' ? 'red' : mStatus?.badge === 'amber' ? 'amber' : 'slate' },
       ]
-    : [
+    : (SHOW_FINANCIALS ? [
         { label: 'Total Debit', value: aed2(c.contract_debit), accent: 'indigo', icon: 'M7 11l5-5 5 5M12 6v12' },
         { label: 'Total Credit', value: aed2(c.contract_credit), accent: 'emerald', icon: 'M17 13l-5 5-5-5M12 18V6' },
         { label: 'Balance', value: aed2(c.contract_balance), tone: Number(c.contract_balance) > 0 ? 'text-red-600' : Number(c.contract_balance) < 0 ? 'text-emerald-600' : 'text-slate-900', accent: Number(c.contract_balance) > 0 ? 'red' : Number(c.contract_balance) < 0 ? 'emerald' : 'slate', icon: 'M12 8c-1.7 0-3 .9-3 2s1.3 2 3 2 3 .9 3 2-1.3 2-3 2m0-8V6m0 12v-2m9-4a9 9 0 1 1-18 0 9 9 0 0 1 18 0z' },
         { label: 'Deposit', value: aed2(c.contract_deposit), accent: 'indigo', icon: 'M3 10l9-6 9 6M5 10v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-9' },
-      ];
+      ] : []);
 
   return (
     <div className="py-8">
@@ -298,10 +301,10 @@ export default function ContractDetail() {
                   {mStatus && <Badge tone={mStatus.badge}>{mStatus.label}</Badge>}
                   {rentalDue?.inProgress && <Badge tone={rentalDue.overdue ? 'red' : 'blue'}>{rentalDue.overdue ? `Overdue · due ${fmtDate(rentalDue.due)}` : `Due back ${fmtDate(rentalDue.due)}`}</Badge>}
                   {c.parent_contract_id && <Badge tone="indigo">🔁 Exchange</Badge>}
-                  {Number(c.carried_balance) > 0 && <Badge tone="green" className="font-semibold">Carried {aed2(c.carried_balance)}</Badge>}
-                  {/* Customer-wide standing (across ALL their contracts) — only one ever shows */}
-                  {Number(c.customer?.available_wallet) > 0 && <Badge tone="cyan" className="font-semibold">💰 Customer wallet {aed2(c.customer.available_wallet)}</Badge>}
-                  {Number(c.customer?.balance) > 0 && <Badge tone="red" className="font-semibold">⚠️ Customer owes {aed2(c.customer.balance)}</Badge>}
+                  {/* Customer-wide money badges (carried balance / wallet / owes) — financials only */}
+                  {SHOW_FINANCIALS && Number(c.carried_balance) > 0 && <Badge tone="green" className="font-semibold">Carried {aed2(c.carried_balance)}</Badge>}
+                  {SHOW_FINANCIALS && Number(c.customer?.available_wallet) > 0 && <Badge tone="cyan" className="font-semibold">💰 Customer wallet {aed2(c.customer.available_wallet)}</Badge>}
+                  {SHOW_FINANCIALS && Number(c.customer?.balance) > 0 && <Badge tone="red" className="font-semibold">⚠️ Customer owes {aed2(c.customer.balance)}</Badge>}
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {c.customer && (
@@ -321,20 +324,24 @@ export default function ContractDetail() {
             </div>
 
             <div className="w-full shrink-0 rounded-2xl bg-white/5 p-4 ring-1 ring-inset ring-white/10 backdrop-blur lg:w-64">
-              <p className="text-xs font-medium text-white/55">{isMaintenance ? 'Total Cost' : 'Balance'}</p>
-              <p className={`mt-1 text-3xl font-bold tracking-tight ${!isMaintenance && Number(c.contract_balance) > 0 ? 'text-red-300' : !isMaintenance && Number(c.contract_balance) < 0 ? 'text-emerald-300' : 'text-white'}`}>
-                {isMaintenance ? aed2(c.maintenance_total ?? c.contract_debit) : aed2(c.contract_balance)}
-              </p>
-              <Button variant="secondary" className="mt-4 w-full justify-center" onClick={() => navigate(`/contracts/${id}/edit`)}>Edit Contract</Button>
+              {SHOW_FINANCIALS && (
+                <>
+                  <p className="text-xs font-medium text-white/55">{isMaintenance ? 'Total Cost' : 'Balance'}</p>
+                  <p className={`mt-1 text-3xl font-bold tracking-tight ${!isMaintenance && Number(c.contract_balance) > 0 ? 'text-red-300' : !isMaintenance && Number(c.contract_balance) < 0 ? 'text-emerald-300' : 'text-white'}`}>
+                    {isMaintenance ? aed2(c.maintenance_total ?? c.contract_debit) : aed2(c.contract_balance)}
+                  </p>
+                </>
+              )}
+              <Button variant="secondary" className={`${SHOW_FINANCIALS ? 'mt-4' : ''} w-full justify-center`} onClick={() => navigate(`/contracts/${id}/edit`)}>Edit Contract</Button>
             </div>
           </div>
         </div>
 
-        {/* Net Profit — the daily-glance figure (Net Collected − Billed), reconciled live against
-            the accounting system, with the full audit one click away. Rentals/bookings only. */}
-        {c.contract_no && !isMaintenance && <NetProfitCard contractId={id} contractNo={c.contract_no} />}
+        {/* Net Profit — the daily-glance figure (Net Collected − Billed). Financials only. */}
+        {SHOW_FINANCIALS && c.contract_no && !isMaintenance && <NetProfitCard contractId={id} contractNo={c.contract_no} />}
 
-        {/* Stat tiles */}
+        {/* Stat tiles (money tiles hidden while financials are off; non-money maintenance tiles remain) */}
+        {stats.length > 0 && (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           {stats.map((s) => (
             <div key={s.label} className="hover-lift rounded-2xl border border-slate-200/60 bg-white px-5 py-4 shadow-soft">
@@ -350,10 +357,16 @@ export default function ContractDetail() {
             </div>
           ))}
         </div>
+        )}
 
-        {/* Billing reconciliation — per-category Charged/Settled/Outstanding (reconciles to
-            the Balance) + the invoice discount proof. Rentals only; nothing recomputed. */}
-        {!isMaintenance && <BillingReconciliation contract={c} />}
+        {/* 9-point Pre-Delivery Readiness — the Rental Manager's check-in/out decision surface.
+            Rentals & bookings only; maintenance visits have their own workshop log below. */}
+        {!isMaintenance && c.vehicle_id && (
+          <ReadinessPanel vehicleId={c.vehicle_id} plate={c.vehicle?.plate_no} />
+        )}
+
+        {/* Billing reconciliation — per-category Charged/Settled/Outstanding. Financials only. */}
+        {SHOW_FINANCIALS && !isMaintenance && <BillingReconciliation contract={c} />}
 
         {/* Lifecycle timeline */}
         <Lifecycle
@@ -364,8 +377,8 @@ export default function ContractDetail() {
           late={isMaintenance ? !!(c.in_date && c.expected_return_date && dayDiff(c.in_date, c.expected_return_date) > 0) : !!rentalDue?.overdue}
         />
 
-        {/* Overdue rental — what the extra days would cost if the lease is extended */}
-        {overdueBilling && (
+        {/* Overdue rental — what the extra days would cost if the lease is extended. Financials only. */}
+        {SHOW_FINANCIALS && overdueBilling && (
           <Card className="p-6 ring-1 ring-red-200">
             <div className="mb-3 flex items-center justify-between gap-3">
               <h3 className="text-xs font-semibold uppercase tracking-wide text-red-500">Overdue — extension estimate</h3>
@@ -503,10 +516,10 @@ export default function ContractDetail() {
           />
         )}
 
-        {/* Invoices & payments side-by-side — charges (left) and collection (right). */}
-        <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+        {/* Service Records (always — the money-free technical log) + payments (financials only). */}
+        <div className={`grid grid-cols-1 gap-6 ${SHOW_FINANCIALS ? 'xl:grid-cols-2' : ''}`}>
           <ContractInvoices contract={c} onChanged={reload} />
-          <ContractPayments contract={c} onChanged={reload} />
+          {SHOW_FINANCIALS && <ContractPayments contract={c} onChanged={reload} />}
         </div>
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
@@ -525,8 +538,8 @@ export default function ContractDetail() {
             ['Expected Return', rentalDue ? `${fmtDate(rentalDue.due)}${rentalDue.overdue ? ' (overdue)' : ''}` : null],
           ]} />
 
-          {/* rental-only financial sections — hidden for maintenance contracts */}
-          {!isMaintenance && (
+          {/* rental-only financial sections — hidden for maintenance, and while financials are off */}
+          {!isMaintenance && SHOW_FINANCIALS && (
             <>
               <Section title="Pricing" pairs={[
                 ['Day Price', money(c.day_price)], ['Week Price', money(c.week_price)], ['Month Price', money(c.month_price)],

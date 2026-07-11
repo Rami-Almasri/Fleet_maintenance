@@ -8,6 +8,8 @@ const VARIANTS = {
     'bg-gradient-to-b from-red-500 to-red-600 text-white shadow-sm shadow-red-600/20 hover:to-red-700 focus-visible:outline-red-600',
   success:
     'bg-gradient-to-b from-emerald-500 to-emerald-600 text-white shadow-sm shadow-emerald-600/20 hover:to-emerald-700 focus-visible:outline-emerald-600',
+  warning:
+    'bg-gradient-to-b from-amber-500 to-amber-600 text-white shadow-sm shadow-amber-600/20 hover:to-amber-700 focus-visible:outline-amber-600',
 };
 
 const SIZES = {

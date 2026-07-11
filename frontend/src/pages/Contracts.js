@@ -11,6 +11,7 @@ import { InfoTip } from '../components/ui/Tooltip';
 import Icon from '../components/ui/Icon';
 import { Select } from '../components/ui/Field';
 import { aed2, fmtDate, num } from '../lib/format';
+import { SHOW_FINANCIALS } from '../config/features';
 
 const SERVER_PAGE = 50;
 
@@ -124,11 +125,12 @@ export default function Contracts() {
       key: 'out_date', header: 'Out Date', cellClass: 'text-slate-500',
       render: (c) => fmtDate(c.out_date),
     },
-    {
+    // Balance column — financials only.
+    ...(SHOW_FINANCIALS ? [{
       key: 'balance', header: 'Balance', align: 'right', cellClass: 'tabular-nums',
       tooltip: 'Outstanding amount: positive = customer owes, negative = credit/overpaid.',
       render: (c) => <Badge tone={balTone(c.contract_balance)}>{aed2(c.contract_balance)}</Badge>,
-    },
+    }] : []),
   ];
 
   return (
@@ -168,9 +170,11 @@ export default function Contracts() {
             <Select className="lg:w-40" value={state} onChange={onState}>
               {STATES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
             </Select>
-            <Select className="lg:w-48" value={balance} onChange={onBalance}>
-              {BALANCES.map((b) => <option key={b.value} value={b.value}>{b.label}</option>)}
-            </Select>
+            {SHOW_FINANCIALS && (
+              <Select className="lg:w-48" value={balance} onChange={onBalance}>
+                {BALANCES.map((b) => <option key={b.value} value={b.value}>{b.label}</option>)}
+              </Select>
+            )}
             <Select className="lg:w-44" value={serial} onChange={onSerial}>
               {SERIALS.map((n) => <option key={n.value} value={n.value}>{n.label}</option>)}
             </Select>
@@ -182,8 +186,8 @@ export default function Contracts() {
             rowKey={(c) => c.id}
             loading={loading}
             skeletonRows={8}
-            // subtle highlight for contracts that owe money (positive balance)
-            highlightRow={(c) => Number(c.contract_balance || 0) > 0}
+            // subtle highlight for contracts that owe money (positive balance) — financials only
+            highlightRow={(c) => SHOW_FINANCIALS && Number(c.contract_balance || 0) > 0}
             empty="No contracts match these filters. Try clearing the type, state or search."
           />
 

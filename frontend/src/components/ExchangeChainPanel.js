@@ -7,6 +7,7 @@ import Badge from './ui/Badge';
 import Button from './ui/Button';
 import { Card } from './ui/Misc';
 import { aed2, fmtDate } from '../lib/format';
+import { SHOW_FINANCIALS } from '../config/features';
 
 const gapLabel = (h) => {
   if (h === null || h === undefined) return null;
@@ -26,7 +27,7 @@ function Node({ n }) {
           </Link>
           {n.is_current && <Badge tone="indigo">This contract</Badge>}
           {n.state && <Badge tone={n.state === 'open' ? 'green' : 'gray'}>{n.state}</Badge>}
-          {Number(n.carried_balance) > 0 && <Badge tone="emerald" className="font-semibold">Carried {aed2(n.carried_balance)}</Badge>}
+          {SHOW_FINANCIALS && Number(n.carried_balance) > 0 && <Badge tone="emerald" className="font-semibold">Carried {aed2(n.carried_balance)}</Badge>}
         </div>
         <div className="mt-0.5 truncate text-xs text-slate-500">
           {n.vehicle || '—'} · out {fmtDate(n.out_date)}{n.in_date ? ` · in ${fmtDate(n.in_date)}` : ' · not returned'}
@@ -90,19 +91,19 @@ export default function ExchangeChainPanel({ contract }) {
         <Badge tone="slate">{gapLabel(pair.gap_hours)}</Badge>
         {pair.held_days > 0 && <span className="ml-1 text-xs text-slate-500">held {pair.held_days}d</span>}
       </p>
-      {pair.carried_total > 0 && (
+      {SHOW_FINANCIALS && pair.carried_total > 0 && (
         <p className="mt-1 text-xs text-slate-600">
           Carry-over available: <span className="font-semibold text-emerald-700">{aed2(pair.carried_total)}</span>
           {' '}<span className="text-slate-400">(deposit {aed2(pair.parent_deposit)} + credit {aed2(pair.parent_credit)})</span>
         </p>
       )}
       <div className="mt-3 flex flex-wrap gap-2">
-        {pair.carried_total > 0 && (
+        {SHOW_FINANCIALS && pair.carried_total > 0 && (
           <Button size="sm" variant="success" loading={busy} disabled={busy} onClick={() => onLink(pair, 'both')}>
             Link &amp; Carry Balance
           </Button>
         )}
-        <Button size="sm" variant={pair.carried_total > 0 ? 'secondary' : 'primary'} loading={busy} disabled={busy} onClick={() => onLink(pair, 'none')}>
+        <Button size="sm" variant={SHOW_FINANCIALS && pair.carried_total > 0 ? 'secondary' : 'primary'} loading={busy} disabled={busy} onClick={() => onLink(pair, 'none')}>
           Link only
         </Button>
         <Link to={`/contracts/${pair.parent_id === id ? pair.child_id : pair.parent_id}`} className="inline-flex items-center px-2 text-xs font-medium text-indigo-600 hover:text-indigo-700">

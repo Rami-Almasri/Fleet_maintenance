@@ -40,8 +40,8 @@ return [
     // the web. Set OFFICEMANAGER_WEB_SYNC_ENABLED=true only to re-enable the old web buttons.
     'web_sync_enabled' => (bool) env('OFFICEMANAGER_WEB_SYNC_ENABLED', false),
 
-    // The Sheet↔API diff reads the live sheet AND pages every API vehicle on each view —
-    // several seconds against a fragile server. Cache the computed result this long so the
-    // page is instant after the first load; users can force a fresh recompute on demand.
-    'diff_cache_ttl' => (int) env('OFFICEMANAGER_DIFF_CACHE_TTL', 600), // seconds
+    // Sync Audit retention: how many days of sync_runs history to keep. After each healthy
+    // live sync, runs older than this are deleted (cascading to sync_corrections/sync_changes),
+    // so the audit feed stays tidy without manual cleanup. 0 = keep forever.
+    'audit_retention_days' => (int) env('OFFICEMANAGER_AUDIT_RETENTION_DAYS', 90),
 ];

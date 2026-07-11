@@ -35,8 +35,9 @@ const LANES = [
   { key: 'under_repair',    tone: '#f97316' }, // In Workshop — the repair itself: cost, faults & timeline
   ...(SHOW_VIDEO_REVIEW ? [{ key: 'repair_review', tone: '#7c3aed' }] : []), // Supervisor Video-Review: garage finished — Waleed/Abdullah review the video
   { key: 'ready_for_pickup', tone: '#10b981' }, // signed off — awaiting the driver's RETURN leg (collect + arrive)
-  { key: 'in_our_park',      tone: '#0ea5e9' }, // transient — arriveAtPark() always auto-continues within the same request
+  { key: 'qa_reinspection',  tone: '#9333ea' }, // Final QA — major repair, back at our park, awaiting the Inspector's sign-off (replaces the always-empty in_our_park transient lane)
   { key: 'reinspection_failed', tone: '#dc2626' }, // QC: came back but still broken — supervisor re-dispatches
+  { key: 'on_site',         tone: '#0d9488' }, // On-Site (mobile) — separate side-lane; car stays available, one "Mark as Serviced" step closes it
 ];
 
 // How many cards a lane shows before collapsing the rest behind a "Show more" button.
@@ -47,6 +48,7 @@ const SEV_FILTERS = [
   { value: '', key: 'filterAll' },
   { value: 'critical', key: 'critical', emoji: '🔴' },
   { value: 'moderate', key: 'moderate', emoji: '🟡' },
+  { value: 'high', key: 'high', emoji: '🟠' },
   { value: 'routine', key: 'routine', emoji: '🟢' },
 ];
 
@@ -89,9 +91,9 @@ function TicketCard({ tk, tone, can, userId, active, onOpen, onAct }) {
   const custodyHint = `Only ${tk.dispatched_by_name || 'the driver who picked up the car'} can check it in`;
   const tasks = tk.tasks || [];
   const canRoute = can('maintenance.delegate'); // the Supervisor's dispatch authority routes faults
-  // Follow-up notes (Waleed/Abdullah) surfaced right on the card while the car is out — from the moment
-  // it's awaiting pickup through in transit / under repair / review. Mirrors the drawer's canFollowUp.
-  const canFollowUp = can('maintenance.delegate') && ['awaiting_dispatch', 'in_transit', 'under_repair', 'repair_review'].includes(tk.workflow_status);
+  // Follow-up notes (Waleed/Abdullah) surfaced right on the card — only while the car is In Workshop
+  // (under_repair), i.e. actually at the garage being worked on. Mirrors the drawer's canFollowUp.
+  const canFollowUp = can('maintenance.delegate') && tk.workflow_status === 'under_repair';
   const driverName = tk.dispatched_by_name || tk.assigned_driver_name;
   const delegated = tk.delegation?.status === 'driver_assigned' && tk.delegation.driver_name;
   // Critical tickets get a card-level red accent so they pop out of the lane at a glance — the
@@ -240,14 +242,23 @@ function TicketCard({ tk, tone, can, userId, active, onOpen, onAct }) {
               the server from this ticket's status + active garage stint + active move. The logistics
               leg shows here, ON the ticket, not on a separate board. */}
           {tk.position?.label && (
-            <div className="mt-1.5">
+            <div className="mt-1.5 flex flex-wrap items-center gap-1">
               <span
                 className={`inline-flex max-w-full items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-semibold ring-1 ring-inset ${POSITION_TONE[tk.position.tone] || POSITION_TONE.slate} ${tk.position.moving ? 'animate-pulse' : ''}`}
                 title={tk.position.detail || tk.position.label}
               >
                 <span>{POSITION_ICON[tk.position.phase] || '•'}</span>
-                <span className="truncate">{tk.position.label}{tk.position.garage ? ` · ${tk.position.garage}` : ''}</span>
+                <span className="truncate">
+                  {tk.position.label}{tk.position.garage ? ` · ${tk.position.garage}` : ''}
+                  {tk.position.transfer && tk.position.destination ? ` → ${tk.position.destination}` : ''}
+                </span>
               </span>
+              {/* Transfer flag — an at-a-glance marker that this car is being moved between garages. */}
+              {tk.position.transfer && (
+                <span className="inline-flex items-center gap-0.5 rounded-md bg-violet-100 px-1.5 py-0.5 text-[10px] font-bold text-violet-700 ring-1 ring-inset ring-violet-200">
+                  🔀 {t('workflow.position.transfer')}
+                </span>
+              )}
             </div>
           )}
 
@@ -284,8 +295,9 @@ function TicketCard({ tk, tone, can, userId, active, onOpen, onAct }) {
                 );
               })}
               {/* "Manage faults" only appears once the car is at the garage stage — before that
-                  (awaiting dispatch) there's nothing to work on yet. */}
-              {canRoute && isAtGarage(tk) && (
+                  (awaiting dispatch) there's nothing to work on yet. It's hidden again at
+                  ready_for_pickup: by then the faults are fixed and there's nothing left to route. */}
+              {canRoute && isAtGarage(tk) && tk.workflow_status !== 'ready_for_pickup' && (
                 <div onClick={(e) => e.stopPropagation()}>
                   <button
                     type="button"

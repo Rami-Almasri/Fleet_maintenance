@@ -57,7 +57,7 @@ class ScanMileageBaseline extends Command
 
         if (($r['rollback_cars'] + $r['jump_cars']) > 0) {
             $this->newLine();
-            $this->warn(($r['rollback_cars'] + $r['jump_cars']) . ' cars flagged with mileage anomalies — review them on the /anomalies dashboard.');
+            $this->warn(($r['rollback_cars'] + $r['jump_cars']) . ' cars flagged with mileage anomalies — review them on the /mileage-chain-audit dashboard.');
         }
 
         if (! $apply) {

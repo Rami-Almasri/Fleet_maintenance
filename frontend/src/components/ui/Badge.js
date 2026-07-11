@@ -11,6 +11,8 @@ const TONES = {
   cyan: 'bg-cyan-100 text-cyan-700 ring-cyan-600/20',
   slate: 'bg-slate-100 text-slate-600 ring-slate-500/20',
   indigo: 'bg-indigo-100 text-indigo-700 ring-indigo-600/20',
+  orange: 'bg-orange-100 text-orange-700 ring-orange-600/20',
+  yellow: 'bg-yellow-100 text-yellow-800 ring-yellow-600/20',
 };
 
 export default function Badge({ tone = 'gray', children, className = '' }) {
@@ -49,12 +51,15 @@ const OPERATIONAL = {
   test:        { tone: 'cyan',   label: '🧪 Test drive' },
   transfer:    { tone: 'indigo', label: '🚚 Transfer' },
   sale_prep:   { tone: 'slate',  label: '🏷️ Sale prep' },
+  in_transit:  { tone: 'violet', label: '🚚 In transit' },
 };
 
-export function OperationalBadge({ status }) {
+// `destination` is only used for in_transit, to spell out "In transit → Deals on Wheels".
+export function OperationalBadge({ status, destination }) {
   const m = OPERATIONAL[status];
   if (!m) return null;
-  return <Badge tone={m.tone}>{m.label}</Badge>;
+  const label = status === 'in_transit' && destination ? `🚚 In transit → ${destination}` : m.label;
+  return <Badge tone={m.tone}>{label}</Badge>;
 }
 
 // A STANDING safety warning for cars that must not be treated as rentable
@@ -72,6 +77,46 @@ export function VehicleWarningTag({ status }) {
   const m = VEHICLE_WARNING[status];
   if (!m) return null;
   return <Badge tone={m.tone} className="font-semibold">{m.label}</Badge>;
+}
+
+// Deferred Maintenance — a standing warning for a car that was pulled out of the workshop
+// early to satisfy a customer and still "owes" the garage a visit. Shown ALONGSIDE the live
+// status the whole time it's out, so it can't be silently re-rented and forgotten.
+export function DeferredMaintenanceBadge({ pending, note }) {
+  if (!pending) return null;
+  return (
+    <span title={note ? `Owes maintenance — ${note}` : 'Pulled from the workshop for a customer — must go back to the garage once it returns.'}>
+      <Badge tone="red" className="whitespace-nowrap font-semibold normal-case">🛠️↩️ Owes maintenance</Badge>
+    </span>
+  );
+}
+
+// Visual Condition Grade (Abu Marouf) — a manual cosmetic/condition assessment, kept
+// separate from the OM lifecycle status and the live movement:
+//   Green  = perfect (fully available)
+//   Orange = cosmetic / serviceable (still rentable — warn the customer at handover)
+//   Yellow = maintenance needed (blocked from renting, hidden from Available — route to garage)
+//   Red    = critical / grounded (blocked from renting, hidden from Available)
+export const CONDITION_GRADE = {
+  green:  { tone: 'green',  label: 'Perfect',             icon: '✅', dot: 'bg-emerald-500' },
+  orange: { tone: 'orange', label: 'Cosmetic issues',    icon: '⚠️', dot: 'bg-orange-500' },
+  yellow: { tone: 'yellow', label: 'Maintenance needed', icon: '🔧', dot: 'bg-yellow-500' },
+  red:    { tone: 'red',    label: 'Critical — grounded', icon: '⛔', dot: 'bg-red-500' },
+};
+
+// The condition badge. Perfect is hidden by default (no news is good news) unless
+// `showGreen` is set, so the list only calls out cars that need attention.
+export function ConditionBadge({ grade, showGreen = false }) {
+  const m = CONDITION_GRADE[grade];
+  if (!m || (grade === 'green' && !showGreen)) return null;
+  return <Badge tone={m.tone} className="font-semibold">{m.icon} {m.label}</Badge>;
+}
+
+// A tiny condition dot for dense grids (the dashboard Fleet Pulse). Hidden for Perfect.
+export function ConditionDot({ grade, className = '' }) {
+  const m = CONDITION_GRADE[grade];
+  if (!m || grade === 'green') return null;
+  return <span className={`inline-block h-2 w-2 rounded-full ${m.dot} ${className}`} title={m.label} />;
 }
 
 // A tiny "OM" toggle that reveals the stored OfficeManager lifecycle status on

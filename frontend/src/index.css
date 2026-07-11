@@ -2,6 +2,51 @@
 @tailwind components;
 @tailwind utilities;
 
+/* =======================================================================
+   FleetView design tokens — "Aurora" command-center system
+   Brand = navy-blue → cyan.  Two themes: light "Platinum" / dark "Cockpit".
+   Brand/accent ramps are theme-independent (so text-white on them stays
+   readable); only page surfaces/ink/lines flip between themes.
+   ======================================================================= */
+:root {
+  /* Brand (navy-blue) — drives indigo/brand/* utilities. R G B triplets. */
+  --brand-50: 239 246 255;  --brand-100: 219 234 254; --brand-200: 191 219 254;
+  --brand-300: 147 197 253; --brand-400: 96 165 250;  --brand-500: 59 130 246;
+  --brand-600: 37 99 235;   --brand-700: 29 78 216;   --brand-800: 30 64 175;
+  --brand-900: 30 58 138;   --brand-950: 17 27 56;
+  /* Secondary accent (cyan/sky) — drives violet/* utilities for gradient sheen. */
+  --accent-50: 236 254 255;  --accent-100: 207 250 254; --accent-200: 165 243 252;
+  --accent-300: 103 232 249; --accent-400: 34 211 238;  --accent-500: 6 182 212;
+  --accent-600: 8 145 178;   --accent-700: 14 116 144;  --accent-800: 21 94 117;
+  --accent-900: 22 78 99;
+
+  /* Semantic surface tokens (consumed by the new command-center components). */
+  --bg: 244 246 251;
+  --surface: 255 255 255;
+  --panel: 255 255 255;
+  --ink: 15 23 42;
+  --ink-2: 71 85 105;
+  --ink-3: 148 163 184;
+  --line: 226 232 240;
+  --glow: var(--brand-500);
+  /* Tell the browser to paint native controls (inputs, selects, date pickers,
+     option lists, scrollbars) in the light scheme. */
+  color-scheme: light;
+}
+
+[data-theme='dark'] {
+  --bg: 7 12 24;
+  --surface: 20 27 46;
+  --panel: 25 33 56;
+  --ink: 232 237 247;
+  --ink-2: 170 182 205;
+  --ink-3: 120 134 160;
+  --line: 40 51 78;
+  /* Flip native controls to the dark scheme so the UA-default white field
+     background becomes dark — otherwise our light ink renders invisibly on it. */
+  color-scheme: dark;
+}
+
 html,
 body,
 #root {
@@ -10,21 +55,34 @@ body,
 
 body {
   margin: 0;
-  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
-    Helvetica, Arial, sans-serif;
+  font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
-  /* Soft, premium app backdrop (a faint indigo wash on near-white). */
-  background-color: #f6f7fb;
+  color: rgb(var(--ink));
+  /* Soft, premium app backdrop (a faint navy wash on near-white). */
+  background-color: rgb(var(--bg));
   background-image:
-    radial-gradient(60rem 60rem at 110% -10%, rgb(99 102 241 / 0.07), transparent 60%),
-    radial-gradient(50rem 50rem at -10% 110%, rgb(139 92 246 / 0.06), transparent 55%);
+    radial-gradient(60rem 60rem at 110% -10%, rgb(var(--brand-500) / 0.07), transparent 60%),
+    radial-gradient(50rem 50rem at -10% 110%, rgb(var(--accent-500) / 0.06), transparent 55%);
   background-attachment: fixed;
+  transition: background-color 0.4s ease, color 0.3s ease;
+}
+
+/* Cockpit backdrop: deeper, cooler field. */
+[data-theme='dark'] body {
+  background-image:
+    radial-gradient(60rem 60rem at 110% -10%, rgb(var(--brand-500) / 0.16), transparent 60%),
+    radial-gradient(55rem 55rem at -10% 110%, rgb(var(--accent-500) / 0.12), transparent 55%);
+}
+
+/* Display type for headings — Sora gives the premium, technical identity. */
+h1, h2, h3, .font-display {
+  font-family: 'Sora', 'Inter', ui-sans-serif, system-ui, sans-serif;
 }
 
 /* Brand accent text selection. */
 ::selection {
-  background: rgb(99 102 241 / 0.22);
+  background: rgb(var(--brand-500) / 0.24);
 }
 
 /* Slim, modern scrollbars. */
@@ -32,10 +90,7 @@ body {
   scrollbar-width: thin;
   scrollbar-color: rgb(148 163 184 / 0.5) transparent;
 }
-*::-webkit-scrollbar {
-  width: 9px;
-  height: 9px;
-}
+*::-webkit-scrollbar { width: 9px; height: 9px; }
 *::-webkit-scrollbar-thumb {
   background: rgb(148 163 184 / 0.5);
   border-radius: 9999px;
@@ -46,53 +101,32 @@ body {
   background: rgb(100 116 139 / 0.7);
   background-clip: content-box;
 }
+[data-theme='dark'] * { scrollbar-color: rgb(120 134 160 / 0.4) transparent; }
+[data-theme='dark'] *::-webkit-scrollbar-thumb { background: rgb(120 134 160 / 0.35); background-clip: content-box; }
 
-/* Dark sidebar gets a subtle dark scrollbar. */
-.sidebar-scroll {
-  scrollbar-color: rgb(255 255 255 / 0.15) transparent;
-}
-.sidebar-scroll::-webkit-scrollbar-thumb {
-  background: rgb(255 255 255 / 0.14);
-  background-clip: content-box;
-}
+/* Dark sidebar gets a subtle light scrollbar. */
+.sidebar-scroll { scrollbar-color: rgb(255 255 255 / 0.15) transparent; }
+.sidebar-scroll::-webkit-scrollbar-thumb { background: rgb(255 255 255 / 0.14); background-clip: content-box; }
 
 /* Shimmer sweep for skeletons / loading accents. */
-.shimmer {
-  position: relative;
-  overflow: hidden;
-}
+.shimmer { position: relative; overflow: hidden; }
 .shimmer::after {
   content: '';
   position: absolute;
   inset: 0;
   transform: translateX(-100%);
-  background-image: linear-gradient(
-    90deg,
-    transparent,
-    rgb(255 255 255 / 0.55),
-    transparent
-  );
+  background-image: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.55), transparent);
   animation: shimmer 1.6s infinite;
 }
-@keyframes shimmer {
-  100% {
-    transform: translateX(100%);
-  }
-}
+[data-theme='dark'] .shimmer::after { background-image: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.08), transparent); }
+@keyframes shimmer { 100% { transform: translateX(100%); } }
 
 /* ---- Reusable motion layer (used across all pages) ---------------------- */
-
-/* Staggered table-row entrance: add `stagger-rows` to a <table>. */
 @keyframes rowIn {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: none; }
 }
-/* fill-mode `both`: shows the hidden `from` keyframe during the delay and holds the
-   visible `to` keyframe after — so a row is NEVER left stuck invisible if the browser
-   skips the entrance animation (e.g. long/off-screen lists). Resting state stays visible. */
-.stagger-rows tbody tr {
-  animation: rowIn 0.5s cubic-bezier(0.21, 1.02, 0.73, 1) both;
-}
+.stagger-rows tbody tr { animation: rowIn 0.5s cubic-bezier(0.21, 1.02, 0.73, 1) both; }
 .stagger-rows tbody tr:nth-child(1) { animation-delay: 0.03s; }
 .stagger-rows tbody tr:nth-child(2) { animation-delay: 0.06s; }
 .stagger-rows tbody tr:nth-child(3) { animation-delay: 0.09s; }
@@ -105,10 +139,7 @@ body {
 .stagger-rows tbody tr:nth-child(10) { animation-delay: 0.30s; }
 .stagger-rows tbody tr:nth-child(n + 11) { animation-delay: 0.33s; }
 
-/* Generic staggered children (e.g. card grids): add `stagger` to the container. */
-.stagger > * {
-  animation: rowIn 0.5s cubic-bezier(0.21, 1.02, 0.73, 1) both;
-}
+.stagger > * { animation: rowIn 0.5s cubic-bezier(0.21, 1.02, 0.73, 1) both; }
 .stagger > *:nth-child(1) { animation-delay: 0.04s; }
 .stagger > *:nth-child(2) { animation-delay: 0.09s; }
 .stagger > *:nth-child(3) { animation-delay: 0.14s; }
@@ -118,17 +149,13 @@ body {
 .stagger > *:nth-child(n + 7) { animation-delay: 0.34s; }
 
 /* Lift on hover — for clickable cards/tiles. */
-.hover-lift {
-  transition: transform 0.22s cubic-bezier(0.21, 1.02, 0.73, 1), box-shadow 0.22s ease;
-}
-.hover-lift:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 18px 40px -18px rgb(15 23 42 / 0.28);
-}
+.hover-lift { transition: transform 0.22s cubic-bezier(0.21, 1.02, 0.73, 1), box-shadow 0.22s ease; }
+.hover-lift:hover { transform: translateY(-3px); box-shadow: 0 18px 40px -18px rgb(15 23 42 / 0.28); }
+[data-theme='dark'] .hover-lift:hover { box-shadow: 0 0 0 1px rgb(var(--brand-500) / 0.35), 0 22px 48px -16px rgb(0 0 0 / 0.65); }
 
 /* Brand gradient text — for hero headings. */
 .text-gradient {
-  background-image: linear-gradient(92deg, #6366f1, #8b5cf6 55%, #d946ef);
+  background-image: linear-gradient(92deg, rgb(var(--brand-500)), rgb(var(--accent-500)) 55%, rgb(var(--accent-400)));
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -136,67 +163,34 @@ body {
 
 /* Thin animated scroll-progress bar (top of the viewport). */
 .scroll-progress {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: 50;
-  height: 3px;
-  background-image: linear-gradient(90deg, #6366f1, #8b5cf6, #d946ef);
-  box-shadow: 0 0 10px rgb(139 92 246 / 0.6);
+  position: fixed; top: 0; left: 0; z-index: 50; height: 3px;
+  background-image: linear-gradient(90deg, rgb(var(--brand-500)), rgb(var(--accent-500)), rgb(var(--accent-400)));
+  box-shadow: 0 0 10px rgb(var(--accent-500) / 0.6);
   transition: width 0.1s linear;
 }
 
 /* ---- Aurora backdrop: slow drifting color field behind the whole app ---- */
-.aurora {
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  overflow: hidden;
-  pointer-events: none;
-}
-.aurora__blob {
-  position: absolute;
-  border-radius: 9999px;
-  filter: blur(70px);
-  opacity: 0.5;
-  will-change: transform;
-}
+.aurora { position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; }
+.aurora__blob { position: absolute; border-radius: 9999px; filter: blur(70px); opacity: 0.5; will-change: transform; }
 .aurora__blob--1 {
-  top: -12%;
-  right: -6%;
-  width: 42rem;
-  height: 42rem;
-  background: radial-gradient(circle at 30% 30%, rgb(99 102 241 / 0.5), transparent 62%);
+  top: -12%; right: -6%; width: 42rem; height: 42rem;
+  background: radial-gradient(circle at 30% 30%, rgb(var(--brand-500) / 0.5), transparent 62%);
   animation: drift1 26s ease-in-out infinite;
 }
 .aurora__blob--2 {
-  bottom: -18%;
-  left: -8%;
-  width: 38rem;
-  height: 38rem;
-  background: radial-gradient(circle at 60% 40%, rgb(139 92 246 / 0.45), transparent 62%);
+  bottom: -18%; left: -8%; width: 38rem; height: 38rem;
+  background: radial-gradient(circle at 60% 40%, rgb(var(--accent-500) / 0.45), transparent 62%);
   animation: drift2 32s ease-in-out infinite;
 }
 .aurora__blob--3 {
-  top: 35%;
-  left: 45%;
-  width: 30rem;
-  height: 30rem;
-  background: radial-gradient(circle at 50% 50%, rgb(217 70 239 / 0.28), transparent 62%);
+  top: 35%; left: 45%; width: 30rem; height: 30rem;
+  background: radial-gradient(circle at 50% 50%, rgb(var(--brand-400) / 0.28), transparent 62%);
   animation: drift3 38s ease-in-out infinite;
 }
-@keyframes drift1 {
-  0%, 100% { transform: translate(0, 0) scale(1); }
-  50% { transform: translate(-5rem, 4rem) scale(1.12); }
-}
-@keyframes drift2 {
-  0%, 100% { transform: translate(0, 0) scale(1); }
-  50% { transform: translate(6rem, -3rem) scale(1.08); }
-}
-@keyframes drift3 {
-  0%, 100% { transform: translate(-50%, 0) scale(1); }
-  50% { transform: translate(-40%, -4rem) scale(1.15); }
-}
+[data-theme='dark'] .aurora__blob { opacity: 0.6; }
+@keyframes drift1 { 0%, 100% { transform: translate(0, 0) scale(1); } 50% { transform: translate(-5rem, 4rem) scale(1.12); } }
+@keyframes drift2 { 0%, 100% { transform: translate(0, 0) scale(1); } 50% { transform: translate(6rem, -3rem) scale(1.08); } }
+@keyframes drift3 { 0%, 100% { transform: translate(-50%, 0) scale(1); } 50% { transform: translate(-40%, -4rem) scale(1.15); } }
 
 /* Frosted-glass surface (used by the header & floating panels). */
 .glass {
@@ -204,36 +198,182 @@ body {
   backdrop-filter: saturate(180%) blur(14px);
   -webkit-backdrop-filter: saturate(180%) blur(14px);
 }
+[data-theme='dark'] .glass { background-color: rgb(11 17 32 / 0.72); }
 
 /* Tooltip bubble for the collapsed icon-rail sidebar. */
 .rail-tip {
-  position: absolute;
-  left: calc(100% + 0.65rem);
-  top: 50%;
-  transform: translateY(-50%) scale(0.9);
-  white-space: nowrap;
-  border-radius: 0.55rem;
-  background: #0f172a;
-  color: #fff;
-  padding: 0.3rem 0.6rem;
-  font-size: 0.72rem;
-  font-weight: 600;
-  box-shadow: 0 8px 24px -8px rgb(15 23 42 / 0.5);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.16s ease, transform 0.16s ease;
-  z-index: 50;
+  position: absolute; left: calc(100% + 0.65rem); top: 50%;
+  transform: translateY(-50%) scale(0.9); white-space: nowrap;
+  border-radius: 0.55rem; background: #0a1020; color: #fff; padding: 0.3rem 0.6rem;
+  font-size: 0.72rem; font-weight: 600; box-shadow: 0 8px 24px -8px rgb(0 0 0 / 0.5);
+  opacity: 0; pointer-events: none; transition: opacity 0.16s ease, transform 0.16s ease; z-index: 50;
 }
-.group:hover > .rail-tip {
-  opacity: 1;
-  transform: translateY(-50%) scale(1);
+.group:hover > .rail-tip { opacity: 1; transform: translateY(-50%) scale(1); }
+
+/* =======================================================================
+   DARK MODE OVERRIDE LAYER
+   Flips page CONTENT neutrals only. Intentionally-dark chrome (bg-slate-900
+   tooltips/modals/sidebar) is left untouched so it stays dark in both themes.
+   Higher specificity ([data-theme] .class) wins over Tailwind's base class.
+   ======================================================================= */
+
+/* --- Surfaces (cards / panels / glassy tiles) --- */
+[data-theme='dark'] .bg-white { background-color: rgb(var(--surface)); }
+[data-theme='dark'] .bg-white\/95 { background-color: rgb(var(--surface) / 0.95); }
+[data-theme='dark'] .bg-white\/90 { background-color: rgb(var(--surface) / 0.9); }
+[data-theme='dark'] .bg-white\/80 { background-color: rgb(var(--surface) / 0.8); }
+[data-theme='dark'] .bg-white\/72 { background-color: rgb(var(--surface) / 0.72); }
+[data-theme='dark'] .bg-white\/70 { background-color: rgb(var(--surface) / 0.7); }
+[data-theme='dark'] .bg-white\/60 { background-color: rgb(var(--surface) / 0.6); }
+[data-theme='dark'] .hover\:bg-white:hover { background-color: rgb(var(--panel)); }
+
+[data-theme='dark'] .bg-slate-50 { background-color: rgb(15 22 38); }
+[data-theme='dark'] .bg-slate-50\/90 { background-color: rgb(15 22 38 / 0.9); }
+[data-theme='dark'] .bg-slate-50\/70 { background-color: rgb(15 22 38 / 0.7); }
+[data-theme='dark'] .bg-slate-50\/60 { background-color: rgb(15 22 38 / 0.6); }
+[data-theme='dark'] .bg-slate-50\/50 { background-color: rgb(15 22 38 / 0.5); }
+[data-theme='dark'] .bg-slate-50\/40 { background-color: rgb(15 22 38 / 0.4); }
+/* DataTable zebra striping — even rows use the `even:` variant, which the plain
+   `.bg-slate-50/NN` rules don't match, so without this every other row keeps a
+   pale LIGHT-gray wash over the dark surface. */
+[data-theme='dark'] .even\:bg-slate-50\/40:nth-child(even) { background-color: rgb(15 22 38 / 0.4); }
+[data-theme='dark'] .bg-slate-100 { background-color: rgb(26 34 54); }
+[data-theme='dark'] .bg-slate-200 { background-color: rgb(40 51 78); }
+[data-theme='dark'] .hover\:bg-slate-50:hover { background-color: rgb(22 29 48); }
+[data-theme='dark'] .hover\:bg-slate-100:hover { background-color: rgb(28 37 64); }
+/* Destructive-action hover (Delete buttons) — the plain `.bg-red-50` rule above
+   doesn't catch the `hover:` variant, so without this the hovered button keeps a
+   pale-pink LIGHT background under light-red ink and the label goes unreadable. */
+[data-theme='dark'] .hover\:bg-red-50:hover { background-color: rgb(239 68 68 / 0.14); }
+
+/* --- Ink (text) --- */
+[data-theme='dark'] .text-slate-900 { color: rgb(232 237 247); }
+[data-theme='dark'] .text-slate-800 { color: rgb(221 228 240); }
+[data-theme='dark'] .text-slate-700 { color: rgb(200 210 226); }
+[data-theme='dark'] .text-slate-600 { color: rgb(175 186 207); }
+[data-theme='dark'] .text-slate-500 { color: rgb(147 160 184); }
+[data-theme='dark'] .text-slate-400 { color: rgb(118 132 158); }
+[data-theme='dark'] .text-slate-300 { color: rgb(107 120 148); }
+
+/* --- Gray mirrors slate (Badge/Gauge and a few pages use the gray ramp) --- */
+[data-theme='dark'] .bg-gray-50 { background-color: rgb(15 22 38); }
+[data-theme='dark'] .bg-gray-100 { background-color: rgb(26 34 54); }
+[data-theme='dark'] .text-gray-900 { color: rgb(232 237 247); }
+[data-theme='dark'] .text-gray-800 { color: rgb(221 228 240); }
+[data-theme='dark'] .text-gray-700 { color: rgb(200 210 226); }
+[data-theme='dark'] .text-gray-600 { color: rgb(175 186 207); }
+[data-theme='dark'] .text-gray-500 { color: rgb(147 160 184); }
+[data-theme='dark'] .text-gray-400 { color: rgb(118 132 158); }
+[data-theme='dark'] .border-gray-200 { border-color: rgb(255 255 255 / 0.09); }
+[data-theme='dark'] .border-gray-100 { border-color: rgb(255 255 255 / 0.06); }
+[data-theme='dark'] .ring-gray-200 { --tw-ring-color: rgb(255 255 255 / 0.09); }
+
+/* --- Borders / rings / dividers --- */
+[data-theme='dark'] .border-slate-200 { border-color: rgb(255 255 255 / 0.09); }
+[data-theme='dark'] .border-slate-200\/60 { border-color: rgb(255 255 255 / 0.08); }
+[data-theme='dark'] .border-slate-200\/70 { border-color: rgb(255 255 255 / 0.09); }
+[data-theme='dark'] .border-slate-100 { border-color: rgb(255 255 255 / 0.06); }
+[data-theme='dark'] .border-slate-300 { border-color: rgb(255 255 255 / 0.12); }
+[data-theme='dark'] .ring-slate-200 { --tw-ring-color: rgb(255 255 255 / 0.09); }
+[data-theme='dark'] .divide-slate-100 > :not([hidden]) ~ :not([hidden]) { border-color: rgb(255 255 255 / 0.06); }
+[data-theme='dark'] .divide-slate-200 > :not([hidden]) ~ :not([hidden]) { border-color: rgb(255 255 255 / 0.08); }
+
+/* --- Form controls: text inputs / textareas / selects keep the browser's
+   white UA-default background unless we flip it, which strands our light ink
+   invisibly on white. Give every field the cockpit surface + readable ink,
+   line border, and a legible placeholder. Checkbox/radio/range/color keep
+   their native (now dark-scheme) rendering. --- */
+[data-theme='dark'] input:not([type='checkbox'], [type='radio'], [type='range'], [type='color']),
+[data-theme='dark'] textarea,
+[data-theme='dark'] select {
+  background-color: rgb(var(--panel));
+  color: rgb(var(--ink));
+  border-color: rgb(255 255 255 / 0.12);
 }
+[data-theme='dark'] input::placeholder,
+[data-theme='dark'] textarea::placeholder { color: rgb(var(--ink-3)); }
+[data-theme='dark'] input:disabled,
+[data-theme='dark'] textarea:disabled,
+[data-theme='dark'] select:disabled { background-color: rgb(15 22 38); color: rgb(var(--ink-3)); }
+
+/* --- Soft accent tints used as panels/badges → dark tints --- */
+[data-theme='dark'] .bg-indigo-50 { background-color: rgb(var(--brand-500) / 0.14); }
+[data-theme='dark'] .bg-indigo-100 { background-color: rgb(var(--brand-500) / 0.18); }
+[data-theme='dark'] .bg-blue-50 { background-color: rgb(59 130 246 / 0.14); }
+[data-theme='dark'] .bg-blue-100 { background-color: rgb(59 130 246 / 0.18); }
+[data-theme='dark'] .bg-emerald-50 { background-color: rgb(16 185 129 / 0.13); }
+[data-theme='dark'] .bg-emerald-100 { background-color: rgb(16 185 129 / 0.17); }
+[data-theme='dark'] .bg-green-50 { background-color: rgb(16 185 129 / 0.13); }
+[data-theme='dark'] .bg-green-100 { background-color: rgb(16 185 129 / 0.17); }
+[data-theme='dark'] .bg-amber-50 { background-color: rgb(245 158 11 / 0.14); }
+[data-theme='dark'] .bg-amber-100 { background-color: rgb(245 158 11 / 0.18); }
+[data-theme='dark'] .bg-orange-50 { background-color: rgb(249 115 22 / 0.14); }
+[data-theme='dark'] .bg-orange-100 { background-color: rgb(249 115 22 / 0.18); }
+[data-theme='dark'] .bg-red-50 { background-color: rgb(239 68 68 / 0.14); }
+[data-theme='dark'] .bg-red-100 { background-color: rgb(239 68 68 / 0.18); }
+[data-theme='dark'] .bg-rose-50 { background-color: rgb(244 63 94 / 0.14); }
+[data-theme='dark'] .bg-rose-100 { background-color: rgb(244 63 94 / 0.18); }
+[data-theme='dark'] .bg-violet-50 { background-color: rgb(var(--accent-500) / 0.14); }
+[data-theme='dark'] .bg-violet-100 { background-color: rgb(var(--accent-500) / 0.18); }
+[data-theme='dark'] .bg-cyan-50 { background-color: rgb(6 182 212 / 0.14); }
+[data-theme='dark'] .bg-cyan-100 { background-color: rgb(6 182 212 / 0.18); }
+[data-theme='dark'] .bg-yellow-50 { background-color: rgb(234 179 8 / 0.14); }
+[data-theme='dark'] .bg-yellow-100 { background-color: rgb(234 179 8 / 0.18); }
+
+/* Opacity-suffixed tint backgrounds (e.g. bg-amber-50/70 on the workflow
+   banners) — the plain-class rules above don't catch the /NN variants, which
+   otherwise keep their pale light background while the ink flips to light,
+   turning the text invisible. Match every /NN variant by substring and give it
+   the same dark tint as the plain class. (bg-{color}-500/ is not matched — the
+   pattern requires the "50/" then a slash, which "500/" doesn't contain.) */
+[data-theme='dark'] [class*="bg-indigo-50/"]:not([class*="hover:"])  { background-color: rgb(var(--brand-500) / 0.14); }
+[data-theme='dark'] [class*="bg-blue-50/"]    { background-color: rgb(59 130 246 / 0.14); }
+[data-theme='dark'] [class*="bg-emerald-50/"] { background-color: rgb(16 185 129 / 0.13); }
+[data-theme='dark'] [class*="bg-green-50/"]   { background-color: rgb(16 185 129 / 0.13); }
+[data-theme='dark'] [class*="bg-amber-50/"]   { background-color: rgb(245 158 11 / 0.14); }
+[data-theme='dark'] [class*="bg-orange-50/"]  { background-color: rgb(249 115 22 / 0.14); }
+[data-theme='dark'] [class*="bg-red-50/"]     { background-color: rgb(239 68 68 / 0.14); }
+[data-theme='dark'] [class*="bg-rose-50/"]    { background-color: rgb(244 63 94 / 0.14); }
+[data-theme='dark'] [class*="bg-violet-50/"]  { background-color: rgb(var(--accent-500) / 0.14); }
+[data-theme='dark'] [class*="bg-cyan-50/"]    { background-color: rgb(6 182 212 / 0.14); }
+[data-theme='dark'] [class*="bg-yellow-50/"]  { background-color: rgb(234 179 8 / 0.14); }
+
+/* Gray ramp WITH an opacity suffix (e.g. `bg-gray-50/60` table heads, `hover:bg-gray-50/60`
+   rows used by the DataTable pages). The plain `.bg-gray-50` rule above doesn't catch the /NN
+   variants, so without this a hovered row keeps its pale LIGHT background while the ink flips to
+   light — the text goes invisible on hover. Mirror the slate ramp. The `:not([class*="hover:"])`
+   guard keeps rows transparent at rest; the explicit `:hover` rule tints them only on hover so the
+   row-hover affordance still reads. */
+[data-theme='dark'] [class*="bg-gray-50/"]:not([class*="hover:"])  { background-color: rgb(15 22 38); }
+[data-theme='dark'] [class*="bg-gray-100/"]:not([class*="hover:"]) { background-color: rgb(26 34 54); }
+[data-theme='dark'] .hover\:bg-gray-50\/60:hover  { background-color: rgb(22 29 48); }
+[data-theme='dark'] .hover\:bg-gray-50\/70:hover  { background-color: rgb(22 29 48); }
+
+/* DataTable row-hover — the substring `[class*="bg-indigo-50/"]` rule above is now
+   guarded against `hover:` classes, so give the hovered row its brand tint here.
+   Without an explicit :hover rule the row would show no hover feedback on dark. */
+[data-theme='dark'] .hover\:bg-indigo-50\/40:hover { background-color: rgb(var(--brand-500) / 0.18); }
+
+/* --- Accent text lightened so values/badges read on dark --- */
+[data-theme='dark'] .text-emerald-700, [data-theme='dark'] .text-emerald-600 { color: rgb(52 211 153); }
+[data-theme='dark'] .text-green-700, [data-theme='dark'] .text-green-600 { color: rgb(52 211 153); }
+[data-theme='dark'] .text-amber-700, [data-theme='dark'] .text-amber-600 { color: rgb(251 191 36); }
+[data-theme='dark'] .text-orange-700, [data-theme='dark'] .text-orange-600 { color: rgb(251 146 60); }
+[data-theme='dark'] .text-red-700, [data-theme='dark'] .text-red-600 { color: rgb(248 113 113); }
+[data-theme='dark'] .text-rose-700, [data-theme='dark'] .text-rose-600 { color: rgb(251 113 133); }
+[data-theme='dark'] .text-blue-700, [data-theme='dark'] .text-blue-600 { color: rgb(96 165 250); }
+[data-theme='dark'] .text-indigo-700, [data-theme='dark'] .text-indigo-600 { color: rgb(125 162 251); }
+[data-theme='dark'] .text-violet-700, [data-theme='dark'] .text-violet-600 { color: rgb(56 189 248); }
+[data-theme='dark'] .text-cyan-700, [data-theme='dark'] .text-cyan-600 { color: rgb(34 211 238); }
+[data-theme='dark'] .text-yellow-800, [data-theme='dark'] .text-yellow-700, [data-theme='dark'] .text-yellow-600 { color: rgb(250 204 21); }
+
+/* --- Shadows get real depth on dark --- */
+[data-theme='dark'] .shadow-soft { box-shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 10px 26px -10px rgb(0 0 0 / 0.55); }
+[data-theme='dark'] .shadow-card { box-shadow: 0 1px 3px rgb(0 0 0 / 0.5), 0 18px 44px -16px rgb(0 0 0 / 0.6); }
 
 /* Respect reduced-motion preferences. */
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
+  *, *::before, *::after {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;

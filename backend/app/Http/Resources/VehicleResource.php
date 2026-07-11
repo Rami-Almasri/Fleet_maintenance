@@ -31,18 +31,42 @@ class VehicleResource extends JsonResource
             "for_sale" => (bool) $this->for_sale,
             "operational_status" => $this->operational_status,
             "operational_status_label" => \App\Models\Vehicle::OPERATIONAL_LABELS[$this->operational_status] ?? $this->operational_status,
+            // While in_transit, where the car is being driven (set by a Logistics Dispatch).
+            "transit_destination" => $this->transit_destination,
+            // Visual Condition Grade (Abu Marouf): green Perfect · orange Cosmetic (rentable,
+            // warn the customer) · yellow Maintenance-needed (NOT rentable, route to garage)
+            // · red Critical/grounded (blocked from renting). Yellow & red are both hidden
+            // from Available; only green & orange stay rentable.
+            "condition_grade" => $this->condition_grade ?: 'green',
+            "condition_grade_label" => \App\Models\Vehicle::CONDITION_LABELS[$this->condition_grade] ?? 'Perfect',
+            "condition_note" => $this->condition_note,
+            "condition_graded_at" => $this->condition_graded_at,
+            "condition_graded_by" => $this->condition_graded_by,
+            // Deferred Maintenance: the car was pulled out of the workshop early for a customer and
+            // still owes the garage a visit. A standing 🛠️↩️ flag until it's checked back in / dismissed.
+            "is_deferred_maintenance" => (bool) $this->is_deferred_maintenance,
+            "deferred_maintenance_reason" => $this->deferred_maintenance_reason,
+            "deferred_maintenance_flagged_at" => $this->deferred_maintenance_flagged_at,
+            "deferred_maintenance_flagged_by" => $this->deferred_maintenance_flagged_by,
             // true when the car has a currently-open maintenance contract (in the garage now)
             "under_maintenance" => (bool) ($this->open_maintenance_count ?? 0),
+            // Repair Location (On-Site): the car has an OPEN on-site (mobile) ticket — a minor job to be
+            // done where it's parked. It STAYS available/rentable and merely carries a "Pending
+            // Maintenance" tag until it's marked serviced. List-only (present when the count was loaded).
+            "pending_on_site_maintenance" => (bool) ($this->open_on_site_count ?? 0),
             // true when the car has a currently-open rental contract (out on rent now)
             "rented" => (bool) ($this->open_rental_count ?? 0),
             // true when the car has a currently-open booking/reservation (type R)
             "reserved" => (bool) ($this->open_booking_count ?? 0),
             // available = an in-service ("active") car with NO open movement AND no
             // active/upcoming reservation (truly free to rent out or send for maintenance).
-            // A sold / for-sale / reserved car is never "available". List-only.
+            // A sold / for-sale / reserved car is never "available". A Red (critical /
+            // grounded) or Yellow (maintenance needed) condition grade also drops it from the
+            // pool; only Green & Orange stay rentable. List-only.
             "available" => $this->when(
                 $this->open_contract_count !== null,
                 fn () => $this->status === 'ready'
+                    && ! in_array($this->condition_grade, ['red', 'yellow'], true)
                     && ! (bool) $this->open_contract_count
                     && ! (bool) ($this->open_booking_count ?? 0)
             ),

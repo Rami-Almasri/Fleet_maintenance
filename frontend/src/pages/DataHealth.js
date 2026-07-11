@@ -1,11 +1,12 @@
 import { useCallback } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 import useFetch from '../hooks/useFetch';
 import Badge from '../components/ui/Badge';
 import { Card, PageHeader, Spinner, EmptyState } from '../components/ui/Misc';
 import { usePageStat } from '../components/PageStat';
 import { num } from '../lib/format';
+import StatusMismatch from './StatusMismatch';
 
 const SEV = {
   critical: { tone: 'red', dot: 'bg-red-500', label: 'Must fix', ring: 'ring-red-200', head: 'bg-red-50/60 border-red-100 text-red-700' },
@@ -13,8 +14,9 @@ const SEV = {
   info: { tone: 'blue', dot: 'bg-blue-500', label: 'Nice to fill', ring: 'ring-blue-200', head: 'bg-blue-50/60 border-blue-100 text-blue-700' },
 };
 
-// The single best "open" link for a row: contract → car → customer.
+// The single best "open" link for a row: ticket → contract → car → customer.
 function RowLink({ it }) {
+  if (it.ticket_id) return <Link to={`/maintenance-workflow/${it.ticket_id}`} className="text-xs font-medium text-indigo-600 hover:text-indigo-700">Ticket →</Link>;
   if (it.contract_id) return <Link to={`/contracts/${it.contract_id}`} className="text-xs font-medium text-indigo-600 hover:text-indigo-700">Contract →</Link>;
   if (it.vehicle_id) return <Link to={`/vehicles/${it.vehicle_id}`} className="text-xs font-medium text-indigo-600 hover:text-indigo-700">Car →</Link>;
   if (it.customer_id) return <Link to={`/customers/${it.customer_id}`} className="text-xs font-medium text-indigo-600 hover:text-indigo-700">Customer →</Link>;
@@ -29,7 +31,7 @@ function Record({ it }) {
         {it.vehicle_id
           ? <Link to={`/vehicles/${it.vehicle_id}`} className="font-medium text-indigo-600 hover:text-indigo-700">{it.plate || `#${it.vehicle_id}`}</Link>
           : <span className="font-medium text-gray-700">{it.plate || '—'}</span>}
-        <div className="text-xs text-gray-400">{it.car || '—'}{it.contract_no ? ` · contract ${it.contract_no}` : ''}</div>
+        <div className="text-xs text-gray-400">{it.car || '—'}{it.contract_no ? ` · contract ${it.contract_no}` : ''}{it.ticket_id ? ` · ticket #${it.ticket_id}` : ''}</div>
       </div>
     );
   }
@@ -95,13 +97,36 @@ function Stat({ label, value, tone = 'text-gray-900' }) {
   );
 }
 
-export default function DataHealth() {
-  const fetcher = useCallback(async () => {
-    const { data } = await api.get('/DataHealth');
-    return data.data;
-  }, []);
-  const { data, loading, error } = useFetch(fetcher);
+// Group keys promoted to their own top-level tabs (2026-07-11). They're pulled out of the
+// "Data Quality" tab so each has a dedicated view — see PROMOTED_TABS.
+const PROMOTED_TABS = [
+  {
+    key: 'cars_no_vin',
+    label: 'Cars without a VIN',
+    subtitle: 'Active cars with no chassis number (VIN) on file — VIN is how the sheet and the API match a car, so a missing VIN means it can never be enriched or linked automatically.',
+  },
+  {
+    key: 'cars_no_mileage',
+    label: 'Cars without mileage',
+    subtitle: 'Active cars whose odometer is empty, 0 or 1 (a placeholder). Mileage drives service-due and replacement planning, so these need a real reading.',
+  },
+  {
+    key: 'contracts_no_car',
+    label: 'Contracts without a car',
+    subtitle: 'Contracts whose car could not be matched to a vehicle in the fleet — usually the car has not been imported yet. Import the car (Cars from API) and re-run contracts to link them.',
+  },
+  {
+    key: 'customers_no_name',
+    label: 'Customers without a name',
+    subtitle: 'Customers still nameless after the bulk name fill — either masked at the source ("***") or not present in the OfficeManager customer list.',
+  },
+];
+const PROMOTED_KEYS = PROMOTED_TABS.map((t) => t.key);
 
+// The Data Health content. `data`/`loading`/`error` are lifted to the container (so the tab strip
+// can show per-group counts). `only` restricts the panel to a single group key (a promoted tab);
+// otherwise it shows every group except the promoted ones + the fleet-wide summary strip.
+function DataHealthPanel({ data, loading, error, only = null }) {
   // Floating page gauge: of all data issues, the share that are must-fix.
   const totalIssues = data?.total_issues || 0;
   const mustFix = data?.critical || 0;
@@ -114,27 +139,91 @@ export default function DataHealth() {
 
   if (loading) return <div className="flex justify-center py-24"><Spinner className="h-8 w-8" /></div>;
 
-  const groups = (data?.groups || []).filter((g) => g.count > 0);
+  const allGroups = (data?.groups || []).filter((g) => g.count > 0);
+  const groups = only
+    ? allGroups.filter((g) => g.key === only)
+    : allGroups.filter((g) => !PROMOTED_KEYS.includes(g.key));
 
   return (
-    <div className="py-8">
-      <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
-        <PageHeader title="Data Health" subtitle="Incomplete or broken records to clean up — missing VINs, mileage, unlinked contracts and more. Fix these to keep the fleet data reliable." />
+    <>
+      {error && (
+        <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error}</div>
+      )}
 
-        {error && (
-          <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error}</div>
-        )}
-
+      {/* Fleet-wide summary strip only on the overview tab (the single-group tabs speak for themselves). */}
+      {!only && (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           <Stat label="Total issues" value={num(data?.total_issues)} />
           <Stat label="🔴 Must fix" value={num(data?.critical)} tone="text-red-600" />
           <Stat label="🟡 Incomplete" value={num(data?.warning)} tone="text-amber-600" />
           <Stat label="🔵 Nice to fill" value={num(data?.info)} tone="text-blue-600" />
         </div>
+      )}
 
-        {groups.length === 0
-          ? <Card><EmptyState title="All clean 🎉" message="Every car, contract and customer has its key fields filled in." /></Card>
-          : groups.map((g) => <Group key={g.key} g={g} />)}
+      {groups.length === 0
+        ? <Card><EmptyState title="All clean 🎉" message={only ? 'No cars in this category.' : 'Every car, contract and customer has its key fields filled in.'} /></Card>
+        : groups.map((g) => <Group key={g.key} g={g} />)}
+    </>
+  );
+}
+
+// Status Mismatch was folded in here as a tab (2026-07-11); VIN / mileage promoted to tabs the same day.
+const TABS = [
+  { key: 'health', label: 'Data Quality', subtitle: 'Incomplete or broken records to clean up — unlinked contracts, duplicate VINs, nameless customers and more. Fix these to keep the fleet data reliable.' },
+  ...PROMOTED_TABS,
+  { key: 'status', label: 'Status Mismatches', subtitle: "Cars whose status doesn't match their contracts — out on a contract but not flagged busy, or flagged busy with no open contract." },
+];
+
+export default function DataHealth() {
+  const [params, setParams] = useSearchParams();
+  const requested = params.get('tab');
+  const active = TABS.find((t) => t.key === requested) || TABS[0];
+  const setTab = (key) => setParams(key === 'health' ? {} : { tab: key }, { replace: true });
+
+  // Fetch once here so both the tab counts and the active panel share the same data.
+  const fetcher = useCallback(async () => {
+    const { data } = await api.get('/DataHealth');
+    return data.data;
+  }, []);
+  const { data, loading, error } = useFetch(fetcher);
+  const groupCount = (key) => (data?.groups || []).find((g) => g.key === key)?.count;
+
+  return (
+    <div className="py-8">
+      <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
+        <PageHeader title="Data Health" subtitle={active.subtitle} />
+
+        {/* Tab strip */}
+        <div className="flex flex-wrap gap-1 border-b border-slate-200">
+          {TABS.map((t) => {
+            const count = PROMOTED_KEYS.includes(t.key) ? groupCount(t.key) : undefined;
+            return (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => setTab(t.key)}
+                className={`-mb-px inline-flex items-center gap-1.5 rounded-t-lg border-b-2 px-4 py-2 text-sm font-medium transition ${
+                  active.key === t.key
+                    ? 'border-indigo-600 text-indigo-600'
+                    : 'border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700'
+                }`}
+              >
+                {t.label}
+                {count != null && (
+                  <span className={`rounded-full px-1.5 py-0.5 text-[11px] font-semibold tabular-nums ${
+                    active.key === t.key ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-500'
+                  }`}>
+                    {num(count)}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        {active.key === 'status'
+          ? <StatusMismatch embedded />
+          : <DataHealthPanel data={data} loading={loading} error={error} only={PROMOTED_KEYS.includes(active.key) ? active.key : null} />}
       </div>
     </div>
   );

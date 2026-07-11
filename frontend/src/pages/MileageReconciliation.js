@@ -111,7 +111,7 @@ function ReconCard({ row, applied, busy, canApply, onApply }) {
   );
 }
 
-export default function MileageReconciliation() {
+export default function MileageReconciliation({ embedded = false }) {
   const { can } = usePermissions();
   const canApply = can('vehicles.manage');
   const toast = useToast();
@@ -175,24 +175,30 @@ export default function MileageReconciliation() {
     hint: `${s.needs_review} of ${active} cars need an odometer review`,
   });
 
-  return (
-    <div className="py-8">
-      <div className="mx-auto max-w-5xl space-y-6 px-4 sm:px-6 lg:px-8">
-        <PageHeader
-          title="Mileage Reconciliation"
-          subtitle="Where the stored odometer disagrees with the mileage the scanner rebuilt from contract history. Review each gap and adopt the trusted value with one click."
-        >
-          <button
-            onClick={reload}
-            className="inline-flex items-center gap-1.5 text-sm font-medium text-gray-500 transition hover:text-gray-700"
+  const refreshBtn = (
+    <button
+      onClick={reload}
+      className="inline-flex items-center gap-1.5 text-sm font-medium text-gray-500 transition hover:text-gray-700"
+    >
+      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v6h6M20 20v-6h-6M20 9A8 8 0 0 0 6.3 5.3L4 8m16 8-2.3 2.7A8 8 0 0 1 4 15" />
+      </svg>
+      Refresh
+    </button>
+  );
+
+  const inner = (
+    <div className="mx-auto max-w-5xl space-y-6 px-4 sm:px-6 lg:px-8">
+        {embedded ? (
+          <div className="flex justify-end">{refreshBtn}</div>
+        ) : (
+          <PageHeader
+            title="Mileage Reconciliation"
+            subtitle="Where the stored odometer disagrees with the mileage the scanner rebuilt from contract history. Review each gap and adopt the trusted value with one click."
           >
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v6h6M20 20v-6h-6M20 9A8 8 0 0 0 6.3 5.3L4 8m16 8-2.3 2.7A8 8 0 0 1 4 15" />
-            </svg>
-            Refresh
-          </button>
-          <Link to="/anomalies" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">Mileage anomalies →</Link>
-        </PageHeader>
+            {refreshBtn}
+          </PageHeader>
+        )}
 
         {error && (
           <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error}</div>
@@ -349,7 +355,9 @@ export default function MileageReconciliation() {
             </p>
           </>
         )}
-      </div>
     </div>
   );
+
+  if (embedded) return inner;
+  return <div className="py-8">{inner}</div>;
 }

@@ -20,7 +20,7 @@ class DashboardController extends Controller
 
             return ResponseHelper::SuccessResponse($result, "Dashboard summary retrieved successfully", 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -37,7 +37,7 @@ class DashboardController extends Controller
                 200
             );
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -53,7 +53,65 @@ class DashboardController extends Controller
                 200
             );
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
+     * Month-by-month maintenance trends powering the dashboard charts: workshop cost
+     * per month (bar) and average days-in-shop per visit (trend line). `months` query
+     * param controls the window (default 12, clamped server-side).
+     */
+    public function trends(Request $request, DashboardService $dashboard)
+    {
+        try {
+            $months = (int) $request->query('months', 12);
+
+            return ResponseHelper::SuccessResponse(
+                $dashboard->maintenanceTrends($months),
+                "Dashboard trends retrieved successfully",
+                200
+            );
+        } catch (\Exception $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
+     * "Proactive Flags" — three forward-looking conditions for the homepage: rentals expiring
+     * within ?days=N (default 7), concluded rentals with an unpaid balance, and inspections
+     * due/overdue. Reads the same source lists the NotificationScanner raises its
+     * rental_expiring / invoice_overdue / inspection_due alerts from; every item deep-linkable.
+     */
+    public function proactiveFlags(Request $request, DashboardService $dashboard)
+    {
+        try {
+            $days = max(1, (int) $request->query('days', DashboardService::EXPIRY_WINDOW_DAYS));
+
+            return ResponseHelper::SuccessResponse(
+                $dashboard->proactiveFlags($days),
+                "Proactive flags retrieved successfully",
+                200
+            );
+        } catch (\Exception $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
+     * The "Fleet Pulse" grid: every active car with a colour-coded live state and a
+     * maintenance-completion percentage for the ones in the shop.
+     */
+    public function fleetPulse(DashboardService $dashboard)
+    {
+        try {
+            return ResponseHelper::SuccessResponse(
+                $dashboard->fleetPulse(),
+                "Fleet pulse retrieved successfully",
+                200
+            );
+        } catch (\Exception $e) {
+            return ResponseHelper::fromException($e);
         }
     }
 }

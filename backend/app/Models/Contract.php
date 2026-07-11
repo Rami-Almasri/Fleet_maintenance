@@ -124,6 +124,12 @@ class Contract extends Model
         'external_id',
         'synced_at',
         'origin',
+        // Condition Acknowledgment (Omar Protocol booking gate): recorded when a car graded
+        // Orange/Yellow is handed over, snapshotting the grade + note at booking time.
+        'condition_ack_grade',
+        'condition_ack_note',
+        'condition_ack_by',
+        'condition_ack_at',
     ];
 
     protected $casts = [
@@ -135,6 +141,7 @@ class Contract extends Model
         'cdw_on_contract'    => 'boolean',
         'synced_at'          => 'datetime',
         'exchange_linked_at' => 'datetime',
+        'condition_ack_at'   => 'datetime',
     ];
 
     /**

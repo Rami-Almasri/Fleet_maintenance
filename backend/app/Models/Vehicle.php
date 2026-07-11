@@ -42,6 +42,38 @@ class Vehicle extends Model
         'test'        => 'Test Drive',
         'transfer'    => 'Transfer',
         'sale_prep'   => 'Sale Prep',
+        // Out on a Logistics Dispatch — being driven to a destination (transit_destination holds where).
+        'in_transit'  => 'In Transit',
+    ];
+
+    /**
+     * "Active" fleet = cars that can actually earn right now: Ready (OM status 2) or
+     * Rented (3). Single source of truth for views that should ignore sold / disposed /
+     * under_maintenance / out_of_order / suspended / returned cars (Maintenance Foresight
+     * report + its NotificationScanner alerts).
+     */
+    public const ACTIVE_STATUSES = ['ready', 'rented'];
+
+    /**
+     * Visual Condition Grade (Abu Marouf) — a manual cosmetic/condition assessment kept
+     * SEPARATE from the OM lifecycle `status` and the live `operational_status`:
+     *   green  = Perfect (fully available, no issues)
+     *   orange = Cosmetic / serviceable (minor scratches — still rentable, warn the
+     *            customer at handover)
+     *   yellow = Maintenance needed (showing symptoms — NOT rentable, must be routed to
+     *            the garage; blocked from the rental interface and hidden from Available)
+     *   red    = Critical / grounded (unsafe or a major fault — blocked from the rental
+     *            interface and hidden from the Available counts)
+     * Only green & orange stay rentable; yellow & red are both pulled from the pool and
+     * routed to maintenance.
+     */
+    public const CONDITION_GRADES = ['green', 'orange', 'yellow', 'red'];
+
+    public const CONDITION_LABELS = [
+        'green'  => 'Perfect',
+        'orange' => 'Cosmetic issues',
+        'yellow' => 'Maintenance needed',
+        'red'    => 'Critical — grounded',
     ];
 
     /** Human labels for the status slugs. */
@@ -68,11 +100,26 @@ class Vehicle extends Model
         'year',
         'color',
         'category',
+        'vehicle_class',
         'status',
         'status_no',
         'car_serial',
         'for_sale',
         'operational_status',
+        'transit_destination',
+        // --- Visual Condition Grade (Abu Marouf) ---
+        'condition_grade',
+        'condition_note',
+        'condition_graded_at',
+        'condition_graded_by',
+        // --- Deferred Maintenance (car pulled out of the shop early for a customer) ---
+        'is_deferred_maintenance',
+        'deferred_maintenance_reason',
+        'deferred_maintenance_flagged_at',
+        'deferred_maintenance_flagged_by',
+        // --- Pre-Delivery Readiness checklist (see VehicleReadinessService) ---
+        'cleaning_status',
+        'gps_last_seen_at',
         'odometer',
         'engine_hours',
         'source',
@@ -149,6 +196,10 @@ class Vehicle extends Model
         'service_due_date' => 'date',
         'battery_last_changed' => 'date',
         'replacement_due_date' => 'date',
+        'condition_graded_at' => 'datetime',
+        'gps_last_seen_at' => 'datetime',
+        'is_deferred_maintenance' => 'boolean',
+        'deferred_maintenance_flagged_at' => 'datetime',
     ];
 
     protected static function booted(): void
@@ -166,6 +217,117 @@ class Vehicle extends Model
     public function contracts(): HasMany
     {
         return $this->hasMany(Contract::class);
+    }
+
+    /**
+     * Every maintenance row anchored to this car — sheet/manual workshop events AND workflow tickets.
+     * Broad on purpose; callers scope it (e.g. the Vehicles list counts only open on-site tickets to
+     * flag "Pending Maintenance" while the car stays available). See VehicleService::index().
+     */
+    public function maintenances(): HasMany
+    {
+        return $this->hasMany(Maintenance::class);
+    }
+
+    /** Recurring technical service due-points (oil, filters, brakes, …) for this car. */
+    public function serviceReminders(): HasMany
+    {
+        return $this->hasMany(ServiceReminder::class);
+    }
+
+    /**
+     * Record a completed OIL CHANGE and roll every dependent surface forward in one shot — the
+     * closed-loop "Log oil change" action. This is the single writer that keeps the three oil
+     * surfaces in agreement, so completing a service actually clears the Service-Due alert:
+     *
+     *   1. the vehicle-level anchor (last_service_odometer / service_synced_at) that
+     *      serviceStatus() — and therefore the serviceDue / serviceDueSoon notifications — read;
+     *   2. the recurring "oil_change" ServiceReminder row (find-or-create, rolled to the new
+     *      anchor and flipped to source='manual' so the auto-seeder leaves it alone).
+     *
+     * @param  int          $odometer  the reading at which the oil was changed
+     * @param  string|null  $date      service date (Y-m-d); defaults to today
+     */
+    public function recordOilService(int $odometer, ?string $date = null): ServiceReminder
+    {
+        $date = $date ?: now()->toDateString();
+
+        // 1) Vehicle anchor — what serviceStatus() and the oil alert read.
+        $this->last_service_odometer = $odometer;
+        $this->service_synced_at = now();
+        $this->save();
+
+        // 2) The matching recurring reminder (find-or-create), rolled forward.
+        $reminder = $this->serviceReminders()->firstOrNew(['service_type' => 'oil_change']);
+        if (! $reminder->exists) {
+            $reminder->name       = ServiceReminder::TYPE_LABELS['oil_change'];
+            $reminder->interval_km = $this->service_interval_km;
+            $reminder->active     = true;
+        }
+        $reminder->last_service_at       = $date;
+        $reminder->last_service_odometer = $odometer;
+        $reminder->source                = 'manual';
+        $reminder->recomputeNextDue();
+        $reminder->save();
+
+        return $reminder;
+    }
+
+    /**
+     * Fallback cadence for routine services that have no sheet-derived interval (unlike oil, which reads
+     * its per-car interval from `service_interval_km`). Only used when the reminder is FIRST created by a
+     * completed routine fault; an existing reminder keeps whatever cadence it already has. km + days axes
+     * are both optional — a battery is age-driven, filters are mileage-driven. Tune freely.
+     *
+     * @var array<string, array{interval_km:?int, interval_days:?int}>
+     */
+    public const ROUTINE_SERVICE_DEFAULTS = [
+        'battery'    => ['interval_km' => null,  'interval_days' => 730],   // ~2-year battery life
+        'oil_filter' => ['interval_km' => 10000, 'interval_days' => null],
+        'air_filter' => ['interval_km' => 20000, 'interval_days' => null],
+    ];
+
+    /**
+     * Record a completed ROUTINE service of any type and roll its recurring Service Reminder forward, so
+     * the next reminder fires on schedule. This is the generic sibling of recordOilService(): oil_change
+     * delegates to it (because oil ALSO re-anchors the car's serviceStatus() baseline); every other type
+     * just find-or-creates its `service_type` reminder, re-anchors it to this odometer/date, flips it to
+     * source='manual' (so the auto-seeder leaves it), and recomputes the next-due point. A brand-new
+     * reminder seeds its cadence from ROUTINE_SERVICE_DEFAULTS.
+     *
+     * @param  string       $serviceType  a ServiceReminder service_type slug (oil_change, battery, …)
+     * @param  int          $odometer     the reading at which the service was performed
+     * @param  string|null  $date         service date (Y-m-d); defaults to today
+     */
+    public function recordServiceDone(string $serviceType, int $odometer, ?string $date = null): ServiceReminder
+    {
+        if ($serviceType === 'oil_change') {
+            return $this->recordOilService($odometer, $date);
+        }
+
+        $date = $date ?: now()->toDateString();
+
+        $reminder = $this->serviceReminders()->firstOrNew(['service_type' => $serviceType]);
+        if (! $reminder->exists) {
+            $defaults = self::ROUTINE_SERVICE_DEFAULTS[$serviceType] ?? ['interval_km' => null, 'interval_days' => null];
+            $reminder->name          = ServiceReminder::TYPE_LABELS[$serviceType] ?? ucwords(str_replace('_', ' ', $serviceType));
+            $reminder->interval_km   = $defaults['interval_km'];
+            $reminder->interval_days = $defaults['interval_days'];
+            $reminder->active        = true;
+        }
+        $reminder->last_service_at       = $date;
+        $reminder->last_service_odometer = $odometer;
+        $reminder->source                = 'manual';
+        $reminder->recomputeNextDue();
+        $reminder->save();
+
+        return $reminder;
+    }
+
+    /** The car's Maintenance-Workflow audit trail (append-only), newest event first. */
+    public function logEvents(): HasMany
+    {
+        return $this->hasMany(VehicleLogEvent::class)->latest('occurred_at');
     }
 
     /** The car's registration / insurance record (latest). */
@@ -232,5 +394,57 @@ class Vehicle extends Model
             'remaining'  => $remaining,
             'overdue_km' => $isDue ? -$remaining : null,
         ] + $base;
+    }
+
+    /**
+     * A car graded Red (critical / grounded) OR Yellow (maintenance needed) must never leave
+     * on a customer handover: it is blocked from the booking/rental interface and hidden from
+     * the Available counts, and should be routed to the garage. Only green & orange stay
+     * rentable (orange with a documented acknowledgment).
+     */
+    public function rentBlockedByCondition(): bool
+    {
+        return in_array($this->condition_grade, ['red', 'yellow'], true);
+    }
+
+    /**
+     * Orange = serviceable with minor cosmetic issues: still rentable, but ops must
+     * inform the customer at handover (a mandatory acknowledgment prompt).
+     */
+    public function hasCosmeticAlert(): bool
+    {
+        return $this->condition_grade === 'orange';
+    }
+
+    /**
+     * Yellow = the car is showing symptoms and needs scheduled maintenance. It is pulled from
+     * the rental pool (see rentBlockedByCondition) and must be routed to the garage — it is
+     * also surfaced in the Maintenance Forecast.
+     */
+    public function needsScheduledMaintenance(): bool
+    {
+        return $this->condition_grade === 'yellow';
+    }
+
+    /**
+     * Only Orange (cosmetic / serviceable) cars stay bookable but require an acknowledgment: a
+     * customer handover on one requires the sales agent to confirm the customer was told about
+     * the condition first — that acknowledgment is recorded on the contract. Green is clean;
+     * Yellow & Red are hard blocks (see rentBlockedByCondition), so neither is rentable.
+     */
+    public function requiresConditionAcknowledgement(): bool
+    {
+        return $this->condition_grade === 'orange';
+    }
+
+    /**
+     * Deferred Maintenance: the car was pulled out of the workshop early to satisfy a customer,
+     * so it still "owes" the garage a visit. Set when it's rented out of maintenance, surfaced as
+     * a standing 🛠️↩️ flag on every fleet surface, and cleared only when it's checked back into
+     * the workshop (a new maintenance visit) or a supervisor dismisses it. See OperationsService.
+     */
+    public function owesMaintenance(): bool
+    {
+        return (bool) $this->is_deferred_maintenance;
     }
 }

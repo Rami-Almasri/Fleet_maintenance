@@ -4,12 +4,20 @@ namespace App\Services;
 
 use App\Models\Contract;
 use App\Models\Customer;
+use App\Models\Invoice;
+use App\Models\Payment;
 use Illuminate\Support\Facades\DB;
 
 /**
  * Financial calculations (customer balances, contract totals).
  * All figures are computed with single aggregate SQL queries for performance —
  * we never load a customer's contracts into PHP just to sum them.
+ *
+ * SINGLE SOURCE OF TRUTH (money): a customer's balance / wallet is the OfficeManager
+ * contract ledger PLUS the website-native ledger — the M- manual invoices (extra debit)
+ * and P- payments (extra credit) the platform records itself. The native side is the
+ * truth for money FleetView collected, so it feeds the balance and the available wallet;
+ * a recorded payment now lowers what the customer owes everywhere it is shown.
  */
 class AccountingService
 {
@@ -36,6 +44,8 @@ class AccountingService
      */
     public function recalcAllCustomers(): void
     {
+        // OM ledger from contracts + native ledger from manual invoices (debit) and manual
+        // payments (credit), each pre-aggregated per customer, then summed into the cached row.
         DB::statement('
             UPDATE customers c
             LEFT JOIN (
@@ -45,10 +55,22 @@ class AccountingService
                 FROM contracts
                 WHERE deleted_at IS NULL
                 GROUP BY customer_id
-            ) t ON t.customer_id = c.id
-            SET c.debit   = COALESCE(t.d, 0),
-                c.credit  = COALESCE(t.cr, 0),
-                c.balance = COALESCE(t.d, 0) - COALESCE(t.cr, 0)
+            ) t  ON t.customer_id = c.id
+            LEFT JOIN (
+                SELECT customer_id, COALESCE(SUM(total_after_vat), 0) AS nd
+                FROM invoices
+                WHERE origin = \'manual\'
+                GROUP BY customer_id
+            ) ni ON ni.customer_id = c.id
+            LEFT JOIN (
+                SELECT customer_id, COALESCE(SUM(amount), 0) AS ncr
+                FROM payments
+                WHERE origin = \'manual\'
+                GROUP BY customer_id
+            ) np ON np.customer_id = c.id
+            SET c.debit   = COALESCE(t.d, 0)  + COALESCE(ni.nd, 0),
+                c.credit  = COALESCE(t.cr, 0) + COALESCE(np.ncr, 0),
+                c.balance = (COALESCE(t.d, 0) + COALESCE(ni.nd, 0)) - (COALESCE(t.cr, 0) + COALESCE(np.ncr, 0))
             WHERE c.deleted_at IS NULL
         ');
     }
@@ -95,17 +117,36 @@ class AccountingService
         ];
     }
 
-    /** The single aggregate query that powers both methods above. */
+    /**
+     * The single aggregate that powers every balance/wallet method above. Combines the two
+     * ledgers into one truth:
+     *   total_debit  = Σ contract_debit  (OM) + Σ manual-invoice total_after_vat (native)
+     *   total_credit = Σ contract_credit (OM) + Σ manual-payment amount           (native)
+     * Only origin='manual' rows are added — the OM-synced ('api') invoices already mirror
+     * contract_debit, so counting them would double-bill.
+     */
     protected function aggregate(int $customerId): object
     {
-        return Contract::where('customer_id', $customerId)
+        $om = Contract::where('customer_id', $customerId)
             ->selectRaw('
                 COUNT(*) as contracts,
                 SUM(state = \'open\') as open_contracts,
-                COALESCE(SUM(contract_debit), 0) as total_debit,
-                COALESCE(SUM(contract_credit), 0) as total_credit
+                COALESCE(SUM(contract_debit), 0) as om_debit,
+                COALESCE(SUM(contract_credit), 0) as om_credit
             ')
             ->first();
+
+        $nativeDebit = (float) Invoice::where('customer_id', $customerId)
+            ->where('origin', 'manual')->sum('total_after_vat');
+        $nativeCredit = (float) Payment::where('customer_id', $customerId)
+            ->where('origin', 'manual')->sum('amount');
+
+        return (object) [
+            'contracts'      => (int) ($om->contracts ?? 0),
+            'open_contracts' => (int) ($om->open_contracts ?? 0),
+            'total_debit'    => (float) ($om->om_debit ?? 0) + $nativeDebit,
+            'total_credit'   => (float) ($om->om_credit ?? 0) + $nativeCredit,
+        ];
     }
 
     protected function customerId(Customer|int $customer): int

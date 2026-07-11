@@ -26,7 +26,7 @@ class StoreVehicleRegistrationRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'vehicle_id' => 'nullable|exists:vehicles,id',
+            'vehicle_id' => 'required|exists:vehicles,id',
             'chasis_no' => 'nullable|string|max:50',
             'expiry_date' => 'nullable|date',
             'status' => 'nullable|string|max:50',

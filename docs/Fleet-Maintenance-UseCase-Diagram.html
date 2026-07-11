@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fleet Maintenance — Use Case Diagram (UML)</title>
+<style>
+  :root{
+    --ink:#0f172a; --muted:#64748b; --line:#e2e8f0; --bg:#f8fafc; --card:#fff;
+    --brand:#1d4ed8;
+    --inspect:#7c3aed; --inspect-bg:#f5f3ff; --inspect-ln:#ddd6fe;
+    --logi:#0891b2;    --logi-bg:#ecfeff;   --logi-ln:#a5f3fc;
+    --ctrl:#c2410c;    --ctrl-bg:#fff7ed;   --ctrl-ln:#fed7aa;
+    --shadow:0 1px 2px rgba(15,23,42,.04), 0 10px 30px rgba(15,23,42,.07);
+  }
+  *{box-sizing:border-box}
+  html{-webkit-print-color-adjust:exact; print-color-adjust:exact}
+  body{margin:0; background:var(--bg); color:var(--ink);
+    font-family:'Segoe UI',-apple-system,BlinkMacSystemFont,Roboto,Arial,sans-serif}
+  .wrap{max-width:1180px; margin:0 auto; padding:40px 28px 70px}
+
+  header.top{
+    background:linear-gradient(135deg,#1e3a8a,#2563eb); color:#fff; border-radius:18px;
+    padding:30px 38px; box-shadow:var(--shadow); margin-bottom:26px;
+  }
+  header.top .k{text-transform:uppercase; letter-spacing:.2em; font-size:11.5px; font-weight:700; opacity:.85; margin:0 0 8px}
+  header.top h1{margin:0; font-size:28px; font-weight:800; letter-spacing:-.3px}
+  header.top p{margin:8px 0 0; opacity:.93; font-size:15px; max-width:760px}
+
+  .legend{display:flex; gap:22px; flex-wrap:wrap; margin:0 0 18px; font-size:13px; color:var(--muted)}
+  .legend .it{display:flex; align-items:center; gap:8px}
+  .legend .sw{width:26px; height:14px; border-radius:4px; border:1.5px solid}
+  .legend .actor-sw{width:16px; height:16px; border:2px solid var(--ink); border-radius:50%}
+  .legend .inc{width:30px; border-top:2px dashed #94a3b8; height:0}
+
+  .diagram{background:var(--card); border:1px solid var(--line); border-radius:18px; box-shadow:var(--shadow); padding:10px; overflow:hidden}
+  svg{display:block; width:100%; height:auto}
+
+  .uc-ell{stroke-width:2}
+  .uc-i{fill:var(--inspect-bg); stroke:var(--inspect)}
+  .uc-l{fill:var(--logi-bg);    stroke:var(--logi)}
+  .uc-c{fill:var(--ctrl-bg);    stroke:var(--ctrl)}
+  .uc-label{font:600 14px 'Segoe UI',Arial,sans-serif; fill:var(--ink)}
+  .uc-num{font:700 10.5px 'Segoe UI',Arial,sans-serif; letter-spacing:.04em}
+  .uc-num-i{fill:var(--inspect)} .uc-num-l{fill:var(--logi)} .uc-num-c{fill:var(--ctrl)}
+  .assoc{stroke:#94a3b8; stroke-width:1.6; fill:none}
+  .assoc-i{stroke:#c4b5fd} .assoc-l{stroke:#67e8f9} .assoc-c{stroke:#fdba74}
+  .incl{stroke:#94a3b8; stroke-width:1.6; stroke-dasharray:6 5; fill:none}
+  .incl-lbl{font:italic 11px 'Segoe UI',Arial,sans-serif; fill:var(--muted)}
+  .boundary{fill:#fbfdff; stroke:#cbd5e1; stroke-width:2}
+  .boundary-title{font:800 16px 'Segoe UI',Arial,sans-serif; fill:#334155; letter-spacing:.02em}
+  .actor-line{stroke:var(--ink); stroke-width:2.4; fill:none; stroke-linecap:round}
+  .actor-name{font:800 14px 'Segoe UI',Arial,sans-serif; fill:var(--ink)}
+  .actor-role{font:600 11.5px 'Segoe UI',Arial,sans-serif}
+  .actor-role-i{fill:var(--inspect)} .actor-role-l{fill:var(--logi)} .actor-role-c{fill:var(--ctrl)}
+
+  /* actor card backing */
+  .actor-card-i{fill:var(--inspect-bg); stroke:var(--inspect-ln)}
+  .actor-card-l{fill:var(--logi-bg);    stroke:var(--logi-ln)}
+  .actor-card-c{fill:var(--ctrl-bg);    stroke:var(--ctrl-ln)}
+
+  footer{margin-top:26px; color:var(--muted); font-size:12.5px; text-align:center}
+  @media print{ body{background:#fff} .wrap{padding:0} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <p class="k">UML · Use Case Diagram</p>
+    <h1>Fleet Maintenance Workflow — Use Case Diagram</h1>
+    <p>Who does what inside the system. Each actor (stick figure) is connected by a line to every action (oval) they can perform. The box is the system boundary.</p>
+  </header>
+
+  <div class="legend">
+    <div class="it"><span class="actor-sw"></span> Actor (a person/role)</div>
+    <div class="it"><span class="sw uc-i" style="background:var(--inspect-bg);border-color:var(--inspect)"></span> Inspector use case</div>
+    <div class="it"><span class="sw uc-l" style="background:var(--logi-bg);border-color:var(--logi)"></span> Logistics use case</div>
+    <div class="it"><span class="sw uc-c" style="background:var(--ctrl-bg);border-color:var(--ctrl)"></span> Controllers use case</div>
+    <div class="it"><span class="inc"></span> &laquo;include&raquo; relationship</div>
+  </div>
+
+  <div class="diagram">
+    <svg viewBox="0 0 1200 920" role="img" aria-label="Use case diagram">
+      <defs>
+        <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L8,3 L0,6 Z" fill="#94a3b8"/>
+        </marker>
+      </defs>
+
+      <!-- ===== System boundary ===== -->
+      <rect class="boundary" x="430" y="70" width="340" height="810" rx="18"/>
+      <text class="boundary-title" x="600" y="106" text-anchor="middle">Fleet Maintenance Workflow System</text>
+
+      <!-- ===== Association lines (drawn first, under ovals) ===== -->
+      <!-- Inspector hand (172,233) -->
+      <path class="assoc assoc-i" d="M172,233 L455,150"/>
+      <path class="assoc assoc-i" d="M172,233 L455,236"/>
+      <path class="assoc assoc-i" d="M172,233 L455,322"/>
+      <!-- Logistics hand (172,573) -->
+      <path class="assoc assoc-l" d="M172,573 L455,408"/>
+      <path class="assoc assoc-l" d="M172,573 L455,494"/>
+      <path class="assoc assoc-l" d="M172,573 L455,580"/>
+      <path class="assoc assoc-l" d="M172,573 L455,666"/>
+      <!-- Controllers hand (1028,728) -->
+      <path class="assoc assoc-c" d="M1028,728 L745,752"/>
+      <path class="assoc assoc-c" d="M1028,728 L745,838"/>
+
+      <!-- ===== include relationship (UC-1 includes UC-2) ===== -->
+      <path class="incl" d="M600,183 L600,203" marker-end="url(#arrow)"/>
+      <text class="incl-lbl" x="612" y="197">&laquo;include&raquo;</text>
+
+      <!-- ===== Use cases (ovals) ===== -->
+      <!-- Inspector -->
+      <g>
+        <ellipse class="uc-ell uc-i" cx="600" cy="150" rx="145" ry="38"/>
+        <text class="uc-num uc-num-i" x="600" y="143" text-anchor="middle">UC-1</text>
+        <text class="uc-label" x="600" y="162" text-anchor="middle">Trigger Maintenance Job</text>
+      </g>
+      <g>
+        <ellipse class="uc-ell uc-i" cx="600" cy="236" rx="145" ry="38"/>
+        <text class="uc-num uc-num-i" x="600" y="229" text-anchor="middle">UC-1a</text>
+        <text class="uc-label" x="600" y="248" text-anchor="middle">Submit Test-Drive Report</text>
+      </g>
+      <g>
+        <ellipse class="uc-ell uc-i" cx="600" cy="322" rx="145" ry="38"/>
+        <text class="uc-num uc-num-i" x="600" y="315" text-anchor="middle">UC-2</text>
+        <text class="uc-label" x="600" y="334" text-anchor="middle">Re-inspect Vehicle on Return</text>
+      </g>
+      <!-- Logistics -->
+      <g>
+        <ellipse class="uc-ell uc-l" cx="600" cy="408" rx="145" ry="38"/>
+        <text class="uc-num uc-num-l" x="600" y="401" text-anchor="middle">UC-3</text>
+        <text class="uc-label" x="600" y="420" text-anchor="middle">Receive Dispatch Alert</text>
+      </g>
+      <g>
+        <ellipse class="uc-ell uc-l" cx="600" cy="494" rx="145" ry="38"/>
+        <text class="uc-num uc-num-l" x="600" y="487" text-anchor="middle">UC-4</text>
+        <text class="uc-label" x="600" y="506" text-anchor="middle">Scan / Photograph Odometer</text>
+      </g>
+      <g>
+        <ellipse class="uc-ell uc-l" cx="600" cy="580" rx="145" ry="38"/>
+        <text class="uc-num uc-num-l" x="600" y="573" text-anchor="middle">UC-5</text>
+        <text class="uc-label" x="600" y="592" text-anchor="middle">Select Destination Garage</text>
+      </g>
+      <g>
+        <ellipse class="uc-ell uc-l" cx="600" cy="666" rx="145" ry="38"/>
+        <text class="uc-num uc-num-l" x="600" y="659" text-anchor="middle">UC-6</text>
+        <text class="uc-label" x="600" y="678" text-anchor="middle">Update Garage Feedback</text>
+      </g>
+      <!-- Controllers -->
+      <g>
+        <ellipse class="uc-ell uc-c" cx="600" cy="752" rx="145" ry="38"/>
+        <text class="uc-num uc-num-c" x="600" y="745" text-anchor="middle">UC-7</text>
+        <text class="uc-label" x="600" y="764" text-anchor="middle">Track Lifecycle Dashboard</text>
+      </g>
+      <g>
+        <ellipse class="uc-ell uc-c" cx="600" cy="838" rx="145" ry="38"/>
+        <text class="uc-num uc-num-c" x="600" y="831" text-anchor="middle">UC-8</text>
+        <text class="uc-label" x="600" y="850" text-anchor="middle">Oversee &amp; Approve Repairs</text>
+      </g>
+
+      <!-- ===== Actors ===== -->
+      <!-- Inspector (left, upper) -->
+      <g>
+        <rect class="actor-card-i" x="60" y="150" width="180" height="170" rx="14"/>
+        <circle class="actor-line" cx="150" cy="200" r="16" fill="#fff"/>
+        <path class="actor-line" d="M150,216 L150,262"/>
+        <path class="actor-line" d="M120,233 L180,233"/>
+        <path class="actor-line" d="M150,262 L128,296"/>
+        <path class="actor-line" d="M150,262 L172,296"/>
+        <text class="actor-name" x="150" y="318" text-anchor="middle">Abu Maroof</text>
+        <text class="actor-role actor-role-i" x="150" y="335" text-anchor="middle" dy="-.2em">«Inspector»</text>
+      </g>
+      <!-- Logistics (left, lower) -->
+      <g>
+        <rect class="actor-card-l" x="60" y="490" width="180" height="170" rx="14"/>
+        <circle class="actor-line" cx="150" cy="540" r="16" fill="#fff"/>
+        <path class="actor-line" d="M150,556 L150,602"/>
+        <path class="actor-line" d="M120,573 L180,573"/>
+        <path class="actor-line" d="M150,602 L128,636"/>
+        <path class="actor-line" d="M150,602 L172,636"/>
+        <text class="actor-name" x="150" y="658" text-anchor="middle">Logistics Team</text>
+        <text class="actor-role actor-role-l" x="150" y="675" text-anchor="middle" dy="-.2em">«Delivery»</text>
+      </g>
+      <!-- Controllers (right) -->
+      <g>
+        <rect class="actor-card-c" x="960" y="645" width="180" height="170" rx="14"/>
+        <circle class="actor-line" cx="1050" cy="695" r="16" fill="#fff"/>
+        <path class="actor-line" d="M1050,711 L1050,757"/>
+        <path class="actor-line" d="M1020,728 L1080,728"/>
+        <path class="actor-line" d="M1050,757 L1028,791"/>
+        <path class="actor-line" d="M1050,757 L1072,791"/>
+        <text class="actor-name" x="1050" y="813" text-anchor="middle">Lin &amp; Marwa</text>
+        <text class="actor-role actor-role-c" x="1050" y="830" text-anchor="middle" dy="-.2em">«Controllers»</text>
+      </g>
+
+    </svg>
+  </div>
+
+  <footer>UML Use Case Diagram · Fleet Maintenance Workflow · Actors → Use Cases within the system boundary · June 2026</footer>
+
+</div>
+</body>
+</html>

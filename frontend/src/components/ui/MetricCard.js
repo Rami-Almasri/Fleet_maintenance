@@ -67,7 +67,7 @@ export default function MetricCard({
       </div>
 
       <div className="mt-3 flex items-end gap-2">
-        <p className={`font-bold leading-none tracking-tight tabular-nums ${big ? 'text-3xl' : 'text-2xl'} ${t.value}`}>
+        <p className={`font-display font-bold leading-none tracking-tight tabular-nums ${big ? 'text-3xl' : 'text-2xl'} ${t.value}`}>
           {value}
         </p>
         {delta != null && delta !== '' && (
@@ -94,7 +94,7 @@ export default function MetricCard({
 // Responsive container: 1 column on mobile, then 2, then `cols` on large screens.
 // Children animate in with the shared `.stagger` motion.
 export function MetricGrid({ cols = 4, children, className = '' }) {
-  const lg = { 2: 'lg:grid-cols-2', 3: 'lg:grid-cols-3', 4: 'lg:grid-cols-4', 5: 'lg:grid-cols-5' }[cols] || 'lg:grid-cols-4';
+  const lg = { 2: 'lg:grid-cols-2', 3: 'lg:grid-cols-3', 4: 'lg:grid-cols-4', 5: 'lg:grid-cols-5', 6: 'lg:grid-cols-6' }[cols] || 'lg:grid-cols-4';
   return (
     <div className={`stagger grid grid-cols-1 gap-4 sm:grid-cols-2 ${lg} ${className}`}>
       {children}

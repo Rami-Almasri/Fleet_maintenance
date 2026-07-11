@@ -59,7 +59,7 @@ class MaintenanceWorkflowController extends Controller
         'reinspection_failed' => [Maintenance::WF_REINSPECTION_FAILED],
     ];
 
-    private const EAGER = ['vendor', 'vehicle:id,plate_no,make,model', 'inspector:id,name', 'requester:id,name', 'assignedDriver:id,name', 'delegatedBy:id,name', 'watchers:id,name', 'linkedContract:id,contract_no', 'lineItems',
+    private const EAGER = ['vendor', 'transferToVendor:id,name', 'vehicle:id,plate_no,make,model', 'inspector:id,name', 'requester:id,name', 'assignedDriver:id,name', 'delegatedBy:id,name', 'watchers:id,name', 'linkedContract:id,contract_no', 'lineItems',
         // Multi-garage routing: the ticket's faults, each with its garage-stint timeline + current garage.
         // lastFailedVendor drives the "Unresolved at Garage X" blame badge on a re-inspection failure.
         'tasks.assignments.vendor:id,name', 'tasks.currentVendor:id,name', 'tasks.lastFailedVendor:id,name', 'tasks.media', 'tasks.markedIncorrectBy:id,name',
@@ -209,7 +209,8 @@ class MaintenanceWorkflowController extends Controller
      * The signed-in user's ROLE-SCOPED queue — the focused dashboard each role opens, holding only
      * the work that is theirs to act on:
      *
-     *   Inspector  (maintenance.initiate): pending_inspections (requested + diagnostic) and
+     *   Inspector  (maintenance.initiate): pending_inspections (requested + diagnostic),
+     *                                      on_site (mobile jobs to Mark as Serviced), and
      *                                      final_reinspections (cars back, awaiting sign-off).
      *   Dispatcher (maintenance.delegate): awaiting_dispatch_decision (open tickets awaiting a garage
      *                                      + driver assignment — the Supervisor's call) and
@@ -250,6 +251,11 @@ class MaintenanceWorkflowController extends Controller
                 // Customer complaints awaiting Abu Maroof's triage (talk / resolve on-site / send in).
                 $add('complaint_triage', [Maintenance::WF_COMPLAINT_TRIAGE]);
                 $add('pending_inspections', [Maintenance::WF_INSPECTION_REQUESTED, Maintenance::WF_INSPECTION_DIAGNOSTIC]);
+                // On-Site (mobile) lane — a minor job the inspector committed to do where the car is
+                // parked (Repair Location = on_site). One step closes it (Mark as Serviced); no garage,
+                // no dispatch, no re-inspection. Shared with the Supervisor (same maintenance.initiate |
+                // maintenance.delegate authority as the serviced action).
+                $add('on_site', [Maintenance::WF_ON_SITE_PENDING]);
                 $add('final_reinspections', [Maintenance::WF_READY_REINSPECTION]);
             }
             if ($isDispatcher) {
@@ -1807,6 +1813,21 @@ class MaintenanceWorkflowController extends Controller
                 throw new \App\Exceptions\WorkflowTransitionException('The car is already at that garage.', ['field' => 'vendor_id']);
             }
 
+            // ── Resolved-Transfer Oversight ───────────────────────────────────────────────────────
+            // Moving a car to another garage while EVERY fault on the ticket is already fixed is unusual
+            // (nothing left to repair). Gate it behind a MANDATORY justification note and log the case for
+            // the /oversight/resolved-transfers board. Evaluated + the "from" garage snapshotted here,
+            // BEFORE the move below re-points the ticket's current garage.
+            $allResolved  = $ticket->tasksProgress()['all_resolved'];
+            $fromVendorId = $ticket->vendor_id;
+            $fromGarage   = $ticket->garage;
+            if ($allResolved && trim((string) ($data['reason'] ?? '')) === '') {
+                throw new \App\Exceptions\WorkflowTransitionException(
+                    'Every fault on this ticket is already fixed. Add a note explaining why the car is being transferred.',
+                    ['field' => 'reason'],
+                );
+            }
+
             $vendor = \App\Models\Vendor::findOrFail($data['vendor_id']);
 
             // ── Rule 1 · Conflict Check ───────────────────────────────────────────────────────────
@@ -1844,11 +1865,48 @@ class MaintenanceWorkflowController extends Controller
             // Stamp the mandatory current odometer onto the ticket (continuity verdict) and heal the
             // car's live mileage forward. Mutates odometer_flags in memory; the rollback save below
             // persists it alongside the new garage — one write.
-            $this->workflow->recordGarageTransferOdometer($ticket, (int) $data['odometer'], $data['odometer_note'] ?? null);
+            $this->workflow->recordGarageTransferOdometer($ticket, (int) $data['odometer'], $data['odometer_note'] ?? null, $request->user());
 
-            // Move every fault CURRENTLY AT the garage to the new one — they ride In Transit (not workable)
-            // until the arrival check-in. Already-resolved faults stay locked at the old garage, and any
-            // Pending-Assignment fault (never routed) stays Pending — the delegate assigns it at the next stop.
+            // Oversight record — the transfer is now committed (guards + conflict check passed). If every
+            // fault was already fixed, log the case with the Supervisor's justification note. Best-effort:
+            // a logging hiccup must never undo a committed transfer.
+            if ($allResolved) {
+                try {
+                    \App\Models\ResolvedTransferFlag::create([
+                        'maintenance_id' => $ticket->id,
+                        'vehicle_id'     => $ticket->vehicle_id,
+                        'from_vendor_id' => $fromVendorId,
+                        'from_garage'    => $fromGarage,
+                        'to_vendor_id'   => $vendor->id,
+                        'to_garage'      => $vendor->name,
+                        'note'           => trim((string) $data['reason']),
+                        'odometer'       => (int) $data['odometer'],
+                        'flagged_by'     => $request->user()?->id,
+                    ]);
+                } catch (\Throwable $e) {
+                    \Illuminate\Support\Facades\Log::warning('Failed to record resolved-transfer oversight flag', [
+                        'ticket' => $ticket->id,
+                        'error'  => $e->getMessage(),
+                    ]);
+                }
+            }
+
+            if ($ticket->hasReachedGarage()) {
+                // ── Planned transfer (the car is physically AT its current garage) ─────────────────
+                // Ground truth stays put: vendor_id KEEPS pointing at the garage the car is at, and only
+                // the destination is recorded (transfer_to_vendor_id). The ticket drops to "Awaiting
+                // Pickup" so a driver collects the car — the board reads "Awaiting Pickup · [current] →
+                // [new]". The fault-stint hand-over + vendor re-point are DEFERRED to the destination
+                // arrival check-in (markUnderRepair), so the single-garage invariant holds the whole leg.
+                $this->workflow->beginGarageTransfer($ticket, $vendor, $data['assigned_to_id'] ?? null, $data['reason'] ?? null, $request->user());
+
+                $ticket = Maintenance::with(self::EAGER)->findOrFail($ticket->id);
+                return ResponseHelper::SuccessResponse(MaintenanceWorkflowResource::make($ticket), 'Transfer requested — the car is awaiting pickup at ' . ($ticket->garage ?: 'its garage') . ' to move to ' . $vendor->name, 200);
+            }
+
+            // ── Pre-arrival re-route (car never reached a garage — still in our park / en route) ──────
+            // There is no "current garage" to preserve, so this is a plain destination change: move the
+            // fault stints + re-point the ticket exactly as before, keeping the pre-arrival stage.
             $this->tasks->routeTicketToGarage($ticket, $vendor->id, $data['reason'] ?? null, $request->user(), (int) $data['odometer']);
 
             // The ticket owns its single current garage — re-point it (vendor_id is no longer derived
@@ -1857,9 +1915,8 @@ class MaintenanceWorkflowController extends Controller
             $ticket->garage    = $vendor->name;
 
             // ── Workflow Stage Rollback ───────────────────────────────────────────────────────────
-            // A transfer is a physical move: roll the ticket back to "Awaiting Garage Arrival" so the new
-            // garage/driver must run the "Now at Garage" check-in before work resumes. This SAVES the
-            // ticket (garage re-point + mileage-gate flags + rolled-back stage).
+            // Persist the garage re-point + mileage-gate flags (a pre-arrival car keeps its stage — the
+            // rollback only kicks a car that had already reached a garage, which is handled above).
             $this->workflow->rollbackForGarageTransfer($ticket, $request->user());
 
             // ── Transport Manifest ────────────────────────────────────────────────────────────────

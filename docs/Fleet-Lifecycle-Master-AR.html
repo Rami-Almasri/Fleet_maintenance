@@ -1,0 +1,1077 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>دورة حياة الأسطول المتكاملة — الملخّص التنفيذي وخطة التنفيذ</title>
+<style>
+  /* ===================== SHARED SHELL ===================== */
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; background:#eaeef4; color:#1a2433;
+    font:16px/1.7 'Segoe UI','Tahoma','Cairo',-apple-system,Arial,sans-serif;
+  }
+
+  .master{
+    background:linear-gradient(135deg,#0b1f3a,#12305c 55%,#087f8c 150%);
+    color:#fff; padding:52px 22px 46px; text-align:center;
+  }
+  .master .kicker{letter-spacing:.06em; font-size:13px; color:#43d6e4; font-weight:700; text-transform:uppercase; margin-bottom:12px}
+  .master h1{margin:0 0 10px; font-size:33px; line-height:1.28; font-weight:800}
+  .master p.sub{margin:0; color:#c7d6ea; font-size:16px}
+  .master .meta{margin-top:22px; display:inline-flex; gap:10px; flex-wrap:wrap; justify-content:center}
+  .master .meta span{background:rgba(255,255,255,.10); border:1px solid rgba(255,255,255,.18); padding:6px 14px; border-radius:999px; font-size:13px; color:#eaf2fb}
+
+  .toc{max-width:920px; margin:26px auto 6px; padding:0 22px; display:grid; grid-template-columns:1fr 1fr; gap:14px}
+  .toc a{display:block; text-decoration:none; background:#fff; border:1px solid #dbe2ec; border-radius:12px; padding:16px 18px; color:#0b1f3a; box-shadow:0 4px 14px rgba(11,31,58,.06); transition:transform .12s, box-shadow .12s}
+  .toc a:hover{transform:translateY(-2px); box-shadow:0 8px 22px rgba(11,31,58,.12)}
+  .toc .n{font-size:12px; font-weight:800; color:#0ea5b5; letter-spacing:.04em}
+  .toc .t{display:block; font-size:17px; font-weight:800; margin-top:4px}
+  .toc .d{display:block; font-size:13px; color:#5b6677; margin-top:5px; font-weight:400; line-height:1.6}
+  @media(max-width:640px){.toc{grid-template-columns:1fr}}
+
+  .part-hero{
+    background:linear-gradient(225deg,var(--navy) 0%, #12305c 65%, var(--cyan) 165%);
+    color:#fff; padding:40px 0 62px; margin-top:30px;
+  }
+  .part-hero .inner{max-width:940px; margin:0 auto; padding:0 24px}
+  .part-hero .ph-badge{display:inline-block; background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.22); color:#eaf2fb; font-size:13px; font-weight:700; padding:5px 14px; border-radius:999px; margin-bottom:12px}
+  .part-hero .ph-title{margin:0; font-size:28px; font-weight:800; color:#fff; line-height:1.3}
+  .part-hero .ph-sub{margin:9px 0 0; color:#cfe0f2; font-size:15.5px; line-height:1.7}
+
+  .master-footer{color:#5b6b82; font-size:13px; text-align:center; margin:42px auto 30px; max-width:920px; padding:0 22px; line-height:1.8}
+
+  /* ===================== PART 1 · EXECUTIVE SUMMARY (scoped) ===================== */
+  .doc-summary{
+    --navy:#0f1f3d; --navy2:#15294f; --cyan:#0ea5b5; --cyan-soft:#e6f7f9;
+    --ink:#1c2433; --muted:#5b6677; --line:#e3e8ef;
+    --violet:#6d4ad4; --amber:#c77b12; --green:#159a64; --red:#d23b4e;
+    line-height:1.8; color:var(--ink);
+  }
+  .doc-summary .wrap{max-width:920px; margin:0 auto; padding:0 22px 78px}
+  .doc-summary section{background:#fff; border:1px solid var(--line); border-radius:14px; padding:30px 34px; margin-top:26px; box-shadow:0 1px 3px rgba(16,32,64,.04)}
+  .doc-summary section.first{margin-top:-38px}
+  .doc-summary h2{font-size:14px; letter-spacing:.04em; color:var(--cyan); margin:0 0 6px; font-weight:800}
+  .doc-summary h2 + .h2title{font-size:24px; font-weight:800; margin:0 0 18px; color:var(--navy)}
+  .doc-summary h3{font-size:19px; margin:0 0 10px; color:var(--navy)}
+  .doc-summary p{margin:0 0 12px}
+  .doc-summary .lead{font-size:17px; color:var(--muted)}
+  .doc-summary ul.clean{margin:0 0 8px; padding-right:20px; padding-left:0}
+  .doc-summary ul.clean li{margin:6px 0}
+  .doc-summary table{border-collapse:collapse; width:100%; margin:10px 0; font-size:15px}
+  .doc-summary th,.doc-summary td{text-align:right; padding:11px 14px; border-bottom:1px solid var(--line); vertical-align:top}
+  .doc-summary th{background:var(--cyan-soft); color:var(--navy); font-weight:700; font-size:14px}
+  .doc-summary tr:last-child td{border-bottom:none}
+  .doc-summary .flow{display:flex; flex-wrap:wrap; gap:8px; align-items:stretch; margin:18px 0 6px}
+  .doc-summary .flow .step{flex:1 1 120px; min-width:120px; background:var(--navy); color:#fff; border-radius:10px; padding:12px 10px; text-align:center}
+  .doc-summary .flow .step b{display:block; font-size:15px; margin-bottom:3px}
+  .doc-summary .flow .step small{color:#9fb2cc; font-size:12px}
+  .doc-summary .flow .arrow{align-self:center; color:var(--cyan); font-weight:800; font-size:20px}
+  .doc-summary .uc{border:1px solid var(--line); border-right:4px solid var(--cyan); border-radius:10px; padding:18px 20px; margin:16px 0; background:#fcfdfe}
+  .doc-summary .uc .id{display:inline-block; background:var(--cyan); color:#fff; font-weight:700; font-size:13px; padding:3px 10px; border-radius:6px; margin-bottom:8px; letter-spacing:.03em; direction:ltr}
+  .doc-summary .uc h3{margin:0 0 8px}
+  .doc-summary .uc .role{font-size:14px; color:var(--muted); margin:0 0 10px}
+  .doc-summary .uc .role b{color:var(--ink)}
+  .doc-summary .uc .value{background:var(--cyan-soft); border-radius:8px; padding:10px 14px; margin-top:10px; font-size:15px; color:#0c5e66}
+  .doc-summary .uc .value b{color:#0a4951}
+  .doc-summary .uc .fix{background:#eafaf2; border:1px solid #bfe9d4; border-radius:8px; padding:10px 14px; margin-top:10px; font-size:15px; color:#0c5e39}
+  .doc-summary .uc .fix b{color:#0a7a45}
+  .doc-summary .tags{display:flex; gap:8px; margin-top:8px; flex-wrap:wrap}
+  .doc-summary .tag{font-size:13px; font-weight:700; padding:3px 10px; border-radius:999px}
+  .doc-summary .tag.violet{background:#efeaff; color:var(--violet)}
+  .doc-summary .tag.amber{background:#fdf0db; color:var(--amber)}
+  .doc-summary .tag.green{background:#e4f6ec; color:var(--green)}
+  .doc-summary .tag.red{background:#fde8ec; color:var(--red)}
+  .doc-summary .tag.cyan{background:var(--cyan-soft); color:#0c5e66}
+  .doc-summary code{background:#eef2f7; border:1px solid #e0e7ef; border-radius:5px; padding:1px 6px; font:13px/1.5 'JetBrains Mono',ui-monospace,Menlo,Consolas,monospace; color:#0b3a63; direction:ltr; unicode-bidi:embed; display:inline-block}
+
+  /* ===================== PART 2 · DETAILED PLAN (scoped) ===================== */
+  .doc-plan{
+    --navy:#0b1f3a; --navy-2:#12305c; --cyan:#0bb4c4; --cyan-dk:#087f8c;
+    --ink:#1a2433; --muted:#5b6b82; --line:#e2e8f0; --bg:#f4f7fb; --card:#ffffff;
+    --block:#e11d48; --warn:#d97706; --ack:#0ea5e9; --ok:#059669; --chip:#eef4fb; --amber:#d97706;
+    color:var(--ink);
+  }
+  .doc-plan .wrap{max-width:960px; margin:0 auto; padding:0 24px 80px}
+  .doc-plan .locked{background:var(--card); border:1px solid var(--line); border-inline-start:4px solid var(--cyan); border-radius:12px; padding:18px 22px; margin:-44px 0 22px; box-shadow:0 8px 24px rgba(11,31,58,.08)}
+  .doc-plan .locked h2{margin:0 0 10px; font-size:15px; letter-spacing:.02em; color:var(--navy)}
+  .doc-plan .locked ol{margin:0; padding-inline-start:22px}
+  .doc-plan .locked li{margin:6px 0}
+  .doc-plan .shipped{margin-top:14px; padding:12px 15px; background:#ecfdf5; border:1px solid #a7f3d0; border-radius:9px; color:#065f46; font-size:14.5px}
+  .doc-plan .shipped b{color:#047857}
+  .doc-plan .revnote{background:#eff6ff; border:1px solid #bfdbfe; border-inline-start:4px solid #2563eb; border-radius:11px; padding:15px 20px; margin:0 0 26px; font-size:14.5px; color:#1e3a8a}
+  .doc-plan .revnote b{color:#1d4ed8}
+  .doc-plan .revnote .tags{margin-top:8px}
+  .doc-plan .movetag{display:inline-block; background:#dbeafe; color:#1e40af; border-radius:6px; padding:2px 10px; font-size:13px; font-weight:600; margin:3px 0 0 6px}
+  .doc-plan .phase{background:var(--card); border:1px solid var(--line); border-radius:14px; padding:0 0 8px; margin:22px 0; overflow:hidden; box-shadow:0 6px 20px rgba(11,31,58,.06)}
+  .doc-plan .phase > .head{display:flex; align-items:center; gap:14px; padding:20px 24px; background:linear-gradient(270deg,#f8fbff,#ffffff); border-bottom:1px solid var(--line)}
+  .doc-plan .tag{flex:0 0 auto; width:44px; height:44px; border-radius:11px; background:var(--navy); color:#fff; font-weight:800; font-size:19px; display:flex; align-items:center; justify-content:center; box-shadow:0 4px 12px rgba(11,31,58,.25)}
+  .doc-plan .tag.f{background:var(--cyan-dk); font-size:12px}
+  .doc-plan .phase h3{margin:0; font-size:20px; font-weight:800; color:var(--navy)}
+  .doc-plan .phase h3 .flag{display:inline-block; margin-inline-start:8px; font-size:12px; font-weight:700; color:#1d4ed8; background:#dbeafe; border-radius:6px; padding:2px 9px; vertical-align:middle}
+  .doc-plan .phase .body{padding:8px 24px 4px}
+  .doc-plan .outcome{background:var(--chip); border-radius:9px; padding:12px 15px; margin:14px 0; font-size:15px; color:#26364d}
+  .doc-plan .outcome b{color:var(--navy)}
+  .doc-plan .subhead{margin:22px 0 4px; font-size:16px; font-weight:800; color:var(--navy); border-top:1px dashed var(--line); padding-top:16px}
+  .doc-plan .subhead:first-of-type{border-top:none; padding-top:4px}
+  .doc-plan h4{margin:16px 0 6px; font-size:13.5px; color:var(--cyan-dk); font-weight:700}
+  .doc-plan p{margin:8px 0}
+  .doc-plan ul{margin:8px 0; padding-inline-start:22px}
+  .doc-plan li{margin:5px 0}
+  .doc-plan code{background:#eef2f7; border:1px solid #e0e7ef; border-radius:5px; padding:1px 6px; font:13px/1.5 'JetBrains Mono',ui-monospace,Menlo,Consolas,monospace; color:#0b3a63; direction:ltr; unicode-bidi:embed; display:inline-block}
+  .doc-plan pre{background:var(--navy); color:#e6f1fb; border-radius:10px; padding:16px 18px; overflow:auto; font:12.5px/1.7 'JetBrains Mono',ui-monospace,Menlo,Consolas,monospace; margin:12px 0; direction:ltr; text-align:left; unicode-bidi:embed}
+  .doc-plan pre .hl{color:var(--cyan)}
+  .doc-plan table{border-collapse:collapse; width:100%; margin:12px 0; font-size:14px}
+  .doc-plan th,.doc-plan td{border:1px solid var(--line); padding:8px 12px; text-align:right; vertical-align:top}
+  .doc-plan th{background:#f1f6fc; color:var(--navy); font-weight:700; font-size:13px}
+  .doc-plan tr:nth-child(even) td{background:#fafcfe}
+  .doc-plan .v{display:inline-block; padding:1px 10px; border-radius:999px; font-size:12px; font-weight:700; white-space:nowrap}
+  .doc-plan .v.block{background:#fee2e2; color:var(--block)}
+  .doc-plan .v.warn{background:#fef3c7; color:var(--warn)}
+  .doc-plan .v.ack{background:#e0f2fe; color:#0369a1}
+  .doc-plan .grid16{display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:8px; margin:12px 0}
+  .doc-plan .grid16 .cell{background:#f6f9fd; border:1px solid var(--line); border-radius:8px; padding:8px 12px; font-size:13.5px}
+  .doc-plan .grid16 .cell .n{color:var(--cyan-dk); font-weight:800; margin-inline-end:6px}
+  .doc-plan .grid16 .cell.lux{background:#fef9c3; border-color:#fde68a}
+  .doc-plan .done{margin:16px 0 6px; padding:11px 15px; border-radius:9px; background:#f0fdf4; border:1px solid #bbf7d0; color:#166534; font-size:14px}
+  .doc-plan .done b{color:#15803d}
+  .doc-plan .band{background:var(--navy); color:#fff; border-radius:14px; padding:24px 26px; margin:26px 0}
+  .doc-plan .band h3{margin:0 0 14px; color:#fff; font-size:20px}
+  .doc-plan .band table th{background:rgba(255,255,255,.08); color:#dbe7f5; border-color:rgba(255,255,255,.14)}
+  .doc-plan .band table td{border-color:rgba(255,255,255,.12); color:#e8f0fa}
+  .doc-plan .band table tr:nth-child(even) td{background:rgba(255,255,255,.03)}
+  .doc-plan .band .moved{color:var(--cyan); font-weight:700}
+  .doc-plan .signoff{background:#fffbeb; border:1px solid #fde68a; border-radius:14px; padding:22px 26px; margin:26px 0}
+  .doc-plan .signoff h3{margin:0 0 6px; color:#92400e; font-size:20px}
+  .doc-plan .signoff p.lead{margin:0 0 12px; color:#a16207; font-size:14.5px}
+  .doc-plan .signoff ol{margin:0; padding-inline-start:22px}
+  .doc-plan .signoff li{margin:9px 0}
+  .doc-plan .signoff b{color:#78350f}
+
+  @media print{
+    body{background:#fff}
+    .master,.part-hero{box-shadow:none}
+    .doc-summary section,.doc-summary .uc{box-shadow:none; break-inside:avoid; border-color:#ccc}
+    .doc-plan .phase,.doc-plan .locked,.doc-plan .band,.doc-plan .signoff,.doc-plan .revnote{box-shadow:none; break-inside:avoid}
+    .doc-plan .phase{break-inside:avoid-page}
+  }
+</style>
+</head>
+<body>
+
+<header class="master">
+  <div class="kicker">عمليات الأسطول · المخطط الرئيسي الموحّد</div>
+  <h1>دورة حياة الأسطول المتكاملة</h1>
+  <p class="sub">الملخّص التنفيذي وخطة التنفيذ التفصيلية — في مستند واحد</p>
+  <div class="meta">
+    <span>📅 2 يوليو 2026</span>
+    <span>👤 إلى: عمر — للاعتماد</span>
+    <span>📄 النسخة 12 — جاهزة للاعتماد</span>
+  </div>
+</header>
+
+<nav class="toc">
+  <a href="#part-summary"><span class="n">الجزء الأول</span><span class="t">الملخّص التنفيذي</span><span class="d">الركائز الأربع + فحص المنطق — نظرة عامة سريعة قبل التفاصيل</span></a>
+  <a href="#part-plan"><span class="n">الجزء الثاني</span><span class="t">خطة التنفيذ التفصيلية</span><span class="d">11 مرحلة · الجداول والواجهات وآلة الحالات + نقاط الاعتماد</span></a>
+</nav>
+
+<!-- ==================== PART 1 · EXECUTIVE SUMMARY ==================== -->
+<div class="doc-summary" id="part-summary">
+  <header class="part-hero">
+    <div class="inner">
+      <span class="ph-badge">الجزء الأول · عرض تنفيذي</span>
+      <div class="ph-title">حالة الاستخدام الرئيسية الموحّدة</div>
+      <div class="ph-sub">نموذج تشغيلي واحد لنظام الأسطول — من الحجز إلى الإطلاق، بأربع ركائز</div>
+    </div>
+  </header>
+  <div class="wrap">
+
+    <section class="first">
+      <h2>كيف تقرأ هذا المستند</h2>
+      <div class="h2title">أربع ركائز + فحص منطق</div>
+      <p class="lead">هذا هو الملخص التنفيذي — الركائز الأربع لكيفية عمل الأسطول من البداية للنهاية.
+      أما خطة البناء التفصيلية (الجداول والواجهات وآلة الحالات) فتوجد في <b>الجزء الثاني</b> من هذا المستند.
+      اللغة توجيهية: كل بند يذكر ما <b>يجب</b> على النظام فعله. والقسم الأخير هو فحص المنطق — <b>حُسِم تناقضان (النسخة 7)</b>
+      وبقي <b>بندٌ واحد مفتوح</b> يحتاج قراراً قبل البناء.</p>
+
+      <div class="flow">
+        <div class="step"><b>بوابة الجاهزية</b><small>فحص ما قبل التأجير</small></div>
+        <div class="arrow">←</div>
+        <div class="step"><b>تسليم موقَّع</b><small>صور + توقيع</small></div>
+        <div class="arrow">←</div>
+        <div class="step"><b>إرجاع / ضرر</b><small>تقييم مُهيكل</small></div>
+        <div class="arrow">←</div>
+        <div class="step"><b>حماية النقد</b><small>وديعة · مخالفات</small></div>
+        <div class="arrow">←</div>
+        <div class="step"><b>كراج + موافقة</b><small>توجيه + تكلفة</small></div>
+        <div class="arrow">←</div>
+        <div class="step"><b>ضمان جودة</b><small>إطلاق للتأجير</small></div>
+      </div>
+    </section>
+
+    <!-- الركيزة 1 -->
+    <section>
+      <h2>الركيزة 1</h2>
+      <div class="h2title">دورة حياة التأجير — العمود الفقري التشغيلي</div>
+      <p class="lead">لا تغادر السيارة قبل أن تجتاز بوابة الجاهزية، ويُوثَّق تسليمها بالصور، ويوقّع العميل.
+      ونفس الانضباط يُطبَّق عند الإرجاع — هذه حمايتنا القانونية.</p>
+
+      <div class="uc">
+        <span class="id">1</span>
+        <h3>🛡️ الحارس — بوابة الجاهزية (فحص ما قبل التأجير)</h3>
+        <p class="role"><b>من:</b> المبيعات &nbsp;·&nbsp; <b>الهدف:</b> ألّا تُسلَّم سيارة غير جاهزة</p>
+        <p>لا تُسلَّم أي سيارة حتى تجتاز الفحوص التسعة: التوفّر، وصلاحية التسجيل/التأمين <b>حتى تاريخ الإرجاع</b>،
+        وعدم وجود عطل حرج للسلامة، ونافذة السيرفيس، والـ GPS، وإقفال آخر استلام، والغسيل. الموانع تُوقِف الحجز،
+        والتحذيرات يجب الإقرار بها.</p>
+        <div class="value"><b>القيمة للعمل:</b> لا سيارة غير صالحة تصل العميل — والقرار مبنيّ على بيانات، لا على العجلة.</div>
+      </div>
+
+      <div class="uc">
+        <span class="id">2</span>
+        <h3>📷 التسليم — 16 صورة إلزامية + توقيع العميل / OTP</h3>
+        <p class="role"><b>من:</b> السائق &nbsp;·&nbsp; <b>الهدف:</b> توثيق حالة السيارة عند الخروج، بتأكيد العميل</p>
+        <p>يلتقط السائق مجموعة الصور الإلزامية كاملة (أمام/خلف/جوانب/زوايا/جنوط/زجاج/داخلي/عداد/بنزين/خدوش سابقة/مفتاح/احتياطي
+        + فيديو 360° للفاخرة). و<b>يرفض النظام إتمام التسليم</b> حتى تكتمل التغطية <b>ويؤكّد العميل</b> الحالة بتوقيع أو OTP.
+        كل صورة مرتبطة بالعقد + السيارة + الوقت + الموقع + السائق.</p>
+        <div class="value"><b>القيمة للعمل:</b> سجل حالة موقَّع يحسم أي نزاع لاحق حول الأضرار — لا كلمة ضدّ كلمة.</div>
+      </div>
+
+      <div class="uc" style="border-right-color:var(--amber)">
+        <span class="id" style="background:var(--amber)">3</span>
+        <h3>🚦 قاعدة «أولوية التأجير»</h3>
+        <p class="role"><b>من:</b> المبيعات &nbsp;·&nbsp; <b>الهدف:</b> تعظيم الاستغلال مع إبقاء السلامة حاجزاً صلباً</p>
+        <p>الحجز مسموح لسيارة <b>🟢 خضراء</b> و<b>🟠 برتقالية</b> — البرتقالية تتطلّب إقراراً موثَّقاً بالحالة من موظف المبيعات.
+        و<b>🔴 الحمراء منعٌ صارم</b>. أما <b>🟡 الصفراء</b> فتُعامَل كالبرتقالية تماماً (قابلة للتأجير مع إقرار).</p>
+        <div class="value"><b>القيمة للعمل:</b> أسطول مستغَلٌّ لأقصى حدّ، والسلامة تبقى الخطّ الأحمر الوحيد.</div>
+      </div>
+
+      <div class="uc">
+        <span class="id">4</span>
+        <h3>🔄 مسار الاستلام / الخدوش — سلسلة المساءلة</h3>
+        <p class="role"><b>من:</b> السائق ← المديران &nbsp;·&nbsp; <b>الهدف:</b> ألّا يُسقَط أي خدش، ولا يقرّر السائق المسؤولية</p>
+        <p><b>السائق يوثّق</b> (صورة + يعلّم الخدش على المخطط) → النظام يُنشئ <b>مسودة تقييم أضرار</b> تلقائياً →
+        <b>يُشعَر عبدالله ووليد (المديران)</b> فوراً للتقييم النهائي. السائق <b>لا</b> يملك سلطة تسعير أو مسؤولية — يعلّم فقط.</p>
+        <div class="value"><b>القيمة للعمل:</b> كل خدش يُنتِج سجلاً مملوكاً باسمٍ عليه — لا شيء يضيع، وحكم المسؤولية لجهة مختصّة.</div>
+      </div>
+    </section>
+
+    <!-- الركيزة 2 -->
+    <section>
+      <h2>الركيزة 2</h2>
+      <div class="h2title">محرك الصيانة والحوادث</div>
+
+      <div class="flow">
+        <div class="step"><b>المدير يؤكّد</b><small>تقييم + تكلفة</small></div>
+        <div class="arrow">←</div>
+        <div class="step"><b>«قيد الإصلاح»</b><small>تلقائياً</small></div>
+        <div class="arrow">←</div>
+        <div class="step"><b>مهمة لأبو معروف</b><small>طابوره</small></div>
+        <div class="arrow">←</div>
+        <div class="step"><b>عرض سعر + موافقة</b><small>حسب المبلغ</small></div>
+        <div class="arrow">←</div>
+        <div class="step"><b>إصلاح ← ضمان جودة</b><small>إطلاق</small></div>
+      </div>
+
+      <div class="uc">
+        <span class="id">5</span>
+        <h3>🔧 الصيانة الروتينية</h3>
+        <p class="role"><b>من:</b> النظام &nbsp;·&nbsp; <b>الهدف:</b> التقاط السيارة قبل العطل</p>
+        <p>الزيت / الفلتر / البطارية مدفوعةً بتتبّع الكيلومترات وكواشف استحقاق السيرفيس. والبطارية نتابع حالتها وموعد تبديلها.</p>
+        <div class="value"><b>القيمة للعمل:</b> صيانة استباقية تقلّل الأعطال المفاجئة والتوقّف.</div>
+      </div>
+
+      <div class="uc" style="border-right-color:var(--red)">
+        <span class="id" style="background:var(--red)">6</span>
+        <h3>🔁 محرّك دورة الاستقرار (ما بعد الحادث) — صارم ومفروض</h3>
+        <p class="role"><b>من:</b> النظام ← أبو معروف &nbsp;·&nbsp; <b>الهدف:</b> فرض استقرار السيارة المُعاد بناؤها بالنظام لا بالذاكرة</p>
+        <p>لحظة انتقال سيارة «ما بعد حادث» من <b>«قيد الإصلاح» ← «متاحة»</b>، يحقن النظام <b>تذكرة فحص كل 5 أيام</b>. ولا تُقفَل التذكرة
+        بضغطة — الإقفال يتطلّب <b>3 صور جديدة (العداد + حجرة المحرك + الإطارات) + «نجاح» صريح</b>. وإن تأخّر الموعد <b>ولو ساعة</b> ←
+        <b>حظر سلامة</b> فوري (الأعلى أولوية) + تنبيه الأدمن. وبعد <b>3 دورات نظيفة (15 يوماً)</b> تتخرّج تلقائياً للجدول القياسي. كل فحص
+        يُسجَّل في <b>auto_maintenance_audits</b>.</p>
+        <div class="value"><b>القيمة للعمل:</b> السيارات الخطرة محتملة العودة لا يمكن أن تفلت — النظام يفرض كل فحص ويُوقِف المتأخّرة تلقائياً.</div>
+      </div>
+
+      <div class="uc" style="border-right-color:var(--amber)">
+        <span class="id" style="background:var(--amber)">7</span>
+        <h3>🪜 سلّم دعم الحادث</h3>
+        <p class="role"><b>من:</b> المبيعات/العمليات ← أبو معروف &nbsp;·&nbsp; <b>الهدف:</b> إبقاء العميل متنقّلاً</p>
+        <p>العطل المُبلَّغ أثناء الإيجار يتصعّد ثلاث درجات:</p>
+        <ul class="clean">
+          <li><b>1) دعم هاتفي (عن بُعد)</b> — أول محاولة.</li>
+          <li><b>2) إصلاح ميداني</b> — أبو معروف يزور العميل.</li>
+          <li><b>3) تبديل السيارة</b> — إذا فشل الأولان.</li>
+        </ul>
+        <div class="value"><b>القيمة للعمل:</b> تصعيد منظّم بدل ارتجال — والعميل لا يبقى عالقاً.</div>
+      </div>
+
+      <div class="uc">
+        <span class="id">8</span>
+        <h3>💰 مصفوفة الموافقات</h3>
+        <p class="role"><b>من:</b> المُوافِق حسب المبلغ &nbsp;·&nbsp; <b>الهدف:</b> لا عمل يبدأ حتى يوافق الشخص المناسب</p>
+        <p>إصلاحات الأضرار تتطلّب موافقة مالية تربط <b>تقييم المدير</b> بـ<b>أمر الصيانة</b>: عرض سعر من الكراج، ثم موافقة متدرّجة
+        حسب المبلغ (مشرف → مدير عمليات/أسطول → مدير فرع → مدير عام)، مع رفع درجةٍ للفاخرة والحوادث.</p>
+        <div class="value"><b>القيمة للعمل:</b> ضبط مالي كامل — لا صرف دون موافقة الدرجة الصحيحة.</div>
+      </div>
+    </section>
+
+    <!-- الركيزة 3 -->
+    <section>
+      <h2>الركيزة 3</h2>
+      <div class="h2title">التحكم بالوصول حسب الأدوار — مَن يُسمح له بماذا</div>
+      <table>
+        <tr><th>الدور</th><th>الصلاحية</th><th>السلطة</th><th>غير مسموح صراحةً</th></tr>
+        <tr>
+          <td><b>السائق</b></td>
+          <td>logistics</td>
+          <td>الاستلام / التسليم، التقاط الصور، تعليم الخدوش، نقل السيارات</td>
+          <td><b>لا سلطة تسعير أو مسؤولية</b> — يوثّق فقط</td>
+        </tr>
+        <tr>
+          <td><b>المديران</b><br>(عبدالله / وليد)</td>
+          <td>damage.assess</td>
+          <td>تقييم الخدوش، توفير القطع، اعتماد التكلفة، متابعة الحوادث؛ التأكيد ← «قيد الإصلاح»</td>
+          <td>—</td>
+        </tr>
+        <tr>
+          <td><b>المفتّش</b><br>(أبو معروف)</td>
+          <td>initiate</td>
+          <td>طابور الفحص، اختبارات ضمان الجودة، الإصلاحات الميدانية، توقيع «جاهزة للإطلاق»</td>
+          <td>انظر التناقض 3 (فحص الذات)</td>
+        </tr>
+      </table>
+      <p style="margin-bottom:0"><b>الطوابير مُقيَّدة بالدور بحكم البناء:</b> الشاشات محكومة بالصلاحيات، وكل طابور مُقيَّد بالعمل الذي يملكه دوره —
+      فيرى أبو معروف شاشة مختلفة عن السائقين. البناء الجديد الوحيد هنا: شاشة تقييم المديرَين.</p>
+    </section>
+
+    <!-- الركيزة 2.5 -->
+    <section>
+      <h2>الركيزة 2.5</h2>
+      <div class="h2title">حماية العميل والمال — طبقة التدفّق النقدي والمخاطر</div>
+      <p class="lead">الجانب المالي الذي يُهمله البروتوكول المتمحور حول السيارة — وديعة يمكن الخصم منها، محجوزة حتى تُسوّى المخالفات،
+      ووسم مخاطر يمنع تأجير عميل معروف بسوء تعامله.</p>
+
+      <div class="uc" style="border-right-color:var(--green)">
+        <span class="id" style="background:var(--green)">9</span>
+        <h3>🧾 سجل الوديعة</h3>
+        <p class="role"><b>من:</b> الفريق (billing) &nbsp;·&nbsp; <b>الهدف:</b> وديعة يمكن الخصم منها فعلاً</p>
+        <p>تتبّع المدين / الدائن لكل عقد على سجل حقيقي. تكلفة الضرر التي حدّدها المدير، والمخالفات، والبنزين تُخصَم منه؛
+        والدورة هي حجز ← خصم ← إرجاع/ردّ. ورصيد الردّ يمكن أن يذهب إلى محفظة العميل.</p>
+        <div class="value"><b>القيمة للعمل:</b> قرار الضرر يصبح ذا أثر مالي حقيقي بدل أن يبقى حبراً على ورق.</div>
+      </div>
+
+      <div class="uc" style="border-right-color:var(--green)">
+        <span class="id" style="background:var(--green)">10</span>
+        <h3>🚧 حجز المخالفات / السالك</h3>
+        <p class="role"><b>من:</b> النظام &nbsp;·&nbsp; <b>الهدف:</b> ألّا تُردّ الوديعة قبل تسوية ما يصل متأخّراً</p>
+        <p>السالك والمخالفات في الإمارات تصل <b>بعد</b> رجوع السيارة — لذا يُحظِر النظام <b>أي ردّ للوديعة حتى تُسوّى</b>.
+        المخالفة الواصلة تُخصَم من الوديعة؛ والحجز يُرفَع تلقائياً بعد المهلة أو بتسوية يدوية.</p>
+        <div class="value"><b>القيمة للعمل:</b> سدّ تسرّب نقدي كلاسيكي — لا وديعة تُردّ ثم تصل مخالفتها.</div>
+      </div>
+    </section>
+
+    <!-- مركز القيادة -->
+    <section>
+      <h2>الركيزة العابرة</h2>
+      <div class="h2title">مركز القيادة — الشفافية الكاملة</div>
+      <p class="lead">مكانٌ واحد لعمر والأدمن يجيب: «مَن فعل ماذا، وأين كل سيارة، وما المتعثّر؟» — لحظياً. بُنِي بخفّة على البيانات القائمة:
+      جدول <code>activity_log</code> واحد رفيع، والباقي قراءات على آلة الحالات.</p>
+
+      <div class="uc" style="border-right-color:var(--cyan)">
+        <span class="id">12</span>
+        <h3>📡 خلاصة النشاط الفورية (مَن فعل ماذا)</h3>
+        <p class="role"><b>من:</b> النظام &nbsp;·&nbsp; <b>الهدف:</b> لا تحديثات صامتة</p>
+        <p>كل إجراء حرج (تسعير، موافقة، تجهيز للإطلاق، تسجيل فحص/ضرر، تجاوز) يُدفَع إلى خلاصة عامة تُظهِر <b>الفاعل · الوقت · التغيير المحدَّد</b>.</p>
+        <div class="value"><b>القيمة للعمل:</b> سجلّ حيّ لكل تصرّف — يُغلِق باب «التغييرات الصامتة».</div>
+      </div>
+
+      <div class="uc" style="border-right-color:var(--cyan)">
+        <span class="id">13</span>
+        <h3>📍 متتبّع حالة السيارة الحيّة (أين السيارة؟)</h3>
+        <p class="role"><b>من:</b> الأدمن / عمر &nbsp;·&nbsp; <b>الهدف:</b> مصدر واحد لموقع كل سيارة</p>
+        <p>كل سيارة تُظهِر <b>الحالة ← المالك/المُكلَّف</b> (سائق / كراج / مُرسِل)؛ وإن كانت صيانة ← <b>أيّ كراج</b> يحملها و<b>أيّ مشرف</b> من فريقنا.</p>
+        <div class="value"><b>القيمة للعمل:</b> «أين هي ومَن يحملها» للأسطول كلّه — بلا لوحات مجزّأة.</div>
+      </div>
+
+      <div class="uc" style="border-right-color:var(--cyan)">
+        <span class="id">14</span>
+        <h3>📊 النظرة الإدارية العامة</h3>
+        <p class="role"><b>من:</b> عمر + الأدمن &nbsp;·&nbsp; <b>الهدف:</b> التقاط الخلل بنظرة</p>
+        <p>ثلاث لوحات: <b>الصفراء في الميدان</b> (مؤجَّرة الآن)، و<b>الموافقات المعلّقة</b> (بانتظار الدرجة الأعلى)، و<b>المهامّ المتعثّرة</b>
+        (مُطالَب بها ولم تُنجَز خلال X ساعة — بالأحمر). وتضمّ أيضاً <b>السيارات في دورة الاستقرار</b> وتاريخ الفحص التالي.</p>
+        <div class="value"><b>القيمة للعمل:</b> الإدارة ترى المخاطر والاختناقات فوراً، لا بعد فوات الأوان.</div>
+      </div>
+    </section>
+
+    <!-- الذكاء والفرض -->
+    <section>
+      <h2>الركيزة العابرة</h2>
+      <div class="h2title">الذكاء والفرض — المراحل 9–11</div>
+      <p class="lead">طبقات تحمي المال والأصل وتُحسِّن القرار: اختيار الكراج بالبيانات، وذكاء التكلفة، وسلسلة الحادث بإيصالات، ومراقبة الاستخدام.</p>
+
+      <div class="uc" style="border-right-color:var(--cyan)">
+        <span class="id">15</span>
+        <h3>🏭 النظام يختار الكراج (متعدّد المعايير) + 💰 ذكاء التكلفة</h3>
+        <p>محرّك التوجيه يُقيّم كل كراج على <b>10 إشارات</b> (التخصّص، نوع العطل، فئة السيارة، التقييم، معدّل العودة، مدة الإنجاز، السعر، القطع، القرب، الضمان) ← أفضل 3 بأسبابها، ومن التاريخ <b>سعر تقديري</b>. وعرضٌ <b>&gt;20% فوق</b> المتوسط يرفع <b>تحذير تكلفة عالية</b> (بلا حظر). وكل إقفال يكتب <code>actual_cost</code> ويشحذ لقطة <code>garage_cost_stats</code>.</p>
+        <div class="value"><b>القيمة للعمل:</b> أنسب كراج بالبيانات لا العلاقات، ورؤية واضحة إن كنت تدفع أكثر.</div>
+      </div>
+
+      <div class="uc" style="border-right-color:var(--red)">
+        <span class="id" style="background:var(--red)">16</span>
+        <h3>🚨 سلسلة «الحادث ← الكراج» (بإيصالات)</h3>
+        <p>ضرر جديد/حادث ← إشعار <b>عالي الأولوية غير قابل للإغلاق</b> لعبدالله ووليد (صور + مسؤولية) ← تقديم التقييم ← مهمة تلقائية تحمل الملاحظات لأبو معروف الذي <b>لا يرى التذكرة قبل التقييم</b>. وكل مرحلة تختم <code>notified_at / viewed_at / actioned_at</code>.</p>
+        <div class="value"><b>القيمة للعمل:</b> تسليم مضمون بأثر كامل — لا «لم يصلني الإشعار».</div>
+      </div>
+
+      <div class="uc" style="border-right-color:var(--amber)">
+        <span class="id" style="background:var(--amber)">17</span>
+        <h3>📏 مراقبة الاستخدام وفرض المسافة</h3>
+        <p>كل تغيير حالة يتطلّب <b>صورة عداد + إدخالاً</b>؛ وقراءة أقلّ من السابقة <b>خطأ سلامة بيانات</b>، تُحظَر حتى يوافق <b>الأدمن</b> (للأدمن فقط). ومسافة فوق المسموح التعاقدي <b>+5%</b> تَسِم <code>excess_mileage</code> + تُنبّه الأدمن؛ ولوحة استخدام 🟢/🟡/🔴 لكل إيجار. <em>الـGPS/السياج مؤجَّل حتى وصل تغذية حيّة.</em></p>
+        <div class="value"><b>القيمة للعمل:</b> كل كيلومتر مُسجَّل وعصيٌّ على التلاعب، وإساءة العقد تُلتقَط تلقائياً.</div>
+      </div>
+    </section>
+
+    <!-- التناقضات -->
+    <section>
+      <h2>فحص المنطق</h2>
+      <div class="h2title">فحص المنطق — القرارات المفصلية مَحسومة</div>
+      <p class="lead">القرارات المفصلية التي كانت مفتوحة <b>حُسِمت</b> (النسخة 7): تعريف الأصفر، وفصل التقييم عن الموافقة. الخطة متّسقة وجاهزة للاعتماد.</p>
+
+      <div class="uc" style="border-right-color:var(--green)">
+        <span class="id" style="background:var(--green)">✔ 1</span>
+        <h3>الدرجة الصفراء — مُعرَّفة الآن</h3>
+        <p><b>القرار:</b> الأصفر رسمياً <b>قابل للتأجير مع إقرار</b>، يُعامَل <b>تماماً</b> كالبرتقالي. البوابة <b>لا</b> تمنع السيارة الصفراء،
+        لكن <b>يجب</b> أن تُسجِّل إقراراً صريحاً (<b>yellow_grade_ack</b>) عند إنشاء العقد.</p>
+        <div class="fix"><b>الحالة:</b> مُطبَّق فعلاً في بوابة الحجز — الأصفر يتطلّب الإقرار الموثَّق (<b>condition_ack_grade = 'yellow'</b> هو سجلّ الإقرار). لا عمل إضافي.</div>
+      </div>
+
+      <div class="uc" style="border-right-color:var(--green)">
+        <span class="id" style="background:var(--green)">✔ 2</span>
+        <h3>التقييم ≠ الموافقة</h3>
+        <p><b>القرار:</b> دور المدير هو <b>التقييم/التسعير</b> (تحديد التكلفة والنطاق)؛ أما <b>الموافقة</b> فتحكمها مصفوفة الموافقات (حسب المبلغ).
+        <b>valuated_by</b> (المدير) و<b>approved_by</b> (المُوقِّع المخوَّل) منفصلان.</p>
+        <div class="fix"><b>المنطق:</b> حين تتجاوز التكلفة المُقيَّمة حدَّ درجة المدير، تنتقل التذكرة إلى <b>pending_approval_hierarchy</b> وتُصعَّد؛
+        وضمن حدّه يكون هو المُوقِّع. قد تُوقَف السيارة («قيد الإصلاح») عند التقييم، لكن عمل الكراج ينتظر <b>approved_by</b>.</div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<!-- ==================== PART 2 · DETAILED PLAN ==================== -->
+<div class="doc-plan" id="part-plan">
+  <header class="part-hero">
+    <div class="inner">
+      <span class="ph-badge">الجزء الثاني · خطة التنفيذ</span>
+      <div class="ph-title">دورة حياة الأسطول المتكاملة — خطة التنفيذ</div>
+      <div class="ph-sub">عملية تأجير محكمة ومتكاملة من البداية للنهاية — بروتوكول عمر، موفَّقاً مع استراتيجية «أولوية التأجير».</div>
+    </div>
+  </header>
+  <div class="wrap">
+
+  <section class="locked">
+    <h2>القرارات النهائية المعتمدة في هذه الخطة</h2>
+    <ol>
+      <li><b>«أولوية التأجير» ثابتة</b> — يُمنع الحجز فقط عند الدرجة <b>الحمراء</b> أو وجود <b>عطل مفتوح حرج للسلامة</b>. الخضراء / البرتقالية / <b>الصفراء</b> تُؤجَّر مع إقرار موثَّق. <b>(النسخة 7)</b> الأصفر رسمياً <b>قابل للتأجير مع إقرار</b>، يُعامَل تماماً كالبرتقالي — لا يُمنَع أبداً، لكن يُسجَّل <code>yellow_grade_ack</code> عند إنشاء العقد.</li>
+      <li><b>إعادة تفعيل الجانب المالي</b> — مصفوفة موافقات مالية متدرّجة كاملة. <b>(النسخة 7)</b> <b>التقييم ≠ الموافقة النهائية</b>: المدير <em>يقيّم</em> (التكلفة/النطاق)؛ والموافقة تحكمها المصفوفة (حسب المبلغ). <code>valuated_by</code> و<code>approved_by</code> منفصلان.</li>
+      <li><b>إعادة تصنيف درجة الخطورة</b> إلى 4 مستويات (بسيط / متوسط / كبير / <b>حرج للسلامة</b>)؛ ويُشتق «الحرج للسلامة» من قائمة أعطال سلامة مثبَّتة في النظام — نفس القائمة تحكم منع الحجز، وتقييم الضرر، ومحفِّز اختبار القيادة.</li>
+    </ol>
+    <div class="shipped">✓ <b>مُنفَّذ بالفعل</b> (أساس المرحلة 1): بوابة الحجز — الأحمر يُمنع؛ البرتقالي/الأصفر يُؤجَّر فقط بعد إقرار موثَّق بحالة السيارة للعميل (<code>condition_ack_*</code>، ترحيل <code>2026_07_02_090000</code>).</div>
+  </section>
+
+  <div class="revnote">
+    <b>النسخة 11 — مراقبة الاستخدام وفرض المسافة:</b> كل تغيير حالة (تسليم / إرجاع / فحص أثناء الإيجار) يتطلّب <b>صورة عداد + إدخالاً يدوياً</b>؛ وقراءة أقلّ من السابقة تُطلِق <b>خطأ سلامة بيانات</b> وتحظر حتى يوافق الأدمن. مطابقة <b>الـGPS مقابل العداد</b> تَسِم <code>excess_mileage</code> + تُنبّه الأدمن عند تجاوز <b>المسموح + 5%</b>؛ سياج جغرافي اختياري؛ و<b>لوحة استخدام</b> أخضر/أصفر/أحمر في مركز القيادة. <em>شقّ العداد يُشدِّد خدمات قائمة ويُشحَن الآن؛ وشقّ الـGPS يحتاج تغذية تتبّع.</em> (النسخة 10 أضافت ذكاء التكلفة وسلسلة الحادث.)
+    <div class="tags">
+      <span class="movetag">صورة عداد + إدخال إلزامي · تراجع ← حظر صارم</span>
+      <span class="movetag">GPS مقابل العداد · تنبيه تجاوز المسافة عند +5%</span>
+      <span class="movetag">لوحة الاستخدام: 🟢 آمن · 🟡 قريب · 🔴 متجاوز</span>
+    </div>
+  </div>
+
+  <section style="background:var(--card); border:1px solid var(--line); border-radius:14px; padding:20px 24px; margin:22px 0; box-shadow:0 6px 20px rgba(11,31,58,.06)">
+    <h2 style="margin:0 0 4px; font-size:19px; font-weight:800; color:var(--navy)">بوابات الفحص الثلاث <span style="font-size:12.5px; font-weight:700; color:#1d4ed8; background:#dbeafe; border-radius:6px; padding:2px 9px; vertical-align:middle">محفِّزات إلزامية</span></h2>
+    <p style="margin:0 0 8px; color:var(--muted); font-size:14px">كل فحص في النظام تُطلقه إحدى ثلاث بوابات — لا سيارة تُفحَص «عشوائياً»، ولا واحدة تتخطّى بوابة.</p>
+    <table>
+      <thead><tr><th>البوابة</th><th>متى</th><th>أين تعيش</th><th>ماذا تُطلق</th></tr></thead>
+      <tbody>
+        <tr><td><b>ما قبل التأجير</b></td><td>قبل تسليم السيارة لعميل جديد</td><td>المرحلة 1 (الجاهزية + فحص تحقّق)</td><td>فحص جاهزية / تحقّق</td></tr>
+        <tr><td><b>الاستلام</b></td><td>عند رجوع السيارة</td><td>المرحلة 1 (الاستلام) ← المرحلة 2</td><td>المستلِم يعلّم خدوشاً جديدة ← <b>تقييم أضرار تلقائي</b></td></tr>
+        <tr><td><b>الحادث/العطل</b></td><td>عطل يُبلَّغ عنه أثناء الإيجار</td><td>المرحلة 2 (الحادث + مسار الدعم)</td><td>فحص حادث + تصعيد الدعم</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section style="background:var(--card); border:1px solid var(--line); border-radius:14px; padding:20px 24px; margin:22px 0; box-shadow:0 6px 20px rgba(11,31,58,.06)">
+    <h2 style="margin:0 0 4px; font-size:19px; font-weight:800; color:var(--navy)">الأدوار التشغيلية وسلسلة «الضرر ← الإصلاح» <span style="font-size:12.5px; font-weight:700; color:#1d4ed8; background:#dbeafe; border-radius:6px; padding:2px 9px; vertical-align:middle">النسخة 5</span></h2>
+    <p style="margin:0 0 8px; color:var(--muted); font-size:14px">مَن يفعل ماذا — وما الذي يفعله النظام <em>تلقائياً</em> بينهم.</p>
+    <table>
+      <thead><tr><th>الفاعل</th><th>الدور / الصلاحية</th><th>يفعل</th><th>إجراء النظام التلقائي على إدخاله</th></tr></thead>
+      <tbody>
+        <tr><td><b>السائق</b></td><td><code>maintenance.logistics</code></td><td>استلام/تسليم؛ <b>يعلّم</b> خدشاً جديداً (يوثّق فقط)</td><td>عند التعليم ← <b>إشعار عبدالله ووليد</b> + إنشاء مسودة تقييم أضرار تلقائياً</td></tr>
+        <tr><td><b>المديران — عبدالله / وليد</b></td><td><code>maintenance.delegate</code> + <b>جديد <code>damage.assess</code></b></td><td><b>تقييم</b>، <b>اعتماد القطع</b>، <b>تحديد التكلفة</b>، <b>تأكيد</b></td><td>عند التأكيد ← <b>حالة السيارة ← «قيد الإصلاح»</b> + <b>إنشاء مهمة في طابور أبو معروف</b></td></tr>
+        <tr><td><b>أبو معروف</b></td><td><code>maintenance.initiate</code></td><td>ينفّذ مهمة الفحص / الصيانة</td><td>يعمل عليها من طابوره الخاص (مُقيَّد بـ <code>inspected_by</code>)</td></tr>
+      </tbody>
+    </table>
+    <p style="margin:10px 0 0; font-size:13.5px; color:#41506a"><b>السلسلة:</b> السائق يعلّم ← 🔔 عبدالله ووليد ← (تقييم · قطع · تكلفة · تأكيد) ← <b>«قيد الإصلاح» تلقائياً</b> + <b>مهمة تلقائية</b> ← طابور أبو معروف ← ينفّذ ← ضمان الجودة (م5) ← الإطلاق.</p>
+    <p style="margin:10px 0 0; font-size:13px; color:#6d28d9; background:#f5f3ff; border:1px solid #ddd6fe; border-radius:8px; padding:9px 13px"><b>التغيير مقابل النسخة 4:</b> التقييم + القطع + التكلفة تنتقل من المُقيّم (أبو معروف) إلى <b>المديرَين</b>؛ وأبو معروف يصبح <b>المنفِّذ</b>. صلاحية <code>damage.evaluate</code> تحلّ محلّها <code>damage.assess</code> (المديران) + إسناد المهمة للمفتّش.</p>
+    <p style="margin:10px 0 0; font-size:13px; color:#065f46; background:#ecfdf5; border:1px solid #a7f3d0; border-radius:8px; padding:9px 13px"><b>هل يدعم نموذج البيانات طوابير مُقيَّدة بالدور؟ نعم.</b> الشاشات مُقيَّدة بالصلاحيات (Spatie <code>resource.action</code>) وكل طابور مُقيَّد بالعمل الذي يملكه دوره — لذا يرى أبو معروف شاشة مختلفة عن السائقين بحكم البناء. موجود فعلاً: نظام 7 أدوار، شاشات «طابوري» لكل مستخدم، حقول التقييد (<code>assigned_driver_id</code>، <code>inspected_by</code>، <code>workflow_status</code>)، إشعارات موجَّهة بالدور، وتعاقب الحدث اليدوي ← <code>operational_status</code> (نفس الخطّاف الذي يستخدمه «قيد الإصلاح» التلقائي). جديد: شاشة تقييم المديرَين <code>damage.assess</code>. ⚠️ يجب التحقق من <code>MyMaintenanceQueue</code> وتقييد <code>inspected_by</code> مقابل الكود الحيّ قبل البناء.</p>
+  </section>
+
+  <!-- FOUNDATION -->
+  <section class="phase">
+    <div class="head"><div class="tag f">الأساس</div><h3>التمهيد — إعادة تصنيف الخطورة + قائمة أعطال السلامة</h3></div>
+    <div class="body">
+      <div class="outcome"><b>لماذا أولاً:</b> مقياس الخطورة رباعي المستويات وقائمة أعطال السلامة المثبَّتة يشترك فيهما منع الحجز (م1)، وتقييم الضرر (م2)، وشارة الأولوية للحوادث (م2)، ومحفِّز اختبار القيادة (م5). نبنيها مرة ونعيد استخدامها في كل مكان.</div>
+      <ul>
+        <li>إعادة تصنيف <code>fault_severity</code>: routine←<b>بسيط</b>، moderate←<b>متوسط</b>، critical←<b>كبير</b>؛ وإضافة <b>حرج للسلامة</b> (يُسنَد فقط عبر قاعدة السلامة — لا ترقية شاملة).</li>
+        <li><b>جديد</b> <code>config/safety_critical_faults.php</code> — الفرامل، المقود، التعليق، القير، المكينة، الحرارة، التسريب، لمبة التحذير، الإطارات، الحوادث.</li>
+        <li>تحديث شارات/فلاتر/تحقق الخطورة (<code>Maintenance::FAULT_SEVERITIES</code>، <code>meta.js</code>، اللوحة + نموذج العقد).</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- PHASE 1 -->
+  <section class="phase">
+    <div class="head"><div class="tag">1</div><h3>تسليم محكم <span class="flag">جاهزية + توثيق + توقيع</span></h3></div>
+    <div class="body">
+      <div class="outcome"><b>الناتج التشغيلي:</b> لا تغادر السيارة الفرع قبل أن تجتاز لوحة الجاهزية، ويلتقط السائق مجموعة الصور الإلزامية كاملة، ويوقّع العميل. ونفس انضباط التصوير يُطبَّق عند الاستلام. هذه حمايتنا القانونية — حالة السيارة الدقيقة مرتبطة بعقد ووقت وموقع وسائق، مع تأكيد العميل موثَّقاً.</div>
+
+      <div class="subhead">1أ · بوابة الجاهزية والأهلية (الفحوصات التسعة) — بوابة ما قبل التأجير</div>
+      <p>خدمة واحدة، <code>VehicleReadinessService::evaluate(vehicle, out_date, in_date)</code> ← <code>{ blockers, warnings, acknowledgments }</code>. كل فحص إمّا <span class="v block">منع</span> <span class="v warn">تحذير</span> <span class="v ack">إقرار</span>. هذه <em>هي</em> <b>بوابة ما قبل التأجير</b>: التحقّق الإلزامي قبل أن يحصل عميل جديد على السيارة — لا يبدأ تسليم قبل اجتيازها.</p>
+      <table>
+        <thead><tr><th style="width:30px">#</th><th>الفحص</th><th>القرار (أولوية التأجير)</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>السيارة متاحة</td><td><span class="v block">منع</span> إذا مباعة / مشطوبة / موقوفة / خارج الخدمة</td></tr>
+          <tr><td>2</td><td>ضرر مفتوح</td><td><span class="v warn">تحذير</span> — <span class="v block">منع</span> إذا كان حرجاً للسلامة</td></tr>
+          <tr><td>3</td><td>أمر صيانة مفتوح</td><td><b>ليس مانعاً بذاته</b> — يُمنع فقط عند الدرجة الحمراء أو عطل حرج للسلامة</td></tr>
+          <tr><td>4</td><td>صلاحية التسجيل/التأمين <b>حتى تاريخ الإرجاع</b></td><td><span class="v block">منع</span> إذا انتهت قبل الإرجاع</td></tr>
+          <tr><td>5</td><td>السيرفيس مستحق خلال المدة أو 500 كم</td><td><span class="v warn">تحذير</span> / <span class="v ack">إقرار</span></td></tr>
+          <tr><td>6</td><td>الـ GPS يعمل (<b>جديد</b> <code>gps_last_seen_at</code>)</td><td><span class="v warn">تحذير</span> (منع للفاخرة / الرياضية)</td></tr>
+          <tr><td>7</td><td>آخر استلام (Check-In) مُقفل</td><td><span class="v block">منع</span> — يُغذّيه البند 1ب أدناه</td></tr>
+          <tr><td>8</td><td>الغسيل تم (<b>جديد</b> <code>cleaning_status</code>)</td><td><span class="v ack">إقرار</span></td></tr>
+          <tr><td>9</td><td>جاهزية حسب أيام الوقوف</td><td>تحدّد مستوى الجاهزية (انظر المرحلة 5)</td></tr>
+        </tbody>
+      </table>
+      <p><b>الواجهة:</b> <code>GET /Vehicle/{id}/readiness?out_date=&amp;in_date=</code>، يستدعيها نموذج العقد الجديد مباشرةً. <b>الترحيل:</b> <code>add_gps_and_cleaning_to_vehicles</code>.</p>
+
+      <div class="subhead">1ب · توثيق التسليم/الاستلام (قائمة الصور الإلزامية — 16 بنداً) — بوابة الاستلام</div>
+      <p><b>المبدأ: السائق / المستلِم يوثّق فقط — لا يقرّر.</b> تُفتَح جلسة لكل عقد عند التسليم (<code>check_out</code>) وعند الإرجاع (<code>check_in</code>)؛ ويرفض النظام إقفال الجلسة حتى تُلتَقط كل الزوايا الإلزامية. وعند الاستلام يعرض التطبيق صور التسليم جنباً إلى جنب للمقارنة التلقائية.</p>
+      <p><b>بوابة الاستلام:</b> الموظف <em>المستلِم</em> للسيارة يعلّم أي خدش جديد على مخطط السيارة. كل علامة جديدة (خدش غير موجود في صور التسليم) <b>تُطلق تلقائياً تقييم أضرار</b> — انظر سلسلة المساءلة في المرحلة 2أ. المستلِم لا يحكم بالمسؤولية أبداً؛ يعلّم فقط.</p>
+      <div class="grid16">
+        <div class="cell"><span class="n">1</span>الأمام</div>
+        <div class="cell"><span class="n">2</span>الخلف</div>
+        <div class="cell"><span class="n">3</span>الجهة اليمنى</div>
+        <div class="cell"><span class="n">4</span>الجهة اليسرى</div>
+        <div class="cell"><span class="n">5</span>الزوايا الأربع</div>
+        <div class="cell"><span class="n">6</span>الجنوط الأربعة</div>
+        <div class="cell"><span class="n">7</span>الزجاج الأمامي والخلفي</div>
+        <div class="cell"><span class="n">8</span>الداخل — المقاعد</div>
+        <div class="cell"><span class="n">9</span>الطبلون والشاشة</div>
+        <div class="cell"><span class="n">10</span>العداد</div>
+        <div class="cell"><span class="n">11</span>مؤشر البنزين</div>
+        <div class="cell"><span class="n">12</span>الخدوش الموجودة مسبقاً</div>
+        <div class="cell"><span class="n">13</span>مفتاح السيارة</div>
+        <div class="cell"><span class="n">14</span>الإطار الاحتياطي / عدة الطوارئ</div>
+        <div class="cell lux"><span class="n">15</span>فيديو 360° — للفاخرة / الرياضية</div>
+      </div>
+      <h4>البناء</h4>
+      <ul>
+        <li><b>جديد</b> <code>config/inspection_checklist.php</code> — مجموعة الزوايا الإلزامية (+ قاعدة فيديو 360° للفاخرة).</li>
+        <li>ترقية النموذج التجريبي الحالي <code>InspectionPrototype</code> إلى مسار حقيقي على مخزن الصور القائم <code>inspection_records</code> (S3)؛ واستبدال الحقل الحر <code>body_part</code> بالزوايا المُعدَّدة + بوابة اكتمال في الخادم.</li>
+        <li><b>ترحيل</b> <code>create_inspection_sessions</code>: <code>contract_id</code>، <code>phase</code> (check_out / check_in)، <code>completed_at</code>، حالة الاكتمال.</li>
+        <li>جلسة الاستلام المكتملة هي ما يجعل الفحص #7 في الجاهزية يمرّ.</li>
+      </ul>
+
+      <div class="subhead">1ج · توقيع العميل / OTP</div>
+      <p>عند التسليم يؤكّد العميل حالة السيارة الموثَّقة — بتوقيع مرسوم <b>أو</b> رمز OTP / رابط تأكيد. لا تسليم صحيحاً بدونه.</p>
+      <ul>
+        <li><b>ترحيل</b> <code>add_customer_confirmation_to_inspection_sessions</code>: <code>signature_s3_key</code>، <code>otp_code</code>، <code>otp_verified_at</code>، <code>confirmed_at</code>، <code>confirmed_via</code> (signature | otp | link).</li>
+        <li><b>الواجهات:</b> <code>POST /Inspections/session</code> (فتح مرتبط بالعقد) · <code>POST /Inspections/{session}/photo</code> (رفع صورة لزاوية) · <code>POST /Inspections/{session}/complete</code> (يُمنع حتى اكتمال التغطية) · <code>POST /Inspections/{session}/sign</code> (توقيع أو تحقق OTP).</li>
+      </ul>
+      <p><b>الصلاحيات:</b> التقاط السائق يستخدم <code>inspections.manage</code>. كل صورة مرتبطة بـ <b>العقد + السيارة + الوقت + الموقع + السائق</b> (قاعدة التوثيق عند عمر).</p>
+
+      <div class="done"><b>يُعتبر مكتملاً عندما:</b> يعرض نموذج العقد لوحة الفحوصات التسعة مباشرةً؛ ولا يكتمل التسليم دون مجموعة الصور الإلزامية كاملة <b>وتوقيع/OTP للعميل</b>؛ ويعرض الاستلام مقارنة قبل/بعد ويُقفل الحلقة مع الفحص #7.</div>
+    </div>
+  </section>
+
+  <!-- PHASE 2 -->
+  <section class="phase">
+    <div class="head"><div class="tag">2</div><h3>تقييم الأضرار وتوثيق الحوادث <span class="flag">قبل الطبقة المالية</span></h3></div>
+    <div class="body">
+      <div class="outcome"><b>الناتج التشغيلي:</b> حين ترجع السيارة بضرر، أو يُبلَّغ عن عطل أثناء الإيجار، <b>يوثّق السائق</b> — ثم <b>عبدالله ووليد (المديران)</b> يقيّمانه ويعتمدان القطع ويحدّدان التكلفة؛ وتأكيدهما يقلب السيارة تلقائياً إلى «قيد الإصلاح» ويُدرِج مهمة التنفيذ في طابور <b>أبو معروف</b>. هذا السجل هو المصدر الوحيد الذي يفتح أمر الصيانة ويُغذّي مصفوفة الموافقات المالية.</div>
+
+      <div class="subhead">2أ · نموذج تقييم الأضرار</div>
+      <p>حالياً الضرر مجرّد إسقاط لوني للقراءة فقط من حقول نصية حرة. سنبني سجلاً مُهيكلاً حقيقياً (<code>damage_evaluations</code>)، مرتبطاً بالعقد + صور جلسة الاستلام.</p>
+      <table>
+        <thead><tr><th>الحقل</th><th>الخيارات</th></tr></thead>
+        <tbody>
+          <tr><td>نوع الضرر</td><td>بدي / صبغ / جنط / إطار / زجاج / داخلي / ميكانيكي / كهربائي / حادث</td></tr>
+          <tr><td>درجة الخطورة</td><td>بسيط / متوسط / كبير / <b>حرج للسلامة</b> (يعيد استخدام مقياس التمهيد)</td></tr>
+          <tr><td>قابلة للتأجير؟</td><td>نعم / لا</td></tr>
+          <tr><td>السبب</td><td>العميل / استهلاك طبيعي / ضرر سابق / خطأ الكراج / غير معروف</td></tr>
+          <tr><td>مَن يتحمّل؟</td><td>العميل / الشركة / التأمين / الضمان / معلّق</td></tr>
+          <tr><td>يحتاج كراج؟</td><td>نعم / لا ← يفتح أمر صيانة</td></tr>
+          <tr><td>يحتاج سيارة بديلة؟</td><td>نعم / لا</td></tr>
+          <tr><td>تقرير شرطة؟</td><td>نعم / لا</td></tr>
+          <tr><td>تقدير أولي</td><td>درهم — يُغذّي شريحة الموافقة في المرحلة 4</td></tr>
+          <tr><td>صور داعمة</td><td><b>إلزامية</b></td></tr>
+          <tr><td>القرار</td><td>تحميل / بدون تحميل / حجز تأمين / تأمين / صيانة</td></tr>
+        </tbody>
+      </table>
+      <p><b>القاعدة الذهبية (مثبَّتة في النظام):</b> أي ضرر حرج للسلامة (فرامل، إطارات، مقود، لمبة تحذير، تعليق، حرارة، تسريب) ← <b>لا يمكن</b> إرجاع السيارة إلى «متاحة»، حتى لو كان هناك حجز منتظر. تعيد استخدام قائمة أعطال السلامة في التمهيد.</p>
+
+      <div style="background:#ecfdf5; border:1px solid #a7f3d0; border-radius:9px; padding:12px 15px; color:#065f46; font-size:14px"><b>محفِّز الاستلام التلقائي (سلسلة المساءلة — أدوار النسخة 5):</b> <b>السائق / المستلِم</b> يعلّم الخدوش الجديدة على مخطط السيارة عند الاستلام (المرحلة 1ب) — يوثّق فقط، لا يقرّر. كل علامة جديدة (خدش غير موجود في صور التسليم):
+        <ol style="margin:6px 0 0; padding-inline-start:20px">
+          <li><b>تُنشئ تلقائياً مسودة تقييم أضرار</b> (<code>damage_evaluations</code>، <code>pending_assessment</code>) — لا شيء يُسقَط بصمت.</li>
+          <li><b>تُشعِر فوراً عبدالله ووليد</b> (المديران يملكان التقييم).</li>
+          <li><b>المديران يقيّمان:</b> تأكيد الضرر، اعتماد القطع، تحديد التكلفة (النموذج أعلاه).</li>
+          <li>عند <b>تأكيد</b> المدير ← <b>حالة السيارة ← «قيد الإصلاح»</b> + <b>إنشاء مهمة في طابور أبو معروف</b> للتنفيذ.</li>
+        </ol>
+        السائق يعلّم · المديران يقرّران ويسعّران · أبو معروف ينفّذ — قفزتان تلقائيتان بينهم (← وديعة المرحلة 2.5 تخصم من التكلفة المُحدَّدة).</div>
+
+      <div class="subhead">2ب · تصنيف الحوادث التسعة (تذاكر أعطال أثناء الإيجار)</div>
+      <p>العطل المُبلَّغ عنه أثناء الإيجار يفتح تذكرة حادث/عطل مُصنَّفة إلى فئات عمر التسع، مع شارة أولوية عالية مدفوعة بالخطورة (الحرج للسلامة ← شارة حمراء، من مقياس التمهيد).</p>
+      <div class="grid16">
+        <div class="cell">عطل ميكانيكي</div>
+        <div class="cell">حادث</div>
+        <div class="cell">لمبة تحذير</div>
+        <div class="cell">مشكلة إطارات</div>
+        <div class="cell">مشكلة تكييف</div>
+        <div class="cell">بطارية</div>
+        <div class="cell">سوء استخدام العميل</div>
+        <div class="cell">استهلاك طبيعي</div>
+        <div class="cell">استبدال طارئ</div>
+      </div>
+      <ul>
+        <li><b>جديد</b> <code>config/incident_categories.php</code> — الفئات التسع، كل واحدة مربوطة بفئة عطل داخلية وموسومة إن كانت حرجة للسلامة أم لا.</li>
+        <li>توسيع مسار البلاغ الحالي <code>openComplaint</code> بحقل <code>incident_category</code>؛ وعرض شارة الأولوية على اللوحة / شاشة القيادة.</li>
+      </ul>
+
+      <div class="subhead">2ج · مسار دعم الحادث (بوابة الحادث/العطل)</div>
+      <p>العطل المُبلَّغ عنه أثناء الإيجار (المبيعات ↔ العمليات ↔ أبو معروف) يتصعّد عبر ثلاث درجات، كلٌّ مُسجَّلة على تذكرة الحادث:</p>
+      <ul>
+        <li><b>1 · حلّ هاتفي (عن بُعد)</b> — المحاولة الأولى؛ تُسجَّل النتيجة.</li>
+        <li><b>2 · إصلاح ميداني</b> — أبو معروف يزور العميل (تُنشأ مهمة لوجستية)؛ إن نجح، يُغلَق.</li>
+        <li><b>3 · تبديل السيارة</b> — إذا فشل الهاتفي والميداني، تُسلَّم سيارة بديلة للعميل (يرتبط بلوحة تبديل الصيانة القائمة).</li>
+      </ul>
+      <p><b>الحقل:</b> <code>resolution_path</code> (phone / onsite / swap) + حالة التصعيد على التذكرة؛ كل محاولة مختومة بالوقت ومَن والنتيجة. يعيد استخدام استقبال الشكاوى (المُطلِق)، واللوجستيك (الزيارة)، ولوحة التبديل (البديل) — بلا أنظمة جديدة، مجرد السلّم الذي يربطها.</p>
+
+      <h4>الترحيلات والنماذج</h4>
+      <ul>
+        <li><b>جديد</b> <code>damage_evaluations</code> (<code>contract_id, vehicle_id, inspection_session_id, damage_type, severity, is_rentable, cause, liable_party, needs_garage, needs_replacement, needs_police_report, estimate_amount, decision, notes</code>، + مسار العمل: <code>status</code> (<code>pending_assessment</code> ← <code>assessed</code> ← <code>task_created</code>)، <code>assessed_by</code> (عبدالله/وليد)، <code>assessed_at</code>، <code>parts_approved</code>، <code>assigned_cost</code>) + علاقة صور.</li>
+        <li><code>add_incident_category_and_resolution_to_maintenances</code> (تعداد الفئات التسع + <code>resolution_path</code> هاتفي/ميداني/تبديل + حالة التصعيد).</li>
+      </ul>
+      <h4>الواجهات وآلة الحالات</h4>
+      <ul>
+        <li><b>إنشاء تلقائي + إشعار:</b> إقفال جلسة استلام بعلامات جديدة من السائق يُطلق مراقباً ← مسودة <code>damage_evaluations</code> لكل علامة (<code>pending_assessment</code>) و<b>يُشعِر عبدالله ووليد</b>.</li>
+        <li><b>جديد</b> <code>POST /Damage-Evaluations/{id}/assess</code> (المديران، <code>damage.assess</code>) — تأكيد الضرر، اعتماد القطع، تحديد التكلفة ← عند التأكيد يضبط النظام <b><code>vehicle.operational_status = In-Repair</code></b> (بإعادة استخدام تعاقب الحدث اليدوي) و<b>يُنشئ المهمة في طابور أبو معروف</b> (<code>inspected_by</code> = أبو معروف، عند <code>inspection_pending</code>).</li>
+        <li><code>POST /maintenance-tickets/{ticket}/support-attempt</code> (درجة هاتفي/ميداني/تبديل) · <code>GET /Damage-Evaluations?status=pending_assessment</code> (طابور المديرَين) · <code>GET /contracts/{id}/damage-evaluations</code>.</li>
+      </ul>
+      <h4>الصلاحيات</h4>
+      <p><b>جديد</b> <code>damage.assess</code> — المديران (عبدالله / وليد) يقيّمان ويعتمدان القطع ويحدّدان التكلفة. السائق (<code>maintenance.logistics</code>) يوثّق فقط؛ وأبو معروف (<code>maintenance.initiate</code>) ينفّذ المهمة الناتجة. <em>(تحلّ محلّ <code>damage.evaluate</code> في النسخة 4.)</em></p>
+
+      <div class="done"><b>يُعتبر مكتملاً عندما:</b> خدش يعلّمه السائق يُشعِر عبدالله ووليد، وتأكيدهما يقلب السيارة تلقائياً إلى «قيد الإصلاح» ويُدرِج مهمة في طابور أبو معروف، وتتدفّق التكلفة المُحدَّدة إلى وديعة المرحلة 2.5 — بلا تسليم يدوي.</div>
+    </div>
+  </section>
+
+  <!-- PHASE 2.5 -->
+  <section class="phase">
+    <div class="head"><div class="tag" style="font-size:15px">2.5</div><h3>حماية العميل والوديعة <span class="flag">طبقة النقد والمخاطر</span></h3></div>
+    <div class="body">
+      <div class="outcome"><b>الناتج التشغيلي:</b> الجانب المالي الذي يُهمله البروتوكول المتمحور حول السيارة — وديعة (Deposit) يمكن الخصم منها فعلاً، ووديعة محجوزة حتى تُسوّى السالك/المخالفات في الإمارات، ووسم مخاطر يمنع تأجير عميل معروف بسوء تعامله. مُركَّزة عمداً: ثلاثة أجزاء لا أكثر.</div>
+
+      <div class="subhead">2.5أ · سجل الوديعة (Deposit)</div>
+      <p>يحوّل حقول الوديعة القائمة (<code>contract_deposit</code>، <code>deposit_debit/credit</code>) إلى سجل حقيقي يخصم منه قرار الضرر في المرحلة 2 — بدونه يبقى «تحميل / حجز وديعة» بلا أثر.</p>
+      <ul>
+        <li><b>الدورة:</b> محجوزة عند التسليم ← خصم (ضرر / مخالفة / بنزين) ← إرجاع / ردّ الرصيد.</li>
+        <li><b>جديد</b> <code>deposit_ledger_entries</code> (<code>contract_id, customer_id, type</code> hold/charge/refund/release، <code>amount, reason, source, created_by</code>)؛ <code>deposit_status</code> على العقد (محجوزة / مخصومة جزئياً / مُرجَعة).</li>
+        <li><b>الواجهات:</b> <code>POST /contracts/{id}/deposit/hold · /charge · /release</code> · <code>GET /contracts/{id}/deposit</code>.</li>
+        <li>رصيد الإرجاع يمكن أن يذهب إلى محفظة العميل (الرصيد المُرحَّل القائم).</li>
+      </ul>
+
+      <div class="subhead">2.5ب · حجز المخالفات/السالك بعد الإرجاع</div>
+      <p>السالك والمخالفات المرورية في الإمارات تصل <em>بعد</em> رجوع السيارة — لذا يجب ألّا تُردّ الوديعة حتى تُسوّى.</p>
+      <ul>
+        <li>عند الاستلام يدخل العقد حالة <code>pending_charges</code>؛ ويُحظَر ردّ الوديعة حتى تنقضي مهلة المخالفات أو تُسوّيها العمليات يدوياً.</li>
+        <li><b>جديد</b> <code>fine_holds</code> (<code>contract_id, type</code> salik/fine، <code>amount, status</code> pending/settled/cleared، <code>settled_at</code>)؛ إعداد <code>fines_hold_days</code> (مثلاً 14–30).</li>
+        <li><b>الواجهات:</b> <code>POST /contracts/{id}/fines</code> (مخالفة وصلت ← تُخصم من الوديعة) · <code>POST /contracts/{id}/fines/settle</code>.</li>
+        <li><b>التنبيهات:</b> «الوديعة جاهزة للردّ» بعد انقضاء الحجوزات؛ وتذكير «مخالفات غير مُسوّاة تتقادم».</li>
+      </ul>
+
+      <div class="subhead">2.5ج · وسم مخاطر العميل</div>
+      <p>وسم على مستوى العميل يفتقده بروتوكول عمر (هو يصنّف «سوء استخدام العميل» لكل حادثة، لا لكل عميل).</p>
+      <ul>
+        <li><b>المستويات:</b> لا شيء / مراقبة / وديعة أعلى / قائمة سوداء، مع السبب ومَن وضعه.</li>
+        <li><b>يُغذّي بوابة الأهلية في المرحلة 1:</b> القائمة السوداء ← <span class="v block">منع</span> الحجز؛ وديعة أعلى ← طلب وديعة أكبر؛ مراقبة ← <span class="v warn">تحذير</span>.</li>
+        <li><b>جديد</b> أعمدة على <code>customers</code>: <code>risk_level, risk_reason, risk_flagged_by, risk_flagged_at</code>؛ <code>POST /Customer/{id}/risk</code>.</li>
+      </ul>
+      <p><b>الصلاحيات:</b> الوديعة والمخالفات تستخدمان <code>billing.manage</code>؛ ووسم المخاطر يستخدم <code>customers.manage</code>.</p>
+
+      <div class="done"><b>يُعتبر مكتملاً عندما:</b> يخصم أي تحميل ضرر/مخالفة من وديعة حقيقية؛ ولا يمكن ردّ الوديعة والمخالفات معلّقة؛ ويُمنَع العميل في القائمة السوداء بينما يُطلَب وديعة أكبر من مرتفع المخاطر عند بوابة الأهلية.</div>
+    </div>
+  </section>
+
+  <!-- PHASE 3 -->
+  <section class="phase">
+    <div class="head"><div class="tag">3</div><h3>جسر توجيه الكراج</h3></div>
+    <div class="body">
+      <div class="outcome"><b>الناتج التشغيلي:</b> يقترح النظام أفضل كراج (أفضل 3، بتقييم مُرقَّم)؛ فيقبله المنسّق أو يتجاوزه — والتجاوز <b>يجب</b> أن يحمل سبباً مكتوباً وموافقة مدير. لا اختيار كراج بالمزاج أو العلاقة.</div>
+      <p><b>الفجوة:</b> محرك التقييم (<code>GarageRoutingService::suggest()</code>) يرتّب الكراجات فعلاً، لكن لا شيء يستدعيه — التوزيع اليوم اختيار يدوي بلا تسجيل سبب.</p>
+      <h4>ما نبنيه</h4>
+      <ul>
+        <li><b>كشف المحرك:</b> <code>GET /maintenance-tickets/{ticket}/garage-suggestions</code> ← قائمة مُرتَّبة + الاختيار الأعلى + تقييم وأسباب وتحذيرات لكل كراج. التوزيع يعرض <b>أفضل 3</b>.</li>
+        <li><b>التقاط التجاوز:</b> في <code>assignDispatch</code>، حين يختلف الاختيار عن الاقتراح، <b>يُطلَب <code>override_reason</code></b> + موافقة مدير (مشتركة مع المرحلة 4).</li>
+        <li><b>إكمال المعايير الثمانية:</b> إضافة الخمسة الناقصة (مدة الإنجاز، السعر، توفّر القطع، القرب، الضمان).</li>
+      </ul>
+      <h4>الترحيلات</h4>
+      <ul>
+        <li><code>add_routing_decision_to_maintenances</code>: <code>suggested_vendor_id, routing_overridden, routing_override_reason, routing_score</code>.</li>
+        <li><code>add_routing_signals_to_vendors</code>: <code>avg_completion_days, price_index, parts_availability, zone</code> (+ إحداثيات)، <code>workmanship_warranty_months</code>؛ أوزان جديدة في <code>config/garage_routing.php</code> (25/20/15/15/10/5/5/5).</li>
+      </ul>
+      <p><b>إضافةً:</b> إنشاء <code>GarageRoutingRuleController</code> الناقص (إدارة قواعد التخصّص داخل النظام).</p>
+      <div class="done"><b>يُعتبر مكتملاً عندما:</b> يعرض التوزيع الاقتراح المُرتَّب، ويُمنَع أي اختيار مخالف للاقتراح دون سبب + موافقة، وتُسهم المعايير الثمانية كلها في التقييم.</div>
+    </div>
+  </section>
+
+  <!-- PHASE 4 -->
+  <section class="phase">
+    <div class="head"><div class="tag">4</div><h3>الجانب المالي — مصفوفة الموافقات داخل أمر الصيانة</h3></div>
+    <div class="body">
+      <div class="outcome"><b>الناتج التشغيلي:</b> كل إصلاح يحصل على عرض سعر من الكراج أولاً؛ ثم تُوجَّه التكلفة — المرتكزة على تقدير الضرر من المرحلة 2 — تلقائياً إلى المُوافِق المناسب حسب المبلغ، مع رفع درجةٍ للسيارات الفاخرة والحوادث. لا يبدأ عمل، ولا تتحرّك سيارة إلى الكراج، حتى يوافق الشخص المناسب.</div>
+      <p style="background:#f5f3ff; border:1px solid #ddd6fe; border-radius:9px; padding:11px 14px; color:#4c1d95; font-size:14px"><b>التقييم ≠ الموافقة (النسخة 7).</b> المدير الذي يقيّم الإصلاح <b>يسعّره</b> (يحدّد التكلفة والنطاق) — يُختَم <code>valuated_by</code>. وهذا <em>ليس</em> موافقة نهائية. يقارن النظام المبلغ بحدّ درجة المُقيِّم: <b>ضمن حدّه</b> ← هو المُوقِّع (اعتماد تلقائي، <code>approved_by</code> = المدير)؛ <b>فوق حدّه</b> ← الانتقال إلى <code>pending_approval_hierarchy</code> والتصعيد في المصفوفة. <code>valuated_by</code> و<code>approved_by</code> يُخزَّنان منفصلين. قد تُوقَف السيارة (<b>«قيد الإصلاح»</b>) عند التقييم، لكن <b>توجيه الكراج ينتظر <code>approved_by</code></b>.</p>
+      <h4>الحالات داخل المسار</h4>
+      <pre>inspection_pending → <span class="hl">awaiting_quotation</span> → (valuate) →
+      ├─ cost ≤ valuator tier  → auto-approved → awaiting_dispatch → under_repair
+      └─ cost &gt; valuator tier  → <span class="hl">pending_approval_hierarchy</span> → (matrix signs) → awaiting_dispatch → under_repair
+                              ↑___________ rejected / re-quote ___________↓
+under_repair → <span class="hl">additional_quotation</span> → pending_approval_hierarchy → under_repair   (extra-work loop)</pre>
+      <h4>مصفوفة الموافقات</h4>
+      <table>
+        <thead><tr><th>المبلغ (درهم)</th><th>المُوافِق</th><th>الصلاحية</th></tr></thead>
+        <tbody>
+          <tr><td>0 – 500</td><td>مشرف الصيانة</td><td><code>maintenance.approve.t1</code></td></tr>
+          <tr><td>501 – 2,000</td><td>مدير العمليات / الأسطول</td><td><code>maintenance.approve.t2</code></td></tr>
+          <tr><td>2,001 – 5,000</td><td>مدير الفرع</td><td><code>maintenance.approve.t3</code></td></tr>
+          <tr><td>&gt; 5,000</td><td>المالك / المدير العام</td><td><code>maintenance.approve.t4</code></td></tr>
+          <tr><td>حادث / تأمين</td><td>المطالبات + مدير</td><td><code>maintenance.approve.claims</code></td></tr>
+          <tr><td><b>سيارة فاخرة / رياضية</b></td><td>درجة أعلى مما يقتضيه المبلغ</td><td>(يقرأ <code>vehicle_class</code>)</td></tr>
+        </tbody>
+      </table>
+      <h4>الترحيلات والواجهات والصلاحيات</h4>
+      <ul>
+        <li><b>جديد</b> جدولا <code>maintenance_quotations</code> و<code>maintenance_approvals</code>؛ واستبدال بوابة الـ 500 درهم الثابتة في <code>evaluateApproval</code> بمُحلِّل شرائح.</li>
+        <li><code>POST /maintenance-tickets/{ticket}/quotation</code> (الكراج) · <code>POST /maintenance-tickets/{ticket}/approval</code> (موافقة / رفض).</li>
+        <li>إضافة <code>maintenance.approve.t1..t4</code> + <code>.claims</code> في مُهيّئ الأدوار.</li>
+        <li><b>تنبيه البيع / الاستبدال</b> (فقرة عمر 9): إنفاق صيانة 12 شهراً مقابل قيمة السيارة (<code>purchase_price</code>) ← تنبيه «بيع / استبدال / إيقاف تأجير».</li>
+        <li><b>إعادة التفعيل المالي:</b> رفع <code>SHOW_FINANCIALS</code> (على سطح الصيانة / الموافقات أولاً).</li>
+      </ul>
+      <div class="done"><b>يُعتبر مكتملاً عندما:</b> يقود عرض السعر موافقةً مُوجَّهة بالمبلغ إلى الدور الصحيح؛ وتُوجَّه التجاوزات والفاخرة والحوادث بشكل صحيح؛ ويعمل تنبيه التكلفة مقابل القيمة.</div>
+    </div>
+  </section>
+
+  <!-- PHASE 5 -->
+  <section class="phase">
+    <div class="head"><div class="tag">5</div><h3>ضمان الجودة واختبار القيادة — قائمة فحص إلزامية مُفصَّلة</h3></div>
+    <div class="body">
+      <div class="outcome"><b>الناتج التشغيلي:</b> لا تعود سيارة للتأجير دون اجتياز قائمة فحص ثابتة، في كل مرة — لا في أعمال المكينة فقط. وإصلاحات السلامة تتطلّب اختبار قيادة موثَّقاً. وفشل بند واحد يُعيد السيارة إلى الكراج.</div>
+      <h4>قائمة ضمان الجودة (لكل تذكرة — جدول <code>maintenance_qa_items</code> للتدقيق البندي)</h4>
+      <table>
+        <thead><tr><th>البند</th><th>النتيجة</th><th>مطلوب؟</th><th>الإثبات</th></tr></thead>
+        <tbody>
+          <tr><td>مطابقة الإصلاح للطلب</td><td>نجح / فشل</td><td>دائماً</td><td>—</td></tr>
+          <tr><td>لمبات التحذير مُطفأة</td><td>نجح / فشل</td><td>دائماً</td><td>صورة الطبلون</td></tr>
+          <tr><td>التكييف يعمل</td><td>نجح / فشل</td><td>دائماً</td><td>—</td></tr>
+          <tr><td>السوائل والتسريبات</td><td>نجح / فشل</td><td>دائماً</td><td>—</td></tr>
+          <tr><td>الإطارات والجنوط</td><td>نجح / فشل</td><td>دائماً</td><td>—</td></tr>
+          <tr><td>الفرامل</td><td>نجح / فشل</td><td>عند صلة السلامة</td><td>عبر اختبار القيادة</td></tr>
+          <tr><td>تسجيل العداد</td><td>قيمة + صورة</td><td>دائماً</td><td>صورة العداد</td></tr>
+          <tr><td>الغسيل تم</td><td>نجح / فشل</td><td>دائماً</td><td>—</td></tr>
+          <tr><td><b>اختبار القيادة</b></td><td>نجح / فشل / لا ينطبق</td><td>مشروط (القاعدة أدناه)</td><td>المُختبِر + الوقت</td></tr>
+          <tr><td>تحديث الحالة إلى «جاهزة»</td><td>تلقائي</td><td>دائماً</td><td>—</td></tr>
+        </tbody>
+      </table>
+      <p><b>قاعدة اختبار القيادة:</b> مطلوب حين يكون العطل ضمن قائمة أعطال السلامة، أو الخطورة حرجة للسلامة، أو وقفت السيارة أكثر من 7 أيام، أو كانت فاخرة / رياضية. ولا يُجتاز ضمان الجودة حتى ينجح اختبار القيادة.</p>
+      <h4>التغيير والتنبيهات</h4>
+      <ul>
+        <li>إزالة قصْر ضمان الجودة على المكينة/الكهرباء/القير ← <b>كل</b> تذكرة تمرّ بضمان الجودة؛ ويمنع <code>approveQa</code> الإقفال حتى تنجح كل البنود المطلوبة.</li>
+        <li><b>تنبيهات 7 / 14 يوماً في الحالة</b> — كاشف يقرأ <code>last_state_change_at</code> (المُسجَّل أصلاً) وينبّه الإدارة عند التجاوز.</li>
+        <li><b>مصفوفة الجاهزية حسب أيام الوقوف</b> تُغذّي الفحص #9 في المرحلة 1 (أقل من 48 ساعة فحص سريع · 3–7 أيام فحص سلامة · أكثر من 7 جاهزية+اختبار قيادة · أكثر من 14 بطارية/إطارات/سوائل · أكثر من 30 فحص تقني كامل).</li>
+      </ul>
+      <div class="done"><b>يُعتبر مكتملاً عندما:</b> لا تُقفَل تذكرة دون ضمان جودة مُفصَّل ناجح بالكامل (+ اختبار قيادة عند اللزوم)، وتتلقّى الإدارة تنبيهات 7/14 يوماً والجاهزية.</div>
+    </div>
+  </section>
+
+  <!-- PHASE 6 -->
+  <section class="phase">
+    <div class="head"><div class="tag">6</div><h3>بروتوكولات المفتّش ومحرّك دورة الاستقرار <span class="flag">مفروض بالنظام، لا بالذاكرة</span></h3></div>
+    <div class="body">
+      <div class="outcome"><b>الناتج التشغيلي:</b> قواعد فحص أبو معروف تصبح مهامّ متكرّرة يقودها المحرك. وحالة ما بعد الحادث <b>دورة استقرار صارمة</b> يفرضها النظام من طرفٍ لطرف — لا أحد يستطيع تخطّيها.</div>
+
+      <div class="subhead">6أ · مكتبة بروتوكولات المفتّش</div>
+      <ul>
+        <li><b>الروتيني</b> — الزيت / الفلتر حسب حدود الكيلومترات (موجود فعلاً عبر فاصل الزيت + كواشف استحقاق الخدمة).</li>
+        <li><b>البطارية</b> — الصحة + فاصل الاستبدال. <b>جديد</b> <code>vehicles.battery_installed_at</code>، <code>battery_health</code>، <code>battery_interval_months</code>؛ وفحص «البطارية مستحقة».</li>
+        <li>مقودٌ بالإعدادات: <b>جديد</b> <code>config/inspector_protocols.php</code> يعرّف محفِّز كل بروتوكول وقائمته.</li>
+      </ul>
+
+      <div class="subhead">6ب · محرّك دورة الاستقرار (ما بعد الحادث) — صارم ومفروض</div>
+      <p><b>محفِّز تلقائي.</b> لحظة انتقال حالة سيارة <b>موسومة «ما بعد حادث»</b> من <b>«قيد الإصلاح» ← «متاحة»</b>، يبدأ المحرك الدورة ويحقن <code>stability_check_ticket</code> في طابور أبو معروف <b>كل 5 أيام</b> — تلقائياً، بلا مفتاح، بلا ذاكرة.</p>
+      <p style="background:#fef2f2; border:1px solid #fecaca; border-radius:9px; padding:11px 14px; color:#991b1b; font-size:14px"><b>البوابة الصارمة — لا تُقفَل تذكرة الاستقرار بضغطة.</b> الإقفال يتطلّب، مفروضاً في الخادم: <b>(1)</b> مجموعة صور جديدة — <b>العداد + حجرة المحرك + الإطارات</b> (الثلاثة)، و<b>(2)</b> <b>«نجاح»</b> صريح من أبو معروف. وأي شيء أقلّ يُرفَض — لا تخطّي، لا إقفال صامت.</p>
+      <ul>
+        <li><b>تجاوز الموعد ← حظر سلامة:</b> إذا تأخّر موعد الـ5 أيام <b>ولو ساعة واحدة</b>، يطبّق المحرك <code>safety_block</code> على السيارة <b>ويُنبِّه الأدمن فوراً</b>.</li>
+        <li><b>التخرّج:</b> يعدّ المحرك <b>الدورات النظيفة المتتالية</b> (نجاح)؛ وبعد <b>3 دورات نظيفة متتالية (15 يوماً)</b> يُخرِّج السيارة تلقائياً إلى جدول الصيانة القياسي. وأي دورة فاشلة/فائتة <b>تصفّر العدّاد</b>.</li>
+        <li><b>أولوية حظر السلامة:</b> <code>safety_block</code> هو <b>الحالة الأعلى أولويةً</b> — يتجاوز «متاحة»/«مؤجَّرة» في مُحلِّل الحالة و<b>يمنع الحجز</b> عند بوابة المرحلة 1 (كالدرجة الحمراء). <em>(حالة حدّية للاعتماد: سيارة على الطريق وقت تجاوز الموعد تُحظَر للحجز التالي + تُوقَف عند الاستلام — لا يمكن استرجاع إيجار جارٍ.)</em></li>
+      </ul>
+      <h4>الترحيلات والنماذج</h4>
+      <ul>
+        <li><code>vehicles</code>: <code>is_post_accident</code>، <code>maintenance_profile</code> (stability_cycle / standard)، <code>stability_interval_days</code> (5)، <code>next_stability_due</code>، <code>clean_cycles</code>، <code>safety_block</code> + <code>safety_blocked_at</code> / <code>safety_block_reason</code>.</li>
+        <li><b>جدول جديد <code>auto_maintenance_audits</code></b> — صفّ <b>لكل فحص 5 أيام مُولَّد</b>: <code>vehicle_id, cycle_no, due_at, generated_at, status</code> (pending/passed/failed/missed)، <code>closed_at, photos</code> (عداد/محرك/إطارات)، <code>passed_by, block_applied, late_by_minutes, notes</code>. أثرٌ دائم لكل فحص، في وقته أو متأخراً.</li>
+      </ul>
+      <h4>المهمة الخلفية</h4>
+      <ul>
+        <li><b>جديد</b> <code>stability:scan</code> — يُولِّد <code>stability_check_ticket</code> التالي عند الاستحقاق، ويطبّق حظر السلامة + تنبيه الأدمن + يكتب صفّ <code>auto_maintenance_audits</code> عند التجاوز.</li>
+        <li>يعمل <b>يومياً</b> للتوليد؛ وتعمل مرحلة <b>الفرض</b> <b>كل ساعة</b> — فالمهمة اليومية وحدها لا تكشف التجاوز إلا خلال 24 ساعة، لذا فرض «التأخّر ولو ساعة» يحتاج المسح الساعي الخفيف (<code>next_stability_due &lt; now</code> مُفهرَس).</li>
+      </ul>
+      <p><b>لوحة (للأدمن):</b> <b>«السيارات في دورة الاستقرار»</b> — كل سيارة بتقدّم <code>clean_cycles</code> (n/3)، و<b>تاريخ الفحص التالي</b>، وأي حظر سلامة نشط بعلامة حمراء. تُغذّي نظرة مركز القيادة (المرحلة 8).</p>
+
+      <div class="done"><b>يُعتبر مكتملاً عندما:</b> تدخل سيارة ما بعد الحادث الدورة تلقائياً عند صيرورتها «متاحة»؛ ولا تُقفَل أي تذكرة 5 أيام دون الصور الثلاث + «نجاح»؛ وتأخّر ساعة يحظر السيارة ويُنبِّه الأدمن؛ و3 دورات نظيفة تُخرِّجها؛ وكل فحص مُسجَّل في <code>auto_maintenance_audits</code>.</div>
+    </div>
+  </section>
+
+  <!-- PHASE 7 -->
+  <section class="phase">
+    <div class="head"><div class="tag">7</div><h3>تدقيق قرار السلامة <span class="flag">ضابط المساءلة</span></h3></div>
+    <div class="body">
+      <div class="outcome"><b>الناتج التشغيلي:</b> يصبح النظام <b>حارساً للسلامة</b> دون إلغاء حكم أبو معروف. حين يخالف قراره النهائي (الخطورة / قابلية التأجير) ما تُلمِّح إليه الكلمات في وصفه نفسه، يُوسَم السجل، ويُنبَّه الأدمن فوراً، ويجب أن يبرّر بالكتابة. كل منعٍ أو تصريحٍ خلاف منطق النظام يترك أثراً شفّافاً.</div>
+
+      <p style="background:#ecfdf5; border:1px solid #a7f3d0; border-radius:9px; padding:11px 14px; color:#065f46; font-size:14px"><b>يعيد استخدام الموجود:</b> جدول ربط الخطورة <b>مبنيٌّ فعلاً</b> — <code>finding_keywords</code> (مكتبة مخاطر الكلمات) يربط كل كلمة بمخاطرة؛ وواجهة كتالوج الأعطال تخدم خريطة <code>keyword_risk</code>؛ وناقل الإشعارات (جرس داخل التطبيق، جاهز للبثّ) موجود؛ ونمط <b>سبب التجاوز + تاريخ التدقيق للقراءة فقط</b> مُستخدَم فعلاً في توجيه الكراج وسياسة أولوية التأجير. هذه الطبقة تربطها معاً — لا نموذج جديد.</p>
+
+      <div class="subhead">7أ · الاقتراح عند الإدخال</div>
+      <ul>
+        <li>بينما يكتب المفتّش <b>الوصف</b>، يمسحه النظام مقابل <code>finding_keywords</code> ← <b>درجة خطورة مقترَحة</b> = أعلى كلمة خطورة مطابِقة («فرامل»/«مكينة» ← 🔴؛ «صبغ»/«داخلي» ← 🟢).</li>
+        <li>تُعرَض كوسم غير مُلزِم — أبو معروف يظلّ صاحب القرار النهائي.</li>
+      </ul>
+
+      <div class="subhead">7ب · قاعدة التعارض (عتبة 2×2)</div>
+      <table>
+        <thead><tr><th>النظام يقترح</th><th>هو يعلّم</th><th>النتيجة</th></tr></thead>
+        <tbody>
+          <tr><td>🔴 كبير / حرج للسلامة</td><td><b>قابلة للتأجير</b></td><td>⚠️ <b>تعارض ← مطلوب تدقيق</b> (سيارة خطرة صُرِّح بها)</td></tr>
+          <tr><td>🟢 بسيط</td><td><b>غير قابلة للتأجير</b></td><td>⚠️ <b>تعارض ← مطلوب تدقيق</b> (سيارة تافهة أُوقِفت)</td></tr>
+          <tr><td>يتّفق، أو وسط «متوسط»</td><td>—</td><td>✅ مرور صامت، بلا وسم</td></tr>
+        </tbody>
+      </table>
+
+      <div class="subhead">7ج · عند التعارض، يجب على النظام</div>
+      <ol style="margin:6px 0; padding-inline-start:20px">
+        <li><b>وسم السجل</b> <code>audit_status = audit_required</code>.</li>
+        <li><b>حظر الحفظ حتى كتابة <code>override_reason</code></b> (تبرير إجباري).</li>
+        <li><b>إرسال تنبيه/دفع فوري للأدمن</b> (super-admin) عبر ناقل الإشعارات.</li>
+        <li><b>كتابة صفّ في سجل التدقيق</b> لطابور مراجعة الأدمن.</li>
+      </ol>
+
+      <h4>الترحيلات والنماذج</h4>
+      <ul>
+        <li><b>إعادة استخدام</b> <code>finding_keywords</code> كخريطة خطورة (مربوطة بمقياس الـ4 مستويات).</li>
+        <li><b>جديد</b> <code>safety_decision_audits</code> (<code>record_id, record_type, suggested_severity, chosen_severity, is_rentable, override_reason, decided_by, admin_notified_at, reviewed_by, reviewed_at</code>).</li>
+        <li><b>إضافة أعلام</b> على صفّ الفحص: <code>suggested_severity</code>، <code>severity_overridden</code> (bool)، <code>audit_status</code> (none / required / reviewed).</li>
+      </ul>
+      <h4>الواجهة والصلاحيات</h4>
+      <ul>
+        <li>الاقتراح يُحسَب على إدخال الأعطال/الوصف القائم — لا شاشة مفتّش جديدة.</li>
+        <li><b>جديد</b> طابور تدقيق الأدمن: قائمة قراءة فقط مُفلترة بـ<code>audit_status = required</code> (تعيد استخدام واجهة تاريخ OverrideAudit) + إجراء «تمّت المراجعة».</li>
+        <li>يعيد استخدام صلاحيات المفتّش القائمة؛ والتنبيه يستهدف super-admin (اختياري <code>audit.review</code> لمراجِع مخصّص).</li>
+      </ul>
+      <p style="font-size:13px; color:#6d28d9; background:#f5f3ff; border:1px solid #ddd6fe; border-radius:8px; padding:9px 13px"><b>النطاق:</b> هذا الضابط على <b>قرار المفتّش (أبو معروف) للخطورة + قابلية التأجير</b> — نقطة إدخال مختلفة عن تقييم المدير للأضرار عند الاستلام. القاعدة نفسها يمكن أن تمتدّ لتقييم المدير لاحقاً إن رُغِب.</p>
+
+      <div class="done"><b>يُعتبر مكتملاً عندما:</b> كتابة «فرامل» تقترح 🔴؛ وإذا علّم أبو معروف تلك السيارة قابلةً للتأجير، يُحظَر الحفظ حتى يكتب سبباً، ويصل الأدمن تنبيهٌ فوري، ويهبط القرار في طابور التدقيق بكامل الأثر قبل/بعد.</div>
+    </div>
+  </section>
+
+  <!-- PHASE 8 -->
+  <section class="phase">
+    <div class="head"><div class="tag">8</div><h3>مركز القيادة <span class="flag">طبقة الشفافية الكاملة</span></h3></div>
+    <div class="body">
+      <div class="outcome"><b>الناتج التشغيلي:</b> يحصل عمر والأدمن على مكانٍ واحد يجيب: «مَن فعل ماذا، وأين كل سيارة، وما المتعثّر؟» — لحظياً. لا تحديثات صامتة بعد الآن.</div>
+
+      <p style="background:#ecfdf5; border:1px solid #a7f3d0; border-radius:9px; padding:11px 14px; color:#065f46; font-size:14px"><b>جواب نموذج البيانات (بخفّة):</b> نعتمد على <b>سجلّ التدقيق القائم + آلة حالات سير العمل</b> في معظمه. فقط خلاصة النشاط العامة تستفيد من <b>جدول واحد رفيع جديد</b>؛ أما المتتبّع والنظرة العامة فـ<b>قراءات محضة — بلا ترحيل</b>.</p>
+
+      <div class="subhead">8أ · خلاصة النشاط الفورية (مَن فعل ماذا)</div>
+      <p>كل إجراء حرج — <b>تسعير</b> التكلفة، <b>الموافقة</b>، <b>التجهيز للإطلاق</b>، <b>تسجيل فحص / ضرر</b>، <b>تجاوز</b> — يُدفَع إلى خلاصة عامة تُظهِر <b>الفاعل · الوقت · التغيير المحدَّد</b>.</p>
+      <ul>
+        <li><b>يعيد استخدام:</b> <code>vehicle_log_events</code> (يسجّل كل انتقال بالفاعل والوقت)، <code>sync_changes</code> (فروق حقلية was→now)، <code>maintenance_approvals</code>، <code>safety_decision_audits</code>.</li>
+        <li><b>جديد (جدول رفيع واحد)</b> <code>activity_log</code> — متعدّد الأشكال: <code>actor_id, action, subject_type, subject_id, summary, meta</code> (JSON)، <code>created_at</code>. مُسجِّل مركزي <code>ActivityLogger</code> يكتب صفّاً لكل إجراء حرج ← خلاصة واحدة قابلة للفرز والصفحات (بدل استعلام UNION على عدّة سجلات).</li>
+        <li><b>الواجهة:</b> <code>GET /command-center/activity</code> (polling الآن؛ جاهز للبثّ عبر ناقل الإشعارات القائم).</li>
+      </ul>
+
+      <div class="subhead">8ب · متتبّع حالة السيارة الحيّة (أين السيارة؟)</div>
+      <ul>
+        <li><b>بلا جدول جديد.</b> يعيد استخدام <code>Maintenance::livePosition()</code> (يُرجِع 🚚 نقل / 🔧 في الورشة من <code>workflow_status</code> + محطّة الكراج النشطة + مهمة النقل)، إضافةً إلى <code>LogisticsTask</code> النشطة (المالك/المُكلَّف + الوجهة) ومحطّة الكراج (المورّد).</li>
+        <li>كل سيارة تُظهِر <b>الحالة ← المالك/المُكلَّف الحالي</b> (سائق / كراج / مُرسِل). وإن كانت الحالة صيانة ← <b>أيّ كراج/مورّد</b> يحملها و<b>مَن من فريقنا هو المشرف</b> (<code>inspected_by</code> / المُسنَد).</li>
+        <li><b>الواجهة:</b> <code>GET /command-center/fleet-status</code>.</li>
+      </ul>
+
+      <div class="subhead">8ج · النظرة الإدارية العامة (عمر + الأدمن)</div>
+      <ul>
+        <li><b>بلا جدول جديد</b> — ثلاثة استعلامات على البيانات القائمة:</li>
+        <li><b>الصفراء في الميدان:</b> <code>condition_grade = 'yellow'</code> ∩ عقد إيجار نشط (مؤجَّرة الآن).</li>
+        <li><b>الموافقات المعلّقة:</b> تذاكر في <code>pending_approval_hierarchy</code> (المرحلة 4 / القاعدة 2)، مجمّعة حسب الدرجة المنتظَرة.</li>
+        <li><b>المهامّ المتعثّرة:</b> مُطالَب بها ولم تُنجَز خلال X ساعة — من <code>last_state_change_at</code> / وقت المطالبة مقابل SLA المرحلة (<code>stageAge()</code> + <code>STAGE_SLA_SECONDS</code> موجودان)، مُبرَزة بالأحمر.</li>
+        <li><b>الواجهة:</b> <code>GET /command-center/overview</code>.</li>
+      </ul>
+
+      <h4>الصلاحيات</h4>
+      <p><b>جديد</b> <code>command_center.view</code> (الأدمن + عمر / المديرون). يعيد استخدام ناقل الإشعارات لأي دفع.</p>
+
+      <div class="done"><b>يُعتبر مكتملاً عندما:</b> تبثّ خلاصة النشاط كل إجراء حرج بالفاعل والوقت والتغيير؛ ويجيب المتتبّع «أين السيارة X ومَن يحملها» للأسطول كلّه؛ وتُبرِز النظرة العامة الصفراء في الميدان والموافقات المعلّقة والمهامّ المتعثّرة بنظرة واحدة — دون جدول تتبّع ثقيل جديد.</div>
+    </div>
+  </section>
+
+  <!-- PHASE 9 -->
+  <section class="phase">
+    <div class="head"><div class="tag">9</div><h3>ذكاء التكلفة <span class="flag">تسعير مقودٌ بالتاريخ</span></h3></div>
+    <div class="body">
+      <div class="outcome"><b>الناتج التشغيلي:</b> قبل أن تُسند إصلاحاً لكراج، يُظهِر النظام <em>كم كلّف هذا الإصلاح سابقاً</em> — لكل كراج — ويُنبّه حين يُرجَّح أنك تدفع أكثر. لا يمنع أبداً اختيار كراج فاخر؛ فقط يُظهِر المال.</div>
+
+      <p style="background:#ecfdf5; border:1px solid #a7f3d0; border-radius:9px; padding:11px 14px; color:#065f46; font-size:14px"><b>الوصل بالتوجيه الذكي؟ نعم.</b> محرّك المرحلة 3 <code>GarageRoutingService::suggest()</code> يرتّب الكراجات فعلاً؛ ونوسّع كل مرشَّح ليحمل أيضاً <b><code>estimated_price</code></b> لفئة عطل هذه التذكرة + موديل السيارة، من التاريخ. فالتسعير إشارة إضافية في نفس الاقتراح — بلا محرّك منفصل.</p>
+
+      <div class="subhead">9أ · متنبّئ التكلفة</div>
+      <p>عند اختيار <b>فئة العطل</b> (مثلاً القير)، يستعلم النظام تاريخ الصيانة (<code>maintenances</code> + <code>maintenance_line_items</code>) لـ<b>موديل السيارة + نوع العطل</b> ← نطاق تكلفة متوقَّع (متوسط + مدى)، يُقدَّم في واجهة التوزيع وفي <code>garage-suggestions</code>.</p>
+
+      <div class="subhead">9ب · العرض المقارن + التباين</div>
+      <ul>
+        <li>قبل الالتزام، تُظهِر الواجهة <b>«متوسط تكلفة هذا الإصلاح عند الكراج A مقابل B»</b> جنباً إلى جنب.</li>
+        <li><b>التباين:</b> كراج <b>&gt;20% فوق</b> المتوسط التاريخي ← شارة <b>تحذير تكلفة عالية</b> (قابلة للضبط).</li>
+        <li><b>بلا حظر</b> (قيدك): الكراج الفاخر مسموح؛ والتحذير معلوماتي + مُسجَّل (يعيد استخدام نمط سبب التجاوز عند اختيار المُعلَّم).</li>
+      </ul>
+
+      <div class="subhead">9ج · الفعلي مقابل التقديري + لقطة ذكاء الكراجات</div>
+      <ul>
+        <li><b>جديد</b> على سجل الصيانة: <code>estimated_cost</code> (من العرض/المتنبّئ) و<code>actual_cost</code>. عند <b>الإقفال</b> يلتقط النظام <b>مبلغ الدفع النهائي</b> في <code>actual_cost</code>.</li>
+        <li><b>جدول جديد <code>garage_cost_stats</code></b> (لقطة ذكاء الكراجات) — لكل <code>(vendor_id, fault_category, vehicle_model)</code>: <code>avg_cost, sample_count, last_repair_at, updated_at</code>. كل إقفال <b>يحدّثها تلقائياً</b> من <code>actual_cost</code> ← يشحذ المتنبّئ مع الوقت؛ ويُغذّي إشارة <code>price_index</code> في المرحلة 3 ببيانات حقيقية لكل فئة.</li>
+        <li><b>الواجهات:</b> حمولة <code>garage-suggestions</code> تكسب <code>estimated_price</code> + <code>variance_pct</code> + <code>high_cost</code>؛ التحديث عبر <code>CloseObserver</code> + أمر <code>garage:recalc-stats</code>.</li>
+      </ul>
+
+      <div class="done"><b>يُعتبر مكتملاً عندما:</b> اختيار فئة عطل يُظهِر تكلفة متوقَّعة؛ وعرض التوزيع يقارن الكراجات بالتكلفة التاريخية بتحذير &gt;20% (بلا حظر)؛ وكل إقفال يكتب <code>actual_cost</code> ويحدّث لقطة <code>garage_cost_stats</code>.</div>
+    </div>
+  </section>
+
+  <!-- PHASE 10 -->
+  <section class="phase">
+    <div class="head"><div class="tag">10</div><h3>سلسلة التواصل «الحادث ← الكراج» <span class="flag">مؤتمتة · بإيصالات</span></h3></div>
+    <div class="body">
+      <div class="outcome"><b>الناتج التشغيلي:</b> بلاغ حادث/ضرر جديد يقود <b>سلسلة إشعارات مضمونة خطوةً خطوة</b> — لا أحد يقول «لم يصلني الإشعار»، وأبو معروف لا <em>يرى</em> التذكرة حتى يقيّمها المديران. تُشدِّد سلسلة الضرر←الإصلاح (النسخة 5) بتسليم صارم + إيصالات.</div>
+
+      <div class="subhead">السلسلة</div>
+      <ul>
+        <li><b>المُطلِق:</b> فحص مُسجَّل بـ<code>damage_status = NEW</code>، أو حدث صيانة أُنشئ لـ<b>حادث</b>.</li>
+        <li><b>الخطوة A ← المديران:</b> إشعار فوري <b>Push + داخل التطبيق</b> لـ<b>عبدالله ووليد</b>، بعلامة <b>أولوية عالية</b>، مع رابط <b>صور الضرر</b> وحقل <b>الطرف المسؤول</b>.</li>
+        <li><b>الخطوة B ← المفتّش:</b> بمجرّد أن يُقدِّم عبدالله أو وليد <b>التقييم</b> (تكلفة + نطاق + فحص مصفوفة المرحلة 4)، يُنشئ النظام <b>مهمة صيانة</b> تلقائياً لأبو معروف — تحمل <b>ملاحظات التقييم</b> ليعرف ما يفحصه بالضبط.</li>
+        <li><b>الخطوة C — الحارس:</b> لوحة أبو معروف <b>لا تُظهِر</b> التذكرة حتى يُقدَّم التقييم (طابوره مُقيَّد بـ<code>status ∈ {assessed, task_created}</code>؛ التذكرة قبل التقييم غير مرئية له).</li>
+      </ul>
+
+      <div class="subhead">آليات الإشعار</div>
+      <ul>
+        <li><b>غير قابل للإغلاق:</b> إشعار مركز القيادة للخطوة الحالية <b>لا يُغلَق</b> حتى تُتَّخذ الخطوة التالية.</li>
+        <li><b>إيصالات (لا «لم أرَه»):</b> <b>جدول جديد <code>notification_receipts</code></b> — لكل <code>(إشعار، مستلِم/دور)</code>: <code>notified_at, viewed_at, actioned_at</code>. كل مرحلة مختومة، لكل دور، تظهر في تدقيق مركز القيادة.</li>
+        <li>يعيد استخدام ناقل الإشعارات (Push + داخل التطبيق)، وخطوة المدير <code>damage.assess</code> (النسخة 5)، والمهمة التلقائية للمرحلة 2. وحارس الخطوة C مجرّد <b>مُرشِّح نطاق</b> — بلا حالة جديدة.</li>
+      </ul>
+
+      <div class="done"><b>يُعتبر مكتملاً عندما:</b> بلاغ ضرر جديد/حادث يُنبِّه عبدالله ووليد فوراً بأولوية عالية بالصور والمسؤولية؛ وتقديمهما للتقييم يُسقِط مهمة تحمل الملاحظات لأبو معروف؛ ولوحته لا تُظهِر تذكرة قبل التقييم؛ وإشعار الخطوة لا يُغلَق حتى يُعمَل به؛ و<code>notified_at / viewed_at / actioned_at</code> مُسجَّلة لكل دور.</div>
+    </div>
+  </section>
+
+  <!-- PHASE 11 -->
+  <section class="phase">
+    <div class="head"><div class="tag">11</div><h3>مراقبة الاستخدام وفرض المسافة <span class="flag">حماية الأصول</span></h3></div>
+    <div class="body">
+      <div class="outcome"><b>الناتج التشغيلي:</b> كل كيلومتر مُسجَّل وعصيٌّ على التلاعب، وحدود المسافة التعاقدية تُراقَب تلقائياً — فلا يستطيع المستأجر أن يزيد العداد بهدوء أو يخرج عن الحدود دون أن يظهر ذلك.</div>
+
+      <p style="background:#ecfdf5; border:1px solid #a7f3d0; border-radius:9px; padding:11px 14px; color:#065f46; font-size:14px"><b>مبنيٌّ فعلاً (نُشدِّده):</b> <code>OdometerContinuityService</code> (أحكام لكل مرحلة، حالياً <em>ليّنة/غير حاظرة</em>)، وكشف التراجع/القفزة في <code>mileage:scan</code>، وصور عداد إلزامية في حركات اللوجستيك. <b>التبعية:</b> <b>تغذية GPS/تتبّع</b> — غير مدمجة اليوم؛ شقّ العداد (11أ) يعمل بدونها، وشقّ الـGPS (11ب) يحتاج مزوّداً أولاً.</p>
+
+      <div class="subhead">11أ · تسجيل العداد الإلزامي (بوابة صارمة)</div>
+      <ul>
+        <li>كل تغيير حالة — <b>تسليم، إرجاع، وفحص أثناء الإيجار</b> — <b>يتطلّب</b> <b>صورة عداد + إدخالاً يدوياً</b> (كلاهما إلزامي؛ يُرفَض الطلب بدونهما).</li>
+        <li><b>خطأ سلامة البيانات:</b> إذا كانت القيمة <b>أقلّ من السابقة</b>، تُحظَر العملية حتى <b>يوافق الأدمن على التصحيح</b> — <b>للأدمن فقط</b> (المشرفون <b>لا</b> يستطيعون تجاوز علَم سلامة العداد، حسب الاعتماد). بوابة صارمة، والسبب مُسجَّل (نمط تدقيق التجاوز).</li>
+        <li>يعيد استخدام <code>OdometerContinuityService</code> لجلب القراءة السابقة؛ ويضيف <code>integrity_override_by</code> / <code>integrity_override_reason</code>.</li>
+      </ul>
+
+      <div class="subhead">11ب · السياج الجغرافي وفرض المسافة <span style="font-size:12px;color:var(--amber)">(مؤجَّل — بانتظار تغذية GPS حيّة)</span></div>
+      <p style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:9px 13px;color:#92400e;font-size:13.5px"><b>قرار الاعتماد:</b> 11ب <b>مؤجَّل</b> حتى تُوصَل تغذية تتبّع حيّة. نبني <b>11أ</b> + <b>هيكل لوحة 11ج</b> الآن (فحص التجاوز بالعداد اليوم؛ وأعمدة GPS تُضيء عند وصول التغذية).</p>
+      <ul>
+        <li><b>مراقبة المسافة:</b> مقارنة <b>مسافة الـGPS</b> بـ<b>مسافة العداد المُسجَّلة</b>. والتباعد الكبير يُشير إلى <b>تلاعب أو انقطاع GPS</b> — العداد يبقى السجلّ القانوني/المحاسبي؛ والـGPS يُعزِّز.</li>
+        <li><b>تنبيه تجاوز المسافة:</b> المسموح = <code>miles_allowed_pd</code> × أيام الإيجار (موجود على العقد). إذا تجاوزت <b>كيلومترات الـGPS النشطة المسموح + 5%</b> ← <b>تنبيه مخالفة سياسة</b> تلقائي للأدمن + وسم <code>excess_mileage</code>. <em>(يعمل أيضاً على العداد قبل وصول الـGPS.)</em></li>
+        <li><b>السياج الجغرافي (اختياري):</b> وسم أي حركة <b>خارج الحدود التشغيلية</b> على العقد (الخروج من المدينة/المنطقة).</li>
+      </ul>
+
+      <div class="subhead">11ج · لوحة الاستخدام (في مركز القيادة)</div>
+      <ul>
+        <li>لكل إيجار نشط: <b>مسافة الـGPS اللحظية مقابل الحدّ التعاقدي</b>.</li>
+        <li><b>شريط اتجاه المسافة</b>: 🟢 آمن · 🟡 يقترب · 🔴 متجاوز. يمدّد نظرة المرحلة 8.</li>
+      </ul>
+
+      <h4>الترحيلات والواجهات</h4>
+      <ul>
+        <li><b>جديد</b> <code>odometer_readings</code> (subject، stage تسليم/إرجاع/أثناء، value، photo_ref، prev_value، integrity_flag، <code>integrity_override_by/reason</code>، recorded_by/at) — التحقّق الحاظر في طلبات تغيير الحالة.</li>
+        <li><b>جديد</b> <code>rental_usage</code> (لكل عقد): <code>gps_distance_km, odometer_distance_km, allowed_km, buffer_pct</code> (5)، <code>excess_flag, geofence_breach, updated_at</code>.</li>
+        <li><b>جديد</b> كاشف في <code>NotificationScanner</code>: تجاوز المسافة + خرق السياج ← الأدمن. تجاوز السلامة = الأدمن؛ اللوحة تحت <code>command_center.view</code>.</li>
+      </ul>
+
+      <div class="done"><b>يُعتبر مكتملاً عندما:</b> لا يُحفَظ تغيير حالة دون صورة عداد + إدخال؛ وقراءة أقلّ من السابقة تحظر حتى يوافق الأدمن؛ وكيلومترات GPS فوق المسموح +5% تَسِم <code>excess_mileage</code> وتُنبّه الأدمن؛ ومركز القيادة يُظهِر اتجاه مسافة 🟢/🟡/🔴 حيّاً لكل إيجار. <em>(11ب يُفعَّل عند وصل تغذية GPS؛ و11أ + فحص التجاوز بالعداد يُشحَنان بدونها.)</em></div>
+    </div>
+  </section>
+
+  <!-- SEQUENCING -->
+  <section class="band">
+    <h3>التسلسل المُعدَّل</h3>
+    <table>
+      <thead><tr><th style="width:60px">الترتيب</th><th>المرحلة</th><th style="width:150px">التغيير</th></tr></thead>
+      <tbody>
+        <tr><td>0</td><td>التمهيد — إعادة تصنيف الخطورة + قائمة أعطال السلامة</td><td>دون تغيير</td></tr>
+        <tr><td>1</td><td><b>تسليم محكم</b> — جاهزية (بوابة ما قبل التأجير) + <span class="moved">فحص التسليم/الاستلام (بوابة الاستلام) + توقيع</span></td><td class="moved">قُدِّمت للأمام</td></tr>
+        <tr><td>2</td><td><b>تقييم الأضرار وتوثيق الحوادث</b> <span class="moved">(خدش←إشعار المديرَين←تقييم/تكلفة/تأكيد←«قيد الإصلاح» تلقائياً + مهمة أبو معروف؛ الفئات التسع؛ مسار الدعم)</span></td><td class="moved">قُدِّمت · الأدوار النسخة 5</td></tr>
+        <tr><td>2.5</td><td><b>حماية العميل والوديعة</b> <span class="moved">(سجل وديعة + حجز مخالفات + وسم مخاطر)</span></td><td class="moved">جديدة — النسخة 3</td></tr>
+        <tr><td>3</td><td>جسر توجيه الكراج</td><td>كانت المرحلة B</td></tr>
+        <tr><td>4</td><td>الجانب المالي ومصفوفة الموافقات</td><td>كانت C · تعتمد الآن على م2</td></tr>
+        <tr><td>5</td><td>ضمان الجودة / اختبار القيادة / التنبيهات</td><td>كانت D</td></tr>
+        <tr><td>6</td><td><b>بروتوكولات المفتّش ومحرّك دورة الاستقرار</b> <span class="moved">(صارم، مفروض؛ auto_maintenance_audits)</span></td><td class="moved">النسخة 4 · مُشدَّدة النسخة 9</td></tr>
+        <tr><td>7</td><td><b>تدقيق قرار السلامة</b> <span class="moved">(اقتراح كلمات ← تعارض ← تدقيق الأدمن)</span></td><td class="moved">جديدة — النسخة 6 · مستقلة</td></tr>
+        <tr><td>8</td><td><b>مركز القيادة</b> <span class="moved">(خلاصة نشاط + متتبّع حيّ + نظرة إدارية)</span></td><td class="moved">جديدة — النسخة 8 · مستقلة</td></tr>
+        <tr><td>9</td><td><b>ذكاء التكلفة</b> <span class="moved">(متنبّئ سعر + مقارنة كراجات + تباين؛ garage_cost_stats)</span></td><td class="moved">جديدة — النسخة 10 · تمدّد م3/م4</td></tr>
+        <tr><td>10</td><td><b>سلسلة التواصل «الحادث ← الكراج»</b> <span class="moved">(بإيصالات، محروسة، غير قابلة للإغلاق)</span></td><td class="moved">جديدة — النسخة 10 · تُشدِّد النسخة 5</td></tr>
+        <tr><td>11</td><td><b>مراقبة الاستخدام وفرض المسافة</b> <span class="moved">(بوابة عداد صارمة + مراقبة GPS + لوحة استخدام)</span></td><td class="moved">جديدة — النسخة 11 · شقّ GPS يحتاج تغذية</td></tr>
+      </tbody>
+    </table>
+    <p style="color:#aac3e0; font-size:13.5px; margin:14px 0 0">صارت الدورة متكاملة من البداية للنهاية: <b>تسليم (موثَّق وموقَّع) ← إرجاع / حادث (ضرر مُهيكل) ← حماية النقد (وديعة · مخالفات · مخاطر) ← توجيه للكراج ← موافقة على التكلفة ← ضمان جودة وإطلاق.</b> لا شيء مؤجَّل.</p>
+  </section>
+
+  <!-- SIGN-OFF -->
+  <section class="signoff">
+    <h3>الاعتماد — نقاط لتأكيدها من عمر</h3>
+    <p class="lead">النقاط الثلاث الأولى تفتح المرحلتين 1–2؛ والباقي يفتح 4–5.</p>
+    <ol>
+      <li style="opacity:.7"><b>✅ الدرجة الصفراء — مَحسومة (النسخة 7):</b> قابلة للتأجير مع إقرار، تُعامَل تماماً كالبرتقالي؛ تُسجِّل <code>yellow_grade_ack</code> عند إنشاء العقد (مُطبَّق فعلاً في البوابة).</li>
+      <li><b>قائمة أعطال السلامة:</b> تأكيد الفئات التي تُطلِق منع الحجز، والخطورة/الضرر الحرج للسلامة، واختبار القيادة.</li>
+      <li><b>قائمة الصور والتوقيع:</b> تأكيد المجموعة الإلزامية (15 بنداً + فيديو 360° للفاخرة)، وهل تأكيد العميل <b>توقيع أم OTP أم كلاهما</b>.</li>
+      <li><b>نموذج الأضرار:</b> تأكيد خيارات الحقول (خاصة مَن يتحمّل + القرار) مطابقةً لورقة تقييم عمر.</li>
+      <li><b>شرائح الموافقة:</b> تأكيد حدود الدرهم، ومَن يملأ فعلياً أدوار المشرف / العمليات-الأسطول / الفرع / المدير العام. <em>(النسخة 7: «التقييم ≠ الموافقة» مَحسوم — المدير يقيّم والمصفوفة توافق؛ فقط أكّد أن سقف درجة كل مدير = «حدّ تقييمه».)</em></li>
+      <li><b>نسبة البيع / الاستبدال:</b> عتبة تكلفة 12 شهراً مقابل القيمة التي تُطلِق التنبيه.</li>
+      <li><b>الوديعة والمخالفات:</b> تأكيد مهلة حجز المخالفات (مثلاً 14 مقابل 30 يوماً)، وهل يذهب رصيد الردّ إلى <b>محفظة العميل أم نقداً</b>.</li>
+      <li><b>دورة الاستقرار (النسخة 9):</b> الفاصل 5 أيام · التخرّج 3 دورات نظيفة / 15 يوماً · صور البوابة العداد + حجرة المحرك + الإطارات — مؤكَّدة. للتأكيد: <b>(أ)</b> الفرض يعمل <b>كل ساعة</b> (المهمة اليومية وحدها لا تفي بـ«التأخّر ولو ساعة»)؛ <b>(ب)</b> سيارة <b>على الطريق</b> وقت التجاوز تُحظَر للحجز التالي + تُوقَف عند الاستلام (لا يمكن استرجاع إيجار جارٍ).</li>
+      <li><b>الأدوار:</b> تأكيد أن عبدالله ووليد هما مديرا <code>damage.assess</code> (تقييم / قطع / تكلفة / تأكيد)، وأن أبو معروف ينفّذ، وأن تأكيد المدير يقلب السيارة تلقائياً إلى <b>«قيد الإصلاح»</b>.</li>
+      <li><b>تدقيق قرار السلامة:</b> تأكيد عتبات التعارض (كبير/حرج للسلامة يُعلَّم قابلاً للتأجير، والبسيط يُعلَّم غير قابل)، وأن التنبيه الفوري يصلك <b>أنت (الأدمن)</b>، وهل يُراد مراجِع مخصّص <code>audit.review</code>.</li>
+      <li><b>مركز القيادة:</b> تأكيد <b>عتبة المهمة المتعثّرة</b> (كم ساعة X قبل إبراز مهمة مُطالَب بها ولم تُنجَز)، ومَن يحصل على <code>command_center.view</code> (الأدمن + عمر + المديرون؟).</li>
+      <li><b>ذكاء التكلفة:</b> تأكيد <b>عتبة تحذير التكلفة العالية</b> (&gt;20% فوق المتوسط التاريخي؟) وأنها تبقى <b>بلا حظر</b>.</li>
+      <li><b>سلسلة الحادث:</b> تأكيد أن الخطوة C <b>حارس رؤية صارم</b> (أبو معروف لا يرى التذكرة قبل التقييم)، وأن إشعار المدير <b>غير قابل للإغلاق</b> حتى يُقدِّم التقييم.</li>
+      <li style="opacity:.7"><b>✅ مراقبة الاستخدام — مَحسومة:</b> الهامش <b>5%</b> · تجاوز سلامة البيانات <b>للأدمن فقط</b> (المشرفون لا يتجاوزون) · <b>11ب (GPS/سياج) مؤجَّل</b> حتى وصل تغذية حيّة — نبني 11أ + هيكل لوحة 11ج الآن.</li>
+    </ol>
+  </section>
+
+  </div>
+</div>
+
+<footer class="master-footer">
+  دورة حياة الأسطول المتكاملة · الملخّص التنفيذي + خطة التنفيذ (النسخة 12 — جاهزة للاعتماد) · مُعدّ لاعتماد عمر · 2 يوليو 2026
+</footer>
+
+</body>
+</html>

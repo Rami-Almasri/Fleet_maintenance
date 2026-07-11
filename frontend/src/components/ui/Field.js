@@ -9,7 +9,7 @@ function Wrap({ label, error, required, children }) {
       {label && (
         <span className="mb-1 block text-sm font-medium text-gray-700">
           {label}
-          {required && <span className="ml-0.5 text-red-500">*</span>}
+          {required && <span className="ms-0.5 text-red-500">*</span>}
         </span>
       )}
       {children}

@@ -567,6 +567,57 @@ class MaintenanceAnalyticsService
      *
      * @return array<int, array<string,mixed>>
      */
+    /**
+     * "Maintenance Pulse" — a few fleet-wide vital signs for the top of the board:
+     *   - spend_week       : money spent on repairs whose visit STARTED this calendar week
+     *                        (out_date >= start of week), across every maintenance origin.
+     *   - avg_repair_days  : average garage turnaround (actual_in_date − out_date) over
+     *                        visits completed in the last 90 days — the yardstick the board
+     *                        uses to flag a still-open car as "over average".
+     *   - completed_week   : count of visits that came back this week (a throughput signal).
+     *
+     * All figures are single aggregate queries — no per-card work — so the board stays cheap.
+     *
+     * @return array{spend_week:float, avg_repair_days:?float, completed_week:int}
+     */
+    public function maintenancePulse(): array
+    {
+        $weekStart = Carbon::now()->startOfWeek();
+
+        // Spend this week: cost on any maintenance event whose visit started this week.
+        $spendWeek = (float) Maintenance::whereNotNull('cost')
+            ->whereDate('out_date', '>=', $weekStart->toDateString())
+            ->sum('cost');
+
+        // Average turnaround over recently completed visits (both dates present), last 90 days.
+        $recent = Maintenance::whereNotNull('out_date')
+            ->whereNotNull('actual_in_date')
+            ->whereDate('actual_in_date', '>=', Carbon::now()->subDays(90)->toDateString())
+            ->get(['out_date', 'actual_in_date']);
+
+        $durations = $recent
+            ->map(fn ($m) => $m->out_date && $m->actual_in_date
+                ? Carbon::parse($m->out_date)->diffInDays(Carbon::parse($m->actual_in_date))
+                : null)
+            ->filter(fn ($d) => $d !== null)
+            ->values();
+
+        $avgRepairDays = $durations->isNotEmpty()
+            ? round($durations->avg(), 1)
+            : null;
+
+        $completedWeek = (int) Maintenance::whereNotNull('actual_in_date')
+            ->whereDate('actual_in_date', '>=', $weekStart->toDateString())
+            ->distinct()
+            ->count(DB::raw("CONCAT(vehicle_id, '|', out_date)"));
+
+        return [
+            'spend_week'      => round($spendWeek, 2),
+            'avg_repair_days' => $avgRepairDays,
+            'completed_week'  => $completedWeek,
+        ];
+    }
+
     public function garagePerformance(): array
     {
         // All garage events in one pass, with the car + garage name attached. left-joins

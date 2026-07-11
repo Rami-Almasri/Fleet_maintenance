@@ -19,7 +19,12 @@ export default function Login() {
       await login(email, password);
       navigate('/', { replace: true });
     } catch (err) {
-      setError(err.response?.data?.msg || 'Login failed. Check your credentials.');
+      // `msg` may be a string ("Invalid credentials") OR a Laravel validation bag
+      // ({ email: [...], password: [...] }). Flatten the bag to its first message so we
+      // never render an object as a React child.
+      let msg = err.response?.data?.msg;
+      if (msg && typeof msg === 'object') msg = Object.values(msg).flat()[0];
+      setError(msg || 'Login failed. Check your credentials.');
     } finally {
       setLoading(false);
     }

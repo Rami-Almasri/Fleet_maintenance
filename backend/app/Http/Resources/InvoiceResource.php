@@ -32,11 +32,26 @@ class InvoiceResource extends JsonResource
             'discount'             => $this->discount,
             'total_after_discount' => $this->total_after_discount,
             'total_after_vat'      => $this->total_after_vat,
+            // Track A — live settlement state synced from OfficeManager (rental invoices).
+            'payment_status'       => $this->payment_status,
+            'is_pending'           => $this->is_pending,
+            'balance_value'        => $this->balance_value,
+            'paid_amount'          => $this->paid_amount,
+            'status_no'            => $this->status_no,
             'period_from'          => optional($this->period_from)->toDateString(),
             'period_to'            => optional($this->period_to)->toDateString(),
             'rent_days'            => $this->rent_days,
             'net_rate'             => $this->net_rate,
             'notes'                => $this->notes,
+            // Service Log: garage + the parts/services done.
+            'vehicle_id'           => $this->vehicle_id,
+            'vendor_id'            => $this->vendor_id,
+            'garage'               => $this->whenLoaded('vendor', fn () => $this->vendor?->name),
+            'items'                => $this->whenLoaded('items', fn () => $this->items->map(fn ($it) => [
+                'id'           => $it->id,
+                'description'  => $it->description,
+                'category_key' => $it->category_key,
+            ])->values()),
             'contract'             => $this->whenLoaded('contract', fn () => $this->contract ? [
                 'id'            => $this->contract->id,
                 'contract_no'   => $this->contract->contract_no,

@@ -24,7 +24,7 @@ class CustomerController extends Controller
             $result = CustomerResource::collection($customer);
             return ResponseHelper::SuccessResponse($result, "Customer retrieved successfully", 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -35,7 +35,7 @@ class CustomerController extends Controller
             $result = CustomerResource::make($customer);
             return ResponseHelper::SuccessResponse($result, "Customer created successfully", 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -46,7 +46,7 @@ class CustomerController extends Controller
             $result = CustomerResource::make($customer);
             return ResponseHelper::SuccessResponse($result, "Customer retrieved successfully", 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -132,7 +132,7 @@ class CustomerController extends Controller
 
             return ResponseHelper::SuccessResponse($data, "Customer profile retrieved successfully", 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -154,7 +154,7 @@ class CustomerController extends Controller
             ];
             return ResponseHelper::SuccessResponse($result, "Customer balance retrieved successfully", 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -165,7 +165,7 @@ class CustomerController extends Controller
             $result = CustomerResource::make($customer);
             return ResponseHelper::SuccessResponse($result, "Customer updated successfully", 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -175,7 +175,7 @@ class CustomerController extends Controller
             $this->customerService->destroy($customer);
             return ResponseHelper::SuccessResponse(null, "Customer deleted successfully", 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 }

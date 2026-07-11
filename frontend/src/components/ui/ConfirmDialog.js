@@ -10,6 +10,8 @@ export default function ConfirmDialog({
   confirmText = 'Confirm',
   variant = 'danger',
   loading = false,
+  confirmDisabled = false,
+  children,
 }) {
   return (
     <Modal
@@ -22,13 +24,14 @@ export default function ConfirmDialog({
           <Button variant="secondary" onClick={onClose} disabled={loading}>
             Cancel
           </Button>
-          <Button variant={variant} onClick={onConfirm} loading={loading}>
+          <Button variant={variant} onClick={onConfirm} loading={loading} disabled={confirmDisabled}>
             {confirmText}
           </Button>
         </>
       }
     >
-      <p className="text-sm text-gray-600">{message}</p>
+      {message && <p className="text-sm text-gray-600">{message}</p>}
+      {children}
     </Modal>
   );
 }

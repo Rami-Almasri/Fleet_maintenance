@@ -53,7 +53,7 @@ class PaymentController extends Controller
                 'last_page' => $payments->lastPage(),
             ], 'Payments retrieved successfully', 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -66,7 +66,7 @@ class PaymentController extends Controller
 
             return ResponseHelper::SuccessResponse(PaymentResource::make($payment), 'Payment recorded successfully', 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -79,7 +79,7 @@ class PaymentController extends Controller
                 200
             );
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -90,7 +90,7 @@ class PaymentController extends Controller
 
             return ResponseHelper::SuccessResponse(PaymentResource::make($payment), 'Payment updated successfully', 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -101,7 +101,7 @@ class PaymentController extends Controller
 
             return ResponseHelper::SuccessResponse(null, 'Payment deleted successfully', 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 }

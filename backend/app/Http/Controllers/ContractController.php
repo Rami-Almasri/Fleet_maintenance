@@ -31,7 +31,7 @@ class ContractController extends Controller
             ];
             return ResponseHelper::SuccessResponse($result, "Contract retrieved successfully", 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -46,18 +46,38 @@ class ContractController extends Controller
             $contractNo = $this->contractService->nextWebContractNo();
             return ResponseHelper::SuccessResponse(['contract_no' => $contractNo], "Next contract number generated", 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
     public function store(StoreContractRequest $request)
     {
         try {
-            $contract = $this->contractService->store($request->validated());
+            $data = $request->validated();
+
+            // Yellow-grade manager override (Option A: one-step, permission-gated). We only forward the
+            // override to the service when the ACTING user is actually authorised (holds
+            // `operations.override` — managers/admins). A non-manager's flag is silently dropped, so the
+            // service still blocks the Yellow car. override_by/reason land in the contract audit snapshot.
+            $user = $request->user();
+            if ($request->boolean('manager_override') && $user?->can('operations.override')) {
+                $data['manager_override'] = true;
+                $data['override_by']      = $user->name ?? (string) $user->id;
+                $data['override_reason']  = trim((string) $request->input('override_reason')) ?: null;
+            }
+
+            // Deferred Maintenance: a deliberate "pull this in-shop car out for a customer" decision.
+            // Only honoured for a user who may manage maintenance; it releases the maintenance blocks
+            // in the eligibility guard and drives the ticket-close + flag inside ContractService.
+            if ($request->boolean('pull_from_maintenance') && $user?->can('maintenance.manage')) {
+                $data['pull_from_maintenance'] = true;
+            }
+
+            $contract = $this->contractService->store($data);
             $result = ContractResource::make($contract);
             return ResponseHelper::SuccessResponse($result, "Contract created successfully", 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -76,7 +96,7 @@ class ContractController extends Controller
             $result = ContractResource::make($contract);
             return ResponseHelper::SuccessResponse($result, "Contract retrieved successfully", 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -87,7 +107,7 @@ class ContractController extends Controller
             $result = ContractResource::make($contract);
             return ResponseHelper::SuccessResponse($result, "Contract updated successfully", 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -97,7 +117,7 @@ class ContractController extends Controller
             $this->contractService->destroy($contract);
             return ResponseHelper::SuccessResponse(null, "Contract deleted successfully", 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 }

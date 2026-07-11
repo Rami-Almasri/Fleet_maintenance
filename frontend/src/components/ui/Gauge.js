@@ -37,16 +37,22 @@ export function useCountUp(end = 0, duration = 1100) {
   return val;
 }
 
-// Named palettes → [from, to] gradient stops + a soft track tint.
+// Named palettes → [from, to] gradient stops. The ring track uses the themed
+// --line token so gauges read correctly in both Platinum and Cockpit.
+const TRACK = 'rgb(var(--line))';
 const PALETTES = {
-  indigo:  { from: '#6366f1', to: '#8b5cf6', track: '#eef2ff' },
-  emerald: { from: '#10b981', to: '#34d399', track: '#ecfdf5' },
-  blue:    { from: '#3b82f6', to: '#60a5fa', track: '#eff6ff' },
-  amber:   { from: '#f59e0b', to: '#fbbf24', track: '#fffbeb' },
-  red:     { from: '#ef4444', to: '#f87171', track: '#fef2f2' },
-  violet:  { from: '#8b5cf6', to: '#a78bfa', track: '#f5f3ff' },
-  cyan:    { from: '#06b6d4', to: '#22d3ee', track: '#ecfeff' },
-  slate:   { from: '#64748b', to: '#94a3b8', track: '#f1f5f9' },
+  indigo:  { from: '#3b82f6', to: '#22d3ee' },   // brand: navy → cyan
+  brand:   { from: '#3b82f6', to: '#22d3ee' },
+  emerald: { from: '#10b981', to: '#34d399' },   // success green
+  success: { from: '#10b981', to: '#34d399' },
+  blue:    { from: '#3b82f6', to: '#60a5fa' },
+  amber:   { from: '#f59e0b', to: '#fbbf24' },
+  orange:  { from: '#f97316', to: '#fb923c' },   // alert orange
+  alert:   { from: '#f97316', to: '#fb923c' },
+  red:     { from: '#ef4444', to: '#f87171' },
+  violet:  { from: '#06b6d4', to: '#22d3ee' },
+  cyan:    { from: '#06b6d4', to: '#22d3ee' },
+  slate:   { from: '#64748b', to: '#94a3b8' },
 };
 
 let GID = 0; // unique gradient ids so multiple gauges don't collide
@@ -96,7 +102,7 @@ export function RadialGauge({
             <stop offset="100%" stopColor={pal.to} />
           </linearGradient>
         </defs>
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={pal.track} strokeWidth={stroke} />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={TRACK} strokeWidth={stroke} />
         <circle
           cx={size / 2}
           cy={size / 2}
@@ -111,15 +117,15 @@ export function RadialGauge({
         />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="text-3xl font-bold tracking-tight text-gray-900 tabular-nums">
+        <span className="font-display text-3xl font-bold tracking-tight text-slate-900 tabular-nums">
           {format ? format(display) : Math.round(display).toLocaleString()}
         </span>
         {max != null && (
-          <span className="text-[11px] font-medium text-gray-400 tabular-nums">of {max.toLocaleString()}</span>
+          <span className="text-[11px] font-medium text-slate-400 tabular-nums">of {max.toLocaleString()}</span>
         )}
       </div>
       {label && (
-        <span className="absolute -bottom-0 translate-y-full pt-2 text-center text-xs font-semibold text-gray-500">
+        <span className="absolute -bottom-0 translate-y-full pt-2 text-center text-xs font-semibold text-slate-500">
           {label}
         </span>
       )}
@@ -158,10 +164,10 @@ export function FleetDonut({ segments = [], total = null, centerLabel = 'Total',
   });
 
   return (
-    <div className="flex flex-col items-center gap-5 sm:flex-row sm:gap-8">
+    <div className="flex flex-col items-center gap-5">
       <div className="relative shrink-0" style={{ width: size, height: size }}>
         <svg width={size} height={size} className="-rotate-90">
-          <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#f1f5f9" strokeWidth={stroke} />
+          <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={TRACK} strokeWidth={stroke} />
           {arcs.map((a, i) => {
             const pal = PALETTES[a.color] || PALETTES.indigo;
             const len = c * a.frac * grow;
@@ -183,23 +189,23 @@ export function FleetDonut({ segments = [], total = null, centerLabel = 'Total',
           })}
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <span className="text-4xl font-bold tracking-tight text-gray-900 tabular-nums">
+          <span className="font-display text-4xl font-bold tracking-tight text-slate-900 tabular-nums">
             {Math.round(display).toLocaleString()}
           </span>
-          <span className="text-xs font-medium text-gray-400">{centerLabel}</span>
+          <span className="text-xs font-medium text-slate-400">{centerLabel}</span>
         </div>
       </div>
 
-      <div className="grid w-full grid-cols-2 gap-x-6 gap-y-3 sm:flex sm:flex-col sm:gap-y-3">
+      <div className="flex w-full flex-col gap-y-2.5">
         {arcs.map((a, i) => {
           const pal = PALETTES[a.color] || PALETTES.indigo;
           const pct = sum ? Math.round((a.value / sum) * 100) : 0;
           return (
             <div key={i} className="flex items-center gap-3">
               <span className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: pal.from }} />
-              <span className="flex-1 text-sm font-medium text-gray-600">{a.label}</span>
-              <span className="text-sm font-bold text-gray-900 tabular-nums">{a.value}</span>
-              <span className="w-9 text-right text-xs font-medium text-gray-400 tabular-nums">{pct}%</span>
+              <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-600">{a.label}</span>
+              <span className="shrink-0 text-sm font-bold text-slate-900 tabular-nums">{a.value}</span>
+              <span className="w-10 shrink-0 text-right text-xs font-medium text-slate-400 tabular-nums">{pct}%</span>
             </div>
           );
         })}

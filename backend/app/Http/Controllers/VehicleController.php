@@ -5,17 +5,21 @@ namespace App\Http\Controllers;
 use App\Helpers\ResponseHelper;
 use App\Models\Contract;
 use App\Models\Maintenance;
+use App\Models\MaintenanceMedia;
 use App\Models\Vehicle;
+use App\Models\VehicleLogEvent;
 use App\Http\Requests\StoreVehicleRequest;
 use App\Http\Requests\UpdateVehicleRequest;
 use App\Http\Resources\VehicleResource;
 use App\Services\FleetUtilizationService;
 use App\Services\MaintenanceAnalyticsService;
 use App\Services\MileageBaselineService;
+use App\Services\OperationsService;
 use App\Services\RealProfitService;
 use App\Services\VehicleService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 class VehicleController extends Controller
 {
@@ -34,7 +38,7 @@ class VehicleController extends Controller
             $result = VehicleResource::collection($vehicle);
             return ResponseHelper::SuccessResponse($result, "Vehicle retrieved successfully", 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -59,7 +63,273 @@ class VehicleController extends Controller
                 200
             );
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
+     * Fleet Operations: cars on rent right now that also have a workshop record open today (their
+     * maintenance clock is paused until they return) — an open 'U' contract, or an untracked sheet shop
+     * event with no 'U' contract. Rental is King; this snapshot is informational, not a warning.
+     */
+    public function activeShopStays(Request $request, FleetUtilizationService $utilization)
+    {
+        try {
+            $lookback = (int) $request->query('sheet_lookback', 60);
+
+            return ResponseHelper::SuccessResponse(
+                $utilization->activeShopStays($lookback > 0 ? $lookback : 60),
+                'Active rental shop stays retrieved successfully',
+                200
+            );
+        } catch (\Exception $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
+     * Fleet Operations — maintenance↔rental overlap history: every type-'U' maintenance contract whose
+     * dates overlapped a 'C' rental (both may be closed). Rental is King, so the overlap is rental time;
+     * this powers the per-ticket true off-road shop-days breakdown. ?months=N (default 12).
+     */
+    public function maintenanceOverlaps(Request $request, FleetUtilizationService $utilization)
+    {
+        try {
+            $months = (int) $request->query('months', 12);
+
+            return ResponseHelper::SuccessResponse(
+                $utilization->maintenanceOverlaps($months > 0 ? $months : 12),
+                'Maintenance overlaps retrieved successfully',
+                200
+            );
+        } catch (\Exception $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
+     * The car's Technical Service Log — every part/service recorded on its invoices (money-free),
+     * newest first. Powers the per-vehicle Service History view AND the ticket "last done" hint:
+     *   - ?q=  free-text search across the work-item description (e.g. "engine oil").
+     *   - `last_by_category` pre-buckets the LATEST occurrence per Findings category, so a ticket can
+     *     instantly show "last done: <date> at <garage>" the moment the inspector picks a category.
+     */
+    public function serviceHistory(Request $request, Vehicle $vehicle)
+    {
+        try {
+            $q = trim((string) $request->query('q', ''));
+
+            $items = \App\Models\InvoiceItem::query()
+                ->whereHas('invoice', fn ($iq) => $iq->where('vehicle_id', $vehicle->id))
+                ->when($q !== '', fn ($iq) => $iq->where('description', 'like', '%' . $q . '%'))
+                ->with(['invoice:id,invoice_ref,invoice_date,vendor_id', 'invoice.vendor:id,name'])
+                ->get()
+                ->map(fn ($it) => [
+                    'id'           => $it->id,
+                    'description'  => $it->description,
+                    'category_key' => $it->category_key,
+                    'date'         => optional($it->invoice?->invoice_date)->toDateString(),
+                    'garage'       => $it->invoice?->vendor?->name,
+                    'invoice_ref'  => $it->invoice?->invoice_ref,
+                ])
+                ->sortByDesc(fn ($r) => $r['date'] ?? '0000-00-00') // newest first; null dates last
+                ->values();
+
+            // Latest occurrence per category (items are newest-first, so first seen = latest).
+            $lastByCategory = [];
+            foreach ($items as $r) {
+                $key = $r['category_key'];
+                if (! $key || isset($lastByCategory[$key])) {
+                    continue;
+                }
+                $lastByCategory[$key] = ['date' => $r['date'], 'garage' => $r['garage'], 'description' => $r['description']];
+            }
+
+            return ResponseHelper::SuccessResponse([
+                'items'            => $items,
+                'last_by_category' => $lastByCategory,
+                'total'            => $items->count(),
+            ], 'Service history retrieved', 200);
+        } catch (\Exception $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
+     * Service & Inspection — the combined task the Service-Due alert deep-links to (assigned to the
+     * Inspector, "Abo Marouf"). Two things happen on one submit:
+     *
+     *   1. OIL CHANGE (always): Vehicle::recordOilService writes the odometer/date through to the
+     *      vehicle anchor + the recurring oil reminder, so the profile/reminder/alert all move
+     *      together and the Service-Due notification auto-resolves on the next scan.
+     *
+     *   2. INSPECTOR'S PAD (optional — "smart closing"): any issues the inspector flags during the
+     *      test drive are recorded as pad flags and folded into a brand-new maintenance ticket
+     *      (MaintenanceWorkflowService::pickupIntoMaintenance). Only the oil-change task completes on
+     *      this screen; the flagged issues live on their own ticket in the Supervisors' queue.
+     *
+     * The ticket step runs in its OWN transaction, so a ticket failure (e.g. the car already has an
+     * open ticket) never rolls back the completed oil change — the two outcomes are independent.
+     */
+    public function serviceInspection(Request $request, Vehicle $vehicle, \App\Services\MaintenanceWorkflowService $workflow)
+    {
+        try {
+            $data = $request->validate([
+                'odometer'            => 'required|integer|min:0',
+                'date'               => 'nullable|date',
+                'note'               => 'nullable|string|max:2000',
+                'findings'           => 'nullable|array',
+                'findings.*.text'    => 'required_with:findings|string|max:2000',
+                'findings.*.severity' => ['nullable', \Illuminate\Validation\Rule::in(Maintenance::FAULT_SEVERITIES)],
+            ]);
+
+            $actor    = $request->user();
+            $odometer = (int) $data['odometer'];
+            $findings = collect($data['findings'] ?? [])
+                ->filter(fn ($f) => trim((string) ($f['text'] ?? '')) !== '')
+                ->values();
+
+            // 1) Oil change — standalone writes; always committed, never undone below.
+            $reminder = \Illuminate\Support\Facades\DB::transaction(
+                fn () => $vehicle->recordOilService($odometer, $data['date'] ?? null)
+            );
+
+            // 2) Flagged issues → their own maintenance ticket (needs the initiator permission).
+            $ticket      = null;
+            $ticketNote  = null;
+            if ($findings->isNotEmpty()) {
+                if (! $actor->can('maintenance.initiate')) {
+                    $ticketNote = 'Oil change logged. Flagged issues were not raised — you lack permission to open maintenance tickets.';
+                } else {
+                    try {
+                        $ticket = \Illuminate\Support\Facades\DB::transaction(function () use ($vehicle, $odometer, $findings, $data, $actor, $workflow) {
+                            foreach ($findings as $f) {
+                                \App\Models\InspectorPadFlag::create([
+                                    'vehicle_id'  => $vehicle->id,
+                                    'keyword'     => trim((string) $f['text']),
+                                    'observation' => null,
+                                    'severity'    => $f['severity'] ?? null,
+                                    'status'      => \App\Models\InspectorPadFlag::STATUS_PENDING,
+                                    'created_by'  => $actor->id,
+                                ]);
+                            }
+
+                            // Folds the pending pad flags (incl. the ones just added) into a fresh ticket.
+                            return $workflow->pickupIntoMaintenance($vehicle, $odometer, $data['note'] ?? null, $actor);
+                        });
+                    } catch (\App\Exceptions\WorkflowTransitionException $e) {
+                        // Expected, non-fatal (e.g. the car already has an open ticket) — oil stays logged.
+                        $ticketNote = 'Oil change logged. Couldn\'t open a maintenance ticket: ' . $e->getMessage();
+                    }
+                }
+            }
+
+            $vehicle->refresh();
+
+            $message = $ticket
+                ? 'Oil change logged & maintenance ticket opened for flagged issues'
+                : ($ticketNote ?: 'Oil change logged');
+
+            return ResponseHelper::SuccessResponse([
+                'vehicle_id'     => $vehicle->id,
+                'service_status' => $vehicle->serviceStatus(),
+                'reminder'       => \App\Http\Resources\ServiceReminderResource::make($reminder),
+                'ticket'         => $ticket ? [
+                    'id'              => $ticket->id,
+                    'workflow_status' => $ticket->workflow_status,
+                    'fault_severity'  => $ticket->fault_severity,
+                    'findings_count'  => is_array($ticket->findings) ? count($ticket->findings) : 0,
+                ] : null,
+                'ticket_note'    => $ticketNote,
+            ], $message, 200);
+        } catch (\Throwable $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
+     * The car's Tire Details — every tyre line recorded on its maintenance tickets (brand, DOT code,
+     * tread depth, install date/odometer, warranty), newest install first. A tyre line is any
+     * maintenance line item categorised 'tyres' OR carrying a tyre-specific field. Money (line cost)
+     * is included but the frontend hides it behind SHOW_FINANCIALS like every other cost surface.
+     */
+    public function tireHistory(Vehicle $vehicle)
+    {
+        try {
+            $items = \App\Models\MaintenanceLineItem::query()
+                ->where('vehicle_id', $vehicle->id)
+                ->where(function ($w) {
+                    $w->where('category_key', 'tyres')
+                        ->orWhereNotNull('tire_brand')
+                        ->orWhereNotNull('tire_dot')
+                        ->orWhereNotNull('tire_tread_mm');
+                })
+                ->with(['maintenance:id,contract_no,vehicle_id,vendor_id', 'maintenance.vendor:id,name'])
+                ->get()
+                ->map(fn ($l) => [
+                    'id'                 => $l->id,
+                    'brand'              => $l->tire_brand,
+                    'dot'                => $l->tire_dot,
+                    'tread_mm'           => $l->tire_tread_mm !== null ? (float) $l->tire_tread_mm : null,
+                    'description'        => $l->description,
+                    'part_number'        => $l->part_number,
+                    'quantity'           => (float) $l->quantity,
+                    'cost'               => (float) $l->line_total,
+                    'installed_on'       => optional($l->installed_on)->toDateString(),
+                    'installed_odometer' => $l->installed_odometer,
+                    'warranty_until'     => optional($l->warranty_until)->toDateString(),
+                    'garage'             => $l->maintenance?->vendor?->name,
+                    'ticket_id'          => $l->maintenance_id,
+                    'ticket_no'          => $l->maintenance?->contract_no,
+                ])
+                ->sortByDesc(fn ($r) => $r['installed_on'] ?? '0000-00-00') // newest install first; null dates last
+                ->values();
+
+            return ResponseHelper::SuccessResponse([
+                'items' => $items,
+                'total' => $items->count(),
+            ], 'Tire details retrieved', 200);
+        } catch (\Exception $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
+     * "Time machine": what one car was doing — either on a single calendar day (?date=YYYY-MM-DD, or
+     * ?from= alone; rented to whom / in the workshop for what / idle / onboarding / not yet owned), OR
+     * over a date range (?from=&to=) returning how many days it was rented / in the workshop / available.
+     */
+    public function statusOn(Request $request, Vehicle $vehicle, FleetUtilizationService $utilization)
+    {
+        try {
+            $from = $request->query('from') ?: $request->query('date') ?: Carbon::today()->toDateString();
+            $to   = $request->query('to');
+
+            if (! Carbon::hasFormat($from, 'Y-m-d')) {
+                return ResponseHelper::FailureResponse(null, 'A valid date (YYYY-MM-DD) is required.', 422);
+            }
+
+            // Range mode — caller passed both ends and they differ.
+            if ($to) {
+                if (! Carbon::hasFormat($to, 'Y-m-d')) {
+                    return ResponseHelper::FailureResponse(null, 'A valid end date (YYYY-MM-DD) is required.', 422);
+                }
+                if ($to !== $from) {
+                    return ResponseHelper::SuccessResponse(
+                        $utilization->usageBreakdown($vehicle->id, $from, $to),
+                        "Vehicle usage retrieved successfully",
+                        200
+                    );
+                }
+            }
+
+            return ResponseHelper::SuccessResponse(
+                $utilization->statusOn($vehicle->id, $from),
+                "Vehicle status retrieved successfully",
+                200
+            );
+        } catch (\Exception $e) {
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -80,7 +350,7 @@ class VehicleController extends Controller
                 200
             );
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -98,7 +368,7 @@ class VehicleController extends Controller
                 200
             );
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -162,7 +432,7 @@ class VehicleController extends Controller
             $result = VehicleResource::make($vehicle);
             return ResponseHelper::SuccessResponse($result, "Vehicle created successfully", 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -175,7 +445,7 @@ class VehicleController extends Controller
             $result = VehicleResource::make($vehicle);
             return ResponseHelper::SuccessResponse($result, "Vehicle retrieved successfully", 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -326,9 +596,13 @@ class VehicleController extends Controller
             })->values();
 
             // Timeline of every workshop event for this car (built from the same loaded rows).
+            // `kind` + `ts` let these legacy sheet rows interleave with the workflow audit trail
+            // below into one chronological timeline.
             $maintenanceLog = $sheetEvents
                 ->map(fn ($m) => [
+                    'kind'      => 'workshop',
                     'id'        => $m->id,
+                    'ts'        => optional($m->out_date ?? $m->follow_date ?? $m->actual_in_date)->toIso8601String(),
                     'event'     => $m->event_status,
                     'date'      => optional($m->out_date)->toDateString()
                                    ?? optional($m->follow_date)->toDateString()
@@ -347,6 +621,168 @@ class VehicleController extends Controller
                     'notes'     => $m->maintenance_notes,
                     'cost'      => $m->cost,
                 ])->values();
+
+            // Maintenance-Workflow audit trail (VehicleLogEvent) — the lifecycle transitions the team
+            // now enters by hand (request → test drive → report → dispatch → repair → ready → close /
+            // reopen). Tagged inspector vs garage. These are history only; the visit row owns cost.
+            $logEvents = $vehicle->logEvents()
+                ->with(['actor:id,name', 'linkedContract:id,contract_no'])
+                ->get();
+
+            // Video Evidence (the garage's repair clips / photos) lives on the ticket, keyed by
+            // maintenance_id. Load it once and group so each lifecycle event can surface the media that
+            // was captured for it — no N+1. Only the events where a clip/photo is actually taken carry it:
+            // the garage-finished "Video Review" (ready), and per-fault "fixed" evidence (task_resolved).
+            $mediaByTicket = MaintenanceMedia::query()
+                ->whereIn('maintenance_id', $logEvents->pluck('maintenance_id')->filter()->unique()->all())
+                ->get()
+                ->groupBy('maintenance_id');
+            $mediaEvents = [VehicleLogEvent::EVENT_READY, VehicleLogEvent::EVENT_TASK_RESOLVED];
+
+            $workflowLog = $logEvents
+                ->map(function ($e) use ($mediaByTicket, $mediaEvents) {
+                    $meta = (array) ($e->meta ?? []);
+
+                    // A task-scoped event shows only its own fault's clips; a ticket-wide event (mark-ready)
+                    // shows the ticket-wide clips (task_id null). Signed viewUrl() so nothing is publicly listable.
+                    $media = [];
+                    if (in_array($e->event_type, $mediaEvents, true) && isset($mediaByTicket[$e->maintenance_id])) {
+                        $media = $mediaByTicket[$e->maintenance_id]
+                            ->filter(fn ($m) => $e->maintenance_task_id
+                                ? (int) $m->maintenance_task_id === (int) $e->maintenance_task_id
+                                : $m->maintenance_task_id === null)
+                            ->map(fn ($m) => [
+                                'id'   => $m->id,
+                                'kind' => $m->kind,
+                                'name' => $m->original_name,
+                                'url'  => $m->viewUrl(),
+                            ])
+                            ->values()
+                            ->all();
+                    }
+
+                    return [
+                        'kind'        => 'workflow',
+                        'id'          => $e->id,
+                        'ts'          => optional($e->occurred_at)->toIso8601String(),
+                        'date'        => optional($e->occurred_at)->toDateString(),
+                        'event_type'  => $e->event_type,
+                        'workflow_status' => $e->workflow_status,   // the exact lifecycle stage at the time — lets the timeline label the badge by stage
+                        'source'      => $e->source_tag,            // inspector | garage
+                        'description' => $e->description,
+                        'meta'        => $meta ?: null,
+                        'garage'      => $meta['garage'] ?? null,
+                        'odometer'    => $meta['dispatch_odometer'] ?? $meta['return_odometer'] ?? null,
+                        'cost'        => $meta['cost'] ?? null,
+                        'actor'       => $e->actor?->name,
+                        'contract_id' => $e->linked_contract_id,
+                        'contract_no' => $e->linkedContract?->contract_no,
+                        'media'       => $media ?: null,
+                    ];
+                });
+
+            // Driver follow-up notes — logged on the ticket itself (a JSON trail), not as log events.
+            // The user wants these in the timeline too, so flatten each ticket's follow_ups into events.
+            $followUps = Maintenance::workflowTickets()
+                ->where('vehicle_id', $vehicle->id)
+                ->whereNotNull('follow_ups')
+                ->get(['id', 'follow_ups'])
+                ->flatMap(fn ($t) => collect($t->follow_ups ?? [])->map(fn ($f) => [
+                    'kind'        => 'workflow',
+                    'id'          => 'fu-' . $t->id . '-' . ($f['at'] ?? ''),
+                    'ts'          => $f['at'] ?? null,
+                    'date'        => ! empty($f['at']) ? Carbon::parse($f['at'])->toDateString() : null,
+                    'event_type'  => 'follow_up',
+                    'source'      => 'garage',
+                    'description' => $f['text'] ?? null,
+                    'actor'       => $f['by'] ?? null,
+                    'meta'        => null,
+                ]));
+
+            // One unified, chronological (newest-first) timeline: legacy sheet history + the workflow
+            // audit trail + follow-ups, so the profile shows everything in a single place.
+            $timeline = $maintenanceLog
+                ->concat($workflowLog)
+                ->concat($followUps)
+                ->sortByDesc(fn ($i) => $i['ts'] ?? $i['date'] ?? '')
+                ->values();
+
+            // Workflow Journeys — the SAME VehicleLogEvent trail, but reshaped from a flat feed into
+            // one bar-meter PER TICKET showing every workflow STAGE the car passed through and HOW LONG
+            // it sat in each. The log stamps workflow_status on each transition; walking a ticket's
+            // events in order and collapsing consecutive rows that share a workflow_status yields the
+            // distinct stage segments, each timed to the next transition (the last open stage runs to now).
+            // Sub-events with a null workflow_status (status pings, per-fault rows) don't open a stage —
+            // they happen inside the current one. Terminal stages carry no running clock.
+            $now = Carbon::now();
+            $terminal = ['closed', 'diagnostic_cleared', 'complaint_resolved'];
+            $journeys = $logEvents
+                ->filter(fn ($e) => $e->maintenance_id && $e->occurred_at)
+                ->groupBy('maintenance_id')
+                ->map(function ($events, $ticketId) use ($now, $terminal) {
+                    $ordered = $events->sortBy('occurred_at')->values();
+
+                    // Collapse the ordered events into stage segments keyed by workflow_status.
+                    $stages = [];
+                    foreach ($ordered as $e) {
+                        if ($e->workflow_status === null) {
+                            continue; // a sub-event inside the current stage — doesn't open a new one
+                        }
+                        $last = empty($stages) ? null : $stages[count($stages) - 1];
+                        if ($last && $last['workflow_status'] === $e->workflow_status) {
+                            continue; // still the same stage — no new segment
+                        }
+                        $meta = (array) ($e->meta ?? []);
+                        $stages[] = [
+                            'workflow_status' => $e->workflow_status,
+                            'event_type'      => $e->event_type,
+                            'entered_at'      => $e->occurred_at->toIso8601String(),
+                            '_entered'        => $e->occurred_at,          // kept for duration maths, stripped below
+                            'actor'           => $e->actor?->name,
+                            'source'          => $e->source_tag,
+                            'garage'          => $meta['garage'] ?? null,
+                            'description'     => $e->description,
+                        ];
+                    }
+
+                    if (empty($stages)) {
+                        return null; // a ticket whose events never stamped a workflow_status — nothing to chart
+                    }
+
+                    // Time each segment: from its entry to the NEXT stage's entry. The final stage runs to
+                    // now while the ticket is live, or stops (no clock) once it reached a terminal status.
+                    $count = count($stages);
+                    $lastStatus = $stages[$count - 1]['workflow_status'];
+                    $isOpen = ! in_array($lastStatus, $terminal, true);
+                    foreach ($stages as $i => &$stage) {
+                        $start = $stage['_entered'];
+                        if ($i + 1 < $count) {
+                            $end = $stages[$i + 1]['_entered'];
+                        } else {
+                            $end = $isOpen ? $now : null; // terminal stage → no running clock
+                        }
+                        $stage['seconds'] = $end ? max(0, $start->diffInSeconds($end)) : null;
+                        unset($stage['_entered']);
+                    }
+                    unset($stage);
+
+                    $openedAt = $stages[0]['entered_at'];
+                    $totalSeconds = collect($stages)->sum(fn ($s) => $s['seconds'] ?? 0);
+
+                    return [
+                        'ticket_id'     => (int) $ticketId,
+                        'opened_at'     => $openedAt,
+                        'closed_at'     => $isOpen ? null : $stages[$count - 1]['entered_at'],
+                        'is_open'       => $isOpen,
+                        'current_stage' => $lastStatus,
+                        'stage_count'   => $count,
+                        'total_seconds' => $totalSeconds,
+                        'stages'        => $stages,
+                    ];
+                })
+                ->filter()
+                ->sortByDesc('opened_at')
+                ->values();
 
             $data = [
                 'vehicle'      => VehicleResource::make($vehicle),
@@ -378,6 +814,10 @@ class VehicleController extends Controller
                 'availability' => $availability,
                 'maintenance' => $maintenance,
                 'maintenance_log' => $maintenanceLog,
+                // Unified history: sheet workshop events + manual workflow audit trail + follow-ups.
+                'timeline' => $timeline,
+                // Per-ticket stage meter: every workflow stage the car passed through + time in each.
+                'workflow_journeys' => $journeys,
                 'maintenance_analytics' => $analytics->vehicleServiceTrends($vehicle->id),
                 'stats' => [
                     'contracts_count'   => $contracts->count(),
@@ -411,7 +851,7 @@ class VehicleController extends Controller
 
             return ResponseHelper::SuccessResponse($data, "Vehicle profile retrieved successfully", 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -471,11 +911,136 @@ class VehicleController extends Controller
     public function update(UpdateVehicleRequest $request, Vehicle $vehicle)
     {
         try {
-            $vehicle = $this->vehicleService->update($request->validated(), $vehicle);
+            $data = $request->validated();
+
+            // Odometer Modification Approval: a SIGNIFICANT edit (> OdometerChangeRequest::
+            // SIGNIFICANT_DELTA_KM in either direction) is not applied here — it is filed for
+            // admin review instead, carrying the mandatory reason note the frontend collects.
+            // A small edit (typo-fix range) still applies immediately, same as always.
+            if (array_key_exists('odometer', $data) && $data['odometer'] !== null) {
+                $requested = (int) $data['odometer'];
+                $previous  = $vehicle->odometer;
+
+                if (\App\Models\OdometerChangeRequest::isSignificant($previous, $requested)) {
+                    $note = trim((string) $request->input('odometer_change_note', ''));
+                    if ($note === '') {
+                        return ResponseHelper::FailureResponse(
+                            null,
+                            'This is a significant odometer change (more than ' . \App\Models\OdometerChangeRequest::SIGNIFICANT_DELTA_KM . ' km). Please enter a note explaining the change — it will be sent for admin approval.',
+                            422
+                        );
+                    }
+
+                    \App\Models\OdometerChangeRequest::create([
+                        'vehicle_id'         => $vehicle->id,
+                        'previous_odometer'  => $previous,
+                        'requested_odometer' => $requested,
+                        'delta'              => $requested - ($previous ?? 0),
+                        'note'               => $note,
+                        'workflow_stage'     => $vehicle->operational_status,
+                        'status'             => \App\Models\OdometerChangeRequest::STATUS_PENDING,
+                        'requested_by_id'    => optional($request->user())->id,
+                        'requested_by'       => optional($request->user())->name,
+                    ]);
+
+                    // The rest of the edit (make/model/status/etc.) still applies now; only the
+                    // odometer itself is held back pending approval.
+                    unset($data['odometer']);
+                    $vehicle = $this->vehicleService->update($data, $vehicle);
+
+                    return ResponseHelper::SuccessResponse(
+                        VehicleResource::make($vehicle),
+                        'Vehicle updated. The odometer change was significant and has been sent for admin approval.',
+                        200
+                    );
+                }
+            }
+
+            $vehicle = $this->vehicleService->update($data, $vehicle);
             $result = VehicleResource::make($vehicle);
             return ResponseHelper::SuccessResponse($result, "Vehicle updated successfully", 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
+     * Set the car's Visual Condition Grade (Abu Marouf): green / orange / red, plus an
+     * optional "Cosmetic Note". Green clears the note. Stamps who graded it and when so
+     * the grade carries provenance. Gated by vehicles.manage.
+     */
+    public function updateCondition(Request $request, Vehicle $vehicle)
+    {
+        try {
+            $data = $request->validate([
+                'condition_grade' => ['required', Rule::in(Vehicle::CONDITION_GRADES)],
+                'condition_note'  => ['nullable', 'string', 'max:1000'],
+            ]);
+
+            $previous = $vehicle->condition_grade;
+
+            $vehicle->update([
+                'condition_grade'     => $data['condition_grade'],
+                // A Perfect car carries no cosmetic note; orange/red keep whatever was entered.
+                'condition_note'      => $data['condition_grade'] === 'green' ? null : ($data['condition_note'] ?? null),
+                'condition_graded_at' => now(),
+                'condition_graded_by' => optional($request->user())->name,
+            ]);
+
+            // Audit the grade change on the vehicle's event trail (who / when / from → to). The
+            // condition grade is the Damage Assessment pillar's verdict, so it belongs in the
+            // readiness audit story. Best-effort — never blocks the grade update.
+            if ($previous !== $data['condition_grade']) {
+                app(\App\Services\VehicleLogService::class)->recordVehicle(
+                    $vehicle,
+                    \App\Models\VehicleLogEvent::EVENT_CONDITION_GRADED,
+                    $request->user(),
+                    [
+                        'description' => 'Condition graded ' . ($previous ?: 'none') . ' → ' . $data['condition_grade'],
+                        'meta'        => ['pillar' => 'Damage Assessment', 'from' => $previous, 'to' => $data['condition_grade'], 'note' => $data['condition_note'] ?? null],
+                    ],
+                );
+            }
+
+            return ResponseHelper::SuccessResponse(VehicleResource::make($vehicle->refresh()), "Condition grade updated", 200);
+        } catch (\Exception $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
+     * Deferred Maintenance — manually raise the "owes maintenance" flag on a car that was pulled
+     * out of the workshop for a customer. It is normally set automatically when such a car is rented
+     * out; this endpoint is the manual override for the odd case the system didn't catch.
+     */
+    public function deferMaintenance(Request $request, Vehicle $vehicle, OperationsService $operations)
+    {
+        try {
+            $data = $request->validate(['note' => ['nullable', 'string', 'max:1000']]);
+            $operations->flagDeferredMaintenance(
+                $vehicle,
+                $data['note'] ?? $operations->deferredMaintenanceNote($vehicle),
+                optional($request->user())->name,
+            );
+
+            return ResponseHelper::SuccessResponse(VehicleResource::make($vehicle->refresh()), "Flagged for deferred maintenance", 200);
+        } catch (\Exception $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
+     * Deferred Maintenance — the supervisor's Resolve / Dismiss: clear the "owes maintenance" flag
+     * (e.g. the car turned out not to need the shop after all, or it's already been sent back).
+     */
+    public function resolveDeferMaintenance(Request $request, Vehicle $vehicle, OperationsService $operations)
+    {
+        try {
+            $operations->resolveDeferredMaintenance($vehicle);
+
+            return ResponseHelper::SuccessResponse(VehicleResource::make($vehicle->refresh()), "Deferred maintenance cleared", 200);
+        } catch (\Exception $e) {
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -488,7 +1053,7 @@ class VehicleController extends Controller
             $this->vehicleService->destroy($vehicle);
             return ResponseHelper::SuccessResponse(null, "Vehicle deleted successfully", 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 }

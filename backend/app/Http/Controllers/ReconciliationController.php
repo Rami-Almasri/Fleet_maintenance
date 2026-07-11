@@ -34,7 +34,7 @@ class ReconciliationController extends Controller
                 200
             );
         } catch (\Throwable $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -58,7 +58,7 @@ class ReconciliationController extends Controller
                 200
             );
         } catch (\Throwable $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 

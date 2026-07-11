@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fleet System — Unified Master Use Case</title>
+<style>
+  :root{
+    --navy:#0b1f3a; --navy-2:#12305c; --cyan:#0bb4c4; --cyan-dk:#087f8c;
+    --ink:#1a2433; --muted:#5b6b82; --line:#e2e8f0; --bg:#f4f7fb; --card:#ffffff;
+    --ok:#059669; --warn:#d97706; --block:#e11d48;
+  }
+  *{box-sizing:border-box}
+  body{margin:0; background:var(--bg); color:var(--ink);
+    font:15.5px/1.7 'Inter',-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+  .wrap{max-width:940px; margin:0 auto; padding:0 24px 80px}
+
+  header{background:linear-gradient(135deg,var(--navy) 0%,var(--navy-2) 55%,var(--cyan-dk) 140%);
+    color:#fff; padding:48px 0 40px; box-shadow:0 10px 30px rgba(11,31,58,.25)}
+  header .wrap{padding-bottom:0}
+  .eyebrow{letter-spacing:.16em; text-transform:uppercase; font-size:12px; color:var(--cyan); font-weight:700; margin:0 0 8px}
+  h1{margin:0; font-size:33px; font-weight:800; line-height:1.15}
+  .sub{margin:11px 0 0; color:#c7d6ea; font-size:16px; max-width:640px}
+  .meta-row{display:flex; gap:10px; flex-wrap:wrap; margin-top:22px}
+  .pill{background:rgba(255,255,255,.10); border:1px solid rgba(255,255,255,.18);
+    padding:6px 13px; border-radius:999px; font-size:13px; color:#eaf2fb}
+
+  .intro{background:var(--card); border:1px solid var(--line); border-left:4px solid var(--cyan);
+    border-radius:12px; padding:18px 22px; margin:-42px 0 26px; box-shadow:0 8px 24px rgba(11,31,58,.08)}
+  .intro b{color:var(--navy)}
+
+  .sec{background:var(--card); border:1px solid var(--line); border-radius:14px; margin:22px 0;
+    overflow:hidden; box-shadow:0 6px 20px rgba(11,31,58,.06)}
+  .sec > .head{display:flex; align-items:center; gap:14px; padding:20px 24px;
+    background:linear-gradient(90deg,#f8fbff,#fff); border-bottom:1px solid var(--line)}
+  .num{flex:0 0 auto; width:42px; height:42px; border-radius:11px; background:var(--navy);
+    color:#fff; font-weight:800; font-size:19px; display:flex; align-items:center; justify-content:center;
+    box-shadow:0 4px 12px rgba(11,31,58,.25)}
+  .sec h2{margin:0; font-size:20px; font-weight:800; color:var(--navy)}
+  .sec h2 small{display:block; font-size:12.5px; font-weight:600; color:var(--muted); margin-top:2px}
+  .sec .body{padding:14px 24px 20px}
+
+  .step{border-left:2px solid var(--line); padding:2px 0 2px 16px; margin:14px 0}
+  .step .t{font-weight:800; color:var(--navy); font-size:15px}
+  .step p{margin:4px 0 0; font-size:14px; color:#41506a}
+  .flow{background:var(--navy); color:#cfe9ff; border-radius:9px; padding:11px 15px; margin:12px 0;
+    font-size:13.5px; font-weight:600}
+  .flow b{color:#fff}
+  .flow .ar{color:var(--cyan)}
+
+  code{background:#eef2f7; border:1px solid #e0e7ef; border-radius:5px; padding:0 6px;
+    font:12.5px 'JetBrains Mono',ui-monospace,Consolas,monospace; color:#0b3a63}
+  .tag{display:inline-block; padding:1px 9px; border-radius:999px; font-size:11.5px; font-weight:700}
+  .tag.block{background:#fee2e2; color:var(--block)} .tag.warn{background:#fef3c7; color:var(--warn)}
+  .tag.ok{background:#d1fae5; color:var(--ok)}
+
+  table{border-collapse:collapse; width:100%; margin:12px 0; font-size:13.5px}
+  th,td{border:1px solid var(--line); padding:9px 12px; text-align:left; vertical-align:top}
+  th{background:#f1f6fc; color:var(--navy); font-weight:700; font-size:12.5px}
+  tr:nth-child(even) td{background:#fafcfe}
+
+  .rule{background:#eff6ff; border:1px solid #bfdbfe; border-radius:9px; padding:12px 15px; margin:12px 0; font-size:14px}
+  .rule b{color:#1d4ed8}
+
+  .contradict{background:#fffbeb; border:1px solid #fde68a; border-radius:14px; padding:24px 26px; margin:30px 0}
+  .contradict h2{margin:0 0 4px; color:#92400e; font-size:21px}
+  .contradict .lead{margin:0 0 14px; color:#a16207; font-size:14.5px}
+  .cx{background:#fff; border:1px solid #fde68a; border-radius:10px; padding:14px 16px; margin:12px 0}
+  .cx .h{font-weight:800; color:#92400e; font-size:15px; margin-bottom:4px}
+  .cx .h .n{background:#f59e0b; color:#fff; border-radius:6px; padding:1px 8px; font-size:12.5px; margin-right:8px}
+  .cx p{margin:4px 0; font-size:13.5px; color:#5b4708}
+  .cx .fix{color:#065f46; background:#ecfdf5; border:1px solid #a7f3d0; border-radius:7px; padding:7px 11px; margin-top:8px; font-size:13px}
+  .cx .fix b{color:#047857}
+  .cx.done{border-color:#a7f3d0; background:#f6fefb}
+  .cx.done .h{color:#065f46}
+  .cx.done .h .n{background:#059669}
+  .cx.done .h .badge{background:#d1fae5; color:#047857; border-radius:999px; padding:1px 9px; font-size:11.5px; font-weight:700; margin-right:8px}
+
+  footer{color:var(--muted); font-size:12.5px; text-align:center; margin-top:36px}
+  @media print{body{background:#fff} header{box-shadow:none} .sec,.intro,.contradict{box-shadow:none; break-inside:avoid}}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <p class="eyebrow">Final Blueprint · Absolute Source of Truth</p>
+    <h1>Unified Master Use Case</h1>
+    <p class="sub">One consolidated operating model for the fleet system — the Rental Lifecycle, the Maintenance &amp; Incident Engine, role-based access, and money protection.</p>
+    <div class="meta-row">
+      <span class="pill">Executive Summary for: <b>Omar</b></span>
+      <span class="pill">From: Engineering</span>
+      <span class="pill">2026-07-02</span>
+      <span class="pill">Synthesizes Plan Rev. 12 — sign-off ready</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="intro">
+    <b>How to read this.</b> This is the executive summary — the four pillars of how the fleet runs end to end. The detailed build plan (migrations, endpoints, state-machine) lives in <code>Integrated-Fleet-Lifecycle-Plan.html</code> (EN) and <code>-AR.html</code> (Arabic). Directive language throughout: each line states what the system <b>must</b> do. The final section flags the logic check — <b>two prior contradictions are now resolved (Rev. 7)</b>, with <b>one open item</b> left to decide before build.
+  </div>
+
+  <!-- 1 -->
+  <section class="sec">
+    <div class="head"><div class="num">1</div><h2>The Rental Lifecycle <small>The operational backbone</small></h2></div>
+    <div class="body">
+
+      <div class="step">
+        <div class="t">🛡️ Gatekeeper — Readiness Gate (Pre-Rental test)</div>
+        <p>No car is handed over until it passes the 9-check readiness validation: availability, registration/insurance valid <b>through the return date</b>, no open safety-critical fault, service window, GPS, last check-in closed, cleaning. Blockers stop the booking; warnings must be acknowledged.</p>
+      </div>
+
+      <div class="step">
+        <div class="t">📷 Handover — 16-item photo check + Customer Signature/OTP</div>
+        <p>At Check-Out the driver captures the full mandatory photo set (front/rear/sides/corners/rims/glass/interior/odometer/fuel/pre-existing scratches/key/spare + 360° video for luxury). The system <b>refuses to complete the handover</b> until coverage is met <b>and</b> the customer confirms condition by signature or OTP. Every photo is tied to contract + vehicle + time + location + driver.</p>
+      </div>
+
+      <div class="step">
+        <div class="t">🚦 The "Rental-First" Rule</div>
+        <p>Booking is permitted for <span class="tag ok">Green</span> and <span class="tag warn">Orange</span> — Orange requires a mandatory, recorded Condition Acknowledgment by the sales agent. <span class="tag block">Red</span> is a hard block. Utilization is maximised; safety stays a hard barrier.</p>
+        <div class="rule"><b>Resolved (Rev. 7):</b> <span class="tag warn">Yellow</span> is officially <b>Rentable-with-Acknowledgement</b> — treated exactly like Orange; the gate never blocks it but logs a <code>yellow_grade_ack</code> at contract creation.</div>
+      </div>
+
+      <div class="step">
+        <div class="t">🔄 Check-In / Scratch Flow <span class="tag ok">the accountability chain</span></div>
+        <p><b>Driver documents</b> (photo + flags a new scratch on the diagram) → the system auto-creates a <b>Damage Evaluation draft</b> (<code>pending_assessment</code>) → a <b>notification is sent to Abdullah &amp; Walid (Managers)</b> for final assessment. The driver has <b>no</b> pricing or liability authority — they only mark. Nothing marked can be silently dropped.</p>
+      </div>
+
+      <div class="flow"><b>Lifecycle:</b> Readiness Gate → Handover (photos + signature) → <span class="ar">Out on Rent</span> → Check-In (photos + scratch flags) → auto Damage-Eval draft → 🔔 Managers assess.</div>
+    </div>
+  </section>
+
+  <!-- 2 -->
+  <section class="sec">
+    <div class="head"><div class="num">2</div><h2>Maintenance &amp; Incident Engine</h2></div>
+    <div class="body">
+
+      <div class="step">
+        <div class="t">🔧 Routine maintenance</div>
+        <p>Oil / filter / battery driven by mileage tracking and service-due detectors. Battery adds health + replacement-interval tracking. Config-driven protocols (<code>config/inspector_protocols.php</code>).</p>
+      </div>
+
+      <div class="step">
+        <div class="t">🔁 Stability Cycle Engine (post-accident) — strict &amp; enforced</div>
+        <p>When a Post-Accident car goes <b>Under-Repair → Available</b>, the engine injects a <code>stability_check_ticket</code> every <b>5 days</b>. It <b>cannot be closed by a click</b> — a close needs <b>3 fresh photos (Odometer + Engine Bay + Tires) + an explicit Pass</b>. Miss the deadline by even <b>1 hour</b> → an instant <b>Safety Block</b> (highest priority) + Admin alert. After <b>3 clean cycles (15 days)</b> it auto-graduates. Every check is logged in <code>auto_maintenance_audits</code>.</p>
+      </div>
+
+      <div class="step">
+        <div class="t">🪜 Support Ladder (Incident Gate)</div>
+        <p>A fault reported mid-rental escalates: <b>1) Phone support (remote)</b> → <b>2) On-site repair (Abu Marouf visits)</b> → <b>3) Vehicle swap</b> if the first two fail. Each rung is logged on the incident ticket (<code>resolution_path</code>).</p>
+      </div>
+
+      <div class="step">
+        <div class="t">💰 Approval Matrix</div>
+        <p>Damage repairs require financial approval that links the manager's <b>assessment</b> to the <b>Maintenance Order</b>: a garage quotation, then tiered approval by amount (Supervisor → Fleet/Ops Manager → Branch Manager → GM), with luxury cars and accidents bumped a tier. No work starts and no car moves to the garage until the right person approves.</p>
+      </div>
+
+      <div class="flow"><b>Damage → Repair:</b> Manager confirms assessment + cost → vehicle auto <b>In-Repair</b> → task in Abu Marouf's queue → quotation → tiered approval → repair → QA → release.</div>
+    </div>
+  </section>
+
+  <!-- 3 -->
+  <section class="sec">
+    <div class="head"><div class="num">3</div><h2>Role-Based Access Control <small>Who is allowed to do what</small></h2></div>
+    <div class="body">
+      <table>
+        <thead><tr><th>Role</th><th>Permission</th><th>Authority</th><th>Explicitly NOT allowed</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><b>Driver</b></td>
+            <td><code>maintenance.logistics</code></td>
+            <td>Check-in / out, capture photos, flag scratches, move vehicles</td>
+            <td><b>No pricing / liability authority</b> — documents only</td>
+          </tr>
+          <tr>
+            <td><b>Managers</b><br>(Abdullah / Walid)</td>
+            <td><code>damage.assess</code> + <code>maintenance.delegate</code></td>
+            <td>Scratch assessment, part procurement, cost approval, incident follow-up; confirm → auto In-Repair + task to inspector</td>
+            <td>—</td>
+          </tr>
+          <tr>
+            <td><b>Inspector</b><br>(Abu Marouf)</td>
+            <td><code>maintenance.initiate</code></td>
+            <td>Inspection queue, QA tests, field repairs, "Ready for Release" sign-off</td>
+            <td>See contradiction §5.3 (self-QA)</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="rule"><b>Role-scoped queues are supported by the data model.</b> Screens are permission-gated (Spatie <code>resource.action</code>) and each queue is scoped to the work its role owns (<code>assigned_driver_id</code>, <code>inspected_by</code>, <code>workflow_status</code>). Abu Marouf sees a different screen than the Drivers by construction. New build: the Managers' <code>damage.assess</code> screen.</div>
+    </div>
+  </section>
+
+  <!-- 4 -->
+  <section class="sec">
+    <div class="head"><div class="num">2.5</div><h2>Customer &amp; Money Protection <small>The cash-flow &amp; risk layer</small></h2></div>
+    <div class="body">
+
+      <div class="step">
+        <div class="t">🧾 Deposit Ledger</div>
+        <p>Track debits / credits per contract on a real ledger. The manager's assigned damage cost, fines, and fuel post against it; the lifecycle is hold → charge → release/refund. Refund balance can flow to the customer wallet.</p>
+      </div>
+
+      <div class="step">
+        <div class="t">🚧 Fine / Toll Hold</div>
+        <p>On Check-In the contract enters <code>pending_charges</code>; the system <b>blocks any deposit refund until Salik / traffic fines are cleared</b> post-return. A landed fine draws down the deposit; the hold auto-clears after the configured window or on manual settle.</p>
+      </div>
+
+      <div class="step">
+        <div class="t">⚠️ Customer Risk</div>
+        <p>A customer-level flag: <b>blacklist</b> → block booking at the Readiness Gate; <b>high-risk</b> → require a larger deposit; <b>watch</b> → warn. Feeds directly into Pillar 1's gate.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- CROSS-CUTTING: COMMAND CENTER -->
+  <section class="sec">
+    <div class="head"><div class="num">CC</div><h2>Command Center <small>Cross-cutting transparency layer</small></h2></div>
+    <div class="body">
+      <div class="step">
+        <div class="t">📡 Real-time Activity Feed</div>
+        <p>Every critical action (valuation, approval, set-to-ready, inspection/damage filing, override) is pushed to a global stream showing <b>actor · timestamp · the exact change</b>. Lean: one thin <code>activity_log</code> table. No more silent updates.</p>
+      </div>
+      <div class="step">
+        <div class="t">📍 Vehicle Live-Status Tracker</div>
+        <p>Each car shows <b>status → owner/assignee</b> (Driver / Garage / Dispatcher); if in Maintenance → which garage + which supervisor. Reads <code>livePosition()</code> + logistics + garage stint — no new table.</p>
+      </div>
+      <div class="step">
+        <div class="t">📊 Management Overview (Omar + Admin)</div>
+        <p><b>Yellow-in-field</b> · <b>pending approvals</b> (waiting on the hierarchy) · <b>stale tasks</b> (claimed but unfinished past X hours, red) · <b>Vehicles in Stability Cycle</b> + next check due — all read from the state machine.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- CROSS-CUTTING: INTELLIGENCE & ENFORCEMENT -->
+  <section class="sec">
+    <div class="head"><div class="num">I&amp;E</div><h2>Intelligence &amp; Enforcement <small>Phases 9–11</small></h2></div>
+    <div class="body">
+      <div class="step">
+        <div class="t">🏭 System-chosen garage (multi-criteria) + 💰 Cost Intelligence</div>
+        <p>The routing engine scores every garage on <b>10 signals</b> (specialty, fault-type, vehicle-class, rating, comeback-rate, completion-time, price, parts, proximity, warranty) → top 3 with reasons, and — from history — an <b>estimated price</b>. A quote <b>&gt;20% over</b> the historical average raises a <b>High-Cost Warning</b> (non-blocking). Each Close writes <code>actual_cost</code> and sharpens the <code>garage_cost_stats</code> snapshot.</p>
+      </div>
+      <div class="step">
+        <div class="t">🚨 Accident-to-Garage Chain (receipted)</div>
+        <p>New-damage/accident → instant <b>high-priority, non-dismissible</b> ping to Abdullah &amp; Walid (photos + liability) → Submit-Assessment → auto note-carrying task to Abu Marouf, who <b>can't see the ticket until assessed</b>. Every stage stamps <code>notified_at / viewed_at / actioned_at</code>.</p>
+      </div>
+      <div class="step">
+        <div class="t">📏 Usage Monitoring &amp; Mileage Enforcement</div>
+        <p>Every status change requires an <b>odometer photo + entry</b>; a lower-than-previous reading is a <b>Data Integrity Error</b>, blocked until the <b>Admin</b> (Admin-only) approves. Distance over the contractual allowance <b>+5%</b> auto-tags <code>excess_mileage</code> + alerts the Admin; a 🟢/🟡/🔴 Usage Dashboard tracks each rental. <em>GPS/geo-fence deferred until a live feed is connected.</em></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5 CONTRADICTIONS -->
+  <section class="contradict">
+    <h2>5 · Logic check — one open item left</h2>
+    <p class="lead">Of the three contradictions flagged earlier, <b>two are now resolved</b> (Rev. 7 decisions). One remains — a single decision before build.</p>
+
+    <div class="cx done">
+      <div class="h"><span class="n">1</span><span class="badge">✅ RESOLVED</span>Yellow grade defined</div>
+      <p><b>Decision:</b> Yellow is officially <b>Rentable-with-Acknowledgement</b>, treated <em>exactly</em> like Orange. The gate does NOT block a Yellow car, but MUST log an explicit <code>yellow_grade_ack</code> at contract creation.</p>
+      <div class="fix"><b>Status:</b> already live in the shipped booking gate — Yellow already requires the recorded acknowledgment (<code>condition_ack_grade = 'yellow'</code> is the ack record). No further work.</div>
+    </div>
+
+    <div class="cx done">
+      <div class="h"><span class="n">2</span><span class="badge">✅ RESOLVED</span>Valuation ≠ Approval</div>
+      <p><b>Decision:</b> the manager's role is to <b>valuate/assess</b> (set cost + scope); <b>approval</b> is strictly governed by the Approval Matrix (by amount). <code>valuated_by</code> (the manager) and <code>approved_by</code> (the authorized signatory) are separate.</p>
+      <div class="fix"><b>Logic:</b> when the valuated cost exceeds the manager's own tier limit, the ticket transitions to <code>pending_approval_hierarchy</code> and routes up; within his limit he is also the signatory. Grounding (In-Repair) may happen at valuation, but garage work waits for <code>approved_by</code>.</div>
+    </div>
+
+    <div class="cx">
+      <div class="h"><span class="n">3</span>Abu Marouf repairs AND signs off his own QA (separation of duties)</div>
+      <p>Pillar 3 has the Inspector (Abu Marouf) doing <b>field repairs</b> <em>and</em> <b>QA / "Ready for Release" sign-off</b>. That means the person who fixes the car also passes it — which breaks the independent QC we already built (the re-inspection layer deliberately sends a failed repair to a <em>different</em> person). Omar's own protocol says "any car without an independent QA Pass cannot return to rental."</p>
+      <div class="fix"><b>Decision needed:</b> either (a) a second person (a Manager or a Fleet-Ready officer) signs the final QA on repairs Abu Marouf executed, OR (b) accept self-QA for minor jobs and require independent QA only for safety-critical repairs. Recommended: (b) — independent QA mandatory for safety-critical, self-QA allowed otherwise.</div>
+    </div>
+  </section>
+
+  <footer>Unified Master Use Case · Fleet System Final Blueprint · synthesizes Integrated Fleet Lifecycle Rev. 12 (sign-off ready) · 2026-07-02</footer>
+
+</div>
+</body>
+</html>

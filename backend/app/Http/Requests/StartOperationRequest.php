@@ -2,10 +2,8 @@
 
 namespace App\Http\Requests;
 
-use App\Models\PolicyOverrideAudit;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Validation\Rule;
 
 class StartOperationRequest extends FormRequest
 {
@@ -25,12 +23,6 @@ class StartOperationRequest extends FormRequest
 
             // override a soft block (e.g. send to maintenance despite a reservation clash)
             'force' => 'nullable|boolean',
-
-            // manager-only "Rental-First" override: open a maintenance contract on a rented car.
-            // A reason code is mandatory; 'other' must come with notes. Permission is checked in
-            // the controller (operations.override) and the action is written to the audit trail.
-            'override_reason' => ['nullable', Rule::in(array_keys(PolicyOverrideAudit::REASON_CODES))],
-            'override_notes'  => ['nullable', 'string', 'max:1000', 'required_if:override_reason,other'],
 
             // who / where
             'customer_id' => 'nullable|exists:customers,id',

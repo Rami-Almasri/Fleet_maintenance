@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Contract;
 use App\Models\Customer;
+use App\Models\Maintenance;
 use App\Models\Vehicle;
 use Illuminate\Support\Facades\DB;
 
@@ -43,6 +44,8 @@ class DataHealthService
             $this->contractsNoOutDate(),
             // --- customers ---
             $this->customersNoName(),
+            // --- maintenance workflow ---
+            $this->routineFindingConflicts(),
         ];
 
         $bySeverity = fn ($sev) => array_sum(array_map(
@@ -215,6 +218,47 @@ class DataHealthService
         return $this->group('customers_no_name', 'Customers without a name', 'info',
             'Customers that are still nameless after the bulk name fill — either masked at the source ("***") or not present in the OfficeManager customer list.',
             (clone $base)->count(), $items);
+    }
+
+    // ------------------------------------------------------------------ maintenance workflow checks
+
+    /**
+     * Routine findings (Oil Change / Battery Replacement / Tire Rotation / Tire Change) logged on a
+     * ticket while the car's LIVE status said that routine was NOT due — a likely mis-tap or an
+     * unnecessary job billed against a healthy car. Flagged once, at submission time, by
+     * MaintenanceWorkflowService::statusConflictFor() (see `findings[].status_check`); this check just
+     * surfaces every ticket carrying one so a supervisor can double-check it before it's billed/closed.
+     */
+    private function routineFindingConflicts(): array
+    {
+        $tickets = Maintenance::whereNotNull('findings')
+            ->with('vehicle:id,plate_no,make,model,status')
+            ->get(['id', 'vehicle_id', 'findings']);
+
+        $rows = [];
+        foreach ($tickets as $tk) {
+            foreach ((array) $tk->findings as $f) {
+                if (! is_array($f) || empty($f['status_check']['status'])) {
+                    continue;
+                }
+                $rows[] = [
+                    'vehicle_id'  => $tk->vehicle_id,
+                    'plate'       => $tk->vehicle?->plate_no,
+                    'car'         => $tk->vehicle ? (trim((string) ($tk->vehicle->make . ' ' . $tk->vehicle->model)) ?: null) : null,
+                    'status'      => $tk->vehicle?->status,
+                    'contract_id' => null,
+                    'contract_no' => null,
+                    'customer_id' => null,
+                    'customer'    => null,
+                    'ticket_id'   => $tk->id,
+                    'detail'      => '"' . $f['text'] . '" by ' . ($f['by'] ?? 'unknown') . ' — ' . ($f['status_check']['summary'] ?: 'car\'s status was OK'),
+                ];
+            }
+        }
+
+        return $this->group('routine_finding_conflicts', 'Routine findings logged despite an OK status', 'warning',
+            'A scheduled routine (oil, battery, tyres) was reported as a finding while the car\'s own live status said it was NOT due — likely a mis-tap or a job the car did not need. Verify with whoever logged it before it is billed or closed.',
+            count($rows), array_slice($rows, 0, self::CAP));
     }
 
     // ------------------------------------------------------------------------ helpers

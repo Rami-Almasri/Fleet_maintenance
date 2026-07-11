@@ -22,5 +22,22 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
-        //
+        // Any exception that bubbles uncaught out of an API route is shaped through the SAME unified
+        // path the controllers use (meaningful status code + the standard JSON envelope; 5xx logged
+        // with context). One source of truth for error responses — and a safety net for any handler
+        // that doesn't (or no longer needs to) wrap itself in try/catch.
+        $exceptions->render(function (\Throwable $e, \Illuminate\Http\Request $request) {
+            // FormRequest validation is thrown BEFORE the controller body (uncaught), so it reaches
+            // here. Leave it to Laravel's native {message, errors} renderer — the frontend forms read
+            // that shape. Everything else on an API route flows through the unified envelope.
+            if ($e instanceof \Illuminate\Validation\ValidationException) {
+                return null;
+            }
+
+            if ($request->is('api/*') || $request->expectsJson()) {
+                return \App\Helpers\ResponseHelper::fromException($e);
+            }
+
+            return null; // non-API requests keep Laravel's default rendering
+        });
     })->create();

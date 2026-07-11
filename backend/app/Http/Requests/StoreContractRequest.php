@@ -40,6 +40,16 @@ class StoreContractRequest extends FormRequest
             'vehicle_id' => 'nullable|exists:vehicles,id',
             'customer_id' => 'nullable|exists:customers,id',
 
+            // Condition Acknowledgment (Omar Protocol booking gate): the sales agent's
+            // confirmation that the customer was told about an Orange/Yellow car's condition.
+            'condition_acknowledged' => 'nullable|boolean',
+            'condition_ack_by' => 'nullable|string|max:150',
+
+            // Yellow-grade manager override (permission-gated in the controller): a manager may rent a
+            // Yellow car by supplying an override + reason, captured to the contract's audit snapshot.
+            'manager_override' => 'nullable|boolean',
+            'override_reason' => 'nullable|string|max:500',
+
             // maintenance (contract_type = 'U')
             'vendor_id' => 'nullable|exists:vendors,id',
             'maintenance_tags' => 'nullable|array',

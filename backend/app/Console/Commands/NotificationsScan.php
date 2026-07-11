@@ -21,10 +21,11 @@ class NotificationsScan extends Command
         $r = $scanner->scan();
 
         $this->info(sprintf(
-            'Scan complete — %d live condition(s), %d recipient(s), %d new notification(s) raised.',
+            'Scan complete — %d live condition(s), %d recipient(s), %d new raised, %d auto-resolved (condition cleared).',
             $r['alerts'],
             $r['recipients'],
-            $r['created']
+            $r['created'],
+            $r['resolved'] ?? 0
         ));
 
         return self::SUCCESS;

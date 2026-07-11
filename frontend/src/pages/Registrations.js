@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import api from '../api/client';
 import useFetch from '../hooks/useFetch';
-import Badge, { VehicleStatusBadge } from '../components/ui/Badge';
+import Badge, { VehicleStatusBadge, ContractTypeBadge } from '../components/ui/Badge';
 import Pagination from '../components/ui/Pagination';
 import { Card, PageHeader, SearchInput, TableSkeleton, EmptyState } from '../components/ui/Misc';
 import { Select } from '../components/ui/Field';
@@ -180,11 +180,12 @@ export default function Registrations() {
                   <SortHeader label="Insurance" active={sort === 'insurance'} onClick={() => { setSort(sort === 'insurance' ? 'default' : 'insurance'); setPage(1); }} />
                   <th className="px-6 py-3">Insurer</th>
                   <th className="px-6 py-3">Car Status</th>
+                  <th className="px-6 py-3">Contract Status</th>
                 </tr>
               </thead>
 
               {loading ? (
-                <TableSkeleton cols={6} />
+                <TableSkeleton cols={7} />
               ) : (
                 <tbody className="divide-y divide-gray-50">
                   {paged.map((r) => (
@@ -198,6 +199,18 @@ export default function Registrations() {
                       <td className="px-6 py-3"><CoverageCell has={r.has_insurance} date={r.insurance_expiry} days={r.insurance_days_left} /></td>
                       <td className="px-6 py-3 text-gray-600">{r.insurer || '—'}</td>
                       <td className="px-6 py-3"><VehicleStatusBadge status={r.status} /></td>
+                      <td className="px-6 py-3">
+                        {r.has_open_contract ? (
+                          <div>
+                            <ContractTypeBadge type={r.contract_type} />
+                            <div className="mt-1 text-xs text-gray-400">
+                              {[r.contract_no, r.contract_customer].filter(Boolean).join(' · ') || '—'}
+                            </div>
+                          </div>
+                        ) : (
+                          <Badge tone="gray">No open contract</Badge>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

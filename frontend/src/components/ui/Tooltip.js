@@ -68,6 +68,29 @@ export function Tooltip({ content, children, side = 'top', className = '', maxWi
   );
 }
 
+// A cursor-anchored tooltip for the bespoke SVG charts (BarChart / LineChart).
+// Controlled, not hover-on-element: the chart tracks the active point and passes
+// its viewport coords + content. Portaled & fixed so it never clips. Same dark
+// "navy" chrome as <Tooltip> so every surface in the app speaks one language.
+//
+//   const [tip, setTip] = useState(null);   // { x, y, content }
+//   ...onMouseMove → setTip({ x: e.clientX, y: e.clientY, content: <…/> })
+//   <ChartTooltip tip={tip} />
+export function ChartTooltip({ tip }) {
+  if (!tip) return null;
+  return createPortal(
+    <div
+      role="tooltip"
+      style={{ position: 'fixed', top: tip.y - 12, left: tip.x, transform: 'translate(-50%, -100%)' }}
+      className="pointer-events-none z-[80] whitespace-nowrap rounded-lg bg-slate-900 px-2.5 py-1.5 text-xs font-medium leading-snug text-white shadow-xl shadow-slate-900/25 ring-1 ring-white/10 animate-fade-in-up"
+    >
+      {tip.content}
+      <span className="absolute left-1/2 h-2 w-2 -translate-x-1/2 rotate-45 bg-slate-900" style={{ bottom: -3 }} />
+    </div>,
+    document.body
+  );
+}
+
 // A small muted "(i)" marker that reveals an explanation on hover — for technical
 // terms / metric definitions, so the user never leaves the page to understand a KPI.
 export function InfoTip({ content, side = 'top', className = '' }) {

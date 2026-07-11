@@ -3,16 +3,35 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import api from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
+import ConfirmDialog from '../../components/ui/ConfirmDialog';
+import { usePermissions } from '../../hooks/usePermissions';
 import { Card, Spinner } from '../../components/ui/Misc';
 import { Input, Select } from '../../components/ui/Field';
 import SearchSelect from '../../components/ui/SearchSelect';
 import { aed2 } from '../../lib/format';
+import { useAuth } from '../../auth/AuthContext';
+import RentalReadinessGate from './RentalReadinessGate';
+import RentalReadinessInline from './RentalReadinessInline';
 
 const TYPES = [{ v: 'C', l: 'Rental' }, { v: 'U', l: 'Maintenance' }, { v: 'R', l: 'Booking' }];
+
+// Local date/time defaults for the "fill itself" behaviour. HH:mm matches the
+// 24-hour strings the form already stores (e.g. "14:30"); YYYY-MM-DD matches the
+// <input type="date"> value. Both read the operator's local clock.
+const pad2 = (n) => String(n).padStart(2, '0');
+const nowHM = () => { const d = new Date(); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
+const todayYMD = () => { const d = new Date(); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; };
+const diffDays = (a, b) => { if (!a || !b) return 0; const d = Math.round((new Date(b) - new Date(a)) / 86400000); return d > 0 ? d : 0; };
 
 // People who can be marked responsible for a maintenance visit. Currently one person
 // owns the workshop, so the Responsible field is restricted to (and defaults to) him.
 const MAINTENANCE_RESPONSIBLES = ['ABDULLAH HESHAM FAWAZ'];
+
+// Every maintenance visit is booked to the workshop's own account — ABDULLAH HESHAM
+// FAWAZ, customer #10097 — so picking the Maintenance type auto-selects him as the
+// customer. Matched by customer_no first, name as a fallback.
+const MAINTENANCE_CUSTOMER_NO = '10097';
+const MAINTENANCE_CUSTOMER_NAME = 'ABDULLAH HESHAM FAWAZ';
 
 function Section({ title, children, cols = 2 }) {
   return (
@@ -44,10 +63,35 @@ export default function ContractForm() {
   const isEdit = Boolean(id);
   const navigate = useNavigate();
   const toast = useToast();
+  const { user } = useAuth();
+  const { can } = usePermissions();
+  const me = user?.name || user?.username || '';
+
+  // Which fields the form filled in by itself (vehicle pricing, clock, current
+  // user) — drives the little ✨ "auto" hints so the operator can see what was
+  // pre-filled and trust (or override) it.
+  const [auto, setAuto] = useState({});
+  const markAuto = (...fields) => setAuto((a) => ({ ...a, ...Object.fromEntries(fields.map((f) => [f, true])) }));
+  const clearAuto = (field) => setAuto((a) => (a[field] ? { ...a, [field]: false } : a));
 
   const [form, setForm] = useState({ contract_type: 'C', state: 'open' });
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
+  // Visual Condition Grading: the mandatory cosmetic-acknowledgment prompt for Orange cars.
+  const [cosmeticAck, setCosmeticAck] = useState(false);
+  // Yellow-grade rental: a manager may override the block (Option A) by giving a reason.
+  const [mgrOverride, setMgrOverride] = useState(false);   // the manager-override prompt is open
+  const [overrideReason, setOverrideReason] = useState('');
+  // Rental Readiness Checklist: the 8-point pre-confirm gate (new handovers only). Once cleared, the
+  // pending doSubmit options are replayed so the condition-gate/override flow still lands the contract.
+  const [showChecklist, setShowChecklist] = useState(false);
+  const [checklistPassed, setChecklistPassed] = useState(false);
+  const [pendingOpts, setPendingOpts] = useState({});
+  // Deferred Maintenance advisory: a one-time "rent anyway?" prompt for a car that owes the workshop.
+  const [showDeferAck, setShowDeferAck] = useState(false);
+  const [deferAck, setDeferAck] = useState(false);
+  // Re-arm the readiness gate + deferred-maintenance advisory whenever the chosen car changes.
+  useEffect(() => { setChecklistPassed(false); setDeferAck(false); }, [form.vehicle_id]);
   const [vehicles, setVehicles] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [vendors, setVendors] = useState([]);
@@ -68,18 +112,80 @@ export default function ContractForm() {
   const setVal = (field, value) => setForm((f) => ({ ...f, [field]: value }));
   const err = (f) => (errors[f] ? errors[f][0] : '');
 
-  // Picking a car pre-fills Out Mileage with its current odometer (new contracts only,
-  // so we never clobber the recorded pickup mileage of an existing contract).
-  const onVehicleChange = (v) => setForm((f) => {
-    const next = { ...f, vehicle_id: v };
-    if (!isEdit) {
-      const veh = vehicles.find((x) => String(x.id) === String(v));
-      if (veh && veh.odometer !== null && veh.odometer !== undefined && veh.odometer !== '') {
-        next.out_milage = veh.odometer;
+  // onChange that also drops the ✨ "auto" badge — the moment the operator edits a
+  // self-filled field, it's their value, not ours.
+  const setClearing = (field) => (e) => { clearAuto(field); setForm((f) => ({ ...f, [field]: e.target.value })); };
+
+  // Label that grows a small "auto" chip while the value was filled by the form.
+  const autoLabel = (text, field) =>
+    auto[field] ? (
+      <span className="inline-flex items-center gap-1.5">
+        {text}
+        <span className="rounded-full bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-600 ring-1 ring-indigo-100">✨ auto</span>
+      </span>
+    ) : (
+      text
+    );
+
+  // Picking a car pre-fills Out Mileage with its current odometer AND the Pricing
+  // block (Day / Week / Month) with the vehicle's stored rental rates — new
+  // contracts only, so we never clobber the recorded figures of an existing one.
+  const onVehicleChange = (v) => {
+    const has = (x) => x !== null && x !== undefined && x !== '';
+    setForm((f) => {
+      const next = { ...f, vehicle_id: v };
+      if (!isEdit) {
+        const veh = vehicles.find((x) => String(x.id) === String(v));
+        if (veh) {
+          const filled = [];
+          if (has(veh.odometer)) { next.out_milage = veh.odometer; filled.push('out_milage'); }
+          if (has(veh.day_rent_value)) { next.day_price = veh.day_rent_value; filled.push('day_price'); }
+          if (has(veh.week_rent_value)) { next.week_price = veh.week_rent_value; filled.push('week_price'); }
+          if (has(veh.month_rent_value)) { next.month_price = veh.month_rent_value; filled.push('month_price'); }
+          if (filled.length) markAuto(...filled);
+        }
       }
-    }
-    return next;
-  });
+      return next;
+    });
+  };
+
+  // Setting the pickup date auto-stamps Out Time with the current clock if the
+  // operator hasn't typed one — "if I don't insert it, take the time itself".
+  const onOutDateChange = (e) => {
+    const v = e.target.value;
+    setForm((f) => {
+      const next = { ...f, out_date: v };
+      if (v && !f.out_time) { next.out_time = nowHM(); markAuto('out_time'); }
+      return next;
+    });
+  };
+
+  // Same for the return: setting In Date stamps In Time if it's still blank.
+  const onInDateChange = (e) => {
+    const v = e.target.value;
+    setForm((f) => {
+      const next = { ...f, in_date: v };
+      if (v && !f.in_time) { next.in_time = nowHM(); markAuto('in_time'); }
+      return next;
+    });
+  };
+
+  // Closing the contract stamps who closed it (the signed-in user) and back-fills
+  // the return date/time if the operator jumped straight to "Closed".
+  const onStateChange = (e) => {
+    const v = e.target.value;
+    setForm((f) => {
+      const next = { ...f, state: v };
+      if (v === 'closed') {
+        const filled = [];
+        if (!f.closed_by && me) { next.closed_by = me; filled.push('closed_by'); }
+        if (!f.in_date) { next.in_date = todayYMD(); filled.push('in_date'); }
+        if (!f.in_time) { next.in_time = nowHM(); filled.push('in_time'); }
+        if (filled.length) markAuto(...filled);
+      }
+      return next;
+    });
+  };
 
   // Create a walk-in customer inline, then select them for this contract.
   const createCustomer = async () => {
@@ -128,17 +234,26 @@ export default function ContractForm() {
         setItems((c.items || []).map((i) => ({ service_name: i.service_name || '', cost: i.cost ?? '', notes: i.notes || '' })));
         setTags(Array.isArray(c.maintenance_tags) ? c.maintenance_tags : []);
       } else {
-        // New contract: auto-assign the next contract number so the user never types one.
+        // New contract: auto-assign the next contract number so the user never types one,
+        // and pre-fill the "alive" defaults — today's pickup date, the current time, and
+        // the signed-in user as "Opened By" — all of which stay editable.
         const nRes = await api.get('/Contract/next-no').catch(() => null);
         const autoNo = nRes?.data?.data?.contract_no;
-        if (autoNo) setForm((f) => ({ ...f, contract_no: autoNo }));
+        setForm((f) => ({
+          ...f,
+          contract_no: autoNo || f.contract_no,
+          out_date: f.out_date || todayYMD(),
+          out_time: f.out_time || nowHM(),
+          opened_by: f.opened_by || me,
+        }));
+        markAuto('out_date', 'out_time', ...(me ? ['opened_by'] : []));
       }
     } catch (e) {
       toast.error('Failed to load form data');
     } finally {
       setLoading(false);
     }
-  }, [id, isEdit, toast]);
+  }, [id, isEdit, toast, me]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -155,13 +270,55 @@ export default function ContractForm() {
   // --- Maintenance mode (contract_type 'U') ---
   const isMaintenance = form.contract_type === 'U';
 
-  // Default the maintenance "Responsible" to the workshop owner the moment the contract
-  // is switched to Maintenance (new contracts only; never overwrite an existing value).
+  // --- Visual Condition Grading (Abu Marouf) — the booking gate ---
+  // A Rental (C) or Booking (R) is a customer handover, so the car's condition grade gates it:
+  //   red / yellow  → blocked (safety / maintenance barrier; the backend refuses it too)
+  //   orange        → allowed, but a mandatory condition-acknowledgment prompt fires on submit
+  //                   and is recorded on the contract (the customer was told before handover).
+  //   green         → allowed, no prompt.
+  //   green         → clean, no prompt.
+  const isHandover = form.contract_type === 'C' || form.contract_type === 'R';
+  const selectedVehicle = useMemo(
+    () => vehicles.find((x) => String(x.id) === String(form.vehicle_id)),
+    [vehicles, form.vehicle_id],
+  );
+  const conditionGrade = selectedVehicle?.condition_grade || 'green';
+  const conditionNote = selectedVehicle?.condition_note;
+  // Only Orange (cosmetic) needs the customer to acknowledge the condition at handover.
+  const needsConditionAck = isHandover && conditionGrade === 'orange';
+  // Red = absolute block. Yellow = a manager-overridable block (Option A): a user holding
+  // `operations.override` may rent it with a recorded reason; anyone else is blocked.
+  const conditionBlocksRent = conditionGrade === 'red';
+  const isYellowHandover = isHandover && conditionGrade === 'yellow';
+  const canOverrideYellow = can('operations.override');
+  // Deferred Maintenance — two related advisories, both flexible (never a hard block):
+  //   • inMaintenance : the car is IN the workshop now. Renting it pulls it out early — its
+  //     maintenance ticket is closed and it's flagged to return (sends pull_from_maintenance so the
+  //     backend eligibility guard releases it and closes the ticket = no dual contracts).
+  //   • owesMaintenance : the car already carries the flag (came back from an earlier deferral) and
+  //     still owes the shop — a soft "rent again anyway?" reminder.
+  const inMaintenance = isHandover
+    && (selectedVehicle?.operational_status === 'maintenance' || !!selectedVehicle?.under_maintenance);
+  const owesMaintenance = isHandover && !!selectedVehicle?.is_deferred_maintenance;
+  const deferAdvisory = inMaintenance || owesMaintenance;
+
+  // Switching to Maintenance auto-fills the workshop owner as both the "Responsible"
+  // and the billed Customer (#10097), the moment the type flips — new contracts only,
+  // and never overwriting a value the operator already chose.
   useEffect(() => {
-    if (isMaintenance && !isEdit) {
-      setForm((f) => (f.responsible ? f : { ...f, responsible: MAINTENANCE_RESPONSIBLES[0] }));
-    }
-  }, [isMaintenance, isEdit]);
+    if (!isMaintenance || isEdit) return;
+    if (form.responsible && form.customer_id) return; // both already set, nothing to default
+    const mc = !form.customer_id
+      ? (customers.find((c) => String(c.customer_no) === MAINTENANCE_CUSTOMER_NO)
+        || customers.find((c) => (c.name_en || '').trim().toUpperCase() === MAINTENANCE_CUSTOMER_NAME))
+      : null;
+    setForm((f) => ({
+      ...f,
+      responsible: f.responsible || MAINTENANCE_RESPONSIBLES[0],
+      customer_id: f.customer_id || (mc ? mc.id : f.customer_id),
+    }));
+    if (mc && !form.customer_id) markAuto('customer_id');
+  }, [isMaintenance, isEdit, customers, form.responsible, form.customer_id]);
   const itemsTotal = useMemo(
     () => items.reduce((s, i) => s + (Number(i.cost) || 0), 0),
     [items],
@@ -208,6 +365,25 @@ export default function ContractForm() {
   const applied = Math.min(wallet, charges);          // wallet portion this contract can absorb
   const cashToCollect = Math.max(0, charges - applied);
 
+  // --- Live rent estimate ---
+  // Reacts to the (auto-filled) Day/Week/Month prices and the rental length, breaking
+  // the duration into the cheapest mix of month + week + day rates so the operator sees
+  // the expected rent before touching the Charges block. One click drops it into Rents.
+  const rentEstimate = useMemo(() => {
+    const days = Number(form.days) || diffDays(form.out_date, form.in_date);
+    const day = Number(form.day_price) || 0;
+    const week = Number(form.week_price) || 0;
+    const month = Number(form.month_price) || 0;
+    if (!days || (!day && !week && !month)) return null;
+    let rem = days, total = 0;
+    const parts = [];
+    if (month) { const m = Math.floor(rem / 30); if (m) { total += m * month; rem -= m * 30; parts.push(`${m}×month`); } }
+    if (week) { const w = Math.floor(rem / 7); if (w) { total += w * week; rem -= w * 7; parts.push(`${w}×week`); } }
+    const perDay = day || (week ? week / 7 : month / 30);
+    if (rem > 0 && perDay) { total += rem * perDay; parts.push(`${rem}×day`); }
+    return { total: Number(total.toFixed(2)), parts, days };
+  }, [form.days, form.out_date, form.in_date, form.day_price, form.week_price, form.month_price]);
+
   // Apply the wallet: collect only (charges − wallet) as cash. The pre-paid credit is
   // consumed automatically through the customer's running balance — no double counting.
   const applyWallet = () => {
@@ -223,11 +399,74 @@ export default function ContractForm() {
     toast.success(`Applied ${aed2(applied)} from wallet · collect ${aed2(cashToCollect)} from customer`);
   };
 
-  const submit = async () => {
+  // Gate the save on the vehicle's condition grade before doing anything else (new
+  // handovers only — editing an existing contract just corrects data).
+  const submit = () => {
+    // Red = absolute block, no exception.
+    if (!isEdit && isHandover && conditionBlocksRent) {
+      toast.error('This vehicle is graded Red (critical / grounded) and cannot be rented or booked. Pick another car or send it to maintenance.');
+      return;
+    }
+    // Yellow = manager-overridable. Managers get a reason prompt; everyone else is blocked.
+    if (!isEdit && isYellowHandover && !mgrOverride) {
+      if (!canOverrideYellow) {
+        toast.error('This vehicle is graded Yellow (maintenance needed). Only a manager can override to rent or book it.');
+        return;
+      }
+      setOverrideReason('');
+      setMgrOverride(true);   // fire the manager-override prompt; doSubmit runs on confirm
+      return;
+    }
+    if (!isEdit && needsConditionAck && !cosmeticAck) {
+      setCosmeticAck(true);   // fire the mandatory acknowledgment prompt; doSubmit runs on confirm
+      return;
+    }
+    proceedToCommit();
+  };
+
+  // After the condition gate clears, a new handover must pass the 8-point Readiness Checklist before
+  // it is actually saved. The checklist runs once; its "Confirm" replays doSubmit with these opts
+  // (e.g. the manager-override flag). Edits and maintenance visits skip straight to the save.
+  const proceedToCommit = (opts = {}) => {
+    // Deferred-maintenance advisory: confirm once (pull it out / rent anyway?) before the checklist.
+    if (!isEdit && deferAdvisory && !deferAck) {
+      setPendingOpts(opts);
+      setShowDeferAck(true);
+      return;
+    }
+    afterDefer(opts);
+  };
+
+  // Everything after the deferred-maintenance advisory: the 8-point readiness checklist, then save.
+  const afterDefer = (opts = {}) => {
+    if (!isEdit && isHandover && form.vehicle_id && !checklistPassed) {
+      setPendingOpts(opts);
+      setShowChecklist(true);
+      return;
+    }
+    doSubmit(opts);
+  };
+
+  const doSubmit = async (opts = {}) => {
     setSaving(true);
     setErrors({});
     try {
-      const payload = cleanPayload(form);
+      // Final self-fill guarantees, independent of the UI handlers: a pickup/return
+      // date without a time gets the current clock, and whoever saves is recorded
+      // as having opened (and, if closing, closed) the contract.
+      const filled = { ...form };
+      if (filled.out_date && !filled.out_time) filled.out_time = nowHM();
+      if (filled.in_date && !filled.in_time) filled.in_time = nowHM();
+      if (!filled.opened_by && me) filled.opened_by = me;
+      if (filled.state === 'closed' && !filled.closed_by && me) filled.closed_by = me;
+
+      const payload = cleanPayload(filled);
+      // Deferred Maintenance: renting a car that's in the workshop pulls it out early — tell the
+      // backend to close the maintenance ticket (no dual contracts) and raise the "owes maintenance"
+      // flag. Only sent for a new handover on an in-shop car; the confirm prompt already fired.
+      if (!isEdit && isHandover && inMaintenance) {
+        payload.pull_from_maintenance = true;
+      }
       // coerce numeric fields
       NUM_FIELDS.forEach((k) => { if (payload[k] !== undefined) payload[k] = Number(payload[k]); });
 
@@ -244,6 +483,19 @@ export default function ContractForm() {
           }));
         payload.contract_debit = Number(itemsTotal.toFixed(2));
       }
+      // Record the sales agent's condition acknowledgment for an Orange/Yellow handover.
+      // doSubmit only ever runs once the grade gate has passed (green, or confirmed prompt),
+      // so it's safe to stamp the ack whenever the car isn't green.
+      if (!isEdit && needsConditionAck) {
+        payload.condition_acknowledged = true;
+        payload.condition_ack_by = me || undefined;
+      }
+      // Yellow-grade manager override: send the flag + reason so the backend records who
+      // overrode it and why (the controller re-checks the operations.override permission).
+      if (!isEdit && opts.managerOverride) {
+        payload.manager_override = true;
+        payload.override_reason = overrideReason.trim() || undefined;
+      }
       let res;
       if (isEdit) {
         res = await api.post(`/Contract/${id}`, payload);
@@ -257,7 +509,15 @@ export default function ContractForm() {
       }
     } catch (e) {
       const r = e.response?.data;
-      if (r?.errors) { setErrors(r.errors); toast.error('Please fix the highlighted fields'); }
+      if (r?.errors?.condition_ack) {
+        // Backend safety net: the car needs a recorded acknowledgment. Re-open the prompt.
+        toast.error(r.errors.condition_ack[0] || 'Confirm the vehicle condition before handover.');
+        setCosmeticAck(true);
+      } else if (r?.errors?.manager_override) {
+        // Backend safety net: a Yellow car needs a manager override. Re-open it for managers.
+        toast.error(r.errors.manager_override[0] || 'A manager override is required for this vehicle.');
+        if (canOverrideYellow) setMgrOverride(true);
+      } else if (r?.errors) { setErrors(r.errors); toast.error('Please fix the highlighted fields'); }
       else toast.error(r?.message || r?.msg || 'Could not save contract');
     } finally {
       setSaving(false);
@@ -313,7 +573,7 @@ export default function ContractForm() {
           <Select label="Type" value={form.contract_type || 'C'} onChange={set('contract_type')} error={err('contract_type')}>
             {TYPES.map((t) => <option key={t.v} value={t.v}>{t.l}</option>)}
           </Select>
-          <Select label="State" value={form.state || 'open'} onChange={set('state')} error={err('state')}>
+          <Select label="State" value={form.state || 'open'} onChange={onStateChange} error={err('state')}>
             <option value="open">Open</option>
             <option value="closed">Closed</option>
           </Select>
@@ -322,7 +582,12 @@ export default function ContractForm() {
         <Section title="Parties">
           <label className="block">
             <div className="mb-1 flex items-center justify-between">
-              <span className="block text-sm font-medium text-gray-700">Customer</span>
+              <span className="flex items-center gap-1.5 text-sm font-medium text-gray-700">
+                Customer
+                {auto.customer_id && (
+                  <span className="rounded-full bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-600 ring-1 ring-indigo-100">✨ auto</span>
+                )}
+              </span>
               <button
                 type="button"
                 onClick={() => setNewCust(newCust ? null : { name: '', mobile: '' })}
@@ -353,7 +618,7 @@ export default function ContractForm() {
                 </div>
               </div>
             ) : (
-              <SearchSelect value={form.customer_id} onChange={(v) => setVal('customer_id', v)} options={customerOptions} placeholder="Search customer…" />
+              <SearchSelect value={form.customer_id} onChange={(v) => { clearAuto('customer_id'); setVal('customer_id', v); }} options={customerOptions} placeholder="Search customer…" />
             )}
             {err('customer_id') && <span className="mt-1 block text-xs text-red-600">{err('customer_id')}</span>}
           </label>
@@ -364,20 +629,77 @@ export default function ContractForm() {
           </label>
         </Section>
 
+        {/* Visual Condition Grade alert — a car picked for a rental/booking that isn't Perfect. */}
+        {isHandover && conditionGrade === 'orange' && (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-800 shadow-sm">
+            <p className="font-semibold">⚠️ This vehicle has minor cosmetic issues.</p>
+            <p className="mt-0.5">
+              {conditionNote ? `“${conditionNote}” — ` : ''}
+              It stays available to rent, but make sure the client acknowledges the condition in the inspection report at handover.
+            </p>
+          </div>
+        )}
+        {isHandover && conditionGrade === 'yellow' && (
+          <div className="rounded-2xl border border-yellow-300 bg-yellow-50 px-5 py-4 text-sm text-yellow-800 shadow-sm">
+            <p className="font-semibold">🔧 This vehicle is graded Yellow (maintenance needed).</p>
+            <p className="mt-0.5">
+              {conditionNote ? `“${conditionNote}” — ` : ''}
+              {canOverrideYellow
+                ? 'Renting it needs a manager override — you’ll be asked for a reason, which is recorded on the contract.'
+                : 'It cannot be rented or booked without a manager’s override. Send it to the garage, or pick another car.'}
+            </p>
+          </div>
+        )}
+        {isHandover && conditionGrade === 'red' && (
+          <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-800 shadow-sm">
+            <p className="font-semibold">⛔ This vehicle is graded Red (critical / grounded).</p>
+            <p className="mt-0.5">
+              {conditionNote ? `“${conditionNote}” — ` : ''}
+              It cannot be rented or booked. Pick another car, or send this one to maintenance first.
+            </p>
+          </div>
+        )}
+
+        {/* Deferred Maintenance — advisory only (never a block); a confirm prompt fires on submit. */}
+        {inMaintenance && (
+          <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-800 shadow-sm">
+            <p className="font-semibold">🛠️↩️ This vehicle is currently in the workshop.</p>
+            <p className="mt-0.5">
+              Renting it will <span className="font-semibold">close its maintenance ticket</span> and flag it to return to the
+              garage once the customer brings it back — so no maintenance task is forgotten and there are no overlapping contracts.
+            </p>
+          </div>
+        )}
+        {!inMaintenance && owesMaintenance && (
+          <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-800 shadow-sm">
+            <p className="font-semibold">🛠️↩️ This vehicle is flagged for deferred maintenance.</p>
+            <p className="mt-0.5">
+              {selectedVehicle?.deferred_maintenance_reason ? `“${selectedVehicle.deferred_maintenance_reason}” — ` : ''}
+              It was pulled out of the workshop early and still owes the garage a visit. You can still rent it, but it must go back once it returns.
+            </p>
+          </div>
+        )}
+
+        {/* Upfront readiness: the moment a car is picked for a rental/booking, show whether it
+            passes its condition checks — same authority as the blocking gate shown on confirm. */}
+        {isHandover && form.vehicle_id && (
+          <RentalReadinessInline vehicleId={form.vehicle_id} />
+        )}
+
         <Section title="Out (pickup)" cols={3}>
-          <Input label="Out Date" type="date" value={form.out_date || ''} onChange={set('out_date')} />
-          <Input label="Out Time" value={form.out_time || ''} onChange={set('out_time')} placeholder="14:30" />
-          <Input label="Out Mileage" type="number" value={form.out_milage ?? ''} onChange={set('out_milage')} />
+          <Input label={autoLabel('Out Date', 'out_date')} type="date" value={form.out_date || ''} onChange={onOutDateChange} />
+          <Input label={autoLabel('Out Time', 'out_time')} value={form.out_time || ''} onChange={setClearing('out_time')} placeholder="14:30" />
+          <Input label={autoLabel('Out Mileage', 'out_milage')} type="number" value={form.out_milage ?? ''} onChange={setClearing('out_milage')} />
           <Input label="Out Fuel" value={form.out_fuel || ''} onChange={set('out_fuel')} />
-          <Input label="Opened By" value={form.opened_by || ''} onChange={set('opened_by')} />
+          <Input label={autoLabel('Opened By', 'opened_by')} value={form.opened_by || ''} onChange={setClearing('opened_by')} />
         </Section>
 
         <Section title="In (return)" cols={3}>
-          <Input label="In Date" type="date" value={form.in_date || ''} onChange={set('in_date')} />
-          <Input label="In Time" value={form.in_time || ''} onChange={set('in_time')} placeholder="12:00" />
+          <Input label={autoLabel('In Date', 'in_date')} type="date" value={form.in_date || ''} onChange={onInDateChange} />
+          <Input label={autoLabel('In Time', 'in_time')} value={form.in_time || ''} onChange={setClearing('in_time')} placeholder="12:00" />
           <Input label="In Mileage" type="number" value={form.in_milage ?? ''} onChange={set('in_milage')} />
           <Input label="In Fuel" value={form.in_fuel || ''} onChange={set('in_fuel')} />
-          <Input label="Closed By" value={form.closed_by || ''} onChange={set('closed_by')} />
+          <Input label={autoLabel('Closed By', 'closed_by')} value={form.closed_by || ''} onChange={setClearing('closed_by')} />
           <Input label="Days" type="number" value={form.days ?? ''} onChange={set('days')} />
           <Input label="KM" type="number" value={form.km ?? ''} onChange={set('km')} />
         </Section>
@@ -497,10 +819,26 @@ export default function ContractForm() {
         ) : (
           <>
             <Section title="Pricing" cols={3}>
-              <Input label="Day Price" type="number" step="0.01" value={form.day_price ?? ''} onChange={set('day_price')} />
-              <Input label="Week Price" type="number" step="0.01" value={form.week_price ?? ''} onChange={set('week_price')} />
-              <Input label="Month Price" type="number" step="0.01" value={form.month_price ?? ''} onChange={set('month_price')} />
+              <Input label={autoLabel('Day Price', 'day_price')} type="number" step="0.01" value={form.day_price ?? ''} onChange={setClearing('day_price')} />
+              <Input label={autoLabel('Week Price', 'week_price')} type="number" step="0.01" value={form.week_price ?? ''} onChange={setClearing('week_price')} />
+              <Input label={autoLabel('Month Price', 'month_price')} type="number" step="0.01" value={form.month_price ?? ''} onChange={setClearing('month_price')} />
             </Section>
+
+            {rentEstimate && (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-indigo-100 bg-gradient-to-r from-indigo-50 to-violet-50 px-5 py-4 shadow-sm">
+                <div>
+                  <p className="text-sm font-semibold text-indigo-900">
+                    Estimated rent · {aed2(rentEstimate.total)}
+                  </p>
+                  <p className="mt-0.5 text-xs text-indigo-600">
+                    {rentEstimate.days} day{rentEstimate.days === 1 ? '' : 's'} → {rentEstimate.parts.join(' + ')} at the rates above
+                  </p>
+                </div>
+                <Button variant="secondary" onClick={() => { clearAuto('rents_debit'); setVal('rents_debit', rentEstimate.total); }}>
+                  Use as Rents
+                </Button>
+              </div>
+            )}
 
             <Section title="Charges (debit)" cols={3}>
               <Input label="Rents" type="number" step="0.01" value={form.rents_debit ?? ''} onChange={set('rents_debit')} />
@@ -525,6 +863,79 @@ export default function ContractForm() {
           <Button onClick={submit} loading={saving}>{isEdit ? 'Save Changes' : 'Create Contract'}</Button>
         </div>
       </div>
+
+      {/* Mandatory condition acknowledgment before handing over an Orange-graded car. */}
+      <ConfirmDialog
+        open={cosmeticAck}
+        onClose={() => setCosmeticAck(false)}
+        onConfirm={() => { setCosmeticAck(false); proceedToCommit(); }}
+        loading={saving}
+        variant="primary"
+        title="Confirm cosmetic condition"
+        confirmText="Client acknowledged — continue"
+        message={
+          `This vehicle has minor cosmetic issues${conditionNote ? ` (“${conditionNote}”)` : ''}. Please ensure the client acknowledges them in the inspection report`
+          + ' before you continue. Your confirmation is recorded on the contract.'
+        }
+      />
+
+      {/* Deferred-maintenance advisory — flexible "rent anyway?" prompt, never a hard block. */}
+      <ConfirmDialog
+        open={showDeferAck}
+        onClose={() => setShowDeferAck(false)}
+        onConfirm={() => { setShowDeferAck(false); setDeferAck(true); afterDefer(pendingOpts); }}
+        loading={saving}
+        variant="warning"
+        title={inMaintenance ? 'Pull car out of the workshop?' : 'Deferred maintenance'}
+        confirmText={inMaintenance ? 'Close ticket & rent' : 'Proceed with rental'}
+        message={
+          inMaintenance
+            ? `${selectedVehicle?.plate_no || 'This vehicle'} is in the workshop. Renting it will close its open maintenance `
+              + 'ticket and flag it to return to the garage after the rental. Do you want to proceed?'
+            : `${selectedVehicle?.plate_no || 'This vehicle'} is flagged for deferred maintenance`
+              + `${selectedVehicle?.deferred_maintenance_reason ? ` — “${selectedVehicle.deferred_maintenance_reason}”` : ''}. `
+              + 'Do you want to proceed with the rental anyway? It must return to the workshop once the customer brings it back.'
+        }
+      />
+
+      {/* Manager override before renting a Yellow-graded (maintenance-needed) car. */}
+      <ConfirmDialog
+        open={mgrOverride}
+        onClose={() => setMgrOverride(false)}
+        onConfirm={() => { setMgrOverride(false); proceedToCommit({ managerOverride: true }); }}
+        loading={saving}
+        variant="warning"
+        title="Manager override — Yellow vehicle"
+        confirmText="Override & rent"
+        confirmDisabled={!overrideReason.trim()}
+        message={
+          `${selectedVehicle?.plate_no || 'This vehicle'} is graded Yellow (maintenance needed)`
+          + `${conditionNote ? ` — “${conditionNote}”` : ''}. As a manager you can override the block. Your reason is recorded on the contract.`
+        }
+      >
+        <label className="mt-3 block">
+          <span className="text-xs font-medium text-slate-600">Reason for override <span className="text-red-500">*</span></span>
+          <textarea
+            value={overrideReason}
+            onChange={(e) => setOverrideReason(e.target.value)}
+            rows={2}
+            autoFocus
+            placeholder="Why is this Yellow car being rented?"
+            className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-300"
+          />
+        </label>
+      </ConfirmDialog>
+
+      {/* The 8-point Rental Readiness Checklist — final interactive gate before a handover is saved. */}
+      {showChecklist && form.vehicle_id && (
+        <RentalReadinessGate
+          vehicleId={form.vehicle_id}
+          vehicleLabel={selectedVehicle?.plate_no || selectedVehicle?.name}
+          saving={saving}
+          onBack={() => setShowChecklist(false)}
+          onProceed={() => { setShowChecklist(false); setChecklistPassed(true); doSubmit(pendingOpts); }}
+        />
+      )}
     </div>
   );
 }

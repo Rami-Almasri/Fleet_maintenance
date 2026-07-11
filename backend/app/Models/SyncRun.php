@@ -22,4 +22,10 @@ class SyncRun extends Model
     {
         return $this->hasMany(SyncCorrection::class);
     }
+
+    /** Record-level change feed for this run: new contracts (inserts) + field diffs (updates). */
+    public function changes(): HasMany
+    {
+        return $this->hasMany(SyncChange::class);
+    }
 }

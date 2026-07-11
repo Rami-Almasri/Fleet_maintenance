@@ -23,7 +23,7 @@ class VehicleRegistrationController extends Controller
             $result = VehicleRegistrationResource::collection($registration);
             return ResponseHelper::SuccessResponse($result, "Vehicle registration retrieved successfully", 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -36,7 +36,7 @@ class VehicleRegistrationController extends Controller
             $data = $this->registrationService->coverage();
             return ResponseHelper::SuccessResponse($data, "Coverage retrieved successfully", 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -47,7 +47,7 @@ class VehicleRegistrationController extends Controller
             $result = VehicleRegistrationResource::make($registration);
             return ResponseHelper::SuccessResponse($result, "Vehicle registration created successfully", 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -57,7 +57,7 @@ class VehicleRegistrationController extends Controller
             $result = VehicleRegistrationResource::make($registration->load(['vehicle', 'insuranceCompany']));
             return ResponseHelper::SuccessResponse($result, "Vehicle registration retrieved successfully", 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -68,7 +68,7 @@ class VehicleRegistrationController extends Controller
             $result = VehicleRegistrationResource::make($registration);
             return ResponseHelper::SuccessResponse($result, "Vehicle registration updated successfully", 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -78,7 +78,7 @@ class VehicleRegistrationController extends Controller
             $this->registrationService->destroy($registration);
             return ResponseHelper::SuccessResponse(null, "Vehicle registration deleted successfully", 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 }

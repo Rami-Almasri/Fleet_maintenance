@@ -201,6 +201,13 @@ class ContractResource extends JsonResource
             "source" => $this->source,
             "origin" => $this->origin,
 
+            // Condition Acknowledgment (booking gate) — recorded when an Orange/Yellow car
+            // was handed over: the customer was informed of its condition. Audit trail.
+            "condition_ack_grade" => $this->condition_ack_grade,
+            "condition_ack_note" => $this->condition_ack_note,
+            "condition_ack_by" => $this->condition_ack_by,
+            "condition_ack_at" => optional($this->condition_ack_at)->toIso8601String(),
+
             "customer" => CustomerResource::make($this->whenLoaded('customer')),
             "vehicle" => VehicleResource::make($this->whenLoaded('vehicle')),
         ];

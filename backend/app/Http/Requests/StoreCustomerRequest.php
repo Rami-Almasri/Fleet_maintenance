@@ -59,4 +59,21 @@ class StoreCustomerRequest extends FormRequest
             'origin' => 'in:web,sheet',
         ];
     }
+
+    /**
+     * A customer must be identifiable by SOMETHING. Without this guard an empty POST creates a
+     * blank, nameless row (the historical source of "nameless customers"). Require at least one
+     * of: an English/Arabic name, a phone, or a customer number.
+     */
+    public function withValidator($validator): void
+    {
+        $validator->after(function ($validator) {
+            $hasIdentity = collect(['name_en', 'name_ar', 'mobile1', 'customer_no'])
+                ->contains(fn ($f) => filled($this->input($f)));
+
+            if (! $hasIdentity) {
+                $validator->errors()->add('name_en', 'A customer needs at least a name, phone, or customer number.');
+            }
+        });
+    }
 }

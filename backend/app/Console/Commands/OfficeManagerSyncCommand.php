@@ -126,9 +126,21 @@ class OfficeManagerSyncCommand extends Command
                 ? 'Dry run done -- no data written.'
                 : ($errors ? 'Sync finished — some phases failed (see summary); completed phases were saved.' : 'Sync done.'));
             $this->reconciliation($result, $validator, $dryRun, $zombieDays);
+
+            // Keep the Sync Audit feed tidy: drop runs past the retention window (cascades to
+            // their corrections + change rows). Only on a real run, and never the current one.
+            if (! $dryRun) {
+                $this->pruneAuditHistory();
+                // Fresh fleet/financial data landed → drop the cached dashboard aggregates so the
+                // homepage reflects the sync immediately instead of waiting out the cache TTL.
+                \App\Services\DashboardService::flushCache();
+            }
         } catch (Throwable $e) {
             // Safety net for anything outside the per-phase guards (e.g. reconciliation).
-            $run->update(['status' => 'failed', 'error' => $e->getMessage(), 'finished_at' => now()]);
+            // Clip the message: a DB error can embed the whole failing SQL, and writing an
+            // oversized string back into sync_runs.error would re-trigger the very packet
+            // failure we're handling — leaving the row stuck at "running".
+            $run->update(['status' => 'failed', 'error' => $this->clip($e->getMessage(), 500), 'finished_at' => now()]);
             $this->error($e->getMessage());
             return self::FAILURE;
         }
@@ -158,6 +170,29 @@ class OfficeManagerSyncCommand extends Command
         }
     }
 
+    /**
+     * Delete sync_runs older than the retention window so the audit history (and its
+     * cascaded sync_corrections / sync_changes) doesn't grow forever. The FK constraints
+     * are ON DELETE CASCADE, so removing the run rows clears their detail automatically.
+     * 0 days = keep forever (opt out). Failure here never fails the sync — it's housekeeping.
+     */
+    private function pruneAuditHistory(): void
+    {
+        $days = (int) config('officemanager.audit_retention_days', 90);
+        if ($days <= 0) {
+            return;
+        }
+        try {
+            $cutoff = Carbon::now()->subDays($days);
+            $deleted = SyncRun::where('started_at', '<', $cutoff)->delete();
+            if ($deleted > 0) {
+                $this->info("Audit retention: pruned {$deleted} sync run(s) older than {$days} days.");
+            }
+        } catch (Throwable $e) {
+            $this->warn('Audit retention prune skipped: ' . $e->getMessage());
+        }
+    }
+
     /** done = all phases ok · partial = some saved, some failed · failed = nothing saved. */
     private function terminalStatus(bool $dryRun, array $result, array $errors): string
     {
@@ -170,10 +205,25 @@ class OfficeManagerSyncCommand extends Command
         return $result ? 'partial' : 'failed';
     }
 
-    /** One-line "phase: reason | phase: reason" summary for the run log. */
+    /**
+     * One-line "phase: reason | phase: reason" summary for the run log. Each reason is hard-
+     * capped because a DB error message can embed the entire failing SQL (incl. bound JSON) —
+     * writing an unbounded string into sync_runs.error can itself exceed max_allowed_packet and
+     * kill the finalize update, leaving the row frozen at "running".
+     */
     private function errorSummary(array $errors): string
     {
-        return collect($errors)->map(fn ($msg, $key) => "{$key}: {$msg}")->implode(' | ');
+        return collect($errors)
+            ->map(fn ($msg, $key) => "{$key}: " . $this->clip((string) $msg, 500))
+            ->implode(' | ');
+    }
+
+    /** Trim a message to a safe length so it can never overflow a TEXT/packet limit. */
+    private function clip(string $s, int $max): string
+    {
+        $s = trim(preg_replace('/\s+/', ' ', $s));
+
+        return strlen($s) > $max ? substr($s, 0, $max) . '…' : $s;
     }
 
     /** Build the API date window from --from/--to, or null if a date is invalid. */
@@ -261,6 +311,8 @@ class OfficeManagerSyncCommand extends Command
 
     private function resolveRun(): SyncRun
     {
+        $this->reapStaleRuns(); // self-heal orphaned "running" rows from killed syncs
+
         $id = (int) $this->option('run-id');
         if ($id && $existing = SyncRun::find($id)) {
             return $existing;
@@ -270,6 +322,33 @@ class OfficeManagerSyncCommand extends Command
             'status'     => 'running',
             'started_at' => now(),
         ]);
+    }
+
+    /**
+     * Mark long-dead "running" rows as aborted. A sync killed mid-flight (window closed,
+     * Ctrl+C, or the machine slept during a slow OM API step) never reaches the finalize
+     * step, so its row is frozen at status=running forever — showing a phantom "running" on
+     * the Sync Audit page. The progress callback bumps updated_at on every window/flush, so a
+     * row with no heartbeat for 30 min is dead. Runs at the start of every sync, so orphans
+     * self-heal without manual cleanup. Best-effort: a failure here never blocks the sync.
+     */
+    private function reapStaleRuns(): void
+    {
+        try {
+            $reaped = SyncRun::where('status', 'running')
+                ->whereNull('finished_at')
+                ->where('updated_at', '<', Carbon::now()->subMinutes(30))
+                ->update([
+                    'status'      => 'aborted',
+                    'error'       => 'Aborted — the sync ended before finishing (window closed or interrupted, often during a slow OM API step). Re-run to complete.',
+                    'finished_at' => now(),
+                ]);
+            if ($reaped > 0) {
+                $this->warn("Cleaned up {$reaped} stale 'running' sync run(s) left by an interrupted sync.");
+            }
+        } catch (Throwable $e) {
+            // housekeeping only — never let it block the real sync
+        }
     }
 
     /** Start a new phase: reset the counters and show the label. */

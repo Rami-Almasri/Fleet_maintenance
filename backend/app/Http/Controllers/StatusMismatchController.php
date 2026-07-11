@@ -20,7 +20,7 @@ class StatusMismatchController extends Controller
                 200
             );
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 }

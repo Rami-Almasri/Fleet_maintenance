@@ -23,16 +23,26 @@ class RolesAndPermissionsSeeder extends Seeder
      */
     public const PERMISSIONS = [
         'vehicles.view', 'vehicles.manage',
+        'vehicles.approve_odometer', // admin-only: review/approve-or-reject significant manual odometer edits
         'drivers.view', 'drivers.manage',
         'vendors.view', 'vendors.manage',
         'customers.view', 'customers.manage',
         'contracts.view', 'contracts.manage',
+        'booking_readiness.view', 'booking_readiness.manage', // pickup-prep board + its trigger settings (horizon / lead / inspection validity / holidays)
+        'inspections.view', 'inspections.manage', // vehicle condition photos + damage flags (pre/post inspection) + inspection schedules
+        'reminders.view', 'reminders.manage',     // Reminders section: service reminders (oil/filters) + contact reminders (call a garage)
         'billing.view', 'billing.manage',    // invoices + payments/receipts (website-native billing)
         'operations.manage',                 // start/close vehicle movements
         'operations.override',               // manager-only: override the "Rental-First" block (maintenance contract on a rented car)
+        'logistics.view',                    // see the Logistics Dispatch board + My Queue; can be assigned a move + mark it delivered
+        'logistics.dispatch',                // Coordinator: raise / cancel a Logistics Dispatch + oversee + ping (no Claim button)
+        'logistics.claim',                   // Field driver: claim a pooled move + drive it (Picked Up → Delivered → Returned)
         'maintenance.view', 'maintenance.approve', 'maintenance.manage', // manage = create/edit/delete workshop events
+        'maintenance.initiate',              // open a maintenance workflow ticket + file the test-drive report + re-inspect (Inspector)
+        'maintenance.logistics',             // advance a ticket through dispatch → under-repair → ready (Logistics/Delivery)
+        'maintenance.delegate',              // Supervisor: delegate a driver to pickup/dropoff, reassign + ping ("Where is the car?")
         'registration.view', 'registration.manage',
-        'insights.view',                     // anomalies, data-health, status-mismatch, sheet↔api diff
+        'insights.view',                     // anomalies, data-health, status-mismatch
         'dashboard.view',                    // dashboard KPIs + fleet expiring
         'sync.run',                          // run/monitor data syncs
         'users.manage',                      // manage users & role assignments (admin only)
@@ -46,14 +56,19 @@ class RolesAndPermissionsSeeder extends Seeder
     public const ROLES = [
         // Full operational control of the fleet, minus user administration.
         'manager' => [
-            'vehicles.view', 'vehicles.manage',
+            'vehicles.view', 'vehicles.manage', // NOTE: vehicles.approve_odometer is admin-only — not granted here
             'drivers.view', 'drivers.manage',
             'vendors.view', 'vendors.manage',
             'customers.view', 'customers.manage',
             'contracts.view', 'contracts.manage',
+            'booking_readiness.view', 'booking_readiness.manage',
+            'inspections.view', 'inspections.manage',
+            'reminders.view', 'reminders.manage',
             'billing.view', 'billing.manage',
             'operations.manage', 'operations.override',
+            'logistics.view', 'logistics.dispatch', 'logistics.claim',
             'maintenance.view', 'maintenance.approve', 'maintenance.manage',
+            'maintenance.initiate', 'maintenance.logistics', 'maintenance.delegate',
             'registration.view', 'registration.manage',
             'insights.view', 'dashboard.view', 'sync.run',
         ],
@@ -62,27 +77,66 @@ class RolesAndPermissionsSeeder extends Seeder
             'vehicles.view', 'drivers.view',
             'customers.view', 'customers.manage',
             'contracts.view', 'contracts.manage',
+            'booking_readiness.view', 'booking_readiness.manage',
+            'inspections.view', 'inspections.manage',
+            'reminders.view', 'reminders.manage',
             'billing.view', 'billing.manage',
             'operations.manage',
+            'logistics.view', 'logistics.dispatch', 'logistics.claim',
             'registration.view', 'maintenance.view', 'dashboard.view',
         ],
         // Garage / workshop coordination and bill approvals.
         'maintenance' => [
             'vehicles.view', 'vendors.view',
+            'inspections.view', 'inspections.manage',
+            'reminders.view', 'reminders.manage',
             'maintenance.view', 'maintenance.approve', 'maintenance.manage',
+            'maintenance.initiate', 'maintenance.logistics', 'maintenance.delegate',
+            'logistics.view',
             'registration.view', 'insights.view', 'dashboard.view',
+        ],
+        // Supervisor / Coordinator (e.g. Waleed Medhat, Abdullah Asham): the DISPATCHER. After the
+        // inspector files a report, the supervisor reviews the open ticket, picks the destination
+        // garage and assigns a driver for pickup (maintenance.delegate drives the new Phase-2
+        // assign-dispatch step). They also raise/oversee/ping logistics moves (logistics.dispatch) and
+        // auto-watch any ticket the inspector prioritises. maintenance.logistics is granted too, so a
+        // supervisor can handle the pickup/delivery themselves when needed.
+        'supervisor' => [
+            'vehicles.view', 'vendors.view', 'drivers.view',
+            'maintenance.view', 'maintenance.delegate', 'maintenance.logistics',
+            'logistics.view', 'logistics.dispatch',
+            'dashboard.view',
+        ],
+        // Inspector (e.g. Abu Maroof): opens tickets, files the test-drive report, re-inspects on return.
+        'inspector' => [
+            'vehicles.view', 'vendors.view',
+            'inspections.view', 'inspections.manage',
+            'maintenance.view', 'maintenance.initiate',
+            'logistics.view',
+            'dashboard.view',
+        ],
+        // Logistics / Delivery — the field driver pool. Claims pooled moves and drives them through the
+        // round trip (logistics.claim); receives the maintenance dispatch hand-off, captures odometer +
+        // garage. Keeps logistics.dispatch so a driver can also raise an ad-hoc move from the grid.
+        'logistics' => [
+            'vehicles.view', 'vendors.view',
+            'maintenance.view', 'maintenance.logistics',
+            'logistics.view', 'logistics.dispatch', 'logistics.claim',
+            'dashboard.view',
         ],
         // Billing / accounts: customer financials, invoices and payments.
         'finance' => [
             'vehicles.view', 'customers.view', 'customers.manage',
-            'contracts.view', 'billing.view', 'billing.manage',
+            'contracts.view', 'booking_readiness.view', 'inspections.view', 'billing.view', 'billing.manage',
+            'reminders.view', 'reminders.manage',
             'insights.view', 'dashboard.view',
         ],
         // Read-only across the board.
         'viewer' => [
             'vehicles.view', 'drivers.view', 'vendors.view',
-            'customers.view', 'contracts.view', 'billing.view', 'registration.view',
-            'maintenance.view', 'insights.view', 'dashboard.view',
+            'customers.view', 'contracts.view', 'booking_readiness.view', 'inspections.view', 'billing.view', 'registration.view',
+            'reminders.view',
+            'maintenance.view', 'logistics.view', 'insights.view', 'dashboard.view',
         ],
     ];
 

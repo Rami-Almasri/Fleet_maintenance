@@ -4,6 +4,7 @@ namespace App\Notifications;
 
 use Illuminate\Bus\Queueable;
 use Illuminate\Notifications\Messages\BroadcastMessage;
+use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
 /**
@@ -57,6 +58,12 @@ class FleetAlert extends Notification
             $channels[] = 'broadcast';
         }
 
+        // Email is opt-in (config('features.mail_notifications')) and only to recipients who have an
+        // address — so with the flag OFF (the default) or a mailer unconfigured, nothing is ever sent.
+        if (config('features.mail_notifications') && filled($notifiable->email ?? null)) {
+            $channels[] = 'mail';
+        }
+
         return $channels;
     }
 
@@ -64,6 +71,29 @@ class FleetAlert extends Notification
     public function toArray(object $notifiable): array
     {
         return $this->payload;
+    }
+
+    /**
+     * The email envelope — same title/body as the in-app card, plus a button back to the alert's
+     * in-app deep-link. Only ever built when via() added the `mail` channel (flag on + recipient has
+     * an email), so this is inert until NOTIFY_MAIL_ENABLED=true and SMTP is set in .env.
+     */
+    public function toMail(object $notifiable): MailMessage
+    {
+        $title = $this->payload['title'] ?? 'Fleet alert';
+        $url   = $this->payload['url'] ?? null;
+        $link  = $url ? rtrim((string) config('app.frontend_url', config('app.url')), '/') . $url : null;
+
+        $mail = (new MailMessage)
+            ->subject($title)
+            ->greeting($title)
+            ->line($this->payload['body'] ?? '');
+
+        if ($link) {
+            $mail->action('Open in FleetView', $link);
+        }
+
+        return $mail->line('You are receiving this because you have access to this area of FleetView.');
     }
 
     /** The realtime envelope — identical shape to the stored row, plus a fresh id/timestamp. */

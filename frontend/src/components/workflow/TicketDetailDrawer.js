@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api/client';
 import { useI18n } from '../../i18n/I18nContext';
@@ -10,7 +10,7 @@ import { Skeleton } from '../ui/Skeleton';
 import FindingsList from './FindingsList';
 import VideoEvidence from './VideoEvidence';
 import InvoicesPanel from './InvoicesPanel';
-import { resolveAction, allows, ctaLabel, ago, fmtDuration, fmtDateTime, SEVERITY_CHIP, custodyBlocked } from './meta';
+import { resolveAction, allows, ctaLabel, ago, fmtDuration, fmtDateTime, SEVERITY_CHIP, custodyBlocked, isAtGarage } from './meta';
 import { SHOW_VIDEO_REVIEW } from '../../config/features';
 
 // workflow_status → the lane colour, reused for the status pill so the drawer reads as the
@@ -166,9 +166,14 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
   // "Now at Garage" custody gate: only the driver who picked the car up may check it in.
   const custodyLocked = act?.action === 'receive' && custodyBlocked(tk, userId);
   const custodyHint = `Only ${tk?.dispatched_by_name || 'the driver who picked up the car'} can check it in`;
-  // Follow-up is MANAGEMENT authority (Waleed/Abdullah) — they chase the garage, not the driver. Available
-  // from the moment the car is out for pickup (awaiting_dispatch) through in transit / under repair / review.
-  const canFollowUp = tk && ['awaiting_dispatch', 'in_transit', 'under_repair', 'repair_review'].includes(tk.workflow_status) && can('maintenance.delegate');
+  // Follow-up is MANAGEMENT authority (Waleed/Abdullah) — they chase the garage, not the driver. Only
+  // shown while the car is In Workshop (under_repair), i.e. actually at the garage being worked on.
+  const canFollowUp = tk && tk.workflow_status === 'under_repair' && can('maintenance.delegate');
+  // "Manage faults" (mark a fault fixed / reopen / transfer the car) — the Supervisor's dispatch
+  // authority. Offered once the car is at the garage stage, but NOT at ready_for_pickup: the faults
+  // are already fixed by then, so there's nothing left to mark done. Mirrors the board card guard.
+  const canRoute = tk && can('maintenance.delegate') && isAtGarage(tk)
+    && tk.workflow_status !== 'ready_for_pickup' && (tk.tasks?.length > 0);
   // Supervisor Video-Review: the secondary "request a re-fix" (the primary "approve" comes from ACTION).
   // The whole gate is hidden while parked (SHOW_VIDEO_REVIEW = false).
   const canRefix = SHOW_VIDEO_REVIEW && tk && tk.workflow_status === 'repair_review' && can('maintenance.delegate');
@@ -189,6 +194,11 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
       )}
       {tk.workflow_status === 'under_repair' && can('maintenance.logistics') && (
         <Button size="sm" variant="secondary" onClick={() => onAct('finding', tk)}>{t('workflow.board.addFinding')}</Button>
+      )}
+      {canRoute && (
+        <Button size="sm" variant="secondary" onClick={() => onAct('route', tk)}>
+          <Icon.Wrench className="h-3.5 w-3.5" /> {t('workflow.task.route')}
+        </Button>
       )}
       {canFollowUp && (
         <Button size="sm" variant="secondary" onClick={() => onAct('followup', tk)}>{t('workflow.cardAction.followup')}</Button>
@@ -279,6 +289,47 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
             </div>
           </div>
 
+          {/* Audit trail — pinned to the TOP as the primary status reference. Sorted strictly by
+              timestamp DESC (most recent action at the top); ties fall back to the canonical lifecycle
+              order. Each stage links to the earlier one below with an up-arrow so the progression
+              reads bottom-to-top (Inspection requested → … → the latest action on top). */}
+          <Section title={t('workflow.detail.timeline')} icon={<Icon.Activity className="h-3.5 w-3.5 text-slate-400" />}>
+            <ol className="relative">
+              {(() => {
+                const steps = HANDOFF_ORDER.filter((k) => tk.handoffs?.[k]);
+                if (!steps.length) {
+                  return <li className="text-xs text-slate-400">{t('workflow.detail.noTimeline')}</li>;
+                }
+                const at = (k) => { const d = tk.handoffs[k]?.at ? new Date(tk.handoffs[k].at).getTime() : 0; return Number.isNaN(d) ? 0 : d; };
+                const sorted = steps.slice().sort((a, b) => (at(b) - at(a)) || (HANDOFF_ORDER.indexOf(b) - HANDOFF_ORDER.indexOf(a)));
+                return sorted.map((key, si) => {
+                  const h = tk.handoffs[key];
+                  const hasEarlierBelow = si < sorted.length - 1; // an up-arrow links to the stage below
+                  return (
+                    <Fragment key={key}>
+                      <li className="relative flex gap-2.5 px-2 py-1">
+                        <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-indigo-500 ring-2 ring-white" />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-semibold text-slate-800">{t(`workflow.detail.handoff.${key}`)}</p>
+                          <p className="text-xs text-slate-500">
+                            {h.name ? `${h.name} · ` : ''}{fmtDateTime(h.at)}
+                            {h.at && <span className="text-slate-400"> · {ago(h.at, t)}</span>}
+                          </p>
+                        </div>
+                      </li>
+                      {/* arrow FROM this stage TO the next one (above) → explicit workflow progression */}
+                      {hasEarlierBelow && (
+                        <li aria-hidden className="flex ps-0.5 py-0.5">
+                          <svg className="h-4 w-4 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5M6 11l6-6 6 6" /></svg>
+                        </li>
+                      )}
+                    </Fragment>
+                  );
+                });
+              })()}
+            </ol>
+          </Section>
+
           {/* Key facts */}
           <Section title={t('workflow.detail.overview')} icon={<Icon.Info className="h-3.5 w-3.5 text-slate-400" />}>
             <dl className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
@@ -304,7 +355,7 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
             {hasReport(tk.test_drive_report) && (
               <div className="mt-3 border-t border-slate-100 pt-3">
                 <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">{t('workflow.detail.report')}</p>
-                <TestDriveReport report={tk.test_drive_report} />
+                <TestDriveReport report={tk.test_drive_report} tasks={tk.tasks} />
               </div>
             )}
           </Section>
@@ -393,7 +444,7 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
 
           {/* Findings */}
           <Section title={t('workflow.detail.findings')} icon={<Icon.Flag className="h-3.5 w-3.5 text-slate-400" />}>
-            {tk.findings?.length ? <FindingsList findings={tk.findings} /> : (
+            {tk.findings?.length ? <FindingsList findings={tk.findings} tasks={tk.tasks} /> : (
               <p className="text-xs text-slate-400">{t('workflow.detail.noFindings')}</p>
             )}
           </Section>
@@ -501,7 +552,9 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
               </div>
             )}
 
-            {/* The story — one line per reading, oldest→newest, each labelled by how it came to be. */}
+            {/* The story — one line per reading, read BOTTOM-TO-TOP: the first reading sits at the
+                bottom and each later one stacks above it, with an up-arrow between steps so the flow
+                reads upward. Each row is labelled by how the reading came to be. */}
             {mileageLoading ? (
               <div className="mt-4 space-y-2">
                 <Skeleton className="h-4 w-2/3" />
@@ -517,52 +570,68 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
                     {t('workflow.detail.mileageTruncated', { n: mileage.shown, total: mileage.total })}
                   </p>
                 )}
-                <ol className="mt-3 space-y-2.5 border-s border-slate-200 ps-4">
-                  {mileage.history.map((e, i) => {
+                <ol className="mt-3">
+                  {mileage.history.map((_, ri) => {
+                    // Render in REVERSE so the story flows bottom-to-top: the oldest reading is at the
+                    // bottom, the newest at the top. `i` stays the chronological index (0 = oldest) so
+                    // the "then …" connector and every label read correctly up the chain.
+                    const i = mileage.history.length - 1 - ri;
+                    const e = mileage.history[i];
                     const Ico = MILEAGE_ICON[e.how] || Icon.Gauge;
+                    const hasEarlierBelow = ri < mileage.history.length - 1; // an up-arrow links to the step below
                     return (
-                      <li key={i} className={`relative ${e.this_ticket ? '-ms-2 rounded-lg bg-indigo-50/70 px-2 py-1.5 ring-1 ring-inset ring-indigo-100' : ''}`}>
-                        {/* colour-coded dot on the timeline spine */}
-                        <span
-                          className="absolute -start-[1.32rem] top-1.5 h-2.5 w-2.5 rounded-full ring-2 ring-white"
-                          style={{ backgroundColor: MILEAGE_TONE[e.how] || '#94a3b8' }}
-                        />
-                        <div className="flex items-baseline justify-between gap-2">
-                          <p className="flex min-w-0 items-center gap-1.5 text-xs font-semibold text-slate-700">
-                            <Ico className="h-3.5 w-3.5 shrink-0 text-slate-400" />
-                            <span className="truncate">
-                              {i > 0 && <span className="font-normal text-slate-400">{t('workflow.detail.mileageThen')} </span>}
-                              {t(`workflow.detail.mileageHow.${e.how}`)}
-                              {e.ref && <span className="ms-1.5 font-normal text-slate-400">{e.ref}</span>}
-                            </span>
-                          </p>
-                          <span className="shrink-0 text-[11px] text-slate-400">{fmtDateTime(e.at) || '—'}</span>
-                        </div>
-                        <div className="mt-0.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 ps-5">
-                          <span className="text-sm text-slate-600">
-                            {t('workflow.detail.mileageReadKm', { km: Number(e.value).toLocaleString() })}
-                          </span>
-                          {e.delta != null && e.delta !== 0 && (
-                            <span className={`font-mono text-[11px] font-semibold ${e.delta > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                              {e.delta > 0 ? '+' : ''}{Number(e.delta).toLocaleString()} {t('workflow.stage.kmShort')}
-                            </span>
-                          )}
-                          {e.by && <span className="text-[11px] text-slate-500">{t('workflow.detail.mileageBy', { who: e.by })}</span>}
-                          {e.this_ticket && (
-                            <span className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-indigo-600">
-                              {t('workflow.detail.mileageThisTicket')}
-                            </span>
-                          )}
-                          {/* Odometer Continuity verdict — a Discrepancy (backward reading) or garage
-                              test-drive the Supervisor should eyeball. 'verified' is clean → no badge. */}
-                          {e.flag?.status && e.flag.status !== 'verified' && (
-                            <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${MILEAGE_FLAG_CLS[e.flag.status] || 'bg-slate-100 text-slate-600'}`}>
-                              {t(`workflow.odo.status.${e.flag.status}`)}
-                            </span>
-                          )}
-                        </div>
-                        {e.note && <p className="mt-0.5 ps-5 text-[11px] italic text-slate-500">“{e.note}”</p>}
-                      </li>
+                      <Fragment key={i}>
+                        <li className={`relative flex gap-2.5 rounded-lg px-2 py-1.5 ${e.this_ticket ? 'bg-indigo-50/70 ring-1 ring-inset ring-indigo-100' : ''}`}>
+                          {/* colour-coded dot marking how the reading was produced */}
+                          <span
+                            className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-white"
+                            style={{ backgroundColor: MILEAGE_TONE[e.how] || '#94a3b8' }}
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-baseline justify-between gap-2">
+                              <p className="flex min-w-0 items-center gap-1.5 text-xs font-semibold text-slate-700">
+                                <Ico className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                                <span className="truncate">
+                                  {i > 0 && <span className="font-normal text-slate-400">{t('workflow.detail.mileageThen')} </span>}
+                                  {t(`workflow.detail.mileageHow.${e.how}`)}
+                                  {e.ref && <span className="ms-1.5 font-normal text-slate-400">{e.ref}</span>}
+                                </span>
+                              </p>
+                              <span className="shrink-0 text-[11px] text-slate-400">{fmtDateTime(e.at) || '—'}</span>
+                            </div>
+                            <div className="mt-0.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                              <span className="text-sm text-slate-600">
+                                {t('workflow.detail.mileageReadKm', { km: Number(e.value).toLocaleString() })}
+                              </span>
+                              {e.delta != null && e.delta !== 0 && (
+                                <span className={`font-mono text-[11px] font-semibold ${e.delta > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                                  {e.delta > 0 ? '+' : ''}{Number(e.delta).toLocaleString()} {t('workflow.stage.kmShort')}
+                                </span>
+                              )}
+                              {e.by && <span className="text-[11px] text-slate-500">{t('workflow.detail.mileageBy', { who: e.by })}</span>}
+                              {e.this_ticket && (
+                                <span className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-indigo-600">
+                                  {t('workflow.detail.mileageThisTicket')}
+                                </span>
+                              )}
+                              {/* Odometer Continuity verdict — a Discrepancy (backward reading) or garage
+                                  test-drive the Supervisor should eyeball. 'verified' is clean → no badge. */}
+                              {e.flag?.status && e.flag.status !== 'verified' && (
+                                <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${MILEAGE_FLAG_CLS[e.flag.status] || 'bg-slate-100 text-slate-600'}`}>
+                                  {t(`workflow.odo.status.${e.flag.status}`)}
+                                </span>
+                              )}
+                            </div>
+                            {e.note && <p className="mt-0.5 text-[11px] italic text-slate-500">“{e.note}”</p>}
+                          </div>
+                        </li>
+                        {/* up-arrow to the earlier step below → the story reads bottom-to-top */}
+                        {hasEarlierBelow && (
+                          <li aria-hidden className="flex justify-center py-0.5">
+                            <svg className="h-3.5 w-3.5 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5M6 11l6-6 6 6" /></svg>
+                          </li>
+                        )}
+                      </Fragment>
                     );
                   })}
                 </ol>
@@ -585,30 +654,6 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
               </div>
             </Section>
           )}
-
-          {/* Audit trail */}
-          <Section title={t('workflow.detail.timeline')} icon={<Icon.Activity className="h-3.5 w-3.5 text-slate-400" />}>
-            <ol className="relative space-y-3 ps-4">
-              <span className="absolute inset-y-1 left-[3px] w-px bg-slate-200" aria-hidden />
-              {HANDOFF_ORDER.map((key) => {
-                const h = tk.handoffs?.[key];
-                if (!h) return null;
-                return (
-                  <li key={key} className="relative">
-                    <span className="absolute -left-4 top-1 h-2 w-2 rounded-full bg-indigo-500 ring-2 ring-white" />
-                    <p className="text-sm font-semibold text-slate-800">{t(`workflow.detail.handoff.${key}`)}</p>
-                    <p className="text-xs text-slate-500">
-                      {h.name ? `${h.name} · ` : ''}{fmtDateTime(h.at)}
-                      {h.at && <span className="text-slate-400"> · {ago(h.at, t)}</span>}
-                    </p>
-                  </li>
-                );
-              })}
-              {!HANDOFF_ORDER.some((k) => tk.handoffs?.[k]) && (
-                <li className="text-xs text-slate-400">{t('workflow.detail.noTimeline')}</li>
-              )}
-            </ol>
-          </Section>
 
           {/* Follow-up log */}
           {tk.follow_ups?.length > 0 && (
@@ -662,15 +707,42 @@ function hasReport(r) {
   return !!(r.symptoms?.length || r.severity || r.recommended_action || r.notes);
 }
 
-function TestDriveReport({ report }) {
+// Per-symptom fix status, matched to the fault-tasks by symptom text — so the Inspector report shows a
+// "✓ Fixed" (or In progress / Cancelled) badge the moment the ticket is opened, not just in Manage faults.
+const REPORT_STATUS_BADGE = {
+  completed:   { label: '✓ Fixed',     cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
+  in_progress: { label: 'In progress', cls: 'bg-blue-50 text-blue-700 ring-blue-200' },
+  cancelled:   { label: 'Cancelled',   cls: 'bg-slate-100 text-slate-500 ring-slate-200' },
+};
+const normSymptom = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+function TestDriveReport({ report, tasks = [] }) {
   if (typeof report === 'string') return <p className="mt-1 text-sm text-slate-700">{report}</p>;
+  const taskBySymptom = {};
+  tasks.forEach((tk) => { if (tk?.symptom) taskBySymptom[normSymptom(tk.symptom)] = tk; });
+  const badgeFor = (s) => {
+    const tk = taskBySymptom[normSymptom(s)];
+    if (!tk) return null;
+    if (tk.is_incorrect) return REPORT_STATUS_BADGE.cancelled;
+    return REPORT_STATUS_BADGE[tk.status] || null;
+  };
   return (
     <div className="mt-1 space-y-1.5 text-sm text-slate-700">
       {report.symptoms?.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
-          {report.symptoms.map((s, i) => (
-            <span key={i} className="inline-flex items-center rounded-md bg-slate-100 px-2 py-0.5 text-xs text-slate-600 ring-1 ring-inset ring-slate-200">{s}</span>
-          ))}
+          {report.symptoms.map((s, i) => {
+            const badge = badgeFor(s);
+            return (
+              <span key={i} className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 text-xs text-slate-600 ring-1 ring-inset ring-slate-200">
+                {s}
+                {badge && (
+                  <span className={`ml-0.5 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold ring-1 ring-inset ${badge.cls}`}>
+                    {badge.label}
+                  </span>
+                )}
+              </span>
+            );
+          })}
         </div>
       )}
       {report.recommended_action && (

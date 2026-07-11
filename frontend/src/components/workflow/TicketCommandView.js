@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api/client';
 import { useI18n } from '../../i18n/I18nContext';
@@ -495,6 +495,13 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
                     {tk.position?.label && (
                       <span className={`inline-flex items-center gap-1.5 rounded-full bg-white/95 px-3 py-1 text-sm font-bold text-slate-800 shadow-sm ${tk.position.moving ? 'animate-pulse' : ''}`} title={tk.position.detail || ''}>
                         {POSITION_ICON[tk.position.phase] || '📍'} {tk.position.label}{tk.position.garage ? ` · ${tk.position.garage}` : ''}
+                        {tk.position.transfer && tk.position.destination ? ` → ${tk.position.destination}` : ''}
+                      </span>
+                    )}
+                    {/* Transfer flag — a clear marker that this car is mid-move between garages. */}
+                    {tk.position?.transfer && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-3 py-1 text-sm font-bold text-violet-700 shadow-sm">
+                        🔀 {t('workflow.position.transfer')}
                       </span>
                     )}
                     {tk.trigger_reason && (
@@ -588,45 +595,62 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
             )}
 
             <Panel title={t('workflow.detail.findings')} icon={<Icon.Flag className="h-4 w-4" />} accent="#f59e0b">
-              {tk.findings?.length ? <FindingsList findings={tk.findings} /> : (
+              {tk.findings?.length ? <FindingsList findings={tk.findings} tasks={tk.tasks} /> : (
                 <p className="text-sm text-slate-400">{t('workflow.detail.noFindings')}</p>
               )}
             </Panel>
 
-            {/* Audit trail — vertical, richly styled */}
+            {/* Audit trail — newest at the top, with an up-arrow FROM each stage TO the next one above,
+                so the progression is explicit. Dwell time is computed in chronological order (the gap to
+                the stage that came after), then the list is flipped for display. */}
             <Panel title={t('workflow.detail.timeline')} icon={<Icon.Activity className="h-4 w-4" />} accent={tone}>
-              <ol className="relative space-y-4 ps-5">
-                <span className="absolute inset-y-1.5 left-[5px] w-0.5 rounded-full bg-gradient-to-b from-slate-200 via-slate-200 to-transparent" aria-hidden />
-                {JOURNEY.map((step, idx) => {
-                  const h = tk.handoffs?.[step.handoffKey];
-                  if (!h) return null;
-                  // Dwell time of the stage this milestone OPENS: the gap to the next reached milestone,
-                  // or — for the latest milestone on a still-open ticket — up to now ("so far").
-                  const next = JOURNEY.slice(idx + 1).map((s) => tk.handoffs?.[s.handoffKey]).find((x) => x?.at);
-                  const endAt = next?.at || (terminal ? null : new Date().toISOString());
-                  const dwell = h.at && endAt ? (new Date(endAt) - new Date(h.at)) / 1000 : null;
-                  const running = !next?.at && !terminal;
-                  return (
-                    <li key={step.key} className="relative">
-                      <span className="absolute -left-5 top-1 h-3 w-3 rounded-full ring-4 ring-white" style={{ background: tone }} />
-                      <div className="flex items-baseline justify-between gap-2">
-                        <p className="text-sm font-semibold text-slate-800">{t(`workflow.detail.handoff.${step.handoffKey}`)}</p>
-                        {dwell != null && (
-                          <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums ${running ? 'bg-amber-50 text-amber-600' : 'bg-slate-100 text-slate-500'}`}>
-                            {fmtDuration(dwell)}{running ? ' so far' : ''}
-                          </span>
+              <ol className="relative">
+                {(() => {
+                  const reached = JOURNEY.filter((s) => tk.handoffs?.[s.handoffKey]); // chronological
+                  if (!reached.length) {
+                    return <li className="text-sm text-slate-400">{t('workflow.detail.noTimeline')}</li>;
+                  }
+                  // Dwell of each stage = the gap to the NEXT reached milestone (chronological), or up to
+                  // now for the latest milestone on a still-open ticket ("so far").
+                  const rows = reached.map((step, i) => {
+                    const h = tk.handoffs[step.handoffKey];
+                    const nextH = i + 1 < reached.length ? tk.handoffs[reached[i + 1].handoffKey] : null;
+                    const endAt = nextH?.at || (terminal ? null : new Date().toISOString());
+                    const dwell = h.at && endAt ? (new Date(endAt) - new Date(h.at)) / 1000 : null;
+                    return { step, h, dwell, running: !nextH?.at && !terminal };
+                  });
+                  // Display newest-first (flip): the latest stage sits on top, each arrow points UP to it.
+                  return rows.slice().reverse().map((r, ri) => {
+                    const hasEarlierBelow = ri < rows.length - 1;
+                    return (
+                      <Fragment key={r.step.key}>
+                        <li className="relative flex gap-3 px-1 py-1">
+                          <span className="mt-1 h-3 w-3 shrink-0 rounded-full ring-4 ring-white" style={{ background: tone }} />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-baseline justify-between gap-2">
+                              <p className="text-sm font-semibold text-slate-800">{t(`workflow.detail.handoff.${r.step.handoffKey}`)}</p>
+                              {r.dwell != null && (
+                                <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums ${r.running ? 'bg-amber-50 text-amber-600' : 'bg-slate-100 text-slate-500'}`}>
+                                  {fmtDuration(r.dwell)}{r.running ? ' so far' : ''}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs text-slate-500">
+                              {r.h.name ? `${r.h.name} · ` : ''}{fmtDateTime(r.h.at)}
+                              {r.h.at && <span className="text-slate-400"> · {ago(r.h.at, t)}</span>}
+                            </p>
+                          </div>
+                        </li>
+                        {/* arrow FROM this stage TO the next one (above) → explicit workflow progression */}
+                        {hasEarlierBelow && (
+                          <li aria-hidden className="flex ps-1 py-0.5">
+                            <svg className="h-4 w-4" style={{ color: tone }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5M6 11l6-6 6 6" /></svg>
+                          </li>
                         )}
-                      </div>
-                      <p className="text-xs text-slate-500">
-                        {h.name ? `${h.name} · ` : ''}{fmtDateTime(h.at)}
-                        {h.at && <span className="text-slate-400"> · {ago(h.at, t)}</span>}
-                      </p>
-                    </li>
-                  );
-                })}
-                {!JOURNEY.some((s) => tk.handoffs?.[s.handoffKey]) && (
-                  <li className="text-sm text-slate-400">{t('workflow.detail.noTimeline')}</li>
-                )}
+                      </Fragment>
+                    );
+                  });
+                })()}
               </ol>
             </Panel>
 

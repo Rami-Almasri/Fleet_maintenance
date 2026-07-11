@@ -76,7 +76,7 @@ function Group({ g }) {
   );
 }
 
-export default function StatusMismatch() {
+export default function StatusMismatch({ embedded = false }) {
   const fetcher = useCallback(async () => {
     const { data } = await api.get('/StatusMismatch');
     return data.data;
@@ -101,14 +101,11 @@ export default function StatusMismatch() {
   const outCases = groups.filter((g) => g.severity === 'critical').reduce((s, g) => s + g.count, 0);
   const staleCases = groups.filter((g) => g.severity === 'warning').reduce((s, g) => s + g.count, 0);
 
-  return (
-    <div className="py-8">
-      <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
-        <PageHeader title="Status Mismatches" subtitle="Cars whose status doesn't match their contracts — out on a contract but not flagged busy, or flagged busy with no open contract." />
-
-        {error && (
-          <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error}</div>
-        )}
+  const inner = (
+    <>
+      {error && (
+        <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error}</div>
+      )}
 
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
           <div className="rounded-2xl border border-gray-100 bg-white px-5 py-4 shadow-sm ring-1 ring-gray-900/5">
@@ -125,9 +122,19 @@ export default function StatusMismatch() {
           </div>
         </div>
 
-        {groups.length === 0
-          ? <Card><EmptyState title="No status mismatches 🎉" message="Every car's status matches its open contracts." /></Card>
-          : groups.map((g) => <Group key={g.key} g={g} />)}
+      {groups.length === 0
+        ? <Card><EmptyState title="No status mismatches 🎉" message="Every car's status matches its open contracts." /></Card>
+        : groups.map((g) => <Group key={g.key} g={g} />)}
+    </>
+  );
+
+  if (embedded) return inner;
+
+  return (
+    <div className="py-8">
+      <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
+        <PageHeader title="Status Mismatches" subtitle="Cars whose status doesn't match their contracts — out on a contract but not flagged busy, or flagged busy with no open contract." />
+        {inner}
       </div>
     </div>
   );

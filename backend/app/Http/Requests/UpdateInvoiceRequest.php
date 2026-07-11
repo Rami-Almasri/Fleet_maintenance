@@ -19,7 +19,8 @@ class UpdateInvoiceRequest extends FormRequest
         // The parent contract is fixed once an invoice exists, so it isn't editable here.
         return [
             'invoice_date'   => ['nullable', 'date'],
-            'total_value'    => ['required', 'numeric', 'min:0'],
+            // Financial total is now OPTIONAL — the upload is a Technical Service Log first.
+            'total_value'    => ['nullable', 'numeric', 'min:0'],
             'vat_percentage' => ['nullable', 'numeric', 'min:0', 'max:100'],
             'discount'       => ['nullable', 'numeric', 'min:0'],
             'period_from'    => ['nullable', 'date'],
@@ -27,6 +28,11 @@ class UpdateInvoiceRequest extends FormRequest
             'rent_days'      => ['nullable', 'integer'],
             'net_rate'       => ['nullable', 'numeric', 'min:0'],
             'notes'          => ['nullable', 'string', 'max:1000'],
+            // Service Log: the garage that did the work + the list of parts/services performed.
+            'vendor_id'             => ['nullable', 'integer', 'exists:vendors,id'],
+            'items'                 => ['nullable', 'array'],
+            'items.*.description'   => ['required_with:items', 'string', 'max:255'],
+            'items.*.category_key'  => ['nullable', 'string', 'max:40'],
         ];
     }
 }

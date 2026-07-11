@@ -4,8 +4,10 @@ namespace App\Services;
 
 use App\Models\Contract;
 use App\Models\Maintenance;
+use App\Models\MaintenanceTombstone;
 use App\Models\Vehicle;
 use App\Models\Vendor;
+use RuntimeException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -111,6 +113,123 @@ class WorkshopEventService
             // Cascade: removing the last open garage event may free the car.
             $this->cascadeOperationalStatus($vehicleId);
         });
+    }
+
+    /**
+     * "Delete" a SHEET-synced event. Its source is the Google Sheet, so we can't truly
+     * remove it — instead we record a TOMBSTONE keyed by the importer's row_hash and
+     * hard-delete the local row. The row leaving means it drops off the board, cost and
+     * utilization at once; the tombstone makes every future sync skip it. The full
+     * attributes are stashed so Restore can recreate the row verbatim.
+     */
+    public function tombstone(Maintenance $event, ?int $userId = null, ?string $note = null): MaintenanceTombstone
+    {
+        if (! $event->row_hash) {
+            // No stable sheet identity to skip on re-import — refuse rather than leak a
+            // ghost the sync would immediately resurrect.
+            throw new RuntimeException('This event has no sheet identity and cannot be tombstoned.');
+        }
+
+        return DB::transaction(function () use ($event, $userId, $note) {
+            $event->loadMissing(['vendor', 'reason', 'vehicle:id,plate_no,make,model']);
+            $vehicleId = $event->vehicle_id;
+
+            $tombstone = MaintenanceTombstone::updateOrCreate(
+                ['row_hash' => $event->row_hash],
+                [
+                    'vehicle_id' => $vehicleId,
+                    'origin'     => $event->origin,
+                    'out_date'   => $event->out_date,
+                    'payload'    => $event->getAttributes(),   // raw columns → lossless restore
+                    'display'    => $this->displaySnapshot($event),
+                    'note'       => $note,
+                    'created_by' => $userId,
+                ]
+            );
+
+            $event->delete();
+            // Cascade: removing an open garage event may free the car.
+            $this->cascadeOperationalStatus($vehicleId);
+
+            return $tombstone;
+        });
+    }
+
+    /**
+     * Bring a tombstoned sheet event back: recreate its `maintenances` row from the stored
+     * attributes (a raw insert, so casts can't double-encode the JSON columns) and drop the
+     * tombstone so the sync resumes owning it.
+     */
+    public function restore(MaintenanceTombstone $tombstone): Maintenance
+    {
+        return DB::transaction(function () use ($tombstone) {
+            $attrs = $tombstone->payload ?? [];
+            unset($attrs['id'], $attrs['created_at'], $attrs['updated_at']);
+
+            $id = DB::table('maintenances')->insertGetId($attrs);
+            $tombstone->delete();
+
+            $event = Maintenance::findOrFail($id);
+            $this->cascadeOperationalStatus($event->vehicle_id);
+
+            return $event->load(['vendor', 'reason', 'vehicle:id,plate_no,make,model']);
+        });
+    }
+
+    /**
+     * Tombstoned (deleted) sheet events for the same scope as index(), so the Manage-Events
+     * list can show greyed "removed" ghosts with a Restore button.
+     *
+     * @param  array{vehicle_id?:int, contract_id?:int}  $filters
+     */
+    public function tombstonesFor(array $filters = []): Collection
+    {
+        if ($contractId = $filters['contract_id'] ?? null) {
+            $contract = Contract::find($contractId);
+            if (! $contract || ! $contract->vehicle_id || ! $contract->out_date) {
+                return new Collection();
+            }
+            $start = $contract->out_date->copy()->subDays(MaintenanceAnalyticsService::LINK_BUFFER_DAYS);
+            $query = MaintenanceTombstone::where('vehicle_id', $contract->vehicle_id)
+                ->whereNotNull('out_date')
+                ->whereDate('out_date', '>=', $start->toDateString());
+            if ($contract->in_date) {
+                $query->whereDate('out_date', '<=', $contract->in_date->toDateString());
+            }
+        } elseif ($vehicleId = $filters['vehicle_id'] ?? null) {
+            $query = MaintenanceTombstone::where('vehicle_id', $vehicleId);
+        } else {
+            return new Collection();
+        }
+
+        return $query->orderByRaw('out_date IS NULL, out_date DESC')->orderByDesc('id')->get();
+    }
+
+    /** A small render snapshot (issues + keyword-driven priority) for the ghost row. */
+    protected function displaySnapshot(Maintenance $event): array
+    {
+        $issues   = $this->analytics->sheetIssueTags($event);
+        $priority = ($event->maintenance_reason_id && $event->reason)
+            ? ['level' => $event->reason->level, 'matched' => $event->reason->reason_en]
+            : $this->analytics->classifyPriority($issues, $event->maintenance_notes);
+
+        return [
+            'origin'               => $event->origin,
+            'plate'                => $event->vehicle?->plate_no ?: $event->plate,
+            'car'                  => $event->vehicle ? trim($event->vehicle->make . ' ' . $event->vehicle->model) : $event->car_label,
+            'stage'                => $event->event_status,
+            'garage'               => $event->vendor?->name ?: $event->garage,
+            'issues'               => $issues,
+            'maintenance_type'     => $event->maintenance_type,
+            'out_date'             => optional($event->out_date)->toDateString(),
+            'expected_return_date' => optional($event->expected_return_date)->toDateString(),
+            'actual_in_date'       => optional($event->actual_in_date)->toDateString(),
+            'cost'                 => $event->cost !== null ? (float) $event->cost : null,
+            'responsible'          => $event->responsible,
+            'notes'                => $event->maintenance_notes,
+            'priority'             => $priority['level'],
+            'priority_matched'     => $priority['matched'],
+        ];
     }
 
     /**

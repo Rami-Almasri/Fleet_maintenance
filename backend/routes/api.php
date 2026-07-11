@@ -1,30 +1,49 @@
 <?php
 
-use App\Http\Controllers\AnomalyController;
 use App\Http\Controllers\DataHealthController;
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\BookingReadinessController;
+use App\Http\Controllers\CleaningController;
 use App\Http\Controllers\ContractController;
 use App\Http\Controllers\ExchangeController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\CustomerController;
 use App\Http\Controllers\DriverController;
+use App\Http\Controllers\FaultCauseController;
+use App\Http\Controllers\FindingKeywordController;
 use App\Http\Controllers\FleetController;
+use App\Http\Controllers\GarageInvoiceController;
+use App\Http\Controllers\MaintenanceInvoiceController;
 use App\Http\Controllers\MaintenanceController;
-use App\Http\Controllers\MaintenanceReturnController;
+use App\Http\Controllers\MileageChainAuditController;
+use App\Http\Controllers\OdometerChangeRequestController;
+use App\Http\Controllers\FuelMileageController;
 use App\Http\Controllers\ProfitabilityController;
+use App\Http\Controllers\ReadinessController;
+use App\Http\Controllers\RentalOperationsController;
 use App\Http\Controllers\FinancialConflictController;
 use App\Http\Controllers\ReconciliationController;
 use App\Http\Controllers\NotificationController;
+use App\Http\Controllers\NotificationTestController;
+use App\Http\Controllers\SimulationController;
+use App\Http\Controllers\LogisticsDispatchController;
+use App\Http\Controllers\TeamPresenceController;
+use App\Http\Controllers\MaintenanceSwapController;
+use App\Http\Controllers\MaintenanceWorkflowController;
+use App\Http\Controllers\InspectorPadController;
 use App\Http\Controllers\OperationController;
-use App\Http\Controllers\OverrideAuditController;
 use App\Http\Controllers\StatusMismatchController;
-use App\Http\Controllers\SyncController;
 use App\Http\Controllers\SyncAuditController;
+use App\Http\Controllers\VehicleActivityController;
 use App\Http\Controllers\VehicleController;
-use App\Http\Controllers\VehicleCsvSyncController;
+use App\Http\Controllers\VehicleStatusController;
 use App\Http\Controllers\VehicleRegistrationController;
 use App\Http\Controllers\VendorController;
 use App\Http\Controllers\CostCaptureController;
+use App\Http\Controllers\InspectionController;
+use App\Http\Controllers\InspectionScheduleController;
+use App\Http\Controllers\ServiceReminderController;
+use App\Http\Controllers\ContactReminderController;
 use App\Http\Controllers\WorkshopEventController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
@@ -47,14 +66,68 @@ Route::middleware('auth:sanctum')->prefix('Vehicle')->controller(VehicleControll
 
     Route::get('/', 'index')->middleware('permission:vehicles.view');
     Route::get('/utilization', 'utilization')->middleware('permission:insights.view');   // fleet rented/maintenance/idle days (static — must precede /{vehicle})
+    Route::get('/active-shop-stays', 'activeShopStays')->middleware('permission:insights.view'); // ops: cars on rent but stuck in the shop (static — must precede /{vehicle})
+    Route::get('/maintenance-overlaps', 'maintenanceOverlaps')->middleware('permission:insights.view'); // ops: maintenance↔rental overlap history for true off-road shop days (static — must precede /{vehicle})
     Route::get('/mileage-reconciliation', 'mileageReconciliation')->middleware('permission:insights.view'); // system odometer vs scanner value (static — must precede /{vehicle})
+    Route::get('/{vehicle}/status-on', 'statusOn')->middleware('permission:insights.view');   // time machine: car's status on a given day
+    Route::get('/{vehicle}/service-history', 'serviceHistory')->middleware('permission:maintenance.view'); // technical service log (parts/services done, searchable)
+    Route::get('/{vehicle}/tire-history', 'tireHistory')->middleware('permission:maintenance.view');       // tyre details (brand/DOT/tread/warranty) from maintenance line items
     Route::get('/{vehicle}/profile', 'profile')->middleware('permission:vehicles.view');   // full car profile: registration, insurance, fines, contracts
     Route::get('/{vehicle}', 'show')->middleware('permission:vehicles.view');
     Route::post('/', 'store')->middleware('permission:vehicles.manage');
     Route::post('/{vehicle}/apply-baseline', 'applyBaseline')->middleware('permission:vehicles.manage'); // adopt the scanner's validated odometer for one car
+    Route::post('/{vehicle}/condition', 'updateCondition')->middleware('permission:vehicles.manage');    // set the Visual Condition Grade (green/orange/red)
+    Route::post('/{vehicle}/defer-maintenance', 'deferMaintenance')->middleware('permission:maintenance.manage');     // flag "owes maintenance" (pulled out of the shop for a customer)
+    Route::delete('/{vehicle}/defer-maintenance', 'resolveDeferMaintenance')->middleware('permission:maintenance.manage'); // supervisor Resolve / Dismiss of the flag
+    Route::post('/{vehicle}/service-inspection', 'serviceInspection')->middleware('permission:reminders.manage|maintenance.initiate'); // combined: log oil change (clears Service-Due alert) + optionally flag issues → maintenance ticket
     Route::post('/{vehicle}', 'update')->middleware('permission:vehicles.manage');
     Route::delete('/{vehicle}', 'destroy')->middleware('permission:vehicles.manage');
 });
+
+// Activity Audit Trail — the "total transparency" read layer. One unified, newest-first timeline per
+// car (every action: inspection / cleaning / readiness / condition / maintenance / movement) plus the
+// fleet-wide manager feed with action-category + time-window filters. Pure reads over
+// ActivityFeedService (unions vehicle_log_events + logistics_task_events + inspection_records).
+Route::middleware('auth:sanctum')->controller(VehicleActivityController::class)->group(function () {
+    Route::get('Vehicle/{vehicle}/activity', 'vehicle')->middleware('permission:vehicles.view'); // one car's full history timeline
+    Route::get('Fleet/life-status', 'fleetStatus')->middleware('permission:vehicles.view');       // per-car live "where is it now" chips + counts
+    Route::get('Activity', 'feed')->middleware('permission:insights.view');                       // fleet-wide activity feed (manager view)
+});
+
+// Vehicle Status Dashboard — the team's all-day follow-up board (one derived row per car: status,
+// current owner, last/next action, days-in-status, blocked). Read-only aggregation (insights.view);
+// the Supervisor's "Set to Ready" sign-off reuses the same authority that closes a workflow ticket.
+Route::middleware('auth:sanctum')->prefix('vehicle-status')->controller(VehicleStatusController::class)->group(function () {
+    Route::get('/', 'index')->middleware('permission:insights.view');
+    Route::get('/history', 'history')->middleware('permission:insights.view');
+    Route::get('/{vehicle}/timeline', 'timeline')->middleware('permission:insights.view');
+    Route::post('/{vehicle}/set-ready', 'setReady')->middleware('permission:maintenance.initiate|maintenance.delegate');
+});
+
+// Readiness Dashboard — the role-scoped four-pillar task board (Logistics check-out/in, Supervisor
+// damage reviews, Inspector garage sign-offs) + the Pre-Delivery Readiness Gate's read side. Gated
+// broadly so every operational role reaches its own queue; the page itself scopes what each sees.
+Route::middleware('auth:sanctum')->prefix('readiness')->controller(ReadinessController::class)->group(function () {
+    Route::get('/', 'index')->middleware('permission:insights.view|logistics.view|maintenance.view|maintenance.initiate|maintenance.delegate|inspections.view');
+    // NB: contracts.view|contracts.manage included so the Rental Operations Hub's contract-detail
+    // readiness panel (9-point evaluate) loads for a rental manager who only holds contract perms.
+    Route::get('/vehicle/{vehicle}', 'vehicle')->middleware('permission:contracts.view|contracts.manage|insights.view|logistics.view|maintenance.view|maintenance.initiate|maintenance.delegate|inspections.view');
+
+    // Rental Readiness Checklist — the 8-point pre-confirm gate on the contract form (sales side).
+    Route::get('/vehicle/{vehicle}/rental-checklist', 'rentalChecklist')->middleware('permission:contracts.view|contracts.manage|insights.view|logistics.view|maintenance.view|inspections.view');
+    Route::post('/vehicle/{vehicle}/checklist-field', 'setChecklistField')->middleware('permission:contracts.manage|vehicles.manage');
+});
+
+// Vehicle Cleaning — before/after photo capture + clean/dirty flag for the Booking Readiness Cleaning
+// point. Reads gated broadly (so the readiness "Fix" link opens for any prep role); writes require the
+// same manage perm as the readiness checklist field.
+Route::middleware('auth:sanctum')->prefix('cleaning')->controller(CleaningController::class)->group(function () {
+    Route::get('/vehicle/{vehicle}', 'show')->middleware('permission:contracts.view|contracts.manage|vehicles.view|vehicles.manage|booking_readiness.view|inspections.view');
+    Route::post('/vehicle/{vehicle}/photo', 'store')->middleware('permission:contracts.manage|vehicles.manage');
+    Route::delete('/vehicle/{vehicle}/photo/{photo}', 'destroy')->middleware('permission:contracts.manage|vehicles.manage');
+    Route::post('/vehicle/{vehicle}/status', 'setStatus')->middleware('permission:contracts.manage|vehicles.manage');
+});
+
 Route::middleware('auth:sanctum')->prefix('Driver')->controller(DriverController::class)->group(function () {
 
     Route::get('/', 'index')->middleware('permission:drivers.view');
@@ -81,6 +154,12 @@ Route::middleware('auth:sanctum')->prefix('Customer')->controller(CustomerContro
     Route::post('/{customer}', 'update')->middleware('permission:customers.manage');
     Route::delete('/{customer}', 'destroy')->middleware('permission:customers.manage');
 });
+// Rental Operations Hub — active + upcoming rentals/bookings, each with the live 9-check readiness
+// verdict for its car. The Rental Manager's check-in/out surface (reads VehicleReadinessService).
+Route::middleware('auth:sanctum')->controller(RentalOperationsController::class)->group(function () {
+    Route::get('RentalOperations', 'index')->middleware('permission:contracts.view');
+});
+
 Route::middleware('auth:sanctum')->prefix('Contract')->controller(ContractController::class)->group(function () {
 
     Route::get('/', 'index')->middleware('permission:contracts.view');
@@ -96,6 +175,8 @@ Route::middleware('auth:sanctum')->prefix('Contract')->controller(ContractContro
 // origin). ?contract_id= scopes the list to one contract (the Contract Detail panel).
 Route::middleware('auth:sanctum')->prefix('Invoice')->controller(\App\Http\Controllers\InvoiceController::class)->group(function () {
     Route::get('/', 'index')->middleware('permission:billing.view');
+    // Track A — rental payment-status summary for the dashboard (STATIC — must precede /{invoice}).
+    Route::get('/status-summary', 'statusSummary')->middleware('permission:billing.view');
     Route::post('/', 'store')->middleware('permission:billing.manage');
     Route::get('/{invoice}', 'show')->middleware('permission:billing.view');
     Route::post('/{invoice}', 'update')->middleware('permission:billing.manage');
@@ -128,6 +209,241 @@ Route::middleware('auth:sanctum')->controller(OperationController::class)->group
     Route::post('Contract/{contract}/close', 'close')->middleware('permission:operations.manage');   // close an open movement
 });
 
+// Maintenance Swap board — assign a replacement car when a rented vehicle needs urgent maintenance.
+Route::middleware('auth:sanctum')->prefix('maintenance-swaps')->controller(MaintenanceSwapController::class)->group(function () {
+    Route::get('/board', 'board')->middleware('permission:insights.view');                       // queue + pool + active swaps
+    Route::post('/', 'store')->middleware('permission:operations.manage');                       // assign a replacement
+    Route::delete('/{maintenanceSwap}', 'release')->middleware('permission:operations.manage');  // end a swap
+});
+
+// Logistics Dispatch — the data-driven replacement for WhatsApp coordination. A COORDINATOR raises a
+// move (pooled, or pre-assigned); the first DRIVER to claim it owns it and walks it through Picked Up →
+// Delivered → Returned/Arrived (GPS-stamped). Every step auto-audits + auto-updates the coordinator.
+// Static `/pool`, `/my-queue`, `/assignees` precede the `{logisticsTask}` wildcard. Claim/pickup/
+// deliver/return/status are gated logistics.view (the controller enforces assignee-or-dispatcher);
+// raising/cancelling/pinging is coordinator-only (logistics.dispatch); claiming needs logistics.claim.
+Route::middleware('auth:sanctum')->prefix('logistics')->controller(LogisticsDispatchController::class)->group(function () {
+    Route::get('/', 'index')->middleware('permission:logistics.view');                          // all open dispatches (board)
+    Route::get('/pool', 'pool')->middleware('permission:logistics.view');                        // unclaimed moves up for grabs
+    Route::get('/my-queue', 'myQueue');                                                          // current user's claimed queue
+    Route::get('/assignees', 'assignees')->middleware('permission:logistics.dispatch');          // people + destination presets
+    Route::get('/drivers', 'roster')->middleware('permission:logistics.view');                   // driver availability roster (free / busy + what they're on)
+    Route::post('/', 'store')->middleware('permission:logistics.dispatch');                      // coordinator raises a move
+    Route::post('/{logisticsTask}/claim', 'claim')->middleware('permission:logistics.claim');     // driver takes a pooled move
+    // The assignee steps the round trip along — each call auto-audits (who+when) and pings the coordinator.
+    Route::post('/{logisticsTask}/pickup', 'pickup')->middleware('permission:logistics.view');     // car is with the driver
+    Route::post('/{logisticsTask}/deliver', 'deliver')->middleware('permission:logistics.view');   // car at the destination
+    Route::post('/{logisticsTask}/return', 'markReturned')->middleware('permission:logistics.view'); // car back at base (+ GPS)
+    Route::post('/{logisticsTask}/complete', 'complete')->middleware('permission:logistics.view');  // back-compat one-tap close
+    Route::post('/{logisticsTask}/cancel', 'cancel')->middleware('permission:logistics.dispatch');  // call off a move
+    // Supervisor override — reassign the move to a different driver at any point (pulls a pooled move out
+    // of the pool and locks it to the new driver). Coordinator-only.
+    Route::post('/{logisticsTask}/reassign', 'reassign')->middleware('permission:logistics.dispatch');
+    // "Where is the car?" — coordinator pings the assignee, the assignee replies one-click. One unified
+    // location channel for every movement (garage or showroom), not just repairs.
+    Route::post('/{logisticsTask}/ping', 'ping')->middleware('permission:logistics.dispatch');     // coordinator: "where is it?"
+    Route::post('/{logisticsTask}/status', 'respondStatus')->middleware('permission:logistics.view'); // assignee: one-click status reply
+});
+
+// Team Presence — the whole-team "who's where / who's free & why" board. Generalises the driver
+// roster above to every active staff member (drivers, inspectors, supervisors …), deriving each
+// person's live activity from their open moves + maintenance jobs. Read-only oversight → logistics.view.
+Route::middleware(['auth:sanctum', 'permission:logistics.view'])
+    ->get('/team/presence', [TeamPresenceController::class, 'roster']);
+
+// Fleet Maintenance Workflow — the role-driven ticket state machine (Inspector → Logistics →
+// Garage → Re-inspection) that replaces the WhatsApp relay. Each transition advances ONE legal
+// step and is re-guarded server-side (MaintenanceWorkflowService). Reads feed the live pipeline.
+// `/board` is registered before `/{ticket}` so it's never swallowed as an id.
+Route::middleware('auth:sanctum')->prefix('maintenance-tickets')->controller(MaintenanceWorkflowController::class)->group(function () {
+    Route::get('/', 'index')->middleware('permission:maintenance.view');
+    Route::get('/board', 'board')->middleware('permission:maintenance.view');              // live pipeline (6 columns + counts)
+    Route::get('/my-queue', 'myQueue')->middleware('permission:maintenance.view');          // role-scoped dashboard (Inspector / Driver)
+    Route::get('/findings-catalog', 'findingsCatalog')->middleware('permission:maintenance.view'); // central issue-keyword library
+    Route::get('/assignable-drivers', 'assignableDrivers')->middleware('permission:maintenance.delegate'); // supervisor: delegation picker
+    // Vehicle profile panel: health + tickets + condition photos. Static segment before {ticket}.
+    Route::get('/vehicle/{vehicle}', 'vehicleTimeline')->middleware('permission:maintenance.view');
+    // Chronic Fault Watchdog — prior closed repairs of the given fault tags (?tags[]=…) on this vehicle.
+    Route::get('/vehicle/{vehicle}/fault-insights', 'faultInsights')->middleware('permission:maintenance.view');
+    // Park-duration (idle) — how long the car has sat since its last movement; feeds the Scheduled-tab intake.
+    Route::get('/vehicle/{vehicle}/idle', 'vehicleIdle')->middleware('permission:maintenance.view');
+    // Awaiting-Invoice tracker: signed-off-but-uninvoiced tickets (STATIC — must precede /{ticket}).
+    Route::get('/pending-invoices', 'pendingInvoices')->middleware('permission:maintenance.view');
+    Route::get('/{ticket}', 'show')->middleware('permission:maintenance.view');
+    // The car's real current mileage + the full log of manual mileage corrections on this vehicle.
+    Route::get('/{ticket}/mileage', 'mileage')->middleware('permission:maintenance.view');
+    // Diagnostic context — idle duration, last check (+ link), and live oil/battery/tyre status vs. limits.
+    Route::get('/{ticket}/diagnostic-context', 'diagnosticContext')->middleware('permission:maintenance.view');
+    // Complaint Intake — Operations (Marwa & Leen) log a customer complaint → ticket born in Abu Maroof's
+    // TRIAGE lane (complaint_triage); he decides how to handle it before any garage is involved.
+    Route::post('/complaint', 'storeComplaint')->middleware('permission:maintenance.manage');
+    // Complaint TRIAGE actions (Abu Maroof, maintenance.initiate): talk to the customer, resolve on-site
+    // (closes the complaint), or send the car in (garage dispatch / diagnostic, optional replacement swap).
+    Route::post('/{ticket}/triage/call', 'triageCall')->middleware('permission:maintenance.initiate');
+    Route::post('/{ticket}/triage/resolve', 'triageResolve')->middleware('permission:maintenance.initiate');
+    Route::post('/{ticket}/triage/route', 'triageRoute')->middleware('permission:maintenance.initiate');
+    // Breakdown Intake — a technician (initiate) OR a manager (manage, via the Scheduled-tab test intake)
+    // reports a NOT-driveable car → ticket born (grounded) in the Supervisors' dispatch queue, skipping
+    // the test drive; car set RED + graded critical.
+    Route::post('/breakdown', 'storeBreakdown')->middleware('permission:maintenance.initiate|maintenance.manage');
+    // Stage 0 — a Driver (Logistics) requests an inspection → alerts the Inspector (Abu Maroof).
+    Route::post('/request', 'requestInspection')->middleware('permission:maintenance.logistics');
+    // Task-based accountability: an inspection must always begin from a TASK (a Driver flag via
+    // /request, or a system-generated mileage task) — never the Inspector picking an arbitrary car.
+    // So the direct-open endpoint is gated to maintenance.manage (manager override only); the
+    // Inspector (maintenance.initiate, no manage) is blocked server-side and works from his queue.
+    Route::post('/', 'store')->middleware('permission:maintenance.manage');                // manager override: open a diagnostic directly
+    // UC-1 / UC-2 — Inspector (Abu Maroof). `start` picks up an existing task → diagnostic.
+    Route::post('/{ticket}/start', 'startDiagnostic')->middleware('permission:maintenance.initiate');
+    Route::post('/{ticket}/report', 'submitReport')->middleware('permission:maintenance.initiate');
+    // Supervisor Delegation — a supervisor delegates a specific driver to pickup/dropoff
+    // (→ "Driver Assigned"). Fault severity itself is set by the inspector at /report, not here.
+    Route::post('/{ticket}/delegate', 'delegate')->middleware('permission:maintenance.delegate');
+    // Phase 2 — Supervisor (Dispatcher): review the open ticket, pick the garage + assign a driver. May
+    // split-dispatch: route only a subset of faults now (fault_ids), leaving the rest Pending Assignment.
+    Route::post('/{ticket}/assign-dispatch', 'assignDispatch')->middleware('permission:maintenance.delegate');
+    // Split-dispatch Dispatch Queue — assign Pending-Assignment faults to the car's current garage later.
+    Route::post('/{ticket}/assign-pending', 'assignPending')->middleware('permission:maintenance.delegate');
+    // UC-3 / UC-4 / UC-5 — the Driver (maintenance.logistics). dispatch() = the physical pickup
+    // (garage already chosen by the Supervisor); under-repair / ready relay the garage's progress.
+    Route::post('/{ticket}/dispatch', 'dispatch')->middleware('permission:maintenance.logistics');
+    // Recovery (towing) variant of dispatch — a broken-down car is towed in by a Recovery Truck (winch),
+    // not driven by a driver. Same odometer/photo gate; captures the towing unit. Driver or supervisor.
+    Route::post('/{ticket}/recovery-dispatch', 'recoveryDispatch')->middleware('permission:maintenance.logistics|maintenance.delegate');
+    Route::post('/{ticket}/under-repair', 'underRepair')->middleware('permission:maintenance.logistics');
+    Route::post('/{ticket}/findings', 'addFindings')->middleware('permission:maintenance.logistics'); // garage-identified, during repair
+    // Follow-up status is MANAGEMENT authority (Waleed/Abdullah) — they chase the garage, not the driver.
+    Route::post('/{ticket}/follow-up', 'followUp')->middleware('permission:maintenance.delegate');    // Supervisor's follow-up log
+    Route::post('/{ticket}/ready', 'ready')->middleware('permission:maintenance.logistics');          // garage finished → ready for pickup (or supervisor's video review first)
+    // UC-5a — Supervisor Video-Review gate (Waleed/Abdullah): after reviewing the garage's video they
+    // APPROVE it for pickup, or REQUEST A RE-FIX to send the car back to the same garage.
+    Route::post('/{ticket}/approve-repair', 'approveRepair')->middleware('permission:maintenance.delegate');
+    Route::post('/{ticket}/request-refix', 'requestRefix')->middleware('permission:maintenance.delegate');
+    // UC-5b / UC-5c — Ready for Pickup → In Our Park (Driver/Logistics authority). Both mandatory photo
+    // checkpoints on the return leg: collect-from-garage records the pickup (no status change), then
+    // arrive-at-park (mandatory photo, auto-branches by repair severity — minor auto-closes, major routes
+    // to the final QA re-inspection).
+    Route::post('/{ticket}/collect-from-garage', 'collectFromGarage')->middleware('permission:maintenance.logistics');
+    Route::post('/{ticket}/arrive-at-park', 'arriveAtPark')->middleware('permission:maintenance.logistics');
+    // Video Evidence — the garage's repair videos, uploaded by a supervisor as the permanent repair record.
+    // Presign + save + delete are supervisor authority; anyone who can view the ticket can watch them.
+    Route::post('/{ticket}/video/presign', 'presignVideo')->middleware('permission:maintenance.delegate');
+    Route::post('/{ticket}/video', 'storeVideo')->middleware('permission:maintenance.delegate');
+    Route::get('/{ticket}/media', 'listMedia')->middleware('permission:maintenance.view');
+    Route::delete('/{ticket}/media/{media}', 'destroyMedia')->middleware('permission:maintenance.delegate');
+    // "Where is the car?" location tracking is now CANONICAL on Logistics Dispatch (see the /logistics
+    // ping + status routes above) — one channel for every movement. The duplicate per-ticket
+    // reassign/ping/status endpoints were removed in favour of it.
+    // Final re-inspection — the Inspector (maintenance.initiate) OR a Supervisor (maintenance.delegate,
+    // e.g. Waleed/Abdullah) may re-check the car when it's back from the garage and sign off (close)
+    // or send it back (reopen). Drivers can SEE a ready ticket in their queue to track that the car is
+    // back, but the closing decision stays with the inspector or a supervisor.
+    // On-Site (mobile) completion — one-step close for the mobile lane: no garage, no re-inspection, no
+    // QA. Same authority as a close (the inspector who logged it, or a supervisor).
+    Route::post('/{ticket}/mark-serviced', 'markServiced')->middleware('permission:maintenance.initiate|maintenance.delegate');
+    Route::post('/{ticket}/close', 'close')->middleware('permission:maintenance.initiate|maintenance.delegate');
+    Route::post('/{ticket}/reopen', 'reopen')->middleware('permission:maintenance.initiate|maintenance.delegate');
+    // Financial Decoupling (Deferred Cost) — record the final invoice cost later, after close.
+    Route::post('/{ticket}/cost', 'recordCost')->middleware('permission:maintenance.manage');
+    // Structured Parts + Labor breakdown — read with view; record/replace is a money action
+    // (maintenance.manage), works in any state so the bill can be itemised after close (deferred edit).
+    Route::get('/{ticket}/line-items', 'lineItems')->middleware('permission:maintenance.view');
+    Route::put('/{ticket}/line-items', 'syncLineItems')->middleware('permission:maintenance.manage');
+    // Path A (Manual Entry) — ask the garage for an itemised invoice (stamps + alerts the team).
+    Route::post('/{ticket}/request-invoice', 'requestInvoice')->middleware('permission:maintenance.manage');
+    // Garage Invoice Portal — the garages that worked on the ticket (each with its own faults + live link),
+    // then issue a secure link the outside garage uses to self-submit its invoice (optionally per-garage).
+    Route::get('/{ticket}/garage-invoice-garages', [GarageInvoiceController::class, 'garages'])->middleware('permission:maintenance.manage');
+    Route::post('/{ticket}/garage-invoice-link', [GarageInvoiceController::class, 'issueLink'])->middleware('permission:maintenance.manage');
+    // Mark the outstanding invoice as received → close the awaiting_invoice ticket (a money action).
+    Route::post('/{ticket}/finalize-invoice', 'finalizeInvoice')->middleware('permission:maintenance.manage');
+    // One Ticket → Many Invoices — list + create the individual garage bills on a ticket (each covering
+    // only the faults its garage fixed). Edit/delete/reconcile live under the /maintenance-invoices group.
+    Route::get('/{ticket}/invoices', [MaintenanceInvoiceController::class, 'index'])->middleware('permission:maintenance.view');
+    Route::post('/{ticket}/invoices', [MaintenanceInvoiceController::class, 'store'])->middleware('permission:maintenance.manage');
+    // Reclassify the maintenance type mid-lifecycle (e.g. Routine → Insurance Incident on discovery).
+    Route::patch('/{ticket}/type', 'updateType')->middleware('permission:maintenance.manage');
+    // Single-garage routing — the ticket's faults as first-class tasks (read), grouped under one garage.
+    Route::get('/{ticket}/tasks', 'listTasks')->middleware('permission:maintenance.view');
+    // Garage Transfer (whole car) — the Supervisor sequentially moves the car to the next garage: closes
+    // the current stints, opens new ones, re-points the ticket's single current garage. All open faults
+    // move together. The Supervisor's dispatch authority (maintenance.delegate), mirroring assign-dispatch.
+    Route::post('/{ticket}/transfer-garage', 'transferGarage')->middleware('permission:maintenance.delegate');
+});
+
+// Inspector's Pad — the Inspector (Abu Maroof) flags cars with issue keywords + observations ahead of
+// any ticket (maintenance.initiate to write, maintenance.view to read), and picks a car up for
+// maintenance. Pick-up is odometer-gated and mints a ticket carrying the car's pending flags (see
+// InspectorPadController + MaintenanceWorkflowService::pickupIntoMaintenance).
+Route::middleware('auth:sanctum')->prefix('inspector-pad')->controller(InspectorPadController::class)->group(function () {
+    Route::get('/', 'index')->middleware('permission:maintenance.view');
+    Route::post('/', 'store')->middleware('permission:maintenance.initiate');
+    // Static segment before {flag}/{vehicle} — pick a car up for maintenance (odometer-gated).
+    Route::post('/pickup/{vehicle}', 'pickup')->middleware('permission:maintenance.initiate');
+    Route::delete('/{flag}', 'destroy')->middleware('permission:maintenance.initiate');
+});
+
+// Per-fault status actions (independent fault tracking) — a fault is marked fixed / reopened / cancelled
+// on its own, but it is NEVER routed to its own garage: every open fault belongs to the ticket's single
+// current garage (see /{ticket}/assign-dispatch and /{ticket}/transfer-garage). Returns the parent ticket
+// (with every task) so the board card refreshes whole. The Supervisor's dispatch authority.
+Route::middleware(['auth:sanctum', 'permission:maintenance.delegate'])->prefix('maintenance-tasks')->controller(MaintenanceWorkflowController::class)->group(function () {
+    Route::post('/{task}/status', 'setTaskStatus');  // pending / in_progress / completed / cancelled
+    // In-Workshop only: the delegate overrules the inspector — this fault is a mis-diagnosis (see markIncorrect).
+    Route::post('/{task}/incorrect', 'markTaskIncorrect');
+});
+
+// Garage Invoice Portal — team-side AUDIT of a garage-submitted invoice (accept applies it to the ticket,
+// reject discards it). A money action, so gated to the controllers who own the cost (maintenance.manage).
+Route::middleware(['auth:sanctum', 'permission:maintenance.manage'])->prefix('garage-invoices')->controller(GarageInvoiceController::class)->group(function () {
+    Route::post('/{submission}/accept', 'accept');
+    Route::post('/{submission}/reject', 'reject');
+});
+
+// One Ticket → Many Invoices — edit / delete / reconcile a single garage bill. Money actions →
+// maintenance.manage. Update is POST (multipart: it may carry a replacement receipt photo).
+Route::middleware(['auth:sanctum', 'permission:maintenance.manage'])->prefix('maintenance-invoices')->controller(MaintenanceInvoiceController::class)->group(function () {
+    Route::post('/{invoice}', 'update');
+    Route::delete('/{invoice}', 'destroy');
+    Route::post('/{invoice}/reconcile', 'reconcile');
+});
+
+// Garage Invoice Portal — PUBLIC, token-gated (no login): the garage opens its link and submits its
+// invoice. Rate-limited; every response is scoped to the one ticket and carries only car + fault data.
+Route::prefix('garage-invoice')->controller(GarageInvoiceController::class)->group(function () {
+    Route::get('/{token}', 'show')->middleware('throttle:40,1');
+    Route::post('/{token}', 'submit')->middleware('throttle:12,1');
+});
+
+// Symptom → Root-Cause knowledge base administration. The diagnostic picker auto-files custom causes
+// as 'pending'; a manager reviews the queue here and approves (→ joins the master list) or rejects.
+// Gated to maintenance.manage (the manager-override permission), like cost + type changes above.
+Route::middleware(['auth:sanctum', 'permission:maintenance.manage'])->prefix('fault-causes')->controller(FaultCauseController::class)->group(function () {
+    Route::get('/', 'index');                              // review queue + counts (?status=, ?symptom=)
+    Route::post('/{faultCause}/approve', 'approve');       // promote a custom cause to the master list
+    Route::post('/{faultCause}/reject', 'reject');         // decline (kept for audit)
+});
+
+// Findings keyword library — the quick-pick fault keywords + their RISK grade (critical / moderate /
+// routine). Read with maintenance.view (anyone who works tickets sees the library); create / edit /
+// delete are curation actions gated to maintenance.manage, matching cost / type / fault-cause admin.
+Route::middleware('auth:sanctum')->prefix('finding-keywords')->controller(FindingKeywordController::class)->group(function () {
+    Route::get('/', 'index')->middleware('permission:maintenance.view');                  // whole library + risk legend + counts
+    Route::post('/', 'store')->middleware('permission:maintenance.manage');               // add a keyword
+    Route::post('/{findingKeyword}', 'update')->middleware('permission:maintenance.manage');  // edit / re-grade risk (POST, like Vendor)
+    Route::delete('/{findingKeyword}', 'destroy')->middleware('permission:maintenance.manage'); // retire a keyword
+});
+
+// Booking Readiness — the pickup-prep board. Lists upcoming bookings (type-R reservations) inside the
+// look-ahead horizon, each with a live readiness checklist + working-days-to-pickup + verdict. Reads
+// are gated to booking_readiness.view; the trigger settings (horizon / lead / inspection validity /
+// excluded holidays) are edited under booking_readiness.manage.
+Route::middleware('auth:sanctum')->prefix('booking-readiness')->controller(BookingReadinessController::class)->group(function () {
+    Route::get('/', 'index')->middleware('permission:booking_readiness.view');                  // board: bookings + summary + settings
+    Route::get('/settings', 'settings')->middleware('permission:booking_readiness.view');       // settings on their own
+    Route::post('/settings', 'updateSettings')->middleware('permission:booking_readiness.manage'); // save trigger settings
+});
+
 // In-app notification centre (the bell). Every endpoint is scoped to the current
 // user, so it only requires authentication — no extra permission.
 Route::middleware('auth:sanctum')->prefix('notifications')->controller(NotificationController::class)->group(function () {
@@ -140,27 +456,80 @@ Route::middleware('auth:sanctum')->prefix('notifications')->controller(Notificat
     Route::delete('/{id}', 'destroy');         // dismiss one
 });
 
-// Override Audit — read-only trail of "Rental-First" policy overrides (maintenance contract
-// opened on a rented car). Gated by operations.override so only managers/admins see it.
-Route::middleware(['auth:sanctum', 'permission:operations.override'])
-    ->get('Operations/overrides', [OverrideAuditController::class, 'index']);
+// Notification Test Console (ADMIN-ONLY) — fire a realistic FleetAlert of a chosen type on demand
+// (overdue_service | rental_expiry | invoice_overdue | inspection_due), optionally forced when the
+// live condition isn't met, to stress-test the whole raise → DB → bell pipeline. See
+// NotificationTestController. Gated by users.manage (admin/super-admin) so it stays hidden from staff.
+Route::middleware(['auth:sanctum', 'permission:users.manage'])
+    ->post('admin/notifications/test', [NotificationTestController::class, 'fire']);
+
+// Demo / Simulation Panel (ADMIN-ONLY) — force a real live scenario on a real car so the team can
+// watch the system react end-to-end: `oil-alert` forces a Service-Due oil condition + runs the real
+// scanner; `fault-discovery` files a real complaint ticket. `status` is read-only; the mutating
+// actions ALSO hard-refuse unless FEATURE_DEMO_MODE is on (SimulationController::assertDemoMode), and
+// every change is journaled so `reset` restores the fleet exactly. Gated to users.manage (hidden).
+Route::middleware(['auth:sanctum', 'permission:users.manage'])->prefix('simulation')->controller(SimulationController::class)->group(function () {
+    Route::get('/status', 'status');
+    Route::post('/oil-alert', 'oilAlert');
+    Route::post('/fault-discovery', 'faultDiscovery');
+    Route::post('/reset', 'reset');
+});
+
+// Vehicle Inspection Workflow — condition photos (stored in S3-compatible object storage)
+// + rich manual damage flags (type/severity/note) per body zone, linked to a contract and
+// vehicle. Powers the hotspot diagram, the before/after slider and the Fleet Health reports.
+// Upload never touches the app server: client compresses → /presign → PUT to S3 → store metadata.
+Route::middleware('auth:sanctum')->prefix('Inspections')->controller(InspectionController::class)->group(function () {
+    Route::get('/', 'index')->middleware('permission:inspections.view');                 // list by ?contract_id= / ?vehicle_id=
+    Route::post('/presign', 'presign')->middleware('permission:inspections.manage');     // signed S3 PUT URL for one photo
+    Route::post('/', 'store')->middleware('permission:inspections.manage');              // persist record metadata after upload
+    Route::delete('/{inspection}', 'destroy')->middleware('permission:inspections.manage');
+});
+
+// Inspection Schedules — recurring SAFETY / OPERATIONS inspection plans (Fleetio "Schedules").
+// Separate prefix from `Inspections` so the {inspection} wildcard above never swallows these.
+// `complete` (static) is registered before the {inspectionSchedule} wildcard. Reuses the
+// inspections.* permissions (schedules + history are the inspection pillar).
+Route::middleware('auth:sanctum')->prefix('InspectionSchedules')->controller(InspectionScheduleController::class)->group(function () {
+    Route::get('/', 'index')->middleware('permission:inspections.view');                       // ?vehicle_id / ?status / ?active
+    Route::post('/', 'store')->middleware('permission:inspections.manage');
+    Route::get('/{inspectionSchedule}', 'show')->middleware('permission:inspections.view');
+    Route::post('/{inspectionSchedule}/complete', 'complete')->middleware('permission:inspections.manage'); // log a done inspection, roll next-due
+    Route::post('/{inspectionSchedule}', 'update')->middleware('permission:inspections.manage');
+    Route::delete('/{inspectionSchedule}', 'destroy')->middleware('permission:inspections.manage');
+});
+
+// Service Reminders — recurring TECHNICAL maintenance due points (oil/filters/…). Auto rows
+// are seeded by `service:sync-reminders`; a manual edit protects a row from the seeder. Gated
+// by the Reminders section permission set.
+Route::middleware('auth:sanctum')->prefix('ServiceReminders')->controller(ServiceReminderController::class)->group(function () {
+    Route::get('/', 'index')->middleware('permission:reminders.view');                         // ?vehicle_id / ?source / ?status / ?active
+    Route::post('/', 'store')->middleware('permission:reminders.manage');
+    Route::get('/{serviceReminder}', 'show')->middleware('permission:reminders.view');
+    Route::post('/{serviceReminder}/complete', 'complete')->middleware('permission:reminders.manage'); // log the service, roll next-due
+    Route::post('/{serviceReminder}/notify', 'notify')->middleware('permission:reminders.manage');     // alert drivers/technicians this car needs service
+    Route::post('/{serviceReminder}', 'update')->middleware('permission:reminders.manage');
+    Route::delete('/{serviceReminder}', 'destroy')->middleware('permission:reminders.manage');
+});
+
+// Contact Reminders — "call {vendor} about {subject}", optionally linked to an invoice /
+// maintenance ticket for one-click drill-through. Gated by the Reminders section permission set.
+Route::middleware('auth:sanctum')->prefix('ContactReminders')->controller(ContactReminderController::class)->group(function () {
+    Route::get('/', 'index')->middleware('permission:reminders.view');                         // ?vendor_id / ?status / ?assigned_to
+    Route::post('/', 'store')->middleware('permission:reminders.manage');
+    Route::get('/{contactReminder}', 'show')->middleware('permission:reminders.view');
+    Route::post('/{contactReminder}', 'update')->middleware('permission:reminders.manage');
+    Route::delete('/{contactReminder}', 'destroy')->middleware('permission:reminders.manage');
+});
 
 // Fleet insights
 Route::middleware('auth:sanctum')->controller(FleetController::class)->group(function () {
     Route::get('Fleet/expiring', 'expiring')->middleware('permission:dashboard.view');               // cars with registration/insurance expiring within ?days=N
 });
 
-// Manual data sync (the buttons on the Data Sync page)
-Route::middleware('auth:sanctum')->controller(SyncController::class)->group(function () {
-    Route::get('Sync/status', 'status')->middleware('permission:sync.run');
-    Route::post('Sync/run', 'run')->middleware('permission:sync.run');
-    Route::post('Sync/kill', 'kill')->middleware('permission:sync.run');   // stop a stuck background job by PID
-    Route::get('Sync/preview', 'preview')->middleware('permission:sync.run'); // live raw API sample (cars/contracts/invoices)
-});
-
 // Sync Audit — read-only history of CMD sync runs + the auto-corrections they made.
-// Static `Sync/audit` is registered before `Sync/audit/{syncRun}`; both sit outside the
-// SyncController group above so the {syncRun} binding resolves to a SyncRun model.
+// Static `Sync/audit` is registered before `Sync/audit/{syncRun}` so the {syncRun}
+// binding resolves to a SyncRun model.
 Route::middleware(['auth:sanctum', 'permission:sync.run'])->controller(SyncAuditController::class)->group(function () {
     Route::get('Sync/audit', 'index');
     Route::get('Sync/audit/{syncRun}', 'show');
@@ -181,6 +550,8 @@ Route::middleware(['auth:sanctum', 'permission:maintenance.approve'])->get('Main
 Route::middleware(['auth:sanctum', 'permission:maintenance.approve'])->post('Maintenance/{contract}/approve', [MaintenanceController::class, 'approve']);
 // Live maintenance board: cars currently in the garage + traffic-light SLA status
 Route::middleware(['auth:sanctum', 'permission:maintenance.view'])->get('Maintenance/board', [MaintenanceController::class, 'board']);
+// Booking conflicts: cars in the workshop that also have an upcoming booking (/maintenance-bookings)
+Route::middleware(['auth:sanctum', 'permission:maintenance.view'])->get('Maintenance/booking-conflicts', [MaintenanceController::class, 'bookingConflicts']);
 // Controlled reason -> status vocabulary (for the issue-tag picker / classification)
 Route::middleware(['auth:sanctum', 'permission:maintenance.view'])->get('Maintenance/reasons', [MaintenanceController::class, 'reasons']);
 // Garage directory + performance (delays, on-time rate, spend, cars in now)
@@ -194,8 +565,11 @@ Route::middleware(['auth:sanctum', 'permission:maintenance.view'])->get('Mainten
 Route::middleware('auth:sanctum')->prefix('Maintenance/events')->controller(WorkshopEventController::class)->group(function () {
     Route::get('/', 'index')->middleware('permission:maintenance.view');                 // ?vehicle_id=
     Route::post('/', 'store')->middleware('permission:maintenance.manage');
+    // Restore a tombstoned (deleted) sheet event — static segment, before the {workshopEvent} wildcard.
+    Route::post('/tombstones/{tombstone}/restore', 'restore')->middleware('permission:maintenance.manage');
     Route::get('/{workshopEvent}', 'show')->middleware('permission:maintenance.view');
     Route::post('/{workshopEvent}', 'update')->middleware('permission:maintenance.manage');
+    // DELETE a hand-entered event removes it; a sheet-synced event is tombstoned (hidden + skipped on sync).
     Route::delete('/{workshopEvent}', 'destroy')->middleware('permission:maintenance.manage');
 });
 
@@ -207,14 +581,31 @@ Route::middleware('auth:sanctum')->prefix('Maintenance/cost-capture')->controlle
     Route::post('/{workshopEvent}', 'store')->middleware('permission:maintenance.manage');
 });
 
-// Fleet anomalies / exceptional cases (data conflicts + operational gaps)
-Route::middleware(['auth:sanctum', 'permission:insights.view'])->get('Anomalies', [AnomalyController::class, 'index']);
+// Workflow Oversight — the read-only accountability & data-integrity layer over the Maintenance
+// Workflow: mileage discrepancies (odometer entered off from expected), per-stage accountability
+// (who owned each stage + the mileage they recorded), the left-the-garage invoice-chase queue, and
+// the fault-severity grade review (under-graded tickets). Pure reads → insights.view.
+Route::middleware(['auth:sanctum', 'permission:insights.view'])->prefix('Oversight')->controller(\App\Http\Controllers\WorkflowOversightController::class)->group(function () {
+    Route::get('/overview', 'overview');
+    Route::get('/mileage-discrepancies', 'mileageDiscrepancies');
+    Route::get('/stage-accountability', 'stageAccountability');
+    Route::get('/left-garage', 'leftGarage');
+    Route::get('/severity-review', 'severityReview');
+    Route::get('/misdiagnoses', 'misdiagnoses'); // faults the inspector called that a supervisor overruled
+    Route::get('/resolved-transfers', 'resolvedTransfers'); // car moved to another garage with all faults already fixed
+});
 
 // Data health: incomplete/broken records (cars without VIN/mileage, contracts without a car, …)
 Route::middleware(['auth:sanctum', 'permission:insights.view'])->get('DataHealth', [DataHealthController::class, 'index']);
 
 // Fleet-wide operational profitability per car: rental income (type-R, ex-VAT) − maintenance cost
 Route::middleware(['auth:sanctum', 'permission:insights.view'])->get('Profitability', [ProfitabilityController::class, 'index']);
+
+// Fuel & Mileage Reconciliation (live "fuel_data_plate_summary"): per car, actual odometer travel vs.
+// km explained by contracts → out-of-contract (unlogged) km leakage, total fuel debit, odometer-rollback
+// flags. FuelMileage/{vehicle} drills into the per-contract ledger with the off-contract gap per leg.
+Route::middleware(['auth:sanctum', 'permission:insights.view'])->get('FuelMileage', [FuelMileageController::class, 'index']);
+Route::middleware(['auth:sanctum', 'permission:insights.view'])->get('FuelMileage/{vehicle}', [FuelMileageController::class, 'vehicle']);
 
 // Financial conflicts: broken invoices only — VAT math errors, invoice↔contract mismatches,
 // overlapping/double billing. The accounting clean-up hub.
@@ -231,13 +622,25 @@ Route::middleware(['auth:sanctum', 'permission:insights.view'])->get('Reconcilia
 // Vehicle status vs. contract reality mismatches (status out of step with open contracts)
 Route::middleware(['auth:sanctum', 'permission:insights.view'])->get('StatusMismatch', [StatusMismatchController::class, 'index']);
 
-// Maintenance contract ↔ N-Maintenance sheet reconciliation: cars the sheet shows are
-// back from the garage but whose maintenance contract is still open in OfficeManager.
-Route::middleware(['auth:sanctum', 'permission:maintenance.view'])->get('MaintenanceReturns', [MaintenanceReturnController::class, 'index']);
+// Mileage Chain Audit — per-vehicle contract-to-contract odometer handoff (match/mismatch/missing)
+// + a non-destructive "Quick Fix" override on a single mis-typed reading. The read is gated by
+// insights.view; the override writes by contracts.manage (they correct contract mileage data).
+// {contract} model-binds to a Contract.
+Route::middleware('auth:sanctum')->controller(MileageChainAuditController::class)->group(function () {
+    Route::get('MileageChain/audit', 'index')->middleware('permission:insights.view');
+    Route::post('MileageChain/audit/{contract}/override', 'storeOverride')->middleware('permission:contracts.manage');
+    Route::delete('MileageChain/audit/{contract}/override', 'destroyOverride')->middleware('permission:contracts.manage');
+});
 
-// Read-only Sheet ↔ API vehicle comparison: match the Faster sheet to the live API by VIN
-// and show every field that differs between the two sources.
-Route::middleware(['auth:sanctum', 'permission:insights.view'])->get('VehicleCsvSync/diff', [VehicleCsvSyncController::class, 'diff']);
+// Odometer Modification Approval — significant manual odometer edits (raised by VehicleController::
+// update) land here for admin review instead of applying silently. {odometerRequest} model-binds to
+// an OdometerChangeRequest. Gated by vehicles.approve_odometer (admin-only review queue).
+Route::middleware('auth:sanctum')->controller(OdometerChangeRequestController::class)->group(function () {
+    Route::get('OdometerChangeRequests', 'index')->middleware('permission:vehicles.approve_odometer');
+    Route::get('OdometerChangeRequests/stage-readings', 'stageReadings')->middleware('permission:vehicles.approve_odometer');
+    Route::post('OdometerChangeRequests/{odometerRequest}/approve', 'approve')->middleware('permission:vehicles.approve_odometer');
+    Route::post('OdometerChangeRequests/{odometerRequest}/reject', 'reject')->middleware('permission:vehicles.approve_odometer');
+});
 
 // Dashboard KPIs
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard', [DashboardController::class, 'summary']);
@@ -245,6 +648,17 @@ Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/overdue-rentals', [DashboardController::class, 'overdueRentals']);
 // Overdue maintenance: cars stuck in the garage past their expected return date
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/overdue-maintenance', [DashboardController::class, 'overdueMaintenance']);
+// Month-by-month maintenance trends (cost bar + downtime line) for the dashboard charts
+Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/trends', [DashboardController::class, 'trends']);
+// Fleet Pulse: per-car live status grid with maintenance-completion %
+Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/fleet-pulse', [DashboardController::class, 'fleetPulse']);
+// Proactive Flags: rentals expiring within ?days=N, concluded rentals with unpaid balance, inspections due
+Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/proactive-flags', [DashboardController::class, 'proactiveFlags']);
+
+// Trip Dashboard: aggregated pickup/drop-off trip log (Main Trip Dashboard sheet) for the
+// Delivery Command dashboard + Orders board. Cached read; ?refresh forces a re-read.
+Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('TripDashboard', [\App\Http\Controllers\TripDashboardController::class, 'index']);
+Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('TripDashboard/refresh', [\App\Http\Controllers\TripDashboardController::class, 'refresh']);
 
 Route::middleware('auth:sanctum')->prefix('Registration')->controller(VehicleRegistrationController::class)->group(function () {
 
@@ -254,4 +668,13 @@ Route::middleware('auth:sanctum')->prefix('Registration')->controller(VehicleReg
     Route::post('/', 'store')->middleware('permission:registration.manage');
     Route::post('/{registration}', 'update')->middleware('permission:registration.manage');
     Route::delete('/{registration}', 'destroy')->middleware('permission:registration.manage');
+});
+
+// Manual-to-Odoo bridge (read-only, downstream). Assembles the finalised Parts + Labor data into an
+// Odoo-ready payload for review + manual push — nothing is synced automatically. Gated to the money
+// owners (maintenance.manage). Standalone controller so the bridge is independent of the workflow
+// state machine. See docs/maintenance-financial-architecture.md.
+Route::middleware(['auth:sanctum', 'permission:maintenance.manage'])->prefix('odoo-export')->group(function () {
+    Route::get('/ticket/{ticket}', [\App\Http\Controllers\OdooExportController::class, 'ticket']);
+    Route::get('/contract/{contract}', [\App\Http\Controllers\OdooExportController::class, 'contract']);
 });

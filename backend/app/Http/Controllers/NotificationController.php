@@ -3,7 +3,9 @@
 namespace App\Http\Controllers;
 
 use App\Helpers\ResponseHelper;
+use App\Models\User;
 use App\Services\NotificationScanner;
+use App\Support\NotificationCategories;
 use Illuminate\Http\Request;
 
 /**
@@ -22,6 +24,9 @@ class NotificationController extends Controller
             'id'         => $n->id,
             'type'       => $data['type'] ?? 'info',
             'category'   => $data['category'] ?? 'system',
+            // Inbox tab this alert belongs to (routine | complaints | test_drive | other),
+            // derived from its type via the single-source NotificationCategories map.
+            'group'      => NotificationCategories::categoryOf($data['type'] ?? null),
             'severity'   => $data['severity'] ?? 'info',
             'title'      => $data['title'] ?? 'Notification',
             'body'       => $data['body'] ?? '',
@@ -35,23 +40,71 @@ class NotificationController extends Controller
     }
 
     /**
+     * Hide LEGACY notifications a user is no longer allowed to see. Existing rows were written
+     * before the role-based gate (NotificationScanner) existed, so we re-apply that gate here on
+     * READ: any notification whose alert `type` maps to a permission the user lacks is excluded in
+     * SQL — the denied rows never leave the database. Rows with no/ungated type stay visible.
+     *
+     * @template T of \Illuminate\Database\Eloquent\Builder|\Illuminate\Database\Eloquent\Relations\Relation
+     * @param  T  $query
+     * @return T
+     */
+    private function visibleTo($query, User $user)
+    {
+        $denied = NotificationScanner::deniedTypesFor($user);
+
+        if (! empty($denied)) {
+            $query->where(function ($q) use ($denied) {
+                // Keep a row when its type is null/missing OR not in the denied set. (A plain
+                // whereNotIn would also drop null-type rows, since `null NOT IN (...)` is unknown.)
+                $q->whereNull('data->type')->orWhereNotIn('data->type', $denied);
+            });
+        }
+
+        return $query;
+    }
+
+    /**
+     * Narrow a notifications query to a single inbox category (routine | complaints | test_drive)
+     * by its member alert `type`s. Runs over the user's already-tiny, index-scoped row set, so a
+     * `whereIn` on the JSON `data->type` is cheap — no dedicated column needed. Unknown/empty
+     * category is a no-op (returns everything).
+     *
+     * @template T of \Illuminate\Database\Eloquent\Builder|\Illuminate\Database\Eloquent\Relations\Relation
+     * @param  T  $query
+     * @return T
+     */
+    private function inCategory($query, ?string $category)
+    {
+        $types = $category ? NotificationCategories::typesFor($category) : [];
+
+        if (! empty($types)) {
+            $query->whereIn('data->type', $types);
+        }
+
+        return $query;
+    }
+
+    /**
      * Paginated history for the full notifications page.
-     * Query: ?filter=all|unread  &  ?page=N  (15 per page).
+     * Query: ?filter=all|unread  &  ?category=routine|complaints|test_drive  &  ?page=N  (15 per page).
      */
     public function index(Request $request)
     {
         $user  = $request->user();
-        $query = $user->notifications();
+        $query = $this->visibleTo($user->notifications(), $user);
 
         if ($request->query('filter') === 'unread') {
             $query->whereNull('read_at');
         }
 
+        $this->inCategory($query, $request->query('category'));
+
         $page = $query->paginate(15);
 
         return ResponseHelper::SuccessResponse([
             'items'        => collect($page->items())->map(fn ($n) => $this->present($n))->all(),
-            'unread_count' => $user->unreadNotifications()->count(),
+            'unread_count' => $this->visibleTo($user->unreadNotifications(), $user)->count(),
             'total'        => $page->total(),
             'page'         => $page->currentPage(),
             'last_page'    => $page->lastPage(),
@@ -67,19 +120,25 @@ class NotificationController extends Controller
     {
         $user = $request->user();
 
-        $latest = $user->notifications()->limit(8)->get()->map(fn ($n) => $this->present($n));
+        $latest = $this->visibleTo($user->notifications(), $user)->limit(8)->get()->map(fn ($n) => $this->present($n));
 
         $hasNew = false;
         if ($after = $request->query('after')) {
-            $newest = $user->notifications()->first();
+            $newest = $this->visibleTo($user->notifications(), $user)->first();
             $hasNew = $newest && $newest->id !== $after;
         }
 
         return ResponseHelper::SuccessResponse([
-            'unread_count' => $user->unreadNotifications()->count(),
+            'unread_count' => $this->visibleTo($user->unreadNotifications(), $user)->count(),
             'latest'       => $latest->all(),
             'has_new'      => $hasNew,
         ], 'OK');
+    }
+
+    /** The unread badge as the frontend sees it — legacy denied-type rows excluded (matches index/poll). */
+    private function unreadCount(User $user): int
+    {
+        return $this->visibleTo($user->unreadNotifications(), $user)->count();
     }
 
     /** Mark a single notification read. */
@@ -89,7 +148,7 @@ class NotificationController extends Controller
         $n->markAsRead();
 
         return ResponseHelper::SuccessResponse(
-            ['unread_count' => $request->user()->unreadNotifications()->count()],
+            ['unread_count' => $this->unreadCount($request->user())],
             'Notification marked read'
         );
     }
@@ -102,23 +161,32 @@ class NotificationController extends Controller
         return ResponseHelper::SuccessResponse(['unread_count' => 0], 'All notifications marked read');
     }
 
-    /** Dismiss (delete) a single notification. */
+    /** Dismiss (delete) a single notification. 404s if it isn't the caller's — never report a phantom success. */
     public function destroy(Request $request, string $id)
     {
-        $request->user()->notifications()->where('id', $id)->delete();
+        $n = $request->user()->notifications()->where('id', $id)->firstOrFail();
+        $n->delete();
 
         return ResponseHelper::SuccessResponse(
-            ['unread_count' => $request->user()->unreadNotifications()->count()],
+            ['unread_count' => $this->unreadCount($request->user())],
             'Notification dismissed'
         );
     }
 
-    /** Clear the entire history for this user. */
+    /**
+     * Clear this user's notification history. Always strictly scoped to the authenticated user —
+     * never touches another staff member's feed. Pass ?category=routine|complaints|test_drive to
+     * clear just one tab; omit it to clear everything.
+     */
     public function clear(Request $request)
     {
-        $request->user()->notifications()->delete();
+        $category = $request->input('category');
+        $this->inCategory($request->user()->notifications(), $category)->delete();
 
-        return ResponseHelper::SuccessResponse(['unread_count' => 0], 'Notifications cleared');
+        return ResponseHelper::SuccessResponse(
+            ['unread_count' => $this->unreadCount($request->user())],
+            $category ? 'Notifications cleared for this category' : 'Notifications cleared'
+        );
     }
 
     /**
@@ -144,7 +212,7 @@ class NotificationController extends Controller
         $scanner->notifyUser($request->user(), $sample);
 
         return ResponseHelper::SuccessResponse(
-            ['unread_count' => $request->user()->unreadNotifications()->count()],
+            ['unread_count' => $this->unreadCount($request->user())],
             'Demo notification sent'
         );
     }

@@ -26,7 +26,7 @@ import { Input, Textarea } from '../ui/Field';
 import Icon from '../ui/Icon';
 import Tooltip from '../ui/Tooltip';
 import { TASK_STATUS, isAtGarage } from './meta';
-import { evaluateContinuity, needsNote, STAGE } from '../../lib/odometerContinuity';
+import { evaluateContinuity, needsNote, stageIgnoresTolerance, STAGE } from '../../lib/odometerContinuity';
 import OdometerContinuityHint, { odoGateBlocked } from './OdometerContinuityHint';
 import { uploadRepairVideo } from '../../lib/maintenanceMedia';
 
@@ -72,13 +72,14 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
   const prevOdometer = ticket?.receive_odometer ?? ticket?.return_odometer
     ?? ticket?.dispatch_odometer ?? ticket?.test_odometer ?? null;
   const continuity = evaluateContinuity(odometer, prevOdometer, STAGE.TRANSFER);
-  // A garage transfer is a deliberate road trip between sites, so the mileage INCREASE is expected — we
-  // waive the ±10 km note / big-jump nag (ignoreTolerance). A backward reading is still physically
-  // impossible, so a "Discrepancy" is the only thing that still asks for an acknowledgment here.
-  const odoNoteRequired = needsNote(continuity, true);
+  // A transfer IS a road trip — the car is driven from one garage to the next, so a forward mileage
+  // increase is expected and we waive the ±10 km note/confirm nag for it (mirrors the garage in/out
+  // legs). A BACKWARD reading is still impossible, so that Discrepancy guard stays in force below.
+  const ignoreOdoTolerance = stageIgnoresTolerance(STAGE.TRANSFER);
+  const odoNoteRequired = needsNote(continuity, ignoreOdoTolerance);
   // Block the transfer until a garage is chosen, a positive odometer is entered, and the shared odometer
-  // gate is satisfied (with the forward nag waived, only a backward Discrepancy can still hold it).
-  const odoValid = Number(odometer) > 0 && !odoGateBlocked(continuity, odoConfirmed, odoNote, true);
+  // gate is satisfied (a backward Discrepancy still holds it until acknowledged; forward travel is free).
+  const odoValid = Number(odometer) > 0 && !odoGateBlocked(continuity, odoConfirmed, odoNote, ignoreOdoTolerance);
 
   // You can only transfer to a DIFFERENT garage, so the current one is dropped from the picker.
   const garageOptions = useMemo(
@@ -86,6 +87,11 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
     [garages, garage],
   );
   const openFaults = tasks.filter((task) => !TERMINAL.includes(task.status)).length;
+  // Resolved-Transfer Oversight — moving the car to another garage while EVERY fault is already fixed is
+  // unusual (nothing left to repair). When that's the case the justification note becomes MANDATORY and
+  // the move is logged for review on /oversight/resolved-transfers (enforced server-side too).
+  const allFixed = tasks.length > 0 && openFaults === 0;
+  const reasonMissing = allFixed && reason.trim() === '';
   const busy = busyId !== null || transferring || fixBusy || disputeBusy;
   // Can a fault be marked fixed right now? Only once the car is at the garage stage. Derived from the
   // LIVE stage so a transfer (which rolls the ticket back to in_transit) hides fault management at once.
@@ -187,7 +193,7 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
   };
 
   const transferCar = async (acknowledge = false) => {
-    if (!vendorId || !odoValid) return;
+    if (!vendorId || !odoValid || reasonMissing) return;
     setTransferring(true);
     setError(null);
     try {
@@ -252,11 +258,9 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
               )}
             </span>
           </span>
-          {openFaults > 0 && (
-            <Button size="sm" variant="secondary" disabled={busy} onClick={() => setTransferOpen((v) => !v)}>
-              <Icon.ArrowRight className="h-3.5 w-3.5" /> {t('workflow.task.transferCar')}
-            </Button>
-          )}
+          <Button size="sm" variant="secondary" disabled={busy} onClick={() => setTransferOpen((v) => !v)}>
+            <Icon.ArrowRight className="h-3.5 w-3.5" /> {t('workflow.task.transferCar')}
+          </Button>
         </div>
       ) : (
         <div className="mb-3 rounded-xl border border-amber-100 bg-amber-50/70 px-3.5 py-2.5 text-sm text-amber-800">
@@ -296,8 +300,8 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
             onChange={(e) => { setOdometer(e.target.value); setOdoConfirmed(false); setOdoNote(''); }}
             placeholder="Current odometer (km) — required"
           />
-          {/* Shared continuity hint — on a transfer the forward-jump nag is waived (ignoreTolerance); only
-              a backward "Discrepancy" surfaces its acknowledgment checkbox. */}
+          {/* Shared continuity hint — a transfer is a road trip, so forward travel is expected and waived
+              (ignoreTolerance): only a backward "Discrepancy" still surfaces the confirm/note. */}
           <OdometerContinuityHint
             previous={prevOdometer}
             continuity={continuity}
@@ -306,15 +310,24 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
             noteRequired={odoNoteRequired}
             note={odoNote}
             onNote={setOdoNote}
-            ignoreTolerance
+            ignoreTolerance={ignoreOdoTolerance}
             t={t}
           />
+
+          {/* Resolved-Transfer Oversight — all faults already fixed: the note is mandatory and this move
+              is recorded for review. Warn plainly so the operator knows why the note is being demanded. */}
+          {allFixed && (
+            <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-[13px] text-amber-900">
+              <Icon.Info className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+              <span>{t('workflow.task.allFixedTransferWarning')}</span>
+            </div>
+          )}
 
           <Textarea
             rows={2}
             value={reason}
             onChange={(e) => setReason(e.target.value)}
-            placeholder={t('workflow.task.transferReason')}
+            placeholder={allFixed ? t('workflow.task.transferReasonRequired') : t('workflow.task.transferReason')}
           />
 
           {/* Conflict Check — the car is already under active repair at another garage. */}
@@ -339,7 +352,7 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
             <Button size="sm" variant="ghost" disabled={transferring} onClick={() => setTransferOpen(false)}>
               {t('common.cancel')}
             </Button>
-            <Button size="sm" variant="primary" disabled={transferring || !vendorId || !odoValid} onClick={() => transferCar(false)}>
+            <Button size="sm" variant="primary" disabled={transferring || !vendorId || !odoValid || reasonMissing} onClick={() => transferCar(false)}>
               {t('workflow.task.confirmTransfer')}
             </Button>
           </div>

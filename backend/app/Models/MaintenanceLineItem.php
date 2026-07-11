@@ -1,0 +1,153 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Carbon;
+
+/**
+ * One billable line on a maintenance ticket — a replaced PART or a LABOR charge. Together the lines
+ * make up the ticket's structured cost (see [[maintenances.cost]] = parts_total + labor_total). A
+ * part line additionally carries the install date + warranty so the fleet can answer durability
+ * questions ("how long did these brake pads last?"); a labor line is hours × rate.
+ *
+ * The columns are shaped to map cleanly onto Odoo later: a part → BOM component / vendor-bill line,
+ * a labor line → expense / service product, `category_key` → product category / analytic account,
+ * and the parent's `vehicle_id` → the per-asset analytic account that rolls up total cost of
+ * ownership. `line_total` and `warranty_until` are kept consistent automatically on every save.
+ */
+class MaintenanceLineItem extends Model
+{
+    use HasFactory;
+
+    protected $table = 'maintenance_line_items';
+
+    /** A replaced part — count × unit price, with durability/warranty tracking. */
+    public const KIND_PART = 'part';
+    /** A garage labor charge — hours × rate. */
+    public const KIND_LABOR = 'labor';
+    public const KINDS = [self::KIND_PART, self::KIND_LABOR];
+
+    protected $fillable = [
+        'maintenance_id',
+        'maintenance_invoice_id',
+        'maintenance_task_id',
+        'vehicle_id',
+        'kind',
+        'finding_text',
+        'category_key',
+        'description',
+        'part_number',
+        'tire_brand',
+        'tire_dot',
+        'tire_tread_mm',
+        'quantity',
+        'uom',
+        'unit_price',
+        'line_total',
+        'installed_on',
+        'installed_odometer',
+        'warranty_months',
+        'warranty_until',
+        'odoo_product_ref',
+        'odoo_external_id',
+        'odoo_synced_at',
+        'created_by',
+        'entry_source',
+    ];
+
+    protected $casts = [
+        'quantity'           => 'decimal:2',
+        'tire_tread_mm'      => 'decimal:1',
+        'unit_price'         => 'decimal:2',
+        'line_total'         => 'decimal:2',
+        'installed_on'       => 'date',
+        'installed_odometer' => 'integer',
+        'warranty_months'    => 'integer',
+        'warranty_until'     => 'date',
+        'odoo_synced_at'     => 'datetime',
+    ];
+
+    protected static function booted(): void
+    {
+        // Keep the derived fields honest on every write, so callers only ever set the raw inputs:
+        //   line_total      = quantity × unit_price (the auto-sum the totals roll up from)
+        //   warranty_until  = installed_on + warranty_months (the durability/expiry the report reads)
+        static::saving(function (MaintenanceLineItem $item) {
+            $item->line_total = round((float) $item->quantity * (float) $item->unit_price, 2);
+
+            if ($item->installed_on && $item->warranty_months) {
+                $item->warranty_until = Carbon::parse($item->installed_on)->addMonths((int) $item->warranty_months);
+            } elseif (! $item->warranty_months) {
+                $item->warranty_until = null;
+            }
+        });
+
+        // After a line lands or leaves, roll its money up the chain: the fault it's tagged to (parts_cost /
+        // labor_cost), which in turn re-derives the parent ticket total. A line that switched tasks updates
+        // BOTH the old and the new fault. Quiet saves on the rollup side keep this from looping.
+        static::saved(fn (MaintenanceLineItem $item) => $item->rollUpCosts());
+        static::deleted(fn (MaintenanceLineItem $item) => $item->rollUpCosts());
+    }
+
+    /**
+     * Recompute the cached cost of every fault this line touches (the current task, plus the previous one
+     * if the line was just re-assigned), then the parent ticket. When the line belongs to no task, the
+     * ticket total is still refreshed directly so a task-less (general) charge keeps `cost` correct.
+     */
+    public function rollUpCosts(): void
+    {
+        // Refresh the invoice(s) this line touches — the current one plus, if it was just re-assigned, the
+        // previous one — so each invoice's parts/labor split + grand amount stays honest.
+        $invoiceIds = array_unique(array_filter([
+            $this->maintenance_invoice_id,
+            $this->getOriginal('maintenance_invoice_id'),
+        ]));
+        if ($invoiceIds) {
+            MaintenanceInvoice::with('lineItems')->whereIn('id', $invoiceIds)->get()
+                ->each->recalcTotals();
+        }
+
+        $taskIds = array_unique(array_filter([
+            $this->maintenance_task_id,
+            $this->getOriginal('maintenance_task_id'),
+        ]));
+
+        if ($taskIds) {
+            MaintenanceTask::with('lineItems')->whereIn('id', $taskIds)->get()
+                ->each->recalcCosts(); // each task recompute bubbles up to the parent ticket
+            return;
+        }
+
+        optional($this->maintenance)->recalcFromTasks(true);
+    }
+
+    public function maintenance(): BelongsTo
+    {
+        return $this->belongsTo(Maintenance::class);
+    }
+
+    /** The specific fault this part/labor line repairs (null = a general, ticket-wide charge). */
+    public function task(): BelongsTo
+    {
+        return $this->belongsTo(MaintenanceTask::class, 'maintenance_task_id');
+    }
+
+    /** The garage invoice this cost line belongs to (see [[one Ticket → many Invoices]]). */
+    public function invoice(): BelongsTo
+    {
+        return $this->belongsTo(MaintenanceInvoice::class, 'maintenance_invoice_id');
+    }
+
+    public function vehicle(): BelongsTo
+    {
+        return $this->belongsTo(Vehicle::class);
+    }
+
+    public function isPart(): bool
+    {
+        return $this->kind === self::KIND_PART;
+    }
+}

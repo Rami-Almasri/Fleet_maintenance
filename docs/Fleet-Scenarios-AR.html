@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>نظام الأسطول — كل السيناريوهات (لوحة القصة)</title>
+<style>
+  :root{
+    --navy:#0b1f3a; --navy-2:#12305c; --cyan:#0bb4c4; --cyan-dk:#087f8c;
+    --ink:#1a2433; --muted:#5b6b82; --line:#e2e8f0; --bg:#f4f7fb; --card:#ffffff;
+    --ok:#059669; --warn:#d97706; --block:#e11d48; --plan:#7c3aed;
+  }
+  *{box-sizing:border-box}
+  body{margin:0; background:var(--bg); color:var(--ink);
+    font:15.5px/1.75 'Segoe UI','Tahoma','Cairo',-apple-system,Arial,sans-serif}
+  .wrap{max-width:1080px; margin:0 auto; padding:0 22px 80px}
+
+  header{background:linear-gradient(225deg,var(--navy) 0%,var(--navy-2) 55%,var(--cyan-dk) 140%);
+    color:#fff; padding:46px 0 40px; box-shadow:0 10px 30px rgba(11,31,58,.25)}
+  header .wrap{padding-bottom:0}
+  .eyebrow{letter-spacing:.04em; font-size:13px; color:var(--cyan); font-weight:700; margin:0 0 8px}
+  h1{margin:0; font-size:32px; font-weight:800; line-height:1.25}
+  .sub{margin:10px 0 0; color:#c7d6ea; font-size:16px; max-width:700px}
+  .stat{display:flex; gap:26px; flex-wrap:wrap; margin-top:22px}
+  .stat .n{font-size:28px; font-weight:800; color:#fff; line-height:1}
+  .stat .l{font-size:12px; color:#9fb6d4; margin-top:3px}
+
+  .legend{background:var(--card); border:1px solid var(--line); border-radius:12px;
+    padding:12px 18px; margin:-42px 0 24px; display:flex; gap:20px; flex-wrap:wrap; align-items:center;
+    box-shadow:0 8px 24px rgba(11,31,58,.08); font-size:13px; color:var(--muted)}
+  .k{display:inline-flex; align-items:center; gap:6px}
+  .sw{width:11px; height:11px; border-radius:3px; display:inline-block}
+
+  .cat{margin:34px 0 0}
+  .cat-h{display:flex; align-items:baseline; gap:12px}
+  .cat-h .ico{font-size:20px}
+  .cat-h h2{margin:0; font-size:21px; font-weight:800; color:var(--navy)}
+  .cat-h .cnt{margin-right:auto; background:#eef4fb; color:var(--navy-2); border-radius:999px; padding:3px 12px; font-size:12px; font-weight:700}
+  .cat-line{height:2px; background:linear-gradient(90deg,var(--cyan),transparent); margin:7px 0 14px; border-radius:2px}
+
+  .sc{background:var(--card); border:1px solid var(--line); border-radius:12px; padding:15px 18px; margin:11px 0;
+    box-shadow:0 3px 10px rgba(11,31,58,.04); border-right:4px solid var(--cyan)}
+  .sc.blk{border-right-color:var(--block)} .sc.wrn{border-right-color:var(--warn)}
+  .sc.pl{border-right-color:var(--plan)}
+  .sc-h{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:8px}
+  .sc-id{background:var(--navy); color:#fff; font-weight:800; font-size:12.5px; border-radius:6px; padding:2px 9px; font-family:'JetBrains Mono',monospace; direction:ltr}
+  .sc-t{font-weight:800; color:var(--navy); font-size:16px}
+  .st{margin-right:auto; font-size:11px; font-weight:700; border-radius:999px; padding:2px 9px}
+  .st.ok{background:#d1fae5; color:var(--ok)} .st.pl{background:#ede9fe; color:var(--plan)}
+
+  .meta{display:flex; gap:16px; flex-wrap:wrap; font-size:13.5px; color:var(--muted); margin-bottom:8px}
+  .meta b{color:var(--ink)}
+  .actor{display:inline-block; background:#f1f6fc; border:1px solid #dce7f4; color:var(--navy-2);
+    border-radius:6px; padding:1px 8px; font-size:12px; font-weight:600; margin-right:4px}
+
+  ol.steps{margin:6px 0 8px; padding-inline-start:20px}
+  ol.steps li{margin:3px 0; font-size:14.5px; color:#33445c}
+  .out{font-size:14px; border-radius:8px; padding:8px 12px; margin-top:6px}
+  .out.ok{background:#ecfdf5; border:1px solid #a7f3d0; color:#065f46}
+  .out.blk{background:#fef2f2; border:1px solid #fecaca; color:#991b1b}
+  .out.wrn{background:#fffbeb; border:1px solid #fde68a; color:#92400e}
+  .out b{font-weight:800}
+  code{background:#eef2f7; border:1px solid #e0e7ef; border-radius:4px; padding:0 5px;
+    font:12px 'JetBrains Mono',ui-monospace,Consolas,monospace; color:#0b3a63;
+    direction:ltr; unicode-bidi:embed; display:inline-block}
+
+  footer{color:var(--muted); font-size:12.5px; text-align:center; margin-top:40px}
+  @media print{body{background:#fff} header{box-shadow:none} .sc,.legend{box-shadow:none} .cat{break-inside:avoid-page} .sc{break-inside:avoid}}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <p class="eyebrow">نظام الأسطول · لوحة القصة التشغيلية</p>
+    <h1>كل سيناريو، خطوة بخطوة</h1>
+    <p class="sub">دورة حياة الأسطول كاملةً مرويّةً كسيناريوهات ملموسة — كلٌّ بفاعله ومُطلِقه وخطواته ونتيجته. هذا هو رفيق «ماذا يحدث فعلاً» لحالة الاستخدام الرئيسية الموحّدة.</p>
+    <div class="stat">
+      <div><div class="n">54</div><div class="l">سيناريو</div></div>
+      <div><div class="n">11</div><div class="l">رحلات</div></div>
+      <div><div class="n">3</div><div class="l">فاعلين</div></div>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="legend">
+    <span class="k"><span class="sw" style="background:var(--cyan)"></span> مسار طبيعي</span>
+    <span class="k"><span class="sw" style="background:var(--warn)"></span> تحذير / إقرار</span>
+    <span class="k"><span class="sw" style="background:var(--block)"></span> منع صارم</span>
+    <span class="k"><span class="sw" style="background:var(--plan)"></span> بناء مُخطَّط</span>
+    <span style="margin-right:auto">الفاعلون: <b>السائق</b> · <b>المديران (عبدالله/وليد)</b> · <b>أبو معروف (المفتّش)</b></span>
+  </div>
+
+  <!-- A -->
+  <section class="cat">
+    <div class="cat-h"><span class="ico">🚦</span><h2>أ · الحجز والأهلية</h2><span class="cnt">8 سيناريوهات</span></div>
+    <div class="cat-line"></div>
+
+    <div class="sc">
+      <div class="sc-h"><span class="sc-id">A1</span><span class="sc-t">حجز نظيف — سيارة خضراء</span><span class="st ok">يعمل اليوم (البوابة)</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">المبيعات</span></span><span><b>المُطلِق:</b> طلب إيجار جديد</span></div>
+      <ol class="steps">
+        <li>المبيعات تختار السيارة + التواريخ → بوابة الجاهزية تُشغّل الفحوص التسعة.</li>
+        <li>كل الفحوص تمرّ (درجة خضراء، أوراق صالحة حتى الإرجاع، لا عطل مفتوح).</li>
+        <li>ينتقل التسليم إلى مرحلة Check-Out.</li>
+      </ol>
+      <div class="out ok"><b>النتيجة:</b> الحجز مسموح → السيارة تذهب للتسليم.</div>
+    </div>
+
+    <div class="sc blk">
+      <div class="sc-h"><span class="sc-id">A2</span><span class="sc-t">ممنوع — درجة حمراء</span><span class="st ok">يعمل اليوم</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">المبيعات</span></span><span><b>المُطلِق:</b> حجز على سيارة حمراء</span></div>
+      <ol class="steps">
+        <li>المبيعات تختار سيارة مُصنَّفة حمراء (حرجة / موقوفة).</li>
+        <li>البوابة ترفض — الواجهة والخادم كلاهما يرفض.</li>
+      </ol>
+      <div class="out blk"><b>النتيجة:</b> <b>منع صارم.</b> اختر سيارة أخرى أو أرسلها للصيانة.</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">A3</span><span class="sc-t">برتقالي / أصفر — إقرار الحالة</span><span class="st ok">يعمل اليوم</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">المبيعات</span></span><span><b>المُطلِق:</b> حجز على سيارة برتقالية/صفراء</span></div>
+      <ol class="steps">
+        <li>المبيعات تختار سيارة برتقالية (تجميلي) أو صفراء (تحتاج سيرفيس).</li>
+        <li>يظهر طلب إقرار إلزامي: تأكيد أن العميل أُبلِغ.</li>
+        <li>الموظف يؤكّد → يُسجَّل الإقرار على العقد (<code>condition_ack_*</code>).</li>
+      </ol>
+      <div class="out wrn"><b>النتيجة:</b> الحجز مسموح <b>مع إقرار موثَّق</b> (أولوية التأجير).</div>
+    </div>
+
+    <div class="sc blk">
+      <div class="sc-h"><span class="sc-id">A4</span><span class="sc-t">ممنوع — الأوراق تنتهي قبل الإرجاع</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">المبيعات</span></span><span><b>المُطلِق:</b> التسجيل/التأمين ينتهي داخل مدة الإيجار</span></div>
+      <ol class="steps">
+        <li>البوابة تقارن انتهاء التسجيل + التأمين بـ<b>تاريخ الإرجاع</b> (لا باليوم).</li>
+        <li>ينتهيان قبل رجوع السيارة.</li>
+      </ol>
+      <div class="out blk"><b>النتيجة:</b> <b>منع صارم</b> حتى تجديد الأوراق.</div>
+    </div>
+
+    <div class="sc blk">
+      <div class="sc-h"><span class="sc-id">A5</span><span class="sc-t">ممنوع — عطل مفتوح حرج للسلامة</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">المبيعات</span></span><span><b>المُطلِق:</b> السيارة عليها عطل فرامل/مقود/إطار مفتوح</span></div>
+      <ol class="steps">
+        <li>أمر الصيانة المفتوح وحده <b>لا</b> يمنع (أولوية التأجير).</li>
+        <li>لكن العطل على قائمة السلامة المثبَّتة → البوابة تمنع.</li>
+      </ol>
+      <div class="out blk"><b>النتيجة:</b> <b>منع صارم</b> — السلامة هي الحاجز الوحيد غير القابل للتفاوض.</div>
+    </div>
+
+    <div class="sc blk">
+      <div class="sc-h"><span class="sc-id">A6</span><span class="sc-t">ممنوع — عميل في القائمة السوداء</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">المبيعات</span></span><span><b>المُطلِق:</b> وسم مخاطر العميل = قائمة سوداء</span></div>
+      <ol class="steps">
+        <li>البوابة تقرأ مستوى مخاطر العميل.</li>
+        <li>قائمة سوداء → الحجز مرفوض.</li>
+      </ol>
+      <div class="out blk"><b>النتيجة:</b> <b>منع صارم</b> على العميل، أياً كانت السيارة.</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">A7</span><span class="sc-t">عميل مرتفع المخاطر — وديعة أكبر</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">المبيعات</span></span><span><b>المُطلِق:</b> وسم المخاطر = وديعة مرتفعة</span></div>
+      <ol class="steps">
+        <li>البوابة تُشير للعميل كمرتفع المخاطر.</li>
+        <li>يُطلَب وديعة أكبر قبل التسليم.</li>
+      </ol>
+      <div class="out wrn"><b>النتيجة:</b> الحجز مسموح <b>مع وديعة أعلى</b>.</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">A8</span><span class="sc-t">تحذير جاهزية — سيرفيس / GPS / غسيل</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">المبيعات</span></span><span><b>المُطلِق:</b> فحص ليّن يُصدِر تحذيراً</span></div>
+      <ol class="steps">
+        <li>السيرفيس قريب، أو GPS صامت، أو الغسيل غير مُنجَز → تحذير (لا منع).</li>
+        <li>الموظف يُقرّ بكلٍّ؛ ويمكن لمدير رفعه.</li>
+      </ol>
+      <div class="out wrn"><b>النتيجة:</b> الحجز مسموح بعد الإقرار بالتحذيرات.</div>
+    </div>
+  </section>
+
+  <!-- B -->
+  <section class="cat">
+    <div class="cat-h"><span class="ico">📷</span><h2>ب · التسليم (Check-Out)</h2><span class="cnt">سيناريوهان</span></div>
+    <div class="cat-line"></div>
+
+    <div class="sc">
+      <div class="sc-h"><span class="sc-id">B1</span><span class="sc-t">تسليم كامل — صور + توقيع</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">السائق</span></span><span><b>المُطلِق:</b> السيارة جاهزة، العميل حاضر</span></div>
+      <ol class="steps">
+        <li>السائق يلتقط مجموعة الـ16 صورة الإلزامية (+ فيديو 360° للفاخرة).</li>
+        <li>العميل يؤكّد الحالة بتوقيع أو OTP.</li>
+        <li>النظام يُكمِل جلسة Check-Out، مرتبطةً بالعقد.</li>
+      </ol>
+      <div class="out ok"><b>النتيجة:</b> السيارة تخرج <b>مؤجَّرة</b> بسجل حالة موقَّع.</div>
+    </div>
+
+    <div class="sc blk">
+      <div class="sc-h"><span class="sc-id">B2</span><span class="sc-t">تسليم ناقص — صور مفقودة</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">السائق</span></span><span><b>المُطلِق:</b> السائق يتخطّى زاوية مطلوبة</span></div>
+      <ol class="steps">
+        <li>السائق يحاول الإنهاء مع نقص زاوية أو التوقيع.</li>
+        <li>الخادم يرفض إتمام الجلسة.</li>
+      </ol>
+      <div class="out blk"><b>النتيجة:</b> <b>التسليم ممنوع</b> حتى اكتمال التغطية + التوقيع.</div>
+    </div>
+  </section>
+
+  <!-- C -->
+  <section class="cat">
+    <div class="cat-h"><span class="ico">🔄</span><h2>ج · الاستلام (Check-In) وسلسلة الخدوش</h2><span class="cnt">5 سيناريوهات</span></div>
+    <div class="cat-line"></div>
+
+    <div class="sc">
+      <div class="sc-h"><span class="sc-id">C1</span><span class="sc-t">إرجاع نظيف — لا ضرر</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">السائق</span></span><span><b>المُطلِق:</b> رجوع السيارة</span></div>
+      <ol class="steps">
+        <li>السائق يلتقط صور الاستلام؛ النظام يقارنها تلقائياً بصور التسليم.</li>
+        <li>لا ضرر جديد.</li>
+      </ol>
+      <div class="out ok"><b>النتيجة:</b> رجعت → بانتظار الغسيل → جاهزة للتأجير.</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">C2</span><span class="sc-t">خدش جديد — سلسلة المساءلة</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعلون:</b><span class="actor">السائق</span><span class="actor">المديران</span></span><span><b>المُطلِق:</b> السائق يعلّم خدشاً جديداً</span></div>
+      <ol class="steps">
+        <li>السائق يعلّم الخدش على المخطط (يوثّق فقط — لا تسعير).</li>
+        <li>النظام يُنشئ تلقائياً مسودة تقييم أضرار (<code>pending_assessment</code>).</li>
+        <li><b>عبدالله ووليد يُشعَران</b> فوراً.</li>
+      </ol>
+      <div class="out wrn"><b>النتيجة:</b> سجل تقييم مملوك في طابور المديرَين — لا شيء يُسقَط.</div>
+    </div>
+
+    <div class="sc blk">
+      <div class="sc-h"><span class="sc-id">C3</span><span class="sc-t">ضرر حرج للسلامة عند الإرجاع</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">السائق</span></span><span><b>المُطلِق:</b> تعليم ضرر فرامل / إطار / مقود</span></div>
+      <ol class="steps">
+        <li>السائق يعلّم ضرراً يقع على قائمة السلامة.</li>
+        <li>القاعدة الذهبية تُطبَّق.</li>
+      </ol>
+      <div class="out blk"><b>النتيجة:</b> السيارة <b>لا يمكن أن تعود «متاحة»</b> — حتى لو كان هناك حجز منتظر.</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">C4</span><span class="sc-t">وصول مخالفات / سالك بعد الإرجاع</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">النظام</span></span><span><b>المُطلِق:</b> رجعت السيارة، والمخالفات تصل بعد أيام</span></div>
+      <ol class="steps">
+        <li>عند الاستلام يدخل العقد حالة <code>pending_charges</code>.</li>
+        <li>المخالفة الواصلة تُخصَم من الوديعة.</li>
+      </ol>
+      <div class="out wrn"><b>النتيجة:</b> <b>ردّ الوديعة محظور</b> حتى تُسوّى المخالفات.</div>
+    </div>
+
+    <div class="sc">
+      <div class="sc-h"><span class="sc-id">C5</span><span class="sc-t">ردّ الوديعة بعد تسوية المخالفات</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">النظام</span></span><span><b>المُطلِق:</b> انقضاء مهلة الحجز / تسوية العمليات</span></div>
+      <ol class="steps">
+        <li>المخالفات سُوِّيت أو انقضت مهلة الحجز.</li>
+        <li>النظام يُصدِر «الوديعة جاهزة للردّ».</li>
+      </ol>
+      <div class="out ok"><b>النتيجة:</b> ردّ الوديعة (للمحفظة أو نقداً) — الرصيد مُسوّى.</div>
+    </div>
+  </section>
+
+  <!-- D -->
+  <section class="cat">
+    <div class="cat-h"><span class="ico">🧑‍💼</span><h2>د · تقييم المدير (الضرر ← الإصلاح)</h2><span class="cnt">4 سيناريوهات</span></div>
+    <div class="cat-line"></div>
+
+    <div class="sc">
+      <div class="sc-h"><span class="sc-id">D1</span><span class="sc-t">تحميل العميل</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">المديران</span></span><span><b>المُطلِق:</b> تقييم أضرار معلّق</span></div>
+      <ol class="steps">
+        <li>المدير يقيّم: السبب = العميل، المسؤول = العميل، ويحدّد تكلفة.</li>
+        <li>القرار = تحميل → التكلفة تُخصَم من سجل الوديعة.</li>
+      </ol>
+      <div class="out ok"><b>النتيجة:</b> العميل يُحمَّل من الوديعة؛ السجل يُغلَق.</div>
+    </div>
+
+    <div class="sc">
+      <div class="sc-h"><span class="sc-id">D2</span><span class="sc-t">بدون تحميل — استهلاك طبيعي</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">المديران</span></span><span><b>المُطلِق:</b> تقييم أضرار معلّق</span></div>
+      <ol class="steps">
+        <li>المدير يقيّم: السبب = استهلاك طبيعي، المسؤول = الشركة.</li>
+        <li>القرار = بدون تحميل.</li>
+      </ol>
+      <div class="out ok"><b>النتيجة:</b> لا تحميل على العميل؛ السيارة تنتقل للغسيل / إصلاح بسيط.</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">D3</span><span class="sc-t">تأكيد الضرر ← «قيد الإصلاح» + مهمة تلقائياً</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعلون:</b><span class="actor">المديران</span><span class="actor">أبو معروف</span></span><span><b>المُطلِق:</b> المدير يؤكّد ضرراً يحتاج كراج</span></div>
+      <ol class="steps">
+        <li>المدير يؤكّد، يعتمد القطع، يحدّد التكلفة.</li>
+        <li>النظام يضبط حالة السيارة تلقائياً ← <b>«قيد الإصلاح»</b>.</li>
+        <li>النظام يُنشئ مهمة تلقائياً في <b>طابور أبو معروف</b>.</li>
+      </ol>
+      <div class="out wrn"><b>النتيجة:</b> السيارة تنقلب إلى «قيد الإصلاح»؛ والتنفيذ يصل أبو معروف — بلا تسليم يدوي.</div>
+    </div>
+
+    <div class="sc">
+      <div class="sc-h"><span class="sc-id">D4</span><span class="sc-t">يفتح أمر صيانة</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">المديران</span></span><span><b>المُطلِق:</b> <code>needs_garage = Yes</code></span></div>
+      <ol class="steps">
+        <li>التقييم يؤشّر «يحتاج كراج» مع تقدير أولي.</li>
+        <li>يُفتَح أمر صيانة حاملاً الخطورة + التقدير → المرحلة 3/4.</li>
+      </ol>
+      <div class="out ok"><b>النتيجة:</b> أمر مُهيكل جاهز لتوجيه الكراج + الموافقة.</div>
+    </div>
+  </section>
+
+  <!-- E -->
+  <section class="cat">
+    <div class="cat-h"><span class="ico">🪜</span><h2>هـ · حادث أثناء الإيجار (سلّم الدعم)</h2><span class="cnt">4 سيناريوهات</span></div>
+    <div class="cat-line"></div>
+
+    <div class="sc">
+      <div class="sc-h"><span class="sc-id">E1</span><span class="sc-t">الدعم الهاتفي يحلّها</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعلون:</b><span class="actor">المبيعات/العمليات</span><span class="actor">أبو معروف</span></span><span><b>المُطلِق:</b> العميل يبلّغ عن عطل</span></div>
+      <ol class="steps">
+        <li>تُفتَح تذكرة حادث، مُصنَّفة في إحدى الفئات التسع.</li>
+        <li>الدرجة 1: حلّ هاتفي — تمّ الحلّ.</li>
+      </ol>
+      <div class="out ok"><b>النتيجة:</b> أُغلِقت عن بُعد؛ <code>resolution_path = phone</code>.</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">E2</span><span class="sc-t">إصلاح ميداني — أبو معروف يزور</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">أبو معروف</span></span><span><b>المُطلِق:</b> فشل الدعم الهاتفي</span></div>
+      <ol class="steps">
+        <li>الدرجة 2: تُنشأ مهمة لوجستية؛ أبو معروف يذهب للعميل.</li>
+        <li>يُصلح ميدانياً؛ إن نجح، تُغلَق التذكرة.</li>
+      </ol>
+      <div class="out wrn"><b>النتيجة:</b> أُصلِحت عند العميل؛ <code>resolution_path = onsite</code>.</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">E3</span><span class="sc-t">تبديل السيارة</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعلون:</b><span class="actor">العمليات</span><span class="actor">السائق</span></span><span><b>المُطلِق:</b> فشل الهاتفي والميداني معاً</span></div>
+      <ol class="steps">
+        <li>الدرجة 3: تُسنَد سيارة بديلة عبر لوحة التبديل.</li>
+        <li>السائق يوصّل البديل؛ والأصلية تذهب للكراج.</li>
+      </ol>
+      <div class="out wrn"><b>النتيجة:</b> العميل بقي متنقّلاً؛ <code>resolution_path = swap</code>.</div>
+    </div>
+
+    <div class="sc">
+      <div class="sc-h"><span class="sc-id">E4</span><span class="sc-t">تصنيف الحادث + شارة</span><span class="st ok">جزئياً اليوم</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">العمليات</span></span><span><b>المُطلِق:</b> تسجيل حادث</span></div>
+      <ol class="steps">
+        <li>العمليات تختار 1 من 9 فئات (ميكانيكي، حادث، لمبة تحذير، إطار، تكييف، بطارية، سوء استخدام، استهلاك، طارئ).</li>
+        <li>الخطورة تقود شارة أولوية عالية (حرج للسلامة → أحمر).</li>
+      </ol>
+      <div class="out ok"><b>النتيجة:</b> حادث مُرتَّب بالأولوية على اللوحة.</div>
+    </div>
+  </section>
+
+  <!-- F -->
+  <section class="cat">
+    <div class="cat-h"><span class="ico">🔧</span><h2>و · محرك الصيانة ودورة الاستقرار</h2><span class="cnt">6 سيناريوهات</span></div>
+    <div class="cat-line"></div>
+
+    <div class="sc">
+      <div class="sc-h"><span class="sc-id">F1</span><span class="sc-t">روتيني — زيت / فلتر مستحق</span><span class="st ok">يعمل اليوم</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">النظام</span></span><span><b>المُطلِق:</b> الكيلومترات تتجاوز الفاصل</span></div>
+      <ol class="steps">
+        <li>كاشف استحقاق السيرفيس يعمل من تتبّع العداد.</li>
+        <li>تظهر السيارة في تنبؤ الصيانة / التنبيهات.</li>
+      </ol>
+      <div class="out ok"><b>النتيجة:</b> سيرفيس روتيني مجدوَل قبل العطل.</div>
+    </div>
+
+    <div class="sc">
+      <div class="sc-h"><span class="sc-id">F2</span><span class="sc-t">البطارية مستحقة</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">النظام</span></span><span><b>المُطلِق:</b> فاصل عمر / صحة البطارية</span></div>
+      <ol class="steps">
+        <li>فاصل البطارية أو فحص الصحة يتجاوز العتبة.</li>
+        <li>يُصدَر تنبيه «البطارية مستحقة».</li>
+      </ol>
+      <div class="out ok"><b>النتيجة:</b> استبدال البطارية استباقياً.</div>
+    </div>
+
+    <div class="sc pl">
+      <div class="sc-h"><span class="sc-id">F3</span><span class="sc-t">دورة الاستقرار — محفَّزة تلقائياً</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">النظام ← أبو معروف</span></span><span><b>المُطلِق:</b> سيارة «ما بعد حادث» تنتقل «قيد الإصلاح» ← «متاحة»</span></div>
+      <ol class="steps">
+        <li>المحرك يرصد الانتقال على سيارة موسومة «ما بعد حادث».</li>
+        <li><code>stability:scan</code> يحقن <code>stability_check_ticket</code> في طابور أبو معروف — يتكرّر كل 5 أيام.</li>
+        <li>كل فحص مُولَّد يُسجَّل في <code>auto_maintenance_audits</code> بتاريخ استحقاقه.</li>
+      </ol>
+      <div class="out ok"><b>النتيجة:</b> السيارة المُعاد بناؤها تُفرَض على دورة 5 أيام — بلا مفتاح، بلا ذاكرة.</div>
+    </div>
+
+    <div class="sc blk">
+      <div class="sc-h"><span class="sc-id">F4</span><span class="sc-t">البوابة الصارمة — لا إقفال بضغطة</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">أبو معروف</span></span><span><b>المُطلِق:</b> يحاول إقفال تذكرة استقرار</span></div>
+      <ol class="steps">
+        <li>يضغط إقفال دون الأدلّة المطلوبة.</li>
+        <li>الخادم يرفض — الإقفال يحتاج صور <b>العداد + حجرة المحرك + الإطارات</b> <b>و</b>«نجاح» صريح.</li>
+      </ol>
+      <div class="out blk"><b>النتيجة:</b> <b>الإقفال محظور</b> حتى تُقدَّم الصور الثلاث + «نجاح» — لا تخطّي.</div>
+    </div>
+
+    <div class="sc blk">
+      <div class="sc-h"><span class="sc-id">F5</span><span class="sc-t">تأخّر ساعة ← حظر سلامة</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعلون:</b><span class="actor">النظام</span><span class="actor">الأدمن</span></span><span><b>المُطلِق:</b> تجاوز موعد الـ5 أيام</span></div>
+      <ol class="steps">
+        <li>المسح الساعي يرى <code>next_stability_due &lt; now</code>.</li>
+        <li>يطبّق <code>safety_block</code> (الأعلى أولوية — يتجاوز متاحة/مؤجَّرة) ويسجّله في <code>auto_maintenance_audits</code> مع <code>late_by_minutes</code>.</li>
+        <li><b>تنبيه فوري للأدمن.</b></li>
+      </ol>
+      <div class="out blk"><b>النتيجة:</b> السيارة <b>مُوقَفة</b> لحظة تأخّرها ولو ساعة؛ والأدمن يعلم فوراً.</div>
+    </div>
+
+    <div class="sc">
+      <div class="sc-h"><span class="sc-id">F6</span><span class="sc-t">التخرّج — 3 دورات نظيفة</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">النظام</span></span><span><b>المُطلِق:</b> 3 دورات نظيفة متتالية (15 يوماً)</span></div>
+      <ol class="steps">
+        <li>السيارة تجتاز 3 فحوص استقرار متتالية (فشل/تفويت يصفّر العدّاد).</li>
+        <li>المحرك يُخرِّجها تلقائياً.</li>
+      </ol>
+      <div class="out ok"><b>النتيجة:</b> تنتقل من دورة الاستقرار إلى جدول الصيانة القياسي.</div>
+    </div>
+  </section>
+
+  <!-- G -->
+  <section class="cat">
+    <div class="cat-h"><span class="ico">🏭</span><h2>ز · توجيه الكراج والموافقة المالية</h2><span class="cnt">7 سيناريوهات</span></div>
+    <div class="cat-line"></div>
+
+    <div class="sc">
+      <div class="sc-h"><span class="sc-id">G1</span><span class="sc-t">النظام يقترح، المنسّق يقبل</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">المشرف</span></span><span><b>المُطلِق:</b> سيارة تحتاج كراجاً</span></div>
+      <ol class="steps">
+        <li>المحرك يُقيّم الكراجات ويعرض أفضل 3 مع الأسباب.</li>
+        <li>المنسّق يقبل الكراج المقترَح.</li>
+      </ol>
+      <div class="out ok"><b>النتيجة:</b> السيارة توجَّه لأنسب كراج حسب البيانات.</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">G2</span><span class="sc-t">تجاوز الاقتراح</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">المشرف</span></span><span><b>المُطلِق:</b> المنسّق يختار كراجاً مختلفاً</span></div>
+      <ol class="steps">
+        <li>المنسّق يختار خلاف الاقتراح.</li>
+        <li>النظام <b>يطلب سبب تجاوز</b> + موافقة مدير.</li>
+      </ol>
+      <div class="out wrn"><b>النتيجة:</b> التجاوز مسموح <b>فقط</b> بسبب + توقيع (يقتل المحاباة).</div>
+    </div>
+
+    <div class="sc">
+      <div class="sc-h"><span class="sc-id">G3</span><span class="sc-t">إصلاح صغير — درجة تلقائية</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">المشرف</span></span><span><b>المُطلِق:</b> عرض السعر ≤ 500 درهم</span></div>
+      <ol class="steps">
+        <li>عرض سعر الكراج يأتي أقل من 500 درهم.</li>
+        <li>درجة مشرف الصيانة تعتمد.</li>
+      </ol>
+      <div class="out ok"><b>النتيجة:</b> مُعتمَد في الدرجة 1 → الإصلاح يمضي.</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">G4</span><span class="sc-t">إصلاح كبير — يتصعّد للمدير العام</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">المدير العام</span></span><span><b>المُطلِق:</b> عرض السعر &gt; 5,000 درهم</span></div>
+      <ol class="steps">
+        <li>حتى لو قيّمه مدير، فتكلفة &gt;5,000 توجَّه للمالك/المدير العام.</li>
+        <li>المدير العام يوافق أو يرفض.</li>
+      </ol>
+      <div class="out wrn"><b>النتيجة:</b> لا يبدأ عمل حتى توقّع الدرجة الصحيحة (التقييم ≠ الموافقة).</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">G5</span><span class="sc-t">سيارة فاخرة — رفع درجة</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">المُوافِق</span></span><span><b>المُطلِق:</b> سيارة فاخرة / رياضية</span></div>
+      <ol class="steps">
+        <li>فئة السيارة ترفع الموافقة درجةً أعلى مما يقتضيه المبلغ.</li>
+      </ol>
+      <div class="out wrn"><b>النتيجة:</b> تدقيق إضافي على الأصول الغالية حتى للمبالغ الصغيرة.</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">G6</span><span class="sc-t">حادث — مسار المطالبات</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">المطالبات + مدير</span></span><span><b>المُطلِق:</b> حالة حادث / تأمين</span></div>
+      <ol class="steps">
+        <li>نوع الصيانة = حادث → يوجَّه إلى المطالبات + مدير.</li>
+      </ol>
+      <div class="out wrn"><b>النتيجة:</b> مسار التأمين يُعالَج منفصلاً عن درجات التكلفة الروتينية.</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">G7</span><span class="sc-t">عمل إضافي أثناء الإصلاح</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">الكراج ← المُوافِق</span></span><span><b>المُطلِق:</b> الكراج يجد عملاً إضافياً</span></div>
+      <ol class="steps">
+        <li>الكراج يقدّم عرض سعر إضافياً.</li>
+        <li>يعود لدورة الموافقة قبل مواصلة العمل.</li>
+      </ol>
+      <div class="out wrn"><b>النتيجة:</b> لا زحف تكلفة صامت — العمل الإضافي يُعاد اعتماده.</div>
+    </div>
+  </section>
+
+  <!-- H -->
+  <section class="cat">
+    <div class="cat-h"><span class="ico">✅</span><h2>ح · ضمان الجودة والإطلاق والتنبيهات</h2><span class="cnt">6 سيناريوهات</span></div>
+    <div class="cat-line"></div>
+
+    <div class="sc">
+      <div class="sc-h"><span class="sc-id">H1</span><span class="sc-t">نجاح ضمان الجودة ← جاهزة</span><span class="st ok">جزئياً اليوم</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">أبو معروف</span></span><span><b>المُطلِق:</b> انتهاء الإصلاح</span></div>
+      <ol class="steps">
+        <li>تُشغَّل قائمة ضمان جودة مُفصَّلة (مطابقة الإصلاح، لمبات، تكييف، سوائل، إطارات، غسيل).</li>
+        <li>كل البنود المطلوبة تنجح.</li>
+      </ol>
+      <div class="out ok"><b>النتيجة:</b> غسيل ← جاهزة للتأجير.</div>
+    </div>
+
+    <div class="sc blk">
+      <div class="sc-h"><span class="sc-id">H2</span><span class="sc-t">فشل ضمان الجودة ← للكراج</span><span class="st ok">يعمل اليوم</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">أبو معروف</span></span><span><b>المُطلِق:</b> فشل بند في ضمان الجودة</span></div>
+      <ol class="steps">
+        <li>بند يفشل في القائمة.</li>
+        <li>السيارة تُرجَع — طبقة إعادة الفحص ترسلها لشخص مختلف.</li>
+      </ol>
+      <div class="out blk"><b>النتيجة:</b> السيارة <b>لا يمكن</b> إطلاقها حتى تنجح.</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">H3</span><span class="sc-t">اختبار قيادة مطلوب</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">أبو معروف</span></span><span><b>المُطلِق:</b> إصلاح حرج للسلامة / وقوف &gt; 7 أيام / فاخرة</span></div>
+      <ol class="steps">
+        <li>القاعدة تؤشّر «اختبار قيادة مطلوب».</li>
+        <li>لا يُجتاز ضمان الجودة حتى ينجح اختبار القيادة.</li>
+      </ol>
+      <div class="out wrn"><b>النتيجة:</b> لا إصلاح سلامة يُطلَق دون اختبار قيادة موثَّق.</div>
+    </div>
+
+    <div class="sc pl">
+      <div class="sc-h"><span class="sc-id">H4</span><span class="sc-t">تنبيه البيع / الاستبدال</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">النظام ← الإدارة</span></span><span><b>المُطلِق:</b> تكلفة 12 شهراً مقابل القيمة تتجاوز النسبة</span></div>
+      <ol class="steps">
+        <li>إنفاق صيانة آخر 12 شهراً يُقارَن بقيمة السيارة.</li>
+        <li>يتجاوز النسبة المحدَّدة.</li>
+      </ol>
+      <div class="out wrn"><b>النتيجة:</b> يُصدَر توصية «بيع / استبدال / إيقاف تأجير».</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">H5</span><span class="sc-t">عالقة طويلاً في حالة</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">النظام ← الإدارة</span></span><span><b>المُطلِق:</b> 7 / 14 يوماً في حالة واحدة</span></div>
+      <ol class="steps">
+        <li>كاشف يقرأ <code>last_state_change_at</code>.</li>
+        <li>7 أيام ← تحذير، 14 يوماً ← تنبيه حرج للإدارة.</li>
+      </ol>
+      <div class="out wrn"><b>النتيجة:</b> لا سيارة تتعفّن بصمت في مرحلة.</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">H6</span><span class="sc-t">سيارة خاملة — جاهزية قبل الإيجار التالي</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">تجهيز الأسطول</span></span><span><b>المُطلِق:</b> وقوف السيارة &gt; 7 / 14 / 30 يوماً</span></div>
+      <ol class="steps">
+        <li>مصفوفة أيام الوقوف تحدّد مستوى الجاهزية المطلوب.</li>
+        <li>&gt;7 أيام جاهزية + اختبار قيادة قصير · &gt;14 بطارية/إطارات/سوائل · &gt;30 فحص تقني كامل.</li>
+      </ol>
+      <div class="out wrn"><b>النتيجة:</b> السيارة الواقفة طويلاً يُعاد التحقق منها قبل تسليمها ثانيةً.</div>
+    </div>
+  </section>
+
+  <!-- I -->
+  <section class="cat">
+    <div class="cat-h"><span class="ico">🛡️</span><h2>ط · تدقيق قرار السلامة (حارس السلامة)</h2><span class="cnt">3 سيناريوهات</span></div>
+    <div class="cat-line"></div>
+
+    <div class="sc">
+      <div class="sc-h"><span class="sc-id">I1</span><span class="sc-t">اتّفاق — مرور صامت</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">أبو معروف</span></span><span><b>المُطلِق:</b> المفتّش يكتب وصفاً</span></div>
+      <ol class="steps">
+        <li>يكتب «صوت فرامل» → النظام يمسح الكلمات → يقترح 🔴 حرج للسلامة.</li>
+        <li>يعلّم السيارة <b>غير قابلة للتأجير</b> — قراره يتّفق مع الاقتراح.</li>
+      </ol>
+      <div class="out ok"><b>النتيجة:</b> لا تعارض — يُحفَظ بصمت، بلا تدقيق، بلا تنبيه.</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">I2</span><span class="sc-t">مشكلة تافهة أُوقِفت — تعارض معاكس</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعلون:</b><span class="actor">أبو معروف</span><span class="actor">الأدمن</span></span><span><b>المُطلِق:</b> كلمة منخفضة الخطورة، وقرار «غير قابلة»</span></div>
+      <ol class="steps">
+        <li>يكتب «خدش صبغ بسيط» → النظام يقترح 🟢 بسيط.</li>
+        <li>يعلّم السيارة <b>غير قابلة للتأجير</b> — يخالف الاقتراح (إيقاف سيارة تافهة).</li>
+        <li>النظام يوسم <code>audit_required</code>، يُجبِر سبب تجاوز، ويُنبِّه الأدمن.</li>
+      </ol>
+      <div class="out wrn"><b>النتيجة:</b> مُسجَّل — يرى الأدمن <b>لماذا</b> سُحِبت سيارة قابلة للتأجير من الخدمة.</div>
+    </div>
+
+    <div class="sc blk">
+      <div class="sc-h"><span class="sc-id">I3</span><span class="sc-t">عطل فرامل صُرِّح به قابلاً للتأجير ← تنبيه الأدمن</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعلون:</b><span class="actor">أبو معروف</span><span class="actor">الأدمن</span></span><span><b>المُطلِق:</b> كلمة عالية الخطورة، وقرار «قابلة»</span></div>
+      <ol class="steps">
+        <li>يكتب «الفرامل ضعيفة» → النظام يقترح 🔴 حرج للسلامة.</li>
+        <li>يعلّم السيارة <b>قابلة للتأجير</b> رغم ذلك — سيارة خطرة صُرِّح بها خلاف منطق النظام.</li>
+        <li>الحفظ <b>محظور</b> حتى يكتب سبب تجاوز.</li>
+        <li><b>دفع فوري يصل الأدمن</b>؛ والقرار يهبط في طابور التدقيق بكامل الأثر قبل/بعد.</li>
+      </ol>
+      <div class="out blk"><b>النتيجة:</b> حكمه مُحترَم، لكن <b>لا شيء خطر يُصرَّح به خفيةً</b> — الحارس يعمل.</div>
+    </div>
+  </section>
+
+  <!-- J -->
+  <section class="cat">
+    <div class="cat-h"><span class="ico">🖥️</span><h2>ي · مركز القيادة (الشفافية)</h2><span class="cnt">3 سيناريوهات</span></div>
+    <div class="cat-line"></div>
+
+    <div class="sc">
+      <div class="sc-h"><span class="sc-id">J1</span><span class="sc-t">كل إجراء يهبط في الخلاصة</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">النظام</span></span><span><b>المُطلِق:</b> أي إجراء حرج (تسعير، موافقة، تجهيز…)</span></div>
+      <ol class="steps">
+        <li>مدير يسعّر تكلفة؛ أبو معروف يجهّز سيارة.</li>
+        <li>كلٌّ يكتب صفّ <code>activity_log</code> عبر <code>ActivityLogger</code> المركزي.</li>
+      </ol>
+      <div class="out ok"><b>النتيجة:</b> الخلاصة تُظهِر <b>الفاعل · الوقت · التغيير المحدَّد</b> — لا تحديثات صامتة.</div>
+    </div>
+
+    <div class="sc">
+      <div class="sc-h"><span class="sc-id">J2</span><span class="sc-t">«أين السيارة X؟» — جواب واحد</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">الأدمن / عمر</span></span><span><b>المُطلِق:</b> يفتح المتتبّع الحيّ</span></div>
+      <ol class="steps">
+        <li>المتتبّع يقرأ <code>livePosition()</code> + حركة اللوجستيك النشطة + محطّة الكراج.</li>
+        <li>كل سيارة تُظهِر الحالة ← المالك/المُكلَّف؛ وإن كانت صيانة ← أيّ كراج + أيّ مشرف.</li>
+      </ol>
+      <div class="out ok"><b>النتيجة:</b> «أين هي ومَن يحملها» للأسطول كلّه — من مصدر واحد، بلا لوحات مجزّأة.</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">J3</span><span class="sc-t">مهمة متعثّرة تظهر بالأحمر</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعلون:</b><span class="actor">النظام</span><span class="actor">الإدارة</span></span><span><b>المُطلِق:</b> مهمة مُطالَب بها لم تُنجَز خلال X ساعة</span></div>
+      <ol class="steps">
+        <li>أحدهم يطالب بمهمة ولا يُنجزها.</li>
+        <li>النظرة العامة تقارن <code>last_state_change_at</code> بـSLA المرحلة وتُبرِزها بالأحمر — بجوار الصفراء في الميدان والموافقات المعلّقة.</li>
+      </ol>
+      <div class="out wrn"><b>النتيجة:</b> لا شيء يتعثّر دون أن يُرى — عمر والأدمن يلتقطانه بنظرة.</div>
+    </div>
+  </section>
+
+  <!-- K -->
+  <section class="cat">
+    <div class="cat-h"><span class="ico">🧠</span><h2>ك · الذكاء والفرض (المراحل 9–11)</h2><span class="cnt">6 سيناريوهات</span></div>
+    <div class="cat-line"></div>
+
+    <div class="sc">
+      <div class="sc-h"><span class="sc-id">K1</span><span class="sc-t">النظام يختار الكراج (متعدّد المعايير)</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">النظام ← المشرف</span></span><span><b>المُطلِق:</b> تذكرة تحتاج كراجاً</span></div>
+      <ol class="steps">
+        <li>محرّك التوجيه يُقيّم كل كراج على <b>التخصّص · نوع العطل · فئة السيارة · التقييم · معدّل العودة · مدة الإنجاز · السعر · القطع · القرب · الضمان</b>.</li>
+        <li>يُرجِع <b>أفضل 3</b> بدرجاتها وأسبابها + <b>سعر تقديري من التاريخ</b> (المرحلة 9).</li>
+        <li>المشرف يقبل الاختيار، أو يتجاوزه <em>بسبب مكتوب</em>.</li>
+      </ol>
+      <div class="out ok"><b>النتيجة:</b> يُختار أنسب كراج بـ<b>البيانات لا العلاقات</b> — وأي تجاوز مُسجَّل.</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">K2</span><span class="sc-t">تباين تكلفة عالٍ ← تحذير تكلفة</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعلون:</b><span class="actor">النظام</span><span class="actor">الأدمن</span></span><span><b>المُطلِق:</b> عرض كراج &gt;20% فوق التاريخ</span></div>
+      <ol class="steps">
+        <li>المتنبّئ يقارن العرض بـ<code>garage_cost_stats</code> لذلك الموديل + العطل.</li>
+        <li>أكثر من 20% فوق المتوسط التاريخي ← شارة <b>تحذير تكلفة عالية</b>.</li>
+      </ol>
+      <div class="out wrn"><b>النتيجة:</b> ترى أنك تدفع أكثر غالباً — <b>بلا حظر</b>: الكراج الفاخر مسموح.</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">K3</span><span class="sc-t">حادث ← سلسلة بإيصالات للمديرَين</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعلون:</b><span class="actor">النظام</span><span class="actor">المديران</span></span><span><b>المُطلِق:</b> damage_status = NEW / حادث</span></div>
+      <ol class="steps">
+        <li>إشعار <b>أولوية عالية</b> فوري Push + داخل التطبيق لعبدالله ووليد بالصور والمسؤولية (غير قابل للإغلاق).</li>
+        <li><b>تقديمهما للتقييم</b> يُسقِط مهمة تحمل الملاحظات لأبو معروف — الذي لم يكن يراها قبل ذلك.</li>
+        <li><code>notified_at / viewed_at / actioned_at</code> مُسجَّلة لكل دور.</li>
+      </ol>
+      <div class="out ok"><b>النتيجة:</b> تسليم مضمون بإيصالات — «لم يصلني الإشعار» مستحيلة.</div>
+    </div>
+
+    <div class="sc blk">
+      <div class="sc-h"><span class="sc-id">K4</span><span class="sc-t">تراجع العداد ← خطأ سلامة بيانات</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعلون:</b><span class="actor">السائق</span><span class="actor">الأدمن</span></span><span><b>المُطلِق:</b> عداد مُدخَل &lt; القراءة السابقة</span></div>
+      <ol class="steps">
+        <li>عند تغيير حالة، الإدخال أقلّ من آخر قراءة مُسجَّلة.</li>
+        <li>يُحظَر الحفظ <b>حظراً صارماً</b> بخطأ سلامة بيانات.</li>
+        <li><b>الأدمن وحده</b> يوافق على التصحيح (المشرفون لا).</li>
+      </ol>
+      <div class="out blk"><b>النتيجة:</b> تلاعب العداد لا يمرّ — العملية تتوقّف حتى يُصفّيها الأدمن.</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">K5</span><span class="sc-t">تباعد GPS/العداد ← علَم تلاعب</span><span class="st pl">مُخطَّط · يحتاج تغذية GPS</span></div>
+      <div class="meta"><span><b>الفاعل:</b><span class="actor">النظام</span></span><span><b>المُطلِق:</b> مسافة GPS تتباعد عن مسافة العداد</span></div>
+      <ol class="steps">
+        <li>المحرك يقارن كيلومترات GPS المحسوبة بكيلومترات العداد المُسجَّلة.</li>
+        <li>التباعد الكبير يرفع <b>علَم تلاعب / انقطاع GPS</b> للمراجعة.</li>
+      </ol>
+      <div class="out wrn"><b>النتيجة:</b> العداد يبقى سجلّ الحقيقة؛ والـGPS يُعزِّز ويكشف التلاعب. <em>(يُفعَّل عند وصل تغذية GPS.)</em></div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">K6</span><span class="sc-t">تجاوز المسافة ← تنبيه مخالفة سياسة</span><span class="st pl">مُخطَّط</span></div>
+      <div class="meta"><span><b>الفاعلون:</b><span class="actor">النظام</span><span class="actor">الأدمن</span></span><span><b>المُطلِق:</b> الكيلومترات النشطة &gt; المسموح + 5%</span></div>
+      <ol class="steps">
+        <li>المسموح = <code>miles_allowed_pd</code> × أيام الإيجار؛ والإيجار يتجاوز المسموح + 5%.</li>
+        <li>النظام يَسِم الإيجار <code>excess_mileage</code> ويُطلِق <b>تنبيه مخالفة سياسة</b> للأدمن؛ ولوحة الاستخدام تصير 🔴.</li>
+      </ol>
+      <div class="out wrn"><b>النتيجة:</b> إساءة العقد تُلتقَط تلقائياً — بلا تدقيق مسافة يدوي.</div>
+    </div>
+  </section>
+
+  <footer>نظام الأسطول · كل سيناريو (لوحة القصة) · رفيق حالة الاستخدام الرئيسية الموحّدة · 2026-07-02</footer>
+
+</div>
+</body>
+</html>

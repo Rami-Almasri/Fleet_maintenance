@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../api/client';
 import useFetch from '../hooks/useFetch';
 import { useToast } from '../components/ui/Toast';
-import Badge, { VehicleStatusBadge, OperationalBadge } from '../components/ui/Badge';
+import Badge, { VehicleStatusBadge, OperationalBadge, ConditionBadge, DeferredMaintenanceBadge } from '../components/ui/Badge';
 import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import ConfirmDialog from '../components/ui/ConfirmDialog';
@@ -15,12 +15,17 @@ import DataTable, { SectionCard } from '../components/ui/Table';
 import { MetricGridSkeleton } from '../components/ui/Skeleton';
 import Icon from '../components/ui/Icon';
 import { usePageStat } from '../components/PageStat';
+import { usePermissions } from '../hooks/usePermissions';
 import VehicleForm, { VEHICLE_STATUSES, vehicleToForm, cleanPayload } from './vehicles/VehicleForm';
+import DispatchModal from './vehicles/DispatchModal';
+import PickUpModal from './vehicles/PickUpModal';
+import ConditionGradeModal from './vehicles/ConditionGradeModal';
 
 const PAGE_SIZE = 12;
 
 export default function Vehicles() {
   const toast = useToast();
+  const { can } = usePermissions();
   const fetcher = useCallback(async () => {
     const { data } = await api.get('/Vehicle');
     return data.data || [];
@@ -42,6 +47,30 @@ export default function Vehicles() {
   // delete confirm
   const [toDelete, setToDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
+
+  // logistics dispatch modal
+  const [dispatchFor, setDispatchFor] = useState(null);
+  const canDispatch = can('logistics.dispatch');
+
+  // visual condition grading modal
+  const [gradeFor, setGradeFor] = useState(null);
+  const canManage = can('vehicles.manage');
+
+  // Inspector's-Pad "Pick Up for maintenance" modal (odometer-gated intake).
+  const [pickUpFor, setPickUpFor] = useState(null);
+  const canPickup = can('maintenance.initiate');
+
+  // Deferred Maintenance: supervisors/ops can Resolve (dismiss) the "owes maintenance" flag.
+  const canResolveDefer = can('maintenance.manage');
+  const resolveDefer = async (v) => {
+    try {
+      await api.delete(`/Vehicle/${v.id}/defer-maintenance`);
+      toast.success('Deferred-maintenance flag cleared');
+      reload();
+    } catch (e) {
+      toast.error(e.response?.data?.message || 'Could not clear the flag');
+    }
+  };
 
   const list = useMemo(() => vehicles || [], [vehicles]);
   const filtered = useMemo(() => {
@@ -105,8 +134,8 @@ export default function Vehicles() {
     try {
       const payload = cleanPayload(form);
       if (editing) {
-        await api.post(`/Vehicle/${editing.id}`, payload);
-        toast.success('Vehicle updated');
+        const { data } = await api.post(`/Vehicle/${editing.id}`, payload);
+        toast.success(data?.message || 'Vehicle updated');
       } else {
         await api.post('/Vehicle', payload);
         toast.success('Vehicle created');
@@ -168,6 +197,8 @@ export default function Vehicles() {
         <div className="flex flex-wrap items-center gap-1.5">
           <VehicleStatusBadge status={v.status} />
           {v.for_sale && <Badge tone="amber">🏷️ For sale</Badge>}
+          {/* Visual Condition Grade — only shown when it needs attention (orange/red). */}
+          <ConditionBadge grade={v.condition_grade} />
         </div>
       ),
     },
@@ -177,9 +208,10 @@ export default function Vehicles() {
       tooltip: 'Live operational status derived from the car’s open contract (rented, in maintenance, reserved) — distinct from the OM lifecycle status.',
       render: (v) => (
         <div className="flex flex-wrap items-center gap-1.5">
-          <OperationalBadge status={v.operational_status} />
+          <OperationalBadge status={v.operational_status} destination={v.transit_destination} />
           {v.reserved && <Badge tone="violet">📅 Reserved</Badge>}
-          {!v.operational_status && !v.reserved && <span className="text-slate-400">—</span>}
+          <DeferredMaintenanceBadge pending={v.is_deferred_maintenance} note={v.deferred_maintenance_reason} />
+          {!v.operational_status && !v.reserved && !v.is_deferred_maintenance && <span className="text-slate-400">—</span>}
         </div>
       ),
     },
@@ -187,6 +219,26 @@ export default function Vehicles() {
       key: 'actions', header: 'Actions', align: 'right', headerClass: 'sr-only',
       render: (v) => (
         <div className="flex justify-end gap-2">
+          {canPickup && v.available && (
+            <Button variant="secondary" size="sm" onClick={() => setPickUpFor(v)} title="Open a maintenance ticket for this car (requires the current odometer)">
+              🔧 Pick up
+            </Button>
+          )}
+          {canDispatch && v.available && (
+            <Button variant="secondary" size="sm" onClick={() => setDispatchFor(v)} title="Move this car to another location">
+              🚚 Dispatch
+            </Button>
+          )}
+          {canManage && (
+            <Button variant="secondary" size="sm" onClick={() => setGradeFor(v)} title="Set the visual condition grade (green / orange / red)">
+              🎨 Grade
+            </Button>
+          )}
+          {canResolveDefer && v.is_deferred_maintenance && (
+            <Button variant="secondary" size="sm" onClick={() => resolveDefer(v)} title="Clear the 'owes maintenance' flag (sent back to the workshop, or no longer needed)">
+              ✓ Resolve
+            </Button>
+          )}
           <Link to={`/vehicles/${v.id}`}>
             <Button variant="secondary" size="sm">View</Button>
           </Link>
@@ -311,6 +363,30 @@ export default function Vehicles() {
       >
         <VehicleForm values={form} onChange={onField} errors={formErrors} />
       </Modal>
+
+      {/* Logistics dispatch */}
+      <DispatchModal
+        open={!!dispatchFor}
+        vehicle={dispatchFor}
+        onClose={() => setDispatchFor(null)}
+        onDispatched={reload}
+      />
+
+      {/* Pick up for maintenance (odometer-gated) */}
+      <PickUpModal
+        open={!!pickUpFor}
+        vehicle={pickUpFor}
+        onClose={() => setPickUpFor(null)}
+        onPickedUp={reload}
+      />
+
+      {/* Visual condition grading */}
+      <ConditionGradeModal
+        open={!!gradeFor}
+        vehicle={gradeFor}
+        onClose={() => setGradeFor(null)}
+        onSaved={reload}
+      />
 
       {/* Delete confirm */}
       <ConfirmDialog

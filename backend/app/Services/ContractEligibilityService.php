@@ -88,10 +88,14 @@ class ContractEligibilityService
         ];
     }
 
-    /** Gather one vehicle's facts from the DB and run the checklist. */
-    public function evaluate(Vehicle $vehicle): array
+    /**
+     * Gather one vehicle's facts from the DB and run the checklist. $intent carries operator-supplied
+     * signals that aren't facts about the car — currently `pull_from_maintenance` (a deliberate,
+     * permission-gated decision to pull an in-shop car out for a customer, closing its ticket now).
+     */
+    public function evaluate(Vehicle $vehicle, array $intent = []): array
     {
-        return $this->assess($this->gatherFacts($vehicle));
+        return $this->assess(array_merge($this->gatherFacts($vehicle), $intent));
     }
 
     /**
@@ -128,7 +132,13 @@ class ContractEligibilityService
             return [];
         }
 
-        $result = $this->evaluate($vehicle);
+        // `pull_from_maintenance` is the deliberate "release this car from the shop for a customer"
+        // intent (forwarded by the controller only for an authorised user). It lifts the two
+        // maintenance-related blocks — the ticket is closed as part of this very rental — but leaves
+        // every genuine conflict (rented / sold / Red / open damage / dirty) standing.
+        $result = $this->evaluate($vehicle, [
+            'pull_from_maintenance' => ! empty($data['pull_from_maintenance']),
+        ]);
 
         // Hard blocks — status, open maintenance, Red grade, open damage, dirty. Never overridable.
         if (! empty($result['blocks'])) {
@@ -220,6 +230,12 @@ class ContractEligibilityService
             $blockedBy = $op;
         }
 
+        // Deferred-maintenance intent releases ONLY the maintenance lifecycle block (the ticket is
+        // being closed as part of this rental); real conflicts (rented / sold / …) still stand.
+        if ($blockedBy === 'under_maintenance' && ! empty($f['pull_from_maintenance'])) {
+            $blockedBy = null;
+        }
+
         return $this->check(
             'status', 'Vehicle availability',
             $blockedBy ? self::BLOCK : self::PASS,
@@ -231,6 +247,14 @@ class ContractEligibilityService
     private function maintenanceCheck(array $f): array
     {
         $open = ! empty($f['open_maintenance']);
+        // Deferred-maintenance intent: the operator is deliberately pulling the car out of the shop for
+        // a customer, closing the ticket as part of this rental — so an open work order no longer blocks.
+        if ($open && ! empty($f['pull_from_maintenance'])) {
+            return $this->check(
+                'maintenance', 'Open maintenance', self::PASS,
+                'Open work order — will be closed to release the car (deferred maintenance)',
+            );
+        }
         return $this->check(
             'maintenance', 'Open maintenance',
             $open ? self::BLOCK : self::PASS,

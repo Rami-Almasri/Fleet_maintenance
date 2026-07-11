@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fleet System — Every Scenario (Storyboard)</title>
+<style>
+  :root{
+    --navy:#0b1f3a; --navy-2:#12305c; --cyan:#0bb4c4; --cyan-dk:#087f8c;
+    --ink:#1a2433; --muted:#5b6b82; --line:#e2e8f0; --bg:#f4f7fb; --card:#ffffff;
+    --ok:#059669; --warn:#d97706; --block:#e11d48; --plan:#7c3aed;
+  }
+  *{box-sizing:border-box}
+  body{margin:0; background:var(--bg); color:var(--ink);
+    font:15px/1.65 'Inter',-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+  .wrap{max-width:1080px; margin:0 auto; padding:0 22px 80px}
+
+  header{background:linear-gradient(135deg,var(--navy) 0%,var(--navy-2) 55%,var(--cyan-dk) 140%);
+    color:#fff; padding:46px 0 40px; box-shadow:0 10px 30px rgba(11,31,58,.25)}
+  header .wrap{padding-bottom:0}
+  .eyebrow{letter-spacing:.16em; text-transform:uppercase; font-size:12px; color:var(--cyan); font-weight:700; margin:0 0 8px}
+  h1{margin:0; font-size:32px; font-weight:800; line-height:1.15}
+  .sub{margin:10px 0 0; color:#c7d6ea; font-size:15.5px; max-width:680px}
+  .stat{display:flex; gap:26px; flex-wrap:wrap; margin-top:22px}
+  .stat .n{font-size:28px; font-weight:800; color:#fff; line-height:1}
+  .stat .l{font-size:12px; color:#9fb6d4; margin-top:3px}
+
+  .legend{background:var(--card); border:1px solid var(--line); border-radius:12px;
+    padding:12px 18px; margin:-42px 0 24px; display:flex; gap:20px; flex-wrap:wrap; align-items:center;
+    box-shadow:0 8px 24px rgba(11,31,58,.08); font-size:13px; color:var(--muted)}
+  .k{display:inline-flex; align-items:center; gap:6px}
+  .sw{width:11px; height:11px; border-radius:3px; display:inline-block}
+
+  .cat{margin:34px 0 0}
+  .cat-h{display:flex; align-items:baseline; gap:12px}
+  .cat-h .ico{font-size:20px}
+  .cat-h h2{margin:0; font-size:21px; font-weight:800; color:var(--navy)}
+  .cat-h .cnt{margin-left:auto; background:#eef4fb; color:var(--navy-2); border-radius:999px; padding:3px 12px; font-size:12px; font-weight:700}
+  .cat-line{height:2px; background:linear-gradient(90deg,var(--cyan),transparent); margin:7px 0 14px; border-radius:2px}
+
+  .sc{background:var(--card); border:1px solid var(--line); border-radius:12px; padding:15px 18px; margin:11px 0;
+    box-shadow:0 3px 10px rgba(11,31,58,.04); border-left:4px solid var(--cyan)}
+  .sc.blk{border-left-color:var(--block)} .sc.wrn{border-left-color:var(--warn)}
+  .sc.pl{border-left-color:var(--plan)}
+  .sc-h{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:8px}
+  .sc-id{background:var(--navy); color:#fff; font-weight:800; font-size:12.5px; border-radius:6px; padding:2px 9px; font-family:'JetBrains Mono',monospace}
+  .sc-t{font-weight:800; color:var(--navy); font-size:16px}
+  .st{margin-left:auto; font-size:11px; font-weight:700; border-radius:999px; padding:2px 9px}
+  .st.ok{background:#d1fae5; color:var(--ok)} .st.pl{background:#ede9fe; color:var(--plan)}
+
+  .meta{display:flex; gap:16px; flex-wrap:wrap; font-size:13px; color:var(--muted); margin-bottom:8px}
+  .meta b{color:var(--ink)}
+  .actor{display:inline-block; background:#f1f6fc; border:1px solid #dce7f4; color:var(--navy-2);
+    border-radius:6px; padding:1px 8px; font-size:12px; font-weight:600; margin-left:4px}
+
+  ol.steps{margin:6px 0 8px; padding-left:20px}
+  ol.steps li{margin:3px 0; font-size:14px; color:#33445c}
+  .out{font-size:13.5px; border-radius:8px; padding:8px 12px; margin-top:6px}
+  .out.ok{background:#ecfdf5; border:1px solid #a7f3d0; color:#065f46}
+  .out.blk{background:#fef2f2; border:1px solid #fecaca; color:#991b1b}
+  .out.wrn{background:#fffbeb; border:1px solid #fde68a; color:#92400e}
+  .out b{font-weight:800}
+  code{background:#eef2f7; border:1px solid #e0e7ef; border-radius:4px; padding:0 5px;
+    font:12px 'JetBrains Mono',ui-monospace,Consolas,monospace; color:#0b3a63}
+
+  footer{color:var(--muted); font-size:12.5px; text-align:center; margin-top:40px}
+  @media print{body{background:#fff} header{box-shadow:none} .sc,.legend{box-shadow:none} .cat{break-inside:avoid-page} .sc{break-inside:avoid}}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <p class="eyebrow">Fleet System · Operational Storyboard</p>
+    <h1>Every Scenario, Step by Step</h1>
+    <p class="sub">The whole fleet lifecycle told as concrete scenarios — each with its actor, trigger, steps, and outcome. This is the "what actually happens" companion to the Unified Master Use Case.</p>
+    <div class="stat">
+      <div><div class="n">54</div><div class="l">scenarios</div></div>
+      <div><div class="n">11</div><div class="l">journeys</div></div>
+      <div><div class="n">3</div><div class="l">actors</div></div>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="legend">
+    <span class="k"><span class="sw" style="background:var(--cyan)"></span> Normal flow</span>
+    <span class="k"><span class="sw" style="background:var(--warn)"></span> Warning / acknowledgment</span>
+    <span class="k"><span class="sw" style="background:var(--block)"></span> Hard block</span>
+    <span class="k"><span class="sw" style="background:var(--plan)"></span> Planned build</span>
+    <span style="margin-left:auto">Actors: <b>Driver</b> · <b>Managers (Abdullah/Walid)</b> · <b>Abu Marouf (Inspector)</b></span>
+  </div>
+
+  <!-- A -->
+  <section class="cat">
+    <div class="cat-h"><span class="ico">🚦</span><h2>A · Booking &amp; Eligibility</h2><span class="cnt">8 scenarios</span></div>
+    <div class="cat-line"></div>
+
+    <div class="sc">
+      <div class="sc-h"><span class="sc-id">A1</span><span class="sc-t">Clean booking — Green car</span><span class="st ok">works today (gate)</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">Sales</span></span><span><b>Trigger:</b> new rental request</span></div>
+      <ol class="steps">
+        <li>Sales picks vehicle + dates → the Readiness Gate runs the 9 checks.</li>
+        <li>All checks pass (Green grade, docs valid through return, no open fault).</li>
+        <li>Handover proceeds to Check-Out.</li>
+      </ol>
+      <div class="out ok"><b>Outcome:</b> Booking allowed → car goes to handover.</div>
+    </div>
+
+    <div class="sc blk">
+      <div class="sc-h"><span class="sc-id">A2</span><span class="sc-t">Blocked — Red grade</span><span class="st ok">works today</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">Sales</span></span><span><b>Trigger:</b> booking on a Red-graded car</span></div>
+      <ol class="steps">
+        <li>Sales selects a car graded Red (critical / grounded).</li>
+        <li>The gate refuses — front-end and back-end both reject.</li>
+      </ol>
+      <div class="out blk"><b>Outcome:</b> <b>Hard block.</b> Pick another car or send it to maintenance.</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">A3</span><span class="sc-t">Orange / Yellow — condition acknowledgment</span><span class="st ok">works today</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">Sales</span></span><span><b>Trigger:</b> booking on an Orange/Yellow car</span></div>
+      <ol class="steps">
+        <li>Sales selects an Orange (cosmetic) or Yellow (needs service) car.</li>
+        <li>A mandatory acknowledgment prompt fires: confirm the customer was told.</li>
+        <li>Agent confirms → the acknowledgment is recorded on the contract (<code>condition_ack_*</code>).</li>
+      </ol>
+      <div class="out wrn"><b>Outcome:</b> Booking allowed <b>with a recorded acknowledgment</b> (Rental-First).</div>
+    </div>
+
+    <div class="sc blk">
+      <div class="sc-h"><span class="sc-id">A4</span><span class="sc-t">Blocked — docs expire before return</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">Sales</span></span><span><b>Trigger:</b> registration/insurance lapses inside the rental window</span></div>
+      <ol class="steps">
+        <li>The gate compares registration + insurance expiry to the <b>return date</b> (not today).</li>
+        <li>They lapse before the car comes back.</li>
+      </ol>
+      <div class="out blk"><b>Outcome:</b> <b>Hard block</b> until documents are renewed.</div>
+    </div>
+
+    <div class="sc blk">
+      <div class="sc-h"><span class="sc-id">A5</span><span class="sc-t">Blocked — open safety-critical fault</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">Sales</span></span><span><b>Trigger:</b> car has an open brakes/steering/tyre fault</span></div>
+      <ol class="steps">
+        <li>An open maintenance order alone does <b>not</b> block (Rental-First).</li>
+        <li>But the fault is on the hard-coded safety list → the gate blocks.</li>
+      </ol>
+      <div class="out blk"><b>Outcome:</b> <b>Hard block</b> — safety is the only non-negotiable barrier.</div>
+    </div>
+
+    <div class="sc blk">
+      <div class="sc-h"><span class="sc-id">A6</span><span class="sc-t">Blocked — blacklisted customer</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">Sales</span></span><span><b>Trigger:</b> customer risk flag = blacklist</span></div>
+      <ol class="steps">
+        <li>The gate reads the customer's risk level.</li>
+        <li>Blacklist → booking refused.</li>
+      </ol>
+      <div class="out blk"><b>Outcome:</b> <b>Hard block</b> on the customer, regardless of car.</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">A7</span><span class="sc-t">High-risk customer — bigger deposit</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">Sales</span></span><span><b>Trigger:</b> customer risk flag = high-deposit</span></div>
+      <ol class="steps">
+        <li>The gate flags the customer as high-risk.</li>
+        <li>A larger deposit is required before handover.</li>
+      </ol>
+      <div class="out wrn"><b>Outcome:</b> Booking allowed <b>with a higher deposit</b>.</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">A8</span><span class="sc-t">Readiness warning — service / GPS / cleaning</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">Sales</span></span><span><b>Trigger:</b> soft check flags amber</span></div>
+      <ol class="steps">
+        <li>Service due soon, GPS silent, or cleaning not done → warning (not a block).</li>
+        <li>Agent acknowledges each; a manager can clear it.</li>
+      </ol>
+      <div class="out wrn"><b>Outcome:</b> Booking allowed after acknowledging the warnings.</div>
+    </div>
+  </section>
+
+  <!-- B -->
+  <section class="cat">
+    <div class="cat-h"><span class="ico">📷</span><h2>B · Handover (Check-Out)</h2><span class="cnt">2 scenarios</span></div>
+    <div class="cat-line"></div>
+
+    <div class="sc">
+      <div class="sc-h"><span class="sc-id">B1</span><span class="sc-t">Full handover — photos + signature</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">Driver</span></span><span><b>Trigger:</b> car ready, customer present</span></div>
+      <ol class="steps">
+        <li>Driver captures the 16-item mandatory photo set (+ 360° video for luxury).</li>
+        <li>Customer confirms condition by signature or OTP.</li>
+        <li>System completes the Check-Out session, tied to the contract.</li>
+      </ol>
+      <div class="out ok"><b>Outcome:</b> Car goes <b>Out on Rent</b> with a signed condition record.</div>
+    </div>
+
+    <div class="sc blk">
+      <div class="sc-h"><span class="sc-id">B2</span><span class="sc-t">Incomplete handover — missing photos</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">Driver</span></span><span><b>Trigger:</b> driver skips a required zone</span></div>
+      <ol class="steps">
+        <li>Driver tries to finish with a zone or the signature missing.</li>
+        <li>The backend refuses to complete the session.</li>
+      </ol>
+      <div class="out blk"><b>Outcome:</b> <b>Handover blocked</b> until coverage + signature are complete.</div>
+    </div>
+  </section>
+
+  <!-- C -->
+  <section class="cat">
+    <div class="cat-h"><span class="ico">🔄</span><h2>C · Return (Check-In) &amp; the Scratch Chain</h2><span class="cnt">5 scenarios</span></div>
+    <div class="cat-line"></div>
+
+    <div class="sc">
+      <div class="sc-h"><span class="sc-id">C1</span><span class="sc-t">Clean return — no damage</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">Driver</span></span><span><b>Trigger:</b> car returns</span></div>
+      <ol class="steps">
+        <li>Driver captures Check-In photos; system auto-compares to Check-Out.</li>
+        <li>No new damage.</li>
+      </ol>
+      <div class="out ok"><b>Outcome:</b> Returned → Pending Cleaning → Ready for Rent.</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">C2</span><span class="sc-t">New scratch — the accountability chain</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actors:</b><span class="actor">Driver</span><span class="actor">Managers</span></span><span><b>Trigger:</b> driver flags a new scratch</span></div>
+      <ol class="steps">
+        <li>Driver marks the new scratch on the diagram (documents only — no pricing).</li>
+        <li>System auto-creates a Damage Evaluation draft (<code>pending_assessment</code>).</li>
+        <li><b>Abdullah &amp; Walid are notified</b> immediately.</li>
+      </ol>
+      <div class="out wrn"><b>Outcome:</b> Owned evaluation record in the managers' queue — nothing dropped.</div>
+    </div>
+
+    <div class="sc blk">
+      <div class="sc-h"><span class="sc-id">C3</span><span class="sc-t">Safety-critical damage on return</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">Driver</span></span><span><b>Trigger:</b> brake / tyre / steering damage flagged</span></div>
+      <ol class="steps">
+        <li>Driver flags damage that hits the safety list.</li>
+        <li>The golden rule fires.</li>
+      </ol>
+      <div class="out blk"><b>Outcome:</b> Car <b>cannot return to Available</b> — even if a booking is waiting.</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">C4</span><span class="sc-t">Post-return fines / Salik land</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">System</span></span><span><b>Trigger:</b> car returned, fines arrive days later</span></div>
+      <ol class="steps">
+        <li>On Check-In the contract enters <code>pending_charges</code>.</li>
+        <li>A landed fine draws down the deposit.</li>
+      </ol>
+      <div class="out wrn"><b>Outcome:</b> <b>Deposit refund is blocked</b> until fines settle.</div>
+    </div>
+
+    <div class="sc">
+      <div class="sc-h"><span class="sc-id">C5</span><span class="sc-t">Deposit release after fines clear</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">System</span></span><span><b>Trigger:</b> hold window elapses / ops settles</span></div>
+      <ol class="steps">
+        <li>Fines cleared or the hold window elapses.</li>
+        <li>System raises "deposit ready to release."</li>
+      </ol>
+      <div class="out ok"><b>Outcome:</b> Deposit refunded (to wallet or cash) — balance settled.</div>
+    </div>
+  </section>
+
+  <!-- D -->
+  <section class="cat">
+    <div class="cat-h"><span class="ico">🧑‍💼</span><h2>D · Manager Assessment (Damage → Repair)</h2><span class="cnt">4 scenarios</span></div>
+    <div class="cat-line"></div>
+
+    <div class="sc">
+      <div class="sc-h"><span class="sc-id">D1</span><span class="sc-t">Charge the customer</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">Managers</span></span><span><b>Trigger:</b> a pending damage evaluation</span></div>
+      <ol class="steps">
+        <li>Manager assesses: cause = Customer, liable = Customer, assigns a cost.</li>
+        <li>Decision = Charge → the cost draws down the deposit ledger.</li>
+      </ol>
+      <div class="out ok"><b>Outcome:</b> Customer charged from deposit; record closed.</div>
+    </div>
+
+    <div class="sc">
+      <div class="sc-h"><span class="sc-id">D2</span><span class="sc-t">No charge — wear &amp; tear</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">Managers</span></span><span><b>Trigger:</b> a pending damage evaluation</span></div>
+      <ol class="steps">
+        <li>Manager assesses: cause = Wear &amp; Tear, liable = Company.</li>
+        <li>Decision = No Charge.</li>
+      </ol>
+      <div class="out ok"><b>Outcome:</b> No customer charge; car proceeds to cleaning / minor fix.</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">D3</span><span class="sc-t">Confirm damage → auto In-Repair + task</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actors:</b><span class="actor">Managers</span><span class="actor">Abu Marouf</span></span><span><b>Trigger:</b> manager confirms a garage-needed damage</span></div>
+      <ol class="steps">
+        <li>Manager confirms, approves parts, assigns cost.</li>
+        <li>System auto-sets vehicle status → <b>In-Repair</b>.</li>
+        <li>System auto-creates a task in <b>Abu Marouf's queue</b>.</li>
+      </ol>
+      <div class="out wrn"><b>Outcome:</b> Car flips to In-Repair; execution lands with Abu Marouf — no manual hand-off.</div>
+    </div>
+
+    <div class="sc">
+      <div class="sc-h"><span class="sc-id">D4</span><span class="sc-t">Opens a Maintenance Order</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">Managers</span></span><span><b>Trigger:</b> <code>needs_garage = Yes</code></span></div>
+      <ol class="steps">
+        <li>Assessment marks needs-garage with a preliminary estimate.</li>
+        <li>A Maintenance Order opens carrying severity + estimate → Phase 3/4.</li>
+      </ol>
+      <div class="out ok"><b>Outcome:</b> Structured order ready for garage routing + approval.</div>
+    </div>
+  </section>
+
+  <!-- E -->
+  <section class="cat">
+    <div class="cat-h"><span class="ico">🪜</span><h2>E · Mid-Rental Incident (Support Ladder)</h2><span class="cnt">4 scenarios</span></div>
+    <div class="cat-line"></div>
+
+    <div class="sc">
+      <div class="sc-h"><span class="sc-id">E1</span><span class="sc-t">Phone support resolves it</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actors:</b><span class="actor">Sales/Ops</span><span class="actor">Abu Marouf</span></span><span><b>Trigger:</b> customer reports a fault</span></div>
+      <ol class="steps">
+        <li>Incident ticket opens, classified into one of 9 categories.</li>
+        <li>Rung 1: phone troubleshooting — resolved.</li>
+      </ol>
+      <div class="out ok"><b>Outcome:</b> Closed remotely; <code>resolution_path = phone</code>.</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">E2</span><span class="sc-t">On-site repair — Abu Marouf visits</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">Abu Marouf</span></span><span><b>Trigger:</b> phone support failed</span></div>
+      <ol class="steps">
+        <li>Rung 2: a logistics visit is created; Abu Marouf goes to the customer.</li>
+        <li>He repairs on-site; if it clears, the ticket closes.</li>
+      </ol>
+      <div class="out wrn"><b>Outcome:</b> Fixed at the customer; <code>resolution_path = onsite</code>.</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">E3</span><span class="sc-t">Vehicle swap</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actors:</b><span class="actor">Ops</span><span class="actor">Driver</span></span><span><b>Trigger:</b> phone + on-site both failed</span></div>
+      <ol class="steps">
+        <li>Rung 3: a replacement car is assigned via the swap board.</li>
+        <li>Driver delivers the swap; the original goes to the garage.</li>
+      </ol>
+      <div class="out wrn"><b>Outcome:</b> Customer kept mobile; <code>resolution_path = swap</code>.</div>
+    </div>
+
+    <div class="sc">
+      <div class="sc-h"><span class="sc-id">E4</span><span class="sc-t">Incident classified + badged</span><span class="st ok">partly today</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">Ops</span></span><span><b>Trigger:</b> incident logged</span></div>
+      <ol class="steps">
+        <li>Ops picks 1 of 9 categories (mechanical, accident, warning light, tyre, AC, battery, abuse, wear, emergency).</li>
+        <li>Severity drives a high-priority badge (safety-critical → red).</li>
+      </ol>
+      <div class="out ok"><b>Outcome:</b> Prioritized incident on the board.</div>
+    </div>
+  </section>
+
+  <!-- F -->
+  <section class="cat">
+    <div class="cat-h"><span class="ico">🔧</span><h2>F · Maintenance Engine &amp; Stability Cycle</h2><span class="cnt">6 scenarios</span></div>
+    <div class="cat-line"></div>
+
+    <div class="sc">
+      <div class="sc-h"><span class="sc-id">F1</span><span class="sc-t">Routine — oil / filter due</span><span class="st ok">works today</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">System</span></span><span><b>Trigger:</b> mileage crosses the interval</span></div>
+      <ol class="steps">
+        <li>Service-due detector fires from odometer tracking.</li>
+        <li>The car surfaces in the maintenance forecast / alerts.</li>
+      </ol>
+      <div class="out ok"><b>Outcome:</b> Routine service scheduled before breakdown.</div>
+    </div>
+
+    <div class="sc">
+      <div class="sc-h"><span class="sc-id">F2</span><span class="sc-t">Battery due</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">System</span></span><span><b>Trigger:</b> battery age / health interval</span></div>
+      <ol class="steps">
+        <li>Battery interval or health check crosses threshold.</li>
+        <li>A "battery due" alert is raised.</li>
+      </ol>
+      <div class="out ok"><b>Outcome:</b> Battery replaced proactively.</div>
+    </div>
+
+    <div class="sc pl">
+      <div class="sc-h"><span class="sc-id">F3</span><span class="sc-t">Stability Cycle — auto-triggered</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">System → Abu Marouf</span></span><span><b>Trigger:</b> a Post-Accident car goes Under-Repair → Available</span></div>
+      <ol class="steps">
+        <li>The engine detects the transition on a Post-Accident-flagged car.</li>
+        <li><code>stability:scan</code> injects a <code>stability_check_ticket</code> into Abu Marouf's queue — repeated every 5 days.</li>
+        <li>Each generated check is logged in <code>auto_maintenance_audits</code> with its due date.</li>
+      </ol>
+      <div class="out ok"><b>Outcome:</b> Rebuilt car is enforced onto a 5-day cycle — no toggle, no memory.</div>
+    </div>
+
+    <div class="sc blk">
+      <div class="sc-h"><span class="sc-id">F4</span><span class="sc-t">Strict Gate — can't close by a click</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">Abu Marouf</span></span><span><b>Trigger:</b> tries to close a stability ticket</span></div>
+      <ol class="steps">
+        <li>He taps close without the required evidence.</li>
+        <li>Server rejects it — a close needs <b>Odometer + Engine Bay + Tires</b> photos <b>and</b> an explicit Pass.</li>
+      </ol>
+      <div class="out blk"><b>Outcome:</b> <b>Close blocked</b> until all 3 photos + a Pass are supplied — no skip.</div>
+    </div>
+
+    <div class="sc blk">
+      <div class="sc-h"><span class="sc-id">F5</span><span class="sc-t">Missed by 1 hour → Safety Block</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actors:</b><span class="actor">System</span><span class="actor">Admin</span></span><span><b>Trigger:</b> 5-day deadline lapses</span></div>
+      <ol class="steps">
+        <li>The hourly enforcement pass sees <code>next_stability_due &lt; now</code>.</li>
+        <li>Auto-applies <code>safety_block</code> (highest priority — overrides Available/Rented) and logs it to <code>auto_maintenance_audits</code> with <code>late_by_minutes</code>.</li>
+        <li><b>Instant alert to the Admin.</b></li>
+      </ol>
+      <div class="out blk"><b>Outcome:</b> Car <b>grounded</b> the moment it's even 1 hour late; the Admin knows immediately.</div>
+    </div>
+
+    <div class="sc">
+      <div class="sc-h"><span class="sc-id">F6</span><span class="sc-t">Graduation — 3 clean cycles</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">System</span></span><span><b>Trigger:</b> 3 consecutive clean cycles (15 days)</span></div>
+      <ol class="steps">
+        <li>The car passes 3 consecutive stability checks (a fail/miss would reset the counter).</li>
+        <li>The engine auto-graduates it.</li>
+      </ol>
+      <div class="out ok"><b>Outcome:</b> Moved off the Stability Cycle onto the Standard Maintenance Schedule.</div>
+    </div>
+  </section>
+
+  <!-- G -->
+  <section class="cat">
+    <div class="cat-h"><span class="ico">🏭</span><h2>G · Garage Routing &amp; Financial Approval</h2><span class="cnt">7 scenarios</span></div>
+    <div class="cat-line"></div>
+
+    <div class="sc">
+      <div class="sc-h"><span class="sc-id">G1</span><span class="sc-t">System suggests, coordinator accepts</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">Supervisor</span></span><span><b>Trigger:</b> a car needs a garage</span></div>
+      <ol class="steps">
+        <li>The engine scores garages and shows the top 3 with reasons.</li>
+        <li>Coordinator accepts the suggested garage.</li>
+      </ol>
+      <div class="out ok"><b>Outcome:</b> Car routed to the best-fit garage on the data.</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">G2</span><span class="sc-t">Override the suggestion</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">Supervisor</span></span><span><b>Trigger:</b> coordinator picks a different garage</span></div>
+      <ol class="steps">
+        <li>Coordinator chooses off-suggestion.</li>
+        <li>System <b>requires an override reason</b> + a manager approval.</li>
+      </ol>
+      <div class="out wrn"><b>Outcome:</b> Override allowed <b>only</b> with reason + sign-off (kills favoritism).</div>
+    </div>
+
+    <div class="sc">
+      <div class="sc-h"><span class="sc-id">G3</span><span class="sc-t">Small repair — auto tier</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">Supervisor</span></span><span><b>Trigger:</b> quotation ≤ 500 AED</span></div>
+      <ol class="steps">
+        <li>Garage quotation comes in under 500 AED.</li>
+        <li>Maintenance Supervisor tier approves.</li>
+      </ol>
+      <div class="out ok"><b>Outcome:</b> Approved at tier 1 → repair proceeds.</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">G4</span><span class="sc-t">Large repair — escalates to GM</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">GM</span></span><span><b>Trigger:</b> quotation &gt; 5,000 AED</span></div>
+      <ol class="steps">
+        <li>Even if a manager assessed it, a &gt;5,000 cost routes to Owner/GM.</li>
+        <li>GM approves or rejects.</li>
+      </ol>
+      <div class="out wrn"><b>Outcome:</b> No work starts until the right tier signs (assess ≠ approve).</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">G5</span><span class="sc-t">Luxury car — tier bump</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">Approver</span></span><span><b>Trigger:</b> luxury / sports vehicle</span></div>
+      <ol class="steps">
+        <li>The car's class bumps the approval one tier higher than the amount implies.</li>
+      </ol>
+      <div class="out wrn"><b>Outcome:</b> Extra scrutiny on expensive assets even for small sums.</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">G6</span><span class="sc-t">Accident — claims route</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">Claims + Manager</span></span><span><b>Trigger:</b> accident / insurance case</span></div>
+      <ol class="steps">
+        <li>Maintenance type = accident → routes to Claims + Manager.</li>
+      </ol>
+      <div class="out wrn"><b>Outcome:</b> Insurance path handled separately from routine cost tiers.</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">G7</span><span class="sc-t">Extra work mid-repair</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">Garage → Approver</span></span><span><b>Trigger:</b> garage finds more work</span></div>
+      <ol class="steps">
+        <li>Garage submits an additional quotation.</li>
+        <li>It re-enters approval before work continues.</li>
+      </ol>
+      <div class="out wrn"><b>Outcome:</b> No silent cost creep — extra work is re-approved.</div>
+    </div>
+  </section>
+
+  <!-- H -->
+  <section class="cat">
+    <div class="cat-h"><span class="ico">✅</span><h2>H · QA, Release &amp; Alerts</h2><span class="cnt">6 scenarios</span></div>
+    <div class="cat-line"></div>
+
+    <div class="sc">
+      <div class="sc-h"><span class="sc-id">H1</span><span class="sc-t">QA pass → ready</span><span class="st ok">partly today</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">Abu Marouf</span></span><span><b>Trigger:</b> repair finished</span></div>
+      <ol class="steps">
+        <li>Itemized QA checklist run (repair match, lights, AC, fluids, tyres, cleaning).</li>
+        <li>All required items pass.</li>
+      </ol>
+      <div class="out ok"><b>Outcome:</b> Cleaning → Ready for Rent.</div>
+    </div>
+
+    <div class="sc blk">
+      <div class="sc-h"><span class="sc-id">H2</span><span class="sc-t">QA fail → back to garage</span><span class="st ok">works today</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">Abu Marouf</span></span><span><b>Trigger:</b> a QA item fails</span></div>
+      <ol class="steps">
+        <li>An item fails the checklist.</li>
+        <li>The car routes back — the re-inspection layer sends it to a different person.</li>
+      </ol>
+      <div class="out blk"><b>Outcome:</b> Car <b>cannot</b> be released until it passes.</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">H3</span><span class="sc-t">Road test required</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">Abu Marouf</span></span><span><b>Trigger:</b> safety-critical repair / idle &gt; 7d / luxury</span></div>
+      <ol class="steps">
+        <li>The rule flags road-test-required.</li>
+        <li>QA cannot pass until the road test passes.</li>
+      </ol>
+      <div class="out wrn"><b>Outcome:</b> No safety repair released without a documented road test.</div>
+    </div>
+
+    <div class="sc pl">
+      <div class="sc-h"><span class="sc-id">H4</span><span class="sc-t">Sell / Replace alert</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">System → Management</span></span><span><b>Trigger:</b> 12-mo maintenance cost vs value crosses ratio</span></div>
+      <ol class="steps">
+        <li>Trailing 12-month maintenance spend is compared to the car's value.</li>
+        <li>It crosses the set ratio.</li>
+      </ol>
+      <div class="out wrn"><b>Outcome:</b> "Sell / Replace / Stop-Renting" recommendation raised.</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">H5</span><span class="sc-t">Stuck too long in a status</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">System → Management</span></span><span><b>Trigger:</b> 7 / 14 days in one workflow status</span></div>
+      <ol class="steps">
+        <li>A detector reads <code>last_state_change_at</code>.</li>
+        <li>7 days → warning, 14 days → critical alert to management.</li>
+      </ol>
+      <div class="out wrn"><b>Outcome:</b> No car silently rots in a stage.</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">H6</span><span class="sc-t">Idle car — readiness before next rental</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">Fleet-Ready</span></span><span><b>Trigger:</b> car sat idle &gt; 7 / 14 / 30 days</span></div>
+      <ol class="steps">
+        <li>Idle-days matrix sets the required readiness level.</li>
+        <li>&gt;7d readiness + short road test · &gt;14d battery/tyres/fluids · &gt;30d full technical.</li>
+      </ol>
+      <div class="out wrn"><b>Outcome:</b> A long-parked car is re-validated before it's handed over again.</div>
+    </div>
+  </section>
+
+  <!-- I -->
+  <section class="cat">
+    <div class="cat-h"><span class="ico">🛡️</span><h2>I · Safety-Decision Audit (the Safety Guardian)</h2><span class="cnt">3 scenarios</span></div>
+    <div class="cat-line"></div>
+
+    <div class="sc">
+      <div class="sc-h"><span class="sc-id">I1</span><span class="sc-t">Agreement — silent pass</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">Abu Marouf</span></span><span><b>Trigger:</b> inspector writes a description</span></div>
+      <ol class="steps">
+        <li>He types "brake noise" → the system scans keywords → suggests 🔴 Safety-Critical.</li>
+        <li>He marks the car <b>Non-Rentable</b> — his call agrees with the suggestion.</li>
+      </ol>
+      <div class="out ok"><b>Outcome:</b> No conflict — saved silently, no audit, no alert.</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">I2</span><span class="sc-t">Trivial issue grounded — reverse conflict</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actors:</b><span class="actor">Abu Marouf</span><span class="actor">Admin</span></span><span><b>Trigger:</b> low-severity keyword, non-rentable call</span></div>
+      <ol class="steps">
+        <li>He types "minor paint scratch" → system suggests 🟢 Minor.</li>
+        <li>He marks the car <b>Non-Rentable</b> — contradicts the suggestion (grounding a trivial car).</li>
+        <li>System flags <code>audit_required</code>, forces an override reason, alerts the Admin.</li>
+      </ol>
+      <div class="out wrn"><b>Outcome:</b> Recorded — the Admin can see <b>why</b> a rentable car was pulled off the line.</div>
+    </div>
+
+    <div class="sc blk">
+      <div class="sc-h"><span class="sc-id">I3</span><span class="sc-t">Brake fault cleared as rentable → Admin alerted</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actors:</b><span class="actor">Abu Marouf</span><span class="actor">Admin</span></span><span><b>Trigger:</b> high-severity keyword, rentable call</span></div>
+      <ol class="steps">
+        <li>He types "brakes soft" → system suggests 🔴 Safety-Critical.</li>
+        <li>He marks the car <b>Rentable</b> anyway — a dangerous car cleared against system logic.</li>
+        <li>Save is <b>blocked</b> until he writes an override reason.</li>
+        <li>An <b>instant push hits the Admin</b>; the decision lands in the audit queue with the full before/after trail.</li>
+      </ol>
+      <div class="out blk"><b>Outcome:</b> His judgment is honored, but <b>nothing dangerous is cleared invisibly</b> — the guardian is on.</div>
+    </div>
+  </section>
+
+  <!-- J -->
+  <section class="cat">
+    <div class="cat-h"><span class="ico">🖥️</span><h2>J · Command Center (transparency)</h2><span class="cnt">3 scenarios</span></div>
+    <div class="cat-line"></div>
+
+    <div class="sc">
+      <div class="sc-h"><span class="sc-id">J1</span><span class="sc-t">Every action lands in the feed</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">System</span></span><span><b>Trigger:</b> any critical action (valuation, approval, set-to-ready…)</span></div>
+      <ol class="steps">
+        <li>A manager valuates a cost; Abu Marouf sets a car ready.</li>
+        <li>Each writes one <code>activity_log</code> row via the central <code>ActivityLogger</code>.</li>
+      </ol>
+      <div class="out ok"><b>Outcome:</b> The Activity Feed shows <b>actor · timestamp · the exact change</b> — no silent updates.</div>
+    </div>
+
+    <div class="sc">
+      <div class="sc-h"><span class="sc-id">J2</span><span class="sc-t">"Where is car X?" — one answer</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">Admin / Omar</span></span><span><b>Trigger:</b> opens the live tracker</span></div>
+      <ol class="steps">
+        <li>The tracker reads <code>livePosition()</code> + the active logistics move + garage stint.</li>
+        <li>Each car shows status → owner/assignee; if in Maintenance → which garage + which supervisor.</li>
+      </ol>
+      <div class="out ok"><b>Outcome:</b> Fleet-wide "where is it and who has it" — from one source, no fragmented boards.</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">J3</span><span class="sc-t">Stale task surfaces red</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actors:</b><span class="actor">System</span><span class="actor">Management</span></span><span><b>Trigger:</b> a claimed task isn't finished within X hours</span></div>
+      <ol class="steps">
+        <li>Someone claims a task but doesn't complete it.</li>
+        <li>The overview compares <code>last_state_change_at</code> to the stage SLA and flags it red — next to Yellow-in-field and hierarchy-pending approvals.</li>
+      </ol>
+      <div class="out wrn"><b>Outcome:</b> Nothing stalls unseen — Omar &amp; the Admin catch it at a glance.</div>
+    </div>
+  </section>
+
+  <!-- K -->
+  <section class="cat">
+    <div class="cat-h"><span class="ico">🧠</span><h2>K · Intelligence &amp; Enforcement (Phases 9–11)</h2><span class="cnt">6 scenarios</span></div>
+    <div class="cat-line"></div>
+
+    <div class="sc">
+      <div class="sc-h"><span class="sc-id">K1</span><span class="sc-t">The system picks the garage (multi-criteria)</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">System → Supervisor</span></span><span><b>Trigger:</b> a ticket needs a garage</span></div>
+      <ol class="steps">
+        <li>The routing engine scores every garage on <b>specialty · fault-type · vehicle-class · rating · comeback-rate · completion-time · price · parts · proximity · warranty</b>.</li>
+        <li>It returns the <b>top 3</b> with each score + reasons + an <b>estimated price from history</b> (Phase 9).</li>
+        <li>The supervisor accepts the pick, or overrides <em>with a written reason</em>.</li>
+      </ol>
+      <div class="out ok"><b>Outcome:</b> The best-fit garage is chosen on <b>data, not relationships</b> — and any override is logged.</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">K2</span><span class="sc-t">High-cost variance → cost warning</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actors:</b><span class="actor">System</span><span class="actor">Admin</span></span><span><b>Trigger:</b> a garage quote is &gt;20% over history</span></div>
+      <ol class="steps">
+        <li>The predictor compares the quote to <code>garage_cost_stats</code> for that model + fault.</li>
+        <li>It's more than 20% above the historical average → a <b>High-Cost Warning</b> badge.</li>
+      </ol>
+      <div class="out wrn"><b>Outcome:</b> You see you're likely overpaying — <b>non-blocking</b>: a premium garage is still allowed.</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">K3</span><span class="sc-t">Accident → receipted chain to managers</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actors:</b><span class="actor">System</span><span class="actor">Managers</span></span><span><b>Trigger:</b> damage_status = NEW / accident event</span></div>
+      <ol class="steps">
+        <li>Instant <b>High-Priority</b> Push + In-App to Abdullah &amp; Walid with photos + liability field (non-dismissible).</li>
+        <li>Their <b>Submit Assessment</b> auto-drops a note-carrying task to Abu Marouf — who couldn't see it before.</li>
+        <li><code>notified_at / viewed_at / actioned_at</code> logged per role.</li>
+      </ol>
+      <div class="out ok"><b>Outcome:</b> A guaranteed, receipted hand-off — "I didn't get the notification" is impossible.</div>
+    </div>
+
+    <div class="sc blk">
+      <div class="sc-h"><span class="sc-id">K4</span><span class="sc-t">Odometer rollback → Data Integrity Error</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actors:</b><span class="actor">Driver</span><span class="actor">Admin</span></span><span><b>Trigger:</b> entered odometer &lt; previous record</span></div>
+      <ol class="steps">
+        <li>At a status change, the entry is lower than the last logged reading.</li>
+        <li>The save is <b>hard-blocked</b> with a Data Integrity Error.</li>
+        <li>Only the <b>Admin</b> can approve the correction (supervisors cannot).</li>
+      </ol>
+      <div class="out blk"><b>Outcome:</b> Odometer tampering can't slip through — the transaction stops until the Admin clears it.</div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">K5</span><span class="sc-t">GPS/Odometer discrepancy → tamper flag</span><span class="st pl">planned · needs GPS feed</span></div>
+      <div class="meta"><span><b>Actor:</b><span class="actor">System</span></span><span><b>Trigger:</b> GPS distance diverges from odometer distance</span></div>
+      <ol class="steps">
+        <li>The engine compares GPS-calculated km to the odometer-logged km.</li>
+        <li>A large divergence raises a <b>tamper / GPS-gap flag</b> for review.</li>
+      </ol>
+      <div class="out wrn"><b>Outcome:</b> The odometer stays the record of truth; GPS corroborates and catches manipulation. <em>(Activates when the GPS feed is connected.)</em></div>
+    </div>
+
+    <div class="sc wrn">
+      <div class="sc-h"><span class="sc-id">K6</span><span class="sc-t">Excess mileage → Policy Violation alert</span><span class="st pl">planned</span></div>
+      <div class="meta"><span><b>Actors:</b><span class="actor">System</span><span class="actor">Admin</span></span><span><b>Trigger:</b> active km &gt; contractual allowed + 5%</span></div>
+      <ol class="steps">
+        <li>Allowed = <code>miles_allowed_pd</code> × rental days; the rental crosses allowed + 5%.</li>
+        <li>System auto-tags the rental <code>excess_mileage</code> and fires a <b>Policy Violation Alert</b> to the Admin; the Usage Dashboard turns 🔴.</li>
+      </ol>
+      <div class="out wrn"><b>Outcome:</b> Contract abuse is caught automatically — no manual mileage auditing.</div>
+    </div>
+  </section>
+
+  <footer>Fleet System · Every Scenario (Storyboard) · companion to the Unified Master Use Case · 2026-07-02</footer>
+
+</div>
+</body>
+</html>

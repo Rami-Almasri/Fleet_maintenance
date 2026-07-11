@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>نظام سير عمل صيانة الأسطول — تحليل حالات الاستخدام</title>
+<style>
+  :root{
+    --ink:#0f172a; --ink-soft:#334155; --muted:#64748b; --line:#e2e8f0;
+    --bg:#f8fafc; --card:#ffffff;
+    --brand:#1d4ed8; --brand-soft:#eff6ff; --brand-line:#bfdbfe;
+    --inspect:#7c3aed; --inspect-soft:#f5f3ff;
+    --logi:#0891b2;    --logi-soft:#ecfeff;
+    --ctrl:#c2410c;    --ctrl-soft:#fff7ed;
+    --ok:#15803d; --ok-soft:#f0fdf4; --warn:#b45309;
+    --shadow:0 1px 2px rgba(15,23,42,.04), 0 8px 24px rgba(15,23,42,.06);
+  }
+  *{box-sizing:border-box}
+  html{-webkit-print-color-adjust:exact; print-color-adjust:exact}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:'Segoe UI',Tahoma,'Dubai',Arial,sans-serif;
+    line-height:1.8; font-size:15.5px;
+  }
+  .wrap{max-width:980px; margin:0 auto; padding:48px 32px 80px}
+
+  /* Cover */
+  .cover{
+    background:linear-gradient(225deg,#1e3a8a 0%,#1d4ed8 55%,#2563eb 100%);
+    color:#fff; border-radius:22px; padding:54px 48px; position:relative; overflow:hidden;
+    box-shadow:var(--shadow);
+  }
+  .cover::after{
+    content:""; position:absolute; left:-80px; top:-80px; width:320px; height:320px;
+    background:radial-gradient(circle,rgba(255,255,255,.16),transparent 65%); border-radius:50%;
+  }
+  .cover .kicker{text-transform:uppercase; letter-spacing:.1em; font-size:12.5px; font-weight:700; opacity:.85; margin:0 0 14px}
+  .cover h1{font-size:40px; line-height:1.25; margin:0 0 16px; font-weight:800}
+  .cover p{font-size:17px; max-width:660px; margin:0; opacity:.94}
+  .cover .meta{margin-top:30px; display:flex; gap:34px; flex-wrap:wrap; font-size:13.5px; opacity:.9; border-top:1px solid rgba(255,255,255,.2); padding-top:20px}
+  .cover .meta b{display:block; font-size:11.5px; letter-spacing:.04em; text-transform:uppercase; opacity:.75; font-weight:700; margin-bottom:3px}
+
+  section{margin-top:46px}
+  .sec-head{display:flex; align-items:center; gap:14px; margin-bottom:8px}
+  .sec-num{width:34px; height:34px; flex:0 0 34px; border-radius:10px; background:var(--brand); color:#fff; font-weight:800; display:flex; align-items:center; justify-content:center; font-size:15px}
+  h2{font-size:24px; margin:0; font-weight:800}
+  .sec-sub{color:var(--muted); margin:6px 48px 22px; font-size:14.5px}
+
+  .ps{display:grid; grid-template-columns:1fr 1fr; gap:18px}
+  .ps .box{background:var(--card); border:1px solid var(--line); border-radius:16px; padding:22px 24px; box-shadow:var(--shadow)}
+  .ps .box h3{margin:0 0 10px; font-size:15.5px; display:flex; align-items:center; gap:8px}
+  .ps .pain h3{color:#b91c1c}
+  .ps .gain h3{color:var(--ok)}
+  .ps ul{margin:0; padding-right:20px; color:var(--ink-soft)}
+  .ps li{margin:5px 0}
+
+  .role{background:var(--card); border:1px solid var(--line); border-radius:18px; margin-bottom:22px; box-shadow:var(--shadow); overflow:hidden}
+  .role-head{padding:22px 26px; display:flex; align-items:center; gap:16px; border-bottom:1px solid var(--line)}
+  .avatar{width:52px; height:52px; flex:0 0 52px; border-radius:14px; display:flex; align-items:center; justify-content:center; font-size:24px}
+  .role.inspect .avatar{background:var(--inspect-soft); color:var(--inspect)}
+  .role.logi .avatar{background:var(--logi-soft); color:var(--logi)}
+  .role.ctrl .avatar{background:var(--ctrl-soft); color:var(--ctrl)}
+  .role-head .who{flex:1}
+  .role-head .who h3{margin:0; font-size:19px; font-weight:800}
+  .role-head .who .tag{color:var(--muted); font-size:14px; margin-top:2px}
+  .pill{font-size:11.5px; font-weight:700; letter-spacing:.02em; padding:6px 13px; border-radius:999px}
+  .role.inspect .pill{background:var(--inspect-soft); color:var(--inspect)}
+  .role.logi .pill{background:var(--logi-soft); color:var(--logi)}
+  .role.ctrl .pill{background:var(--ctrl-soft); color:var(--ctrl)}
+
+  .uc{padding:18px 26px; border-bottom:1px solid var(--line)}
+  .uc:last-child{border-bottom:0}
+  .uc-top{display:flex; align-items:baseline; gap:12px; margin-bottom:6px}
+  .uc-id{font-size:12px; font-weight:800; color:#fff; background:var(--ink); padding:3px 9px; border-radius:7px; flex:0 0 auto; direction:ltr}
+  .uc-title{font-weight:700; font-size:16px}
+  .uc-body{color:var(--ink-soft); font-size:15px; margin:0 0 8px}
+  .uc-sys{background:var(--brand-soft); border:1px solid var(--brand-line); border-radius:10px; padding:10px 14px; font-size:14px; color:#1e40af; display:flex; gap:9px; align-items:flex-start}
+  .uc-sys b{white-space:nowrap}
+
+  .flow{display:flex; gap:10px; align-items:stretch; overflow-x:auto; padding:6px 2px 14px}
+  .stage{flex:1 1 0; min-width:150px; background:var(--card); border:1px solid var(--line); border-radius:14px; padding:16px; box-shadow:var(--shadow)}
+  .stage .n{width:26px; height:26px; border-radius:8px; background:var(--brand); color:#fff; font-weight:800; font-size:13px; display:flex; align-items:center; justify-content:center; margin-bottom:10px}
+  .stage h4{margin:0 0 6px; font-size:15px; font-weight:800}
+  .stage .by{font-size:12.5px; color:var(--muted); margin-bottom:8px}
+  .stage .vs{font-size:11.5px; font-weight:700; padding:4px 8px; border-radius:6px; background:#f1f5f9; color:var(--ink-soft); display:inline-block}
+  .arrow{display:flex; align-items:center; color:#94a3b8; font-size:20px; flex:0 0 auto}
+  .term{display:flex; gap:12px; margin-top:16px; flex-wrap:wrap}
+  .term .t{flex:1 1 240px; border-radius:12px; padding:14px 18px; font-size:14px; border:1px solid}
+  .term .closed{background:var(--ok-soft); border-color:#bbf7d0; color:#166534}
+  .term .cancel{background:#fef2f2; border-color:#fecaca; color:#991b1b}
+  .term .t b{display:block; margin-bottom:3px; font-size:14.5px}
+
+  .stories{display:grid; grid-template-columns:1fr 1fr; gap:16px}
+  .story{background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 18px; box-shadow:var(--shadow); font-size:14.5px; color:var(--ink-soft); border-inline-start-width:4px}
+  .story.inspect{border-inline-start-color:var(--inspect)}
+  .story.logi{border-inline-start-color:var(--logi)}
+  .story.ctrl{border-inline-start-color:var(--ctrl)}
+  .story .lbl{font-size:11.5px; font-weight:800; margin-bottom:6px}
+  .story.inspect .lbl{color:var(--inspect)}
+  .story.logi .lbl{color:var(--logi)}
+  .story.ctrl .lbl{color:var(--ctrl)}
+
+  table{width:100%; border-collapse:collapse; background:var(--card); border-radius:14px; overflow:hidden; box-shadow:var(--shadow); font-size:14.5px}
+  thead th{background:#0f172a; color:#fff; text-align:right; padding:13px 18px; font-size:13.5px}
+  tbody td{padding:13px 18px; border-top:1px solid var(--line); vertical-align:top}
+  tbody tr:nth-child(even){background:#fafcff}
+  .badge{font-size:11.5px; font-weight:700; padding:3px 10px; border-radius:6px}
+  .b-new{background:var(--brand-soft); color:var(--brand)}
+  .b-reuse{background:var(--ok-soft); color:var(--ok)}
+
+  .note{margin-top:22px; background:#fffbeb; border:1px solid #fde68a; border-radius:12px; padding:16px 20px; font-size:14px; color:#78350f}
+  .note b{color:#92400e}
+
+  footer{margin-top:54px; padding-top:22px; border-top:1px solid var(--line); color:var(--muted); font-size:13px; text-align:center}
+
+  @media print{ body{background:#fff} .wrap{padding:0} section,.role,.stage,.story,.box{break-inside:avoid} .cover{border-radius:0} }
+  @media (max-width:720px){ .ps,.stories{grid-template-columns:1fr} .cover h1{font-size:30px} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- COVER -->
+  <header class="cover">
+    <p class="kicker">عمليات الأسطول · إعادة هندسة العملية</p>
+    <h1>نظام سير عمل صيانة الأسطول</h1>
+    <p>استبدال عملية الصيانة اليدوية القائمة على «واتساب» بسير عمل واحد ذاتي التوثيق — حيث يقوم كل إجراء من المفتش وفريق اللوجستيات والمراقبين بإنشاء البيانات تلقائيًا وفي الوقت الفعلي.</p>
+    <div class="meta">
+      <div><b>أُعِدّ لـ</b>مراجعة الإدارة</div>
+      <div><b>النطاق</b>تحليل حالات الاستخدام والتصميم الوظيفي</div>
+      <div><b>الحالة</b>مقترَح</div>
+      <div><b>التاريخ</b>يونيو 2026</div>
+    </div>
+  </header>
+
+  <!-- 1 -->
+  <section>
+    <div class="sec-head"><div class="sec-num">١</div><h2>لماذا نُغيّر الطريقة؟</h2></div>
+    <p class="sec-sub">العملية الحالية تعيش داخل رسائل الدردشة؛ لا شيء يُتتبَّع أو يُبحَث فيه أو تُحاسَب عليه جهة.</p>
+    <div class="ps">
+      <div class="box pain">
+        <h3>⚠️ اليوم — واتساب وجداول البيانات</h3>
+        <ul>
+          <li>الحالة متناثرة في رسائل دردشة متفرّقة</li>
+          <li>المراقبون يُعيدون كتابة كل شيء يدويًا في جدول بيانات</li>
+          <li>لا سجلّ لمن فعل ماذا، ولا متى</li>
+          <li>السيارات «تضيع» بين الفحص والكراج</li>
+          <li>لا تنبيهات — تُكتشف المشاكل متأخرًا</li>
+        </ul>
+      </div>
+      <div class="box gain">
+        <h3>✅ المقترَح — سير عمل واحد مباشر</h3>
+        <ul>
+          <li>كل دور يعمل داخل التطبيق، والنظام يُسجّل تلقائيًا</li>
+          <li>المراقبون يحصلون على لوحة مباشرة — دون إدخال يدوي</li>
+          <li>كل خطوة مختومة بالوقت ومنسوبة لصاحبها</li>
+          <li>حالة السيارة الدقيقة مرئية دائمًا</li>
+          <li>إشعارات فورية تُسلّم السيارة بين الفرق</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2 -->
+  <section>
+    <div class="sec-head"><div class="sec-num">٢</div><h2>الأدوار الثلاثة وحالات الاستخدام</h2></div>
+    <p class="sec-sub">تذكرة صيانة واحدة تنتقل بين الأدوار. كل تسليم يبدأ بإجراء حقيقي — ويُشعِر الفريق التالي فورًا.</p>
+
+    <!-- Inspector -->
+    <div class="role inspect">
+      <div class="role-head">
+        <div class="avatar">🔍</div>
+        <div class="who"><h3>أبو معروف</h3><div class="tag">المفتّش — يبدأ كل مهمة ويُنهيها</div></div>
+        <span class="pill">الدور 1</span>
+      </div>
+      <div class="uc">
+        <div class="uc-top"><span class="uc-id">UC-1</span><span class="uc-title">بدء مهمة صيانة</span></div>
+        <p class="uc-body">يختار مركبة ويحدّد السبب — <b>صيانة دورية</b> أو <b>مشكلة مُبلَّغ عنها من العميل</b> — ثم يقدّم <b>تقرير قيادة تجريبية</b> (ملاحظات وصور وإشارات أضرار) مباشرةً في النظام.</p>
+        <div class="uc-sys"><b>النظام ←</b><span>يفتح تذكرة صيانة، ويلتقط التقرير مرة واحدة، ويُنبّه فريق اللوجستيات تلقائيًا. لا حاجة لإرسال أي رسالة.</span></div>
+      </div>
+      <div class="uc">
+        <div class="uc-top"><span class="uc-id">UC-2</span><span class="uc-title">إعادة الفحص عند العودة</span></div>
+        <p class="uc-body">عند عودة السيارة، يراجعها بمقارنة «قبل/بعد» ويضع علامة <b>ناجح</b> أو <b>راسب</b>.</p>
+        <div class="uc-sys"><b>النظام ←</b><span>«ناجح» يُعيد السيارة إلى الأسطول المتاح؛ و«راسب» يُعيد فتح مرحلة إصلاح. لا يمكن لسيارة أن تعود للخدمة دون إصلاح بصمت.</span></div>
+      </div>
+    </div>
+
+    <!-- Logistics -->
+    <div class="role logi">
+      <div class="role-head">
+        <div class="avatar">🚚</div>
+        <div class="who"><h3>فريق اللوجستيات / التوصيل</h3><div class="tag">ينقل السيارة إلى الكراج ويُبلّغ بالملاحظات</div></div>
+        <span class="pill">الدور 2</span>
+      </div>
+      <div class="uc">
+        <div class="uc-top"><span class="uc-id">UC-3</span><span class="uc-title">استلام المهمة في الوقت الفعلي</span></div>
+        <p class="uc-body">يتلقّى إشعارًا فوريًا لحظة تقديم أبو معروف لتقريره — دون الحاجة لمتابعة الدردشة.</p>
+        <div class="uc-sys"><b>النظام ←</b><span>إشعار فوري وجرس داخل التطبيق، مرتبط مباشرةً بتذكرة السيارة.</span></div>
+      </div>
+      <div class="uc">
+        <div class="uc-top"><span class="uc-id">UC-4</span><span class="uc-title">مسح / تصوير عدّاد المسافة</span></div>
+        <p class="uc-body">يلتقط قراءة المسافة عند التسليم بتصوير العدّاد.</p>
+        <div class="uc-sys"><b>النظام ←</b><span>يُخزّن القراءة والصورة، ويُغذّي فحوصات تسلسل المسافة الحالية تلقائيًا.</span></div>
+      </div>
+      <div class="uc">
+        <div class="uc-top"><span class="uc-id">UC-5</span><span class="uc-title">اختيار الكراج الوجهة</span></div>
+        <p class="uc-body">يختار الكراج من <b>قائمة محدّدة مسبقًا</b> — دون كتابة حرّة ولا أخطاء إملائية.</p>
+        <div class="uc-sys"><b>النظام ←</b><span>يُسجّل بدقّة إلى أين ذهبت السيارة؛ ويراها المراقبون مباشرة.</span></div>
+      </div>
+      <div class="uc">
+        <div class="uc-top"><span class="uc-id">UC-6</span><span class="uc-title">التحديث بملاحظات الكراج</span></div>
+        <p class="uc-body">يُسجّل ملاحظات استلام الكراج عند التسليم.</p>
+        <div class="uc-sys"><b>النظام ←</b><span>يَنقل السيارة إلى «تحت الإصلاح» ويفتح سجلّ الإصلاح تلقائيًا.</span></div>
+      </div>
+    </div>
+
+    <!-- Controllers -->
+    <div class="role ctrl">
+      <div class="role-head">
+        <div class="avatar">📊</div>
+        <div class="who"><h3>لين ومروى</h3><div class="tag">المراقبتان — تُشرفان على الأسطول كلّه، مباشرةً</div></div>
+        <span class="pill">الدور 3</span>
+      </div>
+      <div class="uc">
+        <div class="uc-top"><span class="uc-id">UC-7</span><span class="uc-title">لوحة دورة الحياة المباشرة</span></div>
+        <p class="uc-body">لوحة — وليست جدول بيانات — تتابع كل مركبة في الوقت الفعلي عبر <b>فحص قيد الانتظار ← في الطريق ← تحت الإصلاح ← جاهزة لإعادة الفحص</b>، وتعرض السيارة والسبب والكراج والمسافة ومدّة بقائها في كل مرحلة.</p>
+        <div class="uc-sys"><b>النظام ←</b><span>يُحدّث نفسه من التذاكر المباشرة. صفر إدخال يدوي.</span></div>
+      </div>
+      <div class="uc">
+        <div class="uc-top"><span class="uc-id">UC-8</span><span class="uc-title">الإشراف وإزالة العوائق</span></div>
+        <p class="uc-body">ترصد السيارات العالقة طويلًا في مرحلة، وتُعيد تعيين الكراجات، وتعتمد فواتير الإصلاح فوق الحدّ، وتُلغي الإنذارات الكاذبة.</p>
+        <div class="uc-sys"><b>النظام ←</b><span>يُميّز الإصلاحات المتأخرة والاعتمادات المعلّقة تلقائيًا — لا شيء يفلت.</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3 -->
+  <section>
+    <div class="sec-head"><div class="sec-num">٣</div><h2>دورة الحياة — تدفّق الحالات</h2></div>
+    <p class="sec-sub">كل مرحلة تُضبَط بإجراء حقيقي وتُحدّث حالة المركبة في الأسطول تلقائيًا.</p>
+    <div class="flow">
+      <div class="stage"><div class="n">١</div><h4>فحص قيد الانتظار</h4><div class="by">يضبطها · المفتّش</div><span class="vs">المركبة: قيادة تجريبية</span></div>
+      <div class="arrow">←</div>
+      <div class="stage"><div class="n">٢</div><h4>في الطريق إلى الكراج</h4><div class="by">يضبطها · اللوجستيات</div><span class="vs">المركبة: نقل</span></div>
+      <div class="arrow">←</div>
+      <div class="stage"><div class="n">٣</div><h4>تحت الإصلاح</h4><div class="by">تضبطها · ملاحظات الكراج</div><span class="vs">المركبة: صيانة</span></div>
+      <div class="arrow">←</div>
+      <div class="stage"><div class="n">٤</div><h4>جاهزة لإعادة الفحص</h4><div class="by">يضبطها · انتهاء الإصلاح</div><span class="vs">المركبة: صيانة</span></div>
+    </div>
+    <div class="term">
+      <div class="t closed"><b>✓ مغلَقة</b> المفتّش يُجيز السيارة — فتعود إلى الأسطول المتاح (أو إلى عقد إيجارها).</div>
+      <div class="t cancel"><b>✕ ملغاة</b> إنذار كاذب أو مهمة متوقّفة — تُغلَق بسبب مُسجَّل وموثّق بالكامل.</div>
+    </div>
+    <div class="note">
+      <b>قاعدة أمان مدمجة:</b> السيارة المؤجَّرة حاليًا لا يمكن إرسالها إلى الكراج إلا بتعيين مركبة بديلة وموافقة مدير — حمايةً للعميل وللإيراد معًا.
+    </div>
+  </section>
+
+  <!-- 4 -->
+  <section>
+    <div class="sec-head"><div class="sec-num">٤</div><h2>قصص المستخدمين</h2></div>
+    <p class="sec-sub">نفس سير العمل، مرويًّا من وجهة نظر كل شخص.</p>
+    <div class="stories">
+      <div class="story inspect"><div class="lbl">المفتّش</div>بصفتي مفتّشًا، أريد بدء مهمة باختيار سيارة وسبب، ليُرافق السياقُ الصحيح السيارةَ طوال الطريق.</div>
+      <div class="story inspect"><div class="lbl">المفتّش</div>بصفتي مفتّشًا، أريد تقديم تقرير القيادة التجريبية داخل التطبيق، ليُسجَّل <i>مرة واحدة</i> ويراه الجميع — لا أن يُعاد كتابته من الدردشة.</div>
+      <div class="story inspect"><div class="lbl">المفتّش</div>بصفتي مفتّشًا، أريد أن يُنبّه تقديمُ تقريري فريقَ اللوجستيات تلقائيًا، حتى لا أُطارد أحدًا لنقل السيارة.</div>
+      <div class="story inspect"><div class="lbl">المفتّش</div>بصفتي مفتّشًا، أريد إعادة الفحص وإجازة/رسوب السيارة عند العودة، حتى لا يعود شيء للخدمة دون إصلاح.</div>
+
+      <div class="story logi"><div class="lbl">اللوجستيات</div>بصفتي من اللوجستيات، أريد تنبيهًا فوريًا عند تقديم الفحص، لأتحرّك دون متابعة الدردشة.</div>
+      <div class="story logi"><div class="lbl">اللوجستيات</div>بصفتي من اللوجستيات، أريد تصوير العدّاد داخل التطبيق، لتُلتقط المسافة عند التسليم بدقّة.</div>
+      <div class="story logi"><div class="lbl">اللوجستيات</div>بصفتي من اللوجستيات، أريد اختيار الكراج من قائمة ثابتة، ليعرف المراقبون دائمًا إلى أين ذهبت السيارة.</div>
+      <div class="story logi"><div class="lbl">اللوجستيات</div>بصفتي من اللوجستيات، أريد تسجيل ملاحظات الكراج، لتنتقل السيارة رسميًا إلى «تحت الإصلاح» ويُفتح السجلّ تلقائيًا.</div>
+
+      <div class="story ctrl"><div class="lbl">المراقبون</div>بصفتي مراقبًا، أريد لوحة مباشرة لحالة كل سيارة، لأستبدل جدول بياناتي بشاشة تُحدّث نفسها.</div>
+      <div class="story ctrl"><div class="lbl">المراقبون</div>بصفتي مراقبًا، أريد رؤية مدّة بقاء كل سيارة في مرحلة، لأتابع التعطّل قبل أن يصبح مشكلة.</div>
+      <div class="story ctrl"><div class="lbl">المراقبون</div>بصفتي مراقبًا، أريد تنبيهات للإصلاحات المتأخرة والفواتير المحتاجة لاعتماد، حتى لا يفلت شيء.</div>
+      <div class="story ctrl"><div class="lbl">المراقبون</div>بصفتي مراقبًا، أريد كل تغيير مختومًا بمَن ومتى، ليكون لديّ سجلّ تدقيق دون تصفّح الدردشة.</div>
+    </div>
+  </section>
+
+  <!-- 5 -->
+  <section>
+    <div class="sec-head"><div class="sec-num">٥</div><h2>كيف يتكامل مع نظامنا الحالي</h2></div>
+    <p class="sec-sub">سير العمل مبنيٌّ في معظمه على ما نملكه أصلًا — أقلّ أجزاء جديدة، وأقصى إعادة استخدام.</p>
+    <table>
+      <thead><tr><th style="width:34%">القدرة</th><th style="width:16%">الحالة</th><th>الكيفية</th></tr></thead>
+      <tbody>
+        <tr><td>تذكرة الصيانة (العمود الفقري لسير العمل)</td><td><span class="badge b-new">جديد</span></td><td>سجلّ واحد يتنقّل عبر المراحل الأربع ويربط كل شيء معًا.</td></tr>
+        <tr><td>تقرير القيادة التجريبية والعدّاد والصور</td><td><span class="badge b-reuse">إعادة استخدام</span></td><td>مبنيّ على خط أنابيب فحص المركبات والتخزين الحالي.</td></tr>
+        <tr><td>قائمة الكراجات</td><td><span class="badge b-reuse">إعادة استخدام</span></td><td>دليل المورّدين الحالي، مُصفّى على الكراجات.</td></tr>
+        <tr><td>تفاصيل الإصلاح والتكلفة والاعتمادات</td><td><span class="badge b-reuse">إعادة استخدام</span></td><td>سجلّات الصيانة/الورشة الحالية ولوحة التكلفة.</td></tr>
+        <tr><td>الإشعارات الفورية</td><td><span class="badge b-reuse">إعادة استخدام</span></td><td>محرّك التنبيهات الحالي يحمل التسليم بين الأدوار.</td></tr>
+        <tr><td>السيارة البديلة (أمان الإيجار)</td><td><span class="badge b-reuse">إعادة استخدام</span></td><td>لوحة تبديل الصيانة الحالية تحمي الإيجارات النشطة.</td></tr>
+        <tr><td>التحكّم بالصلاحيات (مَن يفعل ماذا)</td><td><span class="badge b-new">جديد</span></td><td>إضافة دورَي «المفتّش» و«اللوجستيات» إلى نظام الصلاحيات الحالي.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <footer>نظام سير عمل صيانة الأسطول · تحليل حالات الاستخدام والتصميم الوظيفي · أُعِدّ لمراجعة الإدارة، يونيو 2026</footer>
+
+</div>
+</body>
+</html>

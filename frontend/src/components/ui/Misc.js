@@ -17,7 +17,7 @@ export function PageHeader({ title, subtitle, children }) {
           <span className="h-6 w-1.5 rounded-full bg-gradient-to-b from-indigo-500 to-violet-500" />
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">{title}</h1>
         </div>
-        {subtitle && <p className="mt-1.5 text-sm text-slate-500 sm:pl-4">{subtitle}</p>}
+        {subtitle && <p className="mt-1.5 text-sm text-slate-500 sm:ps-4">{subtitle}</p>}
       </div>
       {children && <div className="flex flex-wrap items-center gap-3">{children}</div>}
     </div>
@@ -43,7 +43,7 @@ export function EmptyState({ title = 'Nothing here', message, icon }) {
 export function SearchInput({ value, onChange, placeholder = 'Search…', className = '' }) {
   return (
     <div className={`relative ${className}`}>
-      <svg className="pointer-events-none absolute left-3.5 top-2.5 h-5 w-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.7">
+      <svg className="pointer-events-none absolute start-3.5 top-2.5 h-5 w-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.7">
         <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.3-4.3M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z" />
       </svg>
       <input
@@ -51,7 +51,7 @@ export function SearchInput({ value, onChange, placeholder = 'Search…', classN
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-11 pr-3 text-sm shadow-sm outline-none transition focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10"
+        className="w-full rounded-xl border border-slate-200 bg-white py-2.5 ps-11 pe-3 text-sm shadow-sm outline-none transition focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10"
       />
     </div>
   );

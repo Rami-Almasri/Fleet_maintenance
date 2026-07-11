@@ -171,13 +171,28 @@ export default function WorkshopEvents({ vehicleId, contractId, defaultDate, exp
   };
 
   const remove = async (ev) => {
-    if (!window.confirm('Delete this workshop event? This cannot be undone.')) return;
+    // Hand-entered events are truly deleted; sheet-synced ones are tombstoned (hidden +
+    // skipped on future syncs) and can be restored, so the warning differs.
+    const msg = ev.editable
+      ? 'Delete this workshop event? This cannot be undone.'
+      : 'Remove this synced sheet event? It will be hidden and kept out of future syncs — you can restore it later.';
+    if (!window.confirm(msg)) return;
     try {
       await api.delete(`/Maintenance/events/${ev.id}`);
-      toast.success('Workshop event deleted');
+      toast.success(ev.editable ? 'Workshop event deleted' : 'Event removed — restore it anytime');
       load();
     } catch (e) {
-      toast.error(e.response?.data?.message || 'Could not delete the event');
+      toast.error(e.response?.data?.message || 'Could not remove the event');
+    }
+  };
+
+  const restore = async (ev) => {
+    try {
+      await api.post(`/Maintenance/events/tombstones/${ev.tombstone_id}/restore`);
+      toast.success('Event restored');
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.message || 'Could not restore the event');
     }
   };
 
@@ -206,46 +221,61 @@ export default function WorkshopEvents({ vehicleId, contractId, defaultDate, exp
           {events.map((ev) => {
             const lvl = LEVEL[ev.priority];
             return (
-              <li key={ev.id} className="relative">
-                <span className={`absolute -left-[27px] top-1.5 h-3 w-3 rounded-full ring-4 ring-white ${ev.stage === 'IN' ? 'bg-emerald-500' : 'bg-indigo-400'}`} />
-                <div className="rounded-xl border border-gray-100 bg-white p-4 shadow-soft">
-                  <div className="flex flex-wrap items-center gap-2">
+              <li key={ev.tombstoned ? `t${ev.tombstone_id}` : ev.id} className="relative">
+                <span className={`absolute -left-[27px] top-1.5 h-3 w-3 rounded-full ring-4 ring-white ${ev.tombstoned ? 'bg-gray-300' : (ev.stage === 'IN' ? 'bg-emerald-500' : 'bg-indigo-400')}`} />
+                <div className={`rounded-xl border p-4 shadow-soft ${ev.tombstoned ? 'border-dashed border-gray-200 bg-gray-50/70' : 'border-gray-100 bg-white'}`}>
+                  <div className={`flex flex-wrap items-center gap-2 ${ev.tombstoned ? 'opacity-60' : ''}`}>
                     <Badge tone={STAGE_TONE[ev.stage] || 'slate'}>{ev.stage || '—'}</Badge>
                     {lvl && <Badge tone={lvl.tone}>{lvl.emoji} {lvl.label}</Badge>}
                     {ev.visit_context === 'routine' && <Badge tone="green" title="Planned upkeep — excluded from foresight Act-now/Chronic">Routine</Badge>}
                     {ev.visit_context === 'accident_rental' && <Badge tone="amber" title="Accident repair logged during a live rental">Accident · rental</Badge>}
                     {/* No SLA / "Overdue" badge here: this is a historical garage log (a car
                         often goes back for another visit). Live overdue lives on the board. */}
-                    {!ev.editable && <Badge tone="gray" title="Synced from the Google Sheet — read-only here">📄 Sheet</Badge>}
+                    {ev.tombstoned
+                      ? <Badge tone="red" title="Removed — hidden from the board and kept out of future syncs">🗑 Removed</Badge>
+                      : !ev.editable && <Badge tone="gray" title="Synced from the Google Sheet — read-only here">📄 Sheet</Badge>}
                     <span className="ml-auto text-xs text-gray-400">{ev.out_date ? fmtDate(ev.out_date) : '—'}</span>
                   </div>
 
-                  {ev.issues?.length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      {ev.issues.map((t) => (
-                        <span key={t} className="rounded-full bg-gray-50 px-2.5 py-0.5 text-xs font-medium text-gray-600 ring-1 ring-inset ring-gray-200">{t}</span>
-                      ))}
-                    </div>
-                  )}
+                  <div className={ev.tombstoned ? 'opacity-60' : ''}>
+                    {ev.issues?.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {ev.issues.map((t) => (
+                          <span key={t} className="rounded-full bg-gray-50 px-2.5 py-0.5 text-xs font-medium text-gray-600 ring-1 ring-inset ring-gray-200">{t}</span>
+                        ))}
+                      </div>
+                    )}
 
-                  <div className="mt-2 grid grid-cols-2 gap-x-6 gap-y-1 text-sm sm:grid-cols-4">
-                    {ev.garage && <Info label="Garage" value={ev.garage} />}
-                    {ev.expected_return_date && <Info label="Expected" value={fmtDate(ev.expected_return_date)} />}
-                    {ev.actual_in_date && <Info label="Returned" value={fmtDate(ev.actual_in_date)} />}
-                    {ev.cost != null && <Info label="Cost" value={aed2(ev.cost)} />}
-                    {ev.responsible && <Info label="Responsible" value={ev.responsible} />}
-                    {ev.maintenance_type && <Info label="Type" value={ev.maintenance_type} />}
+                    <div className="mt-2 grid grid-cols-2 gap-x-6 gap-y-1 text-sm sm:grid-cols-4">
+                      {ev.garage && <Info label="Garage" value={ev.garage} />}
+                      {ev.expected_return_date && <Info label="Expected" value={fmtDate(ev.expected_return_date)} />}
+                      {ev.actual_in_date && <Info label="Returned" value={fmtDate(ev.actual_in_date)} />}
+                      {ev.cost != null && <Info label="Cost" value={aed2(ev.cost)} />}
+                      {ev.responsible && <Info label="Responsible" value={ev.responsible} />}
+                      {ev.maintenance_type && <Info label="Type" value={ev.maintenance_type} />}
+                    </div>
+
+                    {ev.notes && <p className="mt-2 whitespace-pre-line text-sm text-gray-600">{ev.notes}</p>}
                   </div>
 
-                  {ev.notes && <p className="mt-2 whitespace-pre-line text-sm text-gray-600">{ev.notes}</p>}
-
-                  {canManage && ev.editable && (
-                    <div className="mt-3 flex gap-2">
-                      <button onClick={() => openEdit(ev)} className="text-xs font-medium text-indigo-600 hover:text-indigo-700">Edit</button>
-                      <span className="text-gray-200">·</span>
-                      <button onClick={() => remove(ev)} className="text-xs font-medium text-red-500 hover:text-red-600">Delete</button>
+                  {canManage && (ev.tombstoned ? (
+                    <div className="mt-3 flex items-center gap-2">
+                      <button onClick={() => restore(ev)} className="text-xs font-medium text-emerald-600 hover:text-emerald-700">↺ Restore</button>
+                      <span className="text-xs text-gray-400">— removed from the board &amp; future syncs</span>
                     </div>
-                  )}
+                  ) : (
+                    <div className="mt-3 flex gap-2">
+                      {ev.editable && (
+                        <>
+                          <button onClick={() => openEdit(ev)} className="text-xs font-medium text-indigo-600 hover:text-indigo-700">Edit</button>
+                          <span className="text-gray-200">·</span>
+                        </>
+                      )}
+                      <button onClick={() => remove(ev)} className="text-xs font-medium text-red-500 hover:text-red-600">
+                        {ev.editable ? 'Delete' : 'Remove'}
+                      </button>
+                    </div>
+                  ))}
                 </div>
               </li>
             );

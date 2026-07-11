@@ -13,6 +13,7 @@ class ContractService
 {
     public function __construct(
         private ContractEligibilityService $eligibility,
+        private OperationsService $operations,
     ) {
     }
     /**
@@ -70,6 +71,7 @@ class ContractService
         unset(
             $data['condition_acknowledged'], $data['condition_ack_by'],
             $data['manager_override'], $data['override_by'], $data['override_reason'],
+            $data['pull_from_maintenance'],
         );
         $data = array_merge($data, $ack);
 
@@ -87,6 +89,7 @@ class ContractService
             $this->syncMaintenance($contract, $maint);
             $this->syncItems($contract, $items);
             $this->evaluateApproval($contract);
+            $this->syncDeferredMaintenance($contract);
 
             return $contract->load(['maintenance.vendor', 'items', 'customer', 'vehicle']);
         });
@@ -256,6 +259,32 @@ class ContractService
             ['contract_id' => $contract->id],
             ['approval_status' => $status]
         );
+    }
+
+    /**
+     * Keep the vehicle's Deferred Maintenance flag in step with a newly-created contract, while
+     * preserving the single-open-contract invariant (no simultaneous Rental + Maintenance):
+     *   • a Rental (C) written for a car currently in the workshop pulls it out early for a customer
+     *     → CLOSE the maintenance ticket first, then raise the deferred-maintenance flag (the whole
+     *       [Maintenance] → [Closed + Flagged] → [Rental] transition lives in OperationsService);
+     *   • a Maintenance (U) contract means the car is (back) in the shop → clear any pending flag.
+     */
+    protected function syncDeferredMaintenance(Contract $contract): void
+    {
+        if (! $contract->vehicle_id) {
+            return;
+        }
+        $vehicle = Vehicle::find($contract->vehicle_id);
+        if (! $vehicle) {
+            return;
+        }
+
+        if ($contract->contract_type === 'U') {
+            $this->operations->resolveDeferredMaintenance($vehicle);
+        } elseif ($contract->contract_type === 'C' && $this->operations->vehicleInMaintenance($vehicle->id)) {
+            // Close the open maintenance ticket and flag the car — no dual open contracts.
+            $this->operations->deferMaintenanceForRental($vehicle, $contract->opened_by);
+        }
     }
 
     /** Pull the maintenance-header fields out of the contract payload (by reference). */

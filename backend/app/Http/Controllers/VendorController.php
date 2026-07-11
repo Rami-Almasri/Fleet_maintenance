@@ -26,7 +26,7 @@ class VendorController extends Controller
             $result = VendorResource::collection($vendor);
             return ResponseHelper::SuccessResponse($result, "Vendor retrieved successfully", 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -40,7 +40,7 @@ class VendorController extends Controller
             $result = VendorResource::make($vendor);
             return ResponseHelper::SuccessResponse($result, "Vendor created successfully", 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -53,7 +53,7 @@ class VendorController extends Controller
             $result = VendorResource::make($vendor);
             return ResponseHelper::SuccessResponse($result, "Vendor retrieved successfully", 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -67,7 +67,7 @@ class VendorController extends Controller
             $result = VendorResource::make($vendor);
             return ResponseHelper::SuccessResponse($result, "Vendor updated successfully", 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 
@@ -80,7 +80,7 @@ class VendorController extends Controller
             $this->vendorService->destroy($vendor);
             return ResponseHelper::SuccessResponse(null, "Vendor deleted successfully", 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 }

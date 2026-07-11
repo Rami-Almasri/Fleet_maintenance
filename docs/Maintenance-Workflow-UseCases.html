@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fleet Maintenance Workflow — Use Cases</title>
+<style>
+  :root{
+    --navy:#0f1f3d; --navy2:#15294f; --cyan:#0ea5b5; --cyan-soft:#e6f7f9;
+    --ink:#1c2433; --muted:#5b6677; --line:#e3e8ef; --bg:#f5f7fa;
+    --violet:#6d4ad4; --amber:#c77b12; --green:#159a64; --red:#d23b4e;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.6; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:920px; margin:0 auto; padding:0 22px 80px}
+
+  /* Hero */
+  header.hero{
+    background:linear-gradient(135deg,var(--navy),var(--navy2));
+    color:#fff; padding:54px 22px 60px; text-align:center;
+  }
+  .hero .kicker{
+    text-transform:uppercase; letter-spacing:.18em; font-size:12px;
+    color:var(--cyan); font-weight:700; margin-bottom:14px;
+  }
+  .hero h1{margin:0 0 12px; font-size:34px; line-height:1.2; font-weight:800}
+  .hero p{margin:6px 0 0; color:#c7d2e2; font-size:15px}
+  .hero .meta{
+    margin-top:24px; display:inline-flex; gap:10px; flex-wrap:wrap; justify-content:center;
+  }
+  .hero .meta span{
+    background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.16);
+    padding:6px 14px; border-radius:999px; font-size:12.5px; color:#dbe4f0;
+  }
+
+  /* Cards / sections */
+  section{
+    background:#fff; border:1px solid var(--line); border-radius:14px;
+    padding:30px 34px; margin-top:26px; box-shadow:0 1px 3px rgba(16,32,64,.04);
+  }
+  section.first{margin-top:-34px}
+  h2{
+    font-size:13px; text-transform:uppercase; letter-spacing:.12em; color:var(--cyan);
+    margin:0 0 6px; font-weight:800;
+  }
+  h2 + .h2title{font-size:23px; font-weight:800; margin:0 0 18px; color:var(--navy)}
+  h3{font-size:18px; margin:0 0 10px; color:var(--navy)}
+  p{margin:0 0 12px}
+  .lead{font-size:16px; color:var(--muted)}
+
+  ul.clean{margin:0 0 8px; padding-left:20px}
+  ul.clean li{margin:6px 0}
+
+  /* Table */
+  table{border-collapse:collapse; width:100%; margin:10px 0; font-size:14.5px}
+  th,td{text-align:left; padding:11px 14px; border-bottom:1px solid var(--line); vertical-align:top}
+  th{background:var(--cyan-soft); color:var(--navy); font-weight:700; font-size:13px}
+  tr:last-child td{border-bottom:none}
+
+  /* Flow diagram */
+  .flow{
+    display:flex; flex-wrap:wrap; gap:8px; align-items:stretch; margin:18px 0 6px;
+  }
+  .flow .step{
+    flex:1 1 120px; min-width:120px; background:var(--navy); color:#fff;
+    border-radius:10px; padding:12px 10px; text-align:center;
+  }
+  .flow .step b{display:block; font-size:13.5px; margin-bottom:3px}
+  .flow .step small{color:#9fb2cc; font-size:11px; letter-spacing:.04em; text-transform:uppercase}
+  .flow .arrow{align-self:center; color:var(--cyan); font-weight:800; font-size:20px}
+
+  /* Use case cards */
+  .uc{
+    border:1px solid var(--line); border-left:4px solid var(--cyan);
+    border-radius:10px; padding:18px 20px; margin:16px 0; background:#fcfdfe;
+  }
+  .uc .id{
+    display:inline-block; background:var(--cyan); color:#fff; font-weight:700;
+    font-size:12px; padding:3px 10px; border-radius:6px; margin-bottom:8px; letter-spacing:.03em;
+  }
+  .uc h3{margin:0 0 8px}
+  .uc .role{font-size:13px; color:var(--muted); margin:0 0 10px}
+  .uc .role b{color:var(--ink)}
+  .uc .value{
+    background:var(--cyan-soft); border-radius:8px; padding:10px 14px; margin-top:10px;
+    font-size:14px; color:#0c5e66;
+  }
+  .uc .value b{color:#0a4951}
+
+  /* Pipeline board mock */
+  .board{display:flex; gap:8px; flex-wrap:wrap; margin:14px 0}
+  .board .lane{
+    flex:1 1 110px; background:#fff; border:1px solid var(--line); border-radius:9px;
+    padding:12px 8px; text-align:center;
+  }
+  .board .lane .name{font-size:12px; font-weight:700; color:var(--navy)}
+  .board .lane .count{font-size:22px; font-weight:800; color:var(--cyan); margin-top:4px}
+  .board .lane.hot{border-color:var(--amber); background:#fff8ee}
+  .board .lane.hot .count{color:var(--amber)}
+
+  .tags{display:flex; gap:8px; margin-top:6px}
+  .tag{font-size:12px; font-weight:700; padding:3px 10px; border-radius:999px}
+  .tag.violet{background:#efeaff; color:var(--violet)}
+  .tag.amber{background:#fdf0db; color:var(--amber)}
+
+  /* Before/after table accent */
+  .ba td:first-child{color:var(--red)}
+  .ba td:last-child{color:var(--green); font-weight:600}
+
+  footer{margin-top:30px; text-align:center; color:var(--muted); font-size:13px; padding:0 22px}
+
+  @media print{
+    body{background:#fff}
+    section{box-shadow:none; break-inside:avoid; border-color:#ccc}
+    .uc{break-inside:avoid}
+    header.hero{padding:34px 22px}
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="kicker">Management Review</div>
+  <h1>Fleet Maintenance Workflow</h1>
+  <p>A digital ticket lifecycle that replaces the WhatsApp maintenance relay</p>
+  <div class="meta">
+    <span>📅 28 June 2026</span>
+    <span>✅ Live in the system</span>
+    <span>🔧 Backend + Screens shipped</span>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <section class="first">
+    <h2>The Challenge</h2>
+    <div class="h2title">Why we built this</div>
+    <p class="lead">Today, a car that needs the workshop is handled over WhatsApp messages between the
+    inspector, the drivers, and the workshop controllers. That creates real problems:</p>
+    <ul class="clean">
+      <li>No record of <b>who</b> asked for what, or <b>when</b>.</li>
+      <li>Cars sit in the workshop and nobody can say at a glance <b>how many</b> or <b>for how long</b>.</li>
+      <li>Costs and downtime are not tied back to the car's history.</li>
+      <li>A car can be sent to the workshop while it is <b>still rented</b> — with no warning.</li>
+    </ul>
+    <p>We replaced that chat thread with a <b>single, enforced digital workflow</b>. Every car moves
+    through clear stages, each handled by the right person, with a permanent record.</p>
+  </section>
+
+  <section>
+    <h2>The People</h2>
+    <div class="h2title">Who is involved</div>
+    <table>
+      <tr><th>Role</th><th>Real person / team</th><th>What they do</th></tr>
+      <tr><td><b>Inspector</b></td><td>Abu Maroof</td><td>Test-drives cars, diagnoses problems, does the final sign-off</td></tr>
+      <tr><td><b>Logistics / Driver</b></td><td>Drivers</td><td>Request inspections, move cars to/from the garage</td></tr>
+      <tr><td><b>Controller / Manager</b></td><td>Workshop controllers</td><td>Oversee repairs and approve closing</td></tr>
+    </table>
+    <p style="margin-bottom:0">The system only lets each role do <b>their</b> part — a driver cannot
+    close a repair, a garage cannot overwrite the inspector's findings, and so on.</p>
+  </section>
+
+  <section>
+    <h2>The Journey</h2>
+    <div class="h2title">A car, from problem to back-in-service</div>
+    <div class="flow">
+      <div class="step"><b>Request</b><small>Driver</small></div>
+      <div class="arrow">→</div>
+      <div class="step"><b>Diagnose</b><small>Inspector</small></div>
+      <div class="arrow">→</div>
+      <div class="step"><b>Report</b><small>Inspector</small></div>
+      <div class="arrow">→</div>
+      <div class="step"><b>Dispatch</b><small>Logistics</small></div>
+      <div class="arrow">→</div>
+      <div class="step"><b>Repair</b><small>Garage</small></div>
+      <div class="arrow">→</div>
+      <div class="step"><b>Sign-off</b><small>Inspector</small></div>
+    </div>
+    <p style="margin-top:14px; margin-bottom:0">At every step, the <b>next responsible person is
+    automatically notified</b> in the app — no more chasing people on WhatsApp.</p>
+  </section>
+
+  <section>
+    <h2>The Detail</h2>
+    <div class="h2title">Use cases</div>
+
+    <div class="uc">
+      <span class="id">UC-1</span>
+      <h3>Driver requests an inspection</h3>
+      <p class="role"><b>Who:</b> Driver &nbsp;·&nbsp; <b>Goal:</b> Flag a car that seems to have a problem</p>
+      <p>A driver picks the car and submits a request with a short note (e.g. "pulling to the left when
+      braking"). It lands in the Inspector's queue and <b>Abu Maroof is notified immediately</b>. The car
+      is not yet counted as "in the workshop" — it's only a request.</p>
+      <div class="value"><b>Business value:</b> every problem report is logged with who raised it and when, instead of a chat message that gets lost.</div>
+    </div>
+
+    <div class="uc">
+      <span class="id">UC-2</span>
+      <h3>Inspector runs a diagnostic (test drive)</h3>
+      <p class="role"><b>Who:</b> Inspector &nbsp;·&nbsp; <b>Goal:</b> Decide whether the car actually needs the workshop</p>
+      <p>The inspector test-drives the car and records findings from a <b>ready-made checklist of common
+      issues</b> (engine, brakes, tyres, electrical, A/C, bodywork…) plus any custom note.</p>
+      <div class="value"><b>Business value:</b> a diagnostic step <b>before</b> a workshop ticket means healthy cars are never sent to the garage unnecessarily — saving downtime and cost.</div>
+    </div>
+
+    <div class="uc">
+      <span class="id">UC-3</span>
+      <h3>Inspector files the report — needs work, or all clear</h3>
+      <p class="role"><b>Who:</b> Inspector &nbsp;·&nbsp; <b>Goal:</b> Turn a diagnosis into a decision</p>
+      <ul class="clean">
+        <li><b>Needs maintenance</b> → a maintenance ticket is created, Logistics is notified to move the car.</li>
+        <li><b>No maintenance needed</b> → the car is cleared and released. No ticket, no downtime.</li>
+      </ul>
+      <p>Either way the report is saved permanently, and the <b>driver who first requested it is told the
+      result</b> automatically.</p>
+      <div class="value"><b>Business value:</b> a clear, auditable yes/no decision — and the person who raised the issue always hears back.</div>
+    </div>
+
+    <div class="uc">
+      <span class="id">UC-4</span>
+      <h3>Logistics dispatches the car to the garage</h3>
+      <p class="role"><b>Who:</b> Logistics / Driver &nbsp;·&nbsp; <b>Goal:</b> Move the car to the workshop, on the record</p>
+      <p>The driver records the <b>odometer reading</b>, attaches an <b>odometer photo</b> taken on the
+      phone, and selects the <b>garage/vendor</b>. Only now is the car officially "in the workshop", and the
+      controllers are notified. The system also <b>automatically links the car's open maintenance contract</b>.</p>
+      <div class="value"><b>Business value:</b> mileage and a photo are captured at hand-over, so there's no dispute about the car's condition or reading when it went in.</div>
+    </div>
+
+    <div class="uc">
+      <span class="id">UC-5</span>
+      <h3>Garage repairs the car and adds findings</h3>
+      <p class="role"><b>Who:</b> Garage (via Logistics) &nbsp;·&nbsp; <b>Goal:</b> Record what was actually done</p>
+      <p>The car is marked <b>under repair</b>. The garage can add its own findings on top of the
+      inspector's — but it <b>cannot edit or re-report</b> what the inspector already filed. Findings stay in
+      two clearly-labelled buckets:</p>
+      <div class="tags">
+        <span class="tag violet">Inspector findings</span>
+        <span class="tag amber">Garage findings</span>
+      </div>
+      <div class="value" style="margin-top:14px"><b>Business value:</b> a clean, tamper-proof trail of who-found-what — useful for warranty claims and spotting recurring faults.</div>
+    </div>
+
+    <div class="uc">
+      <span class="id">UC-6</span>
+      <h3>Car is ready; inspector signs off and closes</h3>
+      <p class="role"><b>Who:</b> Inspector &nbsp;·&nbsp; <b>Goal:</b> Confirm the repair and return the car to service</p>
+      <p>When the garage marks the car <b>ready</b>, it must capture a <b>final odometer reading + photo</b>
+      (the "after" picture matching the "before"). The inspector re-inspects and <b>closes</b> the ticket —
+      which requires the <b>cost and vendor</b> to be recorded. The car is automatically returned to
+      <b>available</b>.</p>
+      <div class="value"><b>Business value:</b> no car returns to the fleet without a documented cost, a final reading, and a sign-off.</div>
+    </div>
+
+    <div class="uc">
+      <span class="id">UC-7</span>
+      <h3>Follow-ups while a car is in the workshop</h3>
+      <p class="role"><b>Who:</b> Driver / Logistics &nbsp;·&nbsp; <b>Goal:</b> Keep the conversation on the car, not in WhatsApp</p>
+      <p>While a car is in transit or under repair, drivers can post follow-up notes (e.g. "garage says part
+      arrives Sunday"). The controllers are notified.</p>
+      <div class="value"><b>Business value:</b> the status conversation lives on the car's record, visible to everyone, forever.</div>
+    </div>
+
+    <div class="uc">
+      <span class="id">UC-8</span>
+      <h3>The live workshop board</h3>
+      <p class="role"><b>Who:</b> Everyone &nbsp;·&nbsp; <b>Goal:</b> See the whole workshop at a glance</p>
+      <div class="board">
+        <div class="lane"><div class="name">Requested</div><div class="count">2</div></div>
+        <div class="lane"><div class="name">Diagnostic</div><div class="count">1</div></div>
+        <div class="lane"><div class="name">Pending</div><div class="count">3</div></div>
+        <div class="lane"><div class="name">In Transit</div><div class="count">1</div></div>
+        <div class="lane hot"><div class="name">Under Repair</div><div class="count">4</div></div>
+        <div class="lane"><div class="name">Ready</div><div class="count">1</div></div>
+      </div>
+      <p style="margin-bottom:0">A single board shows every car in its current lane, refreshes
+      automatically, and highlights the <b>busiest lane (bottleneck)</b>.</p>
+      <div class="value"><b>Business value:</b> management can answer "how many cars are in the workshop and where are they stuck?" in one look.</div>
+    </div>
+
+    <div class="uc">
+      <span class="id">UC-9</span>
+      <h3>"My Queue" — each person sees only their own work</h3>
+      <p class="role"><b>Who:</b> Inspector / Driver &nbsp;·&nbsp; <b>Goal:</b> Know what <i>I</i> need to do next</p>
+      <ul class="clean">
+        <li><b>Inspector</b> sees: pending inspections + cars awaiting final sign-off.</li>
+        <li><b>Driver</b> sees: active dispatches + cars waiting for a follow-up.</li>
+      </ul>
+      <div class="value"><b>Business value:</b> no one has to scan the whole board to find their tasks.</div>
+    </div>
+
+    <div class="uc">
+      <span class="id">UC-10</span>
+      <h3>Full history on the car's profile</h3>
+      <p class="role"><b>Who:</b> Management / Anyone &nbsp;·&nbsp; <b>Goal:</b> See everything that ever happened to a car</p>
+      <p>Each vehicle profile shows a <b>unified timeline</b>: every workflow step (tagged Test-Drive vs
+      Repair), every follow-up note, and a <b>before/after photo gallery</b> of odometer and condition shots,
+      plus a <b>health banner</b> (in workshop / service due / healthy).</p>
+      <div class="value"><b>Business value:</b> the complete maintenance story of any car, on one screen — for resale, audits, or disputes.</div>
+    </div>
+
+    <div class="uc" style="border-left-color:var(--red)">
+      <span class="id" style="background:var(--red)">UC-11</span>
+      <h3>Guardrail: no workshop while rented</h3>
+      <p class="role"><b>Who:</b> System (automatic) &nbsp;·&nbsp; <b>Goal:</b> Protect revenue</p>
+      <p>If a car is rented, opening a maintenance ticket <b>never steals its "rented" status</b>, and any
+      rental↔maintenance overlap is <b>flagged as a violation</b> on the operations dashboard.</p>
+      <div class="value" style="background:#fdeef0; color:#a02234"><b>Business value:</b> the system actively prevents the costly mistake of pulling a car a customer is still paying for.</div>
+    </div>
+
+  </section>
+
+  <section>
+    <h2>The Bottom Line</h2>
+    <div class="h2title">What the business gets</div>
+    <table class="ba">
+      <tr><th>Before (WhatsApp)</th><th>After (this workflow)</th></tr>
+      <tr><td>Requests lost in chat</td><td>Every request logged with author + time</td></tr>
+      <tr><td>No idea how many cars in workshop</td><td>Live board with counts and bottleneck</td></tr>
+      <tr><td>No proof of mileage/condition at hand-over</td><td>Odometer reading + photo, before and after</td></tr>
+      <tr><td>Costs not tied to the car</td><td>Cost + vendor required to close, on the car's record</td></tr>
+      <tr><td>Anyone could overwrite anyone</td><td>Role-enforced steps; findings are tamper-proof</td></tr>
+      <tr><td>Cars pulled while rented</td><td>Automatic guardrail blocks/flags it</td></tr>
+      <tr><td>No history</td><td>Full per-car timeline with photos</td></tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>Status</h2>
+    <div class="h2title">Where we are</div>
+    <ul class="clean">
+      <li><b>Backend (rules &amp; data):</b> built and verified.</li>
+      <li><b>Screens:</b> Workshop board, action forms, My Queue, and the vehicle timeline — all shipped.</li>
+      <li><b>Notifications:</b> in-app alerts route to the next responsible role automatically.</li>
+      <li><b>Next (optional):</b> instant push notifications instead of the current auto-refresh, and an automated inspection-comparison engine.</li>
+    </ul>
+  </section>
+
+  <footer>
+    This document describes functionality already implemented in the Fleet system.<br>
+    Prepared as a plain-language overview for management.
+  </footer>
+
+</div>
+</body>
+</html>

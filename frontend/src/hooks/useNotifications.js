@@ -119,13 +119,17 @@ export function NotificationsProvider({ children }) {
     }
   }, [poll]);
 
-  const clearAll = useCallback(async () => {
-    setLatest([]);
-    setUnreadCount(0);
+  // Clear the whole feed, or just one inbox category (routine|complaints|test_drive).
+  // Always scoped to the authenticated user on the backend.
+  const clearAll = useCallback(async (category) => {
+    if (!category) {
+      setLatest([]);
+      setUnreadCount(0);
+    }
     try {
-      await api.post('/notifications/clear');
-    } catch (_) {
-      poll();
+      await api.post('/notifications/clear', category ? { category } : {});
+    } finally {
+      poll(); // reconcile badge + dropdown (needed for a category-scoped clear)
     }
   }, [poll]);
 

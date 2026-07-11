@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Maintenance;
+use App\Models\MaintenanceTombstone;
 use App\Models\Vehicle;
 use App\Models\Vendor;
 use Carbon\Carbon;
@@ -26,6 +27,8 @@ class MaintenanceSheetImporter
     protected array $digitsCandidates = [];
     /** normalized garage name => vendor id */
     protected array $vendorByName = [];
+    /** row_hash => true for events the user deleted from the dashboard — never re-imported. */
+    protected array $tombstonedHashes = [];
 
     /** Normalized sheet header => our column. Headers carry newlines/odd hyphens — normHeader strips them. */
     protected const FIELD_MAP = [
@@ -84,7 +87,7 @@ class MaintenanceSheetImporter
     }
 
     /**
-     * @return array{imported:int, updated:int, skipped:int, unmatched_cars:int, vendors_made:int, samples:array, unmatched_samples:array}
+     * @return array{imported:int, updated:int, skipped:int, ignored:int, unmatched_cars:int, vendors_made:int, samples:array, unmatched_samples:array}
      */
     public function import(string $spreadsheetId, int $gid, bool $dryRun = false, ?int $limit = null, string $origin = 'sheet'): array
     {
@@ -101,7 +104,7 @@ class MaintenanceSheetImporter
 
         $this->preloadCaches();
 
-        $imported = 0; $updated = 0; $skipped = 0; $unmatched = 0; $vendorsMade = 0;
+        $imported = 0; $updated = 0; $skipped = 0; $ignored = 0; $unmatched = 0; $vendorsMade = 0;
         $samples = []; $unmatchedSamples = [];
         $seen = [];   // (plate|event|out_date) => running occurrence count, for a stable identity key
 
@@ -192,6 +195,14 @@ class MaintenanceSheetImporter
                 $hash = $this->rowHash($data, $occurrence);
                 $data['row_hash'] = $hash;
 
+                // The user deleted this exact sheet event from the dashboard — honour that
+                // tombstone and never re-create it (occurrence already counted above, so the
+                // identity of the remaining same-day events stays stable).
+                if (isset($this->tombstonedHashes[$hash])) {
+                    $ignored++;
+                    continue;
+                }
+
                 $existing = Maintenance::where('row_hash', $hash)->first();
                 if ($existing) {
                     $existing->fill($data)->save();   // edits (return date, follow date, notes) UPDATE in place
@@ -224,6 +235,7 @@ class MaintenanceSheetImporter
             'imported'          => $imported,
             'updated'           => $updated,
             'skipped'           => $skipped,
+            'ignored'           => $ignored,
             'unmatched_cars'    => $unmatched,
             'vendors_made'      => $vendorsMade,
             'samples'           => $samples,
@@ -286,6 +298,12 @@ class MaintenanceSheetImporter
                 $this->vendorByName[$key] = $vn->id;
             }
         }
+
+        // Events the user deleted from the dashboard — skipped so a sync can't resurrect them.
+        $this->tombstonedHashes = array_fill_keys(
+            MaintenanceTombstone::pluck('row_hash')->all(),
+            true
+        );
     }
 
     /**

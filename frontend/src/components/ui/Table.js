@@ -110,9 +110,9 @@ export default function DataTable({
 
 // Section card with a header bar (title + optional action area) wrapping a table or
 // any content — the repeating "Card > header border-b > body" pattern, standardized.
-export function SectionCard({ title, subtitle, actions, children, className = '', bodyClass = '' }) {
+export function SectionCard({ id, title, subtitle, actions, children, className = '', bodyClass = '' }) {
   return (
-    <div className={`overflow-hidden rounded-2xl border border-slate-200/60 bg-white shadow-soft ${className}`}>
+    <div id={id} className={`overflow-hidden rounded-2xl border border-slate-200/60 bg-white shadow-soft ${className}`}>
       {(title || actions) && (
         <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
           <div className="min-w-0">

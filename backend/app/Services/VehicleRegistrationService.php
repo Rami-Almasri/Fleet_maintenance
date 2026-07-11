@@ -24,11 +24,13 @@ class VehicleRegistrationService
      */
     public function coverage()
     {
-        return Vehicle::with('registration.insuranceCompany')
+        return Vehicle::with(['registration.insuranceCompany', 'openContract.customer'])
+            ->whereIn('status', Vehicle::ACTIVE_STATUSES) // active fleet only: Ready (2) or Rented (3)
             ->orderBy('plate_no')
             ->get()
             ->map(function ($v) {
-                $reg = $v->registration;
+                $reg      = $v->registration;
+                $contract = $v->openContract;
                 return [
                     'vehicle_id'             => $v->id,
                     'plate_no'               => $v->plate_no,
@@ -48,6 +50,13 @@ class VehicleRegistrationService
                     'has_insurance'          => (bool) ($reg && $reg->insurance_expiry),
 
                     'insurer'                => $reg?->insuranceCompany?->name,
+
+                    // Current open contract (if any), so staff see the car's live contract status.
+                    'has_open_contract'      => (bool) $contract,
+                    'contract_no'            => $contract?->contract_no,
+                    'contract_type'          => $contract?->contract_type,
+                    'contract_state'         => $contract?->state,
+                    'contract_customer'      => $contract?->customer?->name_en ?: $contract?->customer?->name_ar,
                 ];
             })
             ->values();

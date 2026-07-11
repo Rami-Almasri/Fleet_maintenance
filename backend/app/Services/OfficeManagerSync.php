@@ -39,11 +39,28 @@ class OfficeManagerSync
      */
     public const AUTHORITATIVE_CLEARABLE = ['in_date', 'in_time', 'in_fuel', 'closed_by'];
 
+    /** Columns left out of an insert snapshot — internal ids / bookkeeping, not real data. */
+    protected const AUDIT_SNAPSHOT_SKIP = ['id', 'created_at', 'updated_at', 'deleted_at', 'synced_at'];
+
+    /** Columns left out of update diffs — they churn on every sync and aren't real changes. */
+    protected const AUDIT_DIFF_SKIP = ['synced_at', 'updated_at', 'created_at'];
+
+    /** Flush the in-memory audit feed to the DB once it reaches this many rows (bounds memory). */
+    protected const AUDIT_FLUSH_EVERY = 500;
+
     /** Sync-run id to attach auto-corrections to (set by the command); null = don't persist. */
     public ?int $auditRunId = null;
 
     /** Auto-corrections collected this run: [{contract_id, contract_no, external_id, field, old_value}]. */
     protected array $corrections = [];
+
+    /**
+     * Record-level change feed collected this run for the Sync Audit page:
+     *   inserts -> [{operation:'insert', ..., snapshot:{full row}}]
+     *   updates -> [{operation:'update', ..., changes:{field:{old,new}}, changed_count:int}]
+     * Built from getDirty()/getOriginal() in flush() (in-memory, no extra queries).
+     */
+    protected array $changes = [];
 
     /** customer_no => id (preloaded, grown with stubs) */
     protected array $customerMap = [];
@@ -423,6 +440,7 @@ class OfficeManagerSync
         $this->nullOverwriteCount = 0;
         $this->nullOverwriteSamples = [];
         $this->corrections = [];
+        $this->changes = [];
 
         ContractObserver::$muted = true;
         if ($dryRun) {
@@ -515,6 +533,8 @@ class OfficeManagerSync
             $odometersBumped = $this->reconcileOdometersFromContracts();
             // persist the auto-corrections (cleared stale fields) for the Sync Audit page
             $this->persistCorrections();
+            // persist the record-level change feed (new contracts + per-field update diffs)
+            $this->persistChanges();
         }
 
         return compact('created', 'updated', 'linked', 'noCar', 'customersMade')
@@ -588,6 +608,176 @@ class OfficeManagerSync
                 'created_at'  => $now,
             ], $chunk));
         }
+    }
+
+    /** Capture a brand-new contract's full row for the Sync Audit "new records" feed. */
+    protected function recordInsert(Contract $row): void
+    {
+        if (! $this->auditRunId) {
+            return;
+        }
+        $snapshot = [];
+        foreach ($row->getAttributes() as $col => $val) {
+            if (in_array($col, self::AUDIT_SNAPSHOT_SKIP, true)) {
+                continue;
+            }
+            $snapshot[$col] = $this->scalarize($val);
+        }
+        $this->changes[] = [
+            'operation'     => 'insert',
+            'contract_id'   => $row->id,
+            'contract_no'   => (string) $row->contract_no,
+            'external_id'   => (string) $row->external_id,
+            'snapshot'      => $snapshot,
+            'changed_count' => count($snapshot),
+        ];
+    }
+
+    /**
+     * Capture the real per-field diff of an about-to-be-saved contract. MUST be called
+     * after fill() but BEFORE save(), while getDirty() still holds the changed columns and
+     * getOriginal() still holds their pre-save values. Records ONLY the fields that changed.
+     */
+    protected function recordUpdate(Contract $existing): void
+    {
+        if (! $this->auditRunId) {
+            return;
+        }
+        $diff = [];
+        foreach ($existing->getDirty() as $col => $newVal) {
+            if (in_array($col, self::AUDIT_DIFF_SKIP, true)) {
+                continue; // bookkeeping churn, not a real data change
+            }
+            $old = $this->scalarize($existing->getOriginal($col));
+            $new = $this->scalarize($newVal);
+            if ($this->isSameValue($old, $new)) {
+                continue; // representation-only churn ("0.00" vs 0, float32 noise) — not a real change
+            }
+            $diff[$col] = ['old' => $old, 'new' => $new];
+        }
+        if ($diff) {
+            $this->changes[] = [
+                'operation'     => 'update',
+                'contract_id'   => $existing->id,
+                'contract_no'   => (string) $existing->contract_no,
+                'external_id'   => (string) $existing->external_id,
+                'changes'       => $diff,
+                'changed_count' => count($diff),
+            ];
+        }
+    }
+
+    /**
+     * True when old and new are the SAME value, only represented differently — so the audit
+     * feed doesn't report it as a change. The money/amount columns are decimal(x,2), so MySQL
+     * returns them as 2-dp strings ("0.00", "142.86", "4499.88") while the API sends the raw
+     * float32 (0, 142.85714721679688, 4499.8798828125). getDirty() therefore flags every
+     * numeric column on every sync. We compare at the storage precision (2 dp), which collapses
+     * that representation noise while keeping every real change (money moves in whole fils,
+     * ≥ 0.01). Non-numeric values (dates, names, statuses) fall back to strict comparison.
+     */
+    protected function isSameValue($old, $new): bool
+    {
+        if ($old === $new) {
+            return true;
+        }
+        // Amount columns compare at the 2-dp storage precision, treating null as 0 (a null
+        // amount and 0 are the same thing — e.g. the Cardoo columns were null on older
+        // contracts and the import now writes 0). Collapses decimal-as-string, float32 and
+        // null↔0 representation churn, while keeping real changes (money moves in fils ≥ 0.01).
+        $oldN = $old === null ? 0.0 : (is_numeric($old) ? (float) $old : null);
+        $newN = $new === null ? 0.0 : (is_numeric($new) ? (float) $new : null);
+        if ($oldN !== null && $newN !== null) {
+            return round($oldN, 2) === round($newN, 2);
+        }
+
+        return false;
+    }
+
+    /** Normalise an attribute to a JSON-friendly scalar for the audit feed. */
+    protected function scalarize($v)
+    {
+        if ($v === null || $v === '') {
+            return null;
+        }
+        if ($v instanceof \DateTimeInterface) {
+            return $v->format('Y-m-d');
+        }
+        if (is_bool($v)) {
+            return $v ? 'true' : 'false';
+        }
+        return is_scalar($v) ? $v : json_encode($v);
+    }
+
+    /**
+     * Bulk-write this run's record-level change feed (inserts + update diffs), linked to the
+     * run. BEST-EFFORT: this is secondary bookkeeping — a failure here (e.g. a batch exceeding
+     * MySQL's max_allowed_packet) must NEVER abort or fail an otherwise-successful import, so
+     * the whole thing is wrapped and swallowed. Rows are inserted in byte-bounded batches so no
+     * single multi-row INSERT can blow the packet limit (XAMPP's default is only 1 MB, and a
+     * full-record snapshot is ~2 KB — 500 of them in one statement would overflow it).
+     */
+    protected function persistChanges(): void
+    {
+        if (! $this->auditRunId || empty($this->changes)) {
+            return;
+        }
+        try {
+            $now = now();
+            $rows = array_map(fn ($c) => [
+                'sync_run_id'   => $this->auditRunId,
+                'contract_id'   => $c['contract_id'],
+                'contract_no'   => $c['contract_no'],
+                'external_id'   => $c['external_id'],
+                'operation'     => $c['operation'],
+                'snapshot'      => isset($c['snapshot']) ? json_encode($c['snapshot']) : null,
+                'changes'       => isset($c['changes']) ? json_encode($c['changes']) : null,
+                'changed_count' => $c['changed_count'] ?? 0,
+                'created_at'    => $now,
+            ], $this->changes);
+            // Free the in-memory buffer now — we've snapshotted it into $rows. This is what
+            // keeps a long sync's footprint flat instead of growing with every record.
+            $this->changes = [];
+
+            foreach ($this->byteBoundedChunks($rows, 512 * 1024, 200) as $batch) {
+                try {
+                    DB::table('sync_changes')->insert($batch);
+                } catch (\Throwable $e) {
+                    report($e); // one odd/oversized batch shouldn't lose the rest
+                }
+            }
+        } catch (\Throwable $e) {
+            report($e); // never let audit bookkeeping break the sync
+        }
+    }
+
+    /**
+     * Split rows into batches whose combined encoded size stays under $maxBytes (and at most
+     * $maxRows each), so a single multi-row INSERT can never exceed MySQL's max_allowed_packet.
+     *
+     * @param  array<int,array<string,mixed>>  $rows
+     * @return array<int,array<int,array<string,mixed>>>
+     */
+    protected function byteBoundedChunks(array $rows, int $maxBytes, int $maxRows): array
+    {
+        $batches = [];
+        $batch = [];
+        $size = 0;
+        foreach ($rows as $row) {
+            $rowSize = strlen((string) ($row['snapshot'] ?? '')) + strlen((string) ($row['changes'] ?? '')) + 200;
+            if ($batch && ($size + $rowSize > $maxBytes || count($batch) >= $maxRows)) {
+                $batches[] = $batch;
+                $batch = [];
+                $size = 0;
+            }
+            $batch[] = $row;
+            $size += $rowSize;
+        }
+        if ($batch) {
+            $batches[] = $batch;
+        }
+
+        return $batches;
     }
 
     /**
@@ -1099,6 +1289,21 @@ class OfficeManagerSync
                             'rent_days'         => is_numeric($row['RentDays'] ?? null) ? (int) $row['RentDays'] : null,
                             'net_rate'          => $this->num($row['RentDayRate'] ?? null),
                             'car_serial'        => is_numeric($row['RaCarSerialNo'] ?? null) ? (int) $row['RaCarSerialNo'] : null,
+                            // Track A — settlement state, previously discarded. Balance is what the
+                            // invoice still owes; paid is real money in (cash + cheque + visa).
+                            'status_no'       => is_numeric($row['StatusNo'] ?? null) ? (int) $row['StatusNo'] : null,
+                            'balance_value'   => $balance = $this->num($row['BalanceValue'] ?? null),
+                            'paid_amount'     => $paid = round(
+                                ($this->num($row['CashPaid'] ?? null) ?? 0)
+                                + ($this->num($row['ChequePaid'] ?? null) ?? 0)
+                                + ($this->num($row['VisaPaid'] ?? null) ?? 0),
+                                2
+                            ),
+                            'payment_status'  => Invoice::derivePaymentStatus(
+                                $balance,
+                                $paid,
+                                $this->num($row['TotalAfterVat'] ?? null)
+                            ),
                             'synced_at'       => now(),
                             'origin'          => 'api',
                         ],
@@ -1188,14 +1393,26 @@ class OfficeManagerSync
                 if ($existing) {
                     // Never let an empty API value blank a populated local field.
                     $data = $this->coalesceNullOverwrites($existing, $b['data']);
-                    $existing->fill($data)->save();
+                    // Stage the write, then read the real per-field diff straight from the
+                    // model (getDirty = new values, getOriginal = pre-save values) — purely
+                    // in-memory, no extra query — so the audit feed shows ONLY what changed.
+                    $existing->fill($data);
+                    $this->recordUpdate($existing);
+                    $existing->save();
                     $updated++;
                 } else {
-                    Contract::create($b['data'] + ['external_id' => $b['external_id']]);
+                    $row = Contract::create($b['data'] + ['external_id' => $b['external_id']]);
+                    $this->recordInsert($row);
                     $created++;
                 }
             }
         });
+        // Drain the audit feed to the DB as it fills so a big sync can't accumulate tens of
+        // thousands of snapshots/diffs in memory (that exhausts PHP's memory_limit). During a
+        // dry run these writes ride the outer rolled-back transaction, so nothing persists.
+        if (count($this->changes) >= self::AUDIT_FLUSH_EVERY) {
+            $this->persistChanges();
+        }
         return [$created, $updated];
     }
 

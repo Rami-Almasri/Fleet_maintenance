@@ -16,6 +16,7 @@ import { MetricGridSkeleton } from '../components/ui/Skeleton';
 import Icon from '../components/ui/Icon';
 import { usePageStat } from '../components/PageStat';
 import { aed2, num } from '../lib/format';
+import { SHOW_FINANCIALS } from '../config/features';
 import CustomerForm, { customerToForm, cleanPayload } from './customers/CustomerForm';
 
 const PAGE_SIZE = 15;
@@ -125,7 +126,7 @@ export default function Customers() {
   // Floating page gauge: share of customers carrying wallet credit (paid ahead).
   const inCredit = useMemo(() => list.filter((c) => Number(c.balance || 0) < 0).length, [list]);
   usePageStat({
-    percent: list.length ? (inCredit / list.length) * 100 : null,
+    percent: SHOW_FINANCIALS && list.length ? (inCredit / list.length) * 100 : null,
     label: 'In credit',
     color: 'emerald',
     hint: `${inCredit} of ${list.length} customers have wallet credit available`,
@@ -156,9 +157,9 @@ export default function Customers() {
 
         {/* Summary metrics */}
         {loading ? (
-          <MetricGridSkeleton count={4} />
+          <MetricGridSkeleton count={SHOW_FINANCIALS ? 4 : 1} />
         ) : (
-          <MetricGrid cols={4}>
+          <MetricGrid cols={SHOW_FINANCIALS ? 4 : 1}>
             <MetricCard
               label="Total Customers"
               value={num(list.length)}
@@ -166,30 +167,35 @@ export default function Customers() {
               icon={<Icon.Users className="h-5 w-5" />}
               hint={search ? `${num(filtered.length)} match the search` : 'Across the fleet'}
             />
-            <MetricCard
-              label="In Credit"
-              value={num(inCredit)}
-              tone="emerald"
-              icon={<Icon.Coins className="h-5 w-5" />}
-              hint={list.length ? `${Math.round((inCredit / list.length) * 100)}% of customers` : '—'}
-              tooltip="Customers carrying wallet credit — money paid in advance, available toward their next rental."
-            />
-            <MetricCard
-              label="Wallet Credit"
-              value={aed2(walletTotal)}
-              tone="green"
-              icon={<Icon.Cash className="h-5 w-5" />}
-              hint="Total carried-forward credit held"
-              tooltip="Sum of all advance payments customers have on file (negative balances)."
-            />
-            <MetricCard
-              label="Outstanding"
-              value={aed2(owedTotal)}
-              tone={owedTotal > 0 ? 'red' : 'slate'}
-              icon={<Icon.Invoice className="h-5 w-5" />}
-              hint={`${num(owedCount)} customer${owedCount === 1 ? '' : 's'} owing`}
-              tooltip="Total amount owed across all customers (positive balances)."
-            />
+            {/* Wallet / Credit / Outstanding money cards — financials only */}
+            {SHOW_FINANCIALS && (
+              <>
+                <MetricCard
+                  label="In Credit"
+                  value={num(inCredit)}
+                  tone="emerald"
+                  icon={<Icon.Coins className="h-5 w-5" />}
+                  hint={list.length ? `${Math.round((inCredit / list.length) * 100)}% of customers` : '—'}
+                  tooltip="Customers carrying wallet credit — money paid in advance, available toward their next rental."
+                />
+                <MetricCard
+                  label="Wallet Credit"
+                  value={aed2(walletTotal)}
+                  tone="green"
+                  icon={<Icon.Cash className="h-5 w-5" />}
+                  hint="Total carried-forward credit held"
+                  tooltip="Sum of all advance payments customers have on file (negative balances)."
+                />
+                <MetricCard
+                  label="Outstanding"
+                  value={aed2(owedTotal)}
+                  tone={owedTotal > 0 ? 'red' : 'slate'}
+                  icon={<Icon.Invoice className="h-5 w-5" />}
+                  hint={`${num(owedCount)} customer${owedCount === 1 ? '' : 's'} owing`}
+                  tooltip="Total amount owed across all customers (positive balances)."
+                />
+              </>
+            )}
           </MetricGrid>
         )}
 
@@ -216,7 +222,7 @@ export default function Customers() {
             loading={loading}
             skeletonRows={PAGE_SIZE}
             empty="No customers found. Try a different search."
-            highlightRow={(c) => Number(c.balance || 0) > 0}
+            highlightRow={(c) => SHOW_FINANCIALS && Number(c.balance || 0) > 0}
             columns={[
               {
                 key: 'customer', header: 'Customer', cellClass: 'font-medium',
@@ -232,11 +238,11 @@ export default function Customers() {
                 key: 'contracts', header: 'Contracts', align: 'right', cellClass: 'tabular-nums text-slate-500',
                 render: (c) => num(c.contracts_count),
               },
-              {
+              ...(SHOW_FINANCIALS ? [{
                 key: 'balance', header: 'Balance', align: 'right',
                 tooltip: 'Positive = amount owed. Negative = wallet credit (advance paid, available toward the next rental).',
                 render: (c) => { const b = balanceBadge(c.balance); return <Badge tone={b.tone}>{b.text}</Badge>; },
-              },
+              }] : []),
               {
                 key: 'actions', header: 'Actions', align: 'right',
                 render: (c) => (

@@ -28,6 +28,35 @@ export const fmtTime = (t) => {
   return `${h}:${m[2]} ${ap}`;
 };
 
+// A duration in whole SECONDS -> a compact "2h 10m" / "45m" / "1d 3h" / "30s". null/undefined -> "—".
+// (Distinct from fmtDuration below, which takes two timestamps; this takes a pre-computed second count.)
+export const fmtSeconds = (seconds) => {
+  if (seconds == null) return '—';
+  const s = Math.max(0, Math.round(seconds));
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (d) return `${d}d ${h}h`;
+  if (h) return `${h}h ${m}m`;
+  if (m) return `${m}m`;
+  return `${s}s`;
+};
+
+// A full date/datetime value -> the local time portion only, "10:48 PM" (12-hour, matches fmtTime).
+// Unlike fmtTime (which parses a bare "HH:MM" string), this parses a real Date/ISO value and shows
+// it in the viewer's local timezone — use it to hang a time off a timestamp beside fmtDate.
+export const fmtClock = (value) => {
+  if (!value) return '';
+  const d = new Date(value);
+  if (isNaN(d)) return '';
+  let h = d.getHours();
+  const min = String(d.getMinutes()).padStart(2, '0');
+  const ap = h >= 12 ? 'PM' : 'AM';
+  h %= 12;
+  if (h === 0) h = 12;
+  return `${h}:${min} ${ap}`;
+};
+
 // Fold a date ("2026-06-18T..." | "2026-06-18") and a "HH:MM[:SS]" time into one local Date.
 export const combineDateTime = (date, time) => {
   if (!date) return null;
@@ -49,6 +78,24 @@ export const fmtDuration = (start, end) => {
   if (h) parts.push(`${h}h`);
   if (m || parts.length === 0) parts.push(`${m}m`);
   return parts.join(' ');
+};
+
+// "2026-06-30T10:00:00Z" -> "just now" / "5m ago" / "3h ago" / "2d ago" / "3mo ago".
+export const fmtAgo = (value) => {
+  if (!value) return null;
+  const d = new Date(value);
+  if (isNaN(d)) return null;
+  const secs = Math.round((Date.now() - d.getTime()) / 1000);
+  if (secs < 45) return 'just now';
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 30) return `${days}d ago`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months}mo ago`;
+  return `${Math.floor(months / 12)}y ago`;
 };
 
 // A "days left" pill descriptor (red overdue / amber soon / green ok).

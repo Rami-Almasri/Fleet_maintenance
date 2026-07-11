@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Helpers\ResponseHelper;
+use App\Models\Vehicle;
 use App\Models\VehicleRegistration;
 use Illuminate\Http\Request;
 
@@ -18,7 +19,11 @@ class FleetController extends Controller
             $days   = max(0, (int) $request->query('days', 30));
             $cutoff = now()->startOfDay()->addDays($days)->toDateString();
 
+            // Active fleet only (Ready / Rented) — the same "can still earn" set used everywhere else.
+            // NOTE: `operational_status` is a string slug, not a numeric code, so the old
+            // whereIn('operational_status', [2, 3]) matched zero rows and the list was always empty.
             $regs = VehicleRegistration::with(['vehicle', 'insuranceCompany'])
+                ->whereHas('vehicle', fn ($q) => $q->whereIn('status', Vehicle::ACTIVE_STATUSES))
                 ->where(function ($q) use ($cutoff) {
                     $q->whereNotNull('expiry_date')->where('expiry_date', '<=', $cutoff)
                         ->orWhere(function ($q2) use ($cutoff) {
@@ -46,7 +51,7 @@ class FleetController extends Controller
 
             return ResponseHelper::SuccessResponse($regs, "Vehicles expiring within {$days} days", 200);
         } catch (\Exception $e) {
-            return ResponseHelper::FailureResponse(null, $e->getMessage(), 400);
+            return ResponseHelper::fromException($e);
         }
     }
 }

@@ -8,7 +8,7 @@
 //
 // Pair it with the gate helper below (odoGateBlocked) so callers don't each re-derive the submit guard.
 
-import { needsConfirm, needsNote, NOTE_THRESHOLD_KM, CONTINUITY_TONE } from '../../lib/odometerContinuity';
+import { needsConfirm, needsNote, isHardBlocked, NOTE_THRESHOLD_KM, CONTINUITY_TONE, STATUS } from '../../lib/odometerContinuity';
 
 // Static Tailwind classes per continuity tone (dynamic `bg-${tone}` classes wouldn't survive purging).
 const CONTINUITY_TONE_CLS = {
@@ -22,6 +22,8 @@ const CONTINUITY_TONE_CLS = {
 // odometer pass continuity === null → both requirements are false → this is a no-op (returns false).
 // `ignoreTolerance` waives the forward-jump nag on a site↔garage move (a Discrepancy still asks).
 export function odoGateBlocked(continuity, confirmed, note, ignoreTolerance = false) {
+  // A hard block (garage intake ≤ pickup) can't be acknowledged away — it blocks submit outright.
+  if (isHardBlocked(continuity)) return true;
   const noteRequired = needsNote(continuity, ignoreTolerance);
   const ackRequired = needsConfirm(continuity?.status, ignoreTolerance) || noteRequired;
   return (ackRequired && !confirmed) || (noteRequired && !String(note ?? '').trim());
@@ -66,7 +68,12 @@ export default function OdometerContinuityHint({ previous, continuity, confirmed
           )}
           {noteRequired && (
             <div className="mt-2">
-              <span className="mb-1 block font-medium">{t('workflow.odo.noteLabel', { km: NOTE_THRESHOLD_KM })}<span className="text-red-500"> *</span></span>
+              <span className="mb-1 block font-medium">
+                {status === STATUS.AUTHORIZED
+                  ? t('workflow.odo.noteLabelDeviation', { km: Math.abs(continuity?.delta ?? 0) })
+                  : t('workflow.odo.noteLabel', { km: NOTE_THRESHOLD_KM })}
+                <span className="text-red-500"> *</span>
+              </span>
               <textarea
                 value={note}
                 onChange={(e) => onNote(e.target.value)}

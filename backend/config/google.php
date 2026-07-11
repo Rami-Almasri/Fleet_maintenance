@@ -82,5 +82,13 @@ return [
             'id'  => env('GOOGLE_SHEETS_INSURANCE_ID'),
             'gid' => env('GOOGLE_SHEETS_INSURANCE_GID'),
         ],
+
+        // "Main Trip Dashboard" tab — the live pickup/drop-off trip log that powers
+        // the Delivery Command dashboard + Orders board. Banner rows 1-2, header row 3,
+        // data from row 4. Defaults point at the shared trips workbook.
+        'trips' => [
+            'id'  => env('GOOGLE_SHEETS_TRIPS_ID', '13IZwMw6Ih91cuyjKQWABzDj95X0cCicvL7OujEKqxX4'),
+            'gid' => (int) env('GOOGLE_SHEETS_TRIPS_GID', 221506513),
+        ],
     ],
 ];

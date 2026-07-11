@@ -1,0 +1,633 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Helpers\ResponseHelper;
+use App\Models\FindingKeyword;
+use App\Models\Maintenance;
+use App\Models\User;
+use Illuminate\Http\Request;
+use Illuminate\Support\Str;
+
+/**
+ * Workflow Oversight — the read-only accountability & data-integrity layer over the Maintenance
+ * Workflow. Four focused audit surfaces + a roll-up overview, all pure reads (insights.view):
+ *
+ *   1. mileageDiscrepancies() — every stage where the odometer entered didn't match what was expected
+ *      (ran backwards, jumped, or a garage test-drive), with the before/after reading, the note the
+ *      operator left and WHO entered it.
+ *   2. stageAccountability()  — per ticket, the full stage-by-stage chain: who owned each stage and the
+ *      mileage they recorded there.
+ *   3. leftGarage()           — cars that have physically left the garage but whose invoice is still
+ *      outstanding, so the team knows exactly which garages to chase for a bill.
+ *   4. severityReview()       — tickets whose fault-severity grade looks UNDER-graded versus the signals
+ *      (a critical-risk keyword / a breakdown / a red-graded car scored only Routine or Moderate).
+ *   5. overview()             — the four counts in one call for the section landing page.
+ *
+ * Nothing here mutates state — every fix is applied on the ticket itself (deep-linked from each row).
+ */
+class WorkflowOversightController extends Controller
+{
+    /**
+     * The odometer capture points across a ticket's life, in lifecycle order. Each maps the JSON
+     * `odometer_flags` key (written by MaintenanceWorkflowService::recordOdometerFlag) to a human
+     * stage label, the ticket column that timestamps it, and the *_by column that names the person
+     * who captured the reading (the flag itself carries the value + note but not the actor).
+     */
+    private const STAGE_MAP = [
+        // flag key      => [label,                         at column,                  actor column]
+        'test_drive' => ['Inspection Test Drive',       'test_started_at',          'inspected_by'],
+        'report'     => ['End of Test Drive (Decide)',  'inspected_at',             'inspected_by'],
+        'dispatch'   => ['Dispatch to Garage',          'dispatched_at',            'dispatched_by'],
+        'receive'    => ['Garage Arrival',              'repair_started_at',        'repair_started_by'],
+        'transfer'   => ['Garage Transfer',             'last_state_change_at',     'delegated_by'],
+        'return'     => ['Collected from Garage',       'picked_up_from_garage_at', 'picked_up_from_garage_by'],
+        'reinspect'  => ['Re-Inspection Sign-off',      'wf_closed_at',             'wf_closed_by'],
+    ];
+
+    /** How far a forward reading may drift from expected before it's worth surfacing (mirrors the UI note gate). */
+    private const NOTE_THRESHOLD_KM = 10;
+
+    // ── 1. Mileage discrepancies ────────────────────────────────────────────────────────────────
+    /**
+     * Every stage reading that didn't line up with the previous one — a meter that ran backwards
+     * (the real data error), a big forward jump, or a garage test-drive. One row per flagged stage:
+     * the transition it happened at, the initial → updated figures, the delta, the operator's note
+     * and the person who entered it.
+     */
+    public function mileageDiscrepancies(Request $request)
+    {
+        try {
+            $cols = array_map(fn ($s) => self::STAGE_MAP[$s][1], array_keys(self::STAGE_MAP));
+
+            $tickets = Maintenance::query()
+                ->whereNotNull('odometer_flags')
+                ->with('vehicle:id,plate_no,make,model,vin')
+                ->orderByDesc('updated_at')
+                ->limit(600)
+                ->get(array_merge(
+                    ['id', 'vehicle_id', 'workflow_status', 'odometer_flags', 'trigger_reason', 'maintenance_notes'],
+                    array_values(array_unique(array_merge(
+                        $cols,
+                        array_map(fn ($s) => self::STAGE_MAP[$s][2], array_keys(self::STAGE_MAP)),
+                    ))),
+                ));
+
+            $names = $this->userNames($tickets, array_map(fn ($s) => self::STAGE_MAP[$s][2], array_keys(self::STAGE_MAP)));
+
+            $rows = collect();
+            foreach ($tickets as $t) {
+                $flags = $t->odometer_flags ?? [];
+                foreach (self::STAGE_MAP as $key => [$label, $atCol, $byCol]) {
+                    $flag = $flags[$key] ?? null;
+                    if (! is_array($flag)) {
+                        continue;
+                    }
+                    $kind = $this->classifyFlag($flag);
+                    if ($kind === null) {
+                        continue; // a clean, in-tolerance reading — nothing to review
+                    }
+                    $delta = $flag['delta'] ?? null;
+                    $rows->push([
+                        'ticket_id'       => $t->id,
+                        'vehicle_id'      => $t->vehicle_id,
+                        'plate_no'        => $t->vehicle?->plate_no,
+                        'car'             => trim(($t->vehicle?->make ?? '') . ' ' . ($t->vehicle?->model ?? '')) ?: null,
+                        'workflow_status' => $t->workflow_status,
+                        'stage_key'       => $key,
+                        'stage_label'     => $label,
+                        'previous'        => $flag['previous'] ?? null,   // the mileage we expected to build on
+                        'reading'         => $flag['reading'] ?? null,    // what the operator actually entered
+                        'delta'           => $delta,
+                        'direction'       => $delta === null ? null : ($delta < 0 ? 'lower' : 'higher'),
+                        'kind'            => $kind,                        // discrepancy | jump | test_drive | deviation | note
+                        'tolerance_waived'=> (bool) ($flag['tolerance_waived'] ?? false),
+                        'note'            => $flag['note'] ?? null,
+                        'entered_by'      => $names[$t->{$byCol}] ?? null,
+                        'at'              => optional($t->{$atCol})->toIso8601String(),
+                        'outcome'         => 'recorded',                    // the reading was accepted onto the ticket
+                    ]);
+                }
+            }
+
+            // Blocked attempts — REJECTED readings the workflow threw away (out-of-range / backward strict
+            // matches, or a garage arrival that wasn't higher than pickup). They live in their own audit
+            // table (nothing survives on the ticket), and are the most important rows here: who tried to
+            // force an unauthorised value, and what it was. Merged in so this page is the single odometer log.
+            $blocks = \App\Models\OdometerBlockEvent::query()
+                ->with(['vehicle:id,plate_no,make,model', 'actor:id,name'])
+                ->orderByDesc('created_at')
+                ->limit(400)
+                ->get();
+
+            foreach ($blocks as $b) {
+                $rows->push([
+                    'ticket_id'       => $b->maintenance_id,
+                    'vehicle_id'      => $b->vehicle_id,
+                    'plate_no'        => $b->vehicle?->plate_no,
+                    'car'             => trim(($b->vehicle?->make ?? '') . ' ' . ($b->vehicle?->model ?? '')) ?: null,
+                    'workflow_status' => null,
+                    'stage_key'       => $b->stage_key,
+                    'stage_label'     => self::STAGE_MAP[$b->stage_key][0] ?? ucfirst(str_replace('_', ' ', $b->stage_key)),
+                    'previous'        => $b->previous,                 // the value it had to match / exceed
+                    'reading'         => $b->reading,                 // the REJECTED value the operator attempted
+                    'delta'           => $b->delta,
+                    'direction'       => $b->delta === null ? null : ($b->delta < 0 ? 'lower' : 'higher'),
+                    'kind'            => 'blocked',
+                    'tolerance_waived'=> false,
+                    'note'            => $b->note,
+                    'entered_by'      => $b->actor?->name,
+                    'at'              => optional($b->created_at)->toIso8601String(),
+                    'outcome'         => 'blocked',                    // the workflow REJECTED this reading
+                ]);
+            }
+
+            // Blocked attempts first (the audit priority), then backward discrepancies, then most recent.
+            $order = ['blocked' => 0, 'discrepancy' => 1, 'jump' => 2, 'test_drive' => 3, 'deviation' => 4, 'note' => 5];
+            $sorted = $rows->sort(function ($a, $b) use ($order) {
+                return ($order[$a['kind']] ?? 9) <=> ($order[$b['kind']] ?? 9)
+                    ?: strcmp((string) $b['at'], (string) $a['at']);
+            })->values();
+
+            return ResponseHelper::SuccessResponse([
+                'rows'          => $sorted,
+                'total'         => $sorted->count(),
+                'blocked'       => $sorted->where('kind', 'blocked')->count(),
+                'discrepancies' => $sorted->where('kind', 'discrepancy')->count(),
+                'tolerance_km'  => \App\Services\OdometerContinuityService::TOLERANCE_KM,
+            ], 'Mileage discrepancies retrieved', 200);
+        } catch (\Throwable $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
+     * Decide whether a stored flag is worth surfacing, and under which bucket. Returns null for a clean
+     * reading (verified & within the note threshold), otherwise: 'discrepancy' (ran backwards — the real
+     * error), 'jump' (a big pickup jump flagged CHECK), 'test_drive' (garage drove it), or 'note' (a
+     * forward gap over the note threshold that the operator had to explain).
+     */
+    private function classifyFlag(array $flag): ?string
+    {
+        $status = $flag['status'] ?? null;
+        $delta  = $flag['delta'] ?? null;
+
+        if ($status === 'discrepancy' || $status === 'exact_required') {
+            // 'exact_required' is normally blocked before storage, but if one is ever persisted it's a real
+            // out-of-range reading — surface it alongside backward discrepancies.
+            return 'discrepancy';
+        }
+        if ($status === 'check') {
+            return 'jump';
+        }
+        if ($status === 'test_drive') {
+            return 'test_drive';
+        }
+        // An "authorized deviation" (+1..tolerance km at a strict-match park spot-check) — always carries a
+        // note; surface every one so a supervisor can audit the small, sanctioned overrides.
+        if ($status === 'authorized_deviation') {
+            return 'deviation';
+        }
+        // A verified forward reading is still worth showing if it crossed the note threshold and the
+        // operator left an explanation (a deliberate site↔garage road trip waives the nag, so skip those).
+        if ($delta !== null && abs($delta) > self::NOTE_THRESHOLD_KM && empty($flag['tolerance_waived']) && ! empty($flag['note'])) {
+            return 'note';
+        }
+        return null;
+    }
+
+    // ── 2. Stage accountability ─────────────────────────────────────────────────────────────────
+    /**
+     * Per ticket, the whole workflow chain: for every stage the car passed through, who owned it and the
+     * mileage recorded there. One card per ticket; each carries an ordered list of the stages it actually
+     * reached (a stage with no owner AND no reading AND no timestamp is skipped as "not reached yet").
+     */
+    public function stageAccountability(Request $request)
+    {
+        try {
+            $tickets = Maintenance::workflowTickets()
+                ->with('vehicle:id,plate_no,make,model')
+                ->orderByDesc('id')
+                ->limit(200)
+                ->get();
+
+            $byCols = ['requested_by', 'inspected_by', 'dispatched_by', 'repair_started_by', 'ready_by', 'picked_up_from_garage_by', 'park_arrived_by', 'wf_closed_by', 'delegated_by'];
+            $names  = $this->userNames($tickets, $byCols);
+
+            // stage key => [label, actor col, at col, odometer col|null]
+            $spec = [
+                'requested'  => ['Inspection Requested', 'requested_by',             'requested_at',             null],
+                'test_drive' => ['Inspection Test Drive','inspected_by',             'test_started_at',          'test_odometer'],
+                'report'     => ['Diagnosis (Decide)',   'inspected_by',             'inspected_at',             'report_odometer'],
+                'delegated'  => ['Driver Delegated',     'delegated_by',             'delegated_at',             null],
+                'dispatched' => ['Dispatched to Garage', 'dispatched_by',            'dispatched_at',            'dispatch_odometer'],
+                'received'   => ['Garage Arrival',       'repair_started_by',        'repair_started_at',        'receive_odometer'],
+                'ready'      => ['Repair Complete',      'ready_by',                 'ready_at',                 null],
+                'collected'  => ['Collected from Garage','picked_up_from_garage_by', 'picked_up_from_garage_at', 'return_odometer'],
+                'park'       => ['Back in Fleet Park',   'park_arrived_by',          'park_arrived_at',          null],
+                'closed'     => ['Re-Inspection / Close','wf_closed_by',             'wf_closed_at',             'reinspect_odometer'],
+            ];
+
+            $out = $tickets->map(function ($t) use ($spec, $names) {
+                $stages = [];
+                foreach ($spec as $key => [$label, $byCol, $atCol, $odoCol]) {
+                    $actorId = $t->{$byCol} ?? null;
+                    $at      = $t->{$atCol} ?? null;
+                    $odo     = $odoCol ? $t->{$odoCol} : null;
+                    if ($actorId === null && $at === null && $odo === null) {
+                        continue; // stage not reached
+                    }
+                    $stages[] = [
+                        'key'      => $key,
+                        'label'    => $label,
+                        'owner'    => $actorId ? ($names[$actorId] ?? 'User #' . $actorId) : null,
+                        'odometer' => $odo !== null ? (int) $odo : null,
+                        'at'       => optional($at)->toIso8601String(),
+                    ];
+                }
+
+                $meta = Maintenance::FAULT_SEVERITY_META[$t->fault_severity] ?? null;
+
+                return [
+                    'ticket_id'        => $t->id,
+                    'vehicle_id'       => $t->vehicle_id,
+                    'plate_no'         => $t->vehicle?->plate_no,
+                    'car'              => trim(($t->vehicle?->make ?? '') . ' ' . ($t->vehicle?->model ?? '')) ?: null,
+                    'workflow_status'  => $t->workflow_status,
+                    'fault_severity'   => $t->fault_severity,
+                    'severity_label'   => $meta['label'] ?? null,
+                    'severity_emoji'   => $meta['emoji'] ?? null,
+                    'severity_tone'    => $meta['tone'] ?? null,
+                    'issue'            => $t->trigger_reason ?? Str::limit((string) $t->maintenance_notes, 80) ?: null,
+                    'stage_count'      => count($stages),
+                    'stages'           => $stages,
+                    'updated_at'       => optional($t->updated_at)->toIso8601String(),
+                ];
+            })->values();
+
+            return ResponseHelper::SuccessResponse([
+                'tickets' => $out,
+                'total'   => $out->count(),
+            ], 'Stage accountability retrieved', 200);
+        } catch (\Throwable $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    // ── 3. Left the garage → chase the invoice ──────────────────────────────────────────────────
+    /**
+     * Cars that have physically left the garage (a garage-out reading was captured) but whose invoice is
+     * still outstanding — the actionable list for "which garages do I still need a bill from?". Each row
+     * says which garage worked on it, when it left, how long ago, and whether an invoice was already
+     * requested. The actual "request invoice" / link happens on the ticket (deep-linked).
+     */
+    public function leftGarage(Request $request)
+    {
+        try {
+            $tickets = Maintenance::query()
+                ->whereNotNull('picked_up_from_garage_at')
+                ->with(['vehicle:id,plate_no,make,model', 'vendor:id,name'])
+                ->withCount(['tasks'])
+                ->orderByDesc('picked_up_from_garage_at')
+                ->limit(400)
+                ->get();
+
+            $now  = now();
+            $rows = $tickets->map(function ($t) use ($now) {
+                $leftAt   = $t->picked_up_from_garage_at;
+                $hasCost  = $t->cost !== null && (float) $t->cost > 0;
+                $requested = $t->invoice_requested_at !== null;
+                // Received = we've closed the money side (cost is in) OR the ticket fully closed.
+                $received = $hasCost;
+                return [
+                    'ticket_id'          => $t->id,
+                    'vehicle_id'         => $t->vehicle_id,
+                    'plate_no'           => $t->vehicle?->plate_no,
+                    'car'                => trim(($t->vehicle?->make ?? '') . ' ' . ($t->vehicle?->model ?? '')) ?: null,
+                    'garage'             => $t->vendor?->name,
+                    'workflow_status'    => $t->workflow_status,
+                    'faults'             => $t->tasks_count,
+                    'left_at'            => optional($leftAt)->toIso8601String(),
+                    'days_since'         => $leftAt ? $leftAt->diffInDays($now) : null,
+                    'invoice_requested'  => $requested,
+                    'invoice_requested_at' => optional($t->invoice_requested_at)->toIso8601String(),
+                    'invoice_received'   => $received,
+                    'needs_request'      => ! $requested && ! $received,
+                ];
+            })
+            // Only the ones still owing an invoice — a finished (cost-in) ticket drops off the chase list.
+            ->filter(fn ($r) => ! $r['invoice_received'])
+            ->sortBy([
+                ['needs_request', 'desc'],
+                ['days_since', 'desc'],
+            ])
+            ->values();
+
+            return ResponseHelper::SuccessResponse([
+                'rows'          => $rows,
+                'total'         => $rows->count(),
+                'needs_request' => $rows->where('needs_request', true)->count(),
+                'requested'     => $rows->where('invoice_requested', true)->count(),
+            ], 'Left-garage invoice queue retrieved', 200);
+        } catch (\Throwable $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    // ── 4. Severity grade review ────────────────────────────────────────────────────────────────
+    /**
+     * Tickets whose fault-severity grade looks too LOW for the situation — the inspector scored it
+     * Routine / Moderate when the signals point to Critical. Signals, strongest first:
+     *   • a finding keyword the library grades critical-risk;
+     *   • a breakdown-origin ticket (a not-driveable car);
+     *   • the car currently graded RED (blocked from rent).
+     * Each flagged row shows what they picked, what it should be, and why.
+     */
+    public function severityReview(Request $request)
+    {
+        try {
+            // The admin-curated keyword → risk lookup, lowercased for forgiving matching.
+            $library = FindingKeyword::active()->get(['keyword', 'risk'])
+                ->mapWithKeys(fn ($k) => [Str::lower(trim($k->keyword)) => $k->risk]);
+
+            $tickets = Maintenance::workflowTickets()
+                ->whereNotNull('fault_severity')
+                ->with('vehicle:id,plate_no,make,model,condition_grade')
+                ->orderByDesc('id')
+                ->limit(500)
+                ->get();
+
+            $names = $this->userNames($tickets, ['inspected_by']);
+
+            $rows = collect();
+            foreach ($tickets as $t) {
+                $graded     = $t->fault_severity;
+                $gradedRank = $this->severityRank($graded);
+
+                $reasons     = [];
+                $expectedRank = $gradedRank;
+                $expected     = $graded;
+
+                // (a) critical-risk keyword among the findings.
+                [$kwRisk, $kwHit] = $this->topKeywordRisk($t, $library);
+                if ($kwRisk !== null) {
+                    $r = $this->severityRank($kwRisk);
+                    if ($r > $expectedRank) {
+                        $expectedRank = $r;
+                        $expected     = $kwRisk;
+                    }
+                    if ($this->severityRank($kwRisk) > $gradedRank) {
+                        $reasons[] = ['type' => 'keyword', 'label' => 'Keyword "' . $kwHit . '" is graded ' . ucfirst($kwRisk), 'risk' => $kwRisk];
+                    }
+                }
+
+                // (b) breakdown origin — a not-driveable car is a critical situation by definition.
+                if ($t->trigger_reason === Maintenance::TRIGGER_BREAKDOWN && $gradedRank < $this->severityRank('critical')) {
+                    $expectedRank = max($expectedRank, $this->severityRank('critical'));
+                    $expected     = 'critical';
+                    $reasons[]    = ['type' => 'breakdown', 'label' => 'Reported as a breakdown (not driveable)', 'risk' => 'critical'];
+                }
+
+                // (c) the car is graded RED (blocked from rent) — a grounded car shouldn't sit at Routine.
+                if ($t->vehicle?->condition_grade === 'red' && $gradedRank < $this->severityRank('critical')) {
+                    $expectedRank = max($expectedRank, $this->severityRank('critical'));
+                    $expected     = 'critical';
+                    $reasons[]    = ['type' => 'condition', 'label' => 'Car is graded RED (blocked from rent)', 'risk' => 'critical'];
+                }
+
+                if (empty($reasons) || $expectedRank <= $gradedRank) {
+                    continue; // graded appropriately (or higher) — not a mismatch
+                }
+
+                $gm = Maintenance::FAULT_SEVERITY_META[$graded] ?? [];
+                $em = Maintenance::FAULT_SEVERITY_META[$expected] ?? [];
+                $rows->push([
+                    'ticket_id'        => $t->id,
+                    'vehicle_id'       => $t->vehicle_id,
+                    'plate_no'         => $t->vehicle?->plate_no,
+                    'car'              => trim(($t->vehicle?->make ?? '') . ' ' . ($t->vehicle?->model ?? '')) ?: null,
+                    'workflow_status'  => $t->workflow_status,
+                    'graded'           => $graded,
+                    'graded_label'     => $gm['label'] ?? ucfirst((string) $graded),
+                    'graded_emoji'     => $gm['emoji'] ?? null,
+                    'graded_tone'      => $gm['tone'] ?? null,
+                    'expected'         => $expected,
+                    'expected_label'   => $em['label'] ?? ucfirst((string) $expected),
+                    'expected_emoji'   => $em['emoji'] ?? null,
+                    'expected_tone'    => $em['tone'] ?? null,
+                    'gap'              => $expectedRank - $gradedRank,
+                    'reasons'          => $reasons,
+                    'graded_by'        => $names[$t->inspected_by] ?? null,
+                    'at'               => optional($t->inspected_at)->toIso8601String(),
+                ]);
+            }
+
+            $sorted = $rows->sortByDesc('gap')->values();
+
+            return ResponseHelper::SuccessResponse([
+                'rows'      => $sorted,
+                'total'     => $sorted->count(),
+                'critical'  => $sorted->where('expected', 'critical')->count(),
+            ], 'Severity grade review retrieved', 200);
+        } catch (\Throwable $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    // ── 5. Mis-diagnosis review ─────────────────────────────────────────────────────────────────
+    /**
+     * The inspector got it wrong — every fault Abu Maroof (the inspector) diagnosed that a supervisor
+     * later OVERRULED as a mis-diagnosis (the "mark fault incorrect" override, In-Workshop only). One row
+     * per disputed fault: the symptom he called, who diagnosed it, who overruled it, the reason and when.
+     * Plus a per-inspector tally so a recurring mis-caller stands out.
+     */
+    public function misdiagnoses(Request $request)
+    {
+        try {
+            $tasks = \App\Models\MaintenanceTask::query()
+                ->whereNotNull('marked_incorrect_at')
+                ->with([
+                    'vehicle:id,plate_no,make,model',
+                    'maintenance:id,inspected_by,workflow_status',
+                    'maintenance.inspector:id,name',
+                    'identifiedBy:id,name',
+                    'markedIncorrectBy:id,name',
+                    'rootCause:id,root_cause',
+                ])
+                ->orderByDesc('marked_incorrect_at')
+                ->limit(400)
+                ->get();
+
+            $rows = $tasks->map(function ($task) {
+                $meta = Maintenance::FAULT_SEVERITY_META[$task->severity] ?? [];
+                // Who called the fault: the fault's own identifier, else the ticket's inspector (Abu Maroof).
+                $diagnosedBy = $task->identifiedBy?->name ?? $task->maintenance?->inspector?->name;
+
+                return [
+                    'task_id'         => $task->id,
+                    'ticket_id'       => $task->maintenance_id,
+                    'vehicle_id'      => $task->vehicle_id,
+                    'plate_no'        => $task->vehicle?->plate_no,
+                    'car'             => trim(($task->vehicle?->make ?? '') . ' ' . ($task->vehicle?->model ?? '')) ?: null,
+                    'workflow_status' => $task->maintenance?->workflow_status,
+                    'symptom'         => $task->symptom,               // the fault he called
+                    'root_cause'      => $task->rootCause?->root_cause ?? $task->root_cause,
+                    'severity'        => $task->severity,
+                    'severity_label'  => $meta['label'] ?? null,
+                    'severity_emoji'  => $meta['emoji'] ?? null,
+                    'severity_tone'   => $meta['tone'] ?? null,
+                    'diagnosed_by'    => $diagnosedBy,
+                    'overruled_by'    => $task->markedIncorrectBy?->name,
+                    'reason'          => $task->incorrect_reason,      // why it was a mis-diagnosis
+                    'at'              => optional($task->marked_incorrect_at)->toIso8601String(),
+                ];
+            })->values();
+
+            // Per-inspector tally — a recurring mis-caller should stand out at the top.
+            $byInspector = $rows
+                ->filter(fn ($r) => $r['diagnosed_by'])
+                ->groupBy('diagnosed_by')
+                ->map(fn ($g, $name) => ['name' => $name, 'count' => $g->count()])
+                ->sortByDesc('count')
+                ->values();
+
+            return ResponseHelper::SuccessResponse([
+                'rows'          => $rows,
+                'total'         => $rows->count(),
+                'by_inspector'  => $byInspector,
+            ], 'Mis-diagnosis review retrieved', 200);
+        } catch (\Throwable $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    // ── 6. Resolved-Transfer Oversight ────────────────────────────────────────────────────────────
+    /**
+     * Cars transferred to a DIFFERENT garage while EVERY fault on the ticket was already fixed — an
+     * unusual move (nothing left to repair) gated behind a mandatory justification note at transfer
+     * time (see MaintenanceWorkflowController::transferGarage). One row per flagged transfer: the car,
+     * from → to garage, the odometer captured, WHO moved it, WHEN, and the note explaining WHY.
+     */
+    public function resolvedTransfers(Request $request)
+    {
+        try {
+            $flags = \App\Models\ResolvedTransferFlag::query()
+                ->with(['vehicle:id,plate_no,make,model', 'flaggedBy:id,name'])
+                ->latest()
+                ->limit(500)
+                ->get();
+
+            $rows = $flags->map(fn ($f) => [
+                'id'          => $f->id,
+                'ticket_id'   => $f->maintenance_id,
+                'plate_no'    => $f->vehicle?->plate_no,
+                'car'         => trim(($f->vehicle?->make ?? '') . ' ' . ($f->vehicle?->model ?? '')) ?: null,
+                'from_garage' => $f->from_garage,
+                'to_garage'   => $f->to_garage,
+                'odometer'    => $f->odometer,
+                'note'        => $f->note,
+                'flagged_by'  => $f->flaggedBy?->name,
+                'at'          => optional($f->created_at)->toIso8601String(),
+            ])->values();
+
+            return ResponseHelper::SuccessResponse([
+                'rows'  => $rows,
+                'total' => $rows->count(),
+            ], 'Resolved-transfer oversight retrieved', 200);
+        } catch (\Throwable $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    // ── Overview roll-up ────────────────────────────────────────────────────────────────────────
+    /** The six counts in one call, for the section landing page. */
+    public function overview(Request $request)
+    {
+        try {
+            $mileage  = $this->mileageDiscrepancies($request)->getData(true)['data'] ?? [];
+            $garage   = $this->leftGarage($request)->getData(true)['data'] ?? [];
+            $severity = $this->severityReview($request)->getData(true)['data'] ?? [];
+            $misdiag  = $this->misdiagnoses($request)->getData(true)['data'] ?? [];
+            $resolved = $this->resolvedTransfers($request)->getData(true)['data'] ?? [];
+
+            return ResponseHelper::SuccessResponse([
+                'mileage_flags'        => $mileage['total'] ?? 0,
+                'mileage_discrepancies'=> $mileage['discrepancies'] ?? 0,
+                'left_garage'          => $garage['total'] ?? 0,
+                'needs_invoice'        => $garage['needs_request'] ?? 0,
+                'severity_mismatches'  => $severity['total'] ?? 0,
+                'severity_critical'    => $severity['critical'] ?? 0,
+                'misdiagnoses'         => $misdiag['total'] ?? 0,
+                'resolved_transfers'   => $resolved['total'] ?? 0,
+            ], 'Workflow oversight overview retrieved', 200);
+        } catch (\Throwable $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    // ── helpers ─────────────────────────────────────────────────────────────────────────────────
+
+    /** id => name lookup for every actor referenced across the given tickets' *_by columns (one query). */
+    private function userNames($tickets, array $cols): array
+    {
+        $ids = collect($tickets)
+            ->flatMap(fn ($t) => array_map(fn ($c) => $t->{$c} ?? null, $cols))
+            ->filter()
+            ->unique()
+            ->values();
+
+        if ($ids->isEmpty()) {
+            return [];
+        }
+
+        return User::whereIn('id', $ids)->pluck('name', 'id')->all();
+    }
+
+    /** Common numeric rank so a keyword's risk and a ticket's fault_severity compare on one scale. */
+    private function severityRank(?string $level): int
+    {
+        return [
+            'critical' => 4,
+            'high'     => 3,
+            'moderate' => 2,
+            'routine'  => 1,
+        ][$level] ?? 0;
+    }
+
+    /**
+     * The highest-risk finding keyword on a ticket, matched against the library. Scans the ticket's
+     * findings text (inspector + garage) and the inspector's suggested findings; returns [risk, hitText]
+     * or [null, null]. Matching is forgiving: exact lowercased hit, else a library keyword contained in
+     * the finding text (or vice-versa) so "engine overheating" still catches the "overheating" keyword.
+     */
+    private function topKeywordRisk(Maintenance $t, $library): array
+    {
+        $texts = collect($t->findings ?? [])->pluck('text')
+            ->merge(collect($t->suggested_findings ?? [])->map(fn ($f) => is_array($f) ? ($f['text'] ?? null) : $f))
+            ->filter()
+            ->map(fn ($s) => Str::lower(trim((string) $s)))
+            ->unique();
+
+        $bestRank = 0;
+        $bestRisk = null;
+        $bestHit  = null;
+
+        foreach ($texts as $text) {
+            foreach ($library as $keyword => $risk) {
+                if ($keyword === '' ) {
+                    continue;
+                }
+                if ($text === $keyword || Str::contains($text, $keyword) || Str::contains($keyword, $text)) {
+                    $r = $this->severityRank($risk);
+                    if ($r > $bestRank) {
+                        $bestRank = $r;
+                        $bestRisk = $risk;
+                        $bestHit  = $keyword;
+                    }
+                }
+            }
+        }
+
+        return [$bestRisk, $bestHit];
+    }
+}

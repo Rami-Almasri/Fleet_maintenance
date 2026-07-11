@@ -7,6 +7,7 @@ import { Card, Spinner } from '../../components/ui/Misc';
 import CustomerReconciliation from '../../components/CustomerReconciliation';
 import { useCountUp } from '../../components/ui/Gauge';
 import { aed2, fmtDate, num } from '../../lib/format';
+import { SHOW_FINANCIALS } from '../../config/features';
 
 function CountUp({ value, format }) {
   const v = useCountUp(Number(value) || 0);
@@ -122,33 +123,39 @@ export default function CustomerProfile() {
             </div>
 
             {/* Balance highlight */}
-            <div className="w-full shrink-0 rounded-2xl bg-white/5 p-4 ring-1 ring-inset ring-white/10 backdrop-blur lg:w-72">
-              <p className="text-xs font-medium text-white/55">{balance > 0 ? 'Outstanding (owes)' : balance < 0 ? 'Credit (overpaid)' : 'Balance'}</p>
-              <p className={`mt-1 text-3xl font-bold tracking-tight ${balance > 0 ? 'text-red-300' : balance < 0 ? 'text-emerald-300' : 'text-white'}`}>
-                {aed2(Math.abs(balance))}
-              </p>
-              <div className="mt-3 flex gap-4 border-t border-white/10 pt-3 text-xs">
-                <div>
-                  <p className="text-white/45">Wallet</p>
-                  <p className="font-semibold text-white">{aed2(wallet)}</p>
-                </div>
-                <div>
-                  <p className="text-white/45">Deposit held</p>
-                  <p className="font-semibold text-white">{aed2(c.deposit)}</p>
+            {SHOW_FINANCIALS && (
+              <div className="w-full shrink-0 rounded-2xl bg-white/5 p-4 ring-1 ring-inset ring-white/10 backdrop-blur lg:w-72">
+                <p className="text-xs font-medium text-white/55">{balance > 0 ? 'Outstanding (owes)' : balance < 0 ? 'Credit (overpaid)' : 'Balance'}</p>
+                <p className={`mt-1 text-3xl font-bold tracking-tight ${balance > 0 ? 'text-red-300' : balance < 0 ? 'text-emerald-300' : 'text-white'}`}>
+                  {aed2(Math.abs(balance))}
+                </p>
+                <div className="mt-3 flex gap-4 border-t border-white/10 pt-3 text-xs">
+                  <div>
+                    <p className="text-white/45">Wallet</p>
+                    <p className="font-semibold text-white">{aed2(wallet)}</p>
+                  </div>
+                  <div>
+                    <p className="text-white/45">Deposit held</p>
+                    <p className="font-semibold text-white">{aed2(c.deposit)}</p>
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
           </div>
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
-          <Stat label={balance > 0 ? 'Outstanding' : balance < 0 ? 'Credit' : 'Balance'} value={Math.abs(balance)} format={aed2} tone={balance > 0 ? 'red' : 'emerald'} highlight={balance !== 0}
-            icon="M12 8c-1.7 0-3 .9-3 2s1.3 2 3 2 3 .9 3 2-1.3 2-3 2m0-8V6m0 12v-2m9-4a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" />
-          <Stat label="Available Wallet" value={wallet} format={aed2} tone="emerald" highlight={wallet > 0}
-            icon="M3 7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7zm13 5h5M16 12a1.5 1.5 0 0 0 0 3h5v-3h-5z" />
-          <Stat label="Deposit Held" value={c.deposit} format={aed2} tone="indigo"
-            icon="M3 10l9-6 9 6M5 10v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-9M9 20v-6h6v6" />
+        <div className={`grid grid-cols-2 gap-4 ${SHOW_FINANCIALS ? 'sm:grid-cols-3 lg:grid-cols-5' : 'sm:grid-cols-2'}`}>
+          {SHOW_FINANCIALS && (
+            <>
+              <Stat label={balance > 0 ? 'Outstanding' : balance < 0 ? 'Credit' : 'Balance'} value={Math.abs(balance)} format={aed2} tone={balance > 0 ? 'red' : 'emerald'} highlight={balance !== 0}
+                icon="M12 8c-1.7 0-3 .9-3 2s1.3 2 3 2 3 .9 3 2-1.3 2-3 2m0-8V6m0 12v-2m9-4a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" />
+              <Stat label="Available Wallet" value={wallet} format={aed2} tone="emerald" highlight={wallet > 0}
+                icon="M3 7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7zm13 5h5M16 12a1.5 1.5 0 0 0 0 3h5v-3h-5z" />
+              <Stat label="Deposit Held" value={c.deposit} format={aed2} tone="indigo"
+                icon="M3 10l9-6 9 6M5 10v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-9M9 20v-6h6v6" />
+            </>
+          )}
           <Stat label="Total Contracts" value={stats.contracts_count} tone="indigo"
             icon="M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z" />
           <Stat label="Open Now" value={stats.open_count} tone="emerald" highlight={stats.open_count > 0}
@@ -178,7 +185,7 @@ export default function CustomerProfile() {
         </div>
 
         {/* Per-category account reconciliation rolled up across all contracts */}
-        <CustomerReconciliation ledger={categoryLedger} totals={ledgerTotals} />
+        {SHOW_FINANCIALS && <CustomerReconciliation ledger={categoryLedger} totals={ledgerTotals} />}
 
         {/* Rental history — a timeline of this customer's contracts */}
         <Card>
@@ -210,7 +217,7 @@ export default function CustomerProfile() {
                             <ContractTypeBadge type={ct.contract_type} />
                             <ContractStateBadge state={ct.state} />
                           </div>
-                          <Badge tone={balTone(ct.balance)}>{aed2(ct.balance)}</Badge>
+                          {SHOW_FINANCIALS && <Badge tone={balTone(ct.balance)}>{aed2(ct.balance)}</Badge>}
                         </div>
                         <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
                           {ct.vehicle && (
@@ -220,7 +227,7 @@ export default function CustomerProfile() {
                             </span>
                           )}
                           <span>{fmtDate(ct.out_date)} → {ct.in_date ? fmtDate(ct.in_date) : <span className="text-emerald-600">still out</span>}</span>
-                          <span className="text-slate-400">Dr {aed2(ct.debit)} · Cr {aed2(ct.credit)}</span>
+                          {SHOW_FINANCIALS && <span className="text-slate-400">Dr {aed2(ct.debit)} · Cr {aed2(ct.credit)}</span>}
                         </div>
                       </div>
                     </li>

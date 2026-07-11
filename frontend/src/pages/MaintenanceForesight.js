@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import api from '../api/client';
 import useFetch from '../hooks/useFetch';
 import Badge from '../components/ui/Badge';
@@ -52,10 +52,16 @@ function ConfidenceBadge({ level, samples }) {
   );
 }
 
-function ForesightCard({ c, onIssue }) {
+function ForesightCard({ c, onIssue, highlight }) {
   const t = TIER[c.tier] || TIER.watch;
+  const [showMoney, setShowMoney] = useState(false);
   return (
-    <Card className={`group relative overflow-hidden p-5 pl-6 ring-1 ${t.ring} shadow-soft transition-all duration-200 hover:-translate-y-0.5 hover:shadow-card`}>
+    <Card
+      id={`car-${c.vehicle_id}`}
+      className={`group relative overflow-hidden p-5 pl-6 ring-1 shadow-soft transition-all duration-200 hover:-translate-y-0.5 hover:shadow-card scroll-mt-24 ${
+        highlight ? 'ring-2 ring-indigo-400 ring-offset-2' : `ring-1 ${t.ring}`
+      }`}
+    >
       {/* tier accent rail */}
       <span aria-hidden className={`absolute inset-y-0 left-0 w-1.5 bg-gradient-to-b ${t.bar}`} />
 
@@ -97,55 +103,114 @@ function ForesightCard({ c, onIssue }) {
         </div>
       </div>
 
-      {/* Why we flagged it — one tidy row per warning (icon · headline · plain reason · evidence),
-          replacing the old chips-plus-bullets that showed each warning twice. */}
-      <div className="mt-4 space-y-2">
-        {c.signals.map((s, i) => {
-          const st = TIER[s.tier] || TIER.watch;
-          return (
-            <div key={i} className="flex gap-3 rounded-xl bg-slate-50/70 p-3 ring-1 ring-inset ring-slate-100">
-              <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${st.soft}`}>
-                <svg className="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={SIGNAL_ICON[s.type] || SIGNAL_ICON.chronic_fault} /></svg>
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold text-slate-800">
-                  {s.label}
-                  {s.basis ? <span className="ml-1 text-xs font-normal text-slate-400">({s.basis})</span> : null}
-                </p>
-                <p className="mt-0.5 text-sm leading-relaxed text-slate-600">{s.detail}</p>
-                {s.evidence?.length > 0 && (
-                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                    <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Evidence</span>
-                    {s.evidence.map((ev, k) => {
-                      const recur = ev.gap_days != null;       // not the first episode
-                      const label = ev.kind === 'contract'
-                        ? `${ev.visits}× · contract #${ev.contract_no}`
-                        : (recur ? `${ev.visits}× · gap ${ev.gap_days} days` : `${ev.visits}× · during rental`);
-                      const gapTag = recur && ev.kind === 'contract' ? ` (${ev.gap_days} days later)` : '';
-                      const body = <>{recur && <span className="mr-0.5">↻</span>}{label}{gapTag && <span className="opacity-60">{gapTag}</span>}</>;
-                      return ev.contract_id ? (
-                        <Link
-                          key={k}
-                          to={`/contracts/${ev.contract_id}`}
-                          title="Open this contract's repair history"
-                          className="inline-flex items-center gap-0.5 rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700 ring-1 ring-inset ring-indigo-200 transition hover:ring-indigo-400"
-                        >
-                          {body}
-                        </Link>
-                      ) : (
-                        <span key={k} className="inline-flex items-center gap-0.5 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600 ring-1 ring-inset ring-slate-200">
-                          {body}
-                        </span>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+      {/* Why it's flagged — split into "what's wrong now" status alerts (each a single
+          self-contained line) and a calm "keeps breaking down" panel (one row per fault, with a
+          count + a compact came-back-after-N-days timeline). A car with several repeat faults no
+          longer reads as the same sentence printed twice per fault. */}
+      {(() => {
+        const recurring = c.signals.filter((s) => s.type === 'chronic_fault' || s.type === 'frequent_breakdowns');
+        const alerts = c.signals.filter((s) => s.type !== 'chronic_fault' && s.type !== 'frequent_breakdowns');
+        return (
+          <div className="mt-4 space-y-2.5">
+            {alerts.map((s, i) => {
+              const st = TIER[s.tier] || TIER.watch;
+              return (
+                <div key={`a${i}`} className="flex items-start gap-3 rounded-xl bg-slate-50/70 p-3 ring-1 ring-inset ring-slate-100">
+                  <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${st.soft}`}>
+                    <svg className="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={SIGNAL_ICON[s.type] || SIGNAL_ICON.chronic_fault} /></svg>
+                  </span>
+                  <p className="min-w-0 flex-1 text-sm leading-relaxed text-slate-600">
+                    <span className="font-semibold text-slate-800">{s.label}.</span> {s.detail}
+                  </p>
+                </div>
+              );
+            })}
 
+            {recurring.length > 0 && (
+              <div className="rounded-xl bg-red-50/50 p-3.5 ring-1 ring-inset ring-red-100">
+                <p className="flex flex-wrap items-center gap-x-2 text-sm font-semibold text-red-700">
+                  <svg className="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={SIGNAL_ICON.chronic_fault} /></svg>
+                  Keeps breaking down
+                  <span className="font-normal text-red-400">· the same faults return after each fix</span>
+                </p>
+                <div className="mt-3 space-y-3">
+                  {recurring.map((s, i) => (
+                    <div key={`r${i}`}>
+                      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                        <span className="inline-flex items-center rounded-md bg-red-600 px-1.5 py-0.5 text-xs font-bold tabular-nums text-white">{s.count}×</span>
+                        <span className="font-semibold capitalize text-slate-800">
+                          {s.issue || (s.type === 'frequent_breakdowns' ? 'Breaks down a lot' : s.label)}
+                        </span>
+                        {s.basis && <span className="text-xs text-slate-400">{s.basis}</span>}
+                      </div>
+                      {s.evidence?.length > 0 && (
+                        <div className="mt-1.5 flex flex-wrap items-center gap-x-1 gap-y-1 pl-0.5 text-xs">
+                          {s.evidence.map((ev, k) => (
+                            <Fragment key={k}>
+                              {k > 0 && ev.gap_days != null && (
+                                <span className="text-slate-400" title={`came back ${ev.gap_days} days later`}>
+                                  <span className="mx-0.5 text-slate-300">→</span>{ev.gap_days}d<span className="mx-0.5 text-slate-300">→</span>
+                                </span>
+                              )}
+                              {ev.contract_id ? (
+                                <Link
+                                  to={`/contracts/${ev.contract_id}`}
+                                  title="Open this contract's repair history"
+                                  className="rounded-full bg-white px-2 py-0.5 font-medium text-indigo-700 ring-1 ring-inset ring-indigo-200 transition hover:ring-indigo-400"
+                                >
+                                  #{ev.contract_no}{ev.visits > 1 ? ` ·${ev.visits}×` : ''}
+                                </Link>
+                              ) : (
+                                <span className="rounded-full bg-white px-2 py-0.5 font-medium text-slate-600 ring-1 ring-inset ring-slate-200">
+                                  {ev.contract_no ? `#${ev.contract_no}` : `${ev.visits}×`}{ev.kind !== 'contract' ? ' · during rental' : ''}
+                                </span>
+                              )}
+                            </Fragment>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* Money detail — collapsed by default so the card stays scannable. One button reveals the
+          downtime cost, the real-profit "worth keeping?" verdict and the per-problem price breakdown. */}
+      <button
+        type="button"
+        onClick={() => setShowMoney((v) => !v)}
+        aria-expanded={showMoney}
+        className="mt-5 flex w-full items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-left transition hover:border-indigo-200 hover:bg-indigo-50/40"
+      >
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 ring-1 ring-inset ring-emerald-100">
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" /></svg>
+          </span>
+          <span className="text-sm font-semibold text-slate-700">
+            {showMoney ? 'Hide the money' : 'Show the money'}
+          </span>
+          {!showMoney && (
+            <span className="hidden items-center gap-1.5 sm:flex">
+              <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${(c.real_net_profit ?? 0) >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+                Net profit {aed2(c.real_net_profit || 0)}
+              </span>
+              {c.potential_saving > 0 && (
+                <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-semibold text-indigo-700">
+                  Save {aed2(c.potential_saving)}
+                </span>
+              )}
+            </span>
+          )}
+        </span>
+        <svg className={`h-4 w-4 shrink-0 text-slate-400 transition-transform duration-200 ${showMoney ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6" /></svg>
+      </button>
+
+      {showMoney && (
+      <>
       {/* What it could cost */}
       <p className="mt-5 mb-2 inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
         If it goes into the garage
@@ -276,6 +341,8 @@ function ForesightCard({ c, onIssue }) {
           </ul>
         </div>
       )}
+      </>
+      )}
 
       {/* Recommended action */}
       <div className="mt-4 flex items-start gap-3 rounded-xl bg-gradient-to-r from-indigo-50 to-violet-50/60 px-4 py-3 ring-1 ring-inset ring-indigo-100">
@@ -400,10 +467,29 @@ export default function MaintenanceForesight() {
   const [tier, setTier] = useState('all');
   const [issue, setIssue] = useState(null);   // open the cost-line drill-down for this problem
 
+  // Deep-link target — e.g. /maintenance-foresight#car-54 from the Command Center "See details".
+  const location = useLocation();
+  const focusId = useMemo(() => {
+    const m = (location.hash || '').match(/^#car-(\d+)$/);
+    return m ? Number(m[1]) : null;
+  }, [location.hash]);
+
   const cars = useMemo(() => {
     const list = data?.cars || [];
     return tier === 'all' ? list : list.filter((c) => c.tier === tier);
   }, [data, tier]);
+
+  // When deep-linked to a car, switch to "All" so the tier filter can't hide it.
+  useEffect(() => {
+    if (focusId) setTier('all');
+  }, [focusId]);
+
+  // Once the targeted card is in the DOM, scroll it into view (it stays ring-highlighted while focused).
+  useEffect(() => {
+    if (!focusId || loading) return;
+    const el = document.getElementById(`car-${focusId}`);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [focusId, loading, cars]);
 
   if (error) {
     return (
@@ -651,7 +737,7 @@ export default function MaintenanceForesight() {
               <EmptyState title="All good" message="No cars need attention here right now." />
             ) : (
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                {cars.map((c) => <ForesightCard key={c.vehicle_id} c={c} onIssue={setIssue} />)}
+                {cars.map((c) => <ForesightCard key={c.vehicle_id} c={c} onIssue={setIssue} highlight={c.vehicle_id === focusId} />)}
               </div>
             )}
           </>

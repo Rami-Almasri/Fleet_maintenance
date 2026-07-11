@@ -2,11 +2,10 @@
 
 namespace App\Services;
 
-use App\Exceptions\RentalActiveException;
 use App\Exceptions\ReservationConflictException;
 use App\Models\Contract;
+use App\Models\LogisticsTask;
 use App\Models\Maintenance;
-use App\Models\PolicyOverrideAudit;
 use App\Models\Vehicle;
 use App\Services\MaintenanceAnalyticsService;
 use Carbon\Carbon;
@@ -57,12 +56,8 @@ class OperationsService
         $force = (bool) ($data['force'] ?? false);
         unset($data['force']);
 
-        // Manager-only "Rental-First" override: a reason code (and the acting user, snapshot
-        // by the controller) signals an intentional, audited maintenance-over-rental override.
-        $overrideReason = $data['override_reason'] ?? null;
-        $overrideNotes  = $data['override_notes'] ?? null;
-        $overrideById   = $data['override_by_id'] ?? null;
-        $overrideByName = $data['override_by_name'] ?? null;
+        // Drop any legacy "Rental-First" override fields a stale client might still send — the block
+        // they belonged to was removed by request (see the note below).
         unset($data['override_reason'], $data['override_notes'], $data['override_by_id'], $data['override_by_name']);
 
         // Only renting is blocked by expired docs / restricted status.
@@ -71,27 +66,11 @@ class OperationsService
             $this->validation->assertCanRent($vehicle);
         }
 
-        // "Rental-First" policy: never open a maintenance (type-U) contract while a car is on a
-        // live rental — workshop visits during a rental are logged against that rental instead.
-        // Staff are hard-blocked; a manager can override with a reason code (audited below).
-        $blockedRental = null;
-        if ($category === 'maintenance') {
-            $blockedRental = $vehicle->contracts()
-                ->where('contract_type', 'C')->currentlyOpen()
-                ->orderByDesc('id')->first();
-            if ($blockedRental && ! $overrideReason) {
-                throw new RentalActiveException(
-                    'This car is on an active rental. Log the workshop visit on the rental instead — '
-                    . 'opening a maintenance contract needs a manager override.',
-                    [
-                        'contract_id' => $blockedRental->id,
-                        'contract_no' => $blockedRental->contract_no,
-                        'customer'    => $blockedRental->customer?->name,
-                        'out_date'    => optional($blockedRental->out_date)->toDateString(),
-                    ]
-                );
-            }
-        }
+        // NOTE: the old "Rental-First" hard-block (no maintenance contract while a car is on a live
+        // rental, manager override + audit) was REMOVED by request — we routinely schedule maintenance
+        // for cars with upcoming/active bookings, or swap the customer onto another car, and manage the
+        // overlap manually. A rental↔maintenance overlap is no longer a block or a violation. The
+        // reservation-clash soft block below (force-overridable) is a separate concern and is kept.
 
         // Don't pull a reserved car into the garage if the maintenance window clashes
         // with a paid reservation — unless the operator explicitly overrides.
@@ -99,7 +78,15 @@ class OperationsService
             $this->assertNoReservationConflict($vehicle, $data['expected_return_date'] ?? null);
         }
 
-        return DB::transaction(function () use ($vehicle, $category, $data, $blockedRental, $overrideReason, $overrideNotes, $overrideById, $overrideByName) {
+        // Deferred Maintenance: is this rental pulling the car OUT of the workshop early to go to a
+        // customer? Detect it (and capture WHY it was in the shop) BEFORE the transaction closes its
+        // open maintenance contract below — afterwards there's nothing left to read.
+        $pullingFromMaintenance = $category === 'rent'
+            && ($vehicle->operational_status === 'maintenance' || $this->vehicleInMaintenance($vehicle->id));
+        $deferNote = $pullingFromMaintenance ? $this->deferredMaintenanceNote($vehicle) : null;
+        $openedBy  = $data['opened_by'] ?? null;
+
+        return DB::transaction(function () use ($vehicle, $category, $data, $pullingFromMaintenance, $deferNote, $openedBy) {
             // 1. a car can only be in one place at a time -> close prior open contract(s)
             $this->closeOpenContracts($vehicle);
 
@@ -132,30 +119,108 @@ class OperationsService
                 $contract->maintenance()->create($maint);
             }
 
-            // 2b. an overridden "Rental-First" block -> record who allowed it and why
-            if ($category === 'maintenance' && $blockedRental && $overrideReason) {
-                PolicyOverrideAudit::create([
-                    'user_id'            => $overrideById,
-                    'user_name'          => $overrideByName,
-                    'vehicle_id'         => $vehicle->id,
-                    'plate'              => $vehicle->plate_no,
-                    'action'             => 'maintenance_over_active_rental',
-                    'reason_code'        => $overrideReason,
-                    'reason_label'       => PolicyOverrideAudit::REASON_CODES[$overrideReason] ?? $overrideReason,
-                    'notes'              => $overrideNotes,
-                    'rental_contract_id' => $blockedRental->id,
-                    'rental_contract_no' => $blockedRental->contract_no,
-                    'result_contract_id' => $contract->id,
-                    'result_contract_no' => $contract->contract_no,
-                    'created_at'         => now(),
-                ]);
-            }
-
             // 3. reflect the current movement on the vehicle
             $vehicle->update(['operational_status' => self::STATUS_MAP[$category]]);
 
+            // 4. Deferred Maintenance bookkeeping:
+            //    • renting a car straight out of the workshop → flag it to go back afterwards;
+            //    • sending a car (back) into the workshop → the debt is settled, clear the flag.
+            if ($pullingFromMaintenance) {
+                $this->flagDeferredMaintenance($vehicle, $deferNote, $openedBy);
+            } elseif ($category === 'maintenance') {
+                $this->resolveDeferredMaintenance($vehicle);
+            }
+
             return $contract;
         });
+    }
+
+    /**
+     * Flag a car "owes maintenance": it was pulled out of the workshop early to satisfy a customer,
+     * so once it comes back it must be routed straight to the garage. The note carries WHY it was in
+     * the shop so the standing reminder explains itself. Idempotent — re-flagging just refreshes it.
+     */
+    public function flagDeferredMaintenance(Vehicle $vehicle, ?string $note = null, ?string $by = null): void
+    {
+        $vehicle->forceFill([
+            'is_deferred_maintenance'    => true,
+            'deferred_maintenance_reason'       => $note,
+            'deferred_maintenance_flagged_at' => now(),
+            'deferred_maintenance_flagged_by' => $by,
+        ])->save();
+    }
+
+    /** Clear the deferred-maintenance flag — the car is (back) in the workshop, or a supervisor dismissed it. */
+    public function resolveDeferredMaintenance(Vehicle $vehicle): void
+    {
+        if (! $vehicle->is_deferred_maintenance) {
+            return; // nothing to clear — avoid a needless write / audit
+        }
+        $vehicle->forceFill([
+            'is_deferred_maintenance'    => false,
+            'deferred_maintenance_reason'       => null,
+            'deferred_maintenance_flagged_at' => null,
+            'deferred_maintenance_flagged_by' => null,
+        ])->save();
+    }
+
+    /**
+     * Compose a short "why it was in the shop" note from the car's currently-open maintenance
+     * ticket / contract, used to explain the flag when the car is pulled out early for a customer.
+     * Prefers the maintenance notes, then the issue tags, then the latest workshop-log reason.
+     */
+    public function deferredMaintenanceNote(Vehicle $vehicle): ?string
+    {
+        $c = Contract::where('contract_type', 'U')->currentlyOpen()
+            ->where('vehicle_id', $vehicle->id)
+            ->with('maintenance')
+            ->latest('id')->first();
+
+        if ($c && $c->maintenance) {
+            if (! empty($c->maintenance->maintenance_notes)) {
+                return $c->maintenance->maintenance_notes;
+            }
+            $tags = $c->maintenance->maintenance_tags;
+            if (is_array($tags) && $tags) {
+                return implode(', ', $tags);
+            }
+            if (is_string($tags) && trim($tags) !== '') {
+                return $tags;
+            }
+        }
+
+        // Fall back to the latest hand-entered workshop event's reason.
+        $m = Maintenance::query()->where('vehicle_id', $vehicle->id)
+            ->whereIn('origin', Maintenance::WORKSHOP_LOG_ORIGINS)
+            ->whereNotNull('out_date')
+            ->orderByDesc('out_date')->orderByDesc('id')->first();
+
+        return $m ? ($m->service_main ?: $m->maintenance_type) : null;
+    }
+
+    /**
+     * Move a car straight from the workshop onto a customer rental WITHOUT leaving overlapping open
+     * contracts. The flow is [Maintenance] → [Closed + Flagged] → [Rental]: capture WHY it was in the
+     * shop, CLOSE the open maintenance (type-U) contract, raise the deferred-maintenance flag, and
+     * reflect the rental on operational_status. Used by the rental-form path (ContractService) where
+     * the new rental row is created directly; the live operation path already closes prior contracts
+     * inside startOperation(). Idempotent and safe to call once per new rental.
+     */
+    public function deferMaintenanceForRental(Vehicle $vehicle, ?string $openedBy = null): void
+    {
+        // Read the reason BEFORE closing the ticket — afterwards there's no open U contract to read.
+        $note = $this->deferredMaintenanceNote($vehicle);
+
+        // Close ONLY the maintenance ticket(s); the just-created rental stays the single open contract.
+        $vehicle->contracts()
+            ->where('state', 'open')
+            ->where('contract_type', 'U')
+            ->update(['state' => 'closed', 'in_date' => now()->toDateString()]);
+
+        $this->flagDeferredMaintenance($vehicle, $note, $openedBy);
+
+        // No maintenance contract is open anymore → the car is now out on rent, not in the shop.
+        $vehicle->update(['operational_status' => 'rented']);
     }
 
     /**
@@ -294,14 +359,24 @@ class OperationsService
         $manualOnly = $this->manualOnlyGarageVehicleIds();
         $maint = array_values(array_unique(array_merge($maintContract, $manualOnly)));
 
-        // A car kept busy ONLY by its garage log must not also be force-freed in step 1.
-        $busyOrGarage = array_values(array_unique(array_merge($busy, $manualOnly)));
+        // Cars out on a Logistics Dispatch (and NOT also under an open contract — a real movement wins
+        // over the transit mirror) keep the live "in_transit" status so a sync never resets them.
+        $inTransit = array_values(array_diff($this->inTransitVehicleIds(), $busy));
 
-        return DB::transaction(function () use ($maint, $rent, $busyOrGarage) {
+        // A car kept busy ONLY by its garage log or an active dispatch must not be force-freed in step 1.
+        $busyOrGarage = array_values(array_unique(array_merge($busy, $manualOnly, $inTransit)));
+
+        return DB::transaction(function () use ($maint, $rent, $inTransit, $busyOrGarage) {
             // 1) no open movement at all → available
             $available = Vehicle::whereNotIn('id', $busyOrGarage ?: [0])
                 ->where('operational_status', '!=', 'available')
                 ->update(['operational_status' => 'available']);
+
+            // 1b) out on a dispatch → in_transit (rented/maintenance below still win if a contract exists)
+            $transit = $inTransit
+                ? Vehicle::whereIn('id', $inTransit)->where('operational_status', '!=', 'in_transit')
+                    ->update(['operational_status' => 'in_transit'])
+                : 0;
 
             // 2) open rental → rented
             $rented = $rent
@@ -317,10 +392,16 @@ class OperationsService
 
             // 4) cars that have left the fleet never show live movement (lifecycle wins)
             Vehicle::whereIn('status', self::LEFT_FLEET_STATUSES)
-                ->whereIn('operational_status', ['rented', 'maintenance'])
+                ->whereIn('operational_status', ['rented', 'maintenance', 'in_transit'])
                 ->update(['operational_status' => 'available']);
 
-            return ['available' => $available, 'rented' => $rented, 'maintenance' => $maintenance];
+            // Clear a stale transit mirror left on any car that's no longer on an active dispatch, so the
+            // grid never shows "In Transit to …" once the move is done / the car moved on.
+            Vehicle::whereNotNull('transit_destination')
+                ->when(! empty($inTransit), fn ($q) => $q->whereNotIn('id', $inTransit))
+                ->update(['transit_destination' => null]);
+
+            return ['available' => $available, 'in_transit' => $transit, 'rented' => $rented, 'maintenance' => $maintenance];
         });
     }
 
@@ -347,15 +428,20 @@ class OperationsService
 
         if (in_array($vehicle->status, self::LEFT_FLEET_STATUSES, true)) {
             $status = 'available';
-        } elseif ($openOf('U')) {
+        } elseif ($this->vehicleInMaintenance($vid)) {
+            // Canonical maintenance rule: an open U-contract, an open hand-entered garage event, OR
+            // an open workflow ticket. "In the workflow ⇒ in maintenance, period" — it even wins
+            // over an open rental, so a rented car sitting in the shop reads the same on every page.
             $status = 'maintenance';
         } elseif ($openOf('C')) {
             $status = 'rented';
         } elseif ($hasOpen) {
             // An open web movement (test / transfer / sale_prep) owns the status — don't override.
             return $vehicle->operational_status;
+        } elseif ($this->vehicleInTransit($vid)) {
+            $status = 'in_transit';
         } else {
-            $status = $this->manualGarageVehicleIds([$vid]) ? 'maintenance' : 'available';
+            $status = 'available';
         }
 
         if ($vehicle->operational_status !== $status) {
@@ -363,6 +449,19 @@ class OperationsService
         }
 
         return $status;
+    }
+
+    /** Vehicle ids currently out on an open Logistics Dispatch (status 'in_transit'). */
+    public function inTransitVehicleIds(): array
+    {
+        return LogisticsTask::open()->whereNotNull('vehicle_id')
+            ->distinct()->pluck('vehicle_id')->map(fn ($id) => (int) $id)->all();
+    }
+
+    /** Is this one car out on an open dispatch right now? */
+    public function vehicleInTransit(int $vehicleId): bool
+    {
+        return LogisticsTask::open()->where('vehicle_id', $vehicleId)->exists();
     }
 
     /**
@@ -409,6 +508,52 @@ class OperationsService
         $busy = Contract::currentlyOpen()->whereNotNull('vehicle_id')->distinct()->pluck('vehicle_id')->all();
 
         return array_values(array_diff($this->manualGarageVehicleIds(), $busy));
+    }
+
+    /**
+     * THE canonical "in maintenance right now" vehicle set — the single source of truth every
+     * surface (dashboard KPI + donut + fleet pulse, the per-vehicle operational_status cascade,
+     * and Maintenance Foresight) must agree on. A car is in maintenance if ANY of these is true:
+     *   • OfficeManager lifecycle status is `under_maintenance`, or
+     *   • it has an OPEN type-U maintenance contract, or
+     *   • its latest hand-entered workshop event is still open (manual garage), or
+     *   • it has an OPEN workflow TICKET (WF_TICKET_STATES — pending → ready-for-re-inspection).
+     * "If it's in the workflow, it's in maintenance — period": an opened ticket counts even before
+     * the car is dispatched, so the workflow board can never disagree with the dashboard again.
+     *
+     * @return array<int>  unique vehicle ids
+     */
+    public function vehiclesInMaintenance(): array
+    {
+        return Vehicle::where('status', 'under_maintenance')->pluck('id')
+            ->merge(
+                Contract::where('contract_type', 'U')->currentlyOpen()
+                    ->whereNotNull('vehicle_id')->pluck('vehicle_id')
+            )
+            ->merge($this->manualGarageVehicleIds())
+            ->merge(
+                Maintenance::openWorkflow()->whereNotNull('vehicle_id')
+                    ->whereIn('workflow_status', Maintenance::WF_TICKET_STATES)
+                    ->pluck('vehicle_id')
+            )
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    /** Is this one car in maintenance right now, per the canonical rule above? */
+    public function vehicleInMaintenance(int $vehicleId): bool
+    {
+        if (Contract::where('contract_type', 'U')->currentlyOpen()->where('vehicle_id', $vehicleId)->exists()) {
+            return true;
+        }
+        if ($this->manualGarageVehicleIds([$vehicleId])) {
+            return true;
+        }
+
+        return Maintenance::openWorkflow()->where('vehicle_id', $vehicleId)
+            ->whereIn('workflow_status', Maintenance::WF_TICKET_STATES)->exists();
     }
 
     /** Close every still-open contract for a vehicle. */

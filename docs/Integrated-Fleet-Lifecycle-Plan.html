@@ -1,0 +1,916 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Integrated Fleet Lifecycle — Implementation Plan</title>
+<style>
+  :root{
+    --navy:#0b1f3a; --navy-2:#12305c; --cyan:#0bb4c4; --cyan-dk:#087f8c;
+    --ink:#1a2433; --muted:#5b6b82; --line:#e2e8f0; --bg:#f4f7fb; --card:#ffffff;
+    --block:#e11d48; --warn:#d97706; --ack:#0ea5e9; --ok:#059669;
+    --chip:#eef4fb;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font:15px/1.6 'Inter',-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+  }
+  .wrap{max-width:960px; margin:0 auto; padding:0 24px 80px}
+
+  header{
+    background:linear-gradient(135deg,var(--navy) 0%,var(--navy-2) 60%,var(--cyan-dk) 140%);
+    color:#fff; padding:44px 0 38px; margin-bottom:28px;
+    box-shadow:0 10px 30px rgba(11,31,58,.25);
+  }
+  header .wrap{padding-bottom:0}
+  .eyebrow{letter-spacing:.18em; text-transform:uppercase; font-size:12px; color:var(--cyan); font-weight:700; margin:0 0 8px}
+  h1{margin:0; font-size:32px; line-height:1.15; font-weight:800}
+  .sub{margin:10px 0 0; color:#c7d6ea; font-size:15px}
+  .meta-row{display:flex; flex-wrap:wrap; gap:10px; margin-top:20px}
+  .meta-row .pill{background:rgba(255,255,255,.10); border:1px solid rgba(255,255,255,.18);
+    padding:6px 12px; border-radius:999px; font-size:13px; color:#eaf2fb}
+
+  .locked{
+    background:var(--card); border:1px solid var(--line); border-left:4px solid var(--cyan);
+    border-radius:12px; padding:18px 22px; margin:-40px 0 22px; position:relative;
+    box-shadow:0 8px 24px rgba(11,31,58,.08);
+  }
+  .locked h2{margin:0 0 10px; font-size:14px; text-transform:uppercase; letter-spacing:.08em; color:var(--navy)}
+  .locked ol{margin:0; padding-left:20px}
+  .locked li{margin:6px 0}
+  .shipped{
+    margin-top:14px; padding:12px 14px; background:#ecfdf5; border:1px solid #a7f3d0;
+    border-radius:9px; color:#065f46; font-size:14px;
+  }
+  .shipped b{color:#047857}
+
+  .revnote{
+    background:#eff6ff; border:1px solid #bfdbfe; border-left:4px solid #2563eb;
+    border-radius:11px; padding:15px 20px; margin:0 0 26px; font-size:14px; color:#1e3a8a;
+  }
+  .revnote b{color:#1d4ed8}
+  .revnote .tags{margin-top:8px}
+  .movetag{display:inline-block; background:#dbeafe; color:#1e40af; border-radius:6px;
+    padding:2px 9px; font-size:12.5px; font-weight:600; margin:3px 6px 0 0}
+
+  .phase{
+    background:var(--card); border:1px solid var(--line); border-radius:14px;
+    padding:0 0 8px; margin:22px 0; overflow:hidden;
+    box-shadow:0 6px 20px rgba(11,31,58,.06);
+  }
+  .phase > .head{
+    display:flex; align-items:center; gap:14px; padding:20px 24px;
+    background:linear-gradient(90deg,#f8fbff,#ffffff); border-bottom:1px solid var(--line);
+  }
+  .tag{
+    flex:0 0 auto; width:44px; height:44px; border-radius:11px;
+    background:var(--navy); color:#fff; font-weight:800; font-size:19px;
+    display:flex; align-items:center; justify-content:center;
+    box-shadow:0 4px 12px rgba(11,31,58,.25);
+  }
+  .tag.f{background:var(--cyan-dk); font-size:13px}
+  .phase h3{margin:0; font-size:20px; font-weight:800; color:var(--navy)}
+  .phase h3 .flag{display:inline-block; margin-left:8px; font-size:11.5px; font-weight:700;
+    color:#1d4ed8; background:#dbeafe; border-radius:6px; padding:2px 8px; vertical-align:middle}
+  .phase .body{padding:8px 24px 4px}
+  .outcome{
+    background:var(--chip); border-radius:9px; padding:12px 15px; margin:14px 0;
+    font-size:14.5px; color:#26364d;
+  }
+  .outcome b{color:var(--navy)}
+  .subhead{margin:22px 0 4px; font-size:15px; font-weight:800; color:var(--navy); border-top:1px dashed var(--line); padding-top:16px}
+  .subhead:first-of-type{border-top:none; padding-top:4px}
+  h4{margin:16px 0 6px; font-size:12.5px; text-transform:uppercase; letter-spacing:.07em; color:var(--cyan-dk); font-weight:700}
+  p{margin:8px 0}
+  ul{margin:8px 0; padding-left:20px}
+  li{margin:5px 0}
+  code{
+    background:#eef2f7; border:1px solid #e0e7ef; border-radius:5px;
+    padding:1px 6px; font:13px/1.5 'JetBrains Mono',ui-monospace,Menlo,Consolas,monospace; color:#0b3a63;
+  }
+  pre{
+    background:var(--navy); color:#e6f1fb; border-radius:10px; padding:16px 18px; overflow:auto;
+    font:12.5px/1.7 'JetBrains Mono',ui-monospace,Menlo,Consolas,monospace; margin:12px 0;
+  }
+  pre .hl{color:var(--cyan)}
+
+  table{border-collapse:collapse; width:100%; margin:12px 0; font-size:13.5px}
+  th,td{border:1px solid var(--line); padding:8px 11px; text-align:left; vertical-align:top}
+  th{background:#f1f6fc; color:var(--navy); font-weight:700; font-size:12.5px}
+  tr:nth-child(even) td{background:#fafcfe}
+
+  .v{display:inline-block; padding:1px 9px; border-radius:999px; font-size:11.5px; font-weight:700; white-space:nowrap}
+  .v.block{background:#fee2e2; color:var(--block)}
+  .v.warn{background:#fef3c7; color:var(--warn)}
+  .v.ack{background:#e0f2fe; color:#0369a1}
+
+  .grid16{display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:8px; margin:12px 0}
+  .grid16 .cell{background:#f6f9fd; border:1px solid var(--line); border-radius:8px; padding:8px 11px; font-size:13px}
+  .grid16 .cell .n{color:var(--cyan-dk); font-weight:800; margin-right:5px}
+  .grid16 .cell.lux{background:#fef9c3; border-color:#fde68a}
+
+  .done{
+    margin:16px 0 6px; padding:11px 15px; border-radius:9px;
+    background:#f0fdf4; border:1px solid #bbf7d0; color:#166534; font-size:13.5px;
+  }
+  .done b{color:#15803d}
+
+  .band{background:var(--navy); color:#fff; border-radius:14px; padding:24px 26px; margin:26px 0}
+  .band h3{margin:0 0 14px; color:#fff; font-size:19px}
+  .band table th{background:rgba(255,255,255,.08); color:#dbe7f5; border-color:rgba(255,255,255,.14)}
+  .band table td{border-color:rgba(255,255,255,.12); color:#e8f0fa}
+  .band table tr:nth-child(even) td{background:rgba(255,255,255,.03)}
+  .band .moved{color:var(--cyan); font-weight:700}
+
+  .signoff{
+    background:#fffbeb; border:1px solid #fde68a; border-radius:14px; padding:22px 26px; margin:26px 0;
+  }
+  .signoff h3{margin:0 0 6px; color:#92400e; font-size:19px}
+  .signoff p.lead{margin:0 0 12px; color:#a16207; font-size:14px}
+  .signoff ol{margin:0; padding-left:20px}
+  .signoff li{margin:9px 0}
+  .signoff b{color:#78350f}
+
+  footer{color:var(--muted); font-size:12.5px; text-align:center; margin-top:34px}
+
+  @media print{
+    body{background:#fff}
+    header{box-shadow:none}
+    .phase,.locked,.band,.signoff,.revnote{box-shadow:none; break-inside:avoid}
+    .phase{break-inside:avoid-page}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <p class="eyebrow">Fleet Operations · Master Blueprint · Rev. 16 — sign-off ready</p>
+    <h1>Integrated Fleet Lifecycle</h1>
+    <p class="sub">A locked-down, start-to-finish rental process — the Omar Protocol, reconciled with the Rental-First strategy.</p>
+    <div class="meta-row">
+      <span class="pill">For: <b>Omar — sign-off</b></span>
+      <span class="pill">From: Engineering</span>
+      <span class="pill">2026-07-04</span>
+      <span class="pill">Rev. 16 — ready to sign</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <section class="locked">
+    <h2>Locked decisions carried into this plan</h2>
+    <ol>
+      <li><b>Rental-First stands</b> — a booking is blocked by a <b>Red <em>or</em> Yellow grade</b>, or an <b>open safety-critical fault</b>. <b>Only Green &amp; Orange rent</b> (Orange logs a recorded acknowledgment). <b>(Rev. 14 — reverses Rev. 7):</b> <b>Yellow is now non-rentable</b>, treated <b>like Red</b> — pulled from the pool &amp; routed to maintenance. <em>Already shipped:</em> <code>Vehicle::rentBlockedByCondition()</code> is true for <b>red + yellow</b>; <code>requiresConditionAcknowledgement()</code> is <b>orange-only</b>.</li>
+      <li><b>Financials un-decoupled</b> — full tiered Approval Matrix. <b>(Rev. 7)</b> <b>Assessment ≠ Final Approval</b>: a supervisor <em>valuates</em> (cost/scope); <em>approval</em> is governed by the matrix (by amount). <code>valuated_by</code> and <code>approved_by</code> are separate.</li>
+      <li><b>Severity re-mapped</b> to 4 levels (Minor / Medium / Major / <b>Safety-Critical</b>); Safety-Critical is derived from one hard-coded safety-fault list — the same list drives the booking block, the damage grading, <em>and</em> the road-test trigger.</li>
+    </ol>
+    <div class="shipped">✓ <b>Already shipped</b> (baseline for Phase 1): the booking gate — <b>Red <em>and</em> Yellow block</b> (pulled from the pool → maintenance); <b>Orange</b> rents only after a recorded customer-condition acknowledgment (<code>condition_ack_*</code>, migration <code>2026_07_02_090000</code>); Green rents freely.</div>
+  </section>
+
+  <div class="revnote">
+    <b>Rev. 16 — Lean cleanup &amp; testing logic:</b> trimmed to the core — <b>data-driven garage selection</b> + <b>odometer / damage integrity</b>. <b>Removed:</b> the automated <b>Stability Cycle Engine</b> (5-day cycle · 1-hour Safety Block · 3-cycle graduation — never shipped) and the <b>+5% mileage buffer</b>. <b>Added (new Rev. 16 section):</b> <b>Baseline Testing</b> (each Test vs. the last Test's history), a <b>Preventive Testing Policy</b> — smart-trigger: a <b>15-day Periodic Safety Refresh</b> (even idle cars), a <b>Deep Inspection after any 20+ day rental</b>, a <b>7-day anti-redundancy buffer</b>, and <b>Ready-State Retention</b> — plus <b>Labor &amp; Time Tracking</b> (every Test/repair time-stamped + cost-accounted → per-garage efficiency), and <b>Data-Driven Garage Selection</b> (price a primary rank, backed by Cost-Intelligence).
+    <div class="tags">
+      <span class="movetag">Removed: Stability Cycle · 5% buffer · Risk Flag</span>
+      <span class="movetag">Baseline Testing · no redundant re-tests</span>
+      <span class="movetag">Garage pick by price + cost-intelligence</span>
+    </div>
+  </div>
+
+  <div class="revnote">
+    <b>Rev. 15 — Roles &amp; the Check/Test split; Yellow policy reconciled:</b> terminology corrected to match operations — <b>Abdullah &amp; Waleed are Supervisors</b> (they <em>review &amp; approve</em> damage, not company managers), and <b>Abu Marouf is the Technical Inspector &amp; Tester</b> (<em>execution only</em> — he tests &amp; verifies, he does not decide liability / cost / scope). A clean <b>Check vs. Test</b> split: a <b>Check</b> (visual / damage, on client return) is a <b>Supervisor</b> decision — a flagged scratch auto-notifies them to review &amp; approve; a <b>Test</b> (technical / performance, after maintenance or when a Check flags a mechanical issue) is <b>Abu Marouf's</b> execution. <b>New escalation:</b> a Check that reveals a <em>potential mechanical</em> problem (e.g. impact that may have hit the steering) <b>auto-escalates to a mechanical Test</b> for Abu Marouf. Also reconciled: the <b>Yellow-grade reversal</b> — Yellow is <b>non-rentable, treated like Red</b> (already shipped in <code>rentBlockedByCondition()</code>), correcting the stale Rev. 7 wording.
+    <div class="tags">
+      <span class="movetag">Abdullah &amp; Waleed = Supervisors (review &amp; approve)</span>
+      <span class="movetag">Abu Marouf = Technical Inspector &amp; Tester (execution)</span>
+      <span class="movetag">Check (visual) → auto-escalates to Test (mechanical)</span>
+    </div>
+  </div>
+
+  <div class="revnote">
+    <b>Rev. 14 — Operational Integrity Gate (Bulletproof-Lifecycle capstone):</b> every physical car-move leaves a verifiable record captured <em>at the moment it happens</em>, not forced at a status flip. Three refinements over Phases 3/5/11 — <b>(IG-1) event-driven odometer capture:</b> an always-visible <b>"Add Odometer Reading"</b> button logs {reading + photo + event_type} anytime; <b>Mark Ready</b> becomes a <b>Final Verification</b> ("pickup/arrival/exit all captured?"), no longer the forced photo point (supersedes 11A's per-transition gate + 11D's Ready-coupling). <b>(IG-2) Garage Arrival Event:</b> when the driver hands the car to the shop — garage <b>confirm/override</b> (dispatch = the Supervisor's <em>plan</em>, arrival = the <em>official decision</em>; a driver can divert if the shop is full, audited against the plan), <b>mandatory arrival odometer</b>, <b>intake condition / scratch flag</b> (→ Damage Assessment), and an <b>ETA</b>. <b>(IG-3) Maintenance Recurrence flag ("Came Back Broken"):</b> not a stage — a QC trigger linking a same-fault return within a short window to the original ticket (<code>maintenance_recurrence</code>).
+    <div class="tags">
+      <span class="movetag">Add Odometer Reading — always on · Ready = verify</span>
+      <span class="movetag">Garage Arrival: confirm garage + odo + condition + ETA</span>
+      <span class="movetag">Recurrence flag: same fault back → link to original</span>
+    </div>
+  </div>
+
+  <div class="revnote">
+    <b>Rev. 13 — Odometer Integrity Gate:</b> Phase 11 gains <b>11D · Shop-Movement Integrity Gate</b> — the garage-side counterpart to the renter odometer hard-gate. The two readings that already bracket a maintenance stint (<b>garage-in</b> at arrival, <b>garage-out</b> at the <em>Ready</em> re-inspection) yield a <b>Net Shop Distance</b>; any run beyond a <b>configurable threshold (default 20&nbsp;km)</b> stamps <code>excessive_shop_movement</code> into <code>odometer_flags</code> and fires an <b>immediate Admin alert</b> — proof of whether a shop drove the car beyond a legitimate test-drive. Wired onto the <em>existing</em> Ready capture (no new capture point) + one Admin setting (<code>shop_movement_threshold_km</code>); non-blocking on close.
+    <div class="tags">
+      <span class="movetag">Net Shop Distance = garage-out − garage-in</span>
+      <span class="movetag">&gt; 20 km (configurable) → excessive_shop_movement</span>
+      <span class="movetag">Instant Admin alert · non-blocking</span>
+    </div>
+  </div>
+
+  <div class="revnote">
+    <b>Rev. 11 — Usage Monitoring &amp; Mileage Enforcement:</b> every status change (Dispatch / Return / Mid-Rental) requires an <b>odometer photo + manual entry</b>; a lower-than-previous reading throws a <b>Data Integrity Error</b> and blocks until the Admin approves. <b>GPS-vs-odometer</b> distance policing auto-tags <code>excess_mileage</code> + alerts the Admin when <b>over the contractual allowance</b>; optional geo-fence; a green/yellow/red <b>Usage Dashboard</b> in the Command Center. <em>The odometer half hardens existing services and ships now; the GPS half needs a telematics feed.</em> (Rev. 10 added Cost Intelligence + the Accident Chain.)
+    <div class="tags">
+      <span class="movetag">Mandatory odometer photo + entry · rollback → hard block</span>
+      <span class="movetag">GPS vs odometer · excess-mileage alert over allowance</span>
+      <span class="movetag">Usage Dashboard: 🟢 safe · 🟡 near · 🔴 over</span>
+    </div>
+  </div>
+
+  <section style="background:var(--card); border:1px solid var(--line); border-radius:14px; padding:20px 24px; margin:22px 0; box-shadow:0 6px 20px rgba(11,31,58,.06)">
+    <h2 style="margin:0 0 4px; font-size:19px; font-weight:800; color:var(--navy)">The Three Testing Gates <span style="font-size:12.5px; font-weight:700; color:#1d4ed8; background:#dbeafe; border-radius:6px; padding:2px 9px; vertical-align:middle">mandatory triggers</span></h2>
+    <p style="margin:0 0 8px; color:var(--muted); font-size:14px">Every inspection is spawned by one of three gates — no car is tested "randomly," and none skips a gate.</p>
+    <table>
+      <thead><tr><th>Gate</th><th>When</th><th>Where it lives</th><th>Spawns</th></tr></thead>
+      <tbody>
+        <tr><td><b>Pre-Rental</b></td><td>before a new customer gets the car</td><td>Phase 1 (Readiness + validation)</td><td>a readiness / validation inspection</td></tr>
+        <tr><td><b>Check-In</b></td><td>when a car returns</td><td>Phase 1 (Check-In) → Phase 2</td><td>receiver marks new scratches → <b>auto Damage Evaluation</b></td></tr>
+        <tr><td><b>Incident</b></td><td>a fault reported mid-rental</td><td>Phase 2 (Incident + Support Flow)</td><td>an incident inspection + support escalation</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section style="background:var(--card); border:1px solid var(--line); border-radius:14px; padding:20px 24px; margin:22px 0; box-shadow:0 6px 20px rgba(11,31,58,.06)">
+    <h2 style="margin:0 0 4px; font-size:19px; font-weight:800; color:var(--navy)">Operational roles &amp; the damage-to-repair chain <span style="font-size:12.5px; font-weight:700; color:#1d4ed8; background:#dbeafe; border-radius:6px; padding:2px 9px; vertical-align:middle">Rev. 5</span></h2>
+    <p style="margin:0 0 8px; color:var(--muted); font-size:14px">Who does what — and what the system does <em>automatically</em> between them. <b>(Roles refined Rev. 15.)</b></p>
+    <table>
+      <thead><tr><th>Actor</th><th>Role / permission</th><th>Does</th><th>System auto-action on their input</th></tr></thead>
+      <tbody>
+        <tr><td><b>Driver</b></td><td><code>maintenance.logistics</code></td><td>Check-In / Out; <b>flags</b> a new scratch (documents only)</td><td>on flag → <b>notify Abdullah &amp; Waleed</b> + auto-draft Damage Evaluation</td></tr>
+        <tr><td><b>Supervisors — Abdullah / Waleed</b></td><td><code>maintenance.delegate</code> + <b>new <code>damage.assess</code></b></td><td><b>review &amp; approve</b>: assess, approve parts, assign cost, <b>confirm</b> — they <em>decide</em>, they do not execute</td><td>on confirm → <b>vehicle status → In-Repair</b> + <b>auto-create a Test/Maintenance task in Abu Marouf's queue</b></td></tr>
+        <tr><td><b>Abu Marouf — Technical Inspector &amp; Tester</b></td><td><code>maintenance.initiate</code></td><td><b>strictly execution</b>: runs the technical <b>Test</b> &amp; <b>verifies</b> fit-for-service — he does <b>not</b> decide liability / cost / scope</td><td>works it from his own queue (<code>inspected_by</code> scoped)</td></tr>
+      </tbody>
+    </table>
+    <p style="margin:10px 0 0; font-size:13.5px; color:#41506a"><b>The chain:</b> Driver flags → 🔔 Supervisors (Abdullah &amp; Waleed) → (review · parts · cost · confirm) → <b>auto In-Repair</b> + <b>auto-task</b> → Abu Marouf's queue → he <b>executes the Test &amp; verifies</b> → QA (Phase 5) → release.</p>
+    <p style="margin:10px 0 0; font-size:13px; color:#6d28d9; background:#f5f3ff; border:1px solid #ddd6fe; border-radius:8px; padding:9px 13px"><b>Role definitions (Rev. 15):</b> <b>Supervisors (Abdullah &amp; Waleed)</b> <em>review &amp; approve</em> — not company managers; their authority is scoped to reviewing damage &amp; approving the repair (<code>damage.assess</code> + <code>maintenance.delegate</code>). <b>Abu Marouf is the Technical Inspector &amp; Tester</b> — <em>execution only</em> (test &amp; verify), never decision-making. Rev. 5 moved assessment + parts + cost to the <b>Supervisors</b>; Abu Marouf is the <b>executor/tester</b>. <code>damage.evaluate</code> is superseded by <code>damage.assess</code> (Supervisors) + task assignment to the Inspector-Tester.</p>
+    <p style="margin:10px 0 0; font-size:13px; color:#065f46; background:#ecfdf5; border:1px solid #a7f3d0; border-radius:8px; padding:9px 13px"><b>Does the data model support role-scoped queues? Yes.</b> Screens are permission-gated (Spatie <code>resource.action</code>) and each queue is scoped to the work its role owns — so Abu Marouf sees a different screen than the Drivers by construction. Already present: 7-role RBAC, per-user "My Queue" screens, the scoping fields (<code>assigned_driver_id</code>, <code>inspected_by</code>, <code>workflow_status</code>), role-targeted notifications, and the manual-event → <code>operational_status</code> cascade (the hook auto In-Repair reuses). New: the Supervisors' <code>damage.assess</code> screen. ⚠️ Verify <code>MyMaintenanceQueue</code> + <code>inspected_by</code> scoping against live code before building.</p>
+  </section>
+
+  <section style="background:var(--card); border:1px solid var(--line); border-radius:14px; padding:20px 24px; margin:22px 0; box-shadow:0 6px 20px rgba(11,31,58,.06)">
+    <h2 style="margin:0 0 4px; font-size:19px; font-weight:800; color:var(--navy)">Check vs. Test — two distinct inspection types <span style="font-size:12.5px; font-weight:700; color:#1d4ed8; background:#dbeafe; border-radius:6px; padding:2px 9px; vertical-align:middle">Rev. 15</span></h2>
+    <p style="margin:0 0 8px; color:var(--muted); font-size:14px">The system separates <b>visual/damage inspection</b> from <b>technical/performance testing</b> — different triggers, owners, authority. A <em>Check</em> is a judgment call (Supervisors); a <em>Test</em> is execution (Abu Marouf).</p>
+    <table>
+      <thead><tr><th></th><th><b>Check</b> (Visual / Damage)</th><th><b>Test</b> (Technical / Performance)</th></tr></thead>
+      <tbody>
+        <tr><td><b>Triggered when</b></td><td>a car <b>returns from a client</b> (Check-In Gate)</td><td><b>after maintenance</b>, or when a <b>Check flags a mechanical issue</b></td></tr>
+        <tr><td><b>Owner</b></td><td><b>Supervisors (Abdullah / Waleed)</b> — <em>decision</em></td><td><b>Abu Marouf, Technical Inspector &amp; Tester</b> — <em>execution</em></td></tr>
+        <tr><td><b>What happens</b></td><td>driver flags a new scratch → the system <b>auto-notifies the Supervisor</b> to <b>review &amp; approve</b> the damage assessment</td><td>Abu Marouf runs the <b>performance test</b> and <b>verifies</b> the car is fit for service</td></tr>
+        <tr><td><b>Authority</b></td><td>review &amp; approve (liability / cost / scope)</td><td>test &amp; verify only — <b>no</b> decision on liability or cost</td></tr>
+      </tbody>
+    </table>
+    <p style="margin:10px 0 0; font-size:13px; color:#92400e; background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:9px 13px"><b>Escalation — Check → Test (Rev. 15):</b> if a <b>Check (Visual)</b> reveals a <b>potential mechanical problem</b> — e.g. impact damage that might have affected the steering, suspension or drivetrain — the system <b>automatically escalates</b> it to a <b>Test (Mechanical) task for Abu Marouf</b>. Visual damage that could hide a mechanical fault never closes on a visual pass alone; it spawns a technical Test so the car is verified fit-for-service before release. (Reuses the Foundation safety-fault list to decide when visible damage implies a mechanical Test.)</p>
+  </section>
+
+  <!-- FOUNDATION -->
+  <section class="phase">
+    <div class="head"><div class="tag f">FND</div><h3>Foundation — Severity re-map + safety-fault list</h3></div>
+    <div class="body">
+      <div class="outcome"><b>Why first:</b> the 4-level severity scale and the one hard-coded safety-fault list are shared by the booking block (P1), the damage grading (P2), the incident badging (P2) and the road-test trigger (P5). Build once, reuse everywhere.</div>
+      <ul>
+        <li>Re-map <code>fault_severity</code>: routine→<b>Minor</b>, moderate→<b>Medium</b>, critical→<b>Major</b>; introduce <b>Safety-Critical</b> (assigned only by the safety rule — never a blanket promotion).</li>
+        <li><b>NEW</b> <code>config/safety_critical_faults.php</code> — brakes, steering, suspension, gearbox, engine, overheating, leak, warning light, tyre, accident.</li>
+        <li>Update severity chips / filters / validation (<code>Maintenance::FAULT_SEVERITIES</code>, <code>meta.js</code>, board + contract form).</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- PHASE 1 -->
+  <section class="phase">
+    <div class="head"><div class="tag">1</div><h3>Locked-Down Handover <span class="flag">Readiness + Documentation + Signature</span></h3></div>
+    <div class="body">
+      <div class="outcome"><b>Operational outcome:</b> a car cannot leave the branch until it passes the readiness panel, the driver has captured the full mandatory photo set, and the customer has signed off. The same photo discipline runs at return. This is our legal protection — the car's exact condition, tied to a contract, time, location and driver, with the customer's confirmation on record.</div>
+
+      <div class="subhead">1A · Readiness &amp; Eligibility gate (the 9 checks) — the Pre-Rental Gate</div>
+      <p>One service, <code>VehicleReadinessService::evaluate(vehicle, out_date, in_date)</code> → <code>{ blockers, warnings, acknowledgments }</code>. Each check is <span class="v block">block</span> <span class="v warn">warn</span> <span class="v ack">ack</span>. This <em>is</em> the <b>Pre-Rental Gate</b> — the mandatory validation before a new customer gets the car; no handover starts until it passes.</p>
+      <table>
+        <thead><tr><th style="width:30px">#</th><th>Check</th><th>Verdict (Rental-First)</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>Vehicle available</td><td><span class="v block">block</span> if sold / disposed / suspended / out-of-order</td></tr>
+          <tr><td>2</td><td>Open damage</td><td><span class="v warn">warn</span> — <span class="v block">block</span> if safety-critical</td></tr>
+          <tr><td>3</td><td>Open Maintenance Order</td><td><b>not a block by itself</b> — block only if Red grade or safety-critical fault</td></tr>
+          <tr><td>4</td><td>Reg / insurance valid <b>through the return date</b></td><td><span class="v block">block</span> if it lapses before return</td></tr>
+          <tr><td>5</td><td>Service due in window or 500 km</td><td><span class="v warn">warn</span> / <span class="v ack">ack</span></td></tr>
+          <tr><td>6</td><td>GPS working (<b>new</b> <code>gps_last_seen_at</code>)</td><td><span class="v warn">warn</span> (block for luxury / sports)</td></tr>
+          <tr><td>7</td><td>Last check-in closed</td><td><span class="v block">block</span> — fed by 1B below</td></tr>
+          <tr><td>8</td><td>Cleaning done (<b>new</b> <code>cleaning_status</code>)</td><td><span class="v ack">ack</span></td></tr>
+          <tr><td>9</td><td>Idle-days readiness</td><td>drives the readiness level (see Phase 5)</td></tr>
+        </tbody>
+      </table>
+      <p><b>Endpoint:</b> <code>GET /Vehicle/{id}/readiness?out_date=&amp;in_date=</code>, called live by the New Contract form. <b>Migration:</b> <code>add_gps_and_cleaning_to_vehicles</code>.</p>
+
+      <div class="subhead">1B · Check-Out / Check-In documentation (16-item mandatory photo list) — the Check-In Gate</div>
+      <p><b>Principle: the driver / receiver documents only — never decides.</b> A session is opened per contract at handover (<code>check_out</code>) and at return (<code>check_in</code>); the backend refuses to complete a session until every mandatory zone is captured. At Check-In the app shows the Check-Out photos side-by-side for an auto-compare.</p>
+      <p><b>The Check-In Gate:</b> the employee <em>receiving</em> the car marks any new scratch on the vehicle diagram. Each new flag (a scratch absent from the Check-Out photos) <b>automatically triggers a Damage Evaluation</b> — see Phase 2A's accountability chain. The receiver never judges liability; they only mark.</p>
+      <div class="grid16">
+        <div class="cell"><span class="n">1</span>Front</div>
+        <div class="cell"><span class="n">2</span>Rear</div>
+        <div class="cell"><span class="n">3</span>Right side</div>
+        <div class="cell"><span class="n">4</span>Left side</div>
+        <div class="cell"><span class="n">5</span>Four corners</div>
+        <div class="cell"><span class="n">6</span>Four rims</div>
+        <div class="cell"><span class="n">7</span>Front &amp; rear glass</div>
+        <div class="cell"><span class="n">8</span>Interior — seats</div>
+        <div class="cell"><span class="n">9</span>Dashboard &amp; screen</div>
+        <div class="cell"><span class="n">10</span>Odometer</div>
+        <div class="cell"><span class="n">11</span>Fuel gauge</div>
+        <div class="cell"><span class="n">12</span>Pre-existing scratches</div>
+        <div class="cell"><span class="n">13</span>Car key</div>
+        <div class="cell"><span class="n">14</span>Spare / emergency kit</div>
+        <div class="cell lux"><span class="n">15</span>360° video — luxury / sports</div>
+      </div>
+      <h4>Build</h4>
+      <ul>
+        <li><b>NEW</b> <code>config/inspection_checklist.php</code> — the mandatory zone set (+ the luxury 360° rule).</li>
+        <li>Promote the current client-side <code>InspectionPrototype</code> to a real flow on the existing S3-backed <code>inspection_records</code> store; replace the free-text <code>body_part</code> with the enumerated zones + a server-side completeness gate.</li>
+        <li><b>Migration</b> <code>create_inspection_sessions</code> (or extend the loose <code>inspection_session_id</code>): <code>contract_id</code>, <code>phase</code> (check_out / check_in), <code>completed_at</code>, coverage state.</li>
+        <li>A completed Check-In session is what flips readiness check&nbsp;#7 to pass.</li>
+      </ul>
+
+      <div class="subhead">1C · Customer signature / OTP</div>
+      <p>At handover the customer confirms the documented condition — by drawn signature <b>or</b> an OTP / confirmation link. Nothing is a valid handover without it.</p>
+      <ul>
+        <li><b>Migration</b> <code>add_customer_confirmation_to_inspection_sessions</code>: <code>signature_s3_key</code>, <code>otp_code</code>, <code>otp_verified_at</code>, <code>confirmed_at</code>, <code>confirmed_via</code> (signature | otp | link).</li>
+        <li><b>Endpoints:</b> <code>POST /Inspections/session</code> (open, tied to contract) · <code>POST /Inspections/{session}/photo</code> (presign + store to a zone) · <code>POST /Inspections/{session}/complete</code> (blocked until coverage met) · <code>POST /Inspections/{session}/sign</code> (signature or OTP verify).</li>
+      </ul>
+      <p><b>Permissions:</b> driver capture reuses <code>inspections.manage</code>. Every photo is tied to <b>contract + vehicle + time + location + driver</b> (Omar's audit rule).</p>
+
+      <div class="done"><b>Done when:</b> the contract form shows the live 9-check panel; a handover cannot complete without the full mandatory photo set <b>and</b> a customer signature/OTP; Check-In shows before/after compare and closes the loop back to readiness&nbsp;#7.</div>
+    </div>
+  </section>
+
+  <!-- PHASE 2 -->
+  <section class="phase">
+    <div class="head"><div class="tag">2</div><h3>Damage Evaluation &amp; Incident Capture <span class="flag">before the money layer</span></h3></div>
+    <div class="body">
+      <div class="outcome"><b>Operational outcome:</b> when a car returns with damage, or a fault is reported during a rental, the <b>driver documents</b> it — then <b>Abdullah &amp; Waleed (Supervisors)</b> assess it, approve parts, and assign cost; their confirm auto-flips the car to In-Repair and drops the execution task into <b>Abu Marouf's</b> queue. That record is the single source that opens the Maintenance Order and feeds the Financial Approval Matrix.</div>
+
+      <div class="subhead">2A · Damage Evaluation Form</div>
+      <p>Today damage is only a read-only colour projection of free-text fields. We build a real structured record (<code>damage_evaluations</code>), linked to the contract + the Check-In session photos.</p>
+      <table>
+        <thead><tr><th>Field</th><th>Options</th></tr></thead>
+        <tbody>
+          <tr><td>Damage type</td><td>Body / Paint / Rim / Tyre / Glass / Interior / Mechanical / Electrical / Accident</td></tr>
+          <tr><td>Severity</td><td>Minor / Medium / Major / <b>Safety-Critical</b> (reuses the Foundation scale)</td></tr>
+          <tr><td>Rentable?</td><td>Yes / No</td></tr>
+          <tr><td>Cause</td><td>Customer / Wear &amp; Tear / Previous Damage / Garage Fault / Unknown</td></tr>
+          <tr><td>Liable party <em>(determined by the <b>police report / insurance policy</b> — not the Supervisor)</em></td><td>Customer / Company / Insurance / Warranty / Pending</td></tr>
+          <tr><td>Needs garage?</td><td>Yes / No → opens a Maintenance Order</td></tr>
+          <tr><td>Needs replacement car?</td><td>Yes / No</td></tr>
+          <tr><td>Police report?</td><td>Yes / No</td></tr>
+          <tr><td>Preliminary estimate</td><td>AED — feeds the approval tier in Phase 4</td></tr>
+          <tr><td>Supporting photos</td><td><b>Mandatory</b></td></tr>
+          <tr><td>Decision</td><td>Charge / No Charge / Hold Deposit / Insurance / Maintenance</td></tr>
+        </tbody>
+      </table>
+      <p><b>Golden rule (hard-coded):</b> any Safety-Critical damage (brakes, tyres, steering, warning light, suspension, overheating, leak) → the car <b>cannot</b> return to Available, even if a booking is waiting. This reuses the Foundation safety-fault list.</p>
+
+      <div style="background:#ecfdf5; border:1px solid #a7f3d0; border-radius:9px; padding:12px 15px; color:#065f46; font-size:14px"><b>Check-In auto-trigger (the accountability chain — Rev. 5 roles):</b> the <b>driver / receiver</b> marks new scratches on the vehicle diagram at Check-In (Phase 1B) — they only <b>document</b>, never decide. Each new flag (a scratch absent from the Check-Out photos):
+        <ol style="margin:6px 0 0; padding-inline-start:20px">
+          <li><b>Auto-creates a draft Damage Evaluation</b> (<code>damage_evaluations</code>, <code>pending_assessment</code>) — nothing silently dropped.</li>
+          <li><b>Immediately notifies Abdullah &amp; Waleed</b> (the Supervisors own the review &amp; approval).</li>
+          <li><b>Supervisors assess:</b> confirm damage, approve parts, assign cost + scope, and the repair decision (the form above). <b>Liability — who bears the cost — is determined by the police report / insurance policy, not the Supervisor: they record it, they don't decide it.</b></li>
+          <li>On manager <b>confirm</b> → <b>vehicle status → In-Repair</b> + <b>auto-create a task in Abu Marouf's queue</b> to execute.</li>
+        </ol>
+        Receiver flags · Supervisors decide &amp; cost · Abu Marouf executes the Test — two automatic hops between them (→ Phase 2.5 deposit draws on the assigned cost).</div>
+
+      <div class="subhead">2B · 9-category incident taxonomy (during-rental fault tickets)</div>
+      <p>A fault reported mid-rental opens an Incident/Fault ticket classified to Omar's nine categories, with severity-driven high-priority badging (Safety-Critical → red badge, from the Foundation scale).</p>
+      <div class="grid16">
+        <div class="cell">Mechanical issue</div>
+        <div class="cell">Accident</div>
+        <div class="cell">Warning light</div>
+        <div class="cell">Tyre issue</div>
+        <div class="cell">AC issue</div>
+        <div class="cell">Battery</div>
+        <div class="cell">Customer abuse</div>
+        <div class="cell">Normal wear</div>
+        <div class="cell">Emergency replacement</div>
+      </div>
+      <ul>
+        <li><b>NEW</b> <code>config/incident_categories.php</code> — the 9 categories, each mapped to an internal fault category and flagged safety-critical or not.</li>
+        <li>Extend the existing <code>openComplaint</code> intake with <code>incident_category</code>; high-priority badge shown on the board / command view.</li>
+      </ul>
+
+      <div class="subhead">2C · Incident Support Flow (the Incident Gate)</div>
+      <p>A fault reported mid-rental (Sales ↔ Ops ↔ Abu Marouf) escalates through three rungs, each logged on the incident ticket:</p>
+      <ul>
+        <li><b>1 · Phone troubleshooting (remote)</b> — first attempt; outcome recorded.</li>
+        <li><b>2 · On-site repair</b> — Abu Marouf visits the customer (creates a logistics visit); if it clears, close.</li>
+        <li><b>3 · Vehicle swap</b> — if remote + on-site both fail, hand the customer a replacement (ties into the existing Maintenance Swap board).</li>
+      </ul>
+      <p><b>Field:</b> <code>resolution_path</code> (phone / onsite / swap) + escalation state on the ticket; each attempt time-stamped with who + outcome. Reuses complaint intake (trigger), logistics (the visit), and the swap board (the replacement) — no new subsystems, just the ladder that connects them.</p>
+
+      <h4>Migrations &amp; models</h4>
+      <ul>
+        <li><b>NEW</b> <code>damage_evaluations</code> (<code>contract_id, vehicle_id, inspection_session_id, damage_type, severity, is_rentable, cause, liable_party, needs_garage, needs_replacement, needs_police_report, estimate_amount, decision, notes</code>, + workflow: <code>status</code> (<code>pending_assessment</code> → <code>assessed</code> → <code>task_created</code>), <code>assessed_by</code> (Abdullah/Waleed), <code>assessed_at</code>, <code>parts_approved</code>, <code>assigned_cost</code>) + a photos relation.</li>
+        <li><code>add_incident_category_and_resolution_to_maintenances</code> (the 9-category enum + <code>resolution_path</code> phone/onsite/swap + escalation state).</li>
+      </ul>
+      <h4>Endpoints &amp; state-machine</h4>
+      <ul>
+        <li><b>Auto-create + notify:</b> completing a Check-In session with new driver-marked flags fires an observer → one <code>damage_evaluations</code> draft per flag (<code>pending_assessment</code>) and <b>notifies Abdullah &amp; Waleed</b>.</li>
+        <li><b>NEW</b> <code>POST /Damage-Evaluations/{id}/assess</code> (Supervisors, <code>damage.assess</code>) — confirm damage, approve parts, assign cost → on confirm the system <b>sets <code>vehicle.operational_status = In-Repair</code></b> (reusing the manual-event cascade) and <b>auto-creates the task in Abu Marouf's queue</b> (<code>inspected_by</code> = Abu Marouf, at <code>inspection_pending</code>).</li>
+        <li><code>POST /maintenance-tickets/{ticket}/support-attempt</code> (phone/onsite/swap rung) · <code>GET /Damage-Evaluations?status=pending_assessment</code> (Supervisors' queue) · <code>GET /contracts/{id}/damage-evaluations</code>.</li>
+      </ul>
+      <h4>Permissions</h4>
+      <p><b>NEW</b> <code>damage.assess</code> — Supervisors (Abdullah / Waleed) assess, approve parts, assign cost. Driver (<code>maintenance.logistics</code>) only documents; Abu Marouf (<code>maintenance.initiate</code>, Technical Inspector &amp; Tester) executes the resulting Test/maintenance task. <em>(Supersedes Rev. 4's <code>damage.evaluate</code>.)</em></p>
+
+      <div class="done"><b>Done when:</b> a driver-flagged scratch notifies Abdullah &amp; Waleed, their confirm auto-flips the car to In-Repair and drops a task into Abu Marouf's queue, and the assigned cost flows to the Phase-2.5 deposit — no manual hand-off.</div>
+    </div>
+  </section>
+
+  <!-- PHASE 2.5 -->
+  <section class="phase">
+    <div class="head"><div class="tag" style="font-size:15px">2.5</div><h3>Customer &amp; Deposit Protection <span class="flag">cash-flow &amp; risk layer</span></h3></div>
+    <div class="body">
+      <div class="outcome"><b>Operational outcome:</b> the money side a car-centric protocol misses — a deposit you can actually charge against, and deposits held until UAE tolls/fines settle. Deliberately lean: two parts, nothing more.</div>
+
+      <div class="subhead">2.5A · Deposit ledger</div>
+      <p>Turns the existing deposit fields (<code>contract_deposit</code>, <code>deposit_debit/credit</code>) into a real ledger the Phase-2 damage decision posts against — without it, "Charge / Hold Deposit" is toothless.</p>
+      <ul>
+        <li><b>Lifecycle:</b> held at handover → charged (damage / fine / fuel) → released / refunded balance.</li>
+        <li><b>NEW</b> <code>deposit_ledger_entries</code> (<code>contract_id, customer_id, type</code> hold/charge/refund/release, <code>amount, reason, source, created_by</code>); <code>deposit_status</code> on the contract (held / partially_charged / released).</li>
+        <li><b>Endpoints:</b> <code>POST /contracts/{id}/deposit/hold · /charge · /release</code> · <code>GET /contracts/{id}/deposit</code>.</li>
+        <li>Refund balance can flow to the customer wallet (existing carried-forward credit).</li>
+      </ul>
+
+      <div class="subhead">2.5B · Post-return fine / toll hold</div>
+      <p>UAE Salik + traffic fines land <em>after</em> the car is back — so the deposit must not be refunded until they settle.</p>
+      <ul>
+        <li>On Check-In the contract enters <code>pending_charges</code>; deposit release is blocked until the fines window clears or ops settles manually.</li>
+        <li><b>NEW</b> <code>fine_holds</code> (<code>contract_id, type</code> salik/fine, <code>amount, status</code> pending/settled/cleared, <code>settled_at</code>); config <code>fines_hold_days</code> (e.g. 14–30).</li>
+        <li><b>Endpoints:</b> <code>POST /contracts/{id}/fines</code> (landed fine → draws down deposit) · <code>POST /contracts/{id}/fines/settle</code>.</li>
+        <li><b>Alerts:</b> "deposit ready to release" once holds clear; "unsettled fines aging" reminder.</li>
+      </ul>
+
+      <p style="background:#fef2f2; border:1px solid #fecaca; border-radius:9px; padding:10px 13px; color:#991b1b; font-size:13.5px"><b>Removed (Rev. 16) — the Customer Risk Flag (2.5C):</b> the per-customer watch / high-deposit / blacklist level feeding the eligibility gate is <b>dropped</b>. <em>(The per-incident "Customer abuse" category in Phase 2B stays — an incident tag, not a customer-level flag.)</em></p>
+      <p><b>Permissions:</b> deposit + fines reuse <code>billing.manage</code>.</p>
+
+      <div class="done"><b>Done when:</b> a damage/fine charge draws down a real deposit; and a deposit cannot be refunded while fines are pending.</div>
+    </div>
+  </section>
+
+  <!-- PHASE 3 -->
+  <section class="phase">
+    <div class="head"><div class="tag">3</div><h3>Garage Routing Bridge</h3></div>
+    <div class="body">
+      <div class="outcome"><b>Operational outcome:</b> the system recommends the best garage (top 3, scored); the coordinator accepts it or overrides — and an override <b>must</b> carry a written reason and a manager sign-off. No more picking a garage by relationship.</div>
+      <p><b>The gap:</b> the scoring engine (<code>GarageRoutingService::suggest()</code>) already ranks garages, but nothing calls it — dispatch today is a manual pick with no reason captured.</p>
+      <h4>What we build</h4>
+      <ul>
+        <li><b>Expose the engine:</b> <code>GET /maintenance-tickets/{ticket}/garage-suggestions</code> → ranked list + top pick + per-garage score, reasons, warnings. Dispatch shows the <b>top 3</b>.</li>
+        <li><b>Capture the override:</b> in <code>assignDispatch</code>, when the pick ≠ the suggestion, <b>require <code>override_reason</code></b> + a manager approval (shared with Phase 4).</li>
+        <li><b>Complete the 8 criteria:</b> add the 5 missing signals (completion time, price, parts availability, proximity, warranty).</li>
+      </ul>
+      <h4>Migrations</h4>
+      <ul>
+        <li><code>add_routing_decision_to_maintenances</code>: <code>suggested_vendor_id, routing_overridden, routing_override_reason, routing_score</code>.</li>
+        <li><code>add_routing_signals_to_vendors</code>: <code>avg_completion_days, price_index, parts_availability, zone</code> (+ lat/long), <code>workmanship_warranty_months</code>; new weights in <code>config/garage_routing.php</code> (25/20/15/15/10/5/5/5).</li>
+      </ul>
+      <p><b>Plus:</b> the missing <code>GarageRoutingRuleController</code> (in-app CRUD for specialty rules).</p>
+      <div class="done"><b>Done when:</b> dispatch shows the ranked suggestion, an off-suggestion pick is blocked without a reason + sign-off, and all 8 criteria score.</div>
+    </div>
+  </section>
+
+  <!-- PHASE 4 -->
+  <section class="phase">
+    <div class="head"><div class="tag">4</div><h3>Financials — Approval Matrix into the Maintenance Order</h3></div>
+    <div class="body">
+      <div class="outcome"><b>Operational outcome:</b> every repair gets a garage quotation first; the cost — anchored to the Phase-2 damage estimate — is routed automatically to the right approver by amount, with luxury cars and accidents bumped a level. No work starts, and no car moves to the garage, until the right person approves.</div>
+      <p style="background:#f5f3ff; border:1px solid #ddd6fe; border-radius:9px; padding:11px 14px; color:#4c1d95; font-size:14px"><b>Valuation ≠ Approval (Rev. 7).</b> The supervisor who assesses a repair <b>valuates</b> it (sets cost + scope) — stamped <code>valuated_by</code>. That is <em>not</em> final approval. The system checks the amount against the valuator's own tier limit: <b>within his limit</b> → he is also the signatory (auto-approve, <code>approved_by</code> = the supervisor); <b>above it</b> → transition to <code>pending_approval_hierarchy</code> and route up the matrix. <code>valuated_by</code> and <code>approved_by</code> are stored separately. The car can be grounded (<b>In-Repair</b>) at valuation, but <b>garage dispatch waits for <code>approved_by</code></b>.</p>
+      <h4>States inside the workflow</h4>
+      <pre>inspection_pending → <span class="hl">awaiting_quotation</span> → (valuate) →
+      ├─ cost ≤ valuator tier  → auto-approved → awaiting_dispatch → under_repair
+      └─ cost &gt; valuator tier  → <span class="hl">pending_approval_hierarchy</span> → (matrix signs) → awaiting_dispatch → under_repair
+                              ↑___________ rejected / re-quote ___________↓
+under_repair → <span class="hl">additional_quotation</span> → pending_approval_hierarchy → under_repair   (extra-work loop)</pre>
+      <h4>The Approval Matrix</h4>
+      <table>
+        <thead><tr><th>Amount (AED)</th><th>Approver</th><th>Permission</th></tr></thead>
+        <tbody>
+          <tr><td>0 – 500</td><td>Maintenance Supervisor</td><td><code>maintenance.approve.t1</code></td></tr>
+          <tr><td>501 – 2,000</td><td>Ops / Fleet Manager</td><td><code>maintenance.approve.t2</code></td></tr>
+          <tr><td>2,001 – 5,000</td><td>Branch Manager</td><td><code>maintenance.approve.t3</code></td></tr>
+          <tr><td>&gt; 5,000</td><td>Owner / GM</td><td><code>maintenance.approve.t4</code></td></tr>
+          <tr><td>Accident / insurance</td><td>Claims + Manager</td><td><code>maintenance.approve.claims</code></td></tr>
+          <tr><td><b>Luxury / sports car</b></td><td>one tier higher than the amount implies</td><td>(reads <code>vehicle_class</code>)</td></tr>
+        </tbody>
+      </table>
+      <h4>Migrations, endpoints &amp; permissions</h4>
+      <ul>
+        <li><b>NEW</b> <code>maintenance_quotations</code> and <code>maintenance_approvals</code> tables; the flat AED-500 gate in <code>evaluateApproval</code> replaced by a tier resolver.</li>
+        <li><code>POST /maintenance-tickets/{ticket}/quotation</code> (garage) · <code>POST /maintenance-tickets/{ticket}/approval</code> (approve / reject).</li>
+        <li>Add <code>maintenance.approve.t1..t4</code> + <code>.claims</code> in the roles seeder.</li>
+        <li><b>Sell / Replace alert</b> (Omar §9): 12-month maintenance spend <b>&gt; 40% of car value</b> (<code>purchase_price</code>) → Sell / Replace / Stop-Renting notification.</li>
+        <li><b>Un-decoupling:</b> flip <code>SHOW_FINANCIALS</code> on (maintenance / approval surface first).</li>
+      </ul>
+      <div class="done"><b>Done when:</b> a quotation drives an amount-routed approval to the correct role; overrides, luxury, and accidents route correctly; the cost-to-value alert fires.</div>
+    </div>
+  </section>
+
+  <!-- PHASE 5 -->
+  <section class="phase">
+    <div class="head"><div class="tag">5</div><h3>QA &amp; Road Test — mandatory itemized checklist</h3></div>
+    <div class="body">
+      <div class="outcome"><b>Operational outcome:</b> no car returns to rental without passing a fixed QA checklist, every time — not just engine jobs. Safety repairs also require a documented road test. A single failed item sends the car back to the garage.</div>
+      <h4>The QA checklist (per ticket — <code>maintenance_qa_items</code> for per-item audit)</h4>
+      <table>
+        <thead><tr><th>Item</th><th>Result</th><th>Required</th><th>Evidence</th></tr></thead>
+        <tbody>
+          <tr><td>Repair matches the order</td><td>pass / fail</td><td>always</td><td>—</td></tr>
+          <tr><td>Warning lights cleared</td><td>pass / fail</td><td>always</td><td>dashboard photo</td></tr>
+          <tr><td>AC / climate works</td><td>pass / fail</td><td>always</td><td>—</td></tr>
+          <tr><td>Fluids &amp; leaks</td><td>pass / fail</td><td>always</td><td>—</td></tr>
+          <tr><td>Tyres &amp; rims</td><td>pass / fail</td><td>always</td><td>—</td></tr>
+          <tr><td>Brakes</td><td>pass / fail</td><td>when safety-relevant</td><td>via road test</td></tr>
+          <tr><td>Odometer recorded</td><td>value + photo</td><td>always</td><td>odometer photo</td></tr>
+          <tr><td>Cleaning done</td><td>pass / fail</td><td>always</td><td>—</td></tr>
+          <tr><td><b>Road test</b></td><td>pass / fail / n-a</td><td>conditional (rule below)</td><td>tester + time</td></tr>
+          <tr><td>Status updated to Ready</td><td>auto</td><td>always</td><td>—</td></tr>
+        </tbody>
+      </table>
+      <p><b>Road-test rule:</b> required when a fault is in the Foundation safety-fault list, or severity is Safety-Critical, or the car sat idle &gt; 7 days, or it's luxury / sports. QA cannot pass until the road test passes.</p>
+      <h4>Change + alerts</h4>
+      <ul>
+        <li>Remove the engine/electrical/transmission-only QA short-circuit → <b>every</b> ticket routes through QA; <code>approveQa</code> blocks close until all required items pass.</li>
+        <li><b>4-day-in-garage alert</b> — a detector reads <code>last_state_change_at</code> (already stamped) and alerts management when a car sits in the garage <b>more than 4 days</b> without closing.</li>
+        <li><b>Idle-days readiness matrix</b> feeds Phase 1 check #9 (&lt;48h quick · 3–7d safety · &gt;7d readiness+road test · &gt;14d battery/tyres/fluids · &gt;30d full technical).</li>
+      </ul>
+      <div class="done"><b>Done when:</b> no ticket closes without a fully-passed itemized QA (+ road test where required), and management receives the 4-day-in-garage and idle-readiness alerts.</div>
+    </div>
+  </section>
+
+  <!-- PHASE 6 -->
+  <section class="phase">
+    <div class="head"><div class="tag">6</div><h3>Inspector Protocols <span class="flag">Abu Marouf's logic, automated</span></h3></div>
+    <div class="body">
+      <div class="outcome"><b>Operational outcome:</b> Abu Marouf's inspection rules become engine-driven recurring tasks, triggered by clear rules rather than anyone's memory.</div>
+
+      <div class="subhead">6A · Inspector Protocol Library</div>
+      <ul>
+        <li><b>Routine</b> — oil / filter by mileage limits (already live via the Oil-Change interval + service-due detectors).</li>
+        <li><b>Battery</b> — health + replacement interval. <b>NEW</b> <code>vehicles.battery_installed_at</code>, <code>battery_health</code>, <code>battery_interval_months</code>; a "battery due" check.</li>
+        <li>Config-driven: <b>NEW</b> <code>config/inspector_protocols.php</code> defining each protocol's trigger + checklist.</li>
+      </ul>
+
+      <p style="background:#fef2f2; border:1px solid #fecaca; border-radius:9px; padding:11px 14px; color:#991b1b; font-size:13.5px"><b>Removed (Rev. 16) — the Stability Cycle Engine.</b> The automated post-accident <b>5-day Stability Cycle</b>, its <b>missed-by-1-hour → <code>safety_block</code></b>, and its <b>3-clean-cycles graduation</b> are <b>dropped entirely</b> — along with <code>stability_check_ticket</code>, <code>auto_maintenance_audits</code>, <code>stability:scan</code>, and the <code>safety_block</code> / <code>clean_cycles</code> / <code>next_stability_due</code> machinery. <em>(None of it was in the shipped code.)</em> Post-accident follow-up runs through the ordinary <b>Check / Test</b> triggers + the Inspector Protocol Library above — no separate enforced cycle.</p>
+
+      <div class="done"><b>Done when:</b> the Inspector Protocol Library drives routine + battery checks by config-driven rule, reusing the existing service-due detectors — with no automated stability machinery.</div>
+    </div>
+  </section>
+
+  <!-- PHASE 7 -->
+  <section class="phase">
+    <div class="head"><div class="tag">7</div><h3>Safety-Decision Audit <span class="flag">the accountability control</span></h3></div>
+    <div class="body">
+      <div class="outcome"><b>Operational outcome:</b> the system becomes a <b>safety guardian</b> without overruling Abu Marouf's judgment. When his final severity / rentable call disagrees with what the keywords in his own description imply, the record is flagged, the Admin is alerted instantly, and he must justify it in writing. Every block-or-clear against system logic leaves a transparent trail.</div>
+
+      <p style="background:#ecfdf5; border:1px solid #a7f3d0; border-radius:9px; padding:11px 14px; color:#065f46; font-size:14px"><b>Reuses what already exists:</b> the severity-mapping table is <b>already built</b> — <code>finding_keywords</code> (Keyword Risk Library) maps each keyword to a risk; the findings-catalog endpoint already serves the <code>keyword_risk</code> map; the notification bus (in-app bell, broadcast-ready) exists; and the <b>override-reason + read-only audit-history pattern</b> is already used for garage routing and the rental-first policy. This layer wires them together — not a new paradigm.</p>
+
+      <div class="subhead">7A · Suggestion at entry</div>
+      <ul>
+        <li>As the inspector types the <b>Description</b>, the system scans it against <code>finding_keywords</code> → a <b>Suggested Severity</b> = the highest-risk matched keyword ("Brakes"/"Engine" → 🔴; "Paint"/"Interior" → 🟢).</li>
+        <li>Shown as a non-binding label — Abu Marouf still makes the final choice.</li>
+      </ul>
+
+      <div class="subhead">7B · Conflict rule (2×2 threshold)</div>
+      <table>
+        <thead><tr><th>System suggests</th><th>He marks</th><th>Result</th></tr></thead>
+        <tbody>
+          <tr><td>🔴 Major / Safety-Critical</td><td><b>Rentable</b></td><td>⚠️ <b>Conflict → Audit Required</b> (a dangerous car cleared)</td></tr>
+          <tr><td>🟢 Minor</td><td><b>Non-Rentable</b></td><td>⚠️ <b>Conflict → Audit Required</b> (a trivial car grounded)</td></tr>
+          <tr><td>agrees, or Medium middle-ground</td><td>—</td><td>✅ silent pass, no flag</td></tr>
+        </tbody>
+      </table>
+
+      <div class="subhead">7C · On a conflict, the system MUST</div>
+      <ol style="margin:6px 0; padding-left:20px">
+        <li><b>Flag the record</b> <code>audit_status = audit_required</code>.</li>
+        <li><b>Block save until an <code>override_reason</code> is written</b> (forced justification).</li>
+        <li><b>Send an instant push/alert to the Admin</b> (super-admin) via the notification bus.</li>
+        <li><b>Write an audit-log row</b> for the Admin's review queue.</li>
+      </ol>
+
+      <h4>Migrations &amp; models</h4>
+      <ul>
+        <li><b>Reuse</b> <code>finding_keywords</code> as the severity map (mapped onto the 4-level scale).</li>
+        <li><b>NEW</b> <code>safety_decision_audits</code> (<code>record_id, record_type, suggested_severity, chosen_severity, is_rentable, override_reason, decided_by, admin_notified_at, reviewed_by, reviewed_at</code>).</li>
+        <li><b>Add flags</b> on the inspection row: <code>suggested_severity</code>, <code>severity_overridden</code> (bool), <code>audit_status</code> (none / required / reviewed).</li>
+      </ul>
+      <h4>UI &amp; permissions</h4>
+      <ul>
+        <li>The suggestion computes on the existing findings/description entry — no new inspector screen.</li>
+        <li><b>NEW</b> Admin audit queue: a filtered read-only list of <code>audit_status = required</code> (reuses the OverrideAudit history UI) + a "mark reviewed" action.</li>
+        <li>Reuses existing inspector permissions; the alert targets super-admin (optional new <code>audit.review</code> for a dedicated reviewer).</li>
+      </ul>
+      <p style="font-size:13px; color:#6d28d9; background:#f5f3ff; border:1px solid #ddd6fe; border-radius:8px; padding:9px 13px"><b>Scope (updated Rev. 15):</b> under the Check/Test split the <b>rentable + severity <em>decision</em> is a Check call owned by the Supervisors (Abdullah / Waleed)</b>; Abu Marouf, the Technical Inspector &amp; Tester, contributes the <b>technical Test verdict</b> (fit / not-fit), not the business decision. This audit therefore sits on the <b>Supervisor's</b> decision, informed by Abu Marouf's Test result — the conflict rule is unchanged; only <em>whose</em> decision it audits moves from the tester to the Supervisor.</p>
+
+      <div class="done"><b>Done when:</b> typing "brakes" suggests 🔴; if Abu Marouf marks that car rentable, the save is blocked until he writes a reason, the Admin gets an instant alert, and the decision lands in the audit queue with the full before/after trail.</div>
+    </div>
+  </section>
+
+  <!-- PHASE 8 -->
+  <section class="phase">
+    <div class="head"><div class="tag">8</div><h3>Command Center <span class="flag">full-transparency layer</span></h3></div>
+    <div class="body">
+      <div class="outcome"><b>Operational outcome:</b> Omar and the Admin get one place that answers "who did what, where is every car, and what's stuck?" — in real time. No more silent updates.</div>
+
+      <p style="background:#ecfdf5; border:1px solid #a7f3d0; border-radius:9px; padding:11px 14px; color:#065f46; font-size:14px"><b>Data-model answer (lean):</b> we <b>tap the existing AuditLog + workflow state machine</b> for almost all of it. Only the global Activity Feed benefits from <b>one thin new table</b>; the tracker and overview are <b>pure read views — no migration</b>.</p>
+
+      <div class="subhead">8A · Real-time Activity Feed (who did what)</div>
+      <p>Every critical action — cost <b>valuation</b>, <b>approval</b>, <b>set-to-ready</b>, <b>inspection / damage filing</b>, <b>override</b> — is pushed to a global stream showing <b>actor · timestamp · the specific change</b>.</p>
+      <ul>
+        <li><b>Reuses:</b> <code>vehicle_log_events</code> (already logs every transition with actor + time), <code>sync_changes</code> (field was→now diffs), <code>maintenance_approvals</code>, <code>safety_decision_audits</code>.</li>
+        <li><b>NEW (one thin table)</b> <code>activity_log</code> — polymorphic: <code>actor_id, action, subject_type, subject_id, summary, meta</code> (JSON), <code>created_at</code>. A central <code>ActivityLogger</code> writes one row per critical action → a single sortable, paginated stream (instead of UNION-querying N logs).</li>
+        <li><b>Endpoint:</b> <code>GET /command-center/activity</code> (polling now; broadcast-ready via the existing notification bus).</li>
+      </ul>
+
+      <div class="subhead">8B · Vehicle Live-Status Tracker (where is the car?)</div>
+      <ul>
+        <li><b>NO new table.</b> Reuses <code>Maintenance::livePosition()</code> (already returns 🚚 In Transit / 🔧 In Workshop from <code>workflow_status</code> + active garage stint + active logistics move), plus the active <code>LogisticsTask</code> (owner/assignee + destination) and the garage stint (vendor).</li>
+        <li>Each car shows <b>status → current owner/assignee</b> (Driver / Garage / Dispatcher). If status = Maintenance → <b>which vendor/garage</b> has it and <b>who from our team is the Supervisor</b> (<code>inspected_by</code> / assigned).</li>
+        <li><b>Endpoint:</b> <code>GET /command-center/fleet-status</code>.</li>
+      </ul>
+
+      <div class="subhead">8C · Management Overview (Omar + Admin)</div>
+      <ul>
+        <li><b>NO new table</b> — three queries over existing data:</li>
+        <li><b>Yellow-in-field:</b> <code>condition_grade = 'yellow'</code> ∩ an active rental contract (out on rent right now).</li>
+        <li><b>Pending approvals:</b> tickets in <code>pending_approval_hierarchy</code> (Phase 4 / Rule 2), grouped by the tier they're waiting on.</li>
+        <li><b>Stale tasks:</b> claimed but not finished within X hours — from <code>last_state_change_at</code> / claim time vs. the stage SLA (<code>stageAge()</code> + <code>STAGE_SLA_SECONDS</code> already exist), highlighted red.</li>
+        <li><b>Endpoint:</b> <code>GET /command-center/overview</code>.</li>
+      </ul>
+
+      <h4>Permissions</h4>
+      <p><b>NEW</b> <code>command_center.view</code> (Admin + Omar / managers). Reuses the notification bus for any push.</p>
+
+      <div class="done"><b>Done when:</b> the Activity Feed streams every critical action with actor + time + change; the tracker answers "where is car X and who has it" fleet-wide; and the overview surfaces Yellow-in-field, hierarchy-pending approvals, and stale claimed tasks at a glance — with no heavyweight new tracking table.</div>
+    </div>
+  </section>
+
+  <!-- PHASE 9 -->
+  <section class="phase">
+    <div class="head"><div class="tag">9</div><h3>Cost Intelligence <span class="flag">history-driven pricing</span></h3></div>
+    <div class="body">
+      <div class="outcome"><b>Operational outcome:</b> before you commit a repair to a garage, the system shows what that repair <em>has cost before</em> — per garage — and flags when you're likely overpaying. It <b>never blocks</b> a premium-garage choice; it just makes the money visible.</div>
+
+      <p style="background:#ecfdf5; border:1px solid #a7f3d0; border-radius:9px; padding:11px 14px; color:#065f46; font-size:14px"><b>Hook into Smart-Routing? Yes.</b> Phase-3's <code>GarageRoutingService::suggest()</code> already ranks garages; we extend each candidate to also carry an <b><code>estimated_price</code></b> for this ticket's fault category + car model, from history. Pricing is one more signal in the same suggestion payload — no separate engine.</p>
+
+      <div class="subhead">9A · Cost Predictor</div>
+      <p>On selecting a <b>Fault Category</b> (e.g. Transmission), the system queries maintenance history (<code>maintenances</code> + <code>maintenance_line_items</code>) for <b>that car model + that fault type</b> → a predicted cost band (avg + range), served into the dispatch UI and <code>garage-suggestions</code>.</p>
+
+      <div class="subhead">9B · Comparative View + Variance</div>
+      <ul>
+        <li>Before committing, the UI shows <b>"average cost for this repair at Garage A vs Garage B"</b> side by side.</li>
+        <li><b>Variance:</b> a garage <b>&gt;20% above</b> the historical average → a <b>High-Cost Warning</b> badge (configurable).</li>
+        <li><b>Non-blocking</b> (your constraint): a premium garage is allowed; the warning is informational + logged (reuses the override-reason pattern if you pick the flagged one).</li>
+      </ul>
+
+      <div class="subhead">9C · Actual vs Estimated + Garage Intelligence snapshot</div>
+      <ul>
+        <li><b>NEW</b> on the maintenance record: <code>estimated_cost</code> (from quotation/predictor) and <code>actual_cost</code>. At <b>Close</b>, the system captures the <b>final payment amount</b> into <code>actual_cost</code>.</li>
+        <li><b>NEW <code>garage_cost_stats</code> table</b> (the Garage Intelligence snapshot) — per <code>(vendor_id, fault_category, vehicle_model)</code>: <code>avg_cost, sample_count, last_repair_at, updated_at</code>. Every Close <b>auto-updates</b> it from <code>actual_cost</code> → the predictor sharpens over time; feeds Phase-3's <code>price_index</code> with real per-category data.</li>
+        <li><b>Endpoints:</b> <code>garage-suggestions</code> payload gains <code>estimated_price</code> + <code>variance_pct</code> + <code>high_cost</code>; refresh via a <code>CloseObserver</code> hook + <code>garage:recalc-stats</code> backfill.</li>
+      </ul>
+
+      <div class="done"><b>Done when:</b> picking a fault category shows a predicted cost; the dispatch view compares garages by historical cost with a &gt;20% High-Cost Warning (non-blocking); and each Close writes <code>actual_cost</code> and refreshes the <code>garage_cost_stats</code> snapshot.</div>
+    </div>
+  </section>
+
+  <!-- PHASE 10 -->
+  <section class="phase">
+    <div class="head"><div class="tag">10</div><h3>Accident-to-Garage Communication Chain <span class="flag">automated · receipted</span></h3></div>
+    <div class="body">
+      <div class="outcome"><b>Operational outcome:</b> an accident / new-damage report drives a <b>guaranteed, step-by-step notification chain</b> — no one can say "I didn't get the notification," and Abu Marouf can't even <em>see</em> the ticket until the Supervisors have assessed it. Hardens the Rev. 5 damage→repair chain with a strict hand-off + receipts.</div>
+
+      <div class="subhead">The chain</div>
+      <ul>
+        <li><b>Trigger:</b> an inspection filed with <code>damage_status = NEW</code>, or a maintenance event created for an <b>Accident</b>.</li>
+        <li><b>Step A → Supervisors:</b> instant <b>Push + In-App</b> to <b>Abdullah &amp; Waleed</b>, flagged <b>High Priority</b>, with a link to the <b>damage photos</b> and the <b>Liability Party</b> field.</li>
+        <li><b>Step B → Inspector-Tester:</b> once Abdullah or Waleed <b>Submit Assessment</b> (cost + scope + Phase-4 matrix check), the system <b>auto-creates a Test/Maintenance Task</b> for Abu Marouf — carrying the Supervisors' <b>assessment notes</b> so he knows what to test for.</li>
+        <li><b>Step C — the Guard:</b> Abu Marouf's dashboard <b>does not show</b> the ticket until the assessment is submitted (his queue is scoped to <code>status ∈ {assessed, task_created}</code>; a pre-assessment ticket is invisible to him).</li>
+      </ul>
+
+      <div class="subhead">Notification mechanics</div>
+      <ul>
+        <li><b>Non-dismissible:</b> the Command-Center notification for the current step <b>cannot be dismissed</b> until the next step is taken.</li>
+        <li><b>Receipts (no "I didn't see it"):</b> <b>NEW <code>notification_receipts</code> table</b> — per <code>(notification, recipient/role)</code>: <code>notified_at, viewed_at, actioned_at</code>. Every stage stamped, per role, surfaced in the Command-Center audit.</li>
+        <li>Reuses the notification bus (Push + in-app), the Rev. 5 manager <code>damage.assess</code> step, and the Phase-2 auto-task. The Step-C guard is a <b>scope filter</b> — no new state.</li>
+      </ul>
+
+      <div class="done"><b>Done when:</b> a new-damage/accident report instantly high-priority-pings Abdullah &amp; Waleed with photos + liability; their Submit-Assessment auto-drops a note-carrying task to Abu Marouf; his dashboard never shows a pre-assessment ticket; the step notification can't be dismissed until acted on; and <code>notified_at / viewed_at / actioned_at</code> are logged for every role.</div>
+    </div>
+  </section>
+
+  <!-- PHASE 11 -->
+  <section class="phase">
+    <div class="head"><div class="tag">11</div><h3>Usage Monitoring &amp; Mileage Enforcement <span class="flag">asset protection</span></h3></div>
+    <div class="body">
+      <div class="outcome"><b>Operational outcome:</b> every kilometre is logged and tamper-proof, and contractual mileage limits are policed automatically — so a renter can't quietly run up the odometer or drive out of bounds without it surfacing. The same discipline runs on the <b>maintenance side (11D)</b>: a garage can't quietly run up the odometer during a shop visit either.</div>
+
+      <p style="background:#ecfdf5; border:1px solid #a7f3d0; border-radius:9px; padding:11px 14px; color:#065f46; font-size:14px"><b>Already built (we harden it):</b> <code>OdometerContinuityService</code> (per-stage verdicts, currently <em>soft/non-blocking</em>), rollback/jump detection in <code>mileage:scan</code>, and mandatory odometer photos on logistics moves. <b>Dependency:</b> a <b>GPS/telematics feed</b> — not integrated today; the odometer half (11A) works without it, the GPS half (11B) needs a provider first.</p>
+
+      <div class="subhead">11A · Mandatory Odometer Logging (hard gate)</div>
+      <ul>
+        <li>Every status change — <b>Dispatch, Return, and Mid-Rental Check</b> — <b>requires</b> an <b>odometer photo + a manual odometer entry</b> (both mandatory; the request is rejected without them).</li>
+        <li><b>Data Integrity Error:</b> if the entered value is <b>less than the previous record</b>, the transaction is <b>blocked</b> until the <b>Admin approves</b> — <b>Admin-only</b> (supervisors cannot override an odometer integrity flag, per sign-off). A hard gate, reason logged (override-audit pattern).</li>
+        <li>Reuses <code>OdometerContinuityService</code> for the previous-reading lookup; adds <code>integrity_override_by</code> / <code>integrity_override_reason</code>.</li>
+        <li><b>(Rev. 14) Capture model superseded — see the Operational Integrity Gate (IG-1):</b> the "required at every status change" rule becomes <b>event-driven capture</b> (always-on button + verify-at-Ready). The <b>rollback → Data-Integrity block + Admin-only override still stands</b> — only <em>when/how</em> the reading is entered changes.</li>
+      </ul>
+
+      <div class="subhead">11B · GPS-Fence &amp; Mileage Enforcement <span style="font-size:12px;color:var(--warn)">(DEFERRED — awaiting a live GPS feed)</span></div>
+      <p style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:9px 13px;color:#92400e;font-size:13.5px"><b>Sign-off decision:</b> 11B is <b>deferred</b> until a live telematics feed is connected. Build <b>11A</b> + the <b>11C dashboard scaffolding</b> now (odometer-based excess check today; GPS columns light up when the feed lands).</p>
+      <ul>
+        <li><b>Distance policing:</b> compare <b>GPS distance</b> vs the <b>odometer-logged distance</b>. A large divergence flags <b>tampering or a GPS gap</b> — the odometer stays the legal/billing record; GPS corroborates.</li>
+        <li><b>Excess-mileage alert:</b> allowed = <code>miles_allowed_pd</code> × rental days (already on the contract). If <b>GPS active km &gt; the contractual allowance</b> → auto <b>Policy Violation Alert</b> to the Admin + tag <code>excess_mileage</code>. <em>(This also runs against the odometer before GPS lands.)</em> <b>(Rev. 16: the +5% buffer is removed.)</b></li>
+        <li><b>Geo-fence (optional):</b> flag movement <b>outside the operational boundary</b> on the contract (leaving the city/region).</li>
+      </ul>
+
+      <div class="subhead">11C · Usage Dashboard (Command Center)</div>
+      <ul>
+        <li>Per active rental: <b>real-time GPS distance vs. the contractual limit</b>.</li>
+        <li>A <b>Mileage Trend bar</b>: 🟢 Safe · 🟡 Approaching · 🔴 Exceeded. Extends the Phase-8 overview.</li>
+      </ul>
+
+      <div class="subhead">11D · Shop-Movement Integrity Gate <span style="font-size:12px;color:var(--warn)">(garage-side odometer audit — Rev. 13)</span></div>
+      <p style="background:#ecfdf5; border:1px solid #a7f3d0; border-radius:9px; padding:11px 14px; color:#065f46; font-size:14px"><b>The concern:</b> 11A stops the <em>renter</em> running up the odometer; <b>11D stops the <em>garage</em></b> doing the same during a shop visit — or using the car for errands. Two readings already bracket every stint, so we measure how far the car moved <em>inside the shop</em>.</p>
+      <ul>
+        <li><b>Entry ("In") — already captured:</b> the garage-arrival odometer (<code>receive_odometer</code> at intake, falling back to <code>dispatch_odometer</code>, whose log reads <em>"وصل الكراج / arrived at garage"</em>). <b>Hardened:</b> the garage-in reading becomes <b>mandatory</b> so Net Distance is always computable.</li>
+        <li><b>Exit ("Out") — the existing <em>Ready</em> capture:</b> at the final test-drive / re-inspection the exit odometer (<code>return_odometer</code>) is taken with its <b>already-mandatory photo</b>. <b>No new capture point.</b></li>
+        <li><b>Net Shop Distance = <code>return_odometer − receive_odometer</code></b> (garage-in → garage-out), shown on the final report + the mileage timeline.</li>
+        <li><b>Configurable threshold:</b> default <b>20 km</b> for a legitimate test-drive, held as an <b>Admin setting</b> <code>shop_movement_threshold_km</code> — tunable without a deploy (not hard-coded).</li>
+        <li><b>Trigger — flag + alert, non-blocking:</b> past threshold → stamp <code>excessive_shop_movement</code> into <code>odometer_flags</code> (new <code>OdometerContinuityService</code> verdict at <code>STAGE_GARAGE_OUT</code>) + <b>instant Admin alert</b>. The car still returns to service — the flag + alert are the audit trail.</li>
+        <li><b>Data integrity:</b> both readings + the verdict persist on the maintenance ticket — there is <b>no separate <code>MaintenanceEvent</code> table</b> (the ticket <em>is</em> the record; also logged to <code>vehicle_log_events</code>).</li>
+        <li><b>(Rev. 14) Capture points re-sourced — see the Operational Integrity Gate:</b> the entry reading is the <b>IG-2 Garage Arrival event</b>, the exit reading is the <b>IG-1 <code>exit</code> event</b> (not forced at Ready). <b>Net Shop Distance = <code>exit</code> − <code>arrival</code></b> — same span, same 20 km rule, same alert; only the source events change.</li>
+      </ul>
+
+      <h4>Migrations &amp; endpoints</h4>
+      <ul>
+        <li><b>NEW</b> <code>odometer_readings</code> (subject, stage dispatch/return/mid_rental, value, photo_ref, prev_value, integrity_flag, <code>integrity_override_by/reason</code>, recorded_by/at) — hard-block validation in the status-change requests.</li>
+        <li><b>NEW</b> <code>rental_usage</code> (per contract): <code>gps_distance_km, odometer_distance_km, allowed_km, excess_flag, geofence_breach, updated_at</code>. <em>(Rev. 16: no <code>buffer_pct</code> — excess is a straight over-allowance comparison.)</em></li>
+        <li><b>NEW (11D)</b> Admin setting <code>shop_movement_threshold_km</code> (20); <code>OdometerContinuityService</code> verdict <code>excessive_shop_movement</code> at <code>STAGE_GARAGE_OUT</code>; the Ready-step handler computes Net Shop Distance → writes the flag + Admin alert; garage-in odometer upgraded to <b>required</b>. No new table.</li>
+        <li><b>NEW</b> <code>NotificationScanner</code> detector: excess-mileage + geofence-breach (11B) <b>and</b> excessive-shop-movement (11D) → Admin. Integrity-override = Admin; dashboard under <code>command_center.view</code>.</li>
+      </ul>
+
+      <div class="done"><b>Done when:</b> no status change saves without an odometer photo + entry; a lower-than-previous reading hard-blocks until Admin approves; GPS active km over allowed +5% auto-tags <code>excess_mileage</code> and alerts the Admin; the Command Center shows a live 🟢/🟡/🔴 mileage trend per rental; <b>and (11D)</b> a maintenance stint whose <b>garage-in → garage-out</b> distance exceeds the configurable shop-movement threshold stamps <code>excessive_shop_movement</code>, shows the <b>Net Shop Distance</b> on the final report, and fires an <b>instant Admin alert</b> — without blocking the car's return to service. <em>(11B activates once a GPS feed is connected; 11A, the odometer-based excess check, and 11D ship without it.)</em></div>
+    </div>
+  </section>
+
+  <!-- PHASE 12 · OPERATIONAL INTEGRITY GATE -->
+  <section class="phase">
+    <div class="head"><div class="tag">12</div><h3>Operational Integrity Gate — Event-Driven Capture <span class="flag">Bulletproof-Lifecycle capstone · Rev. 14</span></h3></div>
+    <div class="body">
+      <div class="outcome"><b>Operational outcome:</b> every physical movement of a car leaves a verifiable record, captured <b>at the moment it happens</b> — not forced at an artificial status flip. Changes <b>no earlier decision except <em>when</em> data is captured</b>; layers onto Phases 3 (garage routing), 5 (QA/Ready) and 11 (odometer).</div>
+
+      <p style="background:#eef4ff; border:1px solid #cdddff; border-radius:9px; padding:11px 14px; color:#1e3a8a; font-size:14px"><b>Why it exists:</b> the workflow kept forcing data entry at the wrong moment — the odometer photo only at <em>Ready</em>, the garage chosen at <em>dispatch</em> before the car had moved — so staff flipped status artificially just to log a reading. The fix: make capture <b>event-driven</b>, recorded when the real-world event occurs, independent of <code>workflow_status</code>.</p>
+
+      <div class="subhead">IG-1 · Event-driven odometer capture (decouples capture from status)</div>
+      <ul>
+        <li><b>Decouple the photo from <code>Ready</code>.</b> The mandatory odometer photo forced at the <code>ready</code> transition — <b>that coupling is removed</b>.</li>
+        <li><b>Always-on capture:</b> an <b>"Add Odometer Reading"</b> action is visible on the ticket at <b>every stage</b> (any <code>workflow_status</code>). Staff log <b>{reading + photo + <code>event_type</code>}</b> the moment a car moves — <b>not a status change</b>.</li>
+        <li><code>event_type ∈ {pickup, arrival, exit, mid_check}</code>. Each writes an <code>odometer_readings</code> row (the Phase-11A table, now carrying <code>event_type</code>) + an <code>InspectionRecord</code> photo (reuses <code>storeOdometerPhoto()</code>) + a continuity verdict into <code>odometer_flags</code>.</li>
+        <li><b><code>Mark Ready</code> becomes a Final Verification, not a capture point:</b> it checks the required event set (<code>pickup</code>, <code>arrival</code>, <code>exit</code>) exists; if any is missing it returns a <b>"missing captures" prompt</b> — instead of blocking inside the Ready modal.</li>
+        <li><b>Supersedes</b> 11A's per-transition hard-gate + 11D's Ready-coupling. The <b>rollback → Data-Integrity block + Admin-only override (11A) is unchanged</b> — only capture timing moves.</li>
+      </ul>
+
+      <div class="subhead">IG-2 · Garage Arrival Event (the official decision point)</div>
+      <p style="color:#334155;font-size:14px;margin:0 0 6px">Fires when the driver <b>physically hands the car to the shop</b> (entry into <em>At the Garage</em>) — <b>not</b> at dispatch. Captures:</p>
+      <ul>
+        <li><b>(a) Garage Confirmation</b> — <b>confirm or override</b> the garage the Supervisor pre-assigned.</li>
+        <li><b>(b) Arrival Odometer</b> — <b>Photo + Reading, mandatory</b>. This <em>is</em> the IG-1 <code>arrival</code> event.</li>
+        <li><b>(c) Intake Condition</b> — brief notes <b>or a Scratch flag</b>; a scratch hands off to the <b>Phase-2 Damage Assessment</b> chain (auto-draft evaluation → notify Abdullah &amp; Waleed).</li>
+        <li><b>(d) Expected Completion</b> — a simple <b>ETA date</b> (feeds the Command-Center stale-task / SLA views).</li>
+      </ul>
+      <p style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:9px 13px;color:#166534;font-size:13.5px"><b>Authority model — dispatch = plan, arrival = decision.</b> The Supervisor's dispatch pick is the <b>suggestion/baseline</b> (<code>suggested_vendor_id</code>, from Phase 3). The arrival confirmation is the <b>official decision</b> — a driver can <b>divert</b> if the primary shop is full, and the divergence is <b>auditable</b> (arrival stamps the confirmed <code>vendor_id</code> + <code>garage_overridden</code> + reason).</p>
+
+      <div class="subhead">IG-3 · Maintenance Recurrence flag ("Came Back Broken") — a QC metric, not a stage</div>
+      <ul>
+        <li><b>Not a board stage.</b> A <b>recurrence trigger</b>: if a car returns from the garage to <b>Ready</b>, and the <b>same fault</b> is reported again within a <b>short, configurable window</b>, the system <b>links the new ticket to the original</b> and raises a <b><code>maintenance_recurrence</code></b> audit flag.</li>
+        <li>Answers <em>"was the repair actually fixed?"</em> — a <b>quality-control metric</b> in the Command Center / fault-insights, feeding the chronic-fault watchdog. Threshold <code>recurrence_window_days</code> (Admin setting).</li>
+        <li>Reuses the findings/fault model + a parent-ticket link — <b>no new stage, no workflow change.</b></li>
+      </ul>
+
+      <h4>Migrations &amp; endpoints</h4>
+      <ul>
+        <li><b>IG-1:</b> reuse <code>odometer_readings</code> + <code>event_type</code>; <b>NEW</b> <code>POST /maintenance-tickets/{ticket}/odometer</code> (standalone, any status); <code>markReady</code> changes from <em>capture</em> to <em>verify</em> (returns the missing-events list). Frontend: always-visible <b>"Add Odometer Reading"</b> button + standalone capture modal (<code>photoTile</code> + <code>OdometerContinuityHint</code>).</li>
+        <li><b>IG-2:</b> <b>NEW</b> <code>POST /maintenance-tickets/{ticket}/arrival</code> — confirm/override garage, mandatory arrival odometer event, intake condition (+ scratch → Phase-2 draft), ETA. Adds <code>garage_overridden</code>, <code>garage_override_reason</code>, <code>expected_completion_date</code>. Capture perm = <code>maintenance.logistics</code>.</li>
+        <li><b>IG-3:</b> <b>NEW</b> <code>maintenance_recurrence</code> flag + <code>original_ticket_id</code> link; <b>NEW</b> detector (same vehicle + same fault within <code>recurrence_window_days</code> after Ready → link + flag); reviewed under <code>maintenance.manage</code>.</li>
+      </ul>
+
+      <div class="done"><b>Done when:</b> a reading can be logged from the ticket <b>at any time</b> via an always-visible button; <b><code>Mark Ready</code> only verifies</b> the pickup/arrival/exit set and prompts for anything missing (never forces an inline photo); a <b>Garage Arrival step</b> captures confirmed-garage + mandatory arrival odometer + intake condition + ETA when the car reaches the shop; a <b>driver's garage override is recorded against the Supervisor's plan</b>; and a <b>same-fault return within the window</b> auto-links to the original ticket and raises a <code>maintenance_recurrence</code> flag.</div>
+    </div>
+  </section>
+
+  <!-- REV 16 · TESTING LOGIC -->
+  <section class="phase">
+    <div class="head"><div class="tag">16</div><h3>Testing Logic &amp; Data-Driven Garage Selection <span class="flag">lean cleanup · Rev. 16</span></h3></div>
+    <div class="body">
+      <div class="outcome"><b>Intent:</b> keep the system <b>lean, automated, and strictly focused on Data-Driven Garage Selection + Odometer/Damage Integrity.</b> Rev. 16 <em>removes</em> the automated <b>Stability Cycle Engine</b> (Phase 6) and the <b>+5% mileage buffer</b>, and <em>adds</em> a <b>Preventive Testing Policy</b> (smart-trigger), baseline testing, <b>labor &amp; time tracking</b>, and data-driven garage selection.</div>
+
+      <div class="subhead">16.1 · Baseline Testing (Test vs. history)</div>
+      <p>Every new <b>Test</b> is compared against the <b>last Test's result</b> for that car — the previous odometer, findings, and pass/fail are the baseline. A Test reads as a <em>delta</em> against history, so regressions and repeat faults surface immediately (feeds the recurrence flag, IG-3).</p>
+
+      <div class="subhead">16.2 · Preventive Testing Policy <span style="font-weight:600; color:var(--muted)">(smart-trigger, not check-everything)</span></div>
+      <p>Tests fire on <b>time-gaps and usage</b> — only when they add genuine value, so Abu Marouf (Technical Inspector &amp; Tester) spends time on cars that actually need it while the fleet stays 100% safety-compliant. Four rules that compose:</p>
+      <ul>
+        <li><b>Periodic Safety Refresh (15 days):</b> the system auto-triggers a <b>Periodic Test</b> for <b>every vehicle in the fleet every 15 days</b> <em>(including pre-owned fleet assets)</em> — even <b>idle / unrented</b> cars stay in optimal condition. The safety <em>floor</em>: the longest a car may go untested.</li>
+        <li><b>Active-Fault → Under Test:</b> any vehicle with an <b>active mechanical or electrical fault</b> is automatically set to <b><code>Under Test</code></b> status until cleared by Abu Marouf (the Technical Inspector &amp; Tester).</li>
+        <li><b>Long-Term Rental Protocol (&gt; 20 days):</b> any rental <b>exceeding 20 days</b> auto-flags the car for a <b>Deep Inspection on return</b> — extended road use (tyres, oil, mechanical stress) is verified before it re-enters the pool.</li>
+        <li><b>7-Day Safety Buffer (anti-redundancy):</b> the system will <b>not</b> trigger a new Periodic Test if the car was <b>already Tested within the last 7 days</b> and is still <b>Ready</b> — no redundant workload or wasted garage throughput.</li>
+        <li><b>Ready-State Retention:</b> a car that passed a Test and is <b>Ready keeps its Ready status without re-testing</b>, as long as it <b>hasn't been rented or had an incident</b> since — already-verified road-worthy cars stay available for immediate dispatch.</li>
+        <li><b>Short-Rental Loophole (the "1-Day Return"):</b> if a car returns from a <b>short rental (≈ 24–48h)</b> and the visual <b>Check confirms zero incidents / no new damage</b>, it does <b>not</b> need a new mechanical Test — the system <b>retains the previous Test's validity</b>, provided that Test was <b>within the 7-day safety window</b>. Prevents needless bottlenecks for cars with no significant mechanical stress. (The counterpart to the Long-Term Rental Protocol: a short clean rental doesn't invalidate a still-valid Test; a 20+ day one forces a Deep Inspection.)</li>
+      </ul>
+      <p style="background:#eef4ff; border:1px solid #cdddff; border-radius:8px; padding:9px 13px; color:#1e3a8a; font-size:13.5px"><b>How they compose (reconciling "no redundant re-test"):</b> a Ready car isn't re-tested on every dispatch (Retention), nor within 7 days of its last Test (Buffer), nor after a short (≤ 48h) incident-free rental (Short-Rental Loophole) — but never goes longer than <b>15 days</b> without a Periodic Refresh (floor); a 20+ day rental forces a Deep Inspection regardless. <b>Configurable</b> (Admin): <code>periodic_test_days</code> (15), <code>long_rental_deep_inspect_days</code> (20), <code>test_buffer_days</code> (7), <code>short_rental_max_hours</code> (48). <em>This 15-day periodic is a lightweight fleet-wide cadence — not a re-add of the removed Stability Cycle (no safety_block, no strict 3-photo gate, no graduation).</em></p>
+
+      <div class="subhead">16.3 · Labor &amp; Time Tracking (per Test/Repair)</div>
+      <p>Record, for <b>every Test and repair</b>, the <b>labor cost</b> and the <b>time taken</b> (start → finish; reuses the existing line-items labor + repair-hours data). <b>Every Test is time-stamped and cost-accounted</b> — so the system shows, per garage, <b>which are efficient and which are lagging</b> (a per-garage efficiency view feeding the Data-Driven Garage Selection below + Phase-9 Cost Intelligence).</p>
+
+      <div class="subhead">16.4 · Data-Driven Garage Selection (price a primary rank)</div>
+      <p>Garage routing (Phase 3) ranks by clear criteria — <b>price</b>, completion speed, parts availability, proximity, warranty, specialization — with <b>price/cost surfaced as a primary selection rank</b>, backed by the Phase-9 Cost-Intelligence prediction shown at the moment of selection. Selection is by the data, not by relationship; the ranking is the record.</p>
+
+      <div class="done"><b>Done when:</b> a Test shows its delta vs. the last Test; a Ready car is <b>not</b> re-tested on every dispatch nor within 7 days of its last Test, yet <b>never goes &gt;15 days</b> without a Periodic Safety Refresh; a <b>20+ day rental forces a Deep Inspection on return</b>; every Test/repair logs <b>labor cost + duration</b> into a per-garage efficiency view; and garage selection leads with price + the cost prediction.</div>
+    </div>
+  </section>
+
+  <!-- SEQUENCING -->
+  <section class="band">
+    <h3>Revised sequencing</h3>
+    <table>
+      <thead><tr><th style="width:60px">Order</th><th>Phase</th><th style="width:150px">Change</th></tr></thead>
+      <tbody>
+        <tr><td>0</td><td>Foundation — severity re-map + safety-fault list</td><td>unchanged</td></tr>
+        <tr><td>1</td><td><b>Locked-Down Handover</b> — Readiness (Pre-Rental Gate) + <span class="moved">Check-Out/In (Check-In Gate) + Signature</span></td><td class="moved">pulled forward</td></tr>
+        <tr><td>2</td><td><b>Damage Evaluation &amp; Incident Capture</b> <span class="moved">(scratch→notify Supervisors→assess/cost/confirm→auto In-Repair + Abu Marouf task; 9-category; Support Flow)</span></td><td class="moved">pulled forward · roles Rev. 5</td></tr>
+        <tr><td>2.5</td><td><b>Customer &amp; Deposit Protection</b> <span class="moved">(deposit ledger + fine hold)</span></td><td class="moved">new — Rev. 3 · risk-flag removed Rev. 16</td></tr>
+        <tr><td>3</td><td>Garage Routing Bridge</td><td>was Phase B</td></tr>
+        <tr><td>4</td><td>Financials &amp; Approval Matrix</td><td>was Phase C · now needs P2</td></tr>
+        <tr><td>5</td><td>QA / Road Test / Alerts</td><td>was Phase D</td></tr>
+        <tr><td>6</td><td><b>Inspector Protocols</b> <span class="moved">(Library only — routine + battery)</span></td><td class="moved">Rev. 4 · <b>Stability Cycle Engine removed Rev. 16</b></td></tr>
+        <tr><td>7</td><td><b>Safety-Decision Audit</b> <span class="moved">(keyword suggestion → conflict → Admin audit)</span></td><td class="moved">new — Rev. 6 · independent</td></tr>
+        <tr><td>8</td><td><b>Command Center</b> <span class="moved">(activity feed + live tracker + management overview)</span></td><td class="moved">new — Rev. 8 · independent</td></tr>
+        <tr><td>9</td><td><b>Cost Intelligence</b> <span class="moved">(price predictor + garage comparison + variance; garage_cost_stats)</span></td><td class="moved">new — Rev. 10 · extends Phase 3/4</td></tr>
+        <tr><td>10</td><td><b>Accident-to-Garage Communication Chain</b> <span class="moved">(receipted, guarded, non-dismissible)</span></td><td class="moved">new — Rev. 10 · hardens Rev. 5</td></tr>
+        <tr><td>11</td><td><b>Usage Monitoring &amp; Mileage Enforcement</b> <span class="moved">(odometer hard-gate + GPS policing + usage dashboard + <b>shop-movement integrity gate</b>)</span></td><td class="moved">new — Rev. 11 · GPS half needs a feed · <b>11D Rev. 13</b></td></tr>
+        <tr><td>12</td><td><b>Operational Integrity Gate</b> <span class="moved">(event-driven odometer + Garage Arrival Event + Maintenance Recurrence flag)</span></td><td class="moved">new — Rev. 14 · <b>cross-cutting, refines P3/P5/P11</b></td></tr>
+      </tbody>
+    </table>
+    <p style="color:#aac3e0; font-size:13px; margin:14px 0 0">The lifecycle now reads end-to-end: <b>Handover (documented + signed) → Return / Incident (structured damage) → Protect the cash (deposit · fines · risk) → Route to garage → Approve cost → QA &amp; release.</b> Nothing deferred.</p>
+  </section>
+
+  <!-- SIGN-OFF -->
+  <section class="signoff">
+    <h3>Sign-off — points for Omar to confirm</h3>
+    <p class="lead">The first three gate Phases 1–2; the rest gate 4–5.</p>
+    <ol>
+      <li style="opacity:.7"><b>✅ Yellow grade — REVISED (Rev. 14, reverses Rev. 7):</b> now <b>non-rentable</b>, treated <b>like Red</b> (pulled from the pool → maintenance); only Green &amp; Orange rent. Already live in the shipped gate (<code>rentBlockedByCondition()</code> covers red + yellow; ack is orange-only).</li>
+      <li><b>Safety-fault list:</b> confirm the categories that trigger a booking block, Safety-Critical severity/damage, and a road test.</li>
+      <li><b>Photo list &amp; signature:</b> confirm the 15-item mandatory set (+ 360° for luxury) and whether customer sign-off is <b>signature, OTP, or both</b>.</li>
+      <li><b>Damage form:</b> confirm the field options (esp. liable-party + decision) match Omar's evaluation sheet.</li>
+      <li><b>Approval tiers:</b> confirm the AED bands and which real managers fill Supervisor / Ops-Fleet / Branch / GM. <em>(Rev. 7: Valuation ≠ Approval is locked — a supervisor valuates, the matrix approves; just confirm each supervisor's own tier ceiling = his "valuator limit".)</em></li>
+      <li><b>Sell / Replace ratio:</b> the 12-month-cost-to-value threshold that fires the alert — <b>set to 40%</b>.</li>
+      <li><b>Deposit &amp; fines:</b> confirm the fine-hold window (e.g. 14 vs 30 days) and whether a refund balance goes to the customer <b>wallet or cash</b>.</li>
+      <li><s><b>Stability Cycle (Rev. 9)</b></s> ❌ <b>REMOVED (Rev. 16):</b> the automated Stability Cycle Engine — the 5-day cycle, the missed-by-1-hour Safety Block, and the 3-clean-cycles graduation — is <b>dropped entirely</b> (never in the shipped code). Post-accident follow-up now runs through the ordinary <b>Check / Test</b> triggers + the Phase-6 Inspector Protocol Library. Nothing to confirm.</li>
+      <li><b>Roles:</b> confirm Abdullah &amp; Waleed are the two <code>damage.assess</code> <b>Supervisors</b> (review / parts / cost / confirm), Abu Marouf (Technical Inspector &amp; Tester) <b>executes the Test</b>, and that a Supervisor confirm should auto-flip the car to <b>In-Repair</b>.</li>
+      <li><b>Safety-Decision Audit:</b> confirm the conflict thresholds (Major/Safety-Critical marked rentable, Minor marked non-rentable), that the instant alert goes to <b>you (Admin)</b>, and whether a dedicated <code>audit.review</code> reviewer is wanted.</li>
+      <li><b>Command Center:</b> confirm the <b>stale-task threshold</b> (X hours before a claimed-but-unfinished task is flagged), and who gets <code>command_center.view</code> (Admin + Omar + managers?).</li>
+      <li><b>Cost Intelligence:</b> confirm the <b>High-Cost Warning threshold</b> (&gt;20% over historical average?) and that it stays <b>non-blocking</b>.</li>
+      <li><b>Accident chain:</b> confirm Step-C is a <b>hard visibility guard</b> (Abu Marouf can't see the ticket pre-assessment) and that the Supervisor notification is <b>non-dismissible</b> until Submit Assessment.</li>
+      <li style="opacity:.7"><b>✅ Usage Monitoring — RESOLVED:</b> Data-Integrity override <b>Admin-only</b> (supervisors cannot override) · <b>11B GPS/geo-fence deferred</b> until a live feed — build 11A + 11C dashboard scaffolding now. <em>(Rev. 16: the +5% buffer is removed — excess = over the contractual allowance.)</em></li>
+      <li><b>Odometer Integrity Gate (11D, Rev. 13):</b> confirm the <b>Shop-Movement threshold = 20 km</b>, configurable in Admin settings (<code>shop_movement_threshold_km</code>); that <b>Net Shop Distance</b> is measured <b>garage-in → garage-out</b>; that a breach is <b>non-blocking</b> (flag <code>excessive_shop_movement</code> + instant Admin alert, car still releases); and that the <b>garage-in reading becomes mandatory</b>.</li>
+      <li><b>Operational Integrity Gate (Rev. 14):</b> confirm <b>(IG-1)</b> odometer capture becomes <b>event-driven</b> — an always-on "Add Odometer Reading" button, and <b>Mark Ready only verifies</b> the pickup/arrival/exit set (no longer the forced photo point); <b>(IG-2)</b> the <b>Garage Arrival Event</b> captures garage confirm/override + mandatory arrival odometer + intake condition (scratch → Damage Assessment) + ETA, with <b>dispatch = the Supervisor's plan and arrival = the official decision</b> (driver may divert, divergence audited); and <b>(IG-3)</b> "Came Back Broken" is a <b>Maintenance Recurrence QC flag</b> (same-fault return within <code>recurrence_window_days</code> → links to the original ticket), <b>not a new board stage</b>. Confirm the <b>recurrence window</b> (e.g. 7 / 14 days).</li>
+      <li><b>Roles &amp; Check/Test (Rev. 15):</b> confirm <b>Abdullah &amp; Waleed = Supervisors</b> (review &amp; approve — not company managers) and <b>Abu Marouf = Technical Inspector &amp; Tester</b> (execution only, no liability / cost / scope decisions); that a <b>Check</b> (visual, on return) auto-notifies the Supervisor to review &amp; approve while a <b>Test</b> (technical) is Abu Marouf's; and the <b>Check → Test auto-escalation</b> (visual impact damage that may be mechanical → auto mechanical Test task). <em>(Ripple: the Phase-7 Safety-Decision Audit now audits the <b>Supervisor's</b> severity/rentable decision, not the tester's — confirm that's the intent.)</em></li>
+      <li><b>Testing logic &amp; garage selection (Rev. 16):</b> confirm <b>Baseline Testing</b> (each Test compared to the last Test's history), the <b>Preventive Testing Policy</b> — <b>15-day Periodic Safety Refresh</b> (even idle cars) · <b>Deep Inspection after 20+ day rentals</b> · <b>7-day anti-redundancy buffer</b> · <b>Ready-State Retention</b> (confirm the <b>15 / 20 / 7-day</b> intervals, all Admin-configurable); <b>Labor &amp; Time Tracking</b> on every Test/repair (time-stamped + cost-accounted → per-garage efficiency); and <b>price as the primary garage-selection rank</b> (backed by Cost-Intelligence). Also note the <b>removals</b>: the Stability Cycle Engine, the +5% mileage buffer, and the Customer Risk Flag are dropped.</li>
+    </ol>
+  </section>
+
+  <!-- PRACTICAL SCENARIO -->
+  <section class="phase">
+    <div class="head"><div class="tag">▶</div><h3>Practical Workflow Scenario: Lifecycle of a Repair Ticket</h3></div>
+    <div class="body">
+      <div class="outcome"><b>A concrete example</b> — how the system bridges a reported fault and the vehicle's return to the fleet. Ticket <b>#169573</b>, <b>Mercedes GLC 300</b> (fault: dim / foggy lights · severity: 🟡 Moderate).</div>
+      <table>
+        <thead><tr><th>Stage</th><th>What happens</th><th>Cumulative downtime*</th><th>Automated transition</th></tr></thead>
+        <tbody>
+          <tr><td><b>1. Inspection Requested</b></td><td>Fault logged; the real-time downtime clock starts.</td><td>0:00</td><td>Ticket opened + assigned to an inspector</td></tr>
+          <tr><td><b>2. Being Inspected</b></td><td>Test-drive + diagnostic + odometer capture.</td><td>~0:20</td><td>On severity set → Awaiting Dispatch</td></tr>
+          <tr><td><b>3. Awaiting Dispatch</b></td><td>Supervisor picks the garage (price-first) + assigns a driver.</td><td>~0:45</td><td>Dispatch confirmed → pickup task to driver</td></tr>
+          <tr><td><b>4. Dispatch → At Garage</b></td><td>Driver captures arrival odometer + photo, hands the car to the shop.</td><td>~2:30</td><td>Arrival odometer + garage → <b>auto "Under Repair"</b></td></tr>
+          <tr><td><b>5. Under Repair</b></td><td>Garage performs the repair; downtime keeps counting.</td><td>~1 day</td><td>Garage "Ready" → re-inspection task</td></tr>
+          <tr><td><b>6. Ready for Re-inspection</b></td><td>Abu Marouf runs the Test, verifies readiness + exit odometer.</td><td>~1d 3:00</td><td>Pass → QA</td></tr>
+          <tr><td><b>7. Quality Assurance</b></td><td>Full itemized checklist (+ road test if required).</td><td>~1d 5:00</td><td>All items pass → Ready</td></tr>
+          <tr><td><b>8. Closed</b></td><td>Vehicle returns to Available; <b>the downtime clock stops</b>.</td><td><b>~1d 6:00 (total)</b></td><td>Close → vehicle status → Available</td></tr>
+        </tbody>
+      </table>
+      <p style="font-size:12px;color:var(--muted)">* Illustrative times — replace with the ticket's live system data.</p>
+      <ul>
+        <li><b>Real-time downtime tracking:</b> a clock starts at the fault report and stops at Close — so management sees exactly how long the car was out of service, and <em>where</em> the time went (dispatch? repair? QA?).</li>
+        <li><b>Visualized progress:</b> a clear stage bar (Dispatch → Repair → Ready); each card shows the current stage + its age, with a red flag once it passes 4 days in the garage.</li>
+        <li><b>Automated status transitions:</b> no manual status-pushing — the arrival odometer moves it to Under Repair, the garage "Ready" opens re-inspection, and Close returns it to Available. A documented trail, nothing missed.</li>
+      </ul>
+      <div class="done"><b>Takeaway:</b> from the moment a fault is reported to the Mercedes returning to the fleet, the system measures downtime live, moves the ticket between stages automatically, and leaves a full audit trail — turning a "reported fault" into a "ready vehicle" by the shortest, clearest path.</div>
+    </div>
+  </section>
+
+  <footer>Integrated Fleet Lifecycle · Implementation Plan (Rev. 16 — sign-off ready) · prepared for Omar · 2026-07-04</footer>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fleet Maintenance Workflow — Use Case Analysis</title>
+<style>
+  :root{
+    --ink:#0f172a; --ink-soft:#334155; --muted:#64748b; --line:#e2e8f0;
+    --bg:#f8fafc; --card:#ffffff;
+    --brand:#1d4ed8; --brand-soft:#eff6ff; --brand-line:#bfdbfe;
+    --inspect:#7c3aed; --inspect-soft:#f5f3ff;
+    --logi:#0891b2;    --logi-soft:#ecfeff;
+    --ctrl:#c2410c;    --ctrl-soft:#fff7ed;
+    --ok:#15803d; --ok-soft:#f0fdf4; --warn:#b45309;
+    --shadow:0 1px 2px rgba(15,23,42,.04), 0 8px 24px rgba(15,23,42,.06);
+  }
+  *{box-sizing:border-box}
+  html{-webkit-print-color-adjust:exact; print-color-adjust:exact}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:'Segoe UI',-apple-system,BlinkMacSystemFont,Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.6; font-size:15px;
+  }
+  .wrap{max-width:980px; margin:0 auto; padding:48px 32px 80px}
+
+  /* ---------- Cover ---------- */
+  .cover{
+    background:linear-gradient(135deg,#1e3a8a 0%,#1d4ed8 55%,#2563eb 100%);
+    color:#fff; border-radius:22px; padding:54px 48px; position:relative; overflow:hidden;
+    box-shadow:var(--shadow);
+  }
+  .cover::after{
+    content:""; position:absolute; right:-80px; top:-80px; width:320px; height:320px;
+    background:radial-gradient(circle,rgba(255,255,255,.16),transparent 65%); border-radius:50%;
+  }
+  .cover .kicker{
+    text-transform:uppercase; letter-spacing:.22em; font-size:12px; font-weight:700;
+    opacity:.85; margin:0 0 14px;
+  }
+  .cover h1{font-size:40px; line-height:1.12; margin:0 0 16px; font-weight:800; letter-spacing:-.5px}
+  .cover p{font-size:17px; max-width:640px; margin:0; opacity:.94}
+  .cover .meta{
+    margin-top:30px; display:flex; gap:28px; flex-wrap:wrap;
+    font-size:13px; opacity:.9; border-top:1px solid rgba(255,255,255,.2); padding-top:20px;
+  }
+  .cover .meta b{display:block; font-size:11px; letter-spacing:.12em; text-transform:uppercase; opacity:.75; font-weight:700; margin-bottom:3px}
+
+  /* ---------- Sections ---------- */
+  section{margin-top:46px}
+  .sec-head{display:flex; align-items:center; gap:14px; margin-bottom:8px}
+  .sec-num{
+    width:34px; height:34px; flex:0 0 34px; border-radius:10px; background:var(--brand);
+    color:#fff; font-weight:800; display:flex; align-items:center; justify-content:center; font-size:15px;
+  }
+  h2{font-size:24px; margin:0; font-weight:800; letter-spacing:-.3px}
+  .sec-sub{color:var(--muted); margin:6px 0 22px 48px; font-size:14.5px}
+
+  /* ---------- Problem / Solution strip ---------- */
+  .ps{display:grid; grid-template-columns:1fr 1fr; gap:18px}
+  .ps .box{background:var(--card); border:1px solid var(--line); border-radius:16px; padding:22px 24px; box-shadow:var(--shadow)}
+  .ps .box h3{margin:0 0 10px; font-size:15px; display:flex; align-items:center; gap:8px}
+  .ps .pain h3{color:#b91c1c}
+  .ps .gain h3{color:var(--ok)}
+  .ps ul{margin:0; padding-left:18px; color:var(--ink-soft)}
+  .ps li{margin:5px 0}
+
+  /* ---------- Role cards ---------- */
+  .role{
+    background:var(--card); border:1px solid var(--line); border-radius:18px;
+    padding:0; margin-bottom:22px; box-shadow:var(--shadow); overflow:hidden;
+  }
+  .role-head{padding:22px 26px; display:flex; align-items:center; gap:16px; border-bottom:1px solid var(--line)}
+  .avatar{
+    width:52px; height:52px; flex:0 0 52px; border-radius:14px; display:flex; align-items:center;
+    justify-content:center; font-size:24px;
+  }
+  .role.inspect .avatar{background:var(--inspect-soft); color:var(--inspect)}
+  .role.logi .avatar{background:var(--logi-soft); color:var(--logi)}
+  .role.ctrl .avatar{background:var(--ctrl-soft); color:var(--ctrl)}
+  .role-head .who{flex:1}
+  .role-head .who h3{margin:0; font-size:19px; font-weight:800}
+  .role-head .who .tag{color:var(--muted); font-size:13.5px; margin-top:2px}
+  .pill{
+    font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase;
+    padding:6px 12px; border-radius:999px;
+  }
+  .role.inspect .pill{background:var(--inspect-soft); color:var(--inspect)}
+  .role.logi .pill{background:var(--logi-soft); color:var(--logi)}
+  .role.ctrl .pill{background:var(--ctrl-soft); color:var(--ctrl)}
+
+  .uc{padding:18px 26px; border-bottom:1px solid var(--line)}
+  .uc:last-child{border-bottom:0}
+  .uc-top{display:flex; align-items:baseline; gap:12px; margin-bottom:6px}
+  .uc-id{
+    font-size:12px; font-weight:800; letter-spacing:.04em; color:#fff; background:var(--ink);
+    padding:3px 9px; border-radius:7px; flex:0 0 auto;
+  }
+  .uc-title{font-weight:700; font-size:15.5px}
+  .uc-body{color:var(--ink-soft); font-size:14.5px; margin:0 0 8px}
+  .uc-sys{
+    background:var(--brand-soft); border:1px solid var(--brand-line); border-radius:10px;
+    padding:10px 14px; font-size:13.5px; color:#1e40af; display:flex; gap:9px; align-items:flex-start;
+  }
+  .uc-sys b{white-space:nowrap}
+
+  /* ---------- Status flow ---------- */
+  .flow{display:flex; gap:10px; align-items:stretch; overflow-x:auto; padding:6px 2px 14px}
+  .stage{
+    flex:1 1 0; min-width:150px; background:var(--card); border:1px solid var(--line);
+    border-radius:14px; padding:16px 16px 18px; box-shadow:var(--shadow); position:relative;
+  }
+  .stage .n{
+    width:26px; height:26px; border-radius:8px; background:var(--brand); color:#fff;
+    font-weight:800; font-size:13px; display:flex; align-items:center; justify-content:center; margin-bottom:10px;
+  }
+  .stage h4{margin:0 0 6px; font-size:14.5px; font-weight:800}
+  .stage .by{font-size:12px; color:var(--muted); margin-bottom:8px}
+  .stage .vs{
+    font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.05em;
+    padding:4px 8px; border-radius:6px; background:#f1f5f9; color:var(--ink-soft); display:inline-block;
+  }
+  .arrow{display:flex; align-items:center; color:#94a3b8; font-size:20px; flex:0 0 auto}
+  .term{display:flex; gap:12px; margin-top:16px; flex-wrap:wrap}
+  .term .t{
+    flex:1 1 240px; border-radius:12px; padding:14px 18px; font-size:13.5px; border:1px solid;
+  }
+  .term .closed{background:var(--ok-soft); border-color:#bbf7d0; color:#166534}
+  .term .cancel{background:#fef2f2; border-color:#fecaca; color:#991b1b}
+  .term .t b{display:block; margin-bottom:3px; font-size:14px}
+
+  /* ---------- User stories ---------- */
+  .stories{display:grid; grid-template-columns:1fr 1fr; gap:16px}
+  .story{
+    background:var(--card); border:1px solid var(--line); border-left-width:4px; border-radius:12px;
+    padding:16px 18px; box-shadow:var(--shadow); font-size:14px; color:var(--ink-soft);
+  }
+  .story.inspect{border-left-color:var(--inspect)}
+  .story.logi{border-left-color:var(--logi)}
+  .story.ctrl{border-left-color:var(--ctrl)}
+  .story .lbl{
+    font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.06em;
+    margin-bottom:6px;
+  }
+  .story.inspect .lbl{color:var(--inspect)}
+  .story.logi .lbl{color:var(--logi)}
+  .story.ctrl .lbl{color:var(--ctrl)}
+  .story i{color:var(--ink)}
+
+  /* ---------- Bridge table ---------- */
+  table{width:100%; border-collapse:collapse; background:var(--card); border-radius:14px; overflow:hidden; box-shadow:var(--shadow); font-size:14px}
+  thead th{background:#0f172a; color:#fff; text-align:left; padding:13px 18px; font-size:13px; letter-spacing:.03em}
+  tbody td{padding:13px 18px; border-top:1px solid var(--line); vertical-align:top}
+  tbody tr:nth-child(even){background:#fafcff}
+  .badge{font-size:11px; font-weight:700; padding:3px 9px; border-radius:6px}
+  .b-new{background:var(--brand-soft); color:var(--brand)}
+  .b-reuse{background:var(--ok-soft); color:var(--ok)}
+
+  .note{
+    margin-top:22px; background:#fffbeb; border:1px solid #fde68a; border-radius:12px;
+    padding:16px 20px; font-size:13.5px; color:#78350f;
+  }
+  .note b{color:#92400e}
+
+  footer{margin-top:54px; padding-top:22px; border-top:1px solid var(--line); color:var(--muted); font-size:12.5px; text-align:center}
+
+  @media print{
+    body{background:#fff}
+    .wrap{padding:0}
+    section{break-inside:avoid}
+    .role,.stage,.story,.box{break-inside:avoid}
+    .cover{border-radius:0}
+  }
+  @media (max-width:720px){
+    .ps,.stories{grid-template-columns:1fr}
+    .cover h1{font-size:30px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- COVER -->
+  <header class="cover">
+    <p class="kicker">Fleet Operations · Process Re-engineering</p>
+    <h1>Fleet Maintenance Workflow</h1>
+    <p>Replacing the manual, WhatsApp-driven maintenance process with a single self-documenting workflow — where every action by the Inspector, Logistics, and Controllers automatically generates the data, in real time.</p>
+    <div class="meta">
+      <div><b>Prepared for</b>Management Review</div>
+      <div><b>Scope</b>Use Case Analysis &amp; Functional Design</div>
+      <div><b>Status</b>Proposal</div>
+      <div><b>Date</b>June 2026</div>
+    </div>
+  </header>
+
+  <!-- 1. WHY -->
+  <section>
+    <div class="sec-head"><div class="sec-num">1</div><h2>Why we are changing</h2></div>
+    <p class="sec-sub">The current process lives in chat messages. Nothing is tracked, searchable, or accountable.</p>
+    <div class="ps">
+      <div class="box pain">
+        <h3>⚠️ Today — WhatsApp &amp; spreadsheets</h3>
+        <ul>
+          <li>Status lives in scattered chat messages</li>
+          <li>Controllers re-type everything into a spreadsheet by hand</li>
+          <li>No record of who did what, or when</li>
+          <li>Cars get “lost” between inspection and the garage</li>
+          <li>No alerts — problems are noticed late</li>
+        </ul>
+      </div>
+      <div class="box gain">
+        <h3>✅ Proposed — one live workflow</h3>
+        <ul>
+          <li>Each role acts in the app; the system records it automatically</li>
+          <li>Controllers get a live dashboard — no manual entry</li>
+          <li>Every step is time-stamped and attributed</li>
+          <li>The car’s exact state is always visible</li>
+          <li>Real-time notifications hand the car between teams</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2. ROLES & USE CASES -->
+  <section>
+    <div class="sec-head"><div class="sec-num">2</div><h2>The three roles &amp; their use cases</h2></div>
+    <p class="sec-sub">A single “Maintenance Ticket” moves between roles. Each handoff is triggered by a real action — and instantly notifies the next team.</p>
+
+    <!-- Inspector -->
+    <div class="role inspect">
+      <div class="role-head">
+        <div class="avatar">🔍</div>
+        <div class="who">
+          <h3>Abu Maroof</h3>
+          <div class="tag">Inspector — starts &amp; closes every job</div>
+        </div>
+        <span class="pill">Role 1</span>
+      </div>
+      <div class="uc">
+        <div class="uc-top"><span class="uc-id">UC-1</span><span class="uc-title">Trigger a maintenance job</span></div>
+        <p class="uc-body">Selects a vehicle and chooses the reason — <b>Periodic Maintenance</b> or <b>Customer-Reported Issue</b> — then submits a <b>test-drive report</b> (notes, photos, damage flags) directly into the system.</p>
+        <div class="uc-sys"><b>System →</b><span>Opens a Maintenance Ticket, captures the report once, and automatically alerts the Logistics team. No message to send.</span></div>
+      </div>
+      <div class="uc">
+        <div class="uc-top"><span class="uc-id">UC-2</span><span class="uc-title">Re-inspect on return</span></div>
+        <p class="uc-body">When the car comes back, reviews it with a before/after comparison and marks it <b>Passed</b> or <b>Failed</b>.</p>
+        <div class="uc-sys"><b>System →</b><span>Pass returns the car to the available fleet; Fail re-opens a repair leg. A car can never silently re-enter service unrepaired.</span></div>
+      </div>
+    </div>
+
+    <!-- Logistics -->
+    <div class="role logi">
+      <div class="role-head">
+        <div class="avatar">🚚</div>
+        <div class="who">
+          <h3>Logistics / Delivery Team</h3>
+          <div class="tag">Moves the car to the garage &amp; relays feedback</div>
+        </div>
+        <span class="pill">Role 2</span>
+      </div>
+      <div class="uc">
+        <div class="uc-top"><span class="uc-id">UC-3</span><span class="uc-title">Receive the job in real time</span></div>
+        <p class="uc-body">Gets an instant notification the moment Abu Maroof submits his report — no need to watch a chat.</p>
+        <div class="uc-sys"><b>System →</b><span>Push + in-app bell, deep-linked straight to the car’s ticket.</span></div>
+      </div>
+      <div class="uc">
+        <div class="uc-top"><span class="uc-id">UC-4</span><span class="uc-title">Scan / photograph the odometer</span></div>
+        <p class="uc-body">Captures the mileage at hand-off by photographing the odometer.</p>
+        <div class="uc-sys"><b>System →</b><span>Stores the reading and photo, and feeds the existing mileage-tracking checks automatically.</span></div>
+      </div>
+      <div class="uc">
+        <div class="uc-top"><span class="uc-id">UC-5</span><span class="uc-title">Select the destination garage</span></div>
+        <p class="uc-body">Picks the garage from a <b>pre-defined list</b> — no free typing, no spelling mistakes.</p>
+        <div class="uc-sys"><b>System →</b><span>Records exactly where the car went; controllers see it live.</span></div>
+      </div>
+      <div class="uc">
+        <div class="uc-top"><span class="uc-id">UC-6</span><span class="uc-title">Update with garage feedback</span></div>
+        <p class="uc-body">Logs the garage’s intake notes on hand-off.</p>
+        <div class="uc-sys"><b>System →</b><span>Moves the car to “Under Repair” and opens the repair record automatically.</span></div>
+      </div>
+    </div>
+
+    <!-- Controllers -->
+    <div class="role ctrl">
+      <div class="role-head">
+        <div class="avatar">📊</div>
+        <div class="who">
+          <h3>Lin &amp; Marwa</h3>
+          <div class="tag">Controllers — oversee the whole fleet, live</div>
+        </div>
+        <span class="pill">Role 3</span>
+      </div>
+      <div class="uc">
+        <div class="uc-top"><span class="uc-id">UC-7</span><span class="uc-title">Live lifecycle dashboard</span></div>
+        <p class="uc-body">A board — not a spreadsheet — that tracks every vehicle in real time across <b>Inspection Pending → In Transit → Under Repair → Ready for Re-inspection</b>, showing the car, reason, garage, mileage, and how long it has been in each stage.</p>
+        <div class="uc-sys"><b>System →</b><span>Updates itself from the live tickets. Zero manual data entry.</span></div>
+      </div>
+      <div class="uc">
+        <div class="uc-top"><span class="uc-id">UC-8</span><span class="uc-title">Oversee &amp; unblock</span></div>
+        <p class="uc-body">Spots cars stuck too long in a stage, re-assigns garages, approves repair bills over the threshold, and cancels false alarms.</p>
+        <div class="uc-sys"><b>System →</b><span>Flags overdue repairs and pending approvals automatically — nothing slips.</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3. STATUS FLOW -->
+  <section>
+    <div class="sec-head"><div class="sec-num">3</div><h2>The lifecycle — status flow</h2></div>
+    <p class="sec-sub">Each stage is set by a real action and updates the vehicle’s fleet status automatically.</p>
+    <div class="flow">
+      <div class="stage">
+        <div class="n">1</div>
+        <h4>Inspection Pending</h4>
+        <div class="by">Set by · Inspector</div>
+        <span class="vs">Vehicle: Test</span>
+      </div>
+      <div class="arrow">→</div>
+      <div class="stage">
+        <div class="n">2</div>
+        <h4>In Transit to Garage</h4>
+        <div class="by">Set by · Logistics</div>
+        <span class="vs">Vehicle: Transfer</span>
+      </div>
+      <div class="arrow">→</div>
+      <div class="stage">
+        <div class="n">3</div>
+        <h4>Under Repair</h4>
+        <div class="by">Set by · Garage feedback</div>
+        <span class="vs">Vehicle: Maintenance</span>
+      </div>
+      <div class="arrow">→</div>
+      <div class="stage">
+        <div class="n">4</div>
+        <h4>Ready for Re-inspection</h4>
+        <div class="by">Set by · Repair done</div>
+        <span class="vs">Vehicle: Maintenance</span>
+      </div>
+    </div>
+    <div class="term">
+      <div class="t closed"><b>✓ Closed</b> Inspector passes the car — it returns to the available fleet (or back to its rental).</div>
+      <div class="t cancel"><b>✕ Cancelled</b> False alarm or aborted job — closed with a reason, fully logged.</div>
+    </div>
+    <div class="note">
+      <b>Safety rule built in:</b> a car that is currently on a rental cannot be sent to the garage unless a replacement vehicle is assigned and a manager approves — protecting both the customer and the revenue.
+    </div>
+  </section>
+
+  <!-- 4. USER STORIES -->
+  <section>
+    <div class="sec-head"><div class="sec-num">4</div><h2>User stories</h2></div>
+    <p class="sec-sub">The same workflow, told from each person’s point of view.</p>
+    <div class="stories">
+      <div class="story inspect"><div class="lbl">Inspector</div>As an Inspector, I want to start a job by picking a car and a reason, so the right context follows the car all the way through.</div>
+      <div class="story inspect"><div class="lbl">Inspector</div>As an Inspector, I want to submit my test-drive report in the app, so my findings are recorded <i>once</i> and seen by everyone — not retyped from a chat.</div>
+      <div class="story inspect"><div class="lbl">Inspector</div>As an Inspector, I want submitting my report to alert Logistics automatically, so I never have to chase anyone to move the car.</div>
+      <div class="story inspect"><div class="lbl">Inspector</div>As an Inspector, I want to re-inspect and pass/fail the car on return, so nothing goes back into service unrepaired.</div>
+
+      <div class="story logi"><div class="lbl">Logistics</div>As Logistics, I want a real-time alert when an inspection is submitted, so I can act without watching a chat.</div>
+      <div class="story logi"><div class="lbl">Logistics</div>As Logistics, I want to photograph the odometer in the app, so the mileage at hand-off is captured accurately.</div>
+      <div class="story logi"><div class="lbl">Logistics</div>As Logistics, I want to pick the garage from a fixed list, so the controllers always know exactly where the car went.</div>
+      <div class="story logi"><div class="lbl">Logistics</div>As Logistics, I want to log the garage feedback, so the car officially moves to “Under Repair” and the record opens itself.</div>
+
+      <div class="story ctrl"><div class="lbl">Controllers</div>As a Controller, I want a live board of every car’s state, so I replace my spreadsheet with a screen that updates itself.</div>
+      <div class="story ctrl"><div class="lbl">Controllers</div>As a Controller, I want to see how long each car has sat in a stage, so I can chase stalls before they become problems.</div>
+      <div class="story ctrl"><div class="lbl">Controllers</div>As a Controller, I want alerts for overdue repairs and bills needing approval, so nothing slips through.</div>
+      <div class="story ctrl"><div class="lbl">Controllers</div>As a Controller, I want every change stamped with who and when, so I have an audit trail without scrolling chat history.</div>
+    </div>
+  </section>
+
+  <!-- 5. BRIDGE -->
+  <section>
+    <div class="sec-head"><div class="sec-num">5</div><h2>How it fits our existing system</h2></div>
+    <p class="sec-sub">The workflow is mostly built on what we already have — minimal new parts, maximum reuse.</p>
+    <table>
+      <thead><tr><th style="width:34%">Capability</th><th style="width:16%">Status</th><th>How</th></tr></thead>
+      <tbody>
+        <tr><td>Maintenance Ticket (the workflow spine)</td><td><span class="badge b-new">New</span></td><td>One record that moves through the 4 stages and ties everything together.</td></tr>
+        <tr><td>Test-drive report, odometer &amp; photos</td><td><span class="badge b-reuse">Reuse</span></td><td>Built on our existing Vehicle Inspection photo &amp; storage pipeline.</td></tr>
+        <tr><td>Garage list</td><td><span class="badge b-reuse">Reuse</span></td><td>Our existing vendors directory, filtered to garages.</td></tr>
+        <tr><td>Repair detail, cost &amp; approvals</td><td><span class="badge b-reuse">Reuse</span></td><td>Our existing maintenance/workshop records and the cost board.</td></tr>
+        <tr><td>Real-time notifications</td><td><span class="badge b-reuse">Reuse</span></td><td>Our existing in-app alert engine carries the role-to-role handoffs.</td></tr>
+        <tr><td>Replacement car (rental safety)</td><td><span class="badge b-reuse">Reuse</span></td><td>Our existing maintenance-swap board protects active rentals.</td></tr>
+        <tr><td>Access control (who can do what)</td><td><span class="badge b-new">New</span></td><td>Add Inspector &amp; Logistics roles to the existing permission system.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <footer>
+    Fleet Maintenance Workflow · Use Case Analysis &amp; Functional Design · Prepared for management review, June 2026
+  </footer>
+
+</div>
+</body>
+</html>

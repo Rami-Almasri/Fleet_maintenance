@@ -41,7 +41,8 @@ class WorkshopEventResource extends JsonResource
         return [
             'id'                   => $this->id,
             'origin'               => $this->origin,
-            'editable'             => $this->isManual(), // only hand-entered events can be changed here
+            'editable'             => $this->isManual(), // only hand-entered events can be EDITED here
+            'tombstoned'           => false,             // a live event (deleted sheet events come back as ghosts)
             'vehicle_id'           => $this->vehicle_id,
             'plate'                => $this->vehicle?->plate_no ?: $this->plate,
             'car'                  => $this->vehicle ? trim($this->vehicle->make . ' ' . $this->vehicle->model) : $this->car_label,

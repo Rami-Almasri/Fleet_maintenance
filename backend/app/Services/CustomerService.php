@@ -33,7 +33,10 @@ class CustomerService
     public function nextWebCustomerNo(): string
     {
         $prefix = 'W-';
-        $max = (int) Customer::where('customer_no', 'like', $prefix.'%')
+        // withTrashed(): the customer_no unique index still holds soft-deleted rows, so a number we
+        // skip here would collide at insert. Counting trashed rows keeps the sequence strictly ahead.
+        $max = (int) Customer::withTrashed()
+            ->where('customer_no', 'like', $prefix.'%')
             ->pluck('customer_no')
             ->map(fn ($no) => (int) preg_replace('/\D/', '', $no))
             ->max();

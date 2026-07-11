@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>عمليات الأسطول — دليل الصيانة وجاهزية المركبات (النسخة 16)</title>
+<style>
+  :root{
+    --navy:#0b1f3a; --navy-2:#12305c; --cyan:#0bb4c4; --cyan-dk:#087f8c;
+    --ink:#1a2433; --muted:#5b6b82; --line:#e2e8f0; --bg:#f4f7fb; --card:#ffffff;
+    --block:#e11d48; --warn:#d97706; --ack:#0ea5e9; --ok:#059669;
+    --chip:#eef4fb;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font:16px/1.8 'Segoe UI','Tahoma','Cairo',-apple-system,Arial,sans-serif;
+  }
+  .wrap{max-width:960px; margin:0 auto; padding:0 24px 80px}
+
+  header{
+    background:linear-gradient(225deg,var(--navy) 0%,var(--navy-2) 60%,var(--cyan-dk) 140%);
+    color:#fff; padding:46px 0 40px; margin-bottom:28px;
+    box-shadow:0 10px 30px rgba(11,31,58,.25);
+  }
+  header .wrap{padding-bottom:0}
+  .eyebrow{letter-spacing:.06em; font-size:13px; color:var(--cyan); font-weight:700; margin:0 0 8px}
+  h1{margin:0; font-size:32px; line-height:1.25; font-weight:800}
+  .sub{margin:12px 0 0; color:#c7d6ea; font-size:17px; line-height:1.7}
+  .meta-row{display:flex; flex-wrap:wrap; gap:10px; margin-top:20px}
+  .meta-row .pill{background:rgba(255,255,255,.10); border:1px solid rgba(255,255,255,.18);
+    padding:6px 14px; border-radius:999px; font-size:13.5px; color:#eaf2fb}
+
+  .intro{
+    background:var(--card); border:1px solid var(--line); border-inline-start:4px solid var(--cyan);
+    border-radius:12px; padding:20px 24px; margin:-40px 0 22px;
+    box-shadow:0 8px 24px rgba(11,31,58,.08);
+  }
+  .intro h2{margin:0 0 8px; font-size:18px; color:var(--navy)}
+  .intro p{margin:8px 0; font-size:15.5px; color:#33425a}
+  .pillars{display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; margin-top:14px}
+  .pillar{background:var(--chip); border:1px solid var(--line); border-radius:10px; padding:11px 14px; font-size:14px}
+  .pillar b{color:var(--navy); display:block; margin-bottom:2px}
+
+  .flow{
+    background:var(--navy); color:#eaf3fb; border-radius:14px; padding:20px 22px; margin:22px 0;
+    font-size:15px; line-height:2.2;
+  }
+  .flow b{color:var(--cyan)}
+  .flow .step{display:inline-block; background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.16);
+    border-radius:8px; padding:4px 12px; margin:4px 2px; font-weight:600; white-space:nowrap}
+  .flow .arrow{color:var(--cyan); font-weight:800; margin:0 2px}
+
+  .priority{margin:40px 0 6px; display:flex; align-items:center; gap:14px}
+  .priority .pnum{flex:0 0 auto; background:var(--cyan-dk); color:#fff; font-weight:800; font-size:14px;
+    padding:6px 14px; border-radius:999px; white-space:nowrap}
+  h2.section{font-size:23px; color:var(--navy); margin:0; font-weight:800}
+  p.lead{color:var(--muted); font-size:15px; margin:6px 0 12px}
+
+  .card{
+    background:var(--card); border:1px solid var(--line); border-radius:14px;
+    padding:20px 24px; margin:16px 0; box-shadow:0 6px 20px rgba(11,31,58,.06);
+  }
+
+  .grades{display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:12px; margin:14px 0}
+  .grade{border-radius:12px; padding:14px 16px; border:1px solid var(--line)}
+  .grade .g-h{font-weight:800; font-size:16px; display:flex; align-items:center; gap:8px; margin-bottom:6px}
+  .grade .dot{width:14px; height:14px; border-radius:50%; display:inline-block}
+  .grade p{margin:4px 0 0; font-size:14px; color:#33425a}
+  .grade .verdict{margin-top:8px; font-size:13px; font-weight:700; display:inline-block; padding:2px 10px; border-radius:999px}
+  .g-green{background:#ecfdf5; border-color:#a7f3d0}
+  .g-green .dot{background:#10b981}   .g-green .verdict{background:#d1fae5; color:#047857}
+  .g-orange{background:#fff7ed; border-color:#fed7aa}
+  .g-orange .dot{background:#f97316}  .g-orange .verdict{background:#ffedd5; color:#c2410c}
+  .g-yellow{background:#fefce8; border-color:#fde68a}
+  .g-yellow .dot{background:#eab308} .g-yellow .verdict{background:#fef9c3; color:#a16207}
+  .g-red{background:#fef2f2; border-color:#fecaca}
+  .g-red .dot{background:#ef4444}    .g-red .verdict{background:#fee2e2; color:#b91c1c}
+
+  table{border-collapse:collapse; width:100%; margin:12px 0; font-size:14.5px}
+  th,td{border:1px solid var(--line); padding:9px 13px; text-align:right; vertical-align:top}
+  th{background:#f1f6fc; color:var(--navy); font-weight:700; font-size:13.5px}
+  tr:nth-child(even) td{background:#fafcfe}
+
+  .phase{
+    background:var(--card); border:1px solid var(--line); border-radius:14px;
+    padding:0 0 10px; margin:18px 0; overflow:hidden;
+    box-shadow:0 6px 20px rgba(11,31,58,.06);
+  }
+  .phase > .head{
+    display:flex; align-items:center; gap:14px; padding:18px 24px;
+    background:linear-gradient(270deg,#f8fbff,#ffffff); border-bottom:1px solid var(--line);
+  }
+  .tag{
+    flex:0 0 auto; width:46px; height:46px; border-radius:12px;
+    background:var(--navy); color:#fff; font-weight:800; font-size:16px;
+    display:flex; align-items:center; justify-content:center;
+    box-shadow:0 4px 12px rgba(11,31,58,.25);
+  }
+  .tag.core{background:var(--cyan-dk)}
+  .phase h3{margin:0; font-size:19px; font-weight:800; color:var(--navy)}
+  .phase .body{padding:10px 24px 4px}
+  .what{background:var(--chip); border-radius:9px; padding:13px 16px; margin:12px 0; font-size:15px; color:#26364d}
+  .what b{color:var(--navy)}
+  .phase ul{margin:10px 0; padding-inline-start:22px}
+  .phase li{margin:7px 0}
+  .example{background:#eff6ff; border:1px solid #bfdbfe; border-inline-start:4px solid #2563eb;
+    border-radius:9px; padding:11px 15px; margin:12px 0; font-size:14px; color:#1e3a8a}
+  .example b{color:#1d4ed8}
+  .note-red{background:#fef2f2; border:1px solid #fecaca; border-radius:9px; padding:11px 15px; margin:12px 0; font-size:13.5px; color:#991b1b}
+  .note-cyan{background:#eef4ff; border:1px solid #cdddff; border-radius:9px; padding:11px 15px; margin:12px 0; font-size:14px; color:#1e3a8a}
+  .steps2{display:grid; grid-template-columns:1fr 1fr; gap:14px; margin:12px 0}
+  @media(max-width:640px){.steps2{grid-template-columns:1fr}}
+  .stepbox{border:1px solid var(--line); border-radius:12px; padding:14px 16px}
+  .stepbox.check{background:#f0f9ff; border-color:#bae6fd}
+  .stepbox.test{background:#f0fdf4; border-color:#bbf7d0}
+  .stepbox h4{margin:0 0 6px; font-size:15.5px}
+  .stepbox.check h4{color:#0369a1}
+  .stepbox.test h4{color:#15803d}
+  .stepbox p{margin:0; font-size:14px; color:#33425a}
+
+  .band{background:var(--navy); color:#fff; border-radius:14px; padding:24px 26px; margin:30px 0}
+  .band h3{margin:0 0 14px; color:#fff; font-size:20px}
+  .band table th{background:rgba(255,255,255,.08); color:#dbe7f5; border-color:rgba(255,255,255,.14)}
+  .band table td{border-color:rgba(255,255,255,.12); color:#e8f0fa}
+  .band table tr:nth-child(even) td{background:rgba(255,255,255,.03)}
+
+  .decide{
+    background:#fffbeb; border:1px solid #fde68a; border-radius:14px; padding:22px 26px; margin:30px 0;
+  }
+  .decide h3{margin:0 0 6px; color:#92400e; font-size:20px}
+  .decide p.lead{margin:0 0 12px; color:#a16207}
+  .decide ol{margin:0; padding-inline-start:22px}
+  .decide li{margin:9px 0}
+  .decide b{color:#78350f}
+
+  footer{color:var(--muted); font-size:13px; text-align:center; margin-top:34px}
+
+  @media print{
+    body{background:#fff}
+    header{box-shadow:none}
+    .phase,.intro,.band,.decide,.flow,.card{box-shadow:none; break-inside:avoid}
+    .phase{break-inside:avoid-page}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <p class="eyebrow">الصيانة أولاً · دليل مدير الصيانة · النسخة 16</p>
+    <h1>عمليات الأسطول — الصيانة، الجاهزية، ونزاهة الإصلاح</h1>
+    <p class="sub">دليلٌ مُرتَّب حسب الأولوية لمدير الصيانة، مبنيٌّ على ثلاث ركائز: <b>جاهزية المركبات</b>، و<b>النزاهة الفنية</b>، و<b>الصيانة الوقائية</b> — مع فصلٍ حاسم بين الفحص البصري والاختبار الميكانيكي.</p>
+    <div class="meta-row">
+      <span class="pill">الصيانة قلب دورة الأسطول</span>
+      <span class="pill">منطق اختبار ذكي — النسخة 16</span>
+      <span class="pill">2026-07-04</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <section class="intro">
+    <h2>الفلسفة: الصيانة قلب دورة الأسطول</h2>
+    <p>مبدأٌ واحد يحكم كل ما يلي: <b>السيارة لا تعود للتأجير حتى تُثبت جاهزيتها فنياً</b>. ننتقل من نموذج «افحص كل شيء دائماً» إلى نموذج <b>«تشغيل ذكي»</b> — نُطلِق الاختبار فقط حين يُضيف قيمة، فيَصرف أبو معروف وقته على السيارات التي تحتاجه فعلاً، ويبقى الأسطول ملتزماً 100% بمعايير السلامة.</p>
+    <div class="pillars">
+      <div class="pillar"><b>جاهزية المركبات</b>لا تأجير قبل اجتياز الاختبار — والجاهزية محفوظة بلا إعادة اختبار زائدة.</div>
+      <div class="pillar"><b>النزاهة الفنية</b>مَن يوثّق غير مَن يقرّر غير مَن ينفّذ؛ العداد عصيٌّ على التلاعب، وكل قرار مُبرَّر.</div>
+      <div class="pillar"><b>الصيانة الوقائية</b>فحص دوري كل 15 يوماً، وفحص عميق بعد الإيجارات الطويلة.</div>
+    </div>
+  </section>
+
+  <div class="flow">
+    <b>مسار الصيانة في سطر:</b><br>
+    <span class="step">مُطلِق اختبار (دوري / إيجار / حادث)</span><span class="arrow">←</span>
+    <span class="step">فحص بصري ← اختبار ميكانيكي</span><span class="arrow">←</span>
+    <span class="step">اختيار الكراج بالبيانات</span><span class="arrow">←</span>
+    <span class="step">إصلاح + موافقة على التكلفة</span><span class="arrow">←</span>
+    <span class="step">ضمان الجودة</span><span class="arrow">←</span>
+    <span class="step">جاهزة</span>
+  </div>
+
+  <!-- ==================== SECTION 1 ==================== -->
+  <div class="priority"><span class="pnum">القسم ١</span><h2 class="section">جوهر الصيانة والاختبار (النسخة 16)</h2></div>
+  <p class="lead">قلب المنظومة: منطق الاختبار الوقائي، مُطلِقاته، ومهلة الأمان — مع الفريق الذي ينفّذها وضمان الجودة الذي يختم كل إصلاح.</p>
+
+  <div class="card">
+    <b style="color:var(--navy)">فريق الصيانة — فصل الصلاحيات:</b>
+    <table>
+      <thead><tr><th>الدور</th><th>المسؤولية</th></tr></thead>
+      <tbody>
+        <tr><td><b>السائق / موظف الاستلام</b></td><td>يستلم ويسلّم، يصوّر، ويعلّم أي خدش. <b>يوثّق فقط — لا يقرّر.</b></td></tr>
+        <tr><td><b>المشرفان — عبدالله ووليد</b></td><td><b>المراجعة والاعتماد</b>: يقيّمان الضرر، يعتمدان القطع والتكلفة، ويوافقان. أصحاب القرار.</td></tr>
+        <tr><td><b>أبو معروف — فاحص فني ومختبِر</b></td><td><b>التنفيذ فقط</b>: يُجري الاختبار الميكانيكي ويتحقّق من الجاهزية — <b>لا يتخذ قرارات مالية</b> ولا مسؤولية ولا نطاقاً.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card" style="border-inline-start:4px solid var(--cyan)">
+    <b style="color:var(--navy)">إطار الفحوصات الأربعة — لبِنات دورة الحياة:</b>
+    <p style="margin:6px 0 0;font-size:14px;color:var(--muted)">كل فحص في النظام هو أحد أربعة أنواع واضحة، لكلٍّ مسؤوله وهدفه وطبيعته:</p>
+    <table>
+      <thead><tr><th>النوع</th><th>المسؤول</th><th>الهدف</th><th>الطبيعة</th></tr></thead>
+      <tbody>
+        <tr><td><b>أ) فحص التسليم</b><br><small>Check-Out</small></td><td>السائق / موظف التسليم</td><td>إثبات قانوني لحالة السيارة قبل تسليمها للعميل</td><td>تشغيلي / لوجستي</td></tr>
+        <tr><td><b>ب) فحص الاستلام</b><br><small>Check-In</small></td><td>السائق / موظف الاستلام</td><td>مقارنة حالة السيارة عند العودة بحالتها قبل التسليم</td><td>تشغيلي / لوجستي</td></tr>
+        <tr><td><b>ج) تقييم الأضرار</b><br><small>Damage Assessment</small></td><td>مُقيّم الأضرار الفني (المشرف المختص) — <b>لا السائق</b></td><td>تحديد طبيعة العطل وسببه: قديم / جديد / بفعل العميل / استهلاك طبيعي / حادث ← تأمين</td><td>تقييمي / مالي</td></tr>
+        <tr><td><b>د) فحص الصيانة/الكراج</b><br><small>Garage Inspection</small></td><td>أبو معروف (فاحص فني)</td><td>تحقّق فني في الكراج من جودة الإصلاح وجاهزية السيارة</td><td>فني / ميكانيكي</td></tr>
+      </tbody>
+    </table>
+    <p style="margin:8px 0 0;font-size:13.5px;color:#41506a"><b>القاعدة:</b> (أ) و(ب) <b>تشغيليان لوجستيان</b> يوثّقهما موظف التسليم/الاستلام؛ (ج) <b>تقييمي مالي</b> يُجريه مُقيّم الأضرار (والمسؤولية المالية النهائية بتقرير الشرطة/التأمين)؛ (د) <b>فني ميكانيكي</b> يُجريه الفاحص. <em>(تفصيل أ/ب في «التسليم»، ج في «تقييم الأضرار»، د في هذا القسم.)</em></p>
+  </div>
+
+  <!-- 1.1 Preventive Testing Logic -->
+  <section class="phase">
+    <div class="head"><div class="tag core">١.١</div><h3>منطق الاختبار الوقائي</h3></div>
+    <div class="body">
+      <div class="what"><b>الفكرة:</b> الاختبارات تُطلَق حسب <b>الوقت والاستخدام</b> — تشغيل ذكي لا فحص دائم. لكل سيارة اختبار له صلاحية زمنية، والنظام لا يكرّره بلا داعٍ.</div>
+
+      <p style="margin:6px 0 4px"><b>مُطلِقات الاختبار:</b></p>
+      <table>
+        <thead><tr><th style="width:26%">المُطلِق</th><th>متى</th><th>النتيجة</th></tr></thead>
+        <tbody>
+          <tr><td><b>فحص أمان دوري</b></td><td>كل <b>15 يوماً</b> لكامل الأسطول — حتى الساكنة/غير المؤجَّرة (<b>بما في ذلك المركبات المستعملة</b>)</td><td>اختبار دوري؛ الحدّ الأقصى الذي تبقى فيه السيارة دون فحص</td></tr>
+          <tr><td><b>أعطال فعّالة</b></td><td>أي مركبة بها عطل <b>ميكانيكي أو كهربائي فعّال</b></td><td>تُوضَع تلقائياً في حالة <b>«تحت الاختبار»</b> حتى يعتمدها أبو معروف</td></tr>
+          <tr><td><b>إيجار طويل</b></td><td>أي إيجار يتجاوز <b>20 يوماً</b></td><td>فحص عميق إلزامي عند الإرجاع (إطارات · زيت · إجهاد ميكانيكي)</td></tr>
+          <tr><td><b>حادث / عطل</b></td><td>بلاغ أثناء الإيجار أو ضرر عند الاستلام</td><td>فتح تذكرة اختبار/إصلاح فوراً</td></tr>
+          <tr><td><b>مهلة الأمان (7 أيام)</b></td><td>اختُبِرت خلال آخر 7 أيام وما زالت «جاهزة»</td><td><b>لا اختبار دوري جديد</b> — منع التكرار وإهدار طاقة الكراج</td></tr>
+        </tbody>
+      </table>
+
+      <p style="margin:12px 0 4px"><b>القواعد الذكية المكمّلة:</b></p>
+      <ul>
+        <li><b>مقارنة مرجعية (Baseline):</b> كل اختبار جديد يُقارَن بنتيجة <b>آخر اختبار</b> للسيارة (العداد، الملاحظات، النتيجة) — فتظهر الانتكاسات والأعطال المتكرّرة فوراً.</li>
+        <li><b>منع الاختبارات الزائدة:</b> السيارة «الجاهزة» التي لم تُؤجَّر منذ آخر اختبار ناجح تبقى جاهزة دون إعادة اختبار — تبقى متاحة للتسليم فوراً.</li>
+        <li><b>ثغرة الإيجار القصير:</b> رجوع من إيجار قصير (24–48 ساعة) بفحص بصري خالٍ من الحوادث ← لا اختبار ميكانيكي جديد؛ تُحفَظ صلاحية الاختبار السابق ما دام ضمن نافذة الـ7 أيام.</li>
+        <li><b>تسجيل التكلفة والوقت:</b> لكل اختبار/إصلاح نُسجّل <b>تكلفة العمالة والوقت المستغرق</b> (بداية ← نهاية) — كل اختبار مؤرَّخ ومُحاسَب، لنرى أي الكراجات أكفأ وأيّها متأخّر (يغذّي مقارنة أداء الكراجات في القسم ٢).</li>
+      </ul>
+
+      <div class="note-cyan"><b>كيف يتكامل الاختبار — توازنٌ بين «صفر تكرار» و«أقصى سلامة»:</b> المركبة الموسومة «جاهزة» <b>لا تحتاج اختباراً جديداً</b> عند كل تسليم، ولا خلال <b>7 أيام</b> من آخر اختبار ناجح، ولا بعد <b>إيجار قصير</b> بلا أضرار مُبلَّغة — <em>(صفر تكرار: لا اختبار بلا قيمة)</em>. لكنها <b>لا يمكن أن تتجاوز 15 يوماً</b> دون فحص أمان دوري، وأي إيجار يدوم <b>20 يوماً فأكثر</b> يُطلِق فحصاً عميقاً إلزامياً عند الإرجاع — <em>(أقصى سلامة: اختبارات دورية ومُحفَّزة بالأحداث)</em>.<br><b>هذه الحدود معاملات قابلة للضبط من الإدارة:</b> الدوري 15 يوماً · الإيجار الطويل 20 يوماً · مهلة الأمان 7 أيام · نافذة الإيجار القصير/التنبيه 48 ساعة.</div>
+    </div>
+  </section>
+
+  <!-- 1.2 QA & Road Test -->
+  <section class="phase">
+    <div class="head"><div class="tag core">١.٢</div><h3>ضمان الجودة واختبار القيادة</h3></div>
+    <div class="body">
+      <div class="what"><b>ماذا يحدث:</b> لا تعود أي سيارة للتأجير قبل اجتياز قائمة فحص كاملة في كل مرة — لا في أعمال المكينة فقط.</div>
+      <ul>
+        <li><b>قائمة الفحص:</b> مطابقة الإصلاح للطلب · لمبات التحذير مُطفأة · التكييف · السوائل والتسريبات · الإطارات والجنوط · الفرامل · تسجيل العداد بصورة · الغسيل.</li>
+        <li><b>اختبار قيادة إلزامي</b> إذا مسّ العطل السلامة، أو كانت السيارة فاخرة، أو وقفت أكثر من 7 أيام.</li>
+        <li><b>فشل بند واحد ← رجوع للكراج.</b> ولا تُقفَل التذكرة قبل نجاح كل البنود.</li>
+        <li>تنبيه للإدارة إذا بقيت السيارة في الكراج <b>أكثر من 4 أيام</b> دون إغلاق.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 1.3 Protocols + Safety Audit -->
+  <section class="phase">
+    <div class="head"><div class="tag core">١.٣</div><h3>البروتوكولات الدورية ورقابة قرارات السلامة</h3></div>
+    <div class="body">
+      <div class="what"><b>ماذا يحدث:</b> قواعد الفحص تصير مهامّ دورية بقواعد واضحة، والنظام يحرس قرارات السلامة دون إلغاء حكم الفنّي.</div>
+      <ul>
+        <li><b>البروتوكولات:</b> الزيت/الفلتر حسب الكيلومترات، وصحّة البطارية وفترة استبدالها — يُطلقها النظام تلقائياً بلا اعتماد على الذاكرة.</li>
+        <li><b>قائمة أعطال السلامة الثابتة</b> (فرامل، مقود، تعليق، قير، مكينة، حرارة، تسريب، لمبة تحذير، إطارات، حوادث) هي المرجع الذي يقرّر متى يلزم اختبار قيادة أو منع تأجير.</li>
+        <li><b>رقابة القرار:</b> إذا وصف الفنّي عطلاً خطيراً ثم علّم السيارة «قابلة للتأجير» ← يوسم النظام السجل، يُنبّه الإدارة، <b>ويمنع الحفظ حتى يُكتَب تبرير</b>. لا سيارة خطِرة تمرّ بصمت.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 1.4 Pre-Delivery Readiness Gate -->
+  <section class="phase">
+    <div class="head"><div class="tag core">١.٤</div><h3>بوابة الجاهزية قبل التسليم (إطار «جاهزة للتسليم»)</h3></div>
+    <div class="body">
+      <div class="what"><b>ماذا يحدث:</b> قبل السماح بأي حجز، يتحقّق النظام تلقائياً من قائمة شروط. لا تصل السيارة إلى حالة «جاهزة للتسليم» حتى تجتاز <b>كل</b> الشروط — وهي الضوء الأخضر النهائي قبل الحجز والتسليم.</div>
+      <table>
+        <thead><tr><th style="width:34%">الشرط</th><th>القاعدة</th></tr></thead>
+        <tbody>
+          <tr><td><b>حالة الإتاحة</b></td><td>يجب أن تكون «متاحة» — وإلا يُمنَع الحجز.</td></tr>
+          <tr><td><b>أضرار مفتوحة</b></td><td>أي تذكرة ضرر غير مُغلَقة ← <b>منع</b>.</td></tr>
+          <tr><td><b>صيانة نشطة</b></td><td>أي أمر صيانة مفتوح ← <b>منع</b>.</td></tr>
+          <tr><td><b>التسجيل / التأمين</b></td><td>إذا انتهى قبل تاريخ نهاية الإيجار ← <b>تحذير أو منع</b>.</td></tr>
+          <tr><td><b>موعد السيرفيس</b></td><td>مستحقّ خلال مدة الإيجار أو خلال 500 كم ← <b>منع أو موافقة مدير</b>.</td></tr>
+          <tr><td><b>اتصال التتبّع (GPS)</b></td><td>غير متصل ← <b>تحذير أو منع</b> (حسب فئة السيارة).</td></tr>
+          <tr><td><b>حالة الاستلام (Check-In)</b></td><td>آخر استلام يجب أن يكون مُقفَلاً — وإلا يُمنَع التسليم.</td></tr>
+          <tr><td><b>حالة النظافة</b></td><td>يجب أن تكون «تم التنظيف».</td></tr>
+          <tr><td><b>آخر اختبار جاهزية</b></td><td>يمتثل لقواعد الدوري 15 يوماً / الإيجار الطويل 20 يوماً / مهلة الأمان 7 أيام.</td></tr>
+        </tbody>
+      </table>
+      <div class="note-cyan"><b>الحالة النهائية:</b> عند استيفاء <b>كل</b> الشروط فقط، ينقل النظام السيارة تلقائياً إلى حالة <b>«جاهزة للتسليم»</b> — وهي الضوء الأخضر النهائي قبل السماح بالحجز والتسليم.</div>
+    </div>
+  </section>
+
+  <!-- ==================== SECTION 2 ==================== -->
+  <div class="priority"><span class="pnum">القسم ٢</span><h2 class="section">اختيار الكراج والأداء</h2></div>
+  <p class="lead">كيف تُختار الكراجات بالبيانات، وكيف نقيس كفاءة كل كراج من التكلفة والوقت.</p>
+
+  <section class="phase">
+    <div class="head"><div class="tag">٢.١</div><h3>اختيار الكراج بالبيانات وذكاء التسعير</h3></div>
+    <div class="body">
+      <div class="what"><b>ماذا يحدث:</b> النظام يقترح أفضل ثلاثة كراجات لكل إصلاح بتقييم رقمي عادل — لا اختيار بالعلاقة الشخصية.</div>
+      <ul>
+        <li><b>السعر هو المعيار الأول</b> (مدعوماً بتوقّع تكلفة من سجلّ الأسعار السابقة لنفس الموديل)، ثم سرعة الإنجاز، توفّر القطع، القرب، الضمان، والتخصّص.</li>
+        <li><b>ذكاء التسعير:</b> قبل الإسناد، يُظهِر النظام كم كلّف هذا الإصلاح سابقاً لكل كراج، ويُحذّر إذا كان الكراج أغلى بأكثر من 20% من المعتاد (تحذير معلوماتي، بلا منع).</li>
+        <li><b>مقياس الأداء:</b> من تسجيل التكلفة والوقت (القسم ١) نبني صورة لكل كراج — أيّها أسرع وأرخص، وأيّها متأخّر أو مُكلِف — فيصير الاختيار بالأداء المُثبَت لا بالانطباع.</li>
+        <li>مخالفة الاقتراح مسموحة، لكنها <b>تتطلّب سبباً مكتوباً وموافقة مدير</b> — فالترتيب هو السجلّ.</li>
+      </ul>
+      <div class="example"><b>مثال:</b> النظام يرشّح كراج «أ» لأنه الأرخص والأقرب وسجلّه أسرع. لو أراد المنسّق كراج «ب»، يكتب السبب ويوافق المدير.</div>
+    </div>
+  </section>
+
+  <!-- ==================== SECTION 3 ==================== -->
+  <div class="priority"><span class="pnum">القسم ٣</span><h2 class="section">سير عمل الأضرار والإرجاع — فصل «الفحص» عن «الاختبار»</h2></div>
+  <p class="lead">التحديث الجوهري في المنطق: عند كل إرجاع، فحصٌ بصري يملكه المشرفان، يعقبه اختبارٌ ميكانيكي ينفّذه أبو معروف.</p>
+
+  <!-- 3.1 Check vs Test -->
+  <section class="phase">
+    <div class="head"><div class="tag">٣.١</div><h3>الفحص البصري مقابل الاختبار الميكانيكي</h3></div>
+    <div class="body">
+      <div class="steps2">
+        <div class="stepbox check">
+          <h4>① الفحص البصري (عند الإرجاع)</h4>
+          <p>يفحص موظف الاستلام السيارة، ويوثّق الصور، ويرفع <b>تقييم التكلفة والحالة</b> إلى <b>عبدالله ووليد</b> للاعتماد. أمّا <b>المسؤولية (مَن يتحمّل)</b> فيُحدّدها تقرير الشرطة/التأمين — لا الموظف ولا المشرف.</p>
+        </div>
+        <div class="stepbox test">
+          <h4>② الاختبار الميكانيكي (بعد الفحص)</h4>
+          <p>بمجرّد بدء عملية الإرجاع، يُنشئ النظام تلقائياً مهمة <b>«اختبار ميكانيكي»</b> لأبو معروف. ينفّذ الاختبار ويتحقّق من الجاهزية — <b>ولا يتخذ قرارات مالية</b>.</p>
+        </div>
+      </div>
+      <div class="note-cyan"><b>متى يُطلَق الاختبار فعلاً (تشغيل ذكي):</b> الاختبار الميكانيكي هو المسار الافتراضي بعد كل فحص، لكن قواعد النسخة 16 قد تُعفي سيارة رجعت من <b>إيجار قصير سليم</b> (24–48 ساعة) أو <b>اختبارها ساري المفعول</b> (خلال 7 أيام) — فلا يتكرّر اختبار بلا قيمة. أما إذا كشف الفحص البصري احتمالَ عطل ميكانيكي (صدمة قد تمسّ المقود مثلاً) فالاختبار <b>إلزامي</b> ولا إعفاء.</div>
+      <div class="example"><b>مثال:</b> ترجع سيارة بخدش ← الموظف يوثّق ويرفع «خدش جديد، تكلفة تقديرية 400 درهم» للمشرفَين ← يعتمدان الإصلاح (وتُحدَّد المسؤولية بتقرير الشرطة/التأمين) ← يُنشأ اختبار ميكانيكي لأبو معروف ← يتحقّق من الجاهزية ← جاهزة أو ترجع للكراج.</div>
+    </div>
+  </section>
+
+  <!-- 3.2 Damage assessment + incidents + accident chain -->
+  <section class="phase">
+    <div class="head"><div class="tag">٣.٢</div><h3>تقييم الأضرار والحوادث</h3></div>
+    <div class="body">
+      <div class="what"><b>ضمن إطار الفحوصات — النوع (ج) تقييم الأضرار:</b> فحصٌ <b>تقييمي/مالي</b> يُجريه <b>مُقيّم الأضرار الفني (المشرف المختص) — لا السائق</b>؛ يحدّد طبيعة العطل وسببه (قديم / جديد / بفعل العميل / استهلاك / حادث). والمسؤولية المالية النهائية بتقرير الشرطة/التأمين.</div>
+      <ul>
+        <li><b>قرار المشرفَين:</b> نوع الضرر ودرجته، النطاق والتكلفة التقديرية، وهل يحتاج كراجاً أو سيارة بديلة. ثم تصير السيارة «قيد الإصلاح» تلقائياً. <b>(المشرف يقرّر الإصلاح والتكلفة — لا المسؤولية.)</b></li>
+        <li><b>تحديد المسؤولية (مَن يتحمّل التكلفة):</b> يُحدَّد بحسب <b>تقرير الشرطة (في الحوادث) ووثيقة التأمين</b> — عميل / شركة / تأمين / ضمان — <b>وليس قراراً للمشرف</b>؛ المشرف يوثّق نتيجة التقرير ويطبّق الخصم وفقها.</li>
+        <li><b>قاعدة ذهبية:</b> أي ضرر يمسّ السلامة ← <b>لا</b> تعود «متاحة» أبداً، حتى لو كان هناك حجز منتظر.</li>
+        <li><b>الأعطال أثناء الإيجار</b> (تسع فئات) لها مسار دعم متدرّج: <b>حلّ هاتفي ← إصلاح ميداني ← تبديل السيارة</b>.</li>
+        <li><b>سلسلة الحادث المضمونة:</b> إشعار فوري للمشرفَين بأولوية عالية مع الصور والمسؤول، إيصالات لكل خطوة، و<b>حارس رؤية</b> — أبو معروف لا يرى التذكرة قبل اعتماد المشرفَين.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 3.3 Odometer integrity -->
+  <section class="phase">
+    <div class="head"><div class="tag">٣.٣</div><h3>مراقبة العداد وحماية الأصول</h3></div>
+    <div class="body">
+      <div class="what"><b>ماذا يحدث:</b> كل كيلومتر مُسجَّل وعصيٌّ على التلاعب — لا الكراج ولا المستأجر يزيد العداد أو يستخدم السيارة دون حق.</div>
+      <ul>
+        <li><b>تسجيل قائم على الأحداث:</b> زرّ «إضافة قراءة عداد» متاح دائماً (قراءة + صورة لحظة الحركة)، وخطوة «جاهز» صارت تحقّقاً نهائياً من التقاط قراءات الاستلام/الوصول/الخروج.</li>
+        <li><b>حدث الوصول للكراج:</b> تأكيد/تجاوز الكراج المخطَّط، قراءة عداد وصول إلزامية، حالة الاستلام، وتاريخ إنجاز متوقّع.</li>
+        <li><b>بوابة الكراج:</b> قياس المسافة داخل الكراج (وصول ← خروج)؛ تجاوز <b>20 كم</b> ← تنبيه فوري للإدارة.</li>
+        <li><b>منع التلاعب:</b> قراءة أقلّ من السابقة توقِف العملية حتى يوافق <b>الأدمن وحده</b>. وعلَم <b>تكرار الصيانة</b> يربط رجوع نفس العطل بالتذكرة الأصلية.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ==================== SECTION 4 ==================== -->
+  <div class="priority"><span class="pnum">القسم ٤</span><h2 class="section">الدورة التشغيلية والمالية والإدارة</h2></div>
+  <p class="lead">التسليم والتوقيع، حماية الوديعة، درجات الحالة، لوحة الإدارة، ودرجات الموافقة المالية.</p>
+
+  <!-- 4.1 Handover -->
+  <section class="phase">
+    <div class="head"><div class="tag">٤.١</div><h3>التسليم والتوقيع</h3></div>
+    <div class="body">
+      <div class="what"><b>ماذا يحدث:</b> لا تغادر سيارة قبل اجتياز فحص الجاهزية، تصويرها من كل الزوايا، وتأكيد العميل حالتها بتوقيعه.</div>
+      <div class="note-cyan"><b>ضمن إطار الفحوصات:</b> هذا هو <b>فحص التسليم (Check-Out — النوع أ)</b>: إثبات قانوني لحالة السيارة قبل تسليمها. ونظيره <b>فحص الاستلام (Check-In — النوع ب)</b> يجري عند عودة السيارة — يقارن الموظف حالتها بصور التسليم ويعلّم أي جديد. كلاهما <b>تشغيلي/لوجستي</b> يوثّقه موظف التسليم/الاستلام (لا يقرّر).</div>
+      <ul>
+        <li><b>فحص الجاهزية:</b> متاحة؟ التأمين والتسجيل ساريان حتى الإرجاع؟ السيرفيس قريب؟ التتبّع يعمل؟ غُسِلت؟ أُقفِل استلامها السابق؟</li>
+        <li><b>الصور الإلزامية (نحو 15):</b> الأمام، الخلف، الجهتان، الزوايا، الجنوط، الزجاج، الداخل، الطبلون، العداد، البنزين، الخدوش القديمة، المفتاح، عدّة الطوارئ — وفيديو 360° للفاخرة.</li>
+        <li><b>تأكيد العميل:</b> توقيع أو رمز (OTP). لا تسليم صحيح بدونه.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 4.2 Deposit -->
+  <section class="phase">
+    <div class="head"><div class="tag">٤.٢</div><h3>حماية الوديعة والمخالفات</h3></div>
+    <div class="body">
+      <ul>
+        <li><b>الوديعة:</b> تُحجَز عند التسليم، ويُخصَم منها أي ضرر أو مخالفة أو نقص بنزين، ويُردّ الباقي (أو يُضاف لمحفظة العميل).</li>
+        <li><b>حجز المخالفات والسالك:</b> لأنها تصل بعد الإرجاع، لا تُردّ الوديعة حتى تصل وتُسوّى (مهلة 14–30 يوماً).</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 4.3 Grades -->
+  <section class="phase">
+    <div class="head"><div class="tag">٤.٣</div><h3>درجات حالة السيارة</h3></div>
+    <div class="body">
+      <p class="lead" style="margin-top:4px"><b>القاعدة: فقط الأخضر والبرتقالي يُؤجَّران.</b></p>
+      <div class="grades">
+        <div class="grade g-green"><div class="g-h"><span class="dot"></span>🟢 أخضر</div><p>ممتازة، جاهزة تماماً.</p><span class="verdict">تُؤجَّر مباشرة</span></div>
+        <div class="grade g-orange"><div class="g-h"><span class="dot"></span>🟠 برتقالي</div><p>خدوش شكلية فقط.</p><span class="verdict">تُؤجَّر مع إقرار</span></div>
+        <div class="grade g-yellow"><div class="g-h"><span class="dot"></span>🟡 أصفر</div><p>تحتاج صيانة.</p><span class="verdict">لا تُؤجَّر ← صيانة</span></div>
+        <div class="grade g-red"><div class="g-h"><span class="dot"></span>🔴 أحمر</div><p>خطِرة / موقوفة.</p><span class="verdict">لا تُؤجَّر ← صيانة فوراً</span></div>
+      </div>
+      <div class="note-red"><b>مُطبَّق فعلاً:</b> الأصفر صار <b>غير قابل للتأجير</b> ويُعامَل معاملة الأحمر — يذهب للصيانة.</div>
+    </div>
+  </section>
+
+  <!-- 4.4 Command Center -->
+  <section class="phase">
+    <div class="head"><div class="tag">٤.٤</div><h3>مركز القيادة — لوحة الإدارة</h3></div>
+    <div class="body">
+      <div class="what"><b>ماذا يحدث:</b> شاشة واحدة تجيب لحظياً: مَن فعل ماذا؟ أين كل سيارة؟ وما المهامّ المتعثّرة؟</div>
+      <ul>
+        <li><b>خلاصة نشاط فورية</b> (تسعير · موافقة · فحص · تجاوز) مع الفاعل والوقت والتغيير.</li>
+        <li><b>متتبّع مباشر:</b> حالة كل سيارة ومَن يحملها وأي كراج تُصلَّح عنده.</li>
+        <li><b>نظرة إدارية:</b> الصفراء في الميدان، الموافقات المعلّقة، والمهامّ المتعثّرة بنظرة واحدة.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 4.5 Decision Tiers -->
+  <section class="phase">
+    <div class="head"><div class="tag">٤.٥</div><h3>درجات الموافقة المالية</h3></div>
+    <div class="body">
+      <div class="what"><b>ماذا يحدث:</b> التكلفة تُوجَّه تلقائياً للمُوافِق حسب المبلغ — والفاخرة أو الحادث يرفعان الدرجة. التقييم ليس موافقة نهائية؛ ما تجاوز الحدّ يُصعَّد تلقائياً.</div>
+      <table>
+        <thead><tr><th>المبلغ (درهم)</th><th>مَن يوافق</th></tr></thead>
+        <tbody>
+          <tr><td>حتى 500</td><td>مشرف الصيانة</td></tr>
+          <tr><td>501 – 2,000</td><td>مدير العمليات / الأسطول</td></tr>
+          <tr><td>2,001 – 5,000</td><td>مدير الفرع</td></tr>
+          <tr><td>أكثر من 5,000</td><td>المالك / المدير العام</td></tr>
+          <tr><td>حادث / تأمين</td><td>قسم المطالبات + مدير</td></tr>
+          <tr><td><b>فاخرة / رياضية</b></td><td>درجة أعلى مما يقتضيه المبلغ</td></tr>
+        </tbody>
+      </table>
+      <div class="note-red"><b>تنبيه البيع/الاستبدال:</b> إذا تجاوزت تكلفة صيانة 12 شهراً <b>40% من قيمة السيارة</b>، يقترح النظام بيعها أو استبدالها.</div>
+    </div>
+  </section>
+
+  <!-- DECISION POINTS -->
+  <section class="decide">
+    <h3>نقاط تحتاج تأكيد الإدارة</h3>
+    <p class="lead">أرقام وحدود قابلة للضبط — نحتاج تأكيدها قبل التثبيت النهائي:</p>
+    <ol>
+      <li><b>مواعيد الاختبار الوقائي:</b> الدوري 15 يوماً · الإيجار الطويل 20 يوماً · مهلة الأمان 7 أيام · ثغرة الإيجار القصير 48 ساعة.</li>
+      <li><b>سير الفحص/الاختبار:</b> تأكيد أن كل إرجاع يُطلق اختباراً ميكانيكياً بعد الفحص البصري — مع إعفاء الإيجار القصير السليم والاختبار الساري.</li>
+      <li><b>قائمة أعطال السلامة:</b> تأكيد الأعطال التي تمنع التأجير وتُلزِم اختبار القيادة.</li>
+      <li><b>اختيار الكراج:</b> السعر معياراً أول، وعتبة تحذير التكلفة (20% فوق المعتاد)، وحدّ حركة الكراج 20 كم.</li>
+      <li><b>حدود الموافقة المالية:</b> تأكيد مبالغ كل درجة (500 / 2,000 / 5,000 / أكثر) ومَن يشغل كل دور.</li>
+      <li><b>درجات الحالة:</b> فقط الأخضر والبرتقالي يُؤجَّران. <b>(مُطبَّق فعلاً)</b></li>
+      <li><b>الوديعة والمخالفات:</b> مهلة الحجز (14 أم 30 يوماً)، ووجهة الرصيد (نقداً أم محفظة).</li>
+    </ol>
+  </section>
+
+  <!-- PRACTICAL SCENARIO -->
+  <h2 class="section" style="margin-top:40px">سيناريو عملي: دورة حياة تذكرة إصلاح</h2>
+  <p class="lead">مثالٌ ملموس للإدارة يوضّح كيف يجسر النظام الفجوة بين <b>بلاغ العطل</b> و<b>عودة السيارة للأسطول</b> — من «طلب فحص» حتى «مُغلَقة».</p>
+  <div class="card">
+    <p style="margin:0 0 10px"><b>التذكرة رقم 169573</b> · <b>المركبة:</b> مرسيدس GLC 300 · <b>العطل المُبلَّغ:</b> إضاءة ضعيفة/ضبابية · <b>الخطورة:</b> 🟡 متوسطة</p>
+    <table>
+      <thead><tr><th>المرحلة</th><th>ماذا حدث</th><th>زمن التعطّل التراكمي*</th><th>الانتقال التلقائي</th></tr></thead>
+      <tbody>
+        <tr><td><b>١. طلب فحص</b><br><small>Inspection Requested</small></td><td>سُجِّل بلاغ العطل، ويبدأ عدّاد التعطّل لحظياً.</td><td>0:00</td><td>تُفتَح التذكرة وتُسنَد لفاحص</td></tr>
+        <tr><td><b>٢. قيد الفحص</b><br><small>Being Inspected</small></td><td>اختبار قيادة + تشخيص + التقاط قراءة العداد.</td><td>~0:20</td><td>عند تحديد الخطورة ← «بانتظار الإرسال»</td></tr>
+        <tr><td><b>٣. بانتظار الإرسال</b><br><small>Awaiting Dispatch</small></td><td>المشرف يرشّح الكراج (السعر أولاً) ويعيّن سائقاً.</td><td>~0:45</td><td>تأكيد الإسناد ← مهمة استلام للسائق</td></tr>
+        <tr><td><b>٤. الإرسال والوصول</b><br><small>Dispatch → At Garage</small></td><td>السائق يستلم، يلتقط عداد الوصول + صورة، ويسلّم للكراج.</td><td>~2:30</td><td>عداد الوصول + الكراج ← <b>«تحت الإصلاح» تلقائياً</b></td></tr>
+        <tr><td><b>٥. تحت الإصلاح</b><br><small>Under Repair</small></td><td>الكراج ينفّذ الإصلاح، والعدّاد يواصل احتساب التعطّل.</td><td>~1 يوم</td><td>«جاهز» من الكراج ← مهمة إعادة فحص</td></tr>
+        <tr><td><b>٦. جاهزة لإعادة الفحص</b><br><small>Ready for Re-inspection</small></td><td>أبو معروف يختبر ويتحقّق من الجاهزية + عداد الخروج.</td><td>~1 يوم 3:00</td><td>نجاح ← ضمان الجودة</td></tr>
+        <tr><td><b>٧. ضمان الجودة</b><br><small>Quality Assurance</small></td><td>قائمة فحص كاملة + اختبار قيادة عند اللزوم.</td><td>~1 يوم 5:00</td><td>اجتياز كل البنود ← «جاهزة»</td></tr>
+        <tr><td><b>٨. مُغلَقة</b><br><small>Closed</small></td><td>تعود السيارة «متاحة»، و<b>يتوقّف عدّاد التعطّل</b>.</td><td><b>~1 يوم 6:00 (إجمالي)</b></td><td>الإغلاق ← حالة السيارة «متاحة»</td></tr>
+      </tbody>
+    </table>
+    <p style="font-size:12.5px;color:var(--muted);margin:6px 0 0">* الأوقات توضيحية — تُستبدَل بالبيانات الفعلية للتذكرة من النظام.</p>
+  </div>
+
+  <div class="steps2" style="grid-template-columns:1fr 1fr 1fr">
+    <div class="stepbox check"><h4>⏱️ تتبّع التعطّل لحظياً</h4><p>عدّاد يبدأ عند بلاغ العطل ويتوقّف عند الإغلاق — فنعرف بدقّة كم كانت السيارة خارج الخدمة، وأين ضاع الوقت (إرسال؟ إصلاح؟ جودة؟).</p></div>
+    <div class="stepbox test"><h4>📊 تصوّر تقدّم التذكرة</h4><p>شريط مراحل واضح: إرسال ← إصلاح ← جاهزة. كل بطاقة تُظهِر المرحلة الحالية وزمنها، وتنبيه أحمر إذا تجاوزت 4 أيام في الكراج.</p></div>
+    <div class="stepbox" style="background:#fef9c3;border-color:#fde68a"><h4>🔄 انتقالات تلقائية</h4><p>لا نقل يدوي للحالة: عداد الوصول ينقلها لـ«تحت الإصلاح»، و«جاهز» من الكراج يفتح إعادة الفحص، والإغلاق يعيدها «متاحة» — أثرٌ موثَّق بلا سهو.</p></div>
+  </div>
+
+  <div class="note-cyan"><b>الخلاصة للإدارة:</b> من لحظة البلاغ حتى عودة المرسيدس للأسطول، النظام يقيس التعطّل لحظياً، ويحرّك التذكرة بين المراحل تلقائياً، ويترك أثراً كاملاً — فيتحوّل «عطل مُبلَّغ» إلى «سيارة جاهزة» بأقصر وأوضح مسار.</div>
+
+  <footer>عمليات الأسطول · دليل الصيانة وجاهزية المركبات · النسخة 16 · مُعدّ لمدير الصيانة · 2026-07-04</footer>
+
+</div>
+</body>
+</html>
