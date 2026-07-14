@@ -12,9 +12,11 @@ use Illuminate\Support\Facades\Log;
 /**
  * Proactive Diagnostic Monitor. The system's own trigger for a "Needs Test Drive": it walks the active
  * fleet, asks the DiagnosticGateService what each car is DUE for, and for any car with an outstanding
- * condition it raises a system-attributed inspection request in Abu Maroof's queue (workflow_status =
- * inspection_requested) AND notifies him — the agenda spells out exactly what to check ("go check the
- * oil and battery"). The human-driven equivalent is a Driver's "Request inspection".
+ * condition it raises a system-attributed inspection request (workflow_status = pending_review) in the
+ * Controllers' (Lin & Marwa) Inspection Review Queue AND notifies them — the agenda spells out exactly
+ * what to check ("go check the oil and battery"). It only reaches Abu Maroof once a Controller approves
+ * it (see MaintenanceWorkflowService::approveInspectionReview()). The human-driven equivalent is a
+ * Driver's "Request inspection".
  *
  * Conditions that raise a request (all from DiagnosticGateService::conditionsDue):
  *   - Oil / service overdue (km or date)     → "Oil Change"
@@ -53,6 +55,18 @@ class InspectionsGenerateTasks extends Command
         $limit   = max(1, (int) $this->option('limit'));
         $onlyId  = $this->option('vehicle') !== null ? (int) $this->option('vehicle') : null;
 
+        // Every scan cycle is logged to storage/logs/laravel.log, not just echoed to the console — this
+        // command runs headless off the Windows Task/schedule:run tick with no attached terminal, so
+        // console-only output (the tables/lines below) would otherwise be silently lost. This is the
+        // canonical, continuously-running source of system-generated inspection requests; the log is
+        // what makes "did it actually run, and what did it find" answerable without a live terminal.
+        Log::info('Proactive Diagnostic Monitor — scan started', [
+            'report'   => 'inspections_generate_tasks_scan',
+            'dry_run'  => $dry,
+            'limit'    => $limit,
+            'vehicle'  => $onlyId,
+        ]);
+
         // Cars already somewhere in the workflow pipeline (incl. the pre-ticket "requested" state) —
         // never raise a second request for them.
         $inPipeline = Maintenance::openWorkflow()
@@ -81,7 +95,8 @@ class InspectionsGenerateTasks extends Command
                     }
 
                     // Oil sanity ceiling — drop an implausible service-due (bad odometer) and log it as an
-                    // anomaly, but keep every other condition on the car.
+                    // anomaly, but keep every other condition on the car. `$svc` is also snapshotted onto the
+                    // request below (current mileage / interval / overdue) for the Inspection Review Queue.
                     $svc = $v->serviceStatus();
                     if (($svc['status'] ?? null) === 'service_due') {
                         $interval = (int) ($svc['interval'] ?? 0);
@@ -104,6 +119,9 @@ class InspectionsGenerateTasks extends Command
                         // Ready-entry-point chips for the Decide step — every condition's mapped Findings
                         // keyword(s), deduped, so the Inspector taps instead of hunting the picker.
                         'suggested_findings' => $this->suggestedFindings($conditions),
+                        // Service snapshot (mileage / interval / overdue) captured NOW — persisted in the
+                        // ticket's trigger_detail so the Inspection Review Queue can show the exact values.
+                        'service'    => $svc,
                     ];
                 }
             });
@@ -137,6 +155,12 @@ class InspectionsGenerateTasks extends Command
         if (empty($requests)) {
             $this->newLine();
             $this->info('No car needs a test-drive request right now (all current, already in the pipeline, or filtered as anomalies).');
+            Log::info('Proactive Diagnostic Monitor — scan complete, nothing due', [
+                'report'         => 'inspections_generate_tasks_scan',
+                'dry_run'        => $dry,
+                'requests_raised' => 0,
+                'anomalies'      => count($anomalies),
+            ]);
             if (! $dry && ! empty($anomalies)) {
                 $this->reportAnomalies($anomalies);
             }
@@ -168,15 +192,25 @@ class InspectionsGenerateTasks extends Command
 
         // Real run — raise each request (system-attributed) and notify the Inspector.
         $created = 0;
+        $failed  = [];
         foreach ($requests as $r) {
             try {
                 $workflow->systemRequestInspection($r['vehicle'], [
                     'note'               => $r['note'],
                     'suggested_findings' => $r['suggested_findings'],
+                    'conditions'         => $r['conditions'],
+                    'service'            => $r['service'],
                 ]);
                 $created++;
             } catch (\Throwable $e) {
                 $this->error('  • ' . ($r['vehicle']->plate_no ?: $r['vehicle']->id) . ': ' . $e->getMessage());
+                $failed[] = ['vehicle_id' => $r['vehicle']->id, 'plate' => $r['vehicle']->plate_no, 'error' => $e->getMessage()];
+                Log::error('Proactive Diagnostic Monitor — failed to raise a system inspection request', [
+                    'report'     => 'inspections_generate_tasks_scan',
+                    'vehicle_id' => $r['vehicle']->id,
+                    'plate'      => $r['vehicle']->plate_no,
+                    'error'      => $e->getMessage(),
+                ]);
             }
         }
 
@@ -187,6 +221,17 @@ class InspectionsGenerateTasks extends Command
         if (! empty($anomalies)) {
             $this->warn(count($anomalies) . ' car(s) had their oil condition skipped as data anomalies (fix odometer in Mileage Reconciliation).');
         }
+
+        Log::info('Proactive Diagnostic Monitor — scan complete', [
+            'report'          => 'inspections_generate_tasks_scan',
+            'dry_run'         => $dry,
+            'requests_raised' => $created,
+            'requests_failed' => count($failed),
+            'failures'        => $failed,
+            'anomalies'       => count($anomalies),
+            'capped'          => $capped,
+        ]);
+
         return self::SUCCESS;
     }
 
