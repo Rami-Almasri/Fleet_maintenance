@@ -134,10 +134,20 @@ export default function FindingsPicker({ catalog, keywordMeta = {}, value = [], 
     onChange(has(k) ? value.filter((v) => v.toLowerCase() !== k.toLowerCase()) : [...value, k]);
   };
 
-  // Ready-entry-point row — the exact keyword(s) this ticket was system-flagged for (oil/battery/tyre
-  // due, post-downtime checklist, …), from DiagnosticGateService. One tap confirms it as a finding, no
-  // need to hunt the category it lives in. Drops off once selected or already reported.
-  const pendingSuggested = suggested.filter((k) => k && !has(k) && !isLocked(k));
+  // Ready-entry-point row — the exact keyword(s) this ticket was system-flagged for (an oil change /
+  // battery / tyre service the car's data says is DUE), from DiagnosticGateService. One tap confirms it
+  // as a finding, no need to hunt the category it lives in. Drops off once selected or already reported.
+  //
+  // Data-driven guard: a monitored routine (oil / battery / tyres) is NEVER offered here while the car's
+  // live status says it isn't due. That's the "confirm this replacement" → "…but it's not due" trap the
+  // reality-check below would immediately flag. The keyword can still be picked manually from the category
+  // list (which then shows that warning) — it just isn't pre-suggested as a done deal.
+  const pendingSuggested = suggested.filter((k) => {
+    if (!k || has(k) || isLocked(k)) return false;
+    const condKey = CONDITION_FOR_KEYWORD[String(k).toLowerCase()];
+    const cond = condKey ? conditionByKey[condKey] : null;
+    return !(cond && cond.status === 'ok');
+  });
 
   // Reality-check warning — a SELECTED keyword that maps to a monitored routine (oil/battery/tyres)
   // whose car's live status says it is NOT due right now. Fires the instant the chip is tapped, before

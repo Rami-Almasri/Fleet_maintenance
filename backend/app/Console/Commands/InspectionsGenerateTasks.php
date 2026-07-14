@@ -236,12 +236,12 @@ class InspectionsGenerateTasks extends Command
     }
 
     /**
-     * Turn a car's due conditions into the Inspector's agenda note — the specific "go check X, Y" line
-     * that rides on the request and its alert. A post-downtime condition spells out the WHY (how many
-     * days the car has been idle) and the safety checklist to inspect, so the inspector sees the
-     * seriousness at a glance without digging through logs, e.g.:
+     * Turn a car's due conditions into the Inspector's agenda note — the specific "please check X, Y"
+     * line that rides on the request and its alert. A post-downtime condition spells out the WHY (how
+     * many days since the car's last maintenance completion — NOT idle time, since the clock keeps
+     * running even while the car is out with a customer) and the safety checklist to inspect, e.g.:
      *
-     *   "Post-downtime safety check due (Vehicle idle for 25 days) — go check: Battery, Fluids, and Brakes."
+     *   "Routine check overdue — 25 days since last maintenance completion — please check: Battery, Fluids, and Brakes."
      *
      * @param array<int,array<string,mixed>> $conditions
      */
@@ -259,18 +259,23 @@ class InspectionsGenerateTasks extends Command
         if ($downtime) {
             $days  = (int) ($downtime['days'] ?? 0);
             $items = $this->humanList($downtime['checklist'] ?? DiagnosticGateService::POST_DOWNTIME_CHECKLIST);
-            $parts[] = 'Post-downtime safety check due (Vehicle idle for ' . $days . ' day' . ($days === 1 ? '' : 's') . ')'
-                . ' — go check: ' . $items . '.';
+            $parts[] = 'Routine check overdue — ' . $days . ' day' . ($days === 1 ? '' : 's') . ' since last maintenance completion'
+                . ' — please check: ' . $items . '.';
         }
 
         return implode(' ', $parts);
     }
 
     /**
-     * The ready-entry-point chip list for the Decide step — every condition's `finding_keyword` (single)
-     * or `finding_keywords` (post-downtime's per-item list), deduped in encounter order. This is what
-     * turns the agenda note ("go check: Battery Status") into an actual one-tap FindingsPicker chip
-     * instead of free text the Inspector has to translate into the picker himself.
+     * The ready-entry-point chip list for the Decide step — the "System flagged — tap to confirm" row.
+     * ONLY the data-driven routine conditions feed it: an oil change actually over its km/date limit, a
+     * battery actually past its service life, a tyre/other reminder actually overdue. Each contributes
+     * its `finding_keyword`, deduped in encounter order, so the Inspector taps to confirm a real finding.
+     *
+     * The post-downtime safety check is deliberately EXCLUDED: its checklist (Battery / Fluids / Brakes)
+     * is a fixed "go look at these" agenda, NOT a verdict that anything is due — pre-filling those as
+     * tap-to-confirm chips would suggest replacements the car's oil/battery validity never called for.
+     * That check still spells its items out in the agenda note (see agenda()); it just isn't a chip.
      *
      * @param array<int,array<string,mixed>> $conditions
      * @return array<int,string>
@@ -278,6 +283,7 @@ class InspectionsGenerateTasks extends Command
     private function suggestedFindings(array $conditions): array
     {
         return collect($conditions)
+            ->reject(fn ($c) => ($c['directive'] ?? null) === DiagnosticGateService::DIRECTIVE_DOWNTIME)
             ->flatMap(fn ($c) => $c['finding_keywords'] ?? array_filter([$c['finding_keyword'] ?? null]))
             ->filter()
             ->unique()

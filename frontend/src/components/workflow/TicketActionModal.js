@@ -35,17 +35,21 @@ import LineItemsEditor, { serializeLineItems, lineItemsUnlinked, invoiceVariance
 import { compressImage, formatBytes } from '../../lib/imageCompression';
 import { evaluateContinuity, needsConfirm, needsNote, isHardBlocked, stageIgnoresTolerance, stageRequiresIncrease, STAGE } from '../../lib/odometerContinuity';
 import OdometerContinuityHint from './OdometerContinuityHint';
+import SignaturePad from './SignaturePad';
+import { isPaused } from './meta';
+
+// Enterprise Handover Workflow — CONTRACT with backend/config/maintenance_handover.php. Small, fixed
+// enums, so hardcoded client-side rather than fetched.
+const FUEL_SCALE = ['E', '1/4', '1/2', '3/4', 'F'];
+const CONDITION_PRESETS = ['Good', 'Minor scratches', 'Damaged'];
+const ACCESSORY_KEYS = ['spare_tire', 'jack', 'first_aid_kit', 'warning_triangle', 'floor_mats', 'charging_cable'];
+const DAMAGE_SEVERITY = ['routine', 'moderate', 'critical']; // reuses App\Models\Maintenance::FAULT_SEVERITIES vocabulary
 
 // Persisted enum values — these are CONTRACT with the backend and never localize.
 // Their visible labels are resolved from the i18n catalog at render time.
 const TRIGGER_REASON_VALUES = ['test_drive', 'customer_reported', 'periodic']; // App\Models\Maintenance::TRIGGER_REASONS
 const MAINTENANCE_TYPES = [
-  { value: 'routine', icon: '🔧' },
   { value: 'breakdown', icon: '⚠️' },
-  { value: 'ins_incident', icon: '🛡️' },
-  { value: 'non_ins_incident', icon: '💥' },
-  { value: 'modification', icon: '⚙️' },
-  { value: 'upgrade', icon: '⬆️' },
 ]; // App\Models\Maintenance::MAINTENANCE_TYPES
 
 // Fault Severity (🔴/🟡/🟢) — CONTRACT with App\Models\Maintenance::FAULT_SEVERITIES. The inspector's
@@ -53,7 +57,6 @@ const MAINTENANCE_TYPES = [
 const FAULT_SEVERITY_OPTS = [
   { value: 'critical', emoji: '🔴' },
   { value: 'moderate', emoji: '🟡' },
-  { value: 'high', emoji: '🟠' },
   { value: 'routine', emoji: '🟢' },
 ];
 
@@ -127,7 +130,7 @@ function StageChip({ label, icon: Ico, secs, running, t }) {
     <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs">
       {Ico && <Ico className="h-3.5 w-3.5 text-slate-400" />}
       <span className="font-medium text-slate-600">{label}</span>
-      <span className={`tabular-nums rounded-md px-1.5 py-0.5 text-[11px] font-semibold ${running ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-700'}`}>
+      <span className={`tabular-nums rounded-full px-1.5 py-0.5 text-[11px] font-semibold ${running ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-700'}`}>
         {text}{running ? ` · ${t('time.running')}` : ''}
       </span>
     </span>
@@ -164,7 +167,7 @@ function StageTimeline({ ticket, t }) {
         {totalText && (
           <span className="inline-flex items-center gap-1.5 text-xs">
             <span className="text-slate-400">{t('workflow.stage.totalDowntime')}</span>
-            <span className={`tabular-nums rounded-md px-1.5 py-0.5 text-[11px] font-bold ${totalRunning ? 'bg-amber-100 text-amber-700' : 'bg-indigo-100 text-indigo-700'}`}>
+            <span className={`tabular-nums rounded-full px-1.5 py-0.5 text-[11px] font-bold ${totalRunning ? 'bg-amber-100 text-amber-700' : 'bg-indigo-100 text-indigo-700'}`}>
               {totalText}{totalRunning ? ` · ${t('time.running')}` : ''}
             </span>
           </span>
@@ -178,7 +181,7 @@ function StageTimeline({ ticket, t }) {
           <span className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-100 bg-indigo-50/60 px-2 py-1 text-xs">
             <Icon.Gauge className="h-3.5 w-3.5 text-indigo-400" />
             <span className="font-medium text-slate-600">{t('workflow.stage.testDriveDistance')}</span>
-            <span className="tabular-nums rounded-md bg-indigo-100 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-700">
+            <span className="tabular-nums rounded-full bg-indigo-100 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-700">
               {Number(ticket.test_drive_distance_km).toLocaleString()} {t('workflow.stage.kmShort')}
             </span>
           </span>
@@ -204,7 +207,7 @@ const SEVERITY_STYLE = {
 // is rendered read-only: the forced level keeps its colour, the others dim, and none respond to clicks.
 function FaultSeverityPicker({ value, onChange, t, locked = false }) {
   return (
-    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+    <div className="grid grid-cols-3 gap-2">
       {FAULT_SEVERITY_OPTS.map((p) => {
         const active = value === p.value;
         return (
@@ -216,12 +219,178 @@ function FaultSeverityPicker({ value, onChange, t, locked = false }) {
             onClick={() => onChange(active ? '' : p.value)}
             className={`flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2.5 text-sm font-semibold transition ${active ? SEVERITY_STYLE[p.value] : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'} ${locked ? `cursor-not-allowed${active ? '' : ' opacity-40'}` : ''}`}
           >
-            <span className="text-base leading-none">{p.emoji}</span>
+            <span className="text-base leading-none" aria-hidden>{p.emoji}</span>
             {t(`workflow.faultSeverity.${p.value}`)}
           </button>
         );
       })}
     </div>
+  );
+}
+
+// Maintenance-type picker. With Breakdown the sole classification, render each option as a full-width,
+// self-explanatory card (amber-toned to signal it grounds the car) rather than a cramped icon grid —
+// it reads as a clear, deliberate choice even when there's only one of it.
+function MaintenanceTypeCards({ types, value, onChange, t }) {
+  return (
+    <div className="grid gap-2 sm:grid-cols-2">
+      {types.map((ty) => {
+        const active = value === ty.value;
+        const desc = t(`workflow.type.${ty.value}Desc`);
+        const hasDesc = desc !== `workflow.type.${ty.value}Desc`;
+        return (
+          <button
+            key={ty.value}
+            type="button"
+            onClick={() => onChange(active ? '' : ty.value)}
+            className={`flex items-start gap-3 rounded-xl border px-4 py-3 text-start transition ${active ? 'border-amber-500 bg-amber-50 ring-1 ring-amber-500' : 'border-slate-200 bg-white hover:border-slate-300'}`}
+          >
+            <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-lg leading-none ${active ? 'bg-amber-100' : 'bg-slate-100'}`} aria-hidden>{ty.icon}</span>
+            <span className="min-w-0 flex-1">
+              <span className={`block text-sm font-semibold ${active ? 'text-amber-900' : 'text-slate-800'}`}>{t(`workflow.type.${ty.value}`)}</span>
+              {hasDesc && <span className="mt-0.5 block text-xs leading-snug text-slate-500">{desc}</span>}
+            </span>
+            {active && <span className="mt-0.5 shrink-0 text-sm font-bold text-amber-600" aria-hidden>✓</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// Enterprise Handover Workflow — the shared custody-handover field set captured on BOTH the pause and
+// resume legs (odometer + photo already rendered by the caller via `odometerBlock`). Kept as one
+// component so the two legs can never visually drift apart.
+function HandoverFields({
+  fuelLevel, onFuelLevel, exteriorCondition, onExteriorCondition, interiorCondition, onInteriorCondition,
+  damageFindings, onDamageFindings, missingAccessories, onMissingAccessories,
+  handoverNotes, onHandoverNotes, signatureRef, onSignatureChange, t,
+}) {
+  const addDamage = () => onDamageFindings([...damageFindings, { location: '', severity: 'routine', note: '' }]);
+  const updateDamage = (i, patch) => onDamageFindings(damageFindings.map((d, idx) => (idx === i ? { ...d, ...patch } : d)));
+  const removeDamage = (i) => onDamageFindings(damageFindings.filter((_, idx) => idx !== i));
+  const toggleAccessory = (key) => onMissingAccessories(
+    missingAccessories.includes(key) ? missingAccessories.filter((a) => a !== key) : [...missingAccessories, key],
+  );
+
+  return (
+    <>
+      {/* Fuel level — 5-option segmented scale, CONTRACT with config/maintenance_handover.php fuel_scale */}
+      <div>
+        <span className="mb-1.5 block text-sm font-medium text-slate-700">{t('workflow.handover.fuelLabel')}<Req /></span>
+        <div className="grid grid-cols-5 gap-1.5">
+          {FUEL_SCALE.map((f) => {
+            const active = fuelLevel === f;
+            return (
+              <button
+                key={f}
+                type="button"
+                onClick={() => onFuelLevel(f)}
+                className={`rounded-lg border px-2 py-2 text-sm font-semibold transition ${active ? 'border-indigo-500 bg-indigo-50 text-indigo-800 ring-1 ring-indigo-500' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'}`}
+              >
+                {f}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Exterior / Interior condition — free text with quick presets */}
+      <div className="grid gap-3 sm:grid-cols-2">
+        {[
+          { label: t('workflow.handover.exteriorLabel'), value: exteriorCondition, onChange: onExteriorCondition },
+          { label: t('workflow.handover.interiorLabel'), value: interiorCondition, onChange: onInteriorCondition },
+        ].map((f, i) => (
+          <div key={i}>
+            <span className="mb-1 block text-sm font-medium text-slate-700">{f.label}<Req /></span>
+            <div className="mb-1.5 flex flex-wrap gap-1.5">
+              {CONDITION_PRESETS.map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => f.onChange(p)}
+                  className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 transition ${f.value === p ? 'bg-slate-900 text-white ring-slate-900' : 'bg-white text-slate-500 ring-slate-300 hover:bg-slate-50'}`}
+                >
+                  {p === 'Good' ? t('workflow.handover.conditionGood') : p === 'Minor scratches' ? t('workflow.handover.conditionMinor') : t('workflow.handover.conditionDamaged')}
+                </button>
+              ))}
+            </div>
+            <Input value={f.value} onChange={(e) => f.onChange(e.target.value)} placeholder={f.label} />
+          </div>
+        ))}
+      </div>
+
+      {/* Damage findings — a small repeatable list (location / severity / note); optional */}
+      <div>
+        <div className="mb-1.5 flex items-center justify-between">
+          <span className="text-sm font-medium text-slate-700">{t('workflow.handover.damageLabel')}</span>
+          <button type="button" onClick={addDamage} className="rounded-lg px-2 py-1 text-xs font-semibold text-indigo-600 hover:bg-indigo-50">
+            + {t('workflow.handover.damageAdd')}
+          </button>
+        </div>
+        {damageFindings.length > 0 && (
+          <div className="space-y-2">
+            {damageFindings.map((d, i) => (
+              <div key={i} className="grid grid-cols-12 items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50/60 p-2">
+                <input
+                  type="text"
+                  value={d.location}
+                  onChange={(e) => updateDamage(i, { location: e.target.value })}
+                  placeholder={t('workflow.handover.damageLocationPh')}
+                  aria-label={t('workflow.handover.damageLocation')}
+                  className="col-span-4 rounded-lg border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-indigo-500"
+                />
+                <select
+                  value={d.severity}
+                  onChange={(e) => updateDamage(i, { severity: e.target.value })}
+                  aria-label={t('workflow.handover.damageSeverity')}
+                  className="col-span-3 rounded-lg border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-indigo-500"
+                >
+                  {DAMAGE_SEVERITY.map((s) => <option key={s} value={s}>{t(`workflow.faultSeverity.${s}`)}</option>)}
+                </select>
+                <input
+                  type="text"
+                  value={d.note}
+                  onChange={(e) => updateDamage(i, { note: e.target.value })}
+                  placeholder={t('workflow.handover.damageNote')}
+                  aria-label={t('workflow.handover.damageNote')}
+                  className="col-span-4 rounded-lg border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-indigo-500"
+                />
+                <button type="button" onClick={() => removeDamage(i)} className="col-span-1 rounded-lg px-1 py-1.5 text-xs font-medium text-red-500 hover:bg-red-50">
+                  {t('workflow.handover.damageRemove')}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Missing accessories — fixed checklist, CONTRACT with config/maintenance_handover.php accessories */}
+      <div>
+        <span className="mb-1.5 block text-sm font-medium text-slate-700">{t('workflow.handover.accessoriesLabel')}</span>
+        <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
+          {ACCESSORY_KEYS.map((key) => (
+            <label key={key} className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs">
+              <input
+                type="checkbox"
+                checked={missingAccessories.includes(key)}
+                onChange={() => toggleAccessory(key)}
+                className="h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+              />
+              {t(`workflow.handover.accessory.${key}`)}
+            </label>
+          ))}
+        </div>
+      </div>
+
+      <Textarea label={t('workflow.handover.notesLabel')} value={handoverNotes} onChange={(e) => onHandoverNotes(e.target.value)} rows={2} />
+
+      {/* Signature — mandatory, plain canvas capture (no library) */}
+      <div>
+        <span className="mb-1.5 block text-sm font-medium text-slate-700">{t('workflow.handover.signatureLabel')}<Req /></span>
+        <SignaturePad ref={signatureRef} onChange={onSignatureChange} />
+      </div>
+    </>
   );
 }
 
@@ -263,12 +432,42 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
     return () => { alive = false; };
   }, [ticket?.id, action]);
 
+  // Post-downtime INSPECTION checklist vs. data-driven SUGGESTED FINDINGS — two different things that
+  // must never be conflated. A long-idle car carries a fixed "look these over" list (Battery / Fluids /
+  // Brakes); that's an agenda to INSPECT, not a verdict that anything is due. So we split the ticket's
+  // trigger_detail: the downtime condition's items render as a read-only checklist, and its keywords are
+  // stripped from `suggested` so they never appear as a "tap to confirm" finding (which would ask the
+  // inspector to confirm a replacement the car's data never called for). Only genuinely-due routines
+  // (oil / battery / tyres over their limit) stay in the suggested row.
+  const inspectChecklist = useMemo(() => {
+    const items = [];
+    (ticket?.trigger_detail?.rules || []).forEach((c) => {
+      if (c?.directive !== 'post_downtime') return;
+      (c.checklist || []).forEach((it) => { if (it && !items.includes(it)) items.push(it); });
+    });
+    return items;
+  }, [ticket]);
+  const dataSuggested = useMemo(() => {
+    // A keyword flagged by the post-downtime rule is a checklist item, NOT a due verdict — strip it from
+    // the tap-to-confirm row UNLESS a data-driven rule flagged the same keyword (then it's genuinely due).
+    const downtime = new Set();
+    const dataDriven = new Set();
+    (ticket?.trigger_detail?.rules || []).forEach((c) => {
+      const bucket = c?.directive === 'post_downtime' ? downtime : dataDriven;
+      (c.finding_keywords || []).forEach((k) => bucket.add(String(k).toLowerCase()));
+    });
+    return (ticket?.suggested_findings || []).filter((k) => {
+      const low = String(k).toLowerCase();
+      return !downtime.has(low) || dataDriven.has(low);
+    });
+  }, [ticket]);
+
   // ---- form state (one bag; only the relevant keys are read per action) ----
   const [vehicleId, setVehicleId] = useState('');
   const [reason, setReason] = useState('test_drive');
   // The maintenance classification. On the inspector's decision ('decide') a test ALWAYS yields a
   // type — routine is the common case, so it's preselected; the inspector confirms or changes it.
-  const [maintType, setMaintType] = useState(() => ticket?.maintenance_type || (action === 'decide' ? 'routine' : ''));
+  const [maintType, setMaintType] = useState(() => ticket?.maintenance_type || '');
   const [complaint, setComplaint] = useState('');
   const [symptoms, setSymptoms] = useState([]); // selected finding tags (library picks + custom)
   // Symptom → Root-Cause diagnosis: { [symptomText]: { root_cause, root_cause_id } }. Shared by the
@@ -280,6 +479,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   const [notes, setNotes] = useState('');
   const [odometer, setOdometer] = useState('');
   const [vendorId, setVendorId] = useState(ticket?.vendor_id ? String(ticket.vendor_id) : '');
+  const [onsiteVendor, setOnsiteVendor] = useState(''); // serviced: free-text on-site vendor/mechanic (NOT a garage from the list)
   const [assignNote, setAssignNote] = useState(''); // assign: supervisor's reason/note when (re)assigning the garage
   const [recoveryUnit, setRecoveryUnit] = useState('');  // recovery: towing unit name/ID
   const [recoveryPhone, setRecoveryPhone] = useState(''); // recovery: operator mobile
@@ -336,6 +536,18 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   const [followLog, setFollowLog] = useState(() => ticket?.follow_ups ?? []); // live note log (newest-first below)
   const [savedAt, setSavedAt] = useState(null); // `at` of the just-saved note → green "Saved ✓" highlight
 
+  // Enterprise Handover Workflow — the full custody handover captured on BOTH 'pause' and 'resume'.
+  // `notes` (above) doubles as the pause 'reason' field; `handoverNotes` is the separate optional
+  // 'notes' field the backend also accepts on both legs.
+  const [fuelLevel, setFuelLevel] = useState('');
+  const [exteriorCondition, setExteriorCondition] = useState('');
+  const [interiorCondition, setInteriorCondition] = useState('');
+  const [damageFindings, setDamageFindings] = useState([]); // [{ location, severity, note }]
+  const [missingAccessories, setMissingAccessories] = useState([]); // [accessory_key, ...]
+  const [handoverNotes, setHandoverNotes] = useState('');
+  const signatureRef = useRef(null);
+  const [signatureReady, setSignatureReady] = useState(false); // re-rendered on stroke so invalid() reacts
+
   const garageOptions = useMemo(
     () => garages.map((g) => ({ id: g.id, label: g.name, sub: g.phone || g.type })),
     [garages],
@@ -352,7 +564,11 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   const [odoConfirmed, setOdoConfirmed] = useState(false);
   const [odoNote, setOdoNote] = useState(''); // mandatory explanation when the reading is >10 km off the previous
   const prevOdometer = useMemo(() => {
-    if (action === 'dispatch' || action === 'recovery') return ticket?.test_odometer ?? null;
+    // Dispatch (pickup FROM our park): compare against the end-of-test-drive reading when the inspector
+    // logged one — using the pre-drive anchor here would wrongly hard-block every pickup after a real
+    // test drive moved the car more than the ±5 km buffer.
+    if (action === 'dispatch') return ticket?.report_odometer ?? ticket?.test_odometer ?? null;
+    if (action === 'recovery') return ticket?.test_odometer ?? null;
     // Decide (end-of-test-drive reading) — compared to the inspector's start-of-drive anchor, so a normal
     // short test reads as clean forward travel; a big loop trips the >10 km note.
     if (action === 'decide') return ticket?.test_odometer ?? null;
@@ -363,7 +579,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
     // Re-inspection sign-off — the QC reading is compared to the last one on the chain (the garage-out
     // return reading, else the earlier captures), so it reads as clean forward continuity by default.
     if (action === 'reinspect') return ticket?.return_odometer ?? ticket?.receive_odometer ?? ticket?.dispatch_odometer ?? ticket?.test_odometer ?? null;
-    if (action === 'start') return vehicles.find((v) => v.id === ticket?.vehicle_id)?.odometer ?? null;
+    if (action === 'start') return vehicles.find((v) => String(v.id) === String(ticket?.vehicle_id))?.odometer ?? null;
     if (action === 'open') return vehicles.find((v) => String(v.id) === String(vehicleId))?.odometer ?? null;
     return null;
   }, [action, ticket, vehicles, vehicleId]);
@@ -372,13 +588,18 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
     switch (action) {
       case 'open':
       case 'start': return STAGE.TEST;
-      // Decide — the end-of-test-drive reading, forward from the start anchor (same TEST rule).
-      case 'decide': return STAGE.TEST;
+      // Decide — the end-of-test-drive reading, forward from the start anchor. The car WAS driven, so a
+      // forward jump is expected (not a strict match like the start reading).
+      case 'decide': return STAGE.TEST_END;
       // Awaiting Pickup — the driver collects the car from OUR PARK, so it shouldn't have moved: strict match.
       case 'dispatch': return STAGE.PARK_PICKUP;
       // Recovery is an emergency tow of a broken-down car (often from off-site) — keep the generic pickup rule.
       case 'recovery': return STAGE.PICKUP;
-      case 'receive': return STAGE.GARAGE_IN;
+      // A recovery-towed leg (ticket.is_recovery — always reflects the CURRENT pickup, never a stale
+      // earlier one, since dispatch() clears the recovery flag when a driver takes over) doesn't
+      // accumulate mileage under its own power: the same reading at arrival is legitimate, only a
+      // decrease isn't. A driven leg keeps the strict "must be higher" rule.
+      case 'receive': return ticket?.is_recovery ? STAGE.GARAGE_IN_RECOVERY : STAGE.GARAGE_IN;
       // Collect-from-garage — the car leaves the garage: garage-OUT continuity (forward = a road test,
       // tolerance waived; backward still flags a Discrepancy).
       case 'collectFromGarage': return STAGE.GARAGE_OUT;
@@ -504,7 +725,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
       case 'typechange':
         return { url: `${base}/${ticket.id}/type`, body: { maintenance_type: maintType }, method: 'patch' };
       case 'decide':
-        return { url: `${base}/${ticket.id}/report`, body: { requires_maintenance: requiresMaintenance, symptoms, causes: buildCauses(symptoms), fault_severity: requiresMaintenance ? (faultSeverity || null) : null, recommended_action: recommended || null, notes: notes || null, maintenance_type: maintType || null, repair_location: requiresMaintenance ? repairLocation : null, report_odometer: odometer ? Number(odometer) : null, odometer_note: odoNote.trim() || null } };
+        return { url: `${base}/${ticket.id}/report`, body: { requires_maintenance: requiresMaintenance, symptoms, causes: buildCauses(symptoms), fault_severity: requiresMaintenance ? (faultSeverity || null) : null, recommended_action: recommended || null, notes: notes || null, maintenance_type: maintType || null, repair_location: requiresMaintenance ? repairLocation : null, report_odometer: odometer ? Number(odometer) : null, odometer_note: odoNote.trim() || null, odometer_confirmed: odoAckRequired ? odoConfirmed : null } };
       case 'delegate':
         return { url: `${base}/${ticket.id}/delegate`, body: { driver_id: Number(driverId), delegation_task: delegationTask } };
       case 'assign':
@@ -533,11 +754,20 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
         };
       case 'serviced':
         // On-Site (mobile) lane — the entire back-half of the workflow collapsed into one step:
-        // no garage, no re-inspection, no QA. Cost/vendor/notes are all optional.
-        return { url: `${base}/${ticket.id}/mark-serviced`, body: { notes: notes || null, cost: cost === '' ? null : Number(cost), vendor_id: vendorId ? Number(vendorId) : null } };
+        // no garage, no re-inspection, no QA. Cost/vendor/notes are all optional. The vendor is a
+        // free-text on-site mechanic name (no garage picker — the car never left).
+        return { url: `${base}/${ticket.id}/mark-serviced`, body: { notes: notes || null, cost: cost === '' ? null : Number(cost), vendor_name: onsiteVendor.trim() || null } };
       case 'requestinvoice':
         // Path A — ask the garage for an itemised invoice (the team is alerted to chase it).
         return { url: `${base}/${ticket.id}/request-invoice`, body: {} };
+      case 'pause':
+      case 'resume':
+        // Pause / Resume — Enterprise Handover Workflow: both legs are always multipart (mandatory
+        // odometer photo + signature), so the JSON body here is unused — see submit().
+        return { url: `${base}/${ticket.id}/${action}`, body: {} };
+      case 'markReturned':
+        // Vehicle Physically Returned — a light checkpoint, no odometer/handover required.
+        return { url: `${base}/${ticket.id}/mark-returned`, body: { note: notes.trim() || null } };
       case 'approveRepair':
         // Supervisor Video-Review — APPROVE (video reviewed) → advance to re-inspection. No fields.
         return { url: `${base}/${ticket.id}/approve-repair`, body: {} };
@@ -559,7 +789,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
         if (!reFail) {
           // PASS — every fault verified fixed → car returns to service. If the invoice isn't ready, defer
           // it: the car still goes back, the ticket parks in awaiting_invoice (never blocks on paperwork).
-          return { url: `${base}/${ticket.id}/close`, body: { cost: cost === '' ? null : Number(cost), vendor_id: vendorId ? Number(vendorId) : null, actual_in_date: inDate || null, notes: notes || null, defer_invoice: deferInvoice, final_odometer: odometer ? Number(odometer) : null, odometer_note: odoNote.trim() || null } };
+          return { url: `${base}/${ticket.id}/close`, body: { cost: cost === '' ? null : Number(cost), vendor_id: vendorId ? Number(vendorId) : null, actual_in_date: inDate || null, notes: notes || null, defer_invoice: deferInvoice, final_odometer: odometer ? Number(odometer) : null, odometer_note: odoNote.trim() || null, odometer_confirmed: odoAckRequired ? odoConfirmed : null } };
         }
         // FAIL — some faults still broken → back to the supervisor for re-dispatch, with per-fault blame.
         const failed_notes = {};
@@ -585,12 +815,13 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
     if (action === 'open') return !vehicleId || !odometer || Number(odometer) < 1 || !photo || compressing || odoGateBlocked;
     if (action === 'start') return !odometer || Number(odometer) < 1 || !photo || compressing || odoGateBlocked;
     if (action === 'typechange') return !maintType;
-    // Opening a ticket requires BOTH a classification and a mandatory fault-severity grade
-    // (a cleared diagnostic needs neither). When it opens a ticket, every symptom that has a preset
-    // cause-list must also be diagnosed (Symptom → Root-Cause). A cleared diagnostic skips the cause gate.
-    // The end-of-test-drive odometer is OPTIONAL here (the inspector may record it), but if entered it must
-    // clear the same continuity/>10 km note gate as every other capture (odoGateBlocked is false when blank).
-    if (action === 'decide') return (requiresMaintenance && (!maintType || !faultSeverity || !rootCausesComplete(symptoms, faultCausesCatalog, causes))) || odoGateBlocked;
+    // Opening a ticket requires a mandatory fault-severity grade (a cleared diagnostic needs none).
+    // When it opens a ticket, every symptom that has a preset cause-list must also be diagnosed
+    // (Symptom → Root-Cause). A cleared diagnostic skips the cause gate. Classification (maintType)
+    // is no longer gated here — it can be set later. The end-of-test-drive odometer is OPTIONAL here
+    // (the inspector may record it), but if entered it must clear the same continuity/>10 km note gate
+    // as every other capture (odoGateBlocked is false when blank).
+    if (action === 'decide') return (requiresMaintenance && (!faultSeverity || !rootCausesComplete(symptoms, faultCausesCatalog, causes))) || odoGateBlocked;
     if (action === 'followup') return !followNote.trim();
     if (action === 'dispatch') return !odometer || Number(odometer) < 1 || !photo || compressing || odoGateBlocked;
     // Recovery (towing): the odometer + its photo AND the recovery unit name are all mandatory (the
@@ -627,6 +858,13 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
     // Collect from garage: the garage-OUT odometer AND the "received from garage" photo are both mandatory.
     if (action === 'collectFromGarage') return !odometer || Number(odometer) < 1 || !photo || compressing || odoGateBlocked;
     if (action === 'arriveAtPark') return !photo || compressing;
+    // Pause / Resume — Enterprise Handover Workflow: odometer + photo + fuel + both conditions +
+    // signature are all mandatory (matches the backend's `required` validation on both legs).
+    if (action === 'pause' || action === 'resume') {
+      return !odometer || Number(odometer) < 1 || !photo || compressing
+        || !fuelLevel || !exteriorCondition.trim() || !interiorCondition.trim()
+        || !signatureReady;
+    }
     return false;
   }
 
@@ -662,7 +900,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
         resp = await api.patch(r.url, r.body);
       } else if (r.method === 'put') {
         resp = await api.put(r.url, r.body);
-      } else if ((action === 'dispatch' && photo?.blob) || (action === 'recovery' && photo?.blob) || (action === 'receive' && photo?.blob) || action === 'ready' || (isTestStart && photo?.blob) || (action === 'collectFromGarage' && photo?.blob) || (action === 'arriveAtPark' && photo?.blob)) {
+      } else if ((action === 'dispatch' && photo?.blob) || (action === 'recovery' && photo?.blob) || (action === 'receive' && photo?.blob) || action === 'ready' || (isTestStart && photo?.blob) || (action === 'collectFromGarage' && photo?.blob) || (action === 'arriveAtPark' && photo?.blob) || (action === 'decide' && photo?.blob) || ((action === 'pause' || action === 'resume') && photo?.blob)) {
         const fd = new FormData();
         if (action === 'dispatch') {
           fd.append('dispatch_odometer', String(Number(odometer)));
@@ -676,8 +914,6 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
           fd.append('recovery_unit_name', recoveryUnit.trim());
           if (recoveryPhone.trim()) fd.append('recovery_unit_phone', recoveryPhone.trim());
           if (!ticket?.vendor_id && vendorId) fd.append('vendor_id', String(Number(vendorId)));
-          if (outDate) fd.append('out_date', outDate);
-          if (returnDate) fd.append('expected_return_date', returnDate);
         } else if (action === 'receive') {
           // Arrival check-in — the mandatory arrival odometer + its photo, plus optional intake notes.
           fd.append('receive_odometer', String(Number(odometer)));
@@ -701,6 +937,43 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
           fd.append('return_odometer', String(Number(odometer)));
         } else if (action === 'arriveAtPark') {
           if (notes) fd.append('notes', notes);
+        } else if (action === 'pause' || action === 'resume') {
+          // Enterprise Handover Workflow — the full custody handover, mirrored field-for-field against
+          // MaintenanceWorkflowController::pause()/resume(). `notes` (state) doubles as pause's optional
+          // 'reason'; `handoverNotes` is the separate optional 'notes' field both legs accept.
+          fd.append(action === 'pause' ? 'pause_odometer' : 'resume_odometer', String(Number(odometer)));
+          fd.append('fuel_level', fuelLevel);
+          fd.append('exterior_condition', exteriorCondition.trim());
+          fd.append('interior_condition', interiorCondition.trim());
+          damageFindings.forEach((d, i) => {
+            if (!d.location?.trim()) return;
+            fd.append(`damage_findings[${i}][location]`, d.location.trim());
+            fd.append(`damage_findings[${i}][severity]`, d.severity || 'routine');
+            if (d.note?.trim()) fd.append(`damage_findings[${i}][note]`, d.note.trim());
+          });
+          missingAccessories.forEach((a) => fd.append('missing_accessories[]', a));
+          if (action === 'pause' && notes.trim()) fd.append('reason', notes.trim());
+          if (handoverNotes.trim()) fd.append('notes', handoverNotes.trim());
+          const sigBlob = await signatureRef.current?.getBlob();
+          if (sigBlob) fd.append('signature', sigBlob, 'signature.png');
+        } else if (action === 'decide') {
+          // Submit Report — same fields as the JSON body in resolve(), multipart only because the
+          // odometer photo rides along. Laravel's 'boolean' rule accepts 1/0/"1"/"0"/true/false but NOT
+          // the strings "true"/"false" that String(bool) yields — and FormData can't carry a real bool —
+          // so send '1'/'0' (mirrors odometer_confirmed below).
+          fd.append('requires_maintenance', requiresMaintenance ? '1' : '0');
+          symptoms.forEach((s) => fd.append('symptoms[]', s));
+          buildCauses(symptoms).forEach((c, i) => {
+            fd.append(`causes[${i}][symptom]`, c.symptom);
+            if (c.root_cause) fd.append(`causes[${i}][root_cause]`, c.root_cause);
+            if (c.root_cause_id != null) fd.append(`causes[${i}][root_cause_id]`, String(c.root_cause_id));
+          });
+          if (requiresMaintenance && faultSeverity) fd.append('fault_severity', faultSeverity);
+          if (recommended) fd.append('recommended_action', recommended);
+          if (notes) fd.append('notes', notes);
+          if (maintType) fd.append('maintenance_type', maintType);
+          if (requiresMaintenance && repairLocation) fd.append('repair_location', repairLocation);
+          if (odometer) fd.append('report_odometer', String(Number(odometer)));
         } else {
           // start | open — the inspector's odometer reading at test-drive start (the chain anchor).
           fd.append('test_odometer', String(Number(odometer)));
@@ -713,10 +986,25 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
         // Odometer note — the mandatory explanation for a >10 km gap from the previous reading. Applies
         // to every odometer-capturing step; only ever set when the gate demanded it, so it's blank otherwise.
         if (odoNote.trim()) fd.append('odometer_note', odoNote.trim());
+        // The "I've checked — this reading is correct" tick — sent whenever the continuity nag asked for
+        // it, so the Mileage oversight board (/oversight/mileage) can show it was actively acknowledged.
+        // Laravel's 'boolean' rule only accepts 1/0/"1"/"0"/true/false — NOT the strings "true"/"false" that
+        // String(bool) would produce, which FormData is otherwise limited to since it can't carry a real bool.
+        if (odoAckRequired) fd.append('odometer_confirmed', odoConfirmed ? '1' : '0');
         if (photo?.blob) fd.append('odometer_photo', photo.blob, 'odometer.jpg');
         resp = await api.post(r.url, fd);
       } else {
         resp = await api.post(r.url, r.body);
+      }
+
+      // Resume may come back with blocked_by_incident: true — the handover was saved and the request
+      // is a 200, but the transition is HELD pending a supervisor's acknowledgement (a discrepancy
+      // exceeded the configured thresholds). This is an expected, non-error outcome: surface it as a
+      // distinct message instead of the normal "resumed" success toast; the ticket stays paused.
+      if (action === 'resume' && resp?.data?.data?.blocked_by_incident) {
+        const who = ticket ? (ticket.plate || `#${ticket.id}`) : 'Ticket';
+        onDone?.(t('workflow.success.resumeBlockedByIncident', { who }));
+        return;
       }
 
       // Follow-up is a running log, not a one-shot transition: keep the modal open so the writer sees
@@ -758,6 +1046,9 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
       case 'assign': return t('workflow.success.assign', { who });
       case 'lineitems': return t('workflow.success.lineitems', { who });
       case 'requestinvoice': return t('workflow.success.requestinvoice', { who });
+      case 'pause': return t('workflow.success.pause', { who });
+      case 'resume': return t('workflow.success.resume', { who });
+      case 'markReturned': return t('workflow.success.markReturned', { who });
       case 'approveRepair': return t('workflow.success.approveRepair', { who });
       case 'requestRefix': return t('workflow.success.requestRefix', { who });
       case 'collectFromGarage': return t('workflow.success.collectFromGarage', { who });
@@ -781,7 +1072,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
     <Modal
       open
       onClose={onClose}
-      size={['decide', 'ready', 'lineitems'].includes(action) ? 'lg' : 'md'}
+      size={['decide', 'ready', 'lineitems', 'pause', 'resume'].includes(action) ? 'lg' : 'md'}
       title={t(`workflow.meta.${action}.title`)}
       subtitle={ticket ? `${ticket.plate || `#${ticket.id}`}${ticket.car ? ` · ${ticket.car}` : ''}` : t(`workflow.meta.${action}.sub`)}
       footer={
@@ -803,7 +1094,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
         {ticket?.findings?.length > 0 && action !== 'decide' && (
           <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3">
             <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{t('workflow.field.findings')}</p>
-            <FindingsList findings={ticket.findings} tasks={ticket.tasks} />
+            <FindingsList findings={ticket.findings} tasks={ticket.tasks} paused={isPaused(ticket)} />
           </div>
         )}
 
@@ -815,22 +1106,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
             <span className="mb-1.5 block text-sm font-medium text-slate-700">
               {t('workflow.type.label')}<Req />
             </span>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {visibleTypes.map((ty) => {
-                const active = maintType === ty.value;
-                return (
-                  <button
-                    key={ty.value}
-                    type="button"
-                    onClick={() => setMaintType(ty.value)}
-                    className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-start transition ${active ? 'border-indigo-500 bg-indigo-50 ring-1 ring-indigo-500' : 'border-slate-200 bg-white hover:border-slate-300'}`}
-                  >
-                    <span className="shrink-0 text-base leading-none">{ty.icon}</span>
-                    <span className={`min-w-0 truncate text-xs font-medium ${active ? 'text-indigo-800' : 'text-slate-700'}`}>{t(`workflow.type.${ty.value}`)}</span>
-                  </button>
-                );
-              })}
-            </div>
+            <MaintenanceTypeCards types={visibleTypes} value={maintType} onChange={setMaintType} t={t} />
             {ticket?.maintenance_type && ticket.maintenance_type !== maintType && (
               <p className="mt-1.5 text-xs text-slate-400">
                 {t('workflow.type.current')} <span className="font-medium text-slate-600">{t(`workflow.type.${ticket.maintenance_type}`)}</span>
@@ -897,10 +1173,32 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
               <Input label={t('workflow.field.reportOdometerKm')} type="number" min="1" value={odometer} onChange={(e) => setOdometer(e.target.value)} placeholder={ticket?.test_odometer ? t('workflow.ph.startedAt', { km: Number(ticket.test_odometer).toLocaleString() }) : t('workflow.ph.odometerExample')} />
               <OdometerContinuityHint previous={prevOdometer} continuity={continuity} confirmed={odoConfirmed} onConfirm={setOdoConfirmed} noteRequired={odoNoteRequired} note={odoNote} onNote={setOdoNote} ignoreTolerance={ignoreOdoTolerance} t={t} />
               <p className="mt-1.5 text-xs text-slate-400">{t('workflow.hint.reportOdometer')}</p>
+              <div className="mt-3">
+                <span className="mb-1 block text-sm font-medium text-slate-700">{t('workflow.field.odometerPhoto')}</span>
+                {photoTile}
+              </div>
             </div>
+            {/* Post-downtime INSPECTION checklist — what to look over on a long-idle car. Read-only: it
+                tells the inspector what to check, it does NOT pre-log any finding. Anything actually found
+                gets tapped in the Findings picker below. */}
+            {inspectChecklist.length > 0 && (
+              <div className="rounded-xl border border-sky-200 bg-sky-50/70 p-3">
+                <p className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-sky-700">
+                  <Icon.Shield className="h-3.5 w-3.5" /> {t('workflow.field.inspectChecklistTitle')}
+                </p>
+                <p className="mb-2 text-xs text-sky-800/80">{t('workflow.field.inspectChecklistHint')}</p>
+                <ul className="flex flex-wrap gap-1.5">
+                  {inspectChecklist.map((item) => (
+                    <li key={item} className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1 text-xs font-medium text-sky-800 ring-1 ring-sky-200">
+                      <Icon.Search className="h-3 w-3 text-sky-500" /> {item}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             <div>
               <span className="mb-1.5 block text-sm font-medium text-slate-700">{t('workflow.field.findingsTapAll')}</span>
-              <FindingsPicker catalog={findingsCatalog} keywordMeta={keywordMeta} value={symptoms} onChange={setSymptoms} locked={lockedFindings} suggested={ticket?.suggested_findings || []} statusConditions={diagConditions} />
+              <FindingsPicker catalog={findingsCatalog} keywordMeta={keywordMeta} value={symptoms} onChange={setSymptoms} locked={lockedFindings} suggested={dataSuggested} statusConditions={diagConditions} />
             </div>
             {/* Symptom → Root-Cause — the mandatory diagnostic step: name the probable cause per symptom */}
             {symptoms.length > 0 && (
@@ -918,28 +1216,16 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
             <Input label={t('workflow.field.recommendedAction')} value={recommended} onChange={(e) => setRecommended(e.target.value)} placeholder={t('workflow.ph.replacePads')} />
             <Textarea label={t('common.notes')} value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} placeholder={t('workflow.ph.testDriveNotes')} />
 
-            {/* Inspector's official classification — the authoritative source; Driver's request carries none */}
-            <div>
-              <span className="mb-1.5 block text-sm font-medium text-slate-700">
-                {t('workflow.type.label')}<Req />
-              </span>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                {visibleTypes.map((ty) => {
-                  const active = maintType === ty.value;
-                  return (
-                    <button
-                      key={ty.value}
-                      type="button"
-                      onClick={() => setMaintType(ty.value)}
-                      className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-start transition ${active ? 'border-indigo-500 bg-indigo-50 ring-1 ring-indigo-500' : 'border-slate-200 bg-white hover:border-slate-300'}`}
-                    >
-                      <span className="shrink-0 text-base leading-none">{ty.icon}</span>
-                      <span className={`min-w-0 truncate text-xs font-medium ${active ? 'text-indigo-800' : 'text-slate-700'}`}>{t(`workflow.type.${ty.value}`)}</span>
-                    </button>
-                  );
-                })}
+            {/* Inspector's official classification — the authoritative source; Driver's request carries none.
+                Only relevant when the car actually needs work: hidden once "No maintenance needed" is chosen. */}
+            {requiresMaintenance && (
+              <div>
+                <span className="mb-1.5 block text-sm font-medium text-slate-700">
+                  {t('workflow.type.label')}<Req />
+                </span>
+                <MaintenanceTypeCards types={visibleTypes} value={maintType} onChange={setMaintType} t={t} />
               </div>
-            </div>
+            )}
 
             {/* The decision — only this turns the diagnostic into a real ticket */}
             <div className="border-t border-slate-100 pt-4">
@@ -1027,7 +1313,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                 can still send it elsewhere (and the failure badge shows who to blame). */}
             {ticket?.workflow_status === 'reinspection_failed' && ticket?.garage && (
               <div className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700 ring-1 ring-inset ring-rose-600/15">
-                ⛔ {t('workflow.hint.redispatchSameGarage', { garage: ticket.garage })}
+                <span aria-hidden>⛔</span> {t('workflow.hint.redispatchSameGarage', { garage: ticket.garage })}
               </div>
             )}
             <div>
@@ -1046,7 +1332,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
               />
             )}
             <div className="rounded-lg bg-indigo-50/70 px-3 py-2 text-xs text-indigo-700 ring-1 ring-inset ring-indigo-600/10">
-              🔮 {t('workflow.hint.autoReturnEstimate')}
+              <span aria-hidden>🔮</span> {t('workflow.hint.autoReturnEstimate')}
             </div>
           </>
         )}
@@ -1114,9 +1400,22 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
               maxLength={40}
             />
 
-            {/* The odometer/condition gate still applies before the car leaves — exactly as for a driver. */}
-            <Input label={t('workflow.field.odometerKm')} type="number" min="1" required value={odometer} onChange={(e) => setOdometer(e.target.value)} placeholder={t('workflow.ph.odometerExample')} />
-            <OdometerContinuityHint previous={prevOdometer} continuity={continuity} confirmed={odoConfirmed} onConfirm={setOdoConfirmed} noteRequired={odoNoteRequired} note={odoNote} onNote={setOdoNote} ignoreTolerance={ignoreOdoTolerance} t={t} />
+            {/* The car is DISABLED and being towed — it isn't driven onto the truck, so the mileage can't
+                change between the last recorded reading and this moment. Locked to that value (no manual
+                entry) instead of an editable field with a continuity hint, since there's nothing to confirm.
+                Falls back to a plain editable field on a ticket with no prior reading to lock to. */}
+            {prevOdometer != null ? (
+              <div>
+                <span className="mb-1 block text-sm font-medium text-slate-700">{t('workflow.field.odometerKm')}</span>
+                <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm">
+                  <Icon.Gauge className="h-4 w-4 shrink-0 text-slate-400" />
+                  <span className="font-mono font-semibold text-slate-700">{odometer ? Number(odometer).toLocaleString() : '—'} {t('workflow.stage.kmShort')}</span>
+                  <span className="ms-auto text-[11px] text-slate-400">{t('workflow.recovery.odometerLocked')}</span>
+                </div>
+              </div>
+            ) : (
+              <Input label={t('workflow.field.odometerKm')} type="number" min="1" required value={odometer} onChange={(e) => setOdometer(e.target.value)} placeholder={t('workflow.ph.odometerExample')} />
+            )}
             <div>
               <span className="mb-1 block text-sm font-medium text-slate-700">{t('workflow.recovery.photoLabel')}<Req /></span>
               {photoTile}
@@ -1125,13 +1424,19 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
             {/* Garage — decoupled from the classic "Assign Garage" screen: when the ticket doesn't have one
                 yet (the common breakdown case, dispatched straight from inspection_pending), pick it right
                 here as part of this same action. Once a garage IS already set (the classic assign step ran,
-                or a re-dispatch), it's shown read-only — this form only ever tows to the assigned garage. */}
+                or a re-dispatch), it's shown read-only — this form only ever tows to the assigned garage.
+                Same transfer-aware display as the driver dispatch form above: if a supervisor already moved
+                the car's destination (transfer_to_garage differs from its current garage), that wins here
+                too, with an explicit "from {garage} →" hint — never a bare garage name with no context. */}
             {ticket?.vendor_id ? (
               <div>
                 <span className="mb-1 block text-sm font-medium text-slate-700">{t('workflow.field.destinationGarage')}</span>
                 <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm">
                   <Icon.Wrench className="h-4 w-4 shrink-0 text-slate-400" />
-                  <span className="font-medium text-slate-700">{ticket.garage}</span>
+                  <span className="font-medium text-slate-700">{ticket.transfer_to_garage || ticket.garage}</span>
+                  {ticket.transfer_to_garage && ticket.garage && (
+                    <span className="text-[11px] text-slate-400">{t('workflow.hint.movingFromGarage', { garage: ticket.garage })}</span>
+                  )}
                   <span className="ms-auto text-[11px] text-slate-400">{t('workflow.hint.garageBySupervisor')}</span>
                 </div>
               </div>
@@ -1142,10 +1447,6 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                 <p className="mt-1.5 text-xs text-slate-400">{t('workflow.recovery.pickGarageHint')}</p>
               </div>
             )}
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Input label={t('workflow.field.dateLeft')} type="date" value={outDate} onChange={(e) => setOutDate(e.target.value)} />
-              <Input label={t('workflow.field.expectedReturn')} type="date" value={returnDate} onChange={(e) => setReturnDate(e.target.value)} />
-            </div>
             <p className="text-xs text-slate-400">{t('workflow.recovery.statusNote')}</p>
           </>
         )}
@@ -1207,7 +1508,8 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                         value={repairTimes[f.text] ?? ''}
                         onChange={(e) => setRepairTimes((p) => ({ ...p, [f.text]: e.target.value }))}
                         placeholder="0"
-                        className="w-16 rounded-lg border border-slate-300 px-2 py-1 text-sm tabular-nums text-slate-700 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                        aria-label={`${f.text} · ${t('workflow.field.hoursShort')}`}
+                        className="w-16 rounded-lg border border-slate-300 px-2 py-1 text-sm tabular-nums text-slate-700 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
                       />
                       <span className="text-xs text-slate-400">{t('workflow.field.hoursShort')}</span>
                       {/* Cost (AED) */}
@@ -1218,7 +1520,8 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                         value={repairCosts[f.text] ?? ''}
                         onChange={(e) => setRepairCosts((p) => ({ ...p, [f.text]: e.target.value }))}
                         placeholder="0.00"
-                        className="w-24 rounded-lg border border-slate-300 px-2 py-1 text-sm tabular-nums text-slate-700 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                        aria-label={`${f.text} · ${t('workflow.field.aedShort')}`}
+                        className="w-24 rounded-lg border border-slate-300 px-2 py-1 text-sm tabular-nums text-slate-700 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
                       />
                       <span className="text-xs text-slate-400">{t('workflow.field.aedShort')}</span>
                     </div>
@@ -1259,10 +1562,14 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
               onChange={(e) => setCost(e.target.value)}
               placeholder={t('workflow.ph.costExample')}
             />
-            <div>
-              <span className="mb-1 block text-sm font-medium text-slate-700">{t('workflow.serviced.vendorLabel')}</span>
-              <SearchSelect value={vendorId} onChange={setVendorId} options={garageOptions} placeholder={t('workflow.ph.pickGarage')} />
-            </div>
+            {/* On-site work never goes to a garage, so this is a free-text vendor/mechanic name,
+                NOT a pick from the garage list. */}
+            <Input
+              label={t('workflow.serviced.vendorLabel')}
+              value={onsiteVendor}
+              onChange={(e) => setOnsiteVendor(e.target.value)}
+              placeholder={t('workflow.serviced.vendorPlaceholder')}
+            />
             <Textarea label={t('workflow.field.notesOptional')} value={notes} onChange={(e) => setNotes(e.target.value)} />
           </div>
         )}
@@ -1281,6 +1588,99 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
             {ticket?.invoice_requested_at && (
               <p className="text-xs text-amber-600">{t('workflow.requestInvoice.already')}</p>
             )}
+          </div>
+        )}
+
+        {/* Pause Maintenance & Return to Service — pull a mid-repair car out for a customer. The ticket
+            keeps ALL its state and remembers the current stage; Resume continues from exactly here. */}
+        {action === 'pause' && (
+          <div className="space-y-3">
+            <div className="rounded-lg bg-amber-50/70 px-3 py-2 text-sm text-amber-700 ring-1 ring-inset ring-amber-600/10">
+              {t('workflow.pause.banner')}
+            </div>
+            {ticket?.position?.label && (
+              <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm">
+                <Icon.Wrench className="h-4 w-4 shrink-0 text-slate-400" />
+                <span className="text-slate-500">{t('workflow.pause.willResumeAt')}</span>
+                <span className="font-semibold text-slate-700">{ticket.position.label}</span>
+              </div>
+            )}
+            <Textarea
+              label={t('workflow.pause.reasonLabel')}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={2}
+              placeholder={t('workflow.pause.reasonPlaceholder')}
+            />
+
+            {/* Enterprise Handover Workflow — the outbound custody handover: odometer + photo mandatory */}
+            <div className="border-t border-slate-100 pt-3">
+              <Input label={t('workflow.handover.odometerLabel')} type="number" min="1" required value={odometer} onChange={(e) => setOdometer(e.target.value)} placeholder={t('workflow.ph.odometerExample')} />
+              <div className="mt-3">
+                <span className="mb-1 block text-sm font-medium text-slate-700">{t('workflow.field.odometerPhoto')}<Req /></span>
+                {photoTile}
+              </div>
+            </div>
+            <HandoverFields
+              fuelLevel={fuelLevel} onFuelLevel={setFuelLevel}
+              exteriorCondition={exteriorCondition} onExteriorCondition={setExteriorCondition}
+              interiorCondition={interiorCondition} onInteriorCondition={setInteriorCondition}
+              damageFindings={damageFindings} onDamageFindings={setDamageFindings}
+              missingAccessories={missingAccessories} onMissingAccessories={setMissingAccessories}
+              handoverNotes={handoverNotes} onHandoverNotes={setHandoverNotes}
+              signatureRef={signatureRef} onSignatureChange={setSignatureReady}
+              t={t}
+            />
+          </div>
+        )}
+
+        {/* Resume Maintenance — the car is back; the SAME ticket continues from the exact paused stage.
+            Enterprise Handover Workflow: the return handover is mandatory before it can resume. */}
+        {action === 'resume' && (
+          <div className="space-y-3">
+            <div className="rounded-lg bg-indigo-50/70 px-3 py-2 text-sm text-indigo-700 ring-1 ring-inset ring-indigo-600/10">
+              {t('workflow.resume.banner', { stage: ticket?.paused_from_status_label || t('workflow.resume.previousStage') })}
+            </div>
+            {ticket?.paused_reason && (
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm">
+                <span className="text-slate-500">{t('workflow.pause.reasonWas')} </span>
+                <span className="font-medium text-slate-700">{ticket.paused_reason}</span>
+              </div>
+            )}
+
+            {/* Enterprise Handover Workflow — the return custody handover: odometer + photo mandatory */}
+            <div className="border-t border-slate-100 pt-3">
+              <Input label={t('workflow.handover.odometerLabel')} type="number" min="1" required value={odometer} onChange={(e) => setOdometer(e.target.value)} placeholder={ticket?.last_pause_handover?.odometer_reading ? t('workflow.ph.startedAt', { km: Number(ticket.last_pause_handover.odometer_reading).toLocaleString() }) : t('workflow.ph.odometerExample')} />
+              <div className="mt-3">
+                <span className="mb-1 block text-sm font-medium text-slate-700">{t('workflow.field.odometerPhoto')}<Req /></span>
+                {photoTile}
+              </div>
+            </div>
+            <HandoverFields
+              fuelLevel={fuelLevel} onFuelLevel={setFuelLevel}
+              exteriorCondition={exteriorCondition} onExteriorCondition={setExteriorCondition}
+              interiorCondition={interiorCondition} onInteriorCondition={setInteriorCondition}
+              damageFindings={damageFindings} onDamageFindings={setDamageFindings}
+              missingAccessories={missingAccessories} onMissingAccessories={setMissingAccessories}
+              handoverNotes={handoverNotes} onHandoverNotes={setHandoverNotes}
+              signatureRef={signatureRef} onSignatureChange={setSignatureReady}
+              t={t}
+            />
+          </div>
+        )}
+
+        {/* Vehicle Physically Returned — a light checkpoint, no odometer/handover required yet. */}
+        {action === 'markReturned' && (
+          <div className="space-y-3">
+            <div className="rounded-lg bg-amber-50/70 px-3 py-2 text-sm text-amber-700 ring-1 ring-inset ring-amber-600/10">
+              {t('workflow.markReturned.hint')}
+            </div>
+            <Textarea
+              label={t('workflow.markReturned.noteLabel')}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={3}
+            />
           </div>
         )}
 
@@ -1397,8 +1797,8 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                             <span className="block truncate text-sm font-medium text-slate-800" title={task.symptom}>{task.symptom}</span>
                             {/* Prior blame — this fault already flunked a re-inspection at a garage before. */}
                             {failCount > 0 && (
-                              <span className="mt-0.5 inline-flex items-center gap-1 rounded-md bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-700">
-                                ⛔ {t('workflow.reinspect.unresolvedBadge', { n: failCount, garage: task.last_failed_garage || t('workflow.task.unassigned') })}
+                              <span className="mt-0.5 inline-flex items-center gap-1 rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-700 ring-1 ring-inset ring-red-600/20">
+                                <span aria-hidden>⛔</span> {t('workflow.reinspect.unresolvedBadge', { n: failCount, garage: task.last_failed_garage || t('workflow.task.unassigned') })}
                               </span>
                             )}
                           </span>
@@ -1425,7 +1825,8 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                             value={brokenNote[task.id] ?? ''}
                             onChange={(e) => setBrokenNote((p) => ({ ...p, [task.id]: e.target.value }))}
                             placeholder={t('workflow.reinspect.faultNotePh')}
-                            className="mt-2 w-full rounded-lg border border-red-200 bg-white px-2.5 py-1.5 text-sm text-slate-700 focus:border-red-400 focus:outline-none focus:ring-1 focus:ring-red-400"
+                            aria-label={t('workflow.reinspect.faultNotePh')}
+                            className="mt-2 w-full rounded-lg border border-red-200 bg-white px-2.5 py-1.5 text-sm text-slate-700 outline-none transition focus:border-red-400 focus:ring-2 focus:ring-red-400/20"
                           />
                         )}
                       </div>
@@ -1478,7 +1879,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                 </div>
                 {reFailGarageChanged && (
                   <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 ring-1 ring-inset ring-amber-600/15">
-                    ⚠️ {t('workflow.reinspect.garageChangeAlert')}
+                    <span aria-hidden>⚠️</span> {t('workflow.reinspect.garageChangeAlert')}
                   </div>
                 )}
                 <Textarea
