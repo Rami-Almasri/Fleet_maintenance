@@ -41,6 +41,10 @@ class RolesAndPermissionsSeeder extends Seeder
         'maintenance.initiate',              // open a maintenance workflow ticket + file the test-drive report + re-inspect (Inspector)
         'maintenance.logistics',             // advance a ticket through dispatch → under-repair → ready (Logistics/Delivery)
         'maintenance.delegate',              // Supervisor: delegate a driver to pickup/dropoff, reassign + ping ("Where is the car?")
+        'parts.view',                        // see part requests / purchases / vehicle part history
+        'parts.request',                     // create a part request (customer walk-in or garage diagnosis)
+        'parts.purchase',                    // record a purchase (garage or supplier) + install the part
+        'parts.investigate',                 // admin: review duplicate/recurrence alerts + approve exceptions
         'registration.view', 'registration.manage',
         'insights.view',                     // anomalies, data-health, status-mismatch
         'dashboard.view',                    // dashboard KPIs + fleet expiring
@@ -69,6 +73,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'logistics.view', 'logistics.dispatch', 'logistics.claim',
             'maintenance.view', 'maintenance.approve', 'maintenance.manage',
             'maintenance.initiate', 'maintenance.logistics', 'maintenance.delegate',
+            'parts.view', 'parts.request', 'parts.purchase', 'parts.investigate',
             'registration.view', 'registration.manage',
             'insights.view', 'dashboard.view', 'sync.run',
         ],
@@ -84,6 +89,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'operations.manage',
             'logistics.view', 'logistics.dispatch', 'logistics.claim',
             'registration.view', 'maintenance.view', 'dashboard.view',
+            'parts.view', 'parts.request', 'parts.purchase',
         ],
         // Garage / workshop coordination and bill approvals.
         'maintenance' => [
@@ -92,6 +98,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'reminders.view', 'reminders.manage',
             'maintenance.view', 'maintenance.approve', 'maintenance.manage',
             'maintenance.initiate', 'maintenance.logistics', 'maintenance.delegate',
+            'parts.view', 'parts.request', 'parts.purchase', 'parts.investigate',
             'logistics.view',
             'registration.view', 'insights.view', 'dashboard.view',
         ],
@@ -104,6 +111,7 @@ class RolesAndPermissionsSeeder extends Seeder
         'supervisor' => [
             'vehicles.view', 'vendors.view', 'drivers.view',
             'maintenance.view', 'maintenance.delegate', 'maintenance.logistics',
+            'parts.view', 'parts.request',
             'logistics.view', 'logistics.dispatch',
             'dashboard.view',
         ],
@@ -112,6 +120,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'vehicles.view', 'vendors.view',
             'inspections.view', 'inspections.manage',
             'maintenance.view', 'maintenance.initiate',
+            'parts.view', 'parts.request',
             'logistics.view',
             'dashboard.view',
         ],
@@ -121,6 +130,7 @@ class RolesAndPermissionsSeeder extends Seeder
         'logistics' => [
             'vehicles.view', 'vendors.view',
             'maintenance.view', 'maintenance.logistics',
+            'parts.view', 'parts.request',
             'logistics.view', 'logistics.dispatch', 'logistics.claim',
             'dashboard.view',
         ],
@@ -129,6 +139,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'vehicles.view', 'customers.view', 'customers.manage',
             'contracts.view', 'booking_readiness.view', 'inspections.view', 'billing.view', 'billing.manage',
             'reminders.view', 'reminders.manage',
+            'parts.view',
             'insights.view', 'dashboard.view',
         ],
         // Read-only across the board.
@@ -136,7 +147,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'vehicles.view', 'drivers.view', 'vendors.view',
             'customers.view', 'contracts.view', 'booking_readiness.view', 'inspections.view', 'billing.view', 'registration.view',
             'reminders.view',
-            'maintenance.view', 'logistics.view', 'insights.view', 'dashboard.view',
+            'maintenance.view', 'logistics.view', 'parts.view', 'insights.view', 'dashboard.view',
         ],
     ];
 

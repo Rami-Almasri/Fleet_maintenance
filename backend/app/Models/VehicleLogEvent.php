@@ -64,6 +64,16 @@ class VehicleLogEvent extends Model
      *   - 'inspector' = Abu Maroof's side (diagnostic, report, re-inspection/close)
      *   - 'garage'    = the workshop side (dispatch, repair, ready, reopen)
      */
+    // ── Parts Purchase + Repair Intelligence — the part-request lifecycle on the vehicle trail ──────
+    public const EVENT_PART_REQUESTED         = 'part_requested';          // a part request was opened (customer or garage source)
+    public const EVENT_PART_APPROVED          = 'part_approved';           // the request was approved for purchase
+    public const EVENT_PART_REJECTED          = 'part_rejected';           // the request was rejected
+    public const EVENT_PART_PURCHASED         = 'part_purchased';          // a part was bought (garage or supplier), price recorded
+    public const EVENT_PART_INSTALLED         = 'part_installed';          // the purchased part was fitted → cost bridged to the ticket
+    public const EVENT_PART_COMPLETED         = 'part_completed';          // the request was closed out
+    public const EVENT_PART_DUPLICATE_FLAGGED = 'part_duplicate_flagged';  // duplicate-purchase detected → investigation opened
+    public const EVENT_PART_RECURRENCE_FLAGGED = 'part_recurrence_flagged'; // a previously-fixed fault came back → warning/investigation
+
     public const SOURCE_BY_EVENT = [
         self::EVENT_INSPECTION_REQUESTED => Maintenance::FINDING_INSPECTOR,
         self::EVENT_DIAGNOSTIC_STARTED => Maintenance::FINDING_INSPECTOR,

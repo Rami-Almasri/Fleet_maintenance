@@ -1,0 +1,173 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Helpers\ResponseHelper;
+use App\Http\Resources\PartRequestResource;
+use App\Models\PartRequest;
+use App\Services\PartWorkflowService;
+use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
+
+/**
+ * The Part Request lifecycle API — Requested → Under Review → Approved → Purchased → Installed → Completed.
+ * Purchases are created here (POST /{id}/purchase) so the duplicate engine runs where the request context
+ * lives; the actual buy record + install live under PartPurchaseController.
+ */
+class PartRequestController extends Controller
+{
+    public function __construct(private PartWorkflowService $service) {}
+
+    /** Board / list with light filters. */
+    public function index(Request $request)
+    {
+        try {
+            $q = PartRequest::query()->with(['vehicle:id,plate_no,make,model', 'customer:id,name_en,name_ar', 'task:id,symptom'])
+                ->latest('id');
+
+            if ($s = $request->query('status')) {
+                $q->whereIn('status', explode(',', $s));
+            }
+            if ($src = $request->query('source')) {
+                $q->where('source', $src);
+            }
+            if ($v = $request->query('vehicle_id')) {
+                $q->where('vehicle_id', $v);
+            }
+
+            $rows = $q->paginate(min((int) $request->query('per_page', 50), 200));
+
+            return ResponseHelper::SuccessResponse([
+                'requests' => PartRequestResource::collection($rows),
+                'meta'     => ['total' => $rows->total(), 'per_page' => $rows->perPage(), 'current_page' => $rows->currentPage()],
+            ], 'Part requests retrieved');
+        } catch (\Throwable $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    public function store(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'source'              => ['required', Rule::in(PartRequest::SOURCES)],
+                'vehicle_id'          => ['required', 'exists:vehicles,id'],
+                // A customer request needs a customer; a garage request needs a ticket + fault.
+                'customer_id'         => ['nullable', 'required_if:source,customer', 'exists:customers,id'],
+                'maintenance_id'      => ['nullable', 'required_if:source,garage', 'exists:maintenances,id'],
+                'maintenance_task_id' => ['nullable', 'exists:maintenance_tasks,id'],
+                'part_name'           => ['required', 'string', 'max:255'],
+                'part_number'         => ['nullable', 'string', 'max:255'],
+                'category_key'        => ['nullable', 'string', 'max:60'],
+                'repair_location'     => ['nullable', Rule::in(PartRequest::LOCATIONS)],
+                'quantity'            => ['nullable', 'numeric', 'gt:0'],
+                'reason'              => ['required', 'string', 'max:2000'],
+                'estimated_price'     => ['nullable', 'numeric', 'min:0'],
+                'currency'            => ['nullable', 'string', 'size:3'],
+                'notes'               => ['nullable', 'string', 'max:2000'],
+            ]);
+
+            $req = $this->service->createRequest($data, $request->user());
+
+            return ResponseHelper::SuccessResponse(new PartRequestResource($req->load('vehicle', 'customer', 'task')), 'Part request created', 201);
+        } catch (\Throwable $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    public function show(PartRequest $partRequest)
+    {
+        try {
+            return ResponseHelper::SuccessResponse(
+                new PartRequestResource($partRequest->load('vehicle', 'customer', 'task', 'purchases.sourceVendor')),
+                'Part request retrieved'
+            );
+        } catch (\Throwable $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    public function review(Request $request, PartRequest $partRequest)
+    {
+        try {
+            $data = $request->validate(['notes' => ['nullable', 'string', 'max:2000']]);
+
+            return ResponseHelper::SuccessResponse(
+                new PartRequestResource($this->service->review($partRequest, $request->user(), $data['notes'] ?? null)),
+                'Part request under review'
+            );
+        } catch (\Throwable $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    public function approve(Request $request, PartRequest $partRequest)
+    {
+        try {
+            return ResponseHelper::SuccessResponse(
+                new PartRequestResource($this->service->approve($partRequest, $request->user())),
+                'Part request approved'
+            );
+        } catch (\Throwable $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    public function reject(Request $request, PartRequest $partRequest)
+    {
+        try {
+            $data = $request->validate(['reason' => ['required', 'string', 'max:2000']]);
+
+            return ResponseHelper::SuccessResponse(
+                new PartRequestResource($this->service->reject($partRequest, $request->user(), $data['reason'])),
+                'Part request rejected'
+            );
+        } catch (\Throwable $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /** Record a purchase against this request. Price is REQUIRED — cannot mark purchased without one. */
+    public function purchase(Request $request, PartRequest $partRequest)
+    {
+        try {
+            $data = $request->validate([
+                'purchase_source'       => ['required', Rule::in(\App\Models\PartPurchase::PURCHASE_SOURCES)],
+                'source_vendor_id'      => ['nullable', 'exists:vendors,id'],
+                'source_name'           => ['nullable', 'string', 'max:255'],
+                'repair_location'       => ['nullable', Rule::in(PartRequest::LOCATIONS)],
+                'purchase_price'        => ['required', 'numeric', 'gt:0'],
+                'currency'              => ['nullable', 'string', 'size:3'],
+                'quantity'              => ['nullable', 'numeric', 'gt:0'],
+                'notes'                 => ['nullable', 'string', 'max:2000'],
+                // Optional inline reason when the buyer is knowingly repurchasing a flagged part.
+                'duplicate_reason_code' => ['nullable', Rule::in(\App\Models\PartInvestigation::REASON_CODES)],
+                'duplicate_reason_note' => ['nullable', 'string', 'max:2000'],
+            ]);
+
+            $result = $this->service->purchase($partRequest, $data, $request->user());
+
+            return ResponseHelper::SuccessResponse([
+                'purchase'      => new \App\Http\Resources\PartPurchaseResource($result['purchase']),
+                'duplicate'     => $result['verdict']['duplicate'],
+                'priority'      => $result['verdict']['priority'],
+                'days_between'  => $result['verdict']['days_between'],
+                'investigation_id' => optional($result['investigation'])->id,
+            ], $result['verdict']['duplicate'] ? 'Purchase recorded — duplicate flagged for review' : 'Purchase recorded', 201);
+        } catch (\Throwable $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    public function complete(Request $request, PartRequest $partRequest)
+    {
+        try {
+            return ResponseHelper::SuccessResponse(
+                new PartRequestResource($this->service->complete($partRequest, $request->user())),
+                'Part request completed'
+            );
+        } catch (\Throwable $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+}

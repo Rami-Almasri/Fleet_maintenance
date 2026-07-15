@@ -28,6 +28,9 @@ use App\Http\Controllers\NotificationTestController;
 use App\Http\Controllers\SimulationController;
 use App\Http\Controllers\LogisticsDispatchController;
 use App\Http\Controllers\TeamPresenceController;
+use App\Http\Controllers\PartRequestController;
+use App\Http\Controllers\PartPurchaseController;
+use App\Http\Controllers\PartInvestigationController;
 use App\Http\Controllers\MaintenanceSwapController;
 use App\Http\Controllers\MaintenanceWorkflowController;
 use App\Http\Controllers\InspectorPadController;
@@ -250,6 +253,37 @@ Route::middleware('auth:sanctum')->prefix('logistics')->controller(LogisticsDisp
 // person's live activity from their open moves + maintenance jobs. Read-only oversight → logistics.view.
 Route::middleware(['auth:sanctum', 'permission:logistics.view'])
     ->get('/team/presence', [TeamPresenceController::class, 'roster']);
+
+// Parts Purchase + Repair Intelligence — the part-request lifecycle (Requested → … → Completed), the
+// purchase ledger + install cost-bridge, and the admin duplicate/recurrence investigation inbox. Reads
+// are parts.view; requests parts.request; buying/installing parts.purchase; adjudication parts.investigate.
+Route::middleware('auth:sanctum')->prefix('part-requests')->controller(PartRequestController::class)->group(function () {
+    Route::get('/', 'index')->middleware('permission:parts.view');
+    Route::post('/', 'store')->middleware('permission:parts.request');
+    Route::get('/{partRequest}', 'show')->middleware('permission:parts.view');
+    Route::post('/{partRequest}/review', 'review')->middleware('permission:parts.investigate|maintenance.manage');
+    Route::post('/{partRequest}/approve', 'approve')->middleware('permission:parts.investigate|maintenance.manage');
+    Route::post('/{partRequest}/reject', 'reject')->middleware('permission:parts.investigate|maintenance.manage');
+    Route::post('/{partRequest}/purchase', 'purchase')->middleware('permission:parts.purchase');
+    Route::post('/{partRequest}/complete', 'complete')->middleware('permission:parts.request|maintenance.manage');
+});
+
+Route::middleware('auth:sanctum')->prefix('part-purchases')->controller(PartPurchaseController::class)->group(function () {
+    Route::get('/', 'index')->middleware('permission:parts.view');
+    Route::get('/duplicate-check', 'duplicateCheck')->middleware('permission:parts.purchase');
+    Route::get('/recurrence-check', 'recurrenceCheck')->middleware('permission:parts.view|maintenance.view');
+    Route::get('/vehicle/{vehicle}/history', 'vehicleHistory')->middleware('permission:parts.view');
+    Route::post('/{partPurchase}/install', 'install')->middleware('permission:parts.purchase|maintenance.logistics');
+});
+
+Route::middleware('auth:sanctum')->prefix('part-investigations')->controller(PartInvestigationController::class)->group(function () {
+    Route::get('/', 'index')->middleware('permission:parts.investigate');
+    Route::post('/{partInvestigation}/review', 'review')->middleware('permission:parts.investigate');
+    Route::post('/{partInvestigation}/provide-reason', 'provideReason')->middleware('permission:parts.investigate');
+    Route::post('/{partInvestigation}/approve', 'approve')->middleware('permission:parts.investigate');
+    Route::post('/{partInvestigation}/reject', 'reject')->middleware('permission:parts.investigate');
+});
+
 
 // Fleet Maintenance Workflow — the role-driven ticket state machine (Inspector → Logistics →
 // Garage → Re-inspection) that replaces the WhatsApp relay. Each transition advances ONE legal

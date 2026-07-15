@@ -36,6 +36,8 @@ import TeamPresence from './pages/TeamPresence';
 import QuickCostInput from './pages/QuickCostInput';
 import Garages from './pages/Garages';
 import FindingKeywords from './pages/FindingKeywords';
+import Parts from './pages/Parts';
+import PartInvestigations from './pages/PartInvestigations';
 import DamageAccidents from './pages/DamageAccidents';
 import OverdueRentals from './pages/OverdueRentals';
 import Profitability from './pages/Profitability';
@@ -186,6 +188,15 @@ export default function App() {
                   <Route path="/finding-keywords" element={<FindingKeywords />} />
                   <Route path="/maintenance-analytics" element={<MaintenanceAnalytics />} />
                   <Route path="/damage-accidents" element={<DamageAccidents />} />
+                </Route>
+
+                {/* Parts Purchase + Repair Intelligence — its own permission group so a parts-only role
+                    (e.g. finance with parts.view) sees the board without needing maintenance.view. */}
+                <Route element={<RequirePermission permission="parts.view" />}>
+                  <Route path="/parts" element={<Parts />} />
+                </Route>
+                <Route element={<RequirePermission permission="parts.investigate" />}>
+                  <Route path="/part-investigations" element={<PartInvestigations />} />
                 </Route>
 
                 <Route element={<RequirePermission permission="maintenance.manage" />}>

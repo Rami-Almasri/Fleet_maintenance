@@ -123,6 +123,8 @@ const NAV_SECTIONS = [
       { name: 'Garages', to: '/garages', icon: 'M3 9l9-6 9 6v11a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z', desc: 'Garages where fleet cars are serviced, with the work routed to each.' },
       { name: 'Vendors', to: '/vendors', icon: 'M3 9l1-5h16l1 5M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M3 9h18M9 20v-6h6v6', desc: 'Suppliers and service vendors referenced by maintenance and contracts.' },
       { name: 'Keyword Risk', to: '/finding-keywords', icon: 'M20.59 13.41 13.42 20.6a2 2 0 0 1-2.83 0l-7-7A2 2 0 0 1 3 12V5a2 2 0 0 1 2-2h7a2 2 0 0 1 1.42.59l7.17 7.17a2 2 0 0 1 0 2.83zM7.5 7.5h.01', desc: 'The fault-keyword library the inspection picker offers, each graded by risk (🔴 critical / 🟡 moderate / 🟢 routine). Add, edit or retire keywords and set how serious each fault type is.' },
+      { name: 'Parts Purchase', to: '/parts', icon: 'M20 7h-9M14 17H5M17 20a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM7 10a3 3 0 1 0 0-6 3 3 0 0 0 0 6z', desc: 'The Parts Purchase + Repair Intelligence board: request a part (customer or garage), approve, buy (garage or supplier) and install it — with duplicate-purchase detection and repair history.' },
+      { name: 'Part Investigations', to: '/part-investigations', icon: 'M12 9v4m0 4h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z', desc: 'Admin inbox for duplicate-purchase and fault-recurrence alerts: review why the same part or fault repeated, capture the reason, and approve or reject the exception.' },
       { name: 'Cost Analytics', to: '/maintenance-analytics', financial: true, icon: 'M3 3v18h18M7 15l3-3 3 3 5-5', desc: 'Maintenance cost trends and breakdowns across the fleet — spend by car, garage, and over time.' },
     ],
   },
@@ -168,6 +170,8 @@ const SEARCH_ITEMS = NAV_SECTIONS.flatMap((s) => s.items.map((i) => ({ ...i, sec
 // "always visible to any authenticated user". These mirror the route guards in
 // App.js and the `permission:` middleware on the backend — keep the three in sync.
 const NAV_PERMISSIONS = {
+  '/parts': 'parts.view',
+  '/part-investigations': 'parts.investigate',
   '/': 'dashboard.view',
   '/ops-dashboard': 'dashboard.view',
   '/orders-board': 'dashboard.view',
