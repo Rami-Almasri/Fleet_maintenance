@@ -9,10 +9,16 @@ use Illuminate\Support\Facades\Schema;
  *
  * The application already enforces this inside a locked transaction (ContractService::store and
  * OperationsService::startOperation), but the database is the last line of defense. MySQL has no
- * partial indexes, so we materialise the guarded key in a STORED generated column that is the
+ * partial indexes, so we materialise the guarded key in a VIRTUAL generated column that is the
  * vehicle_id ONLY while the contract is a live rental (state=open, not returned, type C) and NULL
  * otherwise — then a plain UNIQUE index on that column rejects a second live rental per car (NULLs
- * are distinct, so closed/returned/non-rental contracts are unconstrained).
+ * are distinct, so closed/returned/non-rental contracts are unconstrained). The index fully
+ * materialises the virtual column, so the uniqueness guarantee is identical to a stored column.
+ *
+ * WHY VIRTUAL (not STORED): contracts.vehicle_id carries a foreign key with ON DELETE SET NULL, and
+ * MySQL 8.0 refuses to add a STORED generated column derived from a base column whose FK uses
+ * SET NULL/CASCADE ("ERROR 1215: Cannot add foreign key constraint"). A VIRTUAL column has no such
+ * restriction and is still uniquely indexable on MySQL 8.0.
  *
  * SAFETY: this migration REFUSES to run while a car already has more than one open rental — it lists
  * the offending vehicles and stops, rather than crashing with a cryptic duplicate-key error or, worse,
@@ -55,7 +61,7 @@ return new class extends Migration
             DB::statement(
                 'ALTER TABLE contracts ADD COLUMN ' . self::COL . ' BIGINT UNSIGNED '
                 . "GENERATED ALWAYS AS (CASE WHEN state = 'open' AND in_date IS NULL AND contract_type = 'C' "
-                . 'THEN vehicle_id ELSE NULL END) STORED'
+                . 'THEN vehicle_id ELSE NULL END) VIRTUAL'
             );
         }
 

@@ -1,0 +1,46 @@
+# Keep the build context small and NEVER leak secrets/artifacts into the image.
+
+# Secrets & local env
+.env
+.env.*
+!.env.example
+storage/app/google/*.json
+
+# Dependencies (reinstalled inside the image)
+vendor/
+node_modules/
+
+# Runtime / generated
+storage/logs/*
+storage/framework/cache/*
+storage/framework/sessions/*
+storage/framework/views/*
+storage/app/backups/*
+storage/app/public/*
+bootstrap/cache/*.php
+public/storage
+public/build
+public/hot
+database/database.sqlite
+
+# VCS / tooling / tests
+.git/
+.gitignore
+.idea/
+.vscode/
+.fleet/
+tests/
+phpunit*.xml
+.phpunit.result.cache
+postman/
+
+# Local scratch scripts
+_check.php
+_count_import.php
+_nullcheck.php
+_serialcheck.php
+
+# Docker files themselves (not needed inside the image, except the docker/ dir
+# which is COPYed explicitly)
+Dockerfile
+.dockerignore

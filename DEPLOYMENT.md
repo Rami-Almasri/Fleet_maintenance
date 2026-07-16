@@ -1,5 +1,172 @@
 # Deployment & Sync Operations
 
+> **Two ways to run FleetView in production:**
+> 1. **[Docker Compose](#docker-production-deployment)** (recommended, below) — the whole stack (MySQL + API + web + scheduler) in containers.
+> 2. **Bare-metal** (XAMPP/VPS) — the original sync-operations guide starts at [§ Where the sync must run](#1-where-the-sync-must-run).
+>
+> The Docker stack runs the Laravel **scheduler in its own container**, so the OfficeManager/Google-Sheets syncs, notifications and mileage jobs all run automatically — you do **not** also need the Windows Task / cron `sync-fleet` runner described further down (that section stays for bare-metal installs).
+
+---
+
+# Docker Production Deployment
+
+## Architecture
+
+Single-server stack, orchestrated by `docker-compose.yml`:
+
+```
+                         ┌──────────────────────────────────────────┐
+   Internet :80  ───────▶│  nginx (web)                             │
+   (put TLS proxy        │   • serves React SPA (static build)       │
+    in front for 443)    │   • /api,/sanctum,/up → php-fpm           │
+                         │   • /storage/* → uploaded media           │
+                         └───────────────┬──────────────────────────┘
+                                         │ fastcgi :9000
+                         ┌───────────────▼──────────────────────────┐
+                         │  backend (php-fpm, Laravel 12)            │
+                         │   • migrates + caches on boot (app role)  │
+                         └───────┬───────────────────┬──────────────┘
+                                 │                   │
+              ┌──────────────────▼───────┐   ┌───────▼───────────────┐
+              │  scheduler                │   │  db (MySQL 8)          │
+              │  php artisan schedule:work│   │  volume: db_data       │
+              │  (om:sync, sheets, scans) │   └────────────────────────┘
+              └───────────────────────────┘
+   Optional (profile "workers"):  queue (queue:work) · redis
+   Shared volume: storage_data (uploads, logs, backups)  ·  Google creds bind-mounted read-only
+```
+
+**Design notes**
+- The **frontend is static** — the CRA build is baked into the nginx image at build time; there is no Node runtime container. `REACT_APP_API_URL` defaults to `/api` (same origin), so no CORS setup is needed.
+- The **backend image is reused** by `backend`, `scheduler` and `queue` (built once, tagged `fleetview/backend:latest`). `CONTAINER_ROLE` decides whether a container runs migrations (only `app`).
+- **Redis and the queue worker are off by default** — the app uses the `database` driver for cache/session/queue and has no queued jobs today. Enable them later with `--profile workers`.
+- **Secrets are never in the images**: MySQL creds come from the root `.env`, Laravel config from `backend/.env`, and the Google service-account JSON is bind-mounted read-only from `./secrets/google/`.
+
+## Files
+
+| File | Purpose |
+|------|---------|
+| `backend/Dockerfile` | php-fpm 8.2 image: extensions (`pdo_mysql, mbstring, bcmath, gd, exif, pcntl, zip, intl, opcache`) + composer `--no-dev`, OPcache on. No ffmpeg (no server-side transcoding). |
+| `backend/docker/entrypoint.sh` | Waits for DB → (app role) `migrate --force` + `storage:link` → `config/route/view cache` → exec. |
+| `backend/docker/{opcache,uploads}.ini`, `www.conf` | Prod PHP tuning, 256 MB uploads, `clear_env=no` so env reaches PHP. |
+| `backend/.dockerignore` | Keeps `.env`, `vendor`, `node_modules`, logs, sqlite out of the image. |
+| `frontend/Dockerfile` | Node 20 build stage → nginx 1.27 serving SPA + proxy. |
+| `frontend/nginx.conf` | SPA fallback, `/api`→php-fpm, `/storage`→media, gzip, 256 MB body. |
+| `frontend/.dockerignore` | Keeps `node_modules`, `build`, `.env*` out. |
+| `docker-compose.yml` | db · backend · nginx · scheduler (+ optional queue · redis). |
+| `.env.docker.example` | Template for the root `.env` (MySQL creds, port, API URL). |
+| `secrets/README.md` | Where to drop `google/credentials.json` on the server. |
+
+## Prerequisites (install on the server)
+
+- **Docker Engine ≥ 24.0** and **Docker Compose v2 ≥ 2.20** (`docker compose`, not the legacy `docker-compose`).
+- Verify: `docker --version` and `docker compose version`.
+
+## Environment setup (one time, on the server)
+
+```bash
+# 1. Get the code
+git clone <repo-url> fleet-fullstack && cd fleet-fullstack
+
+# 2. Infra env for compose (MySQL creds, port). NEVER commit the resulting .env.
+cp .env.docker.example .env
+#    → edit .env: set MYSQL_PASSWORD + MYSQL_ROOT_PASSWORD (strong), APP_PORT
+
+# 3. Laravel app env
+cp backend/.env.example backend/.env
+#    → edit backend/.env:
+#        APP_ENV=production   APP_DEBUG=false
+#        APP_URL=https://your-host     APP_FRONTEND_URL=https://your-host
+#        (DB_* are set automatically by compose from the root .env MYSQL_* values —
+#         no need to edit DB_HOST/DB_DATABASE/DB_USERNAME/DB_PASSWORD here)
+#        OFFICEMANAGER_API_KEY=...     (OFFICEMANAGER_WEB_SYNC_ENABLED=false)
+#        FILESYSTEM_DISK=local  (or s3 + AWS_* for offloaded media)
+#        LOG_LEVEL=warning   LOG_STACK=daily
+
+# 4. Google service-account key (only if using Sheets sync)
+mkdir -p secrets/google
+cp /path/to/service-account.json secrets/google/credentials.json
+```
+
+## Build & start
+
+```bash
+# Build images and start the base stack (db, backend, nginx, scheduler)
+docker compose up -d --build
+
+# App key — generate ONCE, then it lives in backend/.env (persists on the host)
+docker compose exec backend php artisan key:generate
+
+# (re-cache config now that APP_KEY is set)
+docker compose restart backend scheduler
+```
+
+App is now at `http://<server>:${APP_PORT}`.
+
+To also run the optional queue worker + redis:
+```bash
+docker compose --profile workers up -d
+```
+
+## Migrations
+
+Migrations run **automatically** on `backend` boot (`entrypoint.sh`, app role). To run them manually:
+```bash
+docker compose exec backend php artisan migrate --force
+docker compose exec backend php artisan migrate:status   # inspect
+```
+Seed roles/permissions (first deploy only, if needed):
+```bash
+docker compose exec backend php artisan db:seed --class=RolesAndPermissionsSeeder --force
+```
+
+## Verify the integrations (after first start)
+
+```bash
+docker compose exec backend php artisan about                      # app boots, DB shown
+# OfficeManager API reachable + key valid (writes nothing):
+docker compose exec backend php artisan om:sync --contracts --from=2026-06-01 --to=2026-06-02 --dry-run --skip-backup
+# Google Sheets credential wired:
+docker compose exec backend php artisan tinker --execute="new App\Services\GoogleSheetsService();"
+docker compose logs -f scheduler                                    # watch scheduled jobs fire
+```
+
+## Backups
+
+The DB lives in the `db_data` volume; uploads in `storage_data`.
+
+```bash
+# App-level DB backup (writes into storage_data → storage/app/backups)
+docker compose exec backend php artisan db:backup
+
+# Raw MySQL dump to the host
+docker compose exec db sh -c 'exec mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" "$MYSQL_DATABASE"' > backup-$(date +%F).sql
+
+# Uploaded media (photos/videos)
+docker run --rm -v fleet-fullstack_storage_data:/data -v "$PWD":/out alpine \
+  tar czf /out/storage-$(date +%F).tar.gz -C /data .
+```
+> Volume names are prefixed with the compose project (folder) name — confirm with `docker volume ls`.
+
+## Updating
+
+```bash
+git pull
+docker compose up -d --build          # rebuilds images, recreates changed containers
+# migrations + config/route/view caches re-run automatically on backend boot
+```
+Roll back by checking out the previous tag/commit and re-running `docker compose up -d --build`. The `db_data` and `storage_data` volumes are untouched by rebuilds.
+
+## TLS / HTTPS
+
+nginx here listens on plain `:80`. For production TLS, terminate in front:
+- a host reverse proxy (Caddy/Traefik/nginx) or cloud load balancer on `:443` proxying to `${APP_PORT}`, **or**
+- add a certbot/Caddy sidecar.
+
+Then set `APP_URL`/`APP_FRONTEND_URL` to the `https://` host and keep only `:443` open publicly.
+
+---
+
 This system syncs from the **OfficeManager API** (source of truth) + **Google Sheets** (make/model/color/price enrichment) into the app database.
 
 **Architecture:** the **CLI is the engine**, the **web `/sync` page is a read-only dashboard**. Syncs run on a schedule via the `sync-fleet` runner. Nobody can start a sync — or a wipe — from the browser (`OFFICEMANAGER_WEB_SYNC_ENABLED=false`, the default).

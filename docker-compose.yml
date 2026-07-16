@@ -1,0 +1,186 @@
+# =============================================================================
+# FleetView — production Docker stack.
+#
+# Base services (always on):   db · backend · nginx · scheduler
+# Optional (profile "workers"): queue · redis   →  enable with:
+#     docker compose --profile workers up -d
+#
+# Secrets are NEVER baked into images. They come from:
+#   - ./.env            (compose interpolation: MySQL creds, ports)   [gitignored]
+#   - ./backend/.env    (Laravel app config, passed via env_file)     [gitignored]
+#   - ./secrets/google/credentials.json (Google service account)      [gitignored]
+# Templates to copy from: .env.docker.example, backend/.env.example.
+# =============================================================================
+
+services:
+  # ---- MySQL database ------------------------------------------------------
+  db:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: "${MYSQL_DATABASE:-laravel}"
+      MYSQL_USER: "${MYSQL_USER:-fleet}"
+      MYSQL_PASSWORD: "${MYSQL_PASSWORD:?set MYSQL_PASSWORD in .env}"
+      MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}"
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - fleet
+
+  # ---- Laravel API (php-fpm) ----------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: fleetview/backend:latest
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      CONTAINER_ROLE: app        # runs migrations + storage:link on boot
+      # DB connection is driven from the root .env (same values the db service
+      # uses) and OVERRIDES anything in backend/.env — so the app always points
+      # at the compose MySQL service, never a stale localhost/XAMPP host.
+      DB_CONNECTION: mysql
+      DB_HOST: db
+      DB_PORT: "3306"
+      DB_DATABASE: "${MYSQL_DATABASE:-laravel}"
+      DB_USERNAME: "${MYSQL_USER:-fleet}"
+      DB_PASSWORD: "${MYSQL_PASSWORD:?set MYSQL_PASSWORD in .env}"
+    volumes:
+      - storage_data:/var/www/html/storage
+      - ./secrets/google:/var/www/html/storage/app/google:ro
+    healthcheck:
+      # php-fpm is accepting connections on :9000. Pure-PHP probe (no extra pkgs).
+      test: ["CMD", "php", "-r", "exit(@fsockopen('127.0.0.1',9000,$$e,$$s,2)?0:1);"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 90s   # first boot runs migrations + cache before fpm answers
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - fleet
+
+  # ---- Web tier: React SPA + reverse proxy --------------------------------
+  nginx:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        REACT_APP_API_URL: "${REACT_APP_API_URL:-/api}"
+    image: fleetview/web:latest
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-80}:80"
+    volumes:
+      # Read-only access to uploaded media so nginx serves /storage directly.
+      - storage_data:/var/www/storage:ro
+    healthcheck:
+      # End-to-end: nginx up AND it can proxy Laravel's /up health route to fpm.
+      # 127.0.0.1 (not localhost) — nginx listens on IPv4 only.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/up"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - fleet
+
+  # ---- Scheduler (replaces the Windows Task / run-scheduler.vbs) -----------
+  # `schedule:work` ticks every minute and fires due jobs: om:sync,
+  # import:maintenance-sheet, notifications:scan, mileage:scan, etc.
+  scheduler:
+    image: fleetview/backend:latest
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      CONTAINER_ROLE: scheduler  # does NOT migrate; just builds caches + runs
+      DB_CONNECTION: mysql
+      DB_HOST: db
+      DB_PORT: "3306"
+      DB_DATABASE: "${MYSQL_DATABASE:-laravel}"
+      DB_USERNAME: "${MYSQL_USER:-fleet}"
+      DB_PASSWORD: "${MYSQL_PASSWORD:?set MYSQL_PASSWORD in .env}"
+    command: ["php", "artisan", "schedule:work"]
+    volumes:
+      - storage_data:/var/www/html/storage
+      - ./secrets/google:/var/www/html/storage/app/google:ro
+    healthcheck:
+      # The schedule:work long-running process is alive (pgrep ships in the image).
+      test: ["CMD-SHELL", "pgrep -f 'schedule:work' >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    depends_on:
+      db:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    networks:
+      - fleet
+
+  # ---- Queue worker (OPTIONAL — no queued jobs today; future-proof) --------
+  queue:
+    image: fleetview/backend:latest
+    restart: unless-stopped
+    profiles: ["workers"]
+    env_file:
+      - ./backend/.env
+    environment:
+      CONTAINER_ROLE: queue
+      DB_CONNECTION: mysql
+      DB_HOST: db
+      DB_PORT: "3306"
+      DB_DATABASE: "${MYSQL_DATABASE:-laravel}"
+      DB_USERNAME: "${MYSQL_USER:-fleet}"
+      DB_PASSWORD: "${MYSQL_PASSWORD:?set MYSQL_PASSWORD in .env}"
+    command: ["php", "artisan", "queue:work", "--tries=3", "--timeout=120", "--sleep=3"]
+    volumes:
+      - storage_data:/var/www/html/storage
+      - ./secrets/google:/var/www/html/storage/app/google:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'queue:work' >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    depends_on:
+      db:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    networks:
+      - fleet
+
+  # ---- Redis (OPTIONAL — only if you switch cache/queue to redis) ----------
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    profiles: ["workers"]
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    networks:
+      - fleet
+
+volumes:
+  db_data:
+  storage_data:
+  redis_data:
+
+networks:
+  fleet:
+    driver: bridge

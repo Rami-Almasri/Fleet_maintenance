@@ -16,6 +16,16 @@ node_modules/
 .env.production
 *.key
 
+# Docker secrets — mounted at runtime, never committed.
+# Keep the folder structure (so the compose bind mount has a source on a fresh
+# clone) but ignore every real credential file inside it.
+/secrets/*
+!/secrets/.gitkeep
+!/secrets/README.md
+!/secrets/google/
+/secrets/google/*
+!/secrets/google/.gitkeep
+
 # Laravel storage & cache
 /backend/storage/*.key
 /backend/bootstrap/cache/*.php
