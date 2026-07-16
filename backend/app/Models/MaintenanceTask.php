@@ -30,13 +30,36 @@ class MaintenanceTask extends Model
     public const STATUS_COMPLETED   = 'completed';    // this fault is fixed
     public const STATUS_TRANSFERRED = 'transferred';  // transient — being moved between garages
     public const STATUS_CANCELLED   = 'cancelled';    // a non-issue; excluded from the "all resolved" gate
+    public const STATUS_NOT_FOUND   = 'not_found';    // workshop checked and the reported fault does not exist — closed, never repaired
     public const STATUSES = [
         self::STATUS_PENDING, self::STATUS_IN_PROGRESS, self::STATUS_COMPLETED,
-        self::STATUS_TRANSFERRED, self::STATUS_CANCELLED,
+        self::STATUS_TRANSFERRED, self::STATUS_CANCELLED, self::STATUS_NOT_FOUND,
     ];
 
     /** Terminal states — the fault needs no more work (resolved or dropped). */
-    public const TERMINAL = [self::STATUS_COMPLETED, self::STATUS_CANCELLED];
+    public const TERMINAL = [self::STATUS_COMPLETED, self::STATUS_CANCELLED, self::STATUS_NOT_FOUND];
+
+    /** Terminal states that were NOT a repair (no fix happened) — excluded from repair/service sync. */
+    public const NON_REPAIR_TERMINAL = [self::STATUS_CANCELLED, self::STATUS_NOT_FOUND];
+
+    // ── Workshop confirmation verdict ───────────────────────────────────────────────────────────────
+    // Recorded by the technician at the "In Workshop" (under_repair) stage: a reported fault is only a
+    // claim until the workshop physically checks it. ONLY `confirmed` may trigger recurring-fault
+    // intelligence — this is the gate that stops false duplicate alerts on unconfirmed reports.
+    public const CONFIRM_CONFIRMED       = 'confirmed';       // the fault genuinely exists
+    public const CONFIRM_NOT_FOUND       = 'not_found';       // no fault found
+    public const CONFIRM_DIFFERENT_CAUSE = 'different_cause'; // a fault exists but the cause differs
+    public const CONFIRMATION_STATUSES = [
+        self::CONFIRM_CONFIRMED, self::CONFIRM_NOT_FOUND,
+        self::CONFIRM_DIFFERENT_CAUSE,
+    ];
+
+    // ── Recurring-fault REPAIR GATE ─────────────────────────────────────────────────────────────────
+    // Set when a CONFIRMED fault recurred within the window: the repair is blocked until a manager
+    // approves it (the guard against paying twice for the same recently-fixed fault).
+    public const GATE_PENDING  = 'pending';   // awaiting approval — repair blocked
+    public const GATE_APPROVED = 'approved';  // cleared — repair may proceed
+    public const GATE_REJECTED = 'rejected';  // refused — fault cancelled, not repaired again here
 
     /** Severity rank for rolling the headline ticket severity up to its worst open fault. */
     public const SEVERITY_RANK = [
@@ -51,6 +74,12 @@ class MaintenanceTask extends Model
         'symptom', 'category_key', 'source', 'severity',
         'root_cause_id', 'root_cause', 'notes', 'resolution_note',
         'status', 'current_vendor_id',
+        // Workshop confirmation gate + report-time recurring-fault flag + repair approval gate.
+        'confirmation_status', 'confirmation_note', 'confirmed_by', 'confirmed_at',
+        'recurrence_flagged', 'recurrence_previous_task_id',
+        'repair_gate', 'repair_gate_by', 'repair_gate_at', 'repair_gate_note',
+        // "Different fault" link — this fault was raised because another fault was reviewed Not found.
+        'derived_from_task_id',
         'identified_by', 'identified_at', 'started_at', 'resolved_at', 'resolved_by',
         'parts_cost', 'labor_cost', 'repair_hours',
         // Quality-Control: this fault flunked the closing re-inspection (garage returned it unfixed).
@@ -63,6 +92,9 @@ class MaintenanceTask extends Model
         'identified_at'         => 'datetime',
         'started_at'            => 'datetime',
         'resolved_at'           => 'datetime',
+        'confirmed_at'          => 'datetime',
+        'recurrence_flagged'    => 'boolean',
+        'repair_gate_at'        => 'datetime',
         'parts_cost'            => 'decimal:2',
         'labor_cost'            => 'decimal:2',
         'repair_hours'          => 'decimal:2',
@@ -118,6 +150,36 @@ class MaintenanceTask extends Model
         return $this->belongsTo(User::class, 'resolved_by');
     }
 
+    /** The technician who recorded the workshop confirmation verdict (confirmed / not_found / …). */
+    public function confirmedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'confirmed_by');
+    }
+
+    /** The prior FIXED fault this one was flagged as possibly recurring from (report-time background flag). */
+    public function recurrencePreviousTask(): BelongsTo
+    {
+        return $this->belongsTo(MaintenanceTask::class, 'recurrence_previous_task_id');
+    }
+
+    /** The manager who approved / rejected the recurring-fault repair gate. */
+    public function repairGateBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'repair_gate_by');
+    }
+
+    /** The original (Not found) fault this one was raised from — the "turned out to be" link. */
+    public function derivedFrom(): BelongsTo
+    {
+        return $this->belongsTo(MaintenanceTask::class, 'derived_from_task_id');
+    }
+
+    /** New faults raised because THIS fault was reviewed Not found (the reverse of derivedFrom). */
+    public function derivedFaults(): HasMany
+    {
+        return $this->hasMany(MaintenanceTask::class, 'derived_from_task_id');
+    }
+
     /** The delegate (supervisor) who overruled the inspector and marked this fault a mis-diagnosis. */
     public function markedIncorrectBy(): BelongsTo
     {
@@ -140,6 +202,12 @@ class MaintenanceTask extends Model
     public function lineItems(): HasMany
     {
         return $this->hasMany(MaintenanceLineItem::class, 'maintenance_task_id');
+    }
+
+    /** Part requests raised against THIS fault (Parts Purchase workflow) — newest first for the fault card. */
+    public function partRequests(): HasMany
+    {
+        return $this->hasMany(PartRequest::class, 'maintenance_task_id')->latest('id');
     }
 
     /** The garage invoice this fault is billed on (null = not yet invoiced; fault → one invoice). */
@@ -195,6 +263,18 @@ class MaintenanceTask extends Model
     public function isTerminal(): bool
     {
         return in_array($this->status, self::TERMINAL, true);
+    }
+
+    /** Has the workshop confirmed this fault genuinely exists (the gate for recurring-fault intelligence)? */
+    public function isConfirmed(): bool
+    {
+        return $this->confirmation_status === self::CONFIRM_CONFIRMED;
+    }
+
+    /** Is the repair blocked awaiting recurring-fault approval? (Repair cannot start while true.) */
+    public function isRepairBlocked(): bool
+    {
+        return $this->repair_gate === self::GATE_PENDING;
     }
 
     /** Is this an OPEN fault not yet routed to any garage (see scopePendingAssignment)? Query-free. */

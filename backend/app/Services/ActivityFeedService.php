@@ -82,6 +82,7 @@ class ActivityFeedService
         VehicleLogEvent::EVENT_DELEGATED            => 'Driver delegated',
         VehicleLogEvent::EVENT_COST_RECORDED        => 'Cost recorded',
         VehicleLogEvent::EVENT_INVOICE_REQUESTED    => 'Invoice requested',
+        VehicleLogEvent::EVENT_TRANSPORT_ASSIGNED   => 'Transport method assigned',
         VehicleLogEvent::EVENT_AWAITING_INVOICE     => 'Awaiting invoice',
         VehicleLogEvent::EVENT_INVOICE_RECEIVED     => 'Invoice received',
         VehicleLogEvent::EVENT_GARAGE_INVOICE_SUBMITTED => 'Garage invoice submitted',

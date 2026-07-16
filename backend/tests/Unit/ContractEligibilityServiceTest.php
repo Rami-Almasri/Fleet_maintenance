@@ -79,6 +79,22 @@ class ContractEligibilityServiceTest extends TestCase
         $this->assertContains('status', $this->keys($r, 'blocks'));
     }
 
+    /** THE double-booking guard: a car with an open rental (type-C) contract can't be rented again. */
+    public function test_open_rental_contract_is_blocked(): void
+    {
+        $r = $this->svc->assess($this->readyFacts(['open_rental' => true]));
+        $this->assertFalse($r['eligible'], 'A car already out on an open rental must not be rentable again');
+        $this->assertContains('rental', $this->keys($r, 'blocks'));
+    }
+
+    /** No open rental → the rental check passes (a Ready car stays rentable). */
+    public function test_no_open_rental_is_rentable(): void
+    {
+        $r = $this->svc->assess($this->readyFacts(['open_rental' => false]));
+        $this->assertTrue($r['eligible']);
+        $this->assertNotContains('rental', $this->keys($r, 'blocks'));
+    }
+
     public function test_red_condition_is_blocked(): void
     {
         $r = $this->svc->assess($this->readyFacts(['condition_grade' => 'red']));

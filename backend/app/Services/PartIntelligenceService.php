@@ -94,16 +94,39 @@ class PartIntelligenceService
         ?string $categoryKey,
         ?string $partClass = null,
         ?int $excludePurchaseId = null,
-        bool $lock = false
+        bool $lock = false,
+        ?string $faultCategoryKey = null,
+        ?string $faultSymptom = null
     ): array {
         $partClass = $partClass ?: $this->classify($partName, $partNumber, $categoryKey);
         $identity  = $this->identityKey($partNumber, $partName);
 
-        $base = ['duplicate' => false, 'priority' => null, 'previous' => null,
-                 'days_between' => null, 'window_days' => null, 'part_class' => $partClass];
+        $base = ['duplicate' => false, 'priority' => null, 'previous' => null, 'days_between' => null,
+                 'window_days' => null, 'part_class' => $partClass, 'same_fault' => false];
 
         if ($identity === null) {
             return $base; // nothing to match on
+        }
+
+        // STRONGEST signal first: same PART bought for the same FAULT (category/symptom) on this vehicle,
+        // within the recurrence window. That's not just a repeat buy — it's a failed repair coming back, so
+        // it is ALWAYS High priority regardless of the part's class/value.
+        if ($faultCategoryKey || $faultSymptom) {
+            $sameFault = $this->priorSameFaultPurchase($vehicleId, $partNumber, $partName, $faultCategoryKey, $faultSymptom, $excludePurchaseId, $lock);
+            if ($sameFault) {
+                $prevAt = $sameFault->purchased_at ?: $sameFault->created_at;
+                $days   = $prevAt ? (int) $prevAt->copy()->startOfDay()->diffInDays(Carbon::now()->startOfDay()) : null;
+
+                return [
+                    'duplicate'    => true,
+                    'priority'     => PartInvestigation::PRIORITY_HIGH,
+                    'previous'     => $sameFault,
+                    'days_between' => $days,
+                    'window_days'  => (int) $this->cfg['recurrence']['window_days'],
+                    'part_class'   => $partClass,
+                    'same_fault'   => true,
+                ];
+            }
         }
 
         $previous = $this->priorPurchaseQuery($vehicleId, $partNumber, $partName, $excludePurchaseId, $lock)->first();
@@ -126,7 +149,31 @@ class PartIntelligenceService
             'days_between' => $days,
             'window_days'  => $this->windowForClass($partClass),
             'part_class'   => $partClass,
+            'same_fault'   => false,
         ];
+    }
+
+    /**
+     * The newest prior purchase of the SAME part on this vehicle whose linked fault matches the given fault
+     * (same category_key, else same normalized symptom), within the recurrence window. Null when there's no
+     * such repeat — this is the Vehicle + Part + Fault signal (a part bought twice for the same problem).
+     */
+    private function priorSameFaultPurchase(
+        int $vehicleId, ?string $partNumber, ?string $partName,
+        ?string $faultCategoryKey, ?string $faultSymptom, ?int $excludeId, bool $lock
+    ): ?PartPurchase {
+        $since = Carbon::now()->subDays((int) $this->cfg['recurrence']['window_days']);
+
+        return $this->priorPurchaseQuery($vehicleId, $partNumber, $partName, $excludeId, $lock)
+            ->where(fn ($q) => $q->where('purchased_at', '>=', $since)->orWhere('created_at', '>=', $since))
+            ->whereHas('task', function ($q) use ($faultCategoryKey, $faultSymptom) {
+                if ($faultCategoryKey) {
+                    $q->whereRaw('LOWER(TRIM(category_key)) = ?', [strtolower(trim($faultCategoryKey))]);
+                } elseif ($faultSymptom) {
+                    $q->whereRaw('LOWER(TRIM(symptom)) = ?', [strtolower(trim($faultSymptom))]);
+                }
+            })
+            ->first();
     }
 
     /**
@@ -194,15 +241,23 @@ class PartIntelligenceService
         return [
             'part_class'   => $verdict['part_class'] ?? null,
             'priority'     => $verdict['priority'] ?? null,
+            // Vehicle + Part + Fault repeat — the same part bought again for the SAME problem (a failed fix),
+            // which is graver than merely buying the same part. The UI headlines this differently.
+            'same_fault'   => $verdict['same_fault'] ?? false,
             'days_between' => $verdict['days_between'] ?? null,
             'window_days'  => $verdict['window_days'] ?? null,
             'previous'     => $prev ? [
                 'purchase_id'   => $prev->id,
                 'part_name'     => $prev->part_name,
+                'part_number'   => $prev->part_number,
                 'purchased_at'  => optional($prev->purchased_at)->toDateString(),
                 'purchase_price' => $prev->purchase_price,
                 'currency'      => $prev->currency,
                 'source'        => $prev->purchase_source,
+                // The concrete vendor for the "Supplier: ABC Parts" line — resolved vendor name, else free text.
+                'source_name'   => optional($prev->sourceVendor)->name ?: $prev->source_name,
+                // The earlier ticket this part was bought under, for the "Maintenance Ticket: #170510" line.
+                'maintenance_id' => $prev->maintenance_id,
                 'purchased_by'  => $prev->purchased_by_name,
             ] : null,
         ];

@@ -50,6 +50,9 @@ class VehicleResource extends JsonResource
             "deferred_maintenance_flagged_by" => $this->deferred_maintenance_flagged_by,
             // true when the car has a currently-open maintenance contract (in the garage now)
             "under_maintenance" => (bool) ($this->open_maintenance_count ?? 0),
+            // MANDATORY maintenance — an open committed ticket the inspector marked NON-deferrable. The car
+            // cannot be rented until the workshop finishes; the rental form blocks the pull-out outright.
+            "maintenance_mandatory" => (bool) ($this->mandatory_maintenance_count ?? 0),
             // Repair Location (On-Site): the car has an OPEN on-site (mobile) ticket — a minor job to be
             // done where it's parked. It STAYS available/rentable and merely carries a "Pending
             // Maintenance" tag until it's marked serviced. List-only (present when the count was loaded).

@@ -8,6 +8,9 @@ use App\Http\Resources\MaintenanceWorkflowResource;
 use App\Models\FaultCause;
 use App\Models\InspectionRecord;
 use App\Models\Maintenance;
+use App\Models\MaintenanceHandover;
+use App\Models\MaintenanceIncident;
+use App\Models\MaintenanceTemporaryRelease;
 use App\Models\Vehicle;
 use App\Services\MaintenanceWorkflowService;
 use Illuminate\Http\Request;
@@ -57,18 +60,29 @@ class MaintenanceWorkflowController extends Controller
         'qa_reinspection' => [Maintenance::WF_READY_REINSPECTION],
         // Quality-Control: back from the garage but a fault is still broken — stands out for the Supervisor.
         'reinspection_failed' => [Maintenance::WF_REINSPECTION_FAILED],
+        // Paused — Returned to Service — the repair is on hold while the car is released back into
+        // service. Its own lane so these cars are visible and one "Resume Maintenance" click sends them
+        // back into the pipeline. Split from "Returned – Waiting Resume" in board() below by whether the
+        // vehicle has been marked physically returned yet (vehicle_returned_at) — both share this one
+        // workflow_status, so the split happens in the query, not this status map.
+        'paused' => [Maintenance::WF_PAUSED_RETURNED_TO_SERVICE],
     ];
 
-    private const EAGER = ['vendor', 'transferToVendor:id,name', 'vehicle:id,plate_no,make,model', 'inspector:id,name', 'requester:id,name', 'assignedDriver:id,name', 'delegatedBy:id,name', 'watchers:id,name', 'linkedContract:id,contract_no', 'lineItems',
+    private const EAGER = ['vendor', 'transferToVendor:id,name', 'vehicle:id,plate_no,make,model,operational_status', 'inspector:id,name', 'requester:id,name', 'assignedDriver:id,name', 'delegatedBy:id,name', 'recommendationReviewer:id,name', 'watchers:id,name', 'linkedContract:id,contract_no', 'lineItems',
         // Multi-garage routing: the ticket's faults, each with its garage-stint timeline + current garage.
         // lastFailedVendor drives the "Unresolved at Garage X" blame badge on a re-inspection failure.
         'tasks.assignments.vendor:id,name', 'tasks.currentVendor:id,name', 'tasks.lastFailedVendor:id,name', 'tasks.media', 'tasks.markedIncorrectBy:id,name',
+        // Per-fault parts (Parts Purchase workflow) — drawer/command only, so opening a fault lists its parts.
+        'tasks.partRequests',
         // Execution layer: the ticket's currently-open MOVE (transit) — drives the unified live position.
         'activeMove',
         // Garage Invoice Portal: the one submission awaiting audit — drives the "Awaiting Audit" flag.
         'pendingGarageInvoice',
         // One Ticket → Many Invoices: each garage bill with its garage, covered faults + line breakdown.
-        'invoices.vendor:id,name', 'invoices.tasks:id,maintenance_invoice_id,symptom,status', 'invoices.lineItems'];
+        'invoices.vendor:id,name', 'invoices.tasks:id,maintenance_invoice_id,symptom,status', 'invoices.lineItems',
+        // Enterprise Handover Workflow — the open discrepancy incident (if any), the latest pause/resume
+        // custody handovers, and every generated comparison report on the ticket's history.
+        'activeIncident.acknowledgedBy:id,name', 'lastPauseHandover', 'lastResumeHandover', 'handoverComparisons'];
 
     /** The standard eager set for a fully-hydrated ticket — reused by the invoice controller's reloads. */
     public static function eagerWith(): array
@@ -76,10 +90,29 @@ class MaintenanceWorkflowController extends Controller
         return self::EAGER;
     }
 
+    // Lightweight eager set for the BOARD only. The board renders summary cards, not the full ticket —
+    // so we load just what a card draws (vehicle, garage, faults + their current/last-failed garage,
+    // the driver/delegation names, and the live-position move) and DROP the heavy drawer-only relations
+    // (invoices + their line items, ticket line items, per-fault assignment stints, handover
+    // comparisons, incidents, watchers, pending garage invoice). Every dropped relation is rendered
+    // behind whenLoaded()/relationLoaded() in the resources, so it cleanly serializes as null/empty
+    // here with no lazy N+1 — and the drawer refetches the fully-hydrated ticket (self::EAGER) when it
+    // opens. Cheap belongsTo(:id,name) loads are kept so no card field ever silently drops.
+    private const BOARD_EAGER = [
+        'vendor', 'transferToVendor:id,name',
+        'vehicle:id,plate_no,make,model,operational_status',
+        'inspector:id,name', 'requester:id,name',
+        'assignedDriver:id,name', 'delegatedBy:id,name',
+        'recommendationReviewer:id,name', 'linkedContract:id,contract_no',
+        'tasks.currentVendor:id,name', 'tasks.lastFailedVendor:id,name',
+        'activeMove',
+    ];
+
     public function __construct(
         private MaintenanceWorkflowService $workflow,
         private \App\Services\MaintenanceTaskService $tasks,
         private \App\Services\MaintenanceForecastService $forecast,
+        private \App\Services\RepairInspectionService $inspections,
     ) {
     }
 
@@ -183,17 +216,45 @@ class MaintenanceWorkflowController extends Controller
             // repair pipeline — so they're excluded here.
             $open = Maintenance::openWorkflow()
                 ->where('workflow_status', '!=', Maintenance::WF_AWAITING_INVOICE)
+                // Recommendation-queue tickets are pre-maintenance (not active jobs) — they live on the
+                // Maintenance Recommendations page, not the active repair pipeline. Exclude them here so the
+                // board and its open_total stay focused on cars actually being worked on.
+                ->whereNotIn('workflow_status', Maintenance::WF_RECOMMENDATION_STATES)
                 ->whereHas('vehicle', fn ($q) => $q->whereIn('status', Vehicle::ACTIVE_STATUSES))
-                ->with(self::EAGER)->withCount('media')->orderBy('id')->get();
+                ->with(self::BOARD_EAGER)->withCount('media')->orderBy('id')->get();
 
             $columns = [];
             $counts  = [];
             foreach (self::COLUMNS as $key => $states) {
                 $bucket = $open->whereIn('workflow_status', $states)->values();
+                // Paused — Returned to Service splits into two lanes on ONE workflow_status: still out
+                // with the customer/operation ('paused') vs physically back, handover paperwork due
+                // ('returned_waiting_resume', added below) — see Maintenance::isPausedOut()/
+                // isReturnedPendingHandover().
+                if ($key === 'paused') {
+                    $bucket = $bucket->whereNull('vehicle_returned_at')->values();
+                }
                 $columns[$key] = MaintenanceWorkflowResource::collection($bucket);
                 $counts[$key]  = $bucket->count();
             }
+
+            // Returned – Waiting Resume — the vehicle is physically back but the resume handover hasn't
+            // cleared yet (an open incident, if any, stays in this same lane — it isn't a separate 8th lane).
+            $returnedWaitingResume = $open
+                ->whereIn('workflow_status', [Maintenance::WF_PAUSED_RETURNED_TO_SERVICE])
+                ->whereNotNull('vehicle_returned_at')
+                ->values();
+            $columns['returned_waiting_resume'] = MaintenanceWorkflowResource::collection($returnedWaitingResume);
+            $counts['returned_waiting_resume']  = $returnedWaitingResume->count();
+
             $counts['open_total'] = $open->count();
+
+            // "Completed today" — workflow tickets that reached their closing timestamp since midnight
+            // (car back in the fleet). Feeds the board's Workshop-Control strip; a single cheap count,
+            // not a serialized collection, so it adds nothing to the board payload weight.
+            $counts['completed_today'] = Maintenance::workflowTickets()
+                ->whereDate('wf_closed_at', now()->toDateString())
+                ->count();
 
             return ResponseHelper::SuccessResponse(
                 ['columns' => $columns, 'counts' => $counts],
@@ -403,6 +464,26 @@ class MaintenanceWorkflowController extends Controller
             $vehicle = $ticket->vehicle; // full row → odometer / baseline_odometer / baseline_synced_at
             $entries = collect();
 
+            // Enterprise Handover Workflow — the pause/resume custody-handover readings, sourced from the
+            // handover table (the source of truth) rather than a denormalized column on the ticket.
+            $ticket->loadMissing(['lastPauseHandover', 'lastResumeHandover']);
+            if ($ticket->lastPauseHandover && $ticket->lastPauseHandover->odometer_reading !== null) {
+                $entries->push([
+                    'value' => (int) $ticket->lastPauseHandover->odometer_reading,
+                    'at'    => $ticket->lastPauseHandover->occurred_at,
+                    'how'   => 'pause', 'by' => $ticket->lastPauseHandover->actor?->name, 'ref' => '#' . $ticket->id,
+                    'note'  => $ticket->lastPauseHandover->notes, 'this_ticket' => true,
+                ]);
+            }
+            if ($ticket->lastResumeHandover && $ticket->lastResumeHandover->odometer_reading !== null) {
+                $entries->push([
+                    'value' => (int) $ticket->lastResumeHandover->odometer_reading,
+                    'at'    => $ticket->lastResumeHandover->occurred_at,
+                    'how'   => 'resume', 'by' => $ticket->lastResumeHandover->actor?->name, 'ref' => '#' . $ticket->id,
+                    'note'  => $ticket->lastResumeHandover->notes, 'this_ticket' => true,
+                ]);
+            }
+
             // 1) Manual corrections — the only source with a human actor (who changed the reading). Anchored
             //    to the DATE of the reading it fixes (the contract's out/in date), not the edit time, so it
             //    sits in the story right next to the value it corrected ("read X … then corrected to Y").
@@ -457,7 +538,7 @@ class MaintenanceWorkflowController extends Controller
 
             // Same-instant tiebreak: a sensible lifecycle order when several readings share a day (dateless
             // contract dates all land at midnight). Unknown sources sort in the middle.
-            $rank = ['contract_out' => 1, 'test_drive' => 2, 'report' => 3, 'dispatch' => 4, 'return' => 5, 'reinspect' => 6, 'contract_in' => 7, 'manual' => 9];
+            $rank = ['contract_out' => 1, 'test_drive' => 2, 'report' => 3, 'dispatch' => 4, 'return' => 5, 'pause' => 5.5, 'reinspect' => 6, 'resume' => 5.7, 'contract_in' => 7, 'manual' => 9];
 
             $sorted = $entries
                 ->filter(fn ($e) => $e['value'] !== null && $e['value'] > 0) // drop 0 / null junk readings
@@ -564,6 +645,39 @@ class MaintenanceWorkflowController extends Controller
      * reading is stored on the ticket; the photo becomes a 'test'-phase odometer inspection record,
      * saved best-effort once the diagnostic commits (a storage hiccup never blocks the drive).
      */
+    /**
+     * Stage 0 (manager entry) — a Controller (Lin/Marwa) REQUESTS an inspection. This is the "request"
+     * half of the split: the manager only picks the vehicle, the inspection type (routine/scheduled via
+     * test_kind) and optional notes — deliberately NO odometer, NO photo, NO diagnostic data, because
+     * those are things a manager cannot know. It creates an `inspection_requested` ticket assigned to the
+     * Inspector (Abu Maroof), who is notified immediately; he captures every reading later at Start
+     * Inspection (startDiagnostic). Gated to maintenance.manage (the Controllers' permission).
+     */
+    public function storeInspectionRequest(Request $request)
+    {
+        return $this->run(function () use ($request) {
+            $data = $request->validate([
+                'vehicle_id'     => ['required', 'integer', Rule::exists('vehicles', 'id')],
+                'trigger_reason' => ['required', Rule::in(Maintenance::TRIGGER_REASONS)],
+                'notes'          => ['nullable', 'string', 'max:2000'],
+                'test_kind'      => ['nullable', Rule::in(Maintenance::TEST_KINDS)],
+            ]);
+
+            $ticket = $this->workflow->requestInspectionByController([
+                'vehicle_id'         => $data['vehicle_id'],
+                'trigger_reason'     => $data['trigger_reason'],
+                'customer_complaint' => $data['notes'] ?? null,
+                'test_kind'          => $data['test_kind'] ?? null,
+            ], $request->user());
+
+            return ResponseHelper::SuccessResponse(
+                MaintenanceWorkflowResource::make($ticket),
+                'Inspection requested — Abu Maroof notified',
+                201
+            );
+        });
+    }
+
     public function store(Request $request)
     {
         return $this->run(function () use ($request) {
@@ -575,6 +689,8 @@ class MaintenanceWorkflowController extends Controller
                 'odometer_photo'     => ['required', 'image', 'max:8192'], // ≤ 8 MB
                 // Mandatory (client-enforced) explanation when the reading is >10 km off the previous one.
                 'odometer_note'      => ['nullable', 'string', 'max:2000'],
+                // The operator's tick of "I've checked — this reading is correct" on the continuity nag.
+                'odometer_confirmed' => ['nullable', 'boolean'],
                 // Which intake tab produced this test (Routine oil/battery/tyres vs Scheduled park-time).
                 'test_kind'          => ['nullable', Rule::in(Maintenance::TEST_KINDS)],
                 // maintenance_type is intentionally absent: the diagnostic hasn't happened yet, so
@@ -650,9 +766,10 @@ class MaintenanceWorkflowController extends Controller
     }
 
     /**
-     * Triage — "Send the car in". Abu Maroof routes the complained car to the garage-dispatch queue OR to
-     * his own diagnostic, optionally arranging a replacement swap for the customer. Gated to
-     * maintenance.initiate.
+     * Triage — "Recommend sending the car in". Abu Maroof recommends routing the complained car to the
+     * garage-dispatch queue OR to his own diagnostic (optionally arranging a replacement swap), but the car
+     * is NOT moved yet: his decision parks in the Triage Routing Approval gate for a Supervisor/delegate to
+     * approve or reject. Gated to maintenance.initiate.
      */
     public function triageRoute(Request $request, Maintenance $ticket)
     {
@@ -662,9 +779,36 @@ class MaintenanceWorkflowController extends Controller
                 'replacement_vehicle_id' => ['nullable', 'integer', Rule::exists('vehicles', 'id')],
                 'note'                   => ['nullable', 'string', 'max:2000'],
             ]);
-            $ticket = $this->workflow->routeComplaint($ticket, $data, $request->user());
+            $ticket = $this->workflow->recommendTriageRoute($ticket, $data, $request->user());
             $sent = $data['destination'] === 'garage' ? 'garage dispatch' : 'diagnostic inspection';
-            return ResponseHelper::SuccessResponse(MaintenanceWorkflowResource::make($ticket), "Complaint sent to {$sent}", 200);
+            return ResponseHelper::SuccessResponse(MaintenanceWorkflowResource::make($ticket), "Sent for supervisor approval — routing to {$sent}", 200);
+        });
+    }
+
+    /**
+     * Triage Routing Approval — the Supervisor/delegate APPROVES Abu Maroof's routing recommendation; the
+     * car is now actually sent to the garage-dispatch queue or the diagnostic queue (with any replacement
+     * arranged). Gated to maintenance.delegate|maintenance.manage.
+     */
+    public function approveTriageRoute(Request $request, Maintenance $ticket)
+    {
+        return $this->run(function () use ($request, $ticket) {
+            $ticket = $this->workflow->approveTriageRoute($ticket, $request->user());
+            $dest = $ticket->workflow_status === Maintenance::WF_INSPECTION_REQUESTED ? 'diagnostic inspection' : 'garage dispatch';
+            return ResponseHelper::SuccessResponse(MaintenanceWorkflowResource::make($ticket), "Routing approved — sent to {$dest}", 200);
+        });
+    }
+
+    /**
+     * Triage Routing Approval — the Supervisor/delegate REJECTS the routing recommendation; the complaint
+     * returns to Abu Maroof's triage lane. Optional reason. Gated to maintenance.delegate|maintenance.manage.
+     */
+    public function rejectTriageRoute(Request $request, Maintenance $ticket)
+    {
+        return $this->run(function () use ($request, $ticket) {
+            $data = $request->validate(['reason' => ['nullable', 'string', 'max:2000']]);
+            $ticket = $this->workflow->rejectTriageRoute($ticket, $data['reason'] ?? null, $request->user());
+            return ResponseHelper::SuccessResponse(MaintenanceWorkflowResource::make($ticket), 'Routing rejected — back to triage', 200);
         });
     }
 
@@ -696,7 +840,8 @@ class MaintenanceWorkflowController extends Controller
 
     /**
      * Stage 0 — a Driver (Logistics) requests an inspection (vehicle + reason + notes). NOT a ticket
-     * nor a diagnostic yet; it alerts the Inspector (Abu Maroof) that this car needs a test drive.
+     * nor a diagnostic yet; it lands in the Controllers' (Lin & Marwa) review queue — the Inspector
+     * (Abu Maroof) is only notified once a Controller approves it.
      */
     public function requestInspection(Request $request)
     {
@@ -710,7 +855,321 @@ class MaintenanceWorkflowController extends Controller
             ]);
 
             $ticket = $this->workflow->requestInspection($data, $request->user());
-            return ResponseHelper::SuccessResponse(MaintenanceWorkflowResource::make($ticket), 'Inspection requested — Abu Maroof notified', 201);
+            return ResponseHelper::SuccessResponse(MaintenanceWorkflowResource::make($ticket), 'Inspection requested — awaiting Controller review', 201);
+        });
+    }
+
+    /**
+     * Pause Maintenance & Return to Service — the car is urgently needed back in service mid-repair. The
+     * repair is temporarily interrupted and the car released back into service (Available) WITHOUT
+     * closing/cancelling the ticket: every bit of its state is preserved and the stage is remembered so
+     * it can resume from exactly here. Enterprise Handover Workflow: a full custody handover (odometer +
+     * photo, fuel, condition, damage, missing accessories, notes, signature) is mandatory here — mirrors
+     * underRepair()'s multipart pattern exactly. Gated to maintenance.manage (the controllers who own the
+     * "pull this car out" decision, matching the rental-form pull).
+     */
+    public function pause(Request $request, Maintenance $ticket)
+    {
+        return $this->run(function () use ($request, $ticket) {
+            $fuelScale = config('maintenance_handover.fuel_scale', []);
+            $data = $request->validate([
+                'reason'              => ['nullable', 'string', 'max:2000'],
+                'pause_odometer'      => ['required', 'integer', 'min:1'],
+                'odometer_photo'      => ['required', 'image', 'max:8192'], // ≤ 8 MB
+                'fuel_level'          => ['required', 'string', Rule::in($fuelScale)],
+                'exterior_condition'  => ['required', 'string', 'max:255'],
+                'interior_condition'  => ['required', 'string', 'max:255'],
+                'damage_findings'     => ['nullable', 'array'],
+                'missing_accessories' => ['nullable', 'array'],
+                'notes'               => ['nullable', 'string', 'max:2000'],
+                'signature'           => ['required', 'image', 'max:2048'],
+            ]);
+
+            $ticket = $this->workflow->pauseForRental($ticket, $data['reason'] ?? null, $request->user(), true, [
+                'odometer_reading'    => $data['pause_odometer'],
+                'fuel_level'          => $data['fuel_level'],
+                'exterior_condition'  => $data['exterior_condition'],
+                'interior_condition'  => $data['interior_condition'],
+                'damage_findings'     => $data['damage_findings'] ?? [],
+                'missing_accessories' => $data['missing_accessories'] ?? [],
+                'notes'               => $data['notes'] ?? null,
+            ]);
+
+            [$photoSaved, $signatureSaved] = $this->storeHandoverEvidence($ticket, $request, MaintenanceHandover::TYPE_PAUSE);
+
+            return ResponseHelper::SuccessResponse(
+                [
+                    'ticket'                => MaintenanceWorkflowResource::make($ticket),
+                    'odometer_photo_saved'  => $photoSaved,
+                    'signature_saved'       => $signatureSaved,
+                ],
+                'Maintenance paused — vehicle released back into service',
+                200
+            );
+        });
+    }
+
+    /**
+     * Vehicle Physically Returned — a light checkpoint (no odometer/handover required): stamps that the
+     * car is back so the return handover paperwork is chased. From this moment the car is blocked from
+     * being rented out again until the resume handover clears. Gated to whoever can plausibly be the one
+     * handing the keys back in (controllers, supervisors, or the driver/logistics claim role).
+     */
+    public function markReturned(Request $request, Maintenance $ticket)
+    {
+        return $this->run(function () use ($request, $ticket) {
+            $data = $request->validate([
+                'note' => ['nullable', 'string', 'max:2000'],
+            ]);
+
+            $ticket = $this->workflow->markVehicleReturned($ticket, $request->user(), $data['note'] ?? null);
+            return ResponseHelper::SuccessResponse(
+                MaintenanceWorkflowResource::make($ticket),
+                'Vehicle marked as physically returned — return handover due',
+                200
+            );
+        });
+    }
+
+    /**
+     * Resume Maintenance — the car is back; the SAME ticket continues from the exact stage it paused at
+     * (nothing restarts), UNLESS the mandatory return handover reveals a discrepancy against the pause
+     * handover beyond the configured thresholds — in which case the resume is held open pending a
+     * supervisor's acknowledgement (`blocked_by_incident: true` in the response; this is an EXPECTED
+     * outcome, not an error — the request still returns 200). Gated to a controller (maintenance.manage)
+     * or a supervisor (maintenance.delegate) — either can send the car back into the workshop pipeline.
+     */
+    public function resume(Request $request, Maintenance $ticket)
+    {
+        return $this->run(function () use ($request, $ticket) {
+            $fuelScale = config('maintenance_handover.fuel_scale', []);
+            $data = $request->validate([
+                'resume_odometer'     => ['required', 'integer', 'min:1'],
+                'odometer_photo'      => ['required', 'image', 'max:8192'], // ≤ 8 MB
+                'fuel_level'          => ['required', 'string', Rule::in($fuelScale)],
+                'exterior_condition'  => ['required', 'string', 'max:255'],
+                'interior_condition'  => ['required', 'string', 'max:255'],
+                'damage_findings'     => ['nullable', 'array'],
+                'missing_accessories' => ['nullable', 'array'],
+                'notes'               => ['nullable', 'string', 'max:2000'],
+                'signature'           => ['required', 'image', 'max:2048'],
+            ]);
+
+            $ticket = $this->workflow->resumeMaintenance($ticket, $request->user(), [
+                'odometer_reading'    => $data['resume_odometer'],
+                'fuel_level'          => $data['fuel_level'],
+                'exterior_condition'  => $data['exterior_condition'],
+                'interior_condition'  => $data['interior_condition'],
+                'damage_findings'     => $data['damage_findings'] ?? [],
+                'missing_accessories' => $data['missing_accessories'] ?? [],
+                'notes'               => $data['notes'] ?? null,
+            ]);
+
+            [$photoSaved, $signatureSaved] = $this->storeHandoverEvidence($ticket, $request, MaintenanceHandover::TYPE_RESUME);
+
+            $blockedByIncident = $ticket->active_incident_id !== null;
+
+            return ResponseHelper::SuccessResponse(
+                [
+                    'ticket'               => MaintenanceWorkflowResource::make($ticket),
+                    'odometer_photo_saved' => $photoSaved,
+                    'signature_saved'      => $signatureSaved,
+                    'blocked_by_incident'  => $blockedByIncident,
+                ],
+                $blockedByIncident
+                    ? 'Return handover recorded — a discrepancy was flagged and needs acknowledgement before the repair resumes'
+                    : 'Maintenance resumed — continuing from where it paused',
+                200
+            );
+        });
+    }
+
+    /**
+     * Temporarily Release Vehicle — the car physically leaves the workshop mid-repair (road test /
+     * customer test/delivery / external inspection / storage) while the ticket stays open at its current
+     * stage. NOT a pause: workflow_status is untouched, the car is NOT freed for rental, the ticket is
+     * never closed. Captures WHO took it, WHY and the odometer OUT. Gated to maintenance.manage (the
+     * controllers who own the "let the car leave" decision, matching the pause authority).
+     */
+    public function temporarilyRelease(Request $request, Maintenance $ticket)
+    {
+        return $this->run(function () use ($request, $ticket) {
+            $data = $request->validate([
+                'reason'         => ['required', 'string', Rule::in(MaintenanceTemporaryRelease::REASONS)],
+                // A free-text detail — MANDATORY when the reason is "Other" (there's no preset label then).
+                'reason_note'    => ['nullable', 'string', 'max:2000', Rule::requiredIf($request->input('reason') === MaintenanceTemporaryRelease::REASON_OTHER)],
+                // Who physically takes the car. Defaults to the signed-in user (they hold custody); an
+                // explicit name is only needed when someone ELSE takes it.
+                'taken_by'       => ['nullable', 'string', 'max:120'],
+                'release_odometer' => ['required', 'integer', 'min:1'],
+            ]);
+
+            $ticket = $this->workflow->temporarilyReleaseVehicle($ticket, [
+                'reason'       => $data['reason'],
+                'reason_note'  => $data['reason_note'] ?? null,
+                'taken_by'     => trim((string) ($data['taken_by'] ?? '')) ?: $request->user()->name,
+                'odometer_out' => $data['release_odometer'],
+            ], $request->user());
+
+            return ResponseHelper::SuccessResponse(
+                MaintenanceWorkflowResource::make($ticket),
+                'Vehicle temporarily released — the repair stays open',
+                200
+            );
+        });
+    }
+
+    /**
+     * Return Vehicle to Workshop — the temporarily-released car is back; record the odometer IN, compute
+     * the distance driven while out, and clear the overlay so the ticket presents at its (unchanged) stage
+     * again. Gated to whoever can plausibly hand the keys back (controllers, supervisors, or the
+     * driver/logistics claim role) — matching mark-returned's authority.
+     */
+    public function returnFromTemporaryRelease(Request $request, Maintenance $ticket)
+    {
+        return $this->run(function () use ($request, $ticket) {
+            $data = $request->validate([
+                'return_odometer' => ['required', 'integer', 'min:1'],
+                'return_note'     => ['nullable', 'string', 'max:2000'],
+            ]);
+
+            $ticket = $this->workflow->returnTemporarilyReleasedVehicle($ticket, [
+                'odometer_in' => $data['return_odometer'],
+                'return_note' => $data['return_note'] ?? null,
+            ], $request->user());
+
+            return ResponseHelper::SuccessResponse(
+                MaintenanceWorkflowResource::make($ticket),
+                'Vehicle returned to the workshop — the repair continues',
+                200
+            );
+        });
+    }
+
+    /**
+     * Acknowledge Incident — a supervisor clears a flagged handover discrepancy, finalizing the resume
+     * that was held pending it. No re-capture: the resume handover was already permanently saved.
+     * Gated to maintenance.manage.
+     */
+    public function acknowledgeIncident(Request $request, Maintenance $ticket, MaintenanceIncident $incident)
+    {
+        return $this->run(function () use ($request, $ticket, $incident) {
+            $data = $request->validate([
+                'acknowledgement_note' => ['nullable', 'string', 'max:2000'],
+            ]);
+
+            $ticket = $this->workflow->acknowledgeIncident($incident, $request->user(), $data['acknowledgement_note'] ?? null);
+            return ResponseHelper::SuccessResponse(
+                MaintenanceWorkflowResource::make($ticket),
+                'Discrepancy acknowledged — maintenance resumed',
+                200
+            );
+        });
+    }
+
+    /**
+     * Best-effort evidence capture for a pause/resume handover — mirrors storeOdometerPhoto()'s "never
+     * block the transition" convention. The odometer photo becomes an InspectionRecord (phase 'pause' or
+     * 'resume', same trail every other checkpoint's photos live in); the signature is stored directly
+     * (no InspectionRecord — it's not a vehicle condition photo). Both back-fill the just-created
+     * MaintenanceHandover row. Returns [odometerPhotoSaved, signatureSaved].
+     */
+    private function storeHandoverEvidence(Maintenance $ticket, Request $request, string $phase): array
+    {
+        $handoverId = $phase === MaintenanceHandover::TYPE_PAUSE ? $ticket->last_pause_handover_id : $ticket->last_resume_handover_id;
+        $photoSaved = false;
+        $signatureSaved = false;
+
+        if (! $handoverId) {
+            return [$photoSaved, $signatureSaved]; // the handover row itself failed to save — nothing to attach evidence to
+        }
+
+        $updates = [];
+
+        if ($request->hasFile('odometer_photo')) {
+            try {
+                $record = $this->storeOdometerPhoto($ticket, $request->file('odometer_photo'), $request->user(), $phase);
+                if ($record) {
+                    $updates['odometer_photo_inspection_record_id'] = $record->id;
+                    $photoSaved = true;
+                }
+            } catch (\Throwable $e) {
+                report($e); // logged — the transition already committed
+            }
+        }
+
+        if ($request->hasFile('signature')) {
+            try {
+                $file = $request->file('signature');
+                $disk = config('filesystems.disks.s3.bucket') ? 's3' : 'public';
+                $ext  = strtolower($file->getClientOriginalExtension() ?: $file->extension() ?: 'png');
+                $dir  = "inspections/vehicle-{$ticket->vehicle_id}/{$phase}/signature";
+                $key  = $file->storeAs($dir, (string) Str::uuid() . '.' . $ext, $disk);
+                if ($key) {
+                    $updates['signature_path'] = $key;
+                    $updates['signature_disk'] = $disk;
+                    $signatureSaved = true;
+                }
+            } catch (\Throwable $e) {
+                report($e);
+            }
+        }
+
+        if (! empty($updates)) {
+            try {
+                MaintenanceHandover::where('id', $handoverId)->update($updates);
+            } catch (\Throwable $e) {
+                report($e);
+            }
+        }
+
+        return [$photoSaved, $signatureSaved];
+    }
+
+    /**
+     * Inspection Request Review Gate — the Controllers' (Lin & Marwa) queue of requests awaiting
+     * approval before they are sent to the Inspector (Abu Maroof).
+     */
+    public function reviewQueue(Request $request)
+    {
+        return $this->run(function () {
+            $tickets = $this->workflow->pendingReview();
+            return ResponseHelper::SuccessResponse(MaintenanceWorkflowResource::collection($tickets), 'OK', 200);
+        });
+    }
+
+    /** Approve a pending inspection request — sends it on to the Inspector, unchanged from today. */
+    public function approveReview(Request $request, Maintenance $ticket)
+    {
+        return $this->run(function () use ($request, $ticket) {
+            $data = $request->validate([
+                'notes' => ['nullable', 'string', 'max:2000'],
+            ]);
+
+            $ticket = $this->workflow->approveInspectionReview($ticket, $data, $request->user());
+            return ResponseHelper::SuccessResponse(MaintenanceWorkflowResource::make($ticket), 'Approved — sent to Abu Maroof', 200);
+        });
+    }
+
+    /** Reject a pending inspection request — terminates it, nothing sent externally. */
+    public function rejectReview(Request $request, Maintenance $ticket)
+    {
+        return $this->run(function () use ($request, $ticket) {
+            $data = $request->validate([
+                'rejection_reason' => ['required', 'string', 'max:2000'],
+            ]);
+
+            $ticket = $this->workflow->rejectInspectionReview($ticket, $data, $request->user());
+            return ResponseHelper::SuccessResponse(MaintenanceWorkflowResource::make($ticket), 'Inspection request rejected', 200);
+        });
+    }
+
+    /** Retroactive sign-off for a legacy system request that bypassed the review gate — see pendingReview(). */
+    public function acknowledgeLegacyReview(Request $request, Maintenance $ticket)
+    {
+        return $this->run(function () use ($request, $ticket) {
+            $ticket = $this->workflow->acknowledgeLegacyInspectionRequest($ticket, $request->user());
+            return ResponseHelper::SuccessResponse(MaintenanceWorkflowResource::make($ticket), 'Acknowledged', 200);
         });
     }
 
@@ -741,9 +1200,10 @@ class MaintenanceWorkflowController extends Controller
     {
         return $this->run(function () use ($request, $ticket) {
             $data = $request->validate([
-                'test_odometer'  => ['required', 'integer', 'min:1'],
-                'odometer_photo' => ['required', 'image', 'max:8192'], // ≤ 8 MB
-                'odometer_note'  => ['nullable', 'string', 'max:2000'], // explanation for a >10 km gap
+                'test_odometer'      => ['required', 'integer', 'min:1'],
+                'odometer_photo'     => ['required', 'image', 'max:8192'], // ≤ 8 MB
+                'odometer_note'      => ['nullable', 'string', 'max:2000'], // explanation for a >10 km gap
+                'odometer_confirmed' => ['nullable', 'boolean'],
             ]);
 
             $ticket = $this->workflow->startDiagnostic($ticket, $data, $request->user());
@@ -803,27 +1263,172 @@ class MaintenanceWorkflowController extends Controller
                 // routes it to the mobile lane (car stays available); 'in_shop' (or omitted) → the
                 // classic workshop pipeline. Only meaningful when requires_maintenance is true.
                 'repair_location'      => ['nullable', Rule::in(Maintenance::REPAIR_LOCATIONS)],
+                // Rental Eligibility — the inspector's one-time "can this car be rented before the
+                // maintenance is finished?" call. false/omitted = mandatory (grounded until complete);
+                // true = deferrable (a later rental pauses the ticket and it resumes on return).
+                'deferrable_for_rental' => ['nullable', 'boolean'],
                 // End-of-test-drive odometer (optional) + the >10 km gap explanation. Captured at Decide,
                 // stored under the 'report' flag key — never overwrites the start-of-drive test_odometer.
                 'report_odometer'      => ['nullable', 'integer', 'min:1'],
                 'odometer_note'        => ['nullable', 'string', 'max:2000'],
+                'odometer_confirmed'   => ['nullable', 'boolean'],
+                // End-of-test-drive odometer PHOTO (optional) — same best-effort, saved-after-commit
+                // pattern as dispatch/receive; a storage hiccup can never block the report from filing.
+                'odometer_photo'       => ['nullable', 'image', 'max:8192'], // ≤ 8 MB
             ]);
 
             $requires = $request->boolean('requires_maintenance');
             $ticket = $this->workflow->submitReport($ticket, $data, $requires, $request->user());
 
             // Promote the inspector's findings into first-class routable tasks (one per fault), so the
-            // ticket can be split across garages from the moment it opens.
-            if ($requires) {
+            // ticket can be split across garages from the moment it opens. A RECOMMENDATION is not yet an
+            // active job — its faults still live on the `findings` JSON for the queue card, and tasks are
+            // created only when a Supervisor approves it (approveRecommendation). Deferring keeps a dismissed
+            // recommendation from leaving orphaned open tasks behind. Breakdowns / on-site jobs open a real
+            // ticket now, so they still promote here.
+            if ($requires && $ticket->workflow_status !== Maintenance::WF_RECOMMENDATION_PENDING) {
                 $this->tasks->syncFromFindings($ticket, $request->user());
                 $ticket->load(self::EAGER);
             }
 
+            $isRecommendation = $ticket->workflow_status === Maintenance::WF_RECOMMENDATION_PENDING;
+
+            $photoSaved = false;
+            if ($request->hasFile('odometer_photo')) {
+                try {
+                    $photoSaved = (bool) $this->storeOdometerPhoto($ticket, $request->file('odometer_photo'), $request->user(), 'report');
+                } catch (\Throwable $e) {
+                    report($e); // logged, never surfaced — the report already succeeded
+                }
+            }
+
             return ResponseHelper::SuccessResponse(
-                MaintenanceWorkflowResource::make($ticket),
-                $requires ? 'Requires maintenance — ticket opened, logistics notified' : 'No maintenance needed — diagnostic closed',
+                ['ticket' => MaintenanceWorkflowResource::make($ticket), 'odometer_photo_saved' => $photoSaved],
+                $isRecommendation
+                    ? 'Recommendation filed — awaiting the supervisor’s approval'
+                    : ($requires ? 'Requires maintenance — ticket opened, logistics notified' : 'No maintenance needed — diagnostic closed'),
                 200
             );
+        });
+    }
+
+    // ── PRE-MAINTENANCE RECOMMENDATION QUEUE ────────────────────────────────────
+
+    /**
+     * The Maintenance Recommendations page data — inspection recommendations awaiting the Supervisor's
+     * triage (recommendation_pending + waiting-for-parts), newest first. These are FENCED pre-tickets: the
+     * cars are NOT active maintenance jobs, so they live here, off the active repair board.
+     */
+    public function recommendations(Request $request)
+    {
+        return $this->run(function () {
+            $tickets = Maintenance::recommendationQueue()
+                ->whereHas('vehicle', fn ($q) => $q->whereIn('status', Vehicle::ACTIVE_STATUSES))
+                ->with(self::EAGER)->withCount('media')
+                ->orderByDesc('id')
+                ->get();
+
+            // Triage Routing Approvals — Abu Maroof's routing recommendations awaiting a Supervisor's
+            // sign-off. Same approval hub, a distinct source (a complaint he wants sent in).
+            $triageApprovals = Maintenance::triageApprovalQueue()
+                ->whereHas('vehicle', fn ($q) => $q->whereIn('status', Vehicle::ACTIVE_STATUSES))
+                ->with(self::EAGER)->withCount('media')
+                ->orderByDesc('id')
+                ->get();
+
+            $counts = [
+                'pending'          => $tickets->where('workflow_status', Maintenance::WF_RECOMMENDATION_PENDING)->count(),
+                'awaiting_parts'   => $tickets->where('workflow_status', Maintenance::WF_AWAITING_PARTS)->count(),
+                'triage_approvals' => $triageApprovals->count(),
+                'total'            => $tickets->count() + $triageApprovals->count(),
+            ];
+
+            return ResponseHelper::SuccessResponse(
+                [
+                    'recommendations'  => MaintenanceWorkflowResource::collection($tickets),
+                    'triage_approvals' => MaintenanceWorkflowResource::collection($triageApprovals),
+                    'counts'           => $counts,
+                ],
+                'Maintenance recommendations retrieved',
+                200
+            );
+        });
+    }
+
+    /**
+     * "Start Maintenance" — the Supervisor approves a recommendation, promoting it into the existing
+     * dispatch pipeline (inspection_pending). From here the workflow is completely unchanged.
+     */
+    public function approveRecommendation(Request $request, Maintenance $ticket)
+    {
+        return $this->run(function () use ($request, $ticket) {
+            $ticket = $this->workflow->approveRecommendation($ticket, $request->user());
+
+            // NOW the recommendation is a real ticket — promote the inspector's findings into first-class
+            // routable tasks (deferred from report time), so it can be split across garages at dispatch.
+            $this->tasks->syncFromFindings($ticket, $request->user());
+            $ticket->load(self::EAGER);
+
+            return ResponseHelper::SuccessResponse(
+                MaintenanceWorkflowResource::make($ticket),
+                'Maintenance approved — ticket opened, supervisors notified to pick a garage',
+                200
+            );
+        });
+    }
+
+    /** Reject a recommendation or mark it not required — terminal, no maintenance happens. */
+    public function dismissRecommendation(Request $request, Maintenance $ticket)
+    {
+        return $this->run(function () use ($request, $ticket) {
+            $data = $request->validate([
+                'disposition' => ['required', Rule::in(Maintenance::RECO_DISPOSITIONS)],
+                'reason'      => ['nullable', 'string', 'max:2000'],
+            ]);
+
+            $ticket = $this->workflow->dismissRecommendation($ticket, $data['disposition'], $data['reason'] ?? null, $request->user());
+            $label  = $data['disposition'] === Maintenance::RECO_NOT_REQUIRED ? 'marked not required' : 'rejected';
+
+            return ResponseHelper::SuccessResponse(MaintenanceWorkflowResource::make($ticket), 'Recommendation ' . $label, 200);
+        });
+    }
+
+    /** Schedule a recommendation for a later date — it stays in the queue with a date badge. */
+    public function scheduleRecommendation(Request $request, Maintenance $ticket)
+    {
+        return $this->run(function () use ($request, $ticket) {
+            $data = $request->validate([
+                'scheduled_for' => ['required', 'date', 'after_or_equal:today'],
+                'note'          => ['nullable', 'string', 'max:2000'],
+            ]);
+
+            $ticket = $this->workflow->scheduleRecommendation($ticket, $data['scheduled_for'], $data['note'] ?? null, $request->user());
+
+            return ResponseHelper::SuccessResponse(MaintenanceWorkflowResource::make($ticket), 'Recommendation scheduled', 200);
+        });
+    }
+
+    /** "Order Parts First" — move the recommendation to Waiting for Parts (stays in the queue). */
+    public function orderRecommendationParts(Request $request, Maintenance $ticket)
+    {
+        return $this->run(function () use ($request, $ticket) {
+            $data = $request->validate([
+                'note' => ['nullable', 'string', 'max:2000'], // what's on order
+            ]);
+
+            $ticket = $this->workflow->orderParts($ticket, $data['note'] ?? null, $request->user());
+
+            return ResponseHelper::SuccessResponse(MaintenanceWorkflowResource::make($ticket), 'Waiting for parts — recommendation held in the queue', 200);
+        });
+    }
+
+    /** "Parts Ready" — the spare arrived; return the recommendation to pending so it can be started. */
+    public function recommendationPartsReady(Request $request, Maintenance $ticket)
+    {
+        return $this->run(function () use ($request, $ticket) {
+            $ticket = $this->workflow->partsReady($ticket, $request->user());
+
+            return ResponseHelper::SuccessResponse(MaintenanceWorkflowResource::make($ticket), 'Parts ready — recommendation can now be started', 200);
         });
     }
 
@@ -911,6 +1516,7 @@ class MaintenanceWorkflowController extends Controller
                 'expected_return_date' => ['nullable', 'date'],
                 'odometer_photo'       => ['nullable', 'image', 'max:8192'], // ≤ 8 MB
                 'odometer_note'        => ['nullable', 'string', 'max:2000'], // explanation for a >10 km gap
+                'odometer_confirmed'   => ['nullable', 'boolean'],
             ]);
 
             $ticket = $this->workflow->dispatch($ticket, $data, $request->user());
@@ -951,6 +1557,7 @@ class MaintenanceWorkflowController extends Controller
                 'recovery_unit_name'   => ['required', 'string', 'max:191'],
                 'recovery_unit_phone'  => ['nullable', 'string', 'max:40'],
                 'odometer_note'        => ['nullable', 'string', 'max:2000'], // explanation for a >10 km gap
+                'odometer_confirmed'   => ['nullable', 'boolean'],
                 // Only required when the ticket has no garage yet — dispatchRecovery() enforces that itself
                 // (reusing ticket->vendor_id when this is omitted), so it's optional at the validation layer.
                 'vendor_id'            => ['nullable', 'integer', Rule::exists('vendors', 'id')],
@@ -1034,6 +1641,7 @@ class MaintenanceWorkflowController extends Controller
                 'receive_odometer'     => ['required', 'integer', 'min:1'],
                 'odometer_photo'       => ['required', 'image', 'max:8192'], // ≤ 8 MB — arrival check-in shot
                 'odometer_note'        => ['nullable', 'string', 'max:2000'], // explanation for a >10 km gap
+                'odometer_confirmed'   => ['nullable', 'boolean'],
                 'garage_feedback'      => ['nullable', 'string', 'max:2000'],
                 'expected_return_date' => ['nullable', 'date'],
             ]);
@@ -1109,6 +1717,7 @@ class MaintenanceWorkflowController extends Controller
                 'final_odometer'  => ['nullable', 'integer', 'min:1'],
                 'odometer_photo'  => ['nullable', 'image', 'max:8192'],
                 'odometer_note'   => ['nullable', 'string', 'max:2000'],
+                'odometer_confirmed' => ['nullable', 'boolean'],
                 'garage_feedback' => ['nullable', 'string', 'max:2000'],
                 'cost'            => ['nullable', 'numeric', 'min:0'],
                 // Granular time-per-fault: a JSON array [{text, hours}] attributing actual repair time
@@ -1194,6 +1803,7 @@ class MaintenanceWorkflowController extends Controller
                 // Garage-OUT reading — mandatory: this is when the car physically leaves the garage.
                 'return_odometer' => ['required', 'integer', 'min:1'],
                 'odometer_note'   => ['nullable', 'string', 'max:2000'], // explanation for a >10 km gap
+                'odometer_confirmed' => ['nullable', 'boolean'],
             ]);
 
             $ticket = $this->workflow->collectFromGarage($ticket, $data, $request->user());
@@ -1226,6 +1836,12 @@ class MaintenanceWorkflowController extends Controller
         return $this->run(function () use ($request, $ticket) {
             $data = $request->validate([
                 'odometer_photo' => ['required', 'image', 'max:8192'], // ≤ 8 MB — mandatory arrival shot; blocks the transition
+                // Arrival-at-park odometer (mandatory) — the reading the moment the car is back at base on
+                // the return leg. Continuity-checked vs the last recorded reading, and it becomes the at-base
+                // anchor the final QA sign-off's strict ±5 km cap compares against.
+                'park_odometer'  => ['required', 'integer', 'min:1'],
+                'odometer_note'  => ['nullable', 'string', 'max:2000'],
+                'odometer_confirmed' => ['nullable', 'boolean'],
                 'cost'           => ['nullable', 'numeric', 'min:0'],
                 'vendor_id'      => ['nullable', 'integer', Rule::exists('vendors', 'id')],
                 'actual_in_date' => ['nullable', 'date'],
@@ -1418,10 +2034,23 @@ class MaintenanceWorkflowController extends Controller
                 // gap explanation. Optional at the validation layer; the modal makes it required on PASS.
                 'final_odometer' => ['nullable', 'integer', 'min:1'],
                 'odometer_note'  => ['nullable', 'string', 'max:2000'],
+                'odometer_confirmed' => ['nullable', 'boolean'],
                 // Deferred-invoice: sign off + return the car to service now, but park in awaiting_invoice
                 // (invoice outstanding) instead of a full close, so the workflow never gets stuck.
                 'defer_invoice'  => ['nullable', 'boolean'],
             ]);
+
+            // Post-Repair Inspection (PASS) — a close coming off the final QC gate is a "Fixed
+            // Successfully" verdict for every fault it verifies. Snapshot the ticket's faults BEFORE the
+            // close so each gets a durable repair_inspections row (Case A). We record every non-cancelled
+            // fault, not just the still-open ones: an in-shop repair completes its faults at the garage
+            // (they're already `completed` by this gate), while an on-site job's faults are still open —
+            // both are verified fixed by this PASS. A minor ticket that auto-closes without ever reaching
+            // the gate records nothing — it never passed a QC check.
+            $wasReinspection = $ticket->workflow_status === Maintenance::WF_READY_REINSPECTION;
+            $verifiedFaults  = $wasReinspection
+                ? $ticket->tasks()->where('status', '!=', \App\Models\MaintenanceTask::STATUS_CANCELLED)->get()
+                : collect();
 
             // A PASSED re-inspection means every fault is verified fixed — resolve any still-open faults
             // so the container's task progress reflects the sign-off (the car still closes explicitly).
@@ -1430,6 +2059,13 @@ class MaintenanceWorkflowController extends Controller
             }
 
             $ticket = $this->workflow->close($ticket, $data, $request->user());
+
+            foreach ($verifiedFaults as $fault) {
+                $this->inspections->recordForFault(
+                    $ticket, $fault, \App\Models\RepairInspection::RESULT_FIXED, null, $data['notes'] ?? null, $request->user()
+                );
+            }
+
             $msg = $ticket->workflow_status === Maintenance::WF_AWAITING_INVOICE
                 ? 'Vehicle back in service — invoice pending'
                 : 'Ticket closed — vehicle back in service';
@@ -1438,10 +2074,11 @@ class MaintenanceWorkflowController extends Controller
     }
 
     /**
-     * "Mark as Serviced" — complete an ON-SITE (mobile) ticket in one step. No garage, no re-inspection,
-     * no QA: the minor job was done where the car is parked, so this resolves the faults and closes the
-     * ticket, clearing the "Pending Maintenance" tag. The car was never out of service. Same authority as
-     * a close (the inspector who logged it or a supervisor). See MaintenanceWorkflowService::markServiced().
+     * "Mark as Serviced" — complete the hands-on work of an ON-SITE (mobile) ticket (no garage, no transit).
+     * It does NOT close the ticket and does NOT touch the vehicle's service data: it routes the ticket to the
+     * final QA re-inspection (ready_for_reinspection), exactly like an in-shop repair. The faults stay OPEN
+     * so the inspector can PASS (→ close, which confirms the routine service using the re-inspection
+     * odometer) or FAIL (→ reopen). See MaintenanceWorkflowService::markServiced().
      */
     public function markServiced(Request $request, Maintenance $ticket)
     {
@@ -1449,24 +2086,28 @@ class MaintenanceWorkflowController extends Controller
             $data = $request->validate([
                 'notes'          => ['nullable', 'string', 'max:2000'],
                 'cost'           => ['nullable', 'numeric', 'min:0'],   // optional on-the-spot cost (else deferred)
-                'vendor_id'      => ['nullable', 'integer', Rule::exists('vendors', 'id')], // optional mobile vendor
-                'actual_in_date' => ['nullable', 'date'],
-                // Odometer at the on-site service — rolls any routine-service fault's Service Reminder
-                // forward from this reading (an in-house oil change never reaches a garage odometer capture).
-                'odometer'       => ['nullable', 'integer', 'min:0'],
+                // On-site work never reaches a garage, so the vendor is a free-text mechanic name
+                // (NOT a garage FK). Preserved by folding it into the notes carried to the closing summary.
+                'vendor_name'    => ['nullable', 'string', 'max:120'],
             ]);
 
-            // The on-site job is done → resolve every open fault so the container reflects completion
-            // (mirrors the re-inspection pass in close()); the ticket still closes explicitly below. The
-            // odometer rides through so a routine oil/battery service schedules its next reminder.
-            foreach ($ticket->tasks()->whereNotIn('status', \App\Models\MaintenanceTask::TERMINAL)->get() as $task) {
-                $this->tasks->setStatus($task, \App\Models\MaintenanceTask::STATUS_COMPLETED, $request->user(), null, $data['odometer'] ?? null);
+            // Fold the on-site vendor's name into the notes so it survives in the closing summary
+            // (there is no garage vendor_id to attach — the car was fixed where it's parked).
+            if (! empty($data['vendor_name'])) {
+                $prefix = 'On-site vendor: ' . trim($data['vendor_name']);
+                $data['notes'] = trim($data['notes'] ?? '') !== ''
+                    ? $prefix . ' · ' . trim($data['notes'])
+                    : $prefix;
             }
+            unset($data['vendor_name']);
 
+            // NOTE: the faults are deliberately left OPEN here. The service is only confirmed to the vehicle
+            // at the re-inspection PASS (close), where the tasks are completed and the PASS odometer is used —
+            // so an on-site oil/battery service can no longer update the vehicle by bypassing QA.
             $ticket = $this->workflow->markServiced($ticket, $data, $request->user());
             return ResponseHelper::SuccessResponse(
                 MaintenanceWorkflowResource::make($ticket),
-                'On-site service completed — vehicle stays available',
+                'On-site service completed — pending final QA re-inspection',
                 200
             );
         });
@@ -1528,6 +2169,20 @@ class MaintenanceWorkflowController extends Controller
                 'failed_task_ids'      => ['nullable', 'array'],
                 'failed_task_ids.*'    => ['integer'],
                 'failed_notes'         => ['nullable', 'array'], // { "<task_id>": "note" }
+                // Post-Repair Inspection — the STRUCTURED reason each still-broken fault failed (Case B).
+                // `failure_reason` is a single fallback for every failed fault; `failure_reasons` overrides
+                // it per fault ({ "<task_id>": "wrong_diagnosis" }). Optional at the API layer (a legacy
+                // send-back predates the enum → defaults to "unknown"); the modal makes the picker required.
+                'failure_reason'       => ['nullable', Rule::in(\App\Models\RepairInspection::REASONS)],
+                'failure_reasons'      => ['nullable', 'array'],
+                'failure_reasons.*'    => [Rule::in(\App\Models\RepairInspection::REASONS)],
+                // Case C — brand-new problems the inspection surfaced (original faults fine, something else
+                // is wrong). Each spawns a fresh fault on the ticket, linked to its inspection record.
+                'new_issues'              => ['nullable', 'array'],
+                'new_issues.*.symptom'    => ['required_with:new_issues', 'string', 'max:255'],
+                'new_issues.*.severity'   => ['nullable', Rule::in(array_keys(Maintenance::FAULT_SEVERITY_META))],
+                'new_issues.*.category_key' => ['nullable', 'string', 'max:120'],
+                'new_issues.*.notes'      => ['nullable', 'string', 'max:2000'],
                 // Optional inspector suggestion: re-route to a different garage for the supervisor's
                 // re-dispatch (pre-selects it). Blame for the failure stays with the original garage.
                 'redispatch_vendor_id' => ['nullable', 'integer', Rule::exists('vendors', 'id')],
@@ -1545,33 +2200,85 @@ class MaintenanceWorkflowController extends Controller
                 );
             }
 
-            $user      = $request->user();
-            $openTasks = $ticket->tasks()->whereNotIn('status', \App\Models\MaintenanceTask::TERMINAL)->get();
+            $user = $request->user();
+            // Every fault this sign-off passes judgement on (an in-shop repair's faults are already
+            // `completed` by the gate, an on-site job's are still open — both get a verdict). Cancelled
+            // faults (non-issues) are excluded. NOTE: we intentionally drive BOTH the guard and the fail
+            // mechanics below off `$allFaults`, NOT the open-only set. An in-shop ticket reaches this gate
+            // with every fault already `completed`, so an open-only set is empty — which used to silently
+            // skip failReinspection() (car bounced back with 0 open faults, garage blame never counted)
+            // and skip the "flag something" guard (an empty send-back was accepted). Both are fixed here.
+            $allFaults = $ticket->tasks()->where('status', '!=', \App\Models\MaintenanceTask::STATUS_CANCELLED)->get();
             $failedIds = array_map('intval', $data['failed_task_ids'] ?? []);
             $notes     = (array) ($data['failed_notes'] ?? []);
+            $reasons   = (array) ($data['failure_reasons'] ?? []);
+            $newIssues = array_values($data['new_issues'] ?? []);
 
-            // When the ticket carries faults, at least one must be flagged still-broken to send it back —
-            // an all-passed re-inspection should CLOSE, not fail. (A legacy ticket with no tasks skips this.)
-            if ($openTasks->isNotEmpty() && empty($failedIds)) {
+            // When the ticket carries faults, sending it back needs at least one still-broken fault OR a
+            // newly-found problem — an all-passed re-inspection with nothing new should CLOSE, not fail.
+            // (A legacy ticket with no tasks skips this.)
+            if ($allFaults->isNotEmpty() && empty($failedIds) && empty($newIssues)) {
                 throw new \App\Exceptions\WorkflowTransitionException(
-                    'Flag at least one fault that is still not fixed — or pass the re-inspection to close the ticket.',
+                    'Flag at least one fault that is still not fixed (or a new problem found) — or pass the re-inspection to close the ticket.',
                     ['field' => 'failed_task_ids'],
                 );
             }
 
+            // Post-Repair Inspection records — DECOUPLED from the mechanics below so every judged fault
+            // gets a durable verdict regardless of its current status (a completed in-shop fault included).
+            // Recorded BEFORE failReinspection so a still_exists snapshots the garage it came back from.
+            foreach ($allFaults as $fault) {
+                if (in_array($fault->id, $failedIds, true)) {
+                    $reason = $reasons[$fault->id] ?? ($data['failure_reason'] ?? null);
+                    $note   = array_key_exists($fault->id, $notes) ? (string) $notes[$fault->id] : null;
+                    $this->inspections->recordForFault($ticket, $fault, \App\Models\RepairInspection::RESULT_STILL_EXISTS, $reason, $note, $user); // Case B
+                } else {
+                    $this->inspections->recordForFault($ticket, $fault, \App\Models\RepairInspection::RESULT_FIXED, null, null, $user); // Case A
+                }
+            }
+
+            // MECHANICS — driven off EVERY judged fault (`$allFaults`), so an in-shop repair (whose faults
+            // are already `completed` at this gate) is handled exactly like an on-site job whose faults are
+            // still open. A flagged fault is RE-OPENED via failReinspection() regardless of its current
+            // status (it drops the fault back to `pending`, detaches + blames the garage, bumps the failure
+            // counter) — this is the fix for the in-shop case where the flagged fault previously stayed
+            // `completed` and sailed straight back through to close. A fault that is NOT flagged is verified
+            // fixed: on-site jobs are advanced to `completed`; already-`completed` in-shop faults are left
+            // untouched (no duplicate resolve event).
             $failedSummary = [];
-            foreach ($openTasks as $task) {
+            foreach ($allFaults as $task) {
                 if (in_array($task->id, $failedIds, true)) {
-                    // Capture the failing garage BEFORE we detach the fault from it.
+                    // Capture the failing garage BEFORE we detach the fault from it. `current_vendor_id`
+                    // survives a completed fault (it is not nulled on resolve), so the blame is captured
+                    // for in-shop faults too.
                     $garageName = $task->currentVendor?->name
                         ?: \App\Models\Vendor::whereKey($task->current_vendor_id)->value('name');
                     $note = array_key_exists($task->id, $notes) ? (string) $notes[$task->id] : null;
                     $this->tasks->failReinspection($task, $note, $user);
                     $failedSummary[] = ['id' => $task->id, 'symptom' => $task->symptom, 'garage' => $garageName];
-                } else {
-                    // Not flagged broken → verified fixed at this re-inspection.
+                } elseif ($task->status !== \App\Models\MaintenanceTask::STATUS_COMPLETED) {
+                    // Not flagged broken and not yet resolved (on-site job) → verified fixed at this
+                    // re-inspection. Already-completed in-shop faults keep their existing resolution.
                     $this->tasks->setStatus($task, \App\Models\MaintenanceTask::STATUS_COMPLETED, $user);
                 }
+            }
+
+            // Case C — materialise each newly-found problem as a fresh fault on the ticket, and stamp its
+            // inspection record so the new fault traces back to the check that surfaced it. It rides the
+            // send-back to the supervisor for re-dispatch alongside any still-broken faults.
+            foreach ($newIssues as $issue) {
+                $newFault = \App\Models\MaintenanceTask::create([
+                    'maintenance_id' => $ticket->id,
+                    'vehicle_id'     => $ticket->vehicle_id,
+                    'symptom'        => trim((string) $issue['symptom']),
+                    'category_key'   => $issue['category_key'] ?? null,
+                    'source'         => Maintenance::FINDING_INSPECTOR,
+                    'severity'       => $issue['severity'] ?? $ticket->fault_severity,
+                    'status'         => \App\Models\MaintenanceTask::STATUS_PENDING,
+                    'identified_by'  => $user->id,
+                    'identified_at'  => now(),
+                ]);
+                $this->inspections->recordNewIssue($ticket, $newFault, $issue['notes'] ?? null, $user);
             }
 
             $ticket = $this->workflow->markReinspectionFailed($ticket, $data['reason'] ?? null, $failedSummary, $user, $data['redispatch_vendor_id'] ?? null);
@@ -1782,6 +2489,53 @@ class MaintenanceWorkflowController extends Controller
     }
 
     /**
+     * Post-Repair Inspection history for one ticket — the durable QC verdicts (fixed / still_exists /
+     * new_issue) recorded at sign-off. Drives the drawer's "Repair Quality Check" panel, including the
+     * "REPAIR FAILED" card (fault, previous repair garage + date, reason). Read-only (maintenance.view).
+     */
+    public function repairInspections(Maintenance $ticket)
+    {
+        return $this->run(function () use ($ticket) {
+            $rows = $ticket->repairInspections()
+                ->with(['fault:id,symptom', 'newFault:id,symptom', 'inspector:id,name', 'previousVendor:id,name'])
+                ->get();
+            return ResponseHelper::SuccessResponse(
+                \App\Http\Resources\RepairInspectionResource::collection($rows),
+                'Repair inspections retrieved',
+                200
+            );
+        });
+    }
+
+    /**
+     * Repair Quality Tracking — the fleet-wide quality report: per-garage success rate (repairs completed
+     * vs how many came back still broken) and the parts flagged as a Possible Part Failure. Read authority
+     * (maintenance.view); managers/admins read it for oversight.
+     */
+    public function repairQuality()
+    {
+        return $this->run(function () {
+            return ResponseHelper::SuccessResponse([
+                'technicians'  => $this->inspections->technicianQuality(),
+                'part_signals' => $this->inspections->partFailureSignals(),
+            ], 'Repair quality retrieved', 200);
+        });
+    }
+
+    /** Every post-repair verdict recorded for one vehicle (newest first) — the car's repair-quality trail. */
+    public function vehicleRepairQuality(Vehicle $vehicle)
+    {
+        return $this->run(function () use ($vehicle) {
+            $rows = $this->inspections->vehicleHistory($vehicle->id);
+            return ResponseHelper::SuccessResponse(
+                \App\Http\Resources\RepairInspectionResource::collection($rows),
+                'Vehicle repair quality retrieved',
+                200
+            );
+        });
+    }
+
+    /**
      * Garage Transfer (whole car) — the Supervisor sends the car to a DIFFERENT garage when work is still
      * needed. Closes the current garage's stint for every open fault (transferred_out + reason) and opens
      * a fresh stint at the next garage, then re-points the ticket's single current garage. The faults stay
@@ -1804,7 +2558,11 @@ class MaintenanceWorkflowController extends Controller
                 'assigned_to_id' => ['nullable', 'integer', Rule::exists('users', 'id')],
                 // Set true to move ahead after the operator acknowledges the Conflict Check warning.
                 'acknowledge_conflict' => ['nullable', 'boolean'],
+                // How the car will actually move: a company driver, or a recovery (tow) truck for a car
+                // that isn't drivable. Defaults to 'driver' — omitted by any older client, unchanged behaviour.
+                'transport_method' => ['nullable', Rule::in([Maintenance::TRANSPORT_DRIVER, Maintenance::TRANSPORT_RECOVERY])],
             ]);
+            $transportMethod = $data['transport_method'] ?? Maintenance::TRANSPORT_DRIVER;
 
             if (! $ticket->vendor_id) {
                 throw new \App\Exceptions\WorkflowTransitionException('Assign a primary garage first before transferring the car.', ['field' => 'vendor_id']);
@@ -1898,7 +2656,7 @@ class MaintenanceWorkflowController extends Controller
                 // Pickup" so a driver collects the car — the board reads "Awaiting Pickup · [current] →
                 // [new]". The fault-stint hand-over + vendor re-point are DEFERRED to the destination
                 // arrival check-in (markUnderRepair), so the single-garage invariant holds the whole leg.
-                $this->workflow->beginGarageTransfer($ticket, $vendor, $data['assigned_to_id'] ?? null, $data['reason'] ?? null, $request->user());
+                $this->workflow->beginGarageTransfer($ticket, $vendor, $data['assigned_to_id'] ?? null, $data['reason'] ?? null, $request->user(), $transportMethod);
 
                 $ticket = Maintenance::with(self::EAGER)->findOrFail($ticket->id);
                 return ResponseHelper::SuccessResponse(MaintenanceWorkflowResource::make($ticket), 'Transfer requested — the car is awaiting pickup at ' . ($ticket->garage ?: 'its garage') . ' to move to ' . $vendor->name, 200);
@@ -1972,6 +2730,63 @@ class MaintenanceWorkflowController extends Controller
 
             $this->tasks->setStatus($task, $data['status'], $request->user(), $data['note'] ?? null, $data['odometer'] ?? null);
             return $this->ticketFor($task, 'Fault status updated');
+        });
+    }
+
+    /**
+     * WORKSHOP CONFIRMATION — the technician records a verdict on a reported fault while the car is In
+     * Workshop: confirmed / not_found / different_cause / needs_diagnosis. Only `confirmed` opens a
+     * recurring-fault review (RecurringFaultService). Non-blocking, independent of the repair status.
+     */
+    public function confirmTask(Request $request, \App\Models\MaintenanceTask $task)
+    {
+        return $this->run(function () use ($request, $task) {
+            $data = $request->validate([
+                'confirmation_status' => ['required', Rule::in(\App\Models\MaintenanceTask::CONFIRMATION_STATUSES)],
+                'note'                => ['nullable', 'string', 'max:2000'],
+            ]);
+
+            $this->tasks->confirmFault($task, $data['confirmation_status'], $request->user(), $data['note'] ?? null);
+            return $this->ticketFor($task, 'Fault review recorded');
+        });
+    }
+
+    /**
+     * Raise a DIFFERENT fault from one reviewed as Not found — the reported symptom wasn't there, but the
+     * real issue is this. Creates a new fault on the same ticket, linked to the original for history; the
+     * original stays Not found (never marked fixed).
+     */
+    public function addDifferentFault(Request $request, \App\Models\MaintenanceTask $task)
+    {
+        return $this->run(function () use ($request, $task) {
+            $data = $request->validate([
+                'symptom'      => ['required', 'string', 'max:255'],
+                'category_key' => ['nullable', 'string', 'max:40'],
+                'severity'     => ['nullable', 'string', 'max:20'],
+                'root_cause'   => ['nullable', 'string', 'max:255'],
+                'notes'        => ['nullable', 'string', 'max:2000'],
+            ]);
+
+            $this->tasks->addDifferentFault($task, $request->user(), $data);
+            return $this->ticketFor($task, 'Different fault added');
+        });
+    }
+
+    /**
+     * Approve or REJECT a recurring fault's repair gate. When a confirmed fault recurred within the window
+     * its repair is frozen; a manager clears it here (approve → repair proceeds; reject → fault cancelled,
+     * not repaired again). Gated to the recurring-fault approval authority, not the workshop delegate.
+     */
+    public function repairApproval(Request $request, \App\Models\MaintenanceTask $task)
+    {
+        return $this->run(function () use ($request, $task) {
+            $data = $request->validate([
+                'decision' => ['required', Rule::in(['approve', 'reject'])],
+                'note'     => ['nullable', 'string', 'max:2000'],
+            ]);
+
+            $this->tasks->resolveRepairGate($task, $request->user(), $data['decision'] === 'approve', $data['note'] ?? null);
+            return $this->ticketFor($task, $data['decision'] === 'approve' ? 'Repair approved — work may proceed' : 'Repair rejected — fault cancelled');
         });
     }
 

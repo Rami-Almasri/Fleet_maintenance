@@ -160,6 +160,58 @@ class LogisticsDispatchService
     }
 
     /**
+     * Raise the movement task for an INTERNAL maintenance leg — the driver taking the car FROM our park TO
+     * the garage (drop-off, from dispatch()) or FROM the garage back to base (return, from collectFromGarage()).
+     * Unlike dispatchForMaintenanceTransfer() (a garage→garage hand-off that starts en_route to COLLECT) this
+     * is the driver who ALREADY has the car in hand — they just picked it up — so it opens straight at
+     * `picked_up`. It exists so Driver Availability, which reads LogisticsTask ONLY, sees the driver as busy
+     * while they physically move the car, and so the ticket's live position reads "In Transit". It is closed
+     * by the matching arrival step (markUnderRepair / arriveAtPark) via complete().
+     *
+     * Deliberately minimal vs a real dispatch: it does NOT touch the vehicle's operational_status /
+     * transit_destination mirror (the maintenance cascade owns that during a repair) and raises no pool ping
+     * (the driver is already on the job). Supersedes any stale open move on the car to hold the
+     * one-move-per-vehicle invariant.
+     */
+    public function raiseMaintenanceLeg(Vehicle $vehicle, string $destination, int $assigneeId, int $maintenanceId, User $actor, ?string $notes = null): LogisticsTask
+    {
+        $destination = trim($destination) ?: 'the garage';
+        $assignee    = User::findOrFail($assigneeId);
+
+        return DB::transaction(function () use ($vehicle, $destination, $assignee, $maintenanceId, $actor, $notes) {
+            // Supersede any stale open move on this car so the one-move-per-vehicle invariant holds.
+            foreach (LogisticsTask::open()->where('vehicle_id', $vehicle->id)->get() as $stale) {
+                $this->forceClose($stale, $actor, LogisticsTask::STATUS_CANCELLED, LogisticsTaskEvent::EVENT_CANCELLED);
+            }
+
+            $task = LogisticsTask::create([
+                'vehicle_id'        => $vehicle->id,
+                'vehicle_plate'     => $vehicle->plate_no,
+                'vehicle_label'     => trim($vehicle->make . ' ' . $vehicle->model) ?: null,
+                'maintenance_id'    => $maintenanceId,
+                'destination'       => $destination,
+                'round_trip'        => false, // the arrival step (markUnderRepair / arriveAtPark) closes it
+                'assigned_to_id'    => $assignee->id,
+                'assigned_to_name'  => $assignee->name ?: $assignee->email,
+                'assigned_by_id'    => $actor->id,
+                'assigned_by_name'  => $actor->name ?: $actor->email,
+                'status'            => LogisticsTask::STATUS_PICKED_UP, // the driver already has the car in hand
+                'status_changed_at' => now(),
+                'notes'             => $notes,
+                'dispatched_at'     => now(),
+                'claimed_at'        => now(),
+            ]);
+
+            $this->recordEvent($task, LogisticsTaskEvent::EVENT_PICKED_UP, $actor, [
+                'to_status' => LogisticsTask::STATUS_PICKED_UP,
+                'note'      => $notes,
+            ]);
+
+            return $task;
+        });
+    }
+
+    /**
      * A driver claims a pooled move — first one wins. A row lock + a re-check inside the transaction
      * make the race safe: the loser gets a clear "already taken" error. On success the task locks to
      * the driver (→ en_route), the coordinator is told who took it, and the pool ping is dismissed
@@ -243,18 +295,29 @@ class LogisticsDispatchService
      */
     private function advance(LogisticsTask $task, string $to, User $actor, array $meta = []): LogisticsTask
     {
-        if (! $task->isActive()) {
-            throw new RuntimeException('This dispatch is already closed.');
-        }
-        $isAssignee = $task->assigned_to_id && (int) $task->assigned_to_id === (int) $actor->id;
-        if (! $isAssignee && ! $actor->can('logistics.dispatch')) {
-            throw new RuntimeException('Only the assigned driver can update this move.');
-        }
-        if (! $task->canMoveTo($to)) {
-            throw new RuntimeException('That step isn\'t available from "' . $task->phaseLabel() . '".');
-        }
-
         return DB::transaction(function () use ($task, $to, $actor, $meta) {
+            // Re-read under a row lock and RE-CHECK all guards on the fresh row inside the
+            // transaction (mirrors claim()), so two concurrent taps of the same step can't both run
+            // the side-effects — duplicate events/notifications and a double vehicle teardown on the
+            // terminal step. Idempotent: a repeated request that finds the move already at $to no-ops.
+            $task = LogisticsTask::whereKey($task->getKey())->lockForUpdate()->first();
+            if (! $task) {
+                throw new RuntimeException('This dispatch no longer exists.');
+            }
+            if ($task->status === $to) {
+                return $task; // idempotent: the same step tapped twice / a retried request
+            }
+            if (! $task->isActive()) {
+                throw new RuntimeException('This dispatch is already closed.');
+            }
+            $isAssignee = $task->assigned_to_id && (int) $task->assigned_to_id === (int) $actor->id;
+            if (! $isAssignee && ! $actor->can('logistics.dispatch')) {
+                throw new RuntimeException('Only the assigned driver can update this move.');
+            }
+            if (! $task->canMoveTo($to)) {
+                throw new RuntimeException('That step isn\'t available from "' . $task->phaseLabel() . '".');
+            }
+
             $from = $task->status;
             $closes = $task->isTerminalStep($to);
 

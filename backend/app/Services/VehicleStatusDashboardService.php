@@ -78,6 +78,12 @@ class VehicleStatusDashboardService
         'reinspection'        => ['status' => 'Final QA Re-inspection', 'tone' => 'amber','owner' => 'Inspector',                       'last' => 'Back at our park',      'next' => 'Final QA sign-off',      'blocked' => true,  'bucket' => 'maintenance'],
         'reinspection_failed' => ['status' => 'Re-inspection Failed', 'tone' => 'red',    'owner' => 'Supervisor',                      'last' => 'Re-inspection failed',  'next' => 'Re-dispatch to garage',  'blocked' => true,  'bucket' => 'maintenance'],
         'in_garage_noticket'  => ['status' => 'In Garage · No Ticket', 'tone' => 'red',   'owner' => 'No Ticket',                       'last' => 'Sent to garage',        'next' => 'Follow garage',          'blocked' => true,  'bucket' => 'maintenance'],
+        // Enterprise Handover Workflow — a paused ticket splits into two sub-states depending on whether
+        // the vehicle has been marked physically returned yet (see Maintenance::isPausedOut() /
+        // isReturnedPendingHandover()): still out (rentable, not blocked) vs back but the handover
+        // paperwork is outstanding (blocked — it can't be rented out again until it clears).
+        'paused_out'                      => ['status' => 'Available · Repair Paused',    'tone' => 'amber',  'owner' => 'Customer', 'last' => 'Repair paused',   'next' => 'Awaiting return',              'blocked' => false, 'bucket' => 'available'],
+        'paused_returned_pending_handover' => ['status' => 'Returned · Handover Pending', 'tone' => 'orange', 'owner' => 'Workshop',  'last' => 'Vehicle returned', 'next' => 'Complete return handover',    'blocked' => true,  'bucket' => 'maintenance'],
         'left'                => ['status' => 'Left the Fleet',       'tone' => 'gray',   'owner' => '—',                               'last' => 'Left the fleet',        'next' => '—',                      'blocked' => false, 'bucket' => 'left'],
     ];
 
@@ -109,6 +115,12 @@ class VehicleStatusDashboardService
         VehicleLogEvent::EVENT_TASK_TRANSFERRED         => 'Fault Moved to Another Garage',
         VehicleLogEvent::EVENT_TASK_RESOLVED            => 'Fault Resolved',
         VehicleLogEvent::EVENT_TASK_REINSPECTION_FAILED => 'Fault Failed Re-inspection',
+        // Enterprise Handover Workflow
+        VehicleLogEvent::EVENT_RETURNED_TO_SERVICE      => 'Paused & Returned to Service',
+        VehicleLogEvent::EVENT_VEHICLE_RETURNED         => 'Vehicle Physically Returned',
+        VehicleLogEvent::EVENT_RESUMED                  => 'Repair Resumed',
+        VehicleLogEvent::EVENT_HANDOVER_INCIDENT        => 'Handover Discrepancy Flagged',
+        VehicleLogEvent::EVENT_INCIDENT_ACKNOWLEDGED    => 'Discrepancy Acknowledged — Repair Resumed',
     ];
 
     public function __construct(protected OperationsService $ops)
@@ -273,6 +285,10 @@ class VehicleStatusDashboardService
             VehicleLogEvent::EVENT_REOPENED, VehicleLogEvent::EVENT_TASK_REINSPECTION_FAILED => 'red',
             VehicleLogEvent::EVENT_UNDER_REPAIR => 'amber',
             VehicleLogEvent::EVENT_DISPATCHED, VehicleLogEvent::EVENT_STATUS_UPDATE => 'violet',
+            VehicleLogEvent::EVENT_RETURNED_TO_SERVICE   => 'slate',
+            VehicleLogEvent::EVENT_VEHICLE_RETURNED      => 'amber',
+            VehicleLogEvent::EVENT_HANDOVER_INCIDENT     => 'red',
+            VehicleLogEvent::EVENT_INCIDENT_ACKNOWLEDGED => 'emerald',
             default => ($e->source_tag === Maintenance::FINDING_INSPECTOR ? 'blue' : 'amber'),
         };
     }
@@ -297,6 +313,15 @@ class VehicleStatusDashboardService
             ->whereNotNull('vehicle_id')
             ->with(['inspector:id,name', 'assignedDriver:id,name', 'vendor:id,name'])
             ->get(['id', 'vehicle_id', 'workflow_status', 'inspected_by', 'assigned_driver_id', 'vendor_id', 'last_state_change_at', 'updated_at'])
+            ->groupBy('vehicle_id')
+            ->map(fn ($g) => $g->sortByDesc('id')->first());
+
+        // Enterprise Handover Workflow — a paused ticket is DELIBERATELY not in WF_TICKET_STATES (see
+        // $tickets above), so it needs its own bulk query to surface the "paused_out" /
+        // "paused_returned_pending_handover" split (see buildRow()).
+        $pausedTickets = Maintenance::where('workflow_status', Maintenance::WF_PAUSED_RETURNED_TO_SERVICE)
+            ->whereNotNull('vehicle_id')
+            ->get(['id', 'vehicle_id', 'workflow_status', 'vehicle_returned_at', 'paused_reason', 'last_state_change_at', 'updated_at'])
             ->groupBy('vehicle_id')
             ->map(fn ($g) => $g->sortByDesc('id')->first());
 
@@ -349,6 +374,7 @@ class VehicleStatusDashboardService
                 $manualOut->get($v->id),
                 isset($manualSet[$v->id]),
                 isset($dueInspectionSet[$v->id]),
+                $pausedTickets->get($v->id),
             );
             $rows[] = $row;
 
@@ -389,6 +415,7 @@ class VehicleStatusDashboardService
         ?Maintenance $manualEvent,
         bool $manualHold,
         bool $dueInspection = false,
+        ?Maintenance $pausedTicket = null,
     ): array {
         $name   = $v->model ?: ($v->make ?: 'Vehicle');
         $title  = trim($name . ' ' . ($v->year ?? ''));
@@ -398,7 +425,7 @@ class VehicleStatusDashboardService
         $left          = in_array($v->status, self::LEFT_FLEET, true);
 
         // Stage precedence mirrors the operational_status cascade: left fleet → maintenance →
-        // transit → rented → grounded(red/yellow) → available.
+        // transit → rented → grounded(red/yellow) → paused (Enterprise Handover Workflow) → available.
         if ($left) {
             $stage = 'left';
         } elseif ($inMaintenance) {
@@ -409,6 +436,8 @@ class VehicleStatusDashboardService
             $stage = 'rented';
         } elseif (in_array($v->condition_grade, ['red', 'yellow'], true)) {
             $stage = 'grounded';
+        } elseif ($pausedTicket !== null) {
+            $stage = $pausedTicket->vehicle_returned_at === null ? 'paused_out' : 'paused_returned_pending_handover';
         } else {
             $stage = 'available';
         }
@@ -445,6 +474,8 @@ class VehicleStatusDashboardService
             $ticket !== null                 => $ticket->last_state_change_at ?? $ticket->updated_at,
             $stage === 'in_garage_noticket'  => $maintContract?->out_date ?? $manualEvent?->out_date,
             $stage === 'rented'              => $rental?->out_date,
+            $pausedTicket !== null && in_array($stage, ['paused_out', 'paused_returned_pending_handover'], true)
+                => $pausedTicket->last_state_change_at ?? $pausedTicket->updated_at,
             default                          => null,
         };
         $days = $anchor ? Carbon::parse($anchor)->startOfDay()->diffInDays(Carbon::now()->startOfDay()) : null;
@@ -479,8 +510,11 @@ class VehicleStatusDashboardService
             'days_in_status' => $days,
             'blocked'        => $meta['blocked'],
             'bucket'         => $meta['bucket'],
-            'ticket_id'      => $ticket?->id,
+            'ticket_id'      => $ticket?->id ?? $pausedTicket?->id,
             'can_set_ready'  => (bool) $canSetReady,
+            // Enterprise Handover Workflow — present only on the two paused stages.
+            'pause_reason'        => $pausedTicket?->paused_reason,
+            'vehicle_returned_at' => optional($pausedTicket?->vehicle_returned_at)->toIso8601String(),
         ];
     }
 

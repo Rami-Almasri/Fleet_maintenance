@@ -448,7 +448,7 @@ class NotificationScanner
                     'body'     => trim(($v->code ? '#' . $v->code . ' ' : '') . trim($v->make . ' ' . $v->model)
                                     . ($v->plate_no ? ' (' . $v->plate_no . ')' : '')
                                     . ' — ' . number_format($s['current']) . ' km, interval ' . number_format($s['interval']) . ' km'),
-                    'url'      => '/vehicles/' . $v->id . '?logOil=1', // deep-link straight into the Service & Inspection flow
+                    'url'      => '/vehicles/' . $v->id . '?serviceTicket=oil_change', // click → open/create a maintenance ticket pre-filled with the due Oil Change
                     'key'      => 'service_inspection:' . $v->id, // distinct from the legacy service_due: key so the retarget isn't dedup-blocked
                     'icon'     => 'oil',
                     'meta'     => ['plate' => $v->plate_no, 'overdue_km' => $s['overdue_km']],
@@ -500,7 +500,7 @@ class NotificationScanner
                         'body'     => trim(($v->code ? '#' . $v->code . ' ' : '') . trim($v->make . ' ' . $v->model)
                                         . ($v->plate_no ? ' (' . $v->plate_no . ')' : '')
                                         . ' — approaching its ' . number_format((int) $f['interval']) . ' km service' . $when),
-                        'url'      => '/vehicles/' . $v->id . '?logOil=1', // deep-link straight into the Service & Inspection flow
+                        'url'      => '/vehicles/' . $v->id . '?serviceTicket=oil_change', // click → open/create a maintenance ticket pre-filled with the due Oil Change
                         'key'      => 'service_inspection_soon:' . $v->id . ':' . $week,
                         'icon'     => 'oil',
                         'meta'     => [
@@ -849,7 +849,7 @@ class NotificationScanner
                     'body'     => trim($car . ($v->plate_no ? ' (' . $v->plate_no . ')' : '')
                                     . ' has returned from rental but still owes maintenance'
                                     . ($v->deferred_maintenance_reason ? ' — ' . $v->deferred_maintenance_reason : '')
-                                    . '. Please schedule it back to the workshop.'),
+                                    . '. Resume its paused maintenance (or schedule it back to the workshop).'),
                     'url'      => '/vehicles/' . $v->id,
                     'key'      => 'deferred_maint_return:' . $v->id,
                     'icon'     => 'wrench',

@@ -64,6 +64,21 @@ class LogisticsTask extends Model
     public const TERMINAL_STATUSES = [self::STATUS_RETURNED, self::STATUS_CANCELLED, self::STATUS_COMPLETED];
 
     /**
+     * TRANSPORT phases — the driver physically has the car and is moving it A→B. This, and ONLY this, is
+     * what makes a driver BUSY (see DriverAvailabilityService). A claimed-but-pre-pickup leg (en_route,
+     * going to COLLECT the car) is included because the driver is already committed to the job and can't
+     * take another; a leg sitting AT the destination (delivered / at_destination) is NOT transport — the
+     * car has been handed over and the driver is free again even while the task itself stays open.
+     */
+    public const TRANSPORT_STATUSES = [
+        self::STATUS_EN_ROUTE,
+        self::STATUS_PICKED_UP,
+        self::STATUS_IN_TRANSIT,     // legacy ≈ picked_up
+        self::STATUS_TO_DESTINATION, // legacy ≈ picked_up
+        self::STATUS_TO_BASE,        // legacy ≈ returning
+    ];
+
+    /**
      * The only legal FORWARD step out of each phase (the driver walking the move along). Claiming
      * (dispatched → en_route) and cancelling are handled separately. From `delivered` a round trip
      * heads home (returned) while a one-way move is already finished. Legacy phases fast-forward to
@@ -121,6 +136,16 @@ class LogisticsTask extends Model
     public function isActive(): bool
     {
         return $this->completed_at === null;
+    }
+
+    /**
+     * Open tasks whose driver is physically MOVING the car right now — the only phase that makes a driver
+     * "busy". Excludes tasks parked at the destination (delivered / at_destination): the car is handed
+     * over, the driver is free, even though the task stays open on a round trip.
+     */
+    public function scopeInTransport(Builder $q): Builder
+    {
+        return $q->open()->whereIn('status', self::TRANSPORT_STATUSES);
     }
 
     /** A pooled, unclaimed request any driver may take. */

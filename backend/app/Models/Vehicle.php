@@ -252,7 +252,10 @@ class Vehicle extends Model
     {
         $date = $date ?: now()->toDateString();
 
-        // 1) Vehicle anchor — what serviceStatus() and the oil alert read.
+        // 1) Vehicle anchor — what serviceStatus() and the oil alert read. The reading also
+        //    advances the car's live odometer (monotonic), so serviceStatus() recomputes
+        //    "km left" against a current mileage rather than a stale API value.
+        $this->advanceOdometer($odometer);
         $this->last_service_odometer = $odometer;
         $this->service_synced_at = now();
         $this->save();
@@ -307,6 +310,19 @@ class Vehicle extends Model
 
         $date = $date ?: now()->toDateString();
 
+        // Sync the vehicle master record's dynamic fields from this service reading:
+        //  - a battery service stamps `battery_last_changed` (which drives the computed Next
+        //    Battery Change), mirroring how oil re-anchors last_service_odometer;
+        //  - every routine service advances the live odometer (monotonic) so serviceStatus()
+        //    recalculates against current mileage.
+        if ($serviceType === 'battery') {
+            $this->battery_last_changed = $date;
+        }
+        $this->advanceOdometer($odometer);
+        if ($this->isDirty()) {
+            $this->save();
+        }
+
         $reminder = $this->serviceReminders()->firstOrNew(['service_type' => $serviceType]);
         if (! $reminder->exists) {
             $defaults = self::ROUTINE_SERVICE_DEFAULTS[$serviceType] ?? ['interval_km' => null, 'interval_days' => null];
@@ -322,6 +338,20 @@ class Vehicle extends Model
         $reminder->save();
 
         return $reminder;
+    }
+
+    /**
+     * Move the car's live odometer forward to a freshly-observed reading (e.g. captured while
+     * logging a service). Odometer is monotonic by policy — the self-healing global baseline
+     * never rolls back — so a LOWER reading at service time is ignored rather than trusted; only
+     * a higher one becomes the new current mileage that serviceStatus() reads. Does not save on
+     * its own: the caller persists as part of its own write.
+     */
+    protected function advanceOdometer(int $reading): void
+    {
+        if ($reading > 0 && ($this->odometer === null || $reading > $this->odometer)) {
+            $this->odometer = $reading;
+        }
     }
 
     /** The car's Maintenance-Workflow audit trail (append-only), newest event first. */

@@ -58,13 +58,14 @@ class ContractEligibilityService
      * buckets. No DB, no side effects — this is the whole rulebook and the unit-test surface.
      *
      * @param array{status?:?string, operational_status?:?string, condition_grade?:?string,
-     *   cleaning_status?:?string, open_maintenance?:bool, open_damage?:int, insurance_days_left?:?int,
-     *   registration_days_left?:?int} $f
+     *   cleaning_status?:?string, open_maintenance?:bool, open_rental?:bool, open_damage?:int,
+     *   insurance_days_left?:?int, registration_days_left?:?int} $f
      */
     public function assess(array $f): array
     {
         $checks = [
             $this->statusCheck($f),
+            $this->rentalCheck($f),
             $this->maintenanceCheck($f),
             $this->conditionCheck($f),
             $this->inspectionCheck($f),
@@ -191,9 +192,22 @@ class ContractEligibilityService
     /** Resolve a vehicle's live facts for the checklist. Reuses the app's canonical "in the shop" rules. */
     public function gatherFacts(Vehicle $vehicle): array
     {
-        $openTicket = Maintenance::openWorkflow()->where('vehicle_id', $vehicle->id)
-            ->whereIn('workflow_status', Maintenance::WF_TICKET_STATES)->exists();
+        // The governing committed maintenance ticket (if any). We fetch the row itself — not just a
+        // boolean — so we can read its Rental Eligibility flag: a ticket the inspector marked NON-deferrable
+        // is MANDATORY maintenance and can never be pulled out for a rental (see maintenanceCheck()).
+        $ticket = Maintenance::openWorkflow()->where('vehicle_id', $vehicle->id)
+            ->whereIn('workflow_status', Maintenance::WF_TICKET_STATES)->latest('id')->first();
+        $openTicket = (bool) $ticket;
+        // Mandatory only when a COMMITTED ticket exists and its inspector marked it non-deferrable. Legacy
+        // type-U contracts / hand-entered garage events carry no such decision, so they stay pull-able
+        // (their behaviour is unchanged) — only an explicitly-mandatory workflow ticket hard-grounds the car.
+        $mandatoryMaintenance = $openTicket && ! $ticket->deferrable_for_rental;
         $openU = Contract::where('contract_type', 'U')->currentlyOpen()->where('vehicle_id', $vehicle->id)->exists();
+        // THE double-booking guard: is there already an open RENTAL (type-C) contract on this car?
+        // This is the authoritative overlap check — it reads the actual open contract, so it holds
+        // even when the drift-prone OM `vehicles.status` hasn't caught up yet (the exact window that
+        // used to let a freshly-rented car be rented again). type-U (maintenance) is handled separately.
+        $openRental = Contract::where('contract_type', 'C')->currentlyOpen()->where('vehicle_id', $vehicle->id)->exists();
         // A hand-entered garage event still open (not marked returned) — the old guard missed these.
         $openManual = Maintenance::where('origin', Maintenance::ORIGIN_MANUAL)->where('vehicle_id', $vehicle->id)
             ->where('event_status', '<>', 'IN')->exists();
@@ -209,6 +223,10 @@ class ContractEligibilityService
             'condition_grade'        => $vehicle->condition_grade,
             'cleaning_status'        => $vehicle->cleaning_status,
             'open_maintenance'       => $openTicket || $openU || $openManual,
+            // MANDATORY maintenance (deferrable_for_rental = false on the open committed ticket): a hard,
+            // non-overridable block — not even pull_from_maintenance releases it.
+            'maintenance_mandatory'  => $mandatoryMaintenance,
+            'open_rental'            => $openRental,
             'open_damage'            => $openDamage,
             'insurance_days_left'    => $reg?->insurance_days_left,
             'registration_days_left' => $reg?->registration_days_left,
@@ -231,8 +249,9 @@ class ContractEligibilityService
         }
 
         // Deferred-maintenance intent releases ONLY the maintenance lifecycle block (the ticket is
-        // being closed as part of this rental); real conflicts (rented / sold / …) still stand.
-        if ($blockedBy === 'under_maintenance' && ! empty($f['pull_from_maintenance'])) {
+        // paused as part of this rental); real conflicts (rented / sold / …) still stand. A MANDATORY
+        // ticket is never released this way — its lifecycle block holds even with a pull intent.
+        if ($blockedBy === 'under_maintenance' && ! empty($f['pull_from_maintenance']) && empty($f['maintenance_mandatory'])) {
             $blockedBy = null;
         }
 
@@ -243,22 +262,54 @@ class ContractEligibilityService
         );
     }
 
+    /**
+     * THE double-booking block: a car already out on an open rental (type-C) contract can't be
+     * rented or booked again. Authoritative and drift-proof — it reads the open contract itself,
+     * not the cached `vehicles.status`, so a rental created seconds ago on this same car (even
+     * before any sync/reconcile) still blocks a second one. Never overridable.
+     */
+    private function rentalCheck(array $f): array
+    {
+        $open = ! empty($f['open_rental']);
+        return $this->check(
+            'rental', 'Existing rental',
+            $open ? self::BLOCK : self::PASS,
+            $open ? 'An open rental contract is already active on this vehicle' : 'No active rental',
+        );
+    }
+
     /** An open work order (workflow ticket, type-U contract, or hand-entered garage event). */
     private function maintenanceCheck(array $f): array
     {
         $open = ! empty($f['open_maintenance']);
-        // Deferred-maintenance intent: the operator is deliberately pulling the car out of the shop for
-        // a customer, closing the ticket as part of this rental — so an open work order no longer blocks.
-        if ($open && ! empty($f['pull_from_maintenance'])) {
+        if (! $open) {
+            return $this->check('maintenance', 'Open maintenance', self::PASS, 'No open maintenance');
+        }
+
+        // MANDATORY maintenance — the inspector marked this ticket non-deferrable at the Decide step. The
+        // car is grounded until the workshop completes it; this is a HARD block that pull_from_maintenance
+        // does NOT lift (the whole point of the flag). Rental eligibility was decided once, and it said no.
+        if (! empty($f['maintenance_mandatory'])) {
             return $this->check(
-                'maintenance', 'Open maintenance', self::PASS,
-                'Open work order — will be closed to release the car (deferred maintenance)',
+                'maintenance', 'Open maintenance', self::BLOCK,
+                'Mandatory maintenance in progress — this vehicle cannot be rented until the workshop completes it',
             );
         }
+
+        // Deferrable (or legacy) work order + the pull-from-maintenance intent: the operator is deliberately
+        // pulling the car out for a customer, pausing the ticket as part of this rental — so it no longer blocks.
+        if (! empty($f['pull_from_maintenance'])) {
+            return $this->check(
+                'maintenance', 'Open maintenance', self::PASS,
+                'Open work order — will be paused and the car released for this rental (maintenance resumes on return)',
+            );
+        }
+
+        // Deferrable, but no pull intent supplied yet: still a block, but one the rental flow may clear by
+        // offering the pause/pull action (it re-submits with pull_from_maintenance).
         return $this->check(
-            'maintenance', 'Open maintenance',
-            $open ? self::BLOCK : self::PASS,
-            $open ? 'An open maintenance work order is active on this vehicle' : 'No open maintenance',
+            'maintenance', 'Open maintenance', self::BLOCK,
+            'An open maintenance work order is active on this vehicle',
         );
     }
 

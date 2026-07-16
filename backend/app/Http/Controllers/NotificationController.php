@@ -76,13 +76,29 @@ class NotificationController extends Controller
      */
     private function inCategory($query, ?string $category)
     {
-        $types = $category ? NotificationCategories::typesFor($category) : [];
-
-        if (! empty($types)) {
-            $query->whereIn('data->type', $types);
+        // No category → everything (used by "clear all").
+        if (! $category) {
+            return $query;
         }
 
-        return $query;
+        // The derived catch-all `other` tab = rows whose type isn't claimed by any real category.
+        // It has NO member types, so it must be scoped to "uncategorized", NEVER left unfiltered —
+        // otherwise clear('other') would delete the user's ENTIRE feed (routine + complaints + …).
+        if ($category === NotificationCategories::OTHER) {
+            $mapped = NotificationCategories::allTypes();
+            return $query->where(function ($q) use ($mapped) {
+                $q->whereNull('data->type')->orWhereNotIn('data->type', $mapped);
+            });
+        }
+
+        $types = NotificationCategories::typesFor($category);
+        if (! empty($types)) {
+            return $query->whereIn('data->type', $types);
+        }
+
+        // A specified-but-unknown category matches NOTHING — a bad param must never fall through to
+        // "all rows" (which for clear() is destructive).
+        return $query->whereRaw('1 = 0');
     }
 
     /**

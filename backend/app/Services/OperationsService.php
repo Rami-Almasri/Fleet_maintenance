@@ -6,10 +6,13 @@ use App\Exceptions\ReservationConflictException;
 use App\Models\Contract;
 use App\Models\LogisticsTask;
 use App\Models\Maintenance;
+use App\Models\User;
 use App\Models\Vehicle;
 use App\Services\MaintenanceAnalyticsService;
+use App\Services\MaintenanceWorkflowService;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
 
 /**
@@ -87,6 +90,32 @@ class OperationsService
         $openedBy  = $data['opened_by'] ?? null;
 
         return DB::transaction(function () use ($vehicle, $category, $data, $pullingFromMaintenance, $deferNote, $openedBy) {
+            // Concurrency guard: lock the vehicle row for the duration of the transaction so two
+            // employees acting on the SAME car at the same instant serialize here — the second waits
+            // for the first to commit before it reads the contract state below. This mirrors
+            // ContractService::store and closes the double-booking hole where this (second) rental
+            // path had no lock. (lockForUpdate is an InnoDB row lock; a no-op on SQLite tests.)
+            Vehicle::whereKey($vehicle->id)->lockForUpdate()->first();
+
+            // Double-booking HARD BLOCK (inside the lock): never open a second live rental on a car
+            // that is already rented. The movement model (step 1) closes prior open contracts, which
+            // for a rent-over-rent would SILENTLY close the first customer's active rental and hand
+            // the car to a second customer — so we refuse instead of closing it. (Pulling a car OUT of
+            // the workshop for a rental stays allowed: that closes an open MAINTENANCE contract, not a
+            // rental, and is handled by the deferred-maintenance path below.)
+            if ($category === 'rent') {
+                $alreadyRented = $vehicle->contracts()
+                    ->where('state', 'open')
+                    ->whereNull('in_date')
+                    ->where('contract_type', self::TYPE_MAP['rent'])
+                    ->exists();
+                if ($alreadyRented) {
+                    throw ValidationException::withMessages([
+                        'vehicle_id' => 'This car already has an open rental contract — close the current rental before starting a new one.',
+                    ]);
+                }
+            }
+
             // 1. a car can only be in one place at a time -> close prior open contract(s)
             $this->closeOpenContracts($vehicle);
 
@@ -126,6 +155,9 @@ class OperationsService
             //    • renting a car straight out of the workshop → flag it to go back afterwards;
             //    • sending a car (back) into the workshop → the debt is settled, clear the flag.
             if ($pullingFromMaintenance) {
+                // Pause an in-progress workflow ticket (preserve its full state) instead of losing it, then
+                // raise the standing "owes maintenance" flag. Prior contracts were already closed in step 1.
+                $this->pauseWorkflowTicketForRental($vehicle, $deferNote, $openedBy);
                 $this->flagDeferredMaintenance($vehicle, $deferNote, $openedBy);
             } elseif ($category === 'maintenance') {
                 $this->resolveDeferredMaintenance($vehicle);
@@ -200,18 +232,26 @@ class OperationsService
 
     /**
      * Move a car straight from the workshop onto a customer rental WITHOUT leaving overlapping open
-     * contracts. The flow is [Maintenance] → [Closed + Flagged] → [Rental]: capture WHY it was in the
-     * shop, CLOSE the open maintenance (type-U) contract, raise the deferred-maintenance flag, and
-     * reflect the rental on operational_status. Used by the rental-form path (ContractService) where
-     * the new rental row is created directly; the live operation path already closes prior contracts
-     * inside startOperation(). Idempotent and safe to call once per new rental.
+     * contracts. The flow is [Maintenance] → [Paused / Closed + Flagged] → [Rental]:
+     *   • an in-progress WORKFLOW ticket is PAUSED (its full state — stage, findings, parts, photos,
+     *     technician assignments, history — is preserved so "Resume Maintenance" continues from the exact
+     *     stage; nothing is closed or lost). This replaces the old behaviour of closing the work order;
+     *   • any legacy open maintenance (type-U) CONTRACT — which carries no workflow state to preserve — is
+     *     still closed so no two contracts sit open at once;
+     *   • the standing deferred-maintenance flag is raised and operational_status reflects the rental.
+     * Used by the rental-form path (ContractService) where the new rental row is created directly; the
+     * live operation path already closes prior contracts inside startOperation(). Idempotent + safe.
      */
     public function deferMaintenanceForRental(Vehicle $vehicle, ?string $openedBy = null): void
     {
-        // Read the reason BEFORE closing the ticket — afterwards there's no open U contract to read.
+        // Read the reason BEFORE anything closes — it explains the flag + the pause.
         $note = $this->deferredMaintenanceNote($vehicle);
 
-        // Close ONLY the maintenance ticket(s); the just-created rental stays the single open contract.
+        // Pause an in-progress workflow ticket (keeps every bit of its state) instead of losing it.
+        $this->pauseWorkflowTicketForRental($vehicle, $note, $openedBy);
+
+        // Close ONLY a legacy maintenance (type-U) contract — no workflow state to keep; the just-created
+        // rental stays the single open contract.
         $vehicle->contracts()
             ->where('state', 'open')
             ->where('contract_type', 'U')
@@ -219,8 +259,35 @@ class OperationsService
 
         $this->flagDeferredMaintenance($vehicle, $note, $openedBy);
 
-        // No maintenance contract is open anymore → the car is now out on rent, not in the shop.
+        // No maintenance is holding the car anymore → it's now out on rent, not in the shop.
         $vehicle->update(['operational_status' => 'rented']);
+    }
+
+    /**
+     * Pause the car's open, in-progress maintenance WORKFLOW ticket (if any) because the car is being
+     * pulled out for a rental — preserving all of its state so it can resume from the exact stage later.
+     * A thin bridge onto MaintenanceWorkflowService::pauseForRental(), resolved lazily via the container
+     * to avoid a constructor dependency cycle (the workflow service depends on this one). No-op when the
+     * car has no pausable ticket (a legacy type-U contract or a manual garage log carries no workflow
+     * state). `$flagVehicle` is false — this service raises the deferred-maintenance flag itself.
+     */
+    public function pauseWorkflowTicketForRental(Vehicle $vehicle, ?string $note = null, ?string $openedBy = null): ?Maintenance
+    {
+        $ticket = Maintenance::openWorkflow()
+            ->where('vehicle_id', $vehicle->id)
+            ->whereIn('workflow_status', Maintenance::PAUSABLE_STATES)
+            ->latest('id')
+            ->first();
+
+        if (! $ticket) {
+            return null;
+        }
+
+        // Best-effort: attribute the pause to the acting user when we can resolve them by name (the rental
+        // form carries opened_by as a display name, not an id). A miss just means a system-attributed pause.
+        $actor = $openedBy ? User::where('name', $openedBy)->first() : null;
+
+        return app(MaintenanceWorkflowService::class)->pauseForRental($ticket, $note, $actor, false);
     }
 
     /**
@@ -228,6 +295,31 @@ class OperationsService
      */
     public function closeOperation(Contract $contract, array $data = []): Contract
     {
+        // Idempotent: a contract already returned (in_date set) or closed is a no-op. Guards against
+        // a double-close (double-click / retry / returning an already-closed rental) re-writing the
+        // return figures or re-freeing a car that has since moved on to another movement.
+        if ($contract->state === 'closed' || $contract->in_date) {
+            return $contract;
+        }
+
+        // Return integrity: the closing mileage can't precede pickup, nor the return date the out date.
+        $inMilage = $data['in_milage'] ?? null;
+        if (is_numeric($inMilage) && is_numeric($contract->out_milage) && (int) $inMilage < (int) $contract->out_milage) {
+            throw ValidationException::withMessages([
+                'in_milage' => "Return mileage ({$inMilage} km) can't be less than the out mileage ({$contract->out_milage} km).",
+            ]);
+        }
+        $inDate = $data['in_date'] ?? null;
+        if ($inDate && $contract->out_date) {
+            $in  = Carbon::parse((string) $inDate)->startOfDay();
+            $out = $contract->out_date->copy()->startOfDay();
+            if ($in->lt($out)) {
+                throw ValidationException::withMessages([
+                    'in_date' => "Return date ({$in->toDateString()}) can't be before the out date ({$out->toDateString()}).",
+                ]);
+            }
+        }
+
         return DB::transaction(function () use ($contract, $data) {
             $contract->update(array_merge([
                 'in_date' => now()->toDateString(),
@@ -235,8 +327,10 @@ class OperationsService
                 'state' => 'closed',
             ]));
 
+            // Re-derive from open contracts rather than blindly forcing 'available': if the car is
+            // also in the shop (an open type-U ticket), it must stay 'maintenance', not be freed.
             if ($contract->vehicle) {
-                $contract->vehicle->update(['operational_status' => 'available']);
+                $this->reconcileVehicleOperationalStatus($contract->vehicle);
             }
 
             return $contract->refresh();
@@ -357,14 +451,25 @@ class OperationsService
         // available. ONE definition (manualOnlyGarageVehicleIds) is reused by the dashboard KPI,
         // donut, /maintenance board and foresight, so every surface agrees on the same cars.
         $manualOnly = $this->manualOnlyGarageVehicleIds();
-        $maint = array_values(array_unique(array_merge($maintContract, $manualOnly)));
+
+        // Open workflow TICKETS (pending → ready-for-re-inspection) also mean "in maintenance" — the
+        // SAME rule the dashboard / board / foresight and the per-vehicle reconcile
+        // (vehicleInMaintenance) all use. Omitting them here made the nightly sync force a ticket-only
+        // car (no U-contract, no manual event) back to 'available', so it read "Available" fleet-wide
+        // while every other surface read "In Maintenance". Include them.
+        $ticketCars = Maintenance::openWorkflow()->whereNotNull('vehicle_id')
+            ->whereIn('workflow_status', Maintenance::WF_TICKET_STATES)
+            ->distinct()->pluck('vehicle_id')->map(fn ($id) => (int) $id)->all();
+
+        $maint = array_values(array_unique(array_merge($maintContract, $manualOnly, $ticketCars)));
 
         // Cars out on a Logistics Dispatch (and NOT also under an open contract — a real movement wins
         // over the transit mirror) keep the live "in_transit" status so a sync never resets them.
         $inTransit = array_values(array_diff($this->inTransitVehicleIds(), $busy));
 
-        // A car kept busy ONLY by its garage log or an active dispatch must not be force-freed in step 1.
-        $busyOrGarage = array_values(array_unique(array_merge($busy, $manualOnly, $inTransit)));
+        // A car kept busy ONLY by its garage log, an open workflow ticket, or an active dispatch must
+        // not be force-freed in step 1.
+        $busyOrGarage = array_values(array_unique(array_merge($busy, $manualOnly, $ticketCars, $inTransit)));
 
         return DB::transaction(function () use ($maint, $rent, $inTransit, $busyOrGarage) {
             // 1) no open movement at all → available
@@ -552,8 +657,19 @@ class OperationsService
             return true;
         }
 
+        if (Maintenance::openWorkflow()->where('vehicle_id', $vehicleId)
+            ->whereIn('workflow_status', Maintenance::WF_TICKET_STATES)->exists()) {
+            return true;
+        }
+
+        // Enterprise Handover Workflow: a paused ticket whose vehicle has been marked physically
+        // RETURNED (but not yet resumed) is sitting at the garage waiting for the return handover
+        // paperwork — block it from being rented out again until that handover clears (or an open
+        // incident is acknowledged). See Maintenance::isReturnedPendingHandover().
         return Maintenance::openWorkflow()->where('vehicle_id', $vehicleId)
-            ->whereIn('workflow_status', Maintenance::WF_TICKET_STATES)->exists();
+            ->where('workflow_status', Maintenance::WF_PAUSED_RETURNED_TO_SERVICE)
+            ->whereNotNull('vehicle_returned_at')
+            ->exists();
     }
 
     /** Close every still-open contract for a vehicle. */

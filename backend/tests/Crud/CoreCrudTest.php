@@ -71,8 +71,14 @@ class CoreCrudTest extends CrudTestCase
         $this->getJson("/api/Vehicle/$id")->assertSuccessful()->assertJsonPath('data.model', 'Sunny');
         $this->getJson("/api/Vehicle/$id/profile")->assertSuccessful();
 
-        $this->postJson("/api/Vehicle/$id", ['model' => 'Sunny SV', 'odometer' => 41000])
-            ->assertSuccessful();
+        // A >10km odometer jump is a "significant change" that requires an approval note (the
+        // OdometerChangeRequest guard), so supply one — the edit still succeeds (odometer filed
+        // for admin approval, the rest applies now).
+        $this->postJson("/api/Vehicle/$id", [
+            'model' => 'Sunny SV',
+            'odometer' => 41000,
+            'odometer_change_note' => 'Correcting mileage after service.',
+        ])->assertSuccessful();
 
         $this->deleteJson("/api/Vehicle/$id")->assertSuccessful();
     }

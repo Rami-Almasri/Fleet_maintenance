@@ -36,15 +36,25 @@ class NotificationCategories
             'service_overdue',
         ],
 
-        // Customer complaints — the Complaint Intake path (Ops log a complaint → ticket → Inspector).
+        // Customer complaints — the Complaint Intake + Triage path (Ops log a complaint → Abu Maroof
+        // triages → resolve on-site / route to garage or diagnostic → Inspector). Every complaint
+        // alert type the workflow emits must be listed here, or NotificationController stamps its
+        // group as the catch-all `other` and it never reaches the Complaints tab.
         'complaints' => [
-            'maint_complaint_intake',   // a complaint was logged (to Supervisors)
-            'maint_complaint_headsup',  // heads-up to the Inspector: this car needs a test drive
-            'maint_complaint_resolved', // the complaint was closed / resolved
+            'maint_complaint_intake',          // a complaint was logged (to Supervisors)
+            'maint_complaint_headsup',         // heads-up to the Inspector: this car needs a test drive
+            'maint_complaint_triage',          // landed in Abu Maroof's triage lane
+            'maint_complaint_call',            // triage: called the customer
+            'maint_complaint_diagnostic',      // triage: sent the car in for diagnosis
+            'maint_complaint_onsite_resolved', // triage: resolved on-site
+            'maint_complaint_resolved',        // the complaint was closed / resolved
         ],
 
         // Test-drive / re-inspection events — the Inspector is asked to road-test a car.
         'test_drive' => [
+            'maint_review_pending',       // Inspection Request Review Gate: awaiting Controller (Lin/Marwa) approval
+            'maint_review_approved',      // review approved → sent to the Inspector
+            'maint_review_rejected',      // review rejected → nothing sent
             'maint_inspection_requested', // "this car needs a test drive" (Driver request or periodic)
             'maint_ready_reinspect',      // repair finished → single-shot re-inspection (a test drive)
             'maint_reinspection_failed',  // a re-inspection failed → back for another look
@@ -64,6 +74,12 @@ class NotificationCategories
     public static function typesFor(string $category): array
     {
         return self::MAP[$category] ?? [];
+    }
+
+    /** Every alert `type` claimed by ANY real category — used to scope the derived `other` bucket. */
+    public static function allTypes(): array
+    {
+        return array_merge(...array_values(self::MAP));
     }
 
     /** Which category does an alert `type` live in? Falls back to `other` so nothing is dropped. */

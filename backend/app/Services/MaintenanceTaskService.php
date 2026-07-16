@@ -36,8 +36,10 @@ class MaintenanceTaskService
         Maintenance::WF_READY_REINSPECTION,
     ];
 
-    public function __construct(private VehicleLogService $log)
-    {
+    public function __construct(
+        private VehicleLogService $log,
+        private RecurringFaultService $recurring,
+    ) {
     }
 
     /**
@@ -89,6 +91,11 @@ class MaintenanceTaskService
                 'description' => 'Fault identified: ' . $text,
                 'source_tag'  => $task->source,
             ]);
+
+            // REPORT-TIME background check (non-blocking): if this car already had the SAME fault FIXED,
+            // silently raise a "possible recurring fault" flag. It is only acted on later, once the
+            // workshop CONFIRMS the fault — a fresh report is just a claim until then.
+            $this->recurring->flagPossibleRecurrence($task);
         }
 
         // Single-garage invariant: a fault discovered after the car is already at a garage joins that
@@ -283,6 +290,153 @@ class MaintenanceTaskService
      * fault (completed/cancelled) also closes its open garage stint with the matching outcome and stamps
      * resolved_at — which lets the parent ticket's tasksProgress() know when every fault is done.
      */
+    /**
+     * WORKSHOP CONFIRMATION GATE — the technician records a verdict on a reported fault while the car is
+     * "In Workshop". A reported fault is only a claim until it is physically checked here; the verdict is
+     * one of MaintenanceTask::CONFIRMATION_STATUSES. Only `confirmed` triggers the recurring-fault
+     * intelligence (via RecurringFaultService) — which is exactly what stops false duplicate alerts on
+     * unconfirmed reports. This is independent of the repair status (a fault can be confirmed, then fixed).
+     */
+    public function confirmFault(MaintenanceTask $task, string $status, User $actor, ?string $note = null): MaintenanceTask
+    {
+        if (! in_array($status, MaintenanceTask::CONFIRMATION_STATUSES, true)) {
+            throw new WorkflowTransitionException('Unknown confirmation verdict: ' . $status, ['field' => 'confirmation_status']);
+        }
+
+        // Confirmation is a workshop act — only meaningful once the car has physically reached the garage
+        // (or is being serviced on-site). Reviewing a fault before the car is even there is nonsensical.
+        if (! optional($task->maintenance)->hasReachedGarage() && ! optional($task->maintenance)->isOnSite()) {
+            throw new WorkflowTransitionException(
+                'A fault can be reviewed only once the car is at the workshop.',
+                ['field' => 'confirmation_status', 'from' => $task->maintenance?->workflow_status, 'to' => $status],
+            );
+        }
+
+        $task->forceFill([
+            'confirmation_status' => $status,
+            'confirmation_note'   => $note !== null ? (trim($note) ?: null) : null,
+            'confirmed_by'        => $actor->id,
+            'confirmed_at'        => Carbon::now(),
+        ])->save();
+
+        // Only a CONFIRMED fault is allowed to open a recurring-fault review case.
+        if ($status === MaintenanceTask::CONFIRM_CONFIRMED) {
+            $review = $this->recurring->onFaultConfirmed($task, $actor);
+
+            // Recurrence detected → BLOCK the repair until a manager approves it (the money guard against
+            // paying twice for the same recently-fixed fault). Leaves any already-resolved gate untouched.
+            if ($review && empty($task->repair_gate)) {
+                $task->forceFill(['repair_gate' => MaintenanceTask::GATE_PENDING])->save();
+            }
+        }
+
+        // NOT FOUND → the reported fault does not exist. Close it as "not found" (never repaired, never
+        // fixed) if it isn't already terminal. The real issue, if any, is captured via addDifferentFault().
+        if ($status === MaintenanceTask::CONFIRM_NOT_FOUND && ! $task->isTerminal()) {
+            $this->setStatus($task, MaintenanceTask::STATUS_NOT_FOUND, $actor, $note);
+        }
+
+        return $task->fresh(['confirmedBy', 'currentVendor', 'repairGateBy', 'recurrencePreviousTask.currentVendor']);
+    }
+
+    /**
+     * "Different fault" — the reviewed fault was Not found, but the technician believes the real issue is a
+     * DIFFERENT fault. Raise a new fault on the SAME ticket, linked back to the original (derived_from) for
+     * history, and (single-garage) attach it to the car's current garage. The original stays Not found —
+     * it is NEVER marked fixed. Returns the new fault.
+     *
+     * @param array{symptom:string, category_key?:?string, severity?:?string, root_cause?:?string, notes?:?string} $data
+     */
+    public function addDifferentFault(MaintenanceTask $original, User $actor, array $data): MaintenanceTask
+    {
+        $symptom = trim((string) ($data['symptom'] ?? ''));
+        if ($symptom === '') {
+            throw new WorkflowTransitionException('Describe the different fault before adding it.', ['field' => 'symptom']);
+        }
+        if ($original->confirmation_status !== MaintenanceTask::CONFIRM_NOT_FOUND) {
+            throw new WorkflowTransitionException('A different fault can only be raised from a fault reviewed as Not found.', ['field' => 'confirmation_status']);
+        }
+
+        $ticket = $original->maintenance;
+
+        $new = new MaintenanceTask([
+            'maintenance_id'       => $original->maintenance_id,
+            'vehicle_id'           => $original->vehicle_id,
+            'symptom'              => $symptom,
+            'category_key'         => $data['category_key'] ?? null,
+            'source'               => Maintenance::FINDING_GARAGE, // discovered in the workshop
+            'severity'             => $this->normSeverity($data['severity'] ?? null) ?? $original->severity,
+            'root_cause'           => $data['root_cause'] ?? null,
+            'notes'                => $data['notes'] ?? null,
+            'status'               => MaintenanceTask::STATUS_PENDING,
+            'identified_by'        => $actor->id,
+            'identified_at'        => Carbon::now(),
+            'derived_from_task_id' => $original->id,
+        ]);
+        $new->save();
+
+        // Record it in the ticket's findings JSON too, so it is a first-class garage finding (line-item
+        // linking, history surfaces) — mirroring addGarageFindings, with the "turned out to be" provenance.
+        if ($ticket) {
+            $findings = is_array($ticket->findings) ? $ticket->findings : [];
+            $findings[] = [
+                'text'         => $symptom,
+                'source'       => Maintenance::FINDING_GARAGE,
+                'severity'     => $new->severity,
+                'root_cause'   => $new->root_cause,
+                'by'           => $actor->name,
+                'garage'       => $ticket->garage,
+                'at'           => Carbon::now()->toIso8601String(),
+                'derived_from' => $original->symptom,
+            ];
+            $ticket->findings = $findings;
+            $ticket->saveQuietly();
+        }
+
+        $this->log->recordTask($new, VehicleLogEvent::EVENT_TASK_IDENTIFIED, $actor, [
+            'description' => 'Different fault raised: "' . $symptom . '" (from Not-found "' . $original->symptom . '")',
+            'source_tag'  => $new->source,
+        ]);
+
+        // Single-garage invariant: if the car is already at a garage, the new fault joins its active stint.
+        if ($ticket && $ticket->vendor_id && in_array($ticket->workflow_status, self::GARAGE_PHASES, true)
+            && ! $new->openAssignment()->exists()) {
+            $this->assign($new, (int) $ticket->vendor_id, $actor);
+        }
+
+        // A brand-new reported fault → run the report-time recurrence background check on it too.
+        $this->recurring->flagPossibleRecurrence($new);
+
+        return $new->fresh(['currentVendor', 'derivedFrom']);
+    }
+
+    /**
+     * Approve or REJECT a recurring fault's repair gate (the review before a second repair). Only meaningful
+     * while the gate is pending. Approve → repair may proceed. Reject → the fault is cancelled (it will not
+     * be repaired again on this ticket) so we never pay twice for a fault a garage just fixed.
+     */
+    public function resolveRepairGate(MaintenanceTask $task, User $actor, bool $approve, ?string $note = null): MaintenanceTask
+    {
+        if ($task->repair_gate !== MaintenanceTask::GATE_PENDING) {
+            throw new WorkflowTransitionException('No repair approval is pending for this fault.', ['field' => 'repair_gate']);
+        }
+        $note = $note !== null ? (trim($note) ?: null) : null;
+
+        $task->forceFill([
+            'repair_gate'      => $approve ? MaintenanceTask::GATE_APPROVED : MaintenanceTask::GATE_REJECTED,
+            'repair_gate_by'   => $actor->id,
+            'repair_gate_at'   => Carbon::now(),
+            'repair_gate_note' => $note,
+        ])->save();
+
+        // Reject means "do not re-repair" — cancel the fault (evidence not required for a cancel).
+        if (! $approve) {
+            $this->setStatus($task, MaintenanceTask::STATUS_CANCELLED, $actor, $note ?? 'Repair rejected — recurring fault not re-repaired.');
+        }
+
+        return $task->fresh(['repairGateBy', 'currentVendor', 'recurrencePreviousTask.currentVendor']);
+    }
+
     public function setStatus(MaintenanceTask $task, string $status, User $actor, ?string $note = null, ?int $serviceOdometer = null): MaintenanceTask
     {
         if (! in_array($status, MaintenanceTask::STATUSES, true)) {
@@ -295,10 +449,40 @@ class MaintenanceTaskService
         // garage stage (dispatched onward). Marking it fixed while the ticket is still awaiting dispatch
         // is nonsensical — the car hasn't even left yet. Reopening (→ pending) and dropping a non-issue
         // (→ cancelled) stay allowed at any stage. The frontend hides the button too; this re-guards it.
+        // EXCEPTION: an on-site (mobile) job is fixed where the car is parked and never reaches a garage,
+        // so "Mark as Serviced" legitimately resolves its faults without a garage stint.
         $needsGarage = in_array($status, [MaintenanceTask::STATUS_IN_PROGRESS, MaintenanceTask::STATUS_COMPLETED], true);
-        if ($needsGarage && ! optional($task->maintenance)->hasReachedGarage()) {
+        if ($needsGarage && ! optional($task->maintenance)->hasReachedGarage() && ! optional($task->maintenance)->isOnSite()) {
             throw new WorkflowTransitionException(
                 'The car has not been dispatched to the garage yet — a fault can be marked fixed only from the garage stage.',
+                ['field' => 'status', 'from' => $task->maintenance?->workflow_status, 'to' => $status],
+            );
+        }
+
+        // Recurring-fault REPAIR GATE: a confirmed fault that recurred within the window is frozen until a
+        // manager approves the repair. No work may start/finish on it until then — the guard against paying
+        // twice for the same recently-fixed fault. Reopen (→ pending) and cancel stay allowed.
+        if ($needsGarage && $task->repair_gate === MaintenanceTask::GATE_PENDING) {
+            throw new WorkflowTransitionException(
+                'This fault recurred recently and is awaiting repair approval — it cannot be repaired until approved.',
+                ['field' => 'status', 'gate' => MaintenanceTask::GATE_PENDING],
+            );
+        }
+
+        // Terminal ticket guard: once a ticket is CLOSED or signed-off-awaiting-invoice, its faults
+        // must not be RE-OPENED (→ pending / in_progress). A terminal correction (resolve / cancel a
+        // lingering fault) stays allowed, but re-opening would strand a "closed" ticket carrying live
+        // open faults while the car is already back in service, and silently rewrite the closed
+        // ticket's historical fault_severity (recalcFromTasks) with no audit trail.
+        $parentTerminal = in_array(
+            optional($task->maintenance)->workflow_status,
+            [Maintenance::WF_CLOSED, Maintenance::WF_AWAITING_INVOICE],
+            true,
+        );
+        $reopening = in_array($status, [MaintenanceTask::STATUS_PENDING, MaintenanceTask::STATUS_IN_PROGRESS], true);
+        if ($parentTerminal && $reopening) {
+            throw new WorkflowTransitionException(
+                'This maintenance ticket is already closed — a fault on it can no longer be re-opened.',
                 ['field' => 'status', 'from' => $task->maintenance?->workflow_status, 'to' => $status],
             );
         }
@@ -315,7 +499,7 @@ class MaintenanceTaskService
                 $open = $task->openAssignment()->first();
                 $open?->update([
                     'released_at' => Carbon::now(),
-                    'outcome'     => $status === MaintenanceTask::STATUS_CANCELLED
+                    'outcome'     => in_array($status, MaintenanceTask::NON_REPAIR_TERMINAL, true)
                         ? MaintenanceTaskAssignment::OUTCOME_CANCELLED
                         : MaintenanceTaskAssignment::OUTCOME_RESOLVED,
                     'released_by' => $actor->id,
@@ -343,70 +527,27 @@ class MaintenanceTaskService
             $task->save();
 
             if ($resolving) {
+                $verb = match ($status) {
+                    MaintenanceTask::STATUS_CANCELLED => 'cancelled',
+                    MaintenanceTask::STATUS_NOT_FOUND => 'closed — not found',
+                    default                           => 'resolved',
+                };
                 $this->log->recordTask($task, VehicleLogEvent::EVENT_TASK_RESOLVED, $actor, [
-                    'description' => 'Fault "' . $task->symptom . '" ' . ($status === MaintenanceTask::STATUS_CANCELLED ? 'cancelled' : 'resolved') . ' by ' . $actor->name
+                    'description' => 'Fault "' . $task->symptom . '" ' . $verb . ' by ' . $actor->name
                         . ($note ? ' — ' . $note : ''),
                     'meta'        => ['status' => $status, 'note' => $note],
                 ]);
             }
 
-            // Closed-loop for a SCHEDULED routine service: when an oil-change / battery fault is FIXED
-            // (not cancelled), roll its recurring Service Reminder forward from the odometer at change,
-            // so the next reminder fires on schedule. A no-op for ordinary faults.
-            if ($status === MaintenanceTask::STATUS_COMPLETED) {
-                $this->advanceRoutineService($task, $actor, $serviceOdometer);
-            }
+            // Routine service (oil / battery) confirmation is DEFERRED to ticket close. Performing the
+            // fault here only marks it done — it is Pending Confirmation, and the vehicle master record
+            // (service history, last-service anchor, battery date, odometer, Service Status) is NOT
+            // touched. That sync happens exactly once, when the ticket is officially closed, in
+            // MaintenanceWorkflowService::confirmRoutineServices — the ticket is the single source of
+            // truth, so no maintenance ever reaches the vehicle outside a completed ticket workflow.
 
             return $task->fresh(['assignments', 'currentVendor']);
         });
-    }
-
-    /**
-     * Roll a completed routine-service fault's recurring Service Reminder forward. If the fault's symptom
-     * maps to a routine service_type (oil_change / battery / …), re-anchor that reminder to the odometer at
-     * the moment of the change: the explicit reading if the client sent one, otherwise the ticket's most
-     * recent odometer capture, otherwise the car's current odometer. Without any reading we can't anchor,
-     * so we skip silently (the fault is still resolved). Best-effort + logged for traceability; never throws
-     * so it can't sink the resolve it rides on.
-     */
-    private function advanceRoutineService(MaintenanceTask $task, User $actor, ?int $odometer): void
-    {
-        $type = Maintenance::routineServiceTypeFor($task->symptom);
-        if (! $type) {
-            return; // ordinary fault — nothing to schedule
-        }
-
-        try {
-            $ticket  = $task->maintenance;
-            $vehicle = $task->vehicle ?: $ticket?->vehicle;
-            if (! $vehicle) {
-                return;
-            }
-
-            $odo = $odometer
-                ?? $ticket?->return_odometer
-                ?? $ticket?->receive_odometer
-                ?? $vehicle->odometer;
-            if ($odo === null) {
-                return; // no reading to anchor to — leave the reminder as it is
-            }
-
-            $reminder = $vehicle->recordServiceDone($type, (int) $odo, Carbon::now()->toDateString());
-
-            $this->log->recordTask($task, VehicleLogEvent::EVENT_SERVICE_LOGGED, $actor, [
-                'description' => $reminder->displayName() . ' logged @ ' . number_format((int) $odo) . ' km'
-                    . ($reminder->next_due_odometer ? ' — next due at ' . number_format((int) $reminder->next_due_odometer) . ' km' : '')
-                    . ' (by ' . $actor->name . ')',
-                'meta'        => [
-                    'service_type'      => $type,
-                    'odometer'          => (int) $odo,
-                    'next_due_odometer' => $reminder->next_due_odometer,
-                    'next_due_at'       => optional($reminder->next_due_at)->toDateString(),
-                ],
-            ]);
-        } catch (\Throwable $e) {
-            report($e); // scheduling the next service must never break marking a fault fixed
-        }
     }
 
     /**

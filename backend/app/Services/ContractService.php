@@ -8,6 +8,7 @@ use App\Models\Vehicle;
 use App\Services\ContractEligibilityService;
 use App\Services\MaintenanceAnalyticsService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class ContractService
 {
@@ -65,17 +66,31 @@ class ContractService
 
     public function store(array $data)
     {
-        // Booking gate: Red and Yellow are refused; Orange requires (and records) a customer-
-        // condition acknowledgment. Returns the acknowledgment columns to stamp on the contract.
-        $ack = $this->eligibility->assertEligibleForContract($data);
-        unset(
-            $data['condition_acknowledged'], $data['condition_ack_by'],
-            $data['manager_override'], $data['override_by'], $data['override_reason'],
-            $data['pull_from_maintenance'],
-        );
-        $data = array_merge($data, $ack);
-
         return DB::transaction(function () use ($data) {
+            // Concurrency guard: lock the vehicle row for the duration of the transaction so two
+            // employees renting the SAME car at the same moment serialize here — the second waits,
+            // then sees the first's now-open rental and fails the eligibility gate below (no
+            // double-booking). (lockForUpdate is a MySQL/InnoDB row lock; a no-op on SQLite tests.)
+            if (! empty($data['vehicle_id'])) {
+                Vehicle::whereKey($data['vehicle_id'])->lockForUpdate()->first();
+            }
+
+            // Booking gate (INSIDE the lock): Red/Yellow refused, Orange needs an acknowledgment, and
+            // an already-open rental on this car is a hard block. Returns the ack columns to stamp on.
+            $ack = $this->eligibility->assertEligibleForContract($data);
+            unset(
+                $data['condition_acknowledged'], $data['condition_ack_by'],
+                $data['manager_override'], $data['override_by'], $data['override_reason'],
+                $data['pull_from_maintenance'],
+            );
+            $data = array_merge($data, $ack);
+
+            // Reject a self-contradictory single submission (out/in supplied together, out-of-order).
+            $this->assertDateMileageOrder(
+                $data['out_milage'] ?? null, $data['in_milage'] ?? null,
+                $data['out_date'] ?? null, $data['in_date'] ?? null,
+            );
+
             $items = $data['items'] ?? null;
             unset($data['items']);
             $maint = $this->extractMaintenance($data);
@@ -90,6 +105,11 @@ class ContractService
             $this->syncItems($contract, $items);
             $this->evaluateApproval($contract);
             $this->syncDeferredMaintenance($contract);
+
+            // Reflect the new movement on the vehicle IMMEDIATELY — no waiting for the nightly OM
+            // reconcile. reconcileVehicleOperationalStatus derives the status from open contracts
+            // (maintenance > rented > available), so a new rental flips the car to 'rented' now.
+            $this->reconcileVehicle($contract);
 
             return $contract->load(['maintenance.vendor', 'items', 'customer', 'vehicle']);
         });
@@ -106,10 +126,24 @@ class ContractService
                 $data['contract_debit'] = $this->itemsTotal($items);
             }
 
+            // Return integrity: compare the EFFECTIVE out/in values (incoming field, else the stored
+            // one) so an edit that records a return can't write a backward odometer or a return date
+            // before pickup — even when the payload only carries the in_* fields.
+            $this->assertDateMileageOrder(
+                array_key_exists('out_milage', $data) ? $data['out_milage'] : $contract->out_milage,
+                array_key_exists('in_milage', $data) ? $data['in_milage'] : $contract->in_milage,
+                array_key_exists('out_date', $data) ? $data['out_date'] : $contract->out_date,
+                array_key_exists('in_date', $data) ? $data['in_date'] : $contract->in_date,
+            );
+
             $contract->update($data);
             $this->syncMaintenance($contract, $maint);
             $this->syncItems($contract, $items);
             $this->evaluateApproval($contract);
+
+            // Keep the vehicle's live status in step with the edit — e.g. an edit that sets in_date /
+            // state=closed (a return via the form) frees the car to 'available' right away.
+            $this->reconcileVehicle($contract);
 
             return $contract->refresh()->load(['maintenance.vendor', 'items', 'customer', 'vehicle']);
         });
@@ -284,6 +318,49 @@ class ContractService
         } elseif ($contract->contract_type === 'C' && $this->operations->vehicleInMaintenance($vehicle->id)) {
             // Close the open maintenance ticket and flag the car — no dual open contracts.
             $this->operations->deferMaintenanceForRental($vehicle, $contract->opened_by);
+        }
+    }
+
+    /**
+     * Re-derive the contract's vehicle operational_status from its open contracts, right now.
+     * Single source of truth (same routine the maintenance cascade + nightly reconcile use), so
+     * the web create/close paths never leave the car's status stale until a sync runs.
+     */
+    protected function reconcileVehicle(Contract $contract): void
+    {
+        if (! $contract->vehicle_id) {
+            return;
+        }
+        // Read a fresh row: earlier steps (deferred-maintenance) may already have written status.
+        $vehicle = Vehicle::find($contract->vehicle_id);
+        if ($vehicle) {
+            $this->operations->reconcileVehicleOperationalStatus($vehicle);
+        }
+    }
+
+    /**
+     * Enforce the return-integrity invariants shared by create and edit:
+     *   • return mileage (in_milage) may not be less than pickup mileage (out_milage);
+     *   • return date (in_date) may not be before pickup date (out_date).
+     * Only compares when BOTH sides of a pair are present, so a still-open contract (no return yet)
+     * is never falsely rejected. Throws a 422 the form can surface field-by-field.
+     */
+    protected function assertDateMileageOrder($outMilage, $inMilage, $outDate, $inDate): void
+    {
+        if (is_numeric($outMilage) && is_numeric($inMilage) && (int) $inMilage < (int) $outMilage) {
+            throw ValidationException::withMessages([
+                'in_milage' => "Return mileage ({$inMilage} km) can't be less than the out mileage ({$outMilage} km).",
+            ]);
+        }
+
+        if ($outDate && $inDate) {
+            $out = $outDate instanceof \DateTimeInterface ? \Illuminate\Support\Carbon::parse($outDate) : \Illuminate\Support\Carbon::parse((string) $outDate);
+            $in  = $inDate instanceof \DateTimeInterface ? \Illuminate\Support\Carbon::parse($inDate) : \Illuminate\Support\Carbon::parse((string) $inDate);
+            if ($in->startOfDay()->lt($out->startOfDay())) {
+                throw ValidationException::withMessages([
+                    'in_date' => "Return date ({$in->toDateString()}) can't be before the out date ({$out->toDateString()}).",
+                ]);
+            }
         }
     }
 

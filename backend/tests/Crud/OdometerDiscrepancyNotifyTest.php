@@ -2,6 +2,7 @@
 
 namespace Tests\Crud;
 
+use App\Exceptions\WorkflowTransitionException;
 use App\Models\Maintenance;
 use App\Models\User;
 use App\Models\Vehicle;
@@ -11,18 +12,19 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Notification;
 
 /**
- * A BACKWARD odometer reading that is recorded (not hard-blocked) — e.g. a garage-transfer reading below
- * the car's last mileage — must alert the supervisors/controllers, not just sit passively on the audit
- * board. Exercises MaintenanceWorkflowService::recordOdometerFlag → notifyOdometerDiscrepancy.
+ * An odometer reading can never DECREASE the car's mileage, at any workflow stage — including a
+ * garage-to-garage transfer. Exercises MaintenanceWorkflowService::recordGarageTransferOdometer
+ * → assertNoDecrease (hard block, no acknowledgment override, whatever the stage).
  */
 class OdometerDiscrepancyNotifyTest extends CrudTestCase
 {
-    public function test_backward_reading_flags_discrepancy_and_alerts_supervisors(): void
+    public function test_backward_transfer_reading_is_hard_blocked(): void
     {
         $vehicleId = $this->makeVehicle(['odometer' => 40000]);
         $vehicle   = Vehicle::find($vehicleId);
 
-        // A supervisor who should be alerted (holds the dispatch permission the alert targets).
+        // A supervisor who would have been alerted under the old accept-and-notify behavior — kept to
+        // prove NO alert fires now that the reading is rejected outright instead of recorded.
         $supervisor = User::create([
             'name'     => 'Supervisor Waleed',
             'email'    => 'sup.' . uniqid() . '@fleet.test',
@@ -42,14 +44,16 @@ class OdometerDiscrepancyNotifyTest extends CrudTestCase
 
         Notification::fake();
 
-        // Record a garage-transfer reading 100 km BELOW the car's mileage — an impossible backwards move.
-        $flag = app(MaintenanceWorkflowService::class)
-            ->recordGarageTransferOdometer($ticket, 39900, null, $this->admin);
+        // A garage-transfer reading 100 km BELOW the car's mileage is impossible — an odometer never
+        // runs backwards, whatever the stage — so it's rejected, not recorded-with-a-note.
+        $this->expectException(WorkflowTransitionException::class);
 
-        $this->assertSame('discrepancy', $flag['status']);
-
-        // The supervisor gets a FleetAlert about the backward reading.
-        Notification::assertSentTo($supervisor, FleetAlert::class);
+        try {
+            app(MaintenanceWorkflowService::class)
+                ->recordGarageTransferOdometer($ticket, 39900, null, $this->admin);
+        } finally {
+            Notification::assertNothingSent();
+        }
     }
 
     public function test_a_normal_forward_reading_raises_no_discrepancy_alert(): void

@@ -3,9 +3,9 @@
 namespace App\Http\Controllers;
 
 use App\Helpers\ResponseHelper;
-use App\Models\LogisticsTask;
 use App\Models\Maintenance;
 use App\Models\User;
+use App\Services\DriverAvailabilityService;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -15,11 +15,14 @@ use Illuminate\Support\Facades\DB;
  * WHY: the live job they're on, the car involved, where it's headed and how long they've been on it.
  * There is no clock-in / GPS presence system in this app — "busy" is derived purely from the work a
  * person currently owns, which is the honest signal (someone with an open job is unavailable; nobody
- * has to remember to toggle a status). Three signals, in priority order:
+ * has to remember to toggle a status).
  *
- *   1. an open LogisticsTask assigned to them  → they're driving a move (the canonical "car is out"),
- *   2. else a Maintenance ticket they're the assigned driver on (pickup / en route / at the garage),
- *   3. else a Maintenance ticket they're the inspector on (test-drive diagnostic / re-inspection).
+ * Driver availability is a DISTINCT concept, kept separate from any task's lifecycle and owned by
+ * DriverAvailabilityService: a driver is busy ONLY while physically transporting a car (never while the
+ * car merely sits at the garage being repaired). Two signals, in priority order:
+ *
+ *   1. an active TRANSPORT leg (DriverAvailabilityService) → they're moving a car right now,
+ *   2. else a Maintenance ticket they're the INSPECTOR on (test-drive diagnostic / re-inspection).
  *
  * Everyone else is Available. Generalises LogisticsDispatchController::roster() (field drivers only)
  * to the WHOLE team, tagging each person with their role so a coordinator can scan drivers, inspectors
@@ -48,6 +51,8 @@ class TeamPresenceController extends Controller
         'supervisor', 'inspector', 'logistics', 'maintenance', 'operations', 'manager', 'finance', 'super-admin', 'viewer',
     ];
 
+    public function __construct(private DriverAvailabilityService $driverAvailability) {}
+
     public function roster()
     {
         try {
@@ -58,26 +63,13 @@ class TeamPresenceController extends Controller
             $users   = $usersQuery->get(['id', 'name', 'email']);
             $userIds = $users->pluck('id')->all();
 
-            // Signal 1 — their open movement task(s): the canonical "car is out with this person".
-            $tasksByUser = LogisticsTask::open()
-                ->whereIn('assigned_to_id', $userIds)
-                ->orderByDesc('status_changed_at')
-                ->get()
-                ->groupBy('assigned_to_id');
+            // Signal 1 — DRIVER AVAILABILITY: is this person physically transporting a car right now? This
+            // is its own concept (see DriverAvailabilityService), a projection over the transport legs only
+            // — never the repair / at-garage / awaiting phases. Returns a per-user "busy" activity map;
+            // anyone absent from it is free to drive.
+            $driverBusy = $this->driverAvailability->busyByUser($userIds);
 
-            // Signal 2 — a maintenance job they're the assigned DRIVER on (pickup / en route / at garage).
-            $maintByDriver = Maintenance::query()
-                ->whereIn('assigned_driver_id', $userIds)
-                ->whereIn('workflow_status', [
-                    Maintenance::WF_AWAITING_DISPATCH,
-                    Maintenance::WF_IN_TRANSIT,
-                    Maintenance::WF_UNDER_REPAIR,
-                ])
-                ->with('vehicle:id,plate_no,make,model')
-                ->get()
-                ->groupBy('assigned_driver_id');
-
-            // Signal 3 — a car they're the INSPECTOR on, mid test-drive or awaiting their re-inspection.
+            // Signal 2 — a car they're the INSPECTOR on, mid test-drive or awaiting their re-inspection.
             $maintByInspector = Maintenance::query()
                 ->whereIn('inspected_by', $userIds)
                 ->whereIn('workflow_status', [
@@ -88,7 +80,7 @@ class TeamPresenceController extends Controller
                 ->get()
                 ->groupBy('inspected_by');
 
-            $team = $users->map(function ($u) use ($tasksByUser, $maintByDriver, $maintByInspector) {
+            $team = $users->map(function ($u) use ($driverBusy, $maintByInspector) {
                 [$roleKey, $roleLabel, $roleTone] = $this->primaryRole($u->roles->pluck('name')->all());
 
                 $person = [
@@ -99,36 +91,9 @@ class TeamPresenceController extends Controller
                     'role_tone' => $roleTone,
                 ];
 
-                // Priority: on a move ▸ on a maintenance pickup ▸ inspecting ▸ available.
-                $tasks = $tasksByUser->get($u->id, collect());
-                if ($task = $tasks->first()) {
-                    return $person + ['status' => 'busy', 'activity' => [
-                        'kind'        => 'move',
-                        'label'       => $task->phaseLabel(),
-                        'vehicle'     => $task->vehicle_plate ?: $task->vehicle_label,
-                        'destination' => $task->destination,
-                        'since'       => optional($task->status_changed_at ?: $task->dispatched_at)->toIso8601String(),
-                        'last_status' => $task->last_status,
-                        'count'       => $tasks->count(),
-                    ]];
-                }
-
-                if ($mt = $maintByDriver->get($u->id, collect())->first()) {
-                    $label = match ($mt->workflow_status) {
-                        Maintenance::WF_UNDER_REPAIR => 'At garage · ' . ($mt->garage ?: 'workshop'),
-                        Maintenance::WF_IN_TRANSIT   => 'En route to ' . ($mt->garage ?: 'garage'),
-                        default                      => 'Assigned pickup → ' . ($mt->garage ?: 'garage'),
-                    };
-
-                    return $person + ['status' => 'busy', 'activity' => [
-                        'kind'        => 'maintenance',
-                        'label'       => $label,
-                        'vehicle'     => $mt->vehicle?->plate_no,
-                        'destination' => $mt->garage,
-                        'since'       => optional($mt->delegated_at ?: $mt->updated_at)->toIso8601String(),
-                        'last_status' => null,
-                        'count'       => 1,
-                    ]];
+                // Priority: physically driving a car ▸ inspecting ▸ available.
+                if (isset($driverBusy[$u->id])) {
+                    return $person + ['status' => 'busy', 'activity' => $driverBusy[$u->id]];
                 }
 
                 if ($mt = $maintByInspector->get($u->id, collect())->first()) {

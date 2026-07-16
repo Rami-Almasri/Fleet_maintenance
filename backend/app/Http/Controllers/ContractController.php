@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Helpers\ResponseHelper;
 use App\Models\Contract;
+use App\Models\Maintenance;
 use App\Http\Requests\StoreContractRequest;
 use App\Http\Requests\UpdateContractRequest;
 use App\Http\Resources\ContractResource;
@@ -66,11 +67,22 @@ class ContractController extends Controller
                 $data['override_reason']  = trim((string) $request->input('override_reason')) ?: null;
             }
 
-            // Deferred Maintenance: a deliberate "pull this in-shop car out for a customer" decision.
-            // Only honoured for a user who may manage maintenance; it releases the maintenance blocks
-            // in the eligibility guard and drives the ticket-close + flag inside ContractService.
-            if ($request->boolean('pull_from_maintenance') && $user?->can('maintenance.manage')) {
-                $data['pull_from_maintenance'] = true;
+            // Deferred Maintenance: a deliberate "pull this in-shop car out for a customer" decision. It
+            // releases the maintenance block in the eligibility guard and drives the ticket-pause inside
+            // ContractService. Two ways it's authorised:
+            //   • the acting user may manage maintenance (the classic path), OR
+            //   • the open committed ticket was already marked DEFERRABLE by the inspector at the Decide
+            //     step — that pre-authorisation lets a plain rental agent (contracts.manage) act on it.
+            // A MANDATORY ticket can never be pulled: the eligibility guard hard-blocks it regardless.
+            if ($request->boolean('pull_from_maintenance')) {
+                $deferrablePreauthorised = Maintenance::openWorkflow()
+                    ->where('vehicle_id', $request->input('vehicle_id'))
+                    ->whereIn('workflow_status', Maintenance::WF_TICKET_STATES)
+                    ->where('deferrable_for_rental', true)
+                    ->exists();
+                if ($user?->can('maintenance.manage') || $deferrablePreauthorised) {
+                    $data['pull_from_maintenance'] = true;
+                }
             }
 
             $contract = $this->contractService->store($data);

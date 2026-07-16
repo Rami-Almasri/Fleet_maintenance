@@ -56,19 +56,24 @@ class PartPurchaseController extends Controller
     {
         try {
             $data = $request->validate([
-                'vehicle_id'   => ['required', 'exists:vehicles,id'],
-                'part_name'    => ['nullable', 'string', 'max:255'],
-                'part_number'  => ['nullable', 'string', 'max:255'],
-                'category_key' => ['nullable', 'string', 'max:60'],
+                'vehicle_id'         => ['required', 'exists:vehicles,id'],
+                'part_name'          => ['nullable', 'string', 'max:255'],
+                'part_number'        => ['nullable', 'string', 'max:255'],
+                'category_key'       => ['nullable', 'string', 'max:60'],
+                // The FAULT this part is for — enables the stronger Vehicle + Part + Fault duplicate signal.
+                'fault_category_key' => ['nullable', 'string', 'max:60'],
+                'fault_symptom'      => ['nullable', 'string', 'max:255'],
             ]);
 
             $verdict = $this->intel->detectDuplicate(
-                (int) $data['vehicle_id'], $data['part_name'] ?? null, $data['part_number'] ?? null, $data['category_key'] ?? null
+                (int) $data['vehicle_id'], $data['part_name'] ?? null, $data['part_number'] ?? null, $data['category_key'] ?? null,
+                null, null, false, $data['fault_category_key'] ?? null, $data['fault_symptom'] ?? null
             );
 
             return ResponseHelper::SuccessResponse([
                 'duplicate'    => $verdict['duplicate'],
                 'priority'     => $verdict['priority'],
+                'same_fault'   => $verdict['same_fault'] ?? false,
                 'part_class'   => $verdict['part_class'],
                 'days_between' => $verdict['days_between'],
                 'window_days'  => $verdict['window_days'],

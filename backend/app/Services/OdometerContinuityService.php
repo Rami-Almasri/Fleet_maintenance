@@ -47,6 +47,8 @@ class OdometerContinuityService
     public const STAGE_GARAGE_OUT  = 'garage_out';  // car-leaves-garage (return) reading vs the intake reading
     public const STAGE_RETURN      = 'return';      // final reading vs the last recorded, when there's no intake to compare
     public const STAGE_TRANSFER    = 'transfer';    // car driven from one garage to another — forward travel expected, big jump worth a re-read
+    public const STAGE_TEST_END    = 'test_end';    // end-of-test-drive reading vs the start-of-drive anchor — the car WAS driven, so forward movement is expected, not a strict match
+    public const STAGE_REINSPECT   = 'reinspect';   // final QA sign-off reading vs the park-arrival reading — the car is back at OUR PARK and shouldn't have moved, so a strict ±TOLERANCE cap applies
 
     /**
      * Strict-match stages — an internal spot-check at OUR OWN PARK, where the car should NOT have moved
@@ -56,7 +58,7 @@ class OdometerContinuityService
      * or ANY backward reading — is a HARD block (a typo or an unauthorised long-distance move), not a soft
      * discrepancy. Mirror of STRICT_MATCH_STAGES in frontend/src/lib/odometerContinuity.js — keep in step.
      */
-    public const STRICT_MATCH_STAGES = [self::STAGE_TEST, self::STAGE_PARK_PICKUP];
+    public const STRICT_MATCH_STAGES = [self::STAGE_TEST, self::STAGE_PARK_PICKUP, self::STAGE_REINSPECT];
 
     /** Does this stage require the reading to match the previous one (exact, or +TOLERANCE with a note)? */
     public function stageRequiresExactMatch(string $stage): bool
@@ -102,15 +104,27 @@ class OdometerContinuityService
 
         // Strict-match stage (an internal spot-check at our own park): the car shouldn't have moved since
         // the previous reading. An exact match is clean; a 1..TOLERANCE forward drift is an "authorized
-        // deviation" that must carry a note; ANYTHING else — backward, or beyond the buffer forward — is a
-        // hard block (a typo or an unauthorised long move), NOT a soft discrepancy. Takes priority over the
-        // generic guards below so a big/backward reading here never downgrades to an ack-able nudge.
+        // deviation" that must carry a note. A BACKWARD reading is always a hard block (a typo — the car
+        // can't be behind where it last was), NOT a soft discrepancy.
         if ($this->stageRequiresExactMatch($stage)) {
             if ($delta === 0) {
                 return $this->flag(self::STATUS_VERIFIED, $previous, $reading, $delta);
             }
-            if ($delta >= 1 && $delta <= self::TOLERANCE_KM) {
-                return $this->flag(self::STATUS_AUTHORIZED, $previous, $reading, $delta);
+            if ($delta > 0) {
+                // Pickup (driver collecting the car for the garage) never hard-blocks a forward drift —
+                // small in-lot moves beyond TOLERANCE_KM are real and can't be fixed by re-reading the
+                // dial, so ANY forward amount is an "authorized deviation": allowed through with a
+                // mandatory confirm + note (audited on the oversight board), never an unresolvable wall.
+                if ($stage === self::STAGE_PARK_PICKUP) {
+                    return $this->flag(self::STATUS_AUTHORIZED, $previous, $reading, $delta);
+                }
+                // Other strict-match stages (the inspector's start-of-drive anchor, and the final QA
+                // sign-off once the car is back at our park) keep the tight cap — a forward jump beyond the
+                // buffer means the car moved when it shouldn't have (an unlogged drive, or a typo).
+                if ($delta <= self::TOLERANCE_KM) {
+                    return $this->flag(self::STATUS_AUTHORIZED, $previous, $reading, $delta);
+                }
+                return $this->flag(self::STATUS_EXACT, $previous, $reading, $delta);
             }
             return $this->flag(self::STATUS_EXACT, $previous, $reading, $delta);
         }
@@ -140,6 +154,11 @@ class OdometerContinuityService
             case self::STAGE_GARAGE_OUT:
                 // The car left the garage having moved more than tolerance since intake → the garage
                 // road-tested it. Legitimate; ask the driver to confirm, never block.
+                return $this->flag(self::STATUS_TEST_DRIVE, $previous, $reading, $delta);
+
+            case self::STAGE_TEST_END:
+                // The end-of-test-drive reading moved more than tolerance since the start-of-drive anchor →
+                // the inspector actually drove the car. Legitimate; ask for a confirm, never block.
                 return $this->flag(self::STATUS_TEST_DRIVE, $previous, $reading, $delta);
 
             default:

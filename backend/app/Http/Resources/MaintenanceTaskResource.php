@@ -31,6 +31,11 @@ class MaintenanceTaskResource extends JsonResource
             // this fault rolls the car's matching Service Reminder forward from the odometer at change — so
             // the UI prompts for that reading. Null for a normal fault.
             'routine_service_type' => Maintenance::routineServiceTypeFor($t->symptom),
+            // Vehicle-sync confirmation state for a routine/reminder service: once the technician has
+            // PERFORMED it (status=completed) the vehicle record is NOT updated yet — it is
+            // 'pending_confirmation' until the ticket is CLOSED, then 'confirmed'. Null for a fault with
+            // no service loop, or one not performed yet (the normal status pill covers those).
+            'service_confirmation' => $this->serviceConfirmation($t),
             'source'         => $t->source,
             'root_cause'     => $t->root_cause,
             'notes'          => $t->notes,
@@ -39,6 +44,39 @@ class MaintenanceTaskResource extends JsonResource
             // Independent status — the heart of multi-stage routing.
             'status'         => $t->status,
             'is_terminal'    => $t->isTerminal(),
+
+            // Workshop CONFIRMATION verdict — recorded In Workshop: confirmed / not_found / different_cause
+            // / needs_diagnosis (null = not reviewed yet). Only `confirmed` triggers recurring-fault review.
+            'confirmation_status' => $t->confirmation_status,
+            'confirmation_note'   => $t->confirmation_note,
+            'confirmed_by'        => $t->confirmedBy?->name,
+            'confirmed_at'        => optional($t->confirmed_at)->toIso8601String(),
+            // Report-time "possible recurring fault" background flag (the same fault was FIXED before). A
+            // soft hint for the workshop — informational, never blocking.
+            'recurrence_flagged'  => (bool) $t->recurrence_flagged,
+            // A snapshot of that previous repair, for the "Previous repair found" card. Only present when
+            // the fault is flagged and the prior fault still resolves.
+            'recurrence'          => $this->when((bool) $t->recurrence_flagged && $t->recurrence_previous_task_id, function () use ($t) {
+                $prev = $t->recurrencePreviousTask;
+                if (! $prev) {
+                    return null;
+                }
+                $repairedOn = $prev->resolved_at;
+                $days = ($prev->started_at && $repairedOn)
+                    ? max(0, (int) $prev->started_at->copy()->startOfDay()->diffInDays($repairedOn->copy()->startOfDay()))
+                    : null;
+                return [
+                    'garage'      => $prev->currentVendor?->name,
+                    'repaired_on' => optional($repairedOn)->toIso8601String(),
+                    'repair_days' => $days,
+                ];
+            }),
+            // Recurring-fault REPAIR GATE — when a confirmed fault recurred, the repair is frozen
+            // (repair_gate=pending) until a manager approves it. Drives the "Waiting for approval" panel.
+            'repair_gate'      => $t->repair_gate, // null | pending | approved | rejected
+            'repair_gate_by'   => $t->repairGateBy?->name,
+            'repair_gate_at'   => optional($t->repair_gate_at)->toIso8601String(),
+            'repair_gate_note' => $t->repair_gate_note,
             // Split-dispatch: an OPEN fault not yet routed to any garage. The delegate assigns it from the
             // Dispatch Queue (In-Workshop view). Drives the "Pending Assignment" badge + the queue filter.
             'pending_assignment' => $t->isPendingAssignment(),
@@ -90,6 +128,16 @@ class MaintenanceTaskResource extends JsonResource
                 'url'              => $m->viewUrl(),
             ])->values()),
 
+            // Parts raised against THIS fault (Parts Purchase workflow) — so opening a fault shows what was
+            // ordered/fitted for it, without going to the Parts board. Present only when eager-loaded.
+            'parts'          => $this->whenLoaded('partRequests', fn () => $t->partRequests->map(fn ($p) => [
+                'id'         => $p->id,
+                'part_name'  => $p->part_name,
+                'part_number' => $p->part_number,
+                'quantity'   => $p->quantity,
+                'status'     => $p->status,
+            ])->values()),
+
             // The garage "stints" — the transfer history / per-fault timeline (when eager-loaded).
             'assignments'    => $this->whenLoaded('assignments', fn () => $t->assignments->map(fn ($a) => [
                 'id'          => $a->id,
@@ -102,5 +150,24 @@ class MaintenanceTaskResource extends JsonResource
                 'reason'      => $a->reason,
             ])->values()),
         ];
+    }
+
+    /**
+     * The vehicle-sync confirmation state for a routine/reminder service fault. A performed
+     * (status=completed) service is 'pending_confirmation' until its ticket is CLOSED — the single point
+     * the vehicle record is updated (MaintenanceWorkflowService::confirmRoutineServices) — then 'confirmed'.
+     * Null for an ordinary fault (no service loop) or a service not performed yet.
+     */
+    private function serviceConfirmation(MaintenanceTask $t): ?string
+    {
+        if (! Maintenance::serviceTypeForSymptom($t->symptom)) {
+            return null;
+        }
+        if ($t->status !== MaintenanceTask::STATUS_COMPLETED) {
+            return null;
+        }
+        return optional($t->maintenance)->workflow_status === Maintenance::WF_CLOSED
+            ? 'confirmed'
+            : 'pending_confirmation';
     }
 }

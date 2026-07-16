@@ -156,92 +156,34 @@ class VehicleController extends Controller
     }
 
     /**
-     * Service & Inspection — the combined task the Service-Due alert deep-links to (assigned to the
-     * Inspector, "Abo Marouf"). Two things happen on one submit:
-     *
-     *   1. OIL CHANGE (always): Vehicle::recordOilService writes the odometer/date through to the
-     *      vehicle anchor + the recurring oil reminder, so the profile/reminder/alert all move
-     *      together and the Service-Due notification auto-resolves on the next scan.
-     *
-     *   2. INSPECTOR'S PAD (optional — "smart closing"): any issues the inspector flags during the
-     *      test drive are recorded as pad flags and folded into a brand-new maintenance ticket
-     *      (MaintenanceWorkflowService::pickupIntoMaintenance). Only the oil-change task completes on
-     *      this screen; the flagged issues live on their own ticket in the Supervisors' queue.
-     *
-     * The ticket step runs in its OWN transaction, so a ticket failure (e.g. the car already has an
-     * open ticket) never rolls back the completed oil change — the two outcomes are independent.
+     * Open a maintenance ticket for a scheduled/routine service on this car — the target of the
+     * Service-Due alert (?serviceTicket=<type>). This ORIGINATES a ticket only; it does NOT log service
+     * against the vehicle. The vehicle's service record is updated exclusively when that ticket is later
+     * closed (MaintenanceWorkflowService::confirmRoutineServices). Ticket = single source of truth.
      */
-    public function serviceInspection(Request $request, Vehicle $vehicle, \App\Services\MaintenanceWorkflowService $workflow)
+    public function openServiceTicket(Request $request, Vehicle $vehicle, \App\Services\MaintenanceWorkflowService $workflow)
     {
         try {
             $data = $request->validate([
-                'odometer'            => 'required|integer|min:0',
-                'date'               => 'nullable|date',
-                'note'               => 'nullable|string|max:2000',
-                'findings'           => 'nullable|array',
-                'findings.*.text'    => 'required_with:findings|string|max:2000',
-                'findings.*.severity' => ['nullable', \Illuminate\Validation\Rule::in(Maintenance::FAULT_SEVERITIES)],
+                'service_type'  => 'nullable|string|max:64',
+                'service_label' => 'nullable|string|max:120',
+                'odometer'      => 'nullable|integer|min:0',
             ]);
 
-            $actor    = $request->user();
-            $odometer = (int) $data['odometer'];
-            $findings = collect($data['findings'] ?? [])
-                ->filter(fn ($f) => trim((string) ($f['text'] ?? '')) !== '')
-                ->values();
+            $label = $data['service_label']
+                ?: (Maintenance::serviceLabelForType($data['service_type'] ?? null) ?: 'Oil Change');
 
-            // 1) Oil change — standalone writes; always committed, never undone below.
-            $reminder = \Illuminate\Support\Facades\DB::transaction(
-                fn () => $vehicle->recordOilService($odometer, $data['date'] ?? null)
-            );
+            $odometer = $data['odometer'] ?? $vehicle->odometer;
 
-            // 2) Flagged issues → their own maintenance ticket (needs the initiator permission).
-            $ticket      = null;
-            $ticketNote  = null;
-            if ($findings->isNotEmpty()) {
-                if (! $actor->can('maintenance.initiate')) {
-                    $ticketNote = 'Oil change logged. Flagged issues were not raised — you lack permission to open maintenance tickets.';
-                } else {
-                    try {
-                        $ticket = \Illuminate\Support\Facades\DB::transaction(function () use ($vehicle, $odometer, $findings, $data, $actor, $workflow) {
-                            foreach ($findings as $f) {
-                                \App\Models\InspectorPadFlag::create([
-                                    'vehicle_id'  => $vehicle->id,
-                                    'keyword'     => trim((string) $f['text']),
-                                    'observation' => null,
-                                    'severity'    => $f['severity'] ?? null,
-                                    'status'      => \App\Models\InspectorPadFlag::STATUS_PENDING,
-                                    'created_by'  => $actor->id,
-                                ]);
-                            }
-
-                            // Folds the pending pad flags (incl. the ones just added) into a fresh ticket.
-                            return $workflow->pickupIntoMaintenance($vehicle, $odometer, $data['note'] ?? null, $actor);
-                        });
-                    } catch (\App\Exceptions\WorkflowTransitionException $e) {
-                        // Expected, non-fatal (e.g. the car already has an open ticket) — oil stays logged.
-                        $ticketNote = 'Oil change logged. Couldn\'t open a maintenance ticket: ' . $e->getMessage();
-                    }
-                }
-            }
-
-            $vehicle->refresh();
-
-            $message = $ticket
-                ? 'Oil change logged & maintenance ticket opened for flagged issues'
-                : ($ticketNote ?: 'Oil change logged');
+            $ticket = $workflow->openServiceTicket($vehicle, $label, $odometer, $request->user());
 
             return ResponseHelper::SuccessResponse([
-                'vehicle_id'     => $vehicle->id,
-                'service_status' => $vehicle->serviceStatus(),
-                'reminder'       => \App\Http\Resources\ServiceReminderResource::make($reminder),
-                'ticket'         => $ticket ? [
+                'ticket' => [
                     'id'              => $ticket->id,
                     'workflow_status' => $ticket->workflow_status,
-                    'fault_severity'  => $ticket->fault_severity,
-                    'findings_count'  => is_array($ticket->findings) ? count($ticket->findings) : 0,
-                ] : null,
-                'ticket_note'    => $ticketNote,
-            ], $message, 200);
+                    'url'             => '/maintenance-workflow/' . $ticket->id,
+                ],
+            ], 'Maintenance ticket opened — perform the service on the ticket; the vehicle updates when it is closed.', 200);
         } catch (\Throwable $e) {
             return ResponseHelper::fromException($e);
         }
@@ -626,7 +568,7 @@ class VehicleController extends Controller
             // now enters by hand (request → test drive → report → dispatch → repair → ready → close /
             // reopen). Tagged inspector vs garage. These are history only; the visit row owns cost.
             $logEvents = $vehicle->logEvents()
-                ->with(['actor:id,name', 'linkedContract:id,contract_no'])
+                ->with(['actor:id,name', 'linkedContract:id,contract_no', 'maintenance:id,maintenance_notes,garage_feedback'])
                 ->get();
 
             // Video Evidence (the garage's repair clips / photos) lives on the ticket, keyed by
@@ -664,6 +606,7 @@ class VehicleController extends Controller
                     return [
                         'kind'        => 'workflow',
                         'id'          => $e->id,
+                        'ticket_id'   => $e->maintenance_id,
                         'ts'          => optional($e->occurred_at)->toIso8601String(),
                         'date'        => optional($e->occurred_at)->toDateString(),
                         'event_type'  => $e->event_type,
@@ -672,8 +615,14 @@ class VehicleController extends Controller
                         'description' => $e->description,
                         'meta'        => $meta ?: null,
                         'garage'      => $meta['garage'] ?? null,
-                        'odometer'    => $meta['dispatch_odometer'] ?? $meta['return_odometer'] ?? null,
+                        'odometer'    => $meta['receive_odometer'] ?? $meta['dispatch_odometer'] ?? $meta['return_odometer'] ?? null,
                         'cost'        => $meta['cost'] ?? null,
+                        // The event card's expandable "Show Faults (N)" list — kept as a list, never
+                        // flattened into `description`, so a multi-fault ticket doesn't read as a paragraph.
+                        'faults'      => $meta['faults'] ?? null,
+                        // Workshop notes for the ticket itself — free text the garage/team logged (only
+                        // set once the ticket is closed via composeClosingSummary, or live garage feedback).
+                        'notes'       => $e->maintenance?->maintenance_notes ?: $e->maintenance?->garage_feedback,
                         'actor'       => $e->actor?->name,
                         'contract_id' => $e->linked_contract_id,
                         'contract_no' => $e->linkedContract?->contract_no,

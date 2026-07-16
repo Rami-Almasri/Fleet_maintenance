@@ -46,8 +46,9 @@ class GarageInvoiceService
      * Issue (or re-issue) a secure link for a ticket, optionally SCOPED TO ONE GARAGE. A car can pass
      * through several garages over a ticket's life (each fault is routed + transferred between garages —
      * see maintenance_task_assignments), and each garage should invoice only its own work. Passing
-     * $vendorId scopes the link to that garage: it presents only the faults that garage touched and can
-     * bill only those. $vendorId = null keeps the legacy whole-ticket link (a ticket that only ever sat at
+     * $vendorId scopes the link to that garage: it presents only the faults that garage now owns — resolved
+     * there or currently being worked there (current_vendor_id), never a fault it handed off unresolved —
+     * and can bill only those. $vendorId = null keeps the legacy whole-ticket link (a ticket that only ever sat at
      * one garage, or whose faults aren't exploded into tasks yet).
      *
      * Any still-pending link FOR THE SAME SCOPE is retired first, so one garage only ever holds one live
@@ -78,31 +79,33 @@ class GarageInvoiceService
     }
 
     /**
-     * The garages that have worked on this ticket, each with the faults it may invoice — the menu the team
-     * picks from to hand out a per-garage link. A garage is "on the ticket" if any of its faults has (or
-     * had) a stint there (maintenance_task_assignments), so a garage that has since transferred the car on
-     * still gets to bill for what it did. Each row carries its current live link, if one is issued.
+     * The garages that own work on this ticket, each with the faults it may invoice — the menu the team
+     * picks from to hand out a per-garage link. A fault is attributed to the garage that RESOLVED it or is
+     * CURRENTLY working it (maintenance_tasks.current_vendor_id), NOT to every garage its car ever passed
+     * through: when the car is transferred on, an unresolved fault's ownership moves to the destination
+     * (transfer() re-points current_vendor_id) while a fault already fixed keeps its resolving garage. So a
+     * garage bills only what it actually did, and unresolved faults it handed off never stay attached to it.
+     * Each row carries its current live link, if one is issued.
      *
      * @return array<int,array{vendor_id:int, name:string, finding_count:int, findings:array<int,string>, link:?array}>
      */
     public function garagesForTicket(Maintenance $ticket): array
     {
-        $tasks = $ticket->tasks()->with(['assignments.vendor'])->get();
+        $tasks = $ticket->tasks()->with('currentVendor')->get();
 
         // vendor_id => ['name' => …, 'findings' => [canonicalKey => originalText]]
         $byVendor = [];
         foreach ($tasks as $task) {
+            $vendorId = $task->current_vendor_id;
+            if (! $vendorId) {
+                continue; // fault owned by no garage (unassigned / bounced at re-inspection / on-site) — nothing to bill
+            }
             $symptom = trim((string) $task->symptom);
             if ($symptom === '') {
                 continue;
             }
-            foreach ($task->assignments as $stint) {
-                if (! $stint->vendor_id) {
-                    continue;
-                }
-                $byVendor[$stint->vendor_id]['name'] ??= $stint->vendor?->name ?: ('Garage #' . $stint->vendor_id);
-                $byVendor[$stint->vendor_id]['findings'][mb_strtolower($symptom)] = $symptom;
-            }
+            $byVendor[$vendorId]['name'] ??= $task->currentVendor?->name ?: ('Garage #' . $vendorId);
+            $byVendor[$vendorId]['findings'][mb_strtolower($symptom)] = $symptom;
         }
 
         // The live pending link per garage, so the team sees an already-issued link instead of re-minting one.
@@ -158,22 +161,22 @@ class GarageInvoiceService
             ->all();
     }
 
-    /** The lowercased fault symptoms a garage worked on this ticket (its billable finding set). */
+    /** The lowercased fault symptoms this garage OWNS on the ticket (resolved or currently working) — its billable finding set. */
     private function vendorSymptomKeys(Maintenance $ticket, int $vendorId): \Illuminate\Support\Collection
     {
         return $ticket->tasks()
-            ->whereHas('assignments', fn ($q) => $q->where('vendor_id', $vendorId))
+            ->where('current_vendor_id', $vendorId)
             ->pluck('symptom')
             ->map(fn ($s) => mb_strtolower(trim((string) $s)))
             ->filter()
             ->flip();
     }
 
-    /** Guard: a link can only be scoped to a garage that actually worked on the ticket. */
+    /** Guard: a link can only be scoped to a garage that currently owns (or resolved) at least one fault on the ticket. */
     private function assertGarageOnTicket(Maintenance $ticket, int $vendorId): void
     {
         $onTicket = $ticket->tasks()
-            ->whereHas('assignments', fn ($q) => $q->where('vendor_id', $vendorId))
+            ->where('current_vendor_id', $vendorId)
             ->exists();
 
         if (! $onTicket) {
@@ -298,6 +301,15 @@ class GarageInvoiceService
         }
 
         return DB::transaction(function () use ($submission, $actor) {
+            // Concurrency guard: lock the submission row and RE-ASSERT its status inside the
+            // transaction. Without this, two simultaneous "Accept" clicks both pass the check above
+            // and both create a MaintenanceInvoice — double-billing the ticket. The second now waits,
+            // sees 'accepted', and is rejected (no duplicate bill).
+            $submission = GarageInvoiceSubmission::whereKey($submission->getKey())->lockForUpdate()->first();
+            if (! $submission || $submission->status !== GarageInvoiceSubmission::STATUS_SUBMITTED) {
+                throw new WorkflowTransitionException('This garage invoice is not awaiting audit.', ['field' => 'status']);
+            }
+
             $ticket = $submission->maintenance;
 
             if ($submission->vendor_id !== null) {
@@ -356,7 +368,7 @@ class GarageInvoiceService
             ->unique();
 
         return $submission->maintenance->tasks()
-            ->whereHas('assignments', fn ($q) => $q->where('vendor_id', $submission->vendor_id))
+            ->where('current_vendor_id', $submission->vendor_id)
             ->get()
             ->filter(fn ($task) => $findingKeys->contains(mb_strtolower(trim((string) $task->symptom))))
             ->pluck('id')

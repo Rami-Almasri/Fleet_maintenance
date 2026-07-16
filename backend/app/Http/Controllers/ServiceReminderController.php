@@ -6,10 +6,11 @@ use App\Helpers\ResponseHelper;
 use App\Http\Requests\StoreServiceReminderRequest;
 use App\Http\Requests\UpdateServiceReminderRequest;
 use App\Http\Resources\ServiceReminderResource;
+use App\Models\Maintenance;
 use App\Models\ServiceReminder;
+use App\Services\MaintenanceWorkflowService;
 use App\Services\NotificationScanner;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 
 /**
  * Technical maintenance Service Reminders (oil, filters, brakes, …). Auto reminders are
@@ -112,43 +113,39 @@ class ServiceReminderController extends Controller
     }
 
     /**
-     * Mark this service as just performed: reset the anchors (date = today, odometer =
-     * given or the car's current) and roll the next-due point forward.
+     * "Perform this service" — the ticket is now the single source of truth for all maintenance, so this
+     * NO LONGER touches the vehicle or rolls the reminder directly. Instead it opens (or reuses) a
+     * Maintenance Ticket seeded with this service, and the crew performs + closes it there. The reminder's
+     * next-due point and the car's service record are advanced only when that ticket is CLOSED
+     * (MaintenanceWorkflowService::confirmRoutineServices). No maintenance ever updates the vehicle
+     * outside a completed ticket workflow.
+     *
+     *   Service Reminder → Maintenance Ticket → technician performs → Pending Confirmation → ticket closed → vehicle updated
      */
-    public function complete(Request $request, ServiceReminder $serviceReminder)
+    public function complete(Request $request, ServiceReminder $serviceReminder, MaintenanceWorkflowService $workflow)
     {
         try {
             $request->validate(['odometer' => 'nullable|integer|min:0']);
 
-            $odometer = $request->filled('odometer')
-                ? $request->integer('odometer')
-                : $serviceReminder->vehicle?->odometer;
+            $serviceReminder->loadMissing('vehicle');
+            $vehicle = $serviceReminder->vehicle;
+            if (! $vehicle) {
+                return ResponseHelper::FailureResponse(null, 'This reminder is not linked to a vehicle.', 422);
+            }
 
-            $reminder = DB::transaction(function () use ($serviceReminder, $odometer) {
-                // Oil change is the ONE service the vehicle-level serviceStatus() (and its
-                // serviceDue / serviceDueSoon alerts) also tracks. Funnel it through the single
-                // writer so the car's anchor moves too — otherwise "done" never clears the alert.
-                if ($serviceReminder->service_type === 'oil_change'
-                    && $serviceReminder->vehicle
-                    && $odometer !== null) {
-                    return $serviceReminder->vehicle->recordOilService($odometer);
-                }
+            $label    = Maintenance::serviceLabelForType($serviceReminder->service_type) ?: $serviceReminder->displayName();
+            $odometer = $request->filled('odometer') ? $request->integer('odometer') : $vehicle->odometer;
 
-                // Any other service type: just roll this reminder's own due-point forward.
-                $serviceReminder->last_service_at       = now()->toDateString();
-                $serviceReminder->last_service_odometer = $odometer;
-                $serviceReminder->source                = 'manual';
-                $serviceReminder->recomputeNextDue();
-                $serviceReminder->save();
+            $ticket = $workflow->openServiceTicket($vehicle, $label, $odometer, $request->user());
 
-                return $serviceReminder;
-            });
-
-            return ResponseHelper::SuccessResponse(
-                ServiceReminderResource::make($reminder->load('vehicle')),
-                'Service logged; next due point advanced',
-                200
-            );
+            return ResponseHelper::SuccessResponse([
+                'reminder' => ServiceReminderResource::make($serviceReminder->fresh()->load('vehicle')),
+                'ticket'   => [
+                    'id'              => $ticket->id,
+                    'workflow_status' => $ticket->workflow_status,
+                    'url'             => '/maintenance-workflow/' . $ticket->id,
+                ],
+            ], 'Maintenance ticket opened for this service — the vehicle record updates once the ticket is closed.', 200);
         } catch (\Throwable $e) {
             return ResponseHelper::fromException($e);
         }

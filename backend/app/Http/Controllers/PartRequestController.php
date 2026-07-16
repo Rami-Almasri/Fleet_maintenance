@@ -22,7 +22,9 @@ class PartRequestController extends Controller
     public function index(Request $request)
     {
         try {
-            $q = PartRequest::query()->with(['vehicle:id,plate_no,make,model', 'customer:id,name_en,name_ar', 'task:id,symptom'])
+            // `purchases` is loaded so the board's Install action can find the buy to fit (an approved →
+            // purchased request carries its purchase here); without it the Install modal has nothing to act on.
+            $q = PartRequest::query()->with(['vehicle:id,plate_no,make,model', 'customer:id,name_en,name_ar', 'task:id,symptom', 'purchases'])
                 ->latest('id');
 
             if ($s = $request->query('status')) {
@@ -33,6 +35,10 @@ class PartRequestController extends Controller
             }
             if ($v = $request->query('vehicle_id')) {
                 $q->where('vehicle_id', $v);
+            }
+            // Scope to one maintenance ticket — powers the Parts section inside the ticket drawer/command view.
+            if ($m = $request->query('maintenance_id')) {
+                $q->where('maintenance_id', $m);
             }
 
             $rows = $q->paginate(min((int) $request->query('per_page', 50), 200));
@@ -49,12 +55,11 @@ class PartRequestController extends Controller
     public function store(Request $request)
     {
         try {
+            // A part is ALWAYS requested against a maintenance ticket (vehicle → ticket → fault). There is no
+            // standalone customer-part flow: source is forced to 'garage' and the ticket is mandatory.
             $data = $request->validate([
-                'source'              => ['required', Rule::in(PartRequest::SOURCES)],
                 'vehicle_id'          => ['required', 'exists:vehicles,id'],
-                // A customer request needs a customer; a garage request needs a ticket + fault.
-                'customer_id'         => ['nullable', 'required_if:source,customer', 'exists:customers,id'],
-                'maintenance_id'      => ['nullable', 'required_if:source,garage', 'exists:maintenances,id'],
+                'maintenance_id'      => ['required', 'exists:maintenances,id'],
                 'maintenance_task_id' => ['nullable', 'exists:maintenance_tasks,id'],
                 'part_name'           => ['required', 'string', 'max:255'],
                 'part_number'         => ['nullable', 'string', 'max:255'],
@@ -66,6 +71,7 @@ class PartRequestController extends Controller
                 'currency'            => ['nullable', 'string', 'size:3'],
                 'notes'               => ['nullable', 'string', 'max:2000'],
             ]);
+            $data['source'] = PartRequest::SOURCE_GARAGE;
 
             $req = $this->service->createRequest($data, $request->user());
 
@@ -87,25 +93,14 @@ class PartRequestController extends Controller
         }
     }
 
-    public function review(Request $request, PartRequest $partRequest)
-    {
-        try {
-            $data = $request->validate(['notes' => ['nullable', 'string', 'max:2000']]);
-
-            return ResponseHelper::SuccessResponse(
-                new PartRequestResource($this->service->review($partRequest, $request->user(), $data['notes'] ?? null)),
-                'Part request under review'
-            );
-        } catch (\Throwable $e) {
-            return ResponseHelper::fromException($e);
-        }
-    }
-
     public function approve(Request $request, PartRequest $partRequest)
     {
         try {
+            // Optional acknowledgment note when the approver green-lights a flagged duplicate anyway.
+            $data = $request->validate(['notes' => ['nullable', 'string', 'max:2000']]);
+
             return ResponseHelper::SuccessResponse(
-                new PartRequestResource($this->service->approve($partRequest, $request->user())),
+                new PartRequestResource($this->service->approve($partRequest, $request->user(), $data['notes'] ?? null)),
                 'Part request approved'
             );
         } catch (\Throwable $e) {

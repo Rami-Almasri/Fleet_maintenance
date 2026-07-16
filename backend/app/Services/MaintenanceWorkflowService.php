@@ -6,8 +6,12 @@ use App\Exceptions\WorkflowTransitionException;
 use App\Models\FaultCause;
 use App\Models\InspectorPadFlag;
 use App\Models\Maintenance;
+use App\Models\MaintenanceHandover;
+use App\Models\MaintenanceHandoverComparison;
+use App\Models\MaintenanceIncident;
 use App\Models\MaintenanceLineItem;
 use App\Models\MaintenanceSwap;
+use App\Models\MaintenanceTemporaryRelease;
 use App\Models\OdometerBlockEvent;
 use App\Models\User;
 use App\Models\Vehicle;
@@ -52,22 +56,46 @@ class MaintenanceWorkflowService
      * can go forward (closed) or bounce back (under_repair) when a re-inspection fails.
      */
     private const TRANSITIONS = [
+        // Stage -1 → Stage 0: the Controller (Lin/Marwa) reviews a Driver/system-generated request —
+        // approve sends it on to the Inspector exactly as before; reject terminates it.
+        Maintenance::WF_PENDING_REVIEW => [Maintenance::WF_INSPECTION_REQUESTED, Maintenance::WF_REVIEW_REJECTED],
         // Stage 0 → Stage 1: the Inspector picks up a Driver's request and starts the test drive.
         Maintenance::WF_INSPECTION_REQUESTED => [Maintenance::WF_INSPECTION_DIAGNOSTIC],
         // Stage 1 → Stage 2 decision: a diagnostic either becomes a ticket (in-shop → the dispatch
         // queue, OR on-site → the mobile lane) or is cleared. The Repair-Location choice at the Decide
         // step picks which committed branch it enters.
-        Maintenance::WF_INSPECTION_DIAGNOSTIC => [Maintenance::WF_INSPECTION_PENDING, Maintenance::WF_ON_SITE_PENDING, Maintenance::WF_DIAGNOSTIC_CLEARED],
-        // On-Site (mobile) lane: a single "Mark as Serviced" closes it (no garage, no re-inspection),
-        // or — if the job turns out to need the workshop after all — it can be escalated into the
-        // in-shop dispatch queue (inspection_pending) rather than closed.
-        Maintenance::WF_ON_SITE_PENDING    => [Maintenance::WF_CLOSED, Maintenance::WF_INSPECTION_PENDING],
-        // Customer-complaint TRIAGE (Abu Maroof): resolve it on-site (terminal), OR send the car in —
-        // straight to the Supervisors' garage-dispatch queue, OR into his own inspection queue first.
+        // A diagnostic that requires in-shop maintenance now parks in the RECOMMENDATION queue
+        // (recommendation_pending) for the Supervisor to approve — it is no longer an active ticket the
+        // moment it's filed. An emergency Breakdown is the ONE exception: it bypasses the queue straight to
+        // inspection_pending (still a legal target here) because a grounded car can't wait for approval.
+        Maintenance::WF_INSPECTION_DIAGNOSTIC => [Maintenance::WF_RECOMMENDATION_PENDING, Maintenance::WF_INSPECTION_PENDING, Maintenance::WF_ON_SITE_PENDING, Maintenance::WF_DIAGNOSTIC_CLEARED],
+        // Pre-Maintenance Recommendation queue (Supervisor triage). Approve → the existing dispatch queue
+        // (inspection_pending, from which the workflow runs unchanged); order parts → awaiting_parts;
+        // reject / not-required → recommendation_dismissed (terminal).
+        Maintenance::WF_RECOMMENDATION_PENDING => [Maintenance::WF_INSPECTION_PENDING, Maintenance::WF_AWAITING_PARTS, Maintenance::WF_RECOMMENDATION_DISMISSED],
+        // Waiting for Parts: parts arrived → back to recommendation_pending to start (or approve straight to
+        // inspection_pending); or the recommendation is dismissed after all.
+        Maintenance::WF_AWAITING_PARTS         => [Maintenance::WF_RECOMMENDATION_PENDING, Maintenance::WF_INSPECTION_PENDING, Maintenance::WF_RECOMMENDATION_DISMISSED],
+        Maintenance::WF_RECOMMENDATION_DISMISSED => [],
+        // On-Site (mobile) lane: "Mark as Serviced" completes the mobile job and routes it to the final
+        // QA re-inspection (ready_for_reinspection) — service data is confirmed only on a PASS, exactly
+        // like an in-shop repair (see confirmRoutineServices). It never closes directly. Or — if the job
+        // turns out to need the workshop after all — it can be escalated into the in-shop dispatch queue.
+        Maintenance::WF_ON_SITE_PENDING    => [Maintenance::WF_READY_REINSPECTION, Maintenance::WF_INSPECTION_PENDING],
+        // Customer-complaint TRIAGE (Abu Maroof): resolve it on-site (terminal), OR RECOMMEND sending the
+        // car in — which no longer routes it directly; it parks in the Triage Routing Approval gate until a
+        // Supervisor signs it off. He can no longer move the car to a garage/diagnostic on his own.
         Maintenance::WF_COMPLAINT_TRIAGE => [
             Maintenance::WF_COMPLAINT_RESOLVED,
+            Maintenance::WF_TRIAGE_APPROVAL_PENDING,
+        ],
+        // Triage Routing Approval (Supervisor sign-off of Abu Maroof's routing recommendation): APPROVE
+        // executes his chosen destination — the garage-dispatch queue (inspection_pending) OR his own
+        // diagnostic queue (inspection_requested); REJECT bounces it back to triage for him to reconsider.
+        Maintenance::WF_TRIAGE_APPROVAL_PENDING => [
             Maintenance::WF_INSPECTION_PENDING,
             Maintenance::WF_INSPECTION_REQUESTED,
+            Maintenance::WF_COMPLAINT_TRIAGE,
         ],
         Maintenance::WF_COMPLAINT_RESOLVED => [],
         // Phase 2 — the Supervisor (dispatcher) reviews the ticket, picks the garage + assigns a driver.
@@ -92,11 +120,12 @@ class MaintenanceWorkflowService
         // The driver has physically brought the car back to base (arriveAtPark(), mandatory arrival
         // photos). From here the system auto-branches by repair severity (isMajorRepair()) in the SAME
         // request — this state is transient, never a place a ticket rests:
-        //   • minor repair  → auto-continues straight to closed, freeing the car immediately.
-        //   • major repair  → auto-continues to ready_for_reinspection so the Inspector performs a final
-        //     QA pass before the car can be marked Available — the car stays "in maintenance" until then.
+        //   • minor repair with NO routine service  → auto-continues straight to closed, freeing the car.
+        //   • major repair, OR any ticket that performed a routine service (oil/battery/…) → auto-continues
+        //     to ready_for_reinspection so the Inspector performs a final QA pass. The service data
+        //     (oil/battery anchors, history, reminders) is confirmed ONLY on that PASS — never before.
         Maintenance::WF_IN_OUR_PARK        => [Maintenance::WF_CLOSED, Maintenance::WF_READY_REINSPECTION, Maintenance::WF_AWAITING_INVOICE],
-        // Final QA re-inspection (major repairs only, entered from in_our_park): sign off (closed /
+        // Final QA re-inspection (major repairs + routine services, entered from in_our_park / on_site): sign off (closed /
         // awaiting_invoice) or, when a fault is still broken, fail it (→ reinspection_failed).
         Maintenance::WF_READY_REINSPECTION => [Maintenance::WF_CLOSED, Maintenance::WF_AWAITING_INVOICE, Maintenance::WF_REINSPECTION_FAILED],
         // A failed re-inspection sits in the Supervisor's dispatch queue; assigning a garage re-dispatches it.
@@ -155,9 +184,15 @@ class MaintenanceWorkflowService
      * @param  string  $flagKey  where to file it: 'test_drive' | 'dispatch' | 'receive' | 'return'
      * @param  string  $stage    which rule applies: an OdometerContinuityService::STAGE_* constant
      */
-    private function recordOdometerFlag(Maintenance $ticket, string $flagKey, int $reading, ?int $previous, string $stage, ?string $note = null, ?User $actor = null): array
+    private function recordOdometerFlag(Maintenance $ticket, string $flagKey, int $reading, ?int $previous, string $stage, ?string $note = null, ?User $actor = null, ?bool $confirmed = null): array
     {
         $flag  = $this->continuity->evaluate($reading, $previous, $stage);
+        // The operator's tick of "I've checked — this reading is correct" on the continuity nag —
+        // stamped alongside the note so the Mileage oversight board can show it was actively acked,
+        // not just silently accepted.
+        if ($confirmed !== null) {
+            $flag['confirmed'] = $confirmed;
+        }
         // Context-aware tolerance: a site↔garage / garage↔garage move is a deliberate road trip, so a
         // forward mileage increase is EXPECTED — the UI waives the ±10 km note/confirm nag for it and the
         // reading arrives without a note. Stamp the flag so downstream readers (drawer, mileage story)
@@ -238,10 +273,10 @@ class MaintenanceWorkflowService
             // the ticket, so this is the only record that someone tried to force an out-of-range value.
             $this->logOdometerBlock($ticket, $actor, $flagKey, $reading, $previous, $delta, OdometerContinuityService::STATUS_EXACT, $note);
             throw new WorkflowTransitionException(
-                'The reading must match the previous stage (' . number_format($previous) . ' km) — up to '
-                . OdometerContinuityService::TOLERANCE_KM . ' km higher is allowed with a note. '
+                'The reading must match the previous stage (' . number_format($previous) . ' km). '
                 . number_format($reading) . ' km is ' . abs($delta) . ' km '
-                . ($delta < 0 ? 'lower' : 'higher') . '; re-check the dial.',
+                . ($delta < 0 ? 'lower — the odometer can\'t run backwards' : 'higher than allowed at this stage')
+                . '; re-check the dial.',
                 ['field' => $field]
             );
         }
@@ -251,6 +286,58 @@ class MaintenanceWorkflowService
             throw new WorkflowTransitionException(
                 'This reading is ' . (int) $flag['delta'] . ' km above the previous stage — add a short note explaining why before continuing.',
                 ['field' => 'odometer_note']
+            );
+        }
+    }
+
+    /**
+     * Hard "must be higher" gate — the car was physically driven between the previous checkpoint and this
+     * one (pickup → garage arrival, garage → collected, collected → sign-off, garage → garage transfer,
+     * test-drive start → end), so THIS reading can only be strictly HIGHER than the previous one. No
+     * tolerance, no acknowledgment override — an equal or lower value is a mis-keyed reading, not a
+     * legitimate edge case, and must be corrected before the transition can proceed. Mirrors the strict
+     * pattern of assertStrictMatch(), but for "must increase" instead of "must match" stages.
+     */
+    private function assertMustIncrease(Maintenance $ticket, ?User $actor, string $flagKey, int $reading, ?int $previous, ?string $note, string $field, string $previousLabel, ?string $customMessage = null): void
+    {
+        if ($previous === null) {
+            return; // nothing to compare against — this reading anchors the chain
+        }
+        if ($reading <= $previous) {
+            $delta = $reading - $previous;
+            // Audit the rejected attempt before throwing — the transition rolls back and leaves no trace
+            // on the ticket, so this is the only record that someone tried to force an invalid value.
+            $this->logOdometerBlock($ticket, $actor, $flagKey, $reading, $previous, $delta, 'must_increase', $note);
+            throw new WorkflowTransitionException(
+                // A stage may supply its own wording (e.g. the garage→park return leg spells out WHY the car
+                // must have travelled); otherwise fall back to the generic "must be higher" sentence.
+                $customMessage ?? (
+                    'This reading (' . number_format($reading) . ' km) must be higher than the ' . $previousLabel . ' ('
+                        . number_format($previous) . ' km) — the car was driven since then. Re-check the dial.'
+                ),
+                ['field' => $field]
+            );
+        }
+    }
+
+    /**
+     * Hard "can't be lower" gate — a softer sibling of assertMustIncrease() for checkpoints where the car
+     * MAY have moved since the previous reading but isn't guaranteed to (a garage road test is optional; a
+     * final sign-off can land on the exact same reading as the checkpoint just before it). Equal is fine;
+     * only a decrease is impossible and hard-blocked — no tolerance, no acknowledgment override.
+     */
+    private function assertNoDecrease(Maintenance $ticket, ?User $actor, string $flagKey, int $reading, ?int $previous, ?string $note, string $field, string $previousLabel): void
+    {
+        if ($previous === null) {
+            return;
+        }
+        if ($reading < $previous) {
+            $delta = $reading - $previous;
+            $this->logOdometerBlock($ticket, $actor, $flagKey, $reading, $previous, $delta, 'must_increase', $note);
+            throw new WorkflowTransitionException(
+                'This reading (' . number_format($reading) . ' km) can\'t be lower than the ' . $previousLabel . ' ('
+                    . number_format($previous) . ' km) — an odometer can\'t run backwards. Re-check the dial.',
+                ['field' => $field]
             );
         }
     }
@@ -320,8 +407,10 @@ class MaintenanceWorkflowService
      * Mileage Gate for a whole-car garage transfer — the mandatory odometer reading captured the moment
      * the Supervisor switches the car from one garage to another (the transaction is rejected upstream
      * unless it's present). It:
-     *   - stamps the Continuity verdict under the `transfer` key (a backward reading shows as Discrepancy);
-     *   - heals the car's canonical live mileage FORWARD only (odometers never run backwards).
+     *   - hard-blocks any reading that would DECREASE the car's mileage (an odometer never runs
+     *     backwards, whatever the stage — see assertNoDecrease);
+     *   - stamps the Continuity verdict under the `transfer` key;
+     *   - heals the car's canonical live mileage FORWARD only.
      * The odometer_flags mutation is left UNSAVED so it rides along with the caller's own transfer write
      * (rollbackForGarageTransfer) — no extra query; the vehicle heal is saved here.
      */
@@ -329,6 +418,8 @@ class MaintenanceWorkflowService
     {
         $vehicle  = $ticket->vehicle;
         $previous = $vehicle && $vehicle->odometer !== null ? (int) $vehicle->odometer : null;
+
+        $this->assertNoDecrease($ticket, $actor, 'transfer', $odometer, $previous, $note, 'odometer', 'car\'s last recorded reading');
 
         $flag = $this->recordOdometerFlag($ticket, 'transfer', $odometer, $previous, OdometerContinuityService::STAGE_TRANSFER, $note, $actor);
 
@@ -380,22 +471,43 @@ class MaintenanceWorkflowService
      * assignDispatch's driver-delegation overlay + pickup alert, so a transfer flows through the same
      * pickup → in-transit → arrival path as a first dispatch. The odometer flag was already stamped
      * (recordGarageTransferOdometer) and rides along with this save.
+     *
+     * Transport method — 'driver' (default, backward compatible) or 'recovery'. This is ONLY the
+     * Supervisor's choice of how the car will move; the actual pickup still runs through the existing
+     * dispatch() (driver) or dispatchRecovery() (tow) service methods exactly as before — nothing about
+     * markUnderRepair/routeTicketToGarage changes. A named `$driverId` is ignored for a recovery transfer:
+     * a tow has no human custodian, mirroring dispatchRecovery()'s own rule.
      */
-    public function beginGarageTransfer(Maintenance $ticket, Vendor $dest, ?int $driverId, ?string $reason, User $actor): Maintenance
+    public function beginGarageTransfer(Maintenance $ticket, Vendor $dest, ?int $driverId, ?string $reason, User $actor, string $transportMethod = Maintenance::TRANSPORT_DRIVER): Maintenance
     {
         $fromGarage = $ticket->garage ?: $ticket->vendor?->name;
+        $isRecovery = $transportMethod === Maintenance::TRANSPORT_RECOVERY;
 
-        $driver = $driverId ? User::find($driverId) : null;
-        if ($driverId && ! $driver) {
+        $driver = (! $isRecovery && $driverId) ? User::find($driverId) : null;
+        if (! $isRecovery && $driverId && ! $driver) {
             throw new WorkflowTransitionException('That driver no longer exists — pick another.', ['field' => 'assigned_to_id']);
         }
         if ($driver && ! $driver->can('maintenance.logistics')) {
             throw new WorkflowTransitionException('That user is not a driver — pick someone who can pick up cars.', ['field' => 'assigned_to_id']);
         }
 
-        return DB::transaction(function () use ($ticket, $dest, $driver, $reason, $actor, $fromGarage) {
+        return DB::transaction(function () use ($ticket, $dest, $driver, $reason, $actor, $fromGarage, $transportMethod, $isRecovery) {
+            // Row-lock + re-read INSIDE the transaction: two concurrent submits (double-click, a retried
+            // request) both pass the earlier checks against the pre-lock snapshot, but only one can hold
+            // this lock at a time — the second sees the FIRST one's committed write and, if it's an
+            // identical transfer (same destination + method, already pending), no-ops instead of re-doing
+            // it. This is what makes the whole action idempotent under real concurrency, not just
+            // sequential double-clicks.
+            $ticket = Maintenance::where('id', $ticket->id)->lockForUpdate()->firstOrFail();
+            if ((int) $ticket->transfer_to_vendor_id === (int) $dest->id
+                && $ticket->transfer_transport_method === $transportMethod
+                && $ticket->workflow_status === Maintenance::WF_AWAITING_DISPATCH) {
+                return $ticket;
+            }
+
             // Record ONLY the destination — vendor_id stays the garage the car is physically at.
             $ticket->transfer_to_vendor_id = $dest->id;
+            $ticket->transfer_transport_method = $transportMethod;
 
             // The car is leaving its current garage → stop that garage's repair clock and clear the stale
             // arrival/pickup readings; a fresh pickup reading is captured at collection (dispatch()) and a
@@ -448,9 +560,20 @@ class MaintenanceWorkflowService
             $this->log->record($ticket, VehicleLogEvent::EVENT_GARAGE_ASSIGNED, $actor, [
                 'description' => 'Transfer requested — car at ' . ($fromGarage ?: 'the garage') . ' → ' . $dest->name
                     . ($reason ? ' · ' . $reason : '')
-                    . ($driver ? ', pickup by ' . $driver->name : ', pickup open to the pool')
                     . ' (by ' . $actor->name . ')',
                 'meta' => ['from_garage' => $fromGarage, 'to_garage' => $dest->name, 'to_vendor_id' => $dest->id, 'reason' => $reason, 'driver_id' => $driver?->id, 'transfer' => true],
+            ]);
+
+            // A distinct second timeline entry — not a duplicate of "Transfer requested" above, it answers
+            // a different question (HOW, not WHERE): the Supervisor's Recovery-vs-Driver choice for this
+            // leg. Logged in the same transaction/action as the request itself (one form submission).
+            $this->log->record($ticket, VehicleLogEvent::EVENT_TRANSPORT_ASSIGNED, $actor, [
+                'description' => $isRecovery
+                    ? 'Recovery Truck assigned — a towing unit will collect the car for ' . $dest->name . '.'
+                    : ($driver
+                        ? 'Company Driver assigned — ' . $driver->name . ' will collect the car for ' . $dest->name . '.'
+                        : 'Company Driver assigned — pickup open to the driver pool for ' . $dest->name . '.'),
+                'meta' => ['transport_method' => $transportMethod, 'to_garage' => $dest->name, 'driver_id' => $driver?->id],
             ]);
 
             // Alert whoever picks up next — the named driver directly, or the whole Driver pool.
@@ -492,11 +615,12 @@ class MaintenanceWorkflowService
 
     /**
      * Stage 0. A Driver (Logistics) raises a "Request Inspection" on a car they suspect needs a look —
-     * the new entry point the role-based design calls for. It is born in `inspection_requested`: no
+     * the new entry point the role-based design calls for. It is born in `pending_review`: no
      * ticket, no diagnostic, no contract, the car is NOT marked in maintenance (event_status 'IN').
-     * The only side-effect is an alert to the Inspector (Abu Maroof) — "this car needs a test drive",
-     * carrying the Driver's notes — and a `requested_by` stamp so the request is attributable and the
-     * result can be routed straight back to whoever raised it.
+     * The Inspector (Abu Maroof) is NOT notified yet — the request first sits in the Controllers'
+     * (Lin & Marwa) review queue; only their approval sends it on (see approveInspectionReview()).
+     * A `requested_by` stamp makes the request attributable and lets the result route straight back
+     * to whoever raised it.
      *
      * @param array{vehicle_id:int, trigger_reason:string, customer_complaint?:?string} $data
      */
@@ -525,7 +649,7 @@ class MaintenanceWorkflowService
             $ticket = new Maintenance();
             $ticket->origin          = Maintenance::ORIGIN_MANUAL;
             $ticket->vehicle_id      = $vehicleId;
-            $ticket->workflow_status = Maintenance::WF_INSPECTION_REQUESTED;
+            $ticket->workflow_status = Maintenance::WF_PENDING_REVIEW;
             $ticket->trigger_reason  = $reason;
             $ticket->visit_context   = $reason === Maintenance::TRIGGER_PERIODIC
                 ? Maintenance::CONTEXT_ROUTINE
@@ -552,17 +676,18 @@ class MaintenanceWorkflowService
                 'meta'        => ['trigger_reason' => $reason, 'requested_by' => $driver->name],
             ]);
 
-            // Hand off to the Inspector (Abu Maroof) — he acts next: run the test drive.
+            // Hand off to the Controllers (Lin & Marwa) for review — NOT the Inspector yet. Abu Maroof
+            // is only notified once a Controller approves (see approveInspectionReview()).
             $vehicle = $ticket->loadMissing('vehicle')->vehicle;
             $note    = $ticket->customer_complaint ? ' — “' . $ticket->customer_complaint . '”' : '';
-            $this->notifier->notifyByPermission(self::NOTIFY_INSPECTOR, [
-                'type'     => 'maint_inspection_requested',
+            $this->notifier->notifyByPermission(self::NOTIFY_CONTROLLERS, [
+                'type'     => 'maint_review_pending',
                 'category' => 'maintenance',
                 'severity' => 'warning',
-                'title'    => 'Inspection requested · ' . $this->label($vehicle),
+                'title'    => 'Inspection request awaiting review · ' . $this->label($vehicle),
                 'body'     => trim($driver->name . ' asked for a test drive on ' . $this->label($vehicle) . $note),
                 'url'      => $this->link($ticket),
-                'key'      => 'maint_wf:' . $ticket->id . ':inspection_requested',
+                'key'      => 'maint_wf:' . $ticket->id . ':pending_review',
                 'icon'     => 'wrench',
                 'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no, 'requested_by' => $driver->name],
             ], $driver->id);
@@ -572,17 +697,113 @@ class MaintenanceWorkflowService
     }
 
     /**
+     * Stage 0 (manager entry). A Controller (Lin/Marwa, maintenance.manage) requests an inspection
+     * directly — the split that keeps requesting an inspection separate from performing one. Because a
+     * Controller IS the review authority, the request SKIPS the pending_review gate and is born already
+     * approved in `inspection_requested` — Abu Maroof's queue — and he is notified IMMEDIATELY.
+     *
+     * It captures NO odometer / photo / diagnostic data: the manager only names the car, the reason and
+     * optional notes. Every inspection reading (odometer, photo, OCR, tyres, battery, oil, findings) is
+     * collected later, when the Inspector opens the assigned ticket and presses Start Inspection
+     * (startDiagnostic → the existing `start` action). The manager is stamped as BOTH the requester and
+     * the (auto-)reviewer so the request stays fully attributable.
+     *
+     * @param array{vehicle_id:int, trigger_reason:string, customer_complaint?:?string, test_kind?:?string} $data
+     */
+    public function requestInspectionByController(array $data, User $manager): Maintenance
+    {
+        $vehicleId = (int) ($data['vehicle_id'] ?? 0);
+        $vehicle   = $vehicleId ? Vehicle::find($vehicleId) : null;
+        if (! $vehicle) {
+            throw new WorkflowTransitionException('A valid vehicle is required to request an inspection.', [
+                'field' => 'vehicle_id',
+            ]);
+        }
+
+        // Only an active-fleet car may enter the workflow — otherwise the ticket would be hidden by the
+        // board's active-fleet filter the moment it's created.
+        $this->assertActiveFleet($vehicle);
+
+        $reason = $data['trigger_reason'] ?? null;
+        if (! in_array($reason, Maintenance::TRIGGER_REASONS, true)) {
+            throw new WorkflowTransitionException('Choose a reason: test drive, customer complaint, or routine maintenance.', [
+                'field' => 'trigger_reason',
+            ]);
+        }
+
+        return DB::transaction(function () use ($vehicle, $vehicleId, $reason, $data, $manager) {
+            $now = Carbon::now();
+
+            $ticket = new Maintenance();
+            $ticket->origin          = Maintenance::ORIGIN_MANUAL;
+            $ticket->vehicle_id      = $vehicleId;
+            // A Controller is the review authority, so we land PAST the gate, straight in the Inspector's queue.
+            $ticket->workflow_status = Maintenance::WF_INSPECTION_REQUESTED;
+            $ticket->trigger_reason  = $reason;
+            $ticket->visit_context   = $reason === Maintenance::TRIGGER_PERIODIC
+                ? Maintenance::CONTEXT_ROUTINE
+                : 'standard';
+            // Which intake tab produced this (Routine oil/battery/tyres vs Scheduled park-time) — a
+            // traceability tag only; the Inspector re-anchors the mileage chain at Start Inspection.
+            if (isset($data['test_kind']) && in_array($data['test_kind'], Maintenance::TEST_KINDS, true)) {
+                $ticket->test_kind = $data['test_kind'];
+            }
+            // The manager's optional notes ride along as the customer_complaint so the Inspector sees them.
+            $ticket->customer_complaint = $this->clean($data['customer_complaint'] ?? null);
+
+            // maintenance_type is intentionally NOT set — the manager requesting the inspection has no
+            // diagnostic authority. The Inspector classifies the car when filing the report.
+
+            $ticket->event_status   = 'IN';   // a requested inspection is not a garage event
+            $ticket->requested_by   = $manager->id;
+            $ticket->requested_at   = $now;
+            $ticket->driver         = $manager->name;
+            // Auto-approved: the Controller is the reviewer, stamped so the request stays attributable.
+            $ticket->reviewed_by    = $manager->id;
+            $ticket->reviewed_at    = $now;
+            $ticket->review_sent_at = $now;
+            $ticket->save();
+
+            $this->cascade($ticket->vehicle_id);
+
+            $this->log->record($ticket, VehicleLogEvent::EVENT_INSPECTION_REQUESTED, $manager, [
+                'description' => 'Inspection requested — ' . $this->reasonLabel($reason)
+                                . ($ticket->customer_complaint ? ': “' . $ticket->customer_complaint . '”' : '')
+                                . ' — assigned to Abu Maroof (by ' . $manager->name . ')',
+                'meta'        => ['trigger_reason' => $reason, 'requested_by' => $manager->name, 'test_kind' => $ticket->test_kind],
+            ]);
+
+            // Hand off to the Inspector (Abu Maroof) IMMEDIATELY — the same alert the review-approval fires.
+            $vehicle = $ticket->loadMissing('vehicle')->vehicle;
+            $note    = $ticket->customer_complaint ? ' — “' . $ticket->customer_complaint . '”' : '';
+            $this->notifier->notifyByPermission(self::NOTIFY_INSPECTOR, [
+                'type'     => 'maint_inspection_requested',
+                'category' => 'maintenance',
+                'severity' => 'warning',
+                'title'    => 'Inspection requested · ' . $this->label($vehicle),
+                'body'     => trim($manager->name . ' requested an inspection on ' . $this->label($vehicle) . $note),
+                'url'      => $this->link($ticket),
+                'key'      => 'maint_wf:' . $ticket->id . ':inspection_requested',
+                'icon'     => 'wrench',
+                'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no, 'requested_by' => $manager->name],
+            ], $manager->id);
+
+            return $ticket->load($this->eager());
+        });
+    }
+
+    /**
      * SYSTEM-generated routine inspection TASK (Phase-2 auto-routine). The mileage scanner found a
-     * service-due car, so the SYSTEM raises the very same `inspection_requested` task a Driver would
-     * — landing it in Abu Maroof's queue with trigger_reason = periodic. It is attributed to no user
-     * (requested_by null, driver = "System · Auto-Check"); the audit-log entry and the inspector alert
-     * are written exactly as for a Driver request, so the task is fully accountable and the Inspector
-     * still cannot self-start — he only acts on a task the system put in front of him.
+     * service-due car, so the SYSTEM raises the very same `pending_review` task a Driver would —
+     * landing it in the Controllers' (Lin & Marwa) review queue with trigger_reason = periodic. It is
+     * attributed to no user (requested_by null, driver = "System · Auto-Check"); the audit-log entry
+     * is written exactly as for a Driver request, so the task is fully accountable. The Inspector is
+     * NOT notified until a Controller approves it (see approveInspectionReview()).
      *
      * Dedup (don't re-task a car already in the pipeline) is the caller's job (the command checks
      * openWorkflow); here we only assert the car is still active fleet before writing.
      *
-     * @param array{note?:?string, suggested_findings?:?array} $opts
+     * @param array{note?:?string, suggested_findings?:?array, conditions?:?array, service?:?array} $opts
      */
     public function systemRequestInspection(Vehicle $vehicle, array $opts = []): Maintenance
     {
@@ -592,7 +813,7 @@ class MaintenanceWorkflowService
             $ticket = new Maintenance();
             $ticket->origin             = Maintenance::ORIGIN_MANUAL;
             $ticket->vehicle_id         = $vehicle->id;
-            $ticket->workflow_status    = Maintenance::WF_INSPECTION_REQUESTED;
+            $ticket->workflow_status    = Maintenance::WF_PENDING_REVIEW;
             $ticket->trigger_reason     = Maintenance::TRIGGER_PERIODIC;
             $ticket->visit_context      = Maintenance::CONTEXT_ROUTINE; // planned service → foresight ignores it
             $ticket->customer_complaint = $this->clean($opts['note'] ?? 'Routine service due (mileage).');
@@ -600,6 +821,10 @@ class MaintenanceWorkflowService
             // exact Findings-catalog keywords this ticket was raised for, so the Inspector taps to
             // confirm instead of hunting the picker for what the agenda note already told him to check.
             $ticket->suggested_findings = array_values(array_filter($opts['suggested_findings'] ?? []));
+            // Trigger Detail — the machine-readable "why" snapshot the Inspection Review Queue renders so a
+            // system request explains itself (rule fired, human reason, checklist, mileage/threshold/due
+            // values at detection). Snapshot-at-creation: it must not drift if the car is serviced later.
+            $ticket->trigger_detail     = $this->buildTriggerDetail($opts);
             $ticket->event_status       = 'IN';   // a requested inspection is not a garage event
             $ticket->requested_by       = null;    // system-generated, no human requester
             $ticket->requested_at       = Carbon::now();
@@ -614,18 +839,326 @@ class MaintenanceWorkflowService
                 'meta'        => ['trigger_reason' => Maintenance::TRIGGER_PERIODIC, 'requested_by' => 'system', 'auto' => true],
             ]);
 
-            // Hand off to the Inspector (Abu Maroof) — same alert a Driver request raises.
+            // Hand off to the Controllers (Lin & Marwa) for review — same alert a Driver request raises,
+            // just aimed at the review queue instead of the Inspector.
             $note = $ticket->customer_complaint ? ' — ' . $ticket->customer_complaint : '';
+            $this->notifier->notifyByPermission(self::NOTIFY_CONTROLLERS, [
+                'type'     => 'maint_review_pending',
+                'category' => 'maintenance',
+                'severity' => 'warning',
+                'title'    => 'Routine inspection awaiting review · ' . $this->label($vehicle),
+                'body'     => trim('System flagged ' . $this->label($vehicle) . ' for a routine test drive' . $note),
+                'url'      => $this->link($ticket),
+                'key'      => 'maint_wf:' . $ticket->id . ':pending_review',
+                'icon'     => 'wrench',
+                'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle->plate_no, 'requested_by' => 'system'],
+            ]);
+
+            return $ticket->load($this->eager());
+        });
+    }
+
+    /**
+     * Normalise the Proactive Diagnostic Monitor's raw conditions + service snapshot into the compact,
+     * self-describing `trigger_detail` payload the Inspection Review Queue renders. Each rule keeps its
+     * human "why" (`detail`) and its one-tap checklist (`finding_keywords`, unified from the single/plural
+     * shapes DiagnosticGateService emits); the service block carries the mileage/threshold/overdue/due
+     * values behind the oil rule. Returns null when the caller passed no structured context (e.g. a legacy
+     * call) so the column stays empty rather than holding a hollow shell.
+     *
+     * @param array{note?:?string, conditions?:?array, service?:?array} $opts
+     */
+    private function buildTriggerDetail(array $opts): ?array
+    {
+        $conditions = array_values(array_filter($opts['conditions'] ?? [], 'is_array'));
+        $service    = is_array($opts['service'] ?? null) ? $opts['service'] : null;
+
+        if (empty($conditions) && $service === null) {
+            return null; // nothing structured to record
+        }
+
+        $rules = array_map(function (array $c) {
+            // Unify the single `finding_keyword` and the post-downtime `finding_keywords[]` into one list.
+            $keywords = $c['finding_keywords'] ?? array_filter([$c['finding_keyword'] ?? null]);
+
+            return array_filter([
+                'key'              => $c['key'] ?? null,
+                'label'            => $c['label'] ?? null,
+                'directive'        => $c['directive'] ?? null,       // routine | downtime
+                'severity'         => $c['severity'] ?? null,        // critical | moderate | routine
+                'axis'             => $c['axis'] ?? null,            // km | date — which threshold it breached
+                'why'              => $c['detail'] ?? null,          // the human "why this inspection is required"
+                'idle_days'        => $c['days'] ?? null,            // post-downtime only
+                'checklist'        => array_values($c['checklist'] ?? []),
+                'finding_keywords' => array_values(array_filter($keywords)),
+            ], fn ($v) => $v !== null && $v !== []);
+        }, $conditions);
+
+        return array_filter([
+            'source'       => 'diagnostic_monitor',   // the rule engine that raised it (DiagnosticGateService)
+            'generated_at' => Carbon::now()->toIso8601String(),
+            'rules'        => array_values($rules),
+            // Values behind the service/mileage rule at the moment of detection — current odometer, the
+            // service interval (threshold), how far past it the car is, and the calendar next-due date.
+            'service'      => $service ? array_filter([
+                'current_km'  => $service['current'] ?? null,
+                'interval_km' => $service['interval'] ?? null,
+                'overdue_km'  => $service['overdue_km'] ?? null,
+                'next_due_at' => $service['next_due_at'] ?? null,
+                'status'      => $service['status'] ?? null,
+            ], fn ($v) => $v !== null) : null,
+        ], fn ($v) => $v !== null && $v !== []);
+    }
+
+    /**
+     * Every request currently sitting in the Controllers' (Lin & Marwa) review queue, newest first.
+     *
+     * Also surfaces LEGACY system-generated requests that predate the review gate: the Proactive
+     * Diagnostic Monitor ran for a while before approveInspectionReview() became the only path to
+     * workflow_status = inspection_requested, so some system requests were written straight there
+     * (requested_by null, reviewed_by null) and never passed through review. They're still fully
+     * actionable on the board today — nothing is broken — but they never got a reviewer's accountable
+     * sign-off, so they're included here too (tagged via is_legacy_unreviewed on the resource) with an
+     * Acknowledge action instead of Approve/Reject.
+     */
+    public function pendingReview()
+    {
+        $tickets = Maintenance::where(function ($q) {
+            $q->where('workflow_status', Maintenance::WF_PENDING_REVIEW)
+                ->orWhere(function ($q2) {
+                    $q2->where('workflow_status', Maintenance::WF_INSPECTION_REQUESTED)
+                        ->whereNull('requested_by')
+                        ->whereNull('reviewed_by');
+                });
+        })
+            ->with($this->eager())
+            ->orderByDesc('requested_at')
+            ->get();
+
+        // Attach each car's last REAL inspection/test-drive (before this request) so the reviewer can see
+        // when it was last looked at — and what was found — before approving yet another inspection.
+        $lastTests = $this->lastInspectionsForVehicles(
+            $tickets->pluck('vehicle_id')->filter()->unique()->all()
+        );
+        foreach ($tickets as $t) {
+            $prior = $lastTests[$t->vehicle_id] ?? null;
+            // Never surface the request's own row as its "last test".
+            $t->last_test = ($prior && $prior['id'] !== $t->id) ? $prior : null;
+        }
+
+        return $tickets;
+    }
+
+    /**
+     * The most recent real inspection/test-drive for each given vehicle (a ticket that actually had a
+     * diagnostic filed — inspected_at set). Keyed by vehicle_id. One batched query, no N+1.
+     *
+     * @param  int[]  $vehicleIds
+     * @return array<int,array{id:int,at:string,ago_days:int,by:?string,severity:?string,summary:?string}>
+     */
+    private function lastInspectionsForVehicles(array $vehicleIds): array
+    {
+        $vehicleIds = array_values(array_unique(array_filter($vehicleIds)));
+        if ($vehicleIds === []) {
+            return [];
+        }
+
+        $rows = Maintenance::query()
+            ->whereIn('vehicle_id', $vehicleIds)
+            ->whereNotNull('inspected_at')
+            ->orderByDesc('inspected_at')
+            ->with('inspector:id,name')
+            ->get(['id', 'vehicle_id', 'inspected_at', 'inspected_by', 'fault_severity', 'test_drive_report']);
+
+        $out = [];
+        foreach ($rows as $r) {
+            if (isset($out[$r->vehicle_id])) {
+                continue; // keep only each car's newest
+            }
+            $report  = is_array($r->test_drive_report) ? $r->test_drive_report : [];
+            $summary = trim((string) ($report['recommended_action'] ?? ''));
+            if ($summary === '') {
+                $symptoms = array_filter(array_map('trim', (array) ($report['symptoms'] ?? [])));
+                $summary  = $symptoms ? implode(', ', $symptoms) : '';
+            }
+            if (mb_strlen($summary) > 120) {
+                $summary = mb_substr($summary, 0, 119) . '…';
+            }
+
+            $out[$r->vehicle_id] = [
+                'id'       => $r->id,
+                'at'       => $r->inspected_at->toIso8601String(),
+                'ago_days' => (int) $r->inspected_at->diffInDays(Carbon::now()),
+                'by'       => $r->inspector?->name,
+                'severity' => $r->fault_severity,
+                'summary'  => $summary !== '' ? $summary : null,
+            ];
+        }
+
+        return $out;
+    }
+
+    /**
+     * Stage -1 → Stage 0. A Controller (Lin/Marwa) approves an inspection request — the ONLY point
+     * that hands it on to the Inspector (Abu Maroof). Re-fetches with a row lock so two reviewers
+     * racing to act on the same request cannot both win (and the Inspector cannot be notified twice).
+     *
+     * @param array{notes?:?string} $data
+     */
+    public function approveInspectionReview(Maintenance $ticket, array $data, User $reviewer): Maintenance
+    {
+        return DB::transaction(function () use ($ticket, $data, $reviewer) {
+            $locked = Maintenance::where('id', $ticket->id)->lockForUpdate()->firstOrFail();
+            if ($locked->workflow_status !== Maintenance::WF_PENDING_REVIEW) {
+                throw new WorkflowTransitionException('This request has already been reviewed.', [
+                    'workflow_status' => $locked->workflow_status,
+                ]);
+            }
+
+            $this->assertTransition($locked, Maintenance::WF_INSPECTION_REQUESTED);
+
+            $now = Carbon::now();
+            $locked->workflow_status = Maintenance::WF_INSPECTION_REQUESTED;
+            $locked->reviewed_by     = $reviewer->id;
+            $locked->reviewed_at     = $now;
+            $locked->review_notes    = $this->clean($data['notes'] ?? null);
+            $locked->review_sent_at  = $now;
+            $locked->save();
+            $ticket = $locked;
+
+            $this->cascade($ticket->vehicle_id);
+
+            $this->log->record($ticket, VehicleLogEvent::EVENT_REVIEW_APPROVED, $reviewer, [
+                'description' => 'Inspection request approved — sent to Abu Maroof (by ' . $reviewer->name . ')'
+                                . ($ticket->review_notes ? ': “' . $ticket->review_notes . '”' : ''),
+                'meta'        => ['reviewed_by' => $reviewer->name],
+            ]);
+
+            // Hand off to the Inspector (Abu Maroof) — identical to the alert requestInspection() /
+            // systemRequestInspection() used to fire directly, so his experience is unchanged.
+            $vehicle = $ticket->loadMissing('vehicle')->vehicle;
+            $note    = $ticket->customer_complaint ? ' — “' . $ticket->customer_complaint . '”' : '';
+            $isSystem = $ticket->requested_by === null;
             $this->notifier->notifyByPermission(self::NOTIFY_INSPECTOR, [
                 'type'     => 'maint_inspection_requested',
                 'category' => 'maintenance',
                 'severity' => 'warning',
-                'title'    => 'Routine inspection due · ' . $this->label($vehicle),
-                'body'     => trim('System flagged ' . $this->label($vehicle) . ' for a routine test drive' . $note),
+                'title'    => ($isSystem ? 'Routine inspection due · ' : 'Inspection requested · ') . $this->label($vehicle),
+                'body'     => trim(($isSystem ? 'System flagged ' . $this->label($vehicle) . ' for a routine test drive' : $ticket->driver . ' asked for a test drive on ' . $this->label($vehicle)) . $note),
                 'url'      => $this->link($ticket),
                 'key'      => 'maint_wf:' . $ticket->id . ':inspection_requested',
                 'icon'     => 'wrench',
-                'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle->plate_no, 'requested_by' => 'system'],
+                'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no, 'requested_by' => $ticket->driver],
+            ], $reviewer->id);
+
+            // Let the original requester know their request was approved and sent on.
+            if ($ticket->requested_by && $ticket->requested_by !== $reviewer->id) {
+                $requester = User::find($ticket->requested_by);
+                if ($requester) {
+                    $this->notifier->notifyUser($requester, [
+                        'type'     => 'maint_review_approved',
+                        'category' => 'maintenance',
+                        'severity' => 'info',
+                        'title'    => 'Your inspection request was approved · ' . $this->label($vehicle),
+                        'body'     => 'Sent to Abu Maroof for a test drive.',
+                        'url'      => $this->link($ticket),
+                        'key'      => 'maint_wf:' . $ticket->id . ':review_approved',
+                        'icon'     => 'check',
+                    ]);
+                }
+            }
+
+            return $ticket->load($this->eager());
+        });
+    }
+
+    /**
+     * Stage -1 → terminal. A Controller (Lin/Marwa) rejects an inspection request — it never reaches
+     * the Inspector and nothing is sent externally. Same locking discipline as the approve path.
+     *
+     * @param array{rejection_reason:string} $data
+     */
+    public function rejectInspectionReview(Maintenance $ticket, array $data, User $reviewer): Maintenance
+    {
+        $reason = trim((string) ($data['rejection_reason'] ?? ''));
+        if ($reason === '') {
+            throw new WorkflowTransitionException('Say why this inspection request is being rejected.', [
+                'field' => 'rejection_reason',
+            ]);
+        }
+
+        return DB::transaction(function () use ($ticket, $reason, $reviewer) {
+            $locked = Maintenance::where('id', $ticket->id)->lockForUpdate()->firstOrFail();
+            if ($locked->workflow_status !== Maintenance::WF_PENDING_REVIEW) {
+                throw new WorkflowTransitionException('This request has already been reviewed.', [
+                    'workflow_status' => $locked->workflow_status,
+                ]);
+            }
+
+            $this->assertTransition($locked, Maintenance::WF_REVIEW_REJECTED);
+
+            $locked->workflow_status         = Maintenance::WF_REVIEW_REJECTED;
+            $locked->reviewed_by             = $reviewer->id;
+            $locked->reviewed_at             = Carbon::now();
+            $locked->review_rejection_reason = $reason;
+            $locked->save();
+            $ticket = $locked;
+
+            $this->cascade($ticket->vehicle_id);
+
+            $this->log->record($ticket, VehicleLogEvent::EVENT_REVIEW_REJECTED, $reviewer, [
+                'description' => 'Inspection request rejected (by ' . $reviewer->name . '): “' . $reason . '”',
+                'meta'        => ['reviewed_by' => $reviewer->name, 'rejection_reason' => $reason],
+            ]);
+
+            if ($ticket->requested_by && $ticket->requested_by !== $reviewer->id) {
+                $requester = User::find($ticket->requested_by);
+                if ($requester) {
+                    $vehicle = $ticket->loadMissing('vehicle')->vehicle;
+                    $this->notifier->notifyUser($requester, [
+                        'type'     => 'maint_review_rejected',
+                        'category' => 'maintenance',
+                        'severity' => 'warning',
+                        'title'    => 'Your inspection request was rejected · ' . $this->label($vehicle),
+                        'body'     => $reason,
+                        'url'      => $this->link($ticket),
+                        'key'      => 'maint_wf:' . $ticket->id . ':review_rejected',
+                        'icon'     => 'x',
+                    ]);
+                }
+            }
+
+            return $ticket->load($this->eager());
+        });
+    }
+
+    /**
+     * Retroactive sign-off for a LEGACY system-generated request that bypassed the review gate (see
+     * pendingReview()'s doc comment). It's already at workflow_status = inspection_requested and fully
+     * actionable on the board — this does NOT touch that; it only stamps reviewed_by/reviewed_at so the
+     * accountability gap closes, without re-transitioning or re-notifying anyone.
+     */
+    public function acknowledgeLegacyInspectionRequest(Maintenance $ticket, User $reviewer): Maintenance
+    {
+        return DB::transaction(function () use ($ticket, $reviewer) {
+            $locked = Maintenance::where('id', $ticket->id)->lockForUpdate()->firstOrFail();
+            if ($locked->workflow_status !== Maintenance::WF_INSPECTION_REQUESTED
+                || $locked->requested_by !== null
+                || $locked->reviewed_by !== null) {
+                throw new WorkflowTransitionException('This request is not a legacy unreviewed system request.', [
+                    'workflow_status' => $locked->workflow_status,
+                ]);
+            }
+
+            $locked->reviewed_by = $reviewer->id;
+            $locked->reviewed_at = Carbon::now();
+            $locked->save();
+            $ticket = $locked;
+
+            $this->log->record($ticket, VehicleLogEvent::EVENT_REVIEW_APPROVED, $reviewer, [
+                'description' => 'Legacy system-generated request retroactively acknowledged (by ' . $reviewer->name . ') — '
+                                . 'already in the Inspector\'s queue, no change to its stage',
+                'meta'        => ['reviewed_by' => $reviewer->name, 'legacy' => true],
             ]);
 
             return $ticket->load($this->eager());
@@ -648,19 +1181,20 @@ class MaintenanceWorkflowService
 
         $testOdometer = $this->requireTestOdometer($data);
         $odoNote      = $data['odometer_note'] ?? null;
+        $odoConfirmed = array_key_exists('odometer_confirmed', $data) ? (bool) $data['odometer_confirmed'] : null;
         $vehicle      = $ticket->loadMissing('vehicle')->vehicle;
 
         // "Being Inspected" strict-match gate: the car is still in our park, so the start-of-drive reading
         // must match its current mileage (a +1..5 km drift needs a note; a bigger/backward gap is blocked).
         $this->assertStrictMatch($ticket, $actor, 'test_drive', $testOdometer, $vehicle?->odometer !== null ? (int) $vehicle->odometer : null, OdometerContinuityService::STAGE_TEST, $odoNote, 'test_odometer');
 
-        return DB::transaction(function () use ($ticket, $vehicle, $actor, $testOdometer, $odoNote) {
+        return DB::transaction(function () use ($ticket, $vehicle, $actor, $testOdometer, $odoNote, $odoConfirmed) {
             $ticket->workflow_status = Maintenance::WF_INSPECTION_DIAGNOSTIC;
             $ticket->event_status    = 'IN';
             $ticket->test_odometer   = $testOdometer; // start-of-drive anchor
             // Continuity check against the car's current mileage BEFORE we heal it forward (the heal runs
             // after save, so $vehicle->odometer here is still the prior reading).
-            $this->recordOdometerFlag($ticket, 'test_drive', $testOdometer, $vehicle?->odometer !== null ? (int) $vehicle->odometer : null, OdometerContinuityService::STAGE_TEST, $odoNote, $actor);
+            $this->recordOdometerFlag($ticket, 'test_drive', $testOdometer, $vehicle?->odometer !== null ? (int) $vehicle->odometer : null, OdometerContinuityService::STAGE_TEST, $odoNote, $actor, $odoConfirmed);
             $ticket->inspected_by    = $actor->id;
             $ticket->inspected_at    = Carbon::now();
             $ticket->test_started_at = Carbon::now(); // downtime clock starts at the test drive
@@ -739,7 +1273,7 @@ class MaintenanceWorkflowService
             $ticket->trigger_reason  = $reason;
             $ticket->test_odometer   = $testOdometer; // start-of-drive anchor
             // Continuity check against the car's current mileage BEFORE it's healed forward (see below).
-            $this->recordOdometerFlag($ticket, 'test_drive', $testOdometer, $vehicle->odometer !== null ? (int) $vehicle->odometer : null, OdometerContinuityService::STAGE_TEST, $data['odometer_note'] ?? null, $actor);
+            $this->recordOdometerFlag($ticket, 'test_drive', $testOdometer, $vehicle->odometer !== null ? (int) $vehicle->odometer : null, OdometerContinuityService::STAGE_TEST, $data['odometer_note'] ?? null, $actor, array_key_exists('odometer_confirmed', $data) ? (bool) $data['odometer_confirmed'] : null);
 
             // A periodic visit is planned service → tag 'routine' so foresight's Chronic/Act-now
             // signals ignore it (see [[rental-first-policy]]). A reported fault stays standard.
@@ -1054,8 +1588,11 @@ class MaintenanceWorkflowService
 
         $note          = $this->clean($data['note'] ?? null);
         $replacementId = ! empty($data['replacement_vehicle_id']) ? (int) $data['replacement_vehicle_id'] : null;
+        // When this runs as an approval of Abu Maroof's recommendation, credit HIM in the audit alongside
+        // the approving Supervisor (the actor). Null on any direct/legacy call.
+        $recommendedBy = $this->clean($data['recommended_by_name'] ?? null);
 
-        return DB::transaction(function () use ($ticket, $target, $destination, $replacementId, $note, $actor, $vehicle, $rental, $renterName) {
+        return DB::transaction(function () use ($ticket, $target, $destination, $replacementId, $note, $actor, $vehicle, $rental, $renterName, $recommendedBy) {
             // (a) Arrange the replacement, if one was chosen — on the shared Maintenance Swap board.
             $swap = $replacementId ? $this->arrangeReplacement($ticket, $replacementId, $rental, $renterName, $actor) : null;
 
@@ -1079,7 +1616,7 @@ class MaintenanceWorkflowService
                     'description' => 'Complaint sent to ' . $sentTo
                                     . ($swap ? ' — replacement ' . ($swap->replacement_plate ?: '#' . $swap->replacement_vehicle_id) . ' given to the customer' : '')
                                     . ($note ? ': “' . $note . '”' : '')
-                                    . ' (by ' . $actor->name . ')',
+                                    . ($recommendedBy ? ' (recommended by ' . $recommendedBy . ', approved by ' . $actor->name . ')' : ' (by ' . $actor->name . ')'),
                     'meta'        => ['source' => 'complaint_triage', 'destination' => $destination, 'swap_id' => $swap?->id],
                 ]
             );
@@ -1117,6 +1654,149 @@ class MaintenanceWorkflowService
                     'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no, 'customer_complaint' => true],
                 ], $actor->id);
             }
+
+            return $ticket->load($this->eager());
+        });
+    }
+
+    /**
+     * Triage Routing Approval — Step 1 of 2 (Abu Maroof RECOMMENDS). He decides the complaint needs real
+     * work, but he can no longer route the car himself: his chosen destination (a garage OR his own
+     * diagnostic), any replacement he'd give the customer, and his note are RECORDED as a recommendation on
+     * `triage_route_request`, and the ticket parks in the Triage Routing Approval gate
+     * (triage_approval_pending) for a Supervisor/delegate to sign off. Nothing moves yet — the car stays
+     * free, no garage is alerted and no replacement swap is arranged — until approveTriageRoute() runs.
+     *
+     * @param array{destination:string, replacement_vehicle_id?:?int, note?:?string} $data
+     */
+    public function recommendTriageRoute(Maintenance $ticket, array $data, User $actor): Maintenance
+    {
+        $this->assertComplaintTriage($ticket);
+
+        $destination = $data['destination'] ?? null;
+        if (! in_array($destination, ['garage', 'diagnostic'], true)) {
+            throw new WorkflowTransitionException('Choose where to send the car: garage dispatch or diagnostic.', [
+                'field' => 'destination',
+            ]);
+        }
+        // Enforces "only from triage" — TRANSITIONS[complaint_triage] is the only source of this state.
+        $this->assertTransition($ticket, Maintenance::WF_TRIAGE_APPROVAL_PENDING);
+
+        $note          = $this->clean($data['note'] ?? null);
+        $replacementId = ! empty($data['replacement_vehicle_id']) ? (int) $data['replacement_vehicle_id'] : null;
+
+        return DB::transaction(function () use ($ticket, $destination, $replacementId, $note, $actor) {
+            $ticket->triage_route_request = [
+                'destination'            => $destination,
+                'replacement_vehicle_id' => $replacementId,
+                'note'                   => $note,
+                'recommended_by'         => $actor->id,
+                'recommended_by_name'    => $actor->name,
+                'recommended_at'         => Carbon::now()->toIso8601String(),
+            ];
+            $ticket->workflow_status = Maintenance::WF_TRIAGE_APPROVAL_PENDING;
+            $ticket->event_status    = 'IN';   // still parked — nothing has moved
+            $ticket->save();
+
+            $this->cascade($ticket->vehicle_id);
+
+            $sentTo = $destination === 'garage' ? 'garage dispatch' : 'diagnostic inspection';
+            $this->log->record($ticket, VehicleLogEvent::EVENT_STATUS_UPDATE, $actor, [
+                'description' => 'Recommended sending the customer complaint to ' . $sentTo
+                                . ' — awaiting supervisor approval'
+                                . ($note ? ': “' . $note . '”' : '')
+                                . ' (by ' . $actor->name . ')',
+                'meta'        => ['source' => 'complaint_triage', 'action' => 'recommend_route', 'destination' => $destination],
+            ]);
+
+            // Ask the Supervisors/delegates to approve (or reject) the routing.
+            $vehicle = $ticket->loadMissing('vehicle')->vehicle;
+            $this->notifier->notifyByPermission(self::NOTIFY_DISPATCHER, [
+                'type'     => 'maint_triage_route_pending',
+                'category' => 'maintenance',
+                'severity' => 'warning',
+                'title'    => '🛂 Approve routing · ' . $this->label($vehicle),
+                'body'     => trim('Abu Maroof recommends sending a customer complaint on ' . $this->label($vehicle)
+                                . ' to ' . $sentTo . ' — approve or reject the routing.'),
+                'url'      => $this->link($ticket),
+                'key'      => 'maint_wf:' . $ticket->id . ':triage_route_pending',
+                'icon'     => 'bell',
+                'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no, 'customer_complaint' => true],
+            ], $actor->id);
+
+            return $ticket->load($this->eager());
+        });
+    }
+
+    /**
+     * Triage Routing Approval — Step 2 of 2, APPROVE. A Supervisor/delegate signs off Abu Maroof's routing
+     * recommendation, and the stored decision is executed exactly as the direct route used to be: the car is
+     * routed to the garage-dispatch queue or the diagnostic queue, the replacement (if any) is arranged on
+     * the Swap board, and the next role is alerted. The recommendation payload is then cleared.
+     */
+    public function approveTriageRoute(Maintenance $ticket, User $approver): Maintenance
+    {
+        if ($ticket->workflow_status !== Maintenance::WF_TRIAGE_APPROVAL_PENDING) {
+            throw new WorkflowTransitionException('This routing is not awaiting approval.', [
+                'workflow_status' => $ticket->workflow_status,
+            ]);
+        }
+        $request = is_array($ticket->triage_route_request) ? $ticket->triage_route_request : [];
+        if (empty($request['destination'])) {
+            throw new WorkflowTransitionException('This ticket has no routing recommendation to approve.');
+        }
+
+        // routeComplaint runs the real move — its assertTransition now legally fires from triage_approval_pending.
+        // Pass the recommender's name through so the audit credits both Abu Maroof and the approving supervisor.
+        $ticket = $this->routeComplaint($ticket, $request, $approver);
+
+        $ticket->triage_route_request = null;
+        $ticket->save();
+
+        return $ticket->load($this->eager());
+    }
+
+    /**
+     * Triage Routing Approval — Step 2 of 2, REJECT. A Supervisor/delegate rejects Abu Maroof's routing
+     * recommendation: the car is NOT sent in and the complaint returns to the triage lane so he can
+     * reconsider (talk to the customer, resolve on-site, or recommend a different routing). His original
+     * recommendation is cleared and he is notified with the reason.
+     */
+    public function rejectTriageRoute(Maintenance $ticket, ?string $reason, User $actor): Maintenance
+    {
+        $this->assertTransition($ticket, Maintenance::WF_COMPLAINT_TRIAGE);
+
+        return DB::transaction(function () use ($ticket, $reason, $actor) {
+            $text = $this->clean($reason);
+            $ticket->workflow_status      = Maintenance::WF_COMPLAINT_TRIAGE;
+            $ticket->triage_route_request = null;
+            $ticket->event_status         = 'IN';
+            $ticket->save();
+
+            $this->cascade($ticket->vehicle_id);
+
+            $this->log->record($ticket, VehicleLogEvent::EVENT_STATUS_UPDATE, $actor, [
+                'description' => 'Rejected the triage routing — back to triage'
+                                . ($text ? ': “' . $text . '”' : '')
+                                . ' (by ' . $actor->name . ')',
+                'meta'        => ['source' => 'complaint_triage', 'action' => 'reject_route'],
+            ]);
+
+            // Send it back to Abu Maroof (the inspector) to reconsider.
+            $vehicle = $ticket->loadMissing('vehicle')->vehicle;
+            $this->notifier->notifyByPermission(self::NOTIFY_INSPECTOR, [
+                'type'     => 'maint_triage_route_rejected',
+                'category' => 'maintenance',
+                'severity' => 'warning',
+                'title'    => '↩️ Routing rejected · ' . $this->label($vehicle),
+                'body'     => trim('A supervisor rejected sending ' . $this->label($vehicle) . ' in'
+                                . ($text ? ' — “' . $text . '”.' : '.')
+                                . ' Back in triage — reconsider how to handle the complaint.'),
+                'url'      => $this->link($ticket),
+                'key'      => 'maint_wf:' . $ticket->id . ':triage_route_rejected:' . Carbon::now()->timestamp,
+                'icon'     => 'bell',
+                'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no, 'customer_complaint' => true],
+            ], $actor->id);
 
             return $ticket->load($this->eager());
         });
@@ -1469,6 +2149,122 @@ class MaintenanceWorkflowService
         });
     }
 
+    /**
+     * SERVICE INTAKE — turn a due Service Reminder / Service-Due alert into a maintenance ticket. This is
+     * the ONLY way a scheduled service enters the system now: the vehicle page no longer logs service
+     * directly. The car isn't picked up here; this mints (or reuses) the ticket the crew acts on, seeded
+     * with a single routine-service finding whose text maps back to the service_type
+     * (Maintenance::serviceLabelForType) so that, once a technician performs it and the ticket is CLOSED,
+     * confirmRoutineServices() rolls the reminder + updates the vehicle. If the car already has an open
+     * ticket, the service is appended to it instead of minting a duplicate ("open OR create").
+     *
+     * @return Maintenance the open (new or existing) ticket
+     */
+    public function openServiceTicket(Vehicle $vehicle, string $serviceLabel, ?int $odometer, User $actor): Maintenance
+    {
+        $this->assertActiveFleet($vehicle);
+        $serviceLabel = $this->clean($serviceLabel) ?: 'Routine Service';
+
+        return DB::transaction(function () use ($vehicle, $serviceLabel, $odometer, $actor) {
+            // Already in the maintenance pipeline → append the service to that open ticket (no duplicate).
+            if ($this->operations->vehicleInMaintenance($vehicle->id)) {
+                $open = Maintenance::where('vehicle_id', $vehicle->id)
+                    ->whereIn('workflow_status', array_values(array_diff(Maintenance::WF_TICKET_STATES, [Maintenance::WF_CLOSED])))
+                    ->orderByDesc('id')
+                    ->first();
+                if ($open) {
+                    $this->appendServiceFinding($open, $serviceLabel, $actor);
+                    return $open->load($this->eager());
+                }
+            }
+
+            $odo = ($odometer && $odometer > 0) ? (int) $odometer : ($vehicle->odometer ?: null);
+
+            $ticket = new Maintenance();
+            $ticket->origin            = Maintenance::ORIGIN_MANUAL;
+            $ticket->vehicle_id        = $vehicle->id;
+            // Born in the Supervisors' dispatch queue — a scheduled service skips the diagnostic.
+            $ticket->workflow_status   = Maintenance::WF_INSPECTION_PENDING;
+            $ticket->trigger_reason    = Maintenance::TRIGGER_PERIODIC;
+            $ticket->visit_context     = 'standard';
+            $ticket->maintenance_type  = Maintenance::TYPE_ROUTINE;
+            $ticket->fault_severity    = Maintenance::FAULT_SEVERITY_ROUTINE;
+            $ticket->severity          = Maintenance::FAULT_SEVERITY_ROUTINE;
+            $ticket->findings          = [$this->serviceFinding($serviceLabel, $actor)];
+            $ticket->intake_odometer   = $odo;
+            $ticket->maintenance_notes = 'Routine check due — ' . $serviceLabel;
+            $ticket->event_status      = 'IN';
+            $ticket->requested_by      = $actor->id;
+            $ticket->requested_at      = Carbon::now();
+            $ticket->responsible       = $actor->name;
+            $ticket->save();
+
+            // Promote the seeded finding into a first-class MaintenanceTask (Pending, unassigned).
+            app(MaintenanceTaskService::class)->syncFromFindings($ticket, $actor);
+
+            // The ticket is a committed WF_TICKET_STATE → the car reconciles to operational_status = maintenance.
+            $this->cascade($ticket->vehicle_id);
+
+            $this->log->record($ticket, VehicleLogEvent::EVENT_REPORT_FILED, $actor, [
+                'description' => 'Routine service ticket opened — ' . $serviceLabel
+                    . ($odo ? ' at ' . number_format($odo) . ' km' : '') . ' (by ' . $actor->name . ')',
+                'meta'        => ['trigger_reason' => Maintenance::TRIGGER_PERIODIC, 'service' => $serviceLabel, 'intake_odometer' => $odo],
+            ]);
+
+            $vehicle = $ticket->loadMissing('vehicle')->vehicle;
+            $this->notifier->notifyByPermission(self::NOTIFY_DISPATCHER, [
+                'type'     => 'maint_service_intake',
+                'category' => 'maintenance',
+                'severity' => 'warning',
+                'title'    => trim('🔧 Routine service due · ' . $this->label($vehicle)),
+                'body'     => trim($serviceLabel . ' is due for ' . $this->label($vehicle) . '. Assign a garage.'),
+                'url'      => $this->link($ticket),
+                'key'      => 'maint_wf:' . $ticket->id . ':inspection_pending',
+                'icon'     => 'wrench',
+                'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no, 'service' => $serviceLabel],
+            ], $actor->id);
+
+            return $ticket->load($this->eager());
+        });
+    }
+
+    /** Add a routine-service finding to an already-open ticket (idempotent by symptom) + promote to a task. */
+    private function appendServiceFinding(Maintenance $ticket, string $serviceLabel, User $actor): void
+    {
+        $findings = is_array($ticket->findings) ? $ticket->findings : [];
+        $key = mb_strtolower(trim($serviceLabel));
+        foreach ($findings as $f) {
+            if (mb_strtolower(trim((string) ($f['text'] ?? ''))) === $key) {
+                return; // already on this ticket — nothing to add
+            }
+        }
+
+        $findings[] = $this->serviceFinding($serviceLabel, $actor);
+        $ticket->findings = $findings;
+        $ticket->save();
+
+        app(MaintenanceTaskService::class)->syncFromFindings($ticket, $actor);
+
+        $this->log->record($ticket, VehicleLogEvent::EVENT_REPORT_FILED, $actor, [
+            'description' => 'Service added to the open ticket — ' . $serviceLabel . ' (by ' . $actor->name . ')',
+            'meta'        => ['service' => $serviceLabel],
+        ]);
+    }
+
+    /** The findings-JSON shape for a seeded routine-service finding (matches submitReport's shape). */
+    private function serviceFinding(string $serviceLabel, User $actor): array
+    {
+        return [
+            'text'          => $serviceLabel,
+            'source'        => Maintenance::FINDING_INSPECTOR,
+            'severity'      => Maintenance::FAULT_SEVERITY_ROUTINE,
+            'root_cause'    => null,
+            'root_cause_id' => null,
+            'by'            => $actor->name,
+            'at'            => Carbon::now()->toIso8601String(),
+        ];
+    }
+
     // ── Symptom → Root-Cause diagnostic resolution ──────────────────────────────
 
     /**
@@ -1578,9 +2374,29 @@ class MaintenanceWorkflowService
             ? Maintenance::REPAIR_ON_SITE
             : ($requiresMaintenance ? Maintenance::REPAIR_IN_SHOP : null);
 
-        $target = $requiresMaintenance
-            ? ($repairLocation === Maintenance::REPAIR_ON_SITE ? Maintenance::WF_ON_SITE_PENDING : Maintenance::WF_INSPECTION_PENDING)
-            : Maintenance::WF_DIAGNOSTIC_CLEARED;
+        // An emergency Breakdown grounds the car and cannot wait in the recommendation queue for approval —
+        // it bypasses straight to the dispatch pipeline. Detected from the raw report type (same source the
+        // on-site contradiction check below reads), before the payload's default-to-Routine is applied.
+        $isBreakdown = ($report['maintenance_type'] ?? null) === Maintenance::TYPE_BREAKDOWN;
+
+        // A recommended action is what makes this a REVIEWABLE recommendation — the proposal a Supervisor
+        // signs off before work starts. When the inspector records NO recommended action there is nothing to
+        // approve, so the ticket must NOT sit in the recommendation queue (it would only lock up with
+        // "approval locked until an action is recorded"). It opens straight into the dispatch pipeline instead.
+        $hasRecommendedAction = $this->clean($report['recommended_action'] ?? null) !== null;
+
+        // Where the diagnostic lands when it "requires maintenance":
+        //   • on-site                     → the mobile lane (car stays available), unchanged.
+        //   • in-shop breakdown           → straight to inspection_pending (grounded emergency, no approval wait).
+        //   • in-shop, NO recommended action → straight to inspection_pending (Needs Dispatch): nothing to approve.
+        //   • in-shop WITH a recommended action → the RECOMMENDATION queue (recommendation_pending). A
+        //     recommendation is NOT an active job: the Supervisor must approve ("Start Maintenance") before it
+        //     enters inspection_pending, from which the existing workflow runs completely unchanged.
+        $target = ! $requiresMaintenance
+            ? Maintenance::WF_DIAGNOSTIC_CLEARED
+            : ($repairLocation === Maintenance::REPAIR_ON_SITE
+                ? Maintenance::WF_ON_SITE_PENDING
+                : (($isBreakdown || ! $hasRecommendedAction) ? Maintenance::WF_INSPECTION_PENDING : Maintenance::WF_RECOMMENDATION_PENDING));
         $this->assertTransition($ticket, $target);
 
         // An emergency Breakdown is never a mobile job — it grounds the car and must go to a workshop.
@@ -1603,6 +2419,13 @@ class MaintenanceWorkflowService
                 'field' => 'fault_severity',
             ]);
         }
+
+        // Rental Eligibility — the inspector's ONE-TIME call, made here at the Decide step and carried by
+        // the ticket for its whole life: may this car be rented BEFORE maintenance completes? Defaults to
+        // false (mandatory) — the car stays grounded until the workshop finishes — unless the inspector
+        // explicitly marks it deferrable, in which case a later rental pauses the ticket and it resumes on
+        // return. A cleared diagnostic (no maintenance) carries no such decision, so it stays false.
+        $deferrableForRental = $requiresMaintenance && ! empty($report['deferrable_for_rental']);
 
         $payload = [
             'symptoms'           => array_values(array_filter(array_map(
@@ -1645,17 +2468,16 @@ class MaintenanceWorkflowService
 
         // End-of-test-drive odometer (optional) — the reading captured at the Decide step, forward from the
         // start-of-drive test_odometer anchor. Its own column + 'report' flag key; the >10 km note rides along.
-        $reportOdo  = isset($report['report_odometer']) && is_numeric($report['report_odometer']) ? (int) $report['report_odometer'] : null;
-        $reportNote = $report['odometer_note'] ?? null;
-
-        // "Being Inspected" strict-match gate at the Decide step: the end-of-test-drive reading is measured
-        // against the start-of-drive anchor — a short test loop of up to 5 km is allowed with a note, more
-        // (or a backward reading) is blocked as a mis-read or an unauthorised long drive.
+        $reportOdo      = isset($report['report_odometer']) && is_numeric($report['report_odometer']) ? (int) $report['report_odometer'] : null;
+        $reportNote     = $report['odometer_note'] ?? null;
+        $reportConfirmed = array_key_exists('odometer_confirmed', $report) ? (bool) $report['odometer_confirmed'] : null;
+        // The car may not have moved at all — an inspector can diagnose a fault without a test drive — so
+        // equal to the start-of-drive anchor is fine; only a decrease is impossible and hard-blocked.
         if ($reportOdo !== null && $reportOdo > 0) {
-            $this->assertStrictMatch($ticket, $actor, 'report', $reportOdo, $ticket->test_odometer !== null ? (int) $ticket->test_odometer : null, OdometerContinuityService::STAGE_TEST, $reportNote, 'report_odometer');
+            $this->assertNoDecrease($ticket, $actor, 'report', $reportOdo, $ticket->test_odometer !== null ? (int) $ticket->test_odometer : null, $reportNote, 'report_odometer', 'start-of-drive reading');
         }
 
-        return DB::transaction(function () use ($ticket, $payload, $target, $requiresMaintenance, $actor, $faultSeverity, $causeChoices, $repairLocation, $reportOdo, $reportNote) {
+        return DB::transaction(function () use ($ticket, $payload, $target, $requiresMaintenance, $actor, $faultSeverity, $causeChoices, $repairLocation, $deferrableForRental, $reportOdo, $reportNote, $reportConfirmed) {
             $ticket->test_drive_report = $payload;
 
             // The inspector's symptoms become first-class FINDINGS, source-stamped so they persist and
@@ -1702,11 +2524,15 @@ class MaintenanceWorkflowService
             // car is NEVER marked out for an on-site job — event_status stays 'IN' so the operational
             // cascade keeps it available (WF_ON_SITE_PENDING is outside WF_TICKET_STATES anyway).
             $ticket->repair_location = $repairLocation;
+            // Rental Eligibility (deferrable vs mandatory) — the inspector's one-time decision, stamped on
+            // the ticket so every later rental attempt respects it. false = mandatory (grounded until done).
+            $ticket->deferrable_for_rental = $deferrableForRental;
             // End-of-test-drive odometer — recorded before save so the continuity flag rides along; heals the
-            // car's canonical mileage forward (the drive moved the meter). Continuity vs the start anchor.
+            // car's canonical mileage forward (the drive moved the meter). The must-be-higher gate already
+            // ran above; this just stamps the continuity flag for the audit trail.
             if ($reportOdo !== null && $reportOdo > 0) {
                 $ticket->report_odometer = $reportOdo;
-                $this->recordOdometerFlag($ticket, 'report', $reportOdo, $ticket->test_odometer !== null ? (int) $ticket->test_odometer : null, OdometerContinuityService::STAGE_TEST, $reportNote, $actor);
+                $this->recordOdometerFlag($ticket, 'report', $reportOdo, $ticket->test_odometer !== null ? (int) $ticket->test_odometer : null, OdometerContinuityService::STAGE_TEST_END, $reportNote, $actor, $reportConfirmed);
             }
             $ticket->workflow_status = $target;
             $ticket->save();
@@ -1743,11 +2569,16 @@ class MaintenanceWorkflowService
 
             $typeLabel = $payload['maintenance_type'] ? (Maintenance::MAINTENANCE_TYPES[$payload['maintenance_type']] ?? $payload['maintenance_type']) : null;
             $onSite    = $repairLocation === Maintenance::REPAIR_ON_SITE;
+            // A recommendation is NOT yet an open ticket — it's a proposal awaiting the Supervisor's approval.
+            // (Breakdowns skip the queue, so target is inspection_pending and this is false — a real ticket.)
+            $isRecommendation = $target === Maintenance::WF_RECOMMENDATION_PENDING;
             $this->log->record($ticket, VehicleLogEvent::EVENT_REPORT_FILED, $actor, [
-                'description' => ($onSite ? 'On-site maintenance ticket opened from test-drive report' : 'Maintenance ticket opened from test-drive report')
+                'description' => ($onSite ? 'On-site maintenance ticket opened from test-drive report'
+                        : ($isRecommendation ? 'Maintenance recommendation filed from test-drive report — awaiting supervisor approval'
+                            : 'Maintenance ticket opened from test-drive report'))
                     . ($typeLabel ? ' · ' . $typeLabel : '')
                     . ' (by ' . $actor->name . ')',
-                'meta'        => ['severity' => $payload['severity'], 'symptoms' => $payload['symptoms'], 'maintenance_type' => $payload['maintenance_type'], 'repair_location' => $repairLocation],
+                'meta'        => ['severity' => $payload['severity'], 'symptoms' => $payload['symptoms'], 'maintenance_type' => $payload['maintenance_type'], 'repair_location' => $repairLocation, 'recommendation' => $isRecommendation],
             ]);
 
             $sevMeta = $faultSeverity ? (Maintenance::FAULT_SEVERITY_META[$faultSeverity] ?? null) : null;
@@ -1773,10 +2604,31 @@ class MaintenanceWorkflowService
                 return $ticket->load($this->eager());
             }
 
-            // In-Shop → hand the DISPATCH decision to the Supervisors (Waleed/Abdullah): they review the
-            // report and pick the garage. The driver pool is only alerted later, once a car is actually
-            // ready to collect (assignDispatch()). The fault severity rides into the alert (emoji + colour)
-            // so the supervisor gauges the urgency the moment it lands.
+            if ($isRecommendation) {
+                // In-Shop recommendation → the car does NOT enter the active pipeline yet. Ask the Supervisors
+                // to REVIEW & APPROVE it on the Maintenance Recommendations page. Only their explicit "Start
+                // Maintenance" (approveRecommendation) advances it to inspection_pending and fires the
+                // pick-a-garage alert below — so that dispatch step is simply deferred to approval time.
+                $this->notifier->notifyByPermission(self::NOTIFY_DISPATCHER, [
+                    'type'     => 'maint_recommendation_pending',
+                    'category' => 'maintenance',
+                    'severity' => $sevMeta['severity'] ?? 'warning',
+                    'title'    => trim(($sevMeta['emoji'] ?? '') . ' New maintenance recommendation' . $sevTail . ' · ' . $this->label($vehicle)),
+                    'body'     => trim($this->label($vehicle) . ' was recommended for maintenance (inspected by ' . $actor->name
+                                    . ')' . $sevTail . ' — review it and approve, schedule, or order parts.'),
+                    'url'      => $this->recommendationsLink(),
+                    'key'      => 'maint_wf:' . $ticket->id . ':recommendation_pending',
+                    'icon'     => 'clipboard-list',
+                    'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no, 'fault_severity' => $faultSeverity, 'recommendation' => true],
+                ], $actor->id);
+
+                return $ticket->load($this->eager());
+            }
+
+            // In-Shop breakdown (queue bypassed) → hand the DISPATCH decision to the Supervisors
+            // (Waleed/Abdullah): they review the report and pick the garage. The driver pool is only alerted
+            // later, once a car is actually ready to collect (assignDispatch()). The fault severity rides into
+            // the alert (emoji + colour) so the supervisor gauges the urgency the moment it lands.
             $this->notifier->notifyByPermission(self::NOTIFY_DISPATCHER, [
                 'type'     => 'maint_dispatch_ready',
                 'category' => 'maintenance',
@@ -1788,6 +2640,220 @@ class MaintenanceWorkflowService
                 'key'      => 'maint_wf:' . $ticket->id . ':inspection_pending',
                 'icon'     => 'wrench',
                 'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no, 'fault_severity' => $faultSeverity],
+            ], $actor->id);
+
+            return $ticket->load($this->eager());
+        });
+    }
+
+    // ── PRE-MAINTENANCE RECOMMENDATION QUEUE — Supervisor triage ─────────────────
+    //
+    // A recommendation (submitReport's in-shop path) parks in recommendation_pending — fenced, NOT an
+    // active maintenance job. These five actions are the Supervisor's triage of it. Only approve() promotes
+    // it into the existing pipeline (inspection_pending); from there the workflow is completely unchanged.
+
+    /**
+     * "Start Maintenance" — the Supervisor APPROVES the recommendation, promoting it out of the queue and
+     * INTO the existing dispatch pipeline (inspection_pending). This is the ONLY path that turns a
+     * recommendation into an active maintenance job. Reachable from recommendation_pending OR awaiting_parts
+     * (parts arrived → start directly). It fires the same "pick a garage" hand-off submitReport used to
+     * raise — simply deferred from report time to approval time. Everything downstream is untouched.
+     */
+    public function approveRecommendation(Maintenance $ticket, User $actor): Maintenance
+    {
+        $this->assertTransition($ticket, Maintenance::WF_INSPECTION_PENDING);
+
+        // NOTE: no recommended-action gate here. A report filed WITHOUT a recommended action now skips the
+        // recommendation queue entirely (submitReport sends it straight to inspection_pending), so anything
+        // that reaches this queue can always be started — and any pre-existing actionless recommendation is
+        // freely dispatchable rather than a dead-end.
+
+        return DB::transaction(function () use ($ticket, $actor) {
+            $ticket->workflow_status = Maintenance::WF_INSPECTION_PENDING;
+            $ticket->event_status    = 'IN'; // still parked — the driver's pickup takes it out, exactly as before
+            $ticket->recommendation_reviewed_by   = $actor->id;
+            $ticket->recommendation_reviewed_at   = Carbon::now();
+            $ticket->recommendation_scheduled_for = null; // no longer deferred — it's starting now
+            $ticket->save();
+
+            $this->cascade($ticket->vehicle_id);
+
+            $this->log->record($ticket, VehicleLogEvent::EVENT_RECOMMENDATION_APPROVED, $actor, [
+                'description' => 'Recommendation approved — maintenance started (by ' . $actor->name . ')',
+                'meta'        => ['fault_severity' => $ticket->fault_severity],
+            ]);
+
+            // The "review it and pick a garage" alert submitReport used to raise the moment a ticket opened.
+            $vehicle = $ticket->loadMissing('vehicle')->vehicle;
+            $sevMeta = $ticket->fault_severity ? (Maintenance::FAULT_SEVERITY_META[$ticket->fault_severity] ?? null) : null;
+            $sevTail = $sevMeta ? ' · ' . $sevMeta['emoji'] . ' ' . $sevMeta['label'] : '';
+            $this->notifier->notifyByPermission(self::NOTIFY_DISPATCHER, [
+                'type'     => 'maint_dispatch_ready',
+                'category' => 'maintenance',
+                'severity' => $sevMeta['severity'] ?? 'warning',
+                'title'    => trim(($sevMeta['emoji'] ?? '') . ' Maintenance approved' . $sevTail . ' · ' . $this->label($vehicle)),
+                'body'     => trim($this->label($vehicle) . ' was approved for maintenance (by ' . $actor->name . ')'
+                                . $sevTail . ' — review it and pick a garage.'),
+                'url'      => $this->link($ticket),
+                'key'      => 'maint_wf:' . $ticket->id . ':inspection_pending',
+                'icon'     => 'wrench',
+                'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no, 'fault_severity' => $ticket->fault_severity],
+            ], $actor->id);
+
+            return $ticket->load($this->eager());
+        });
+    }
+
+    /**
+     * Dismiss a recommendation WITHOUT any maintenance — the Supervisor REJECTED it or judged it NOT
+     * REQUIRED. Terminal (recommendation_dismissed): no ticket ever becomes active and the car is untouched.
+     * The disposition + reason are stored for the audit trail; the Inspector who raised it is told the outcome.
+     */
+    public function dismissRecommendation(Maintenance $ticket, string $disposition, ?string $reason, User $actor): Maintenance
+    {
+        $this->assertTransition($ticket, Maintenance::WF_RECOMMENDATION_DISMISSED);
+
+        if (! in_array($disposition, Maintenance::RECO_DISPOSITIONS, true)) {
+            throw new WorkflowTransitionException('Choose why: reject the recommendation, or mark it not required.', [
+                'field' => 'disposition',
+            ]);
+        }
+        $reason = $this->clean($reason);
+
+        return DB::transaction(function () use ($ticket, $disposition, $reason, $actor) {
+            $ticket->workflow_status            = Maintenance::WF_RECOMMENDATION_DISMISSED;
+            $ticket->recommendation_disposition = $disposition;
+            $ticket->recommendation_note        = $reason;
+            $ticket->recommendation_reviewed_by = $actor->id;
+            $ticket->recommendation_reviewed_at = Carbon::now();
+            $ticket->event_status               = 'IN'; // never was in the garage — keep it parked
+            $ticket->save();
+
+            $this->cascade($ticket->vehicle_id);
+
+            $label = $disposition === Maintenance::RECO_NOT_REQUIRED ? 'not required' : 'rejected';
+            $this->log->record($ticket, VehicleLogEvent::EVENT_RECOMMENDATION_DISMISSED, $actor, [
+                'description' => 'Recommendation ' . $label . ($reason ? ' — ' . $reason : '') . ' (by ' . $actor->name . ')',
+                'meta'        => ['disposition' => $disposition, 'reason' => $reason],
+            ]);
+
+            // Close the loop back to the Inspector who raised it — no maintenance will happen.
+            $vehicle = $ticket->loadMissing('vehicle')->vehicle;
+            $this->notifier->notifyByPermission(self::NOTIFY_INSPECTOR, [
+                'type'     => 'maint_recommendation_dismissed',
+                'category' => 'maintenance',
+                'severity' => 'info',
+                'title'    => trim('Recommendation ' . $label . ' · ' . $this->label($vehicle)),
+                'body'     => trim($actor->name . ' marked the maintenance recommendation for ' . $this->label($vehicle)
+                                . ' as ' . $label . ($reason ? ': ' . $reason : '') . '.'),
+                'url'      => $this->recommendationsLink(),
+                'key'      => 'maint_wf:' . $ticket->id . ':recommendation_dismissed',
+                'icon'     => 'x-circle',
+                'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no, 'disposition' => $disposition],
+            ], $actor->id);
+
+            return $ticket->load($this->eager());
+        });
+    }
+
+    /**
+     * "Schedule for later" — defer the recommendation to a future date. It STAYS in recommendation_pending
+     * (no state change, so it can still be approved / dismissed / parts-ordered at any time); only a date
+     * badge is stamped so the Supervisor revisits it then.
+     */
+    public function scheduleRecommendation(Maintenance $ticket, string $when, ?string $note, User $actor): Maintenance
+    {
+        if ($ticket->workflow_status !== Maintenance::WF_RECOMMENDATION_PENDING) {
+            throw new WorkflowTransitionException('Only a pending recommendation can be scheduled.', [
+                'workflow_status' => $ticket->workflow_status,
+            ]);
+        }
+        $note = $this->clean($note);
+
+        return DB::transaction(function () use ($ticket, $when, $note, $actor) {
+            $ticket->recommendation_scheduled_for = Carbon::parse($when);
+            if ($note !== null) {
+                $ticket->recommendation_note = $note;
+            }
+            $ticket->recommendation_reviewed_by = $actor->id;
+            $ticket->recommendation_reviewed_at = Carbon::now();
+            $ticket->save(); // workflow_status unchanged → the time-in-stage anchor is left untouched
+
+            $when = $ticket->recommendation_scheduled_for;
+            $this->log->record($ticket, VehicleLogEvent::EVENT_RECOMMENDATION_SCHEDULED, $actor, [
+                'description' => 'Recommendation scheduled for ' . $when->toFormattedDateString()
+                                . ($note ? ' — ' . $note : '') . ' (by ' . $actor->name . ')',
+                'meta'        => ['scheduled_for' => $when->toIso8601String()],
+            ]);
+
+            return $ticket->load($this->eager());
+        });
+    }
+
+    /**
+     * "Order Parts First" — the Supervisor approved the intent but the repair needs a spare part. Moves the
+     * recommendation to awaiting_parts (still fenced, the car stays available); it waits in the queue until
+     * parts are ready. An optional note records what's on order.
+     */
+    public function orderParts(Maintenance $ticket, ?string $note, User $actor): Maintenance
+    {
+        $this->assertTransition($ticket, Maintenance::WF_AWAITING_PARTS);
+        $note = $this->clean($note);
+
+        return DB::transaction(function () use ($ticket, $note, $actor) {
+            $ticket->workflow_status            = Maintenance::WF_AWAITING_PARTS;
+            $ticket->recommendation_parts_ready = false;
+            $ticket->recommendation_note        = $note;
+            $ticket->recommendation_reviewed_by = $actor->id;
+            $ticket->recommendation_reviewed_at = Carbon::now();
+            $ticket->event_status               = 'IN';
+            $ticket->save();
+
+            $this->cascade($ticket->vehicle_id);
+
+            $this->log->record($ticket, VehicleLogEvent::EVENT_PARTS_ORDERED, $actor, [
+                'description' => 'Waiting for parts' . ($note ? ' — ' . $note : '') . ' (by ' . $actor->name . ')',
+                'meta'        => ['parts_note' => $note],
+            ]);
+
+            return $ticket->load($this->eager());
+        });
+    }
+
+    /**
+     * "Parts Ready" — the spare arrived. Returns the recommendation to recommendation_pending with a
+     * parts-ready flag so the Supervisor can now Start Maintenance, and alerts them it's ready to go.
+     */
+    public function partsReady(Maintenance $ticket, User $actor): Maintenance
+    {
+        $this->assertTransition($ticket, Maintenance::WF_RECOMMENDATION_PENDING);
+
+        return DB::transaction(function () use ($ticket, $actor) {
+            $ticket->workflow_status            = Maintenance::WF_RECOMMENDATION_PENDING;
+            $ticket->recommendation_parts_ready = true;
+            $ticket->recommendation_reviewed_by = $actor->id;
+            $ticket->recommendation_reviewed_at = Carbon::now();
+            $ticket->event_status               = 'IN';
+            $ticket->save();
+
+            $this->cascade($ticket->vehicle_id);
+
+            $this->log->record($ticket, VehicleLogEvent::EVENT_PARTS_READY, $actor, [
+                'description' => 'Parts ready — recommendation can now start (by ' . $actor->name . ')',
+                'meta'        => [],
+            ]);
+
+            $vehicle = $ticket->loadMissing('vehicle')->vehicle;
+            $this->notifier->notifyByPermission(self::NOTIFY_DISPATCHER, [
+                'type'     => 'maint_parts_ready',
+                'category' => 'maintenance',
+                'severity' => 'warning',
+                'title'    => trim('📦 Parts ready · ' . $this->label($vehicle)),
+                'body'     => trim('The spare part for ' . $this->label($vehicle) . ' has arrived — start maintenance when ready.'),
+                'url'      => $this->recommendationsLink(),
+                'key'      => 'maint_wf:' . $ticket->id . ':parts_ready',
+                'icon'     => 'package',
+                'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no],
             ], $actor->id);
 
             return $ticket->load($this->eager());
@@ -1931,6 +2997,13 @@ class MaintenanceWorkflowService
         }
 
         return DB::transaction(function () use ($ticket, $vendor, $driver, $data, $actor, $garageChanged, $previousGarage, $fromReinspectionFailed) {
+            // Concurrency / double-submit guard: lock the row and re-validate the transition against the
+            // freshly-read status, so a duplicate/concurrent assign-dispatch blocks then fails cleanly.
+            $this->assertTransition(
+                Maintenance::where('id', $ticket->id)->lockForUpdate()->firstOrFail(),
+                Maintenance::WF_AWAITING_DISPATCH,
+            );
+
             $ticket->vendor_id = $vendor->id;
             $ticket->garage    = $vendor->name;   // denormalised label the board shows
             if (! empty($data['expected_return_date'])) {
@@ -2095,23 +3168,44 @@ class MaintenanceWorkflowService
         }
 
         // "Awaiting Pickup" strict-match gate: the car is still in our park until the driver takes it, so the
-        // pickup reading must match the last recorded mileage (the test-drive anchor, else the live odometer)
-        // — a +1..5 km drift needs a note; a bigger or backward gap is blocked as a typo / unauthorised move.
-        $lastRecorded = $ticket->test_odometer
+        // pickup reading must match the last recorded mileage — the end-of-test-drive reading (report_odometer)
+        // when the inspector logged one, else the start-of-drive anchor, else the live odometer. Using the
+        // START anchor here would wrongly hard-block every dispatch after a real test drive (e.g. the drive
+        // itself covered 7 km, so comparing the pickup reading against the PRE-drive value always overshoots
+        // the ±5 km buffer) — report_odometer is the actual last-known mileage the car sat at in our park.
+        // A +1..5 km drift from THAT still needs a note; a bigger or backward gap is blocked as a typo /
+        // unauthorised move.
+        $lastRecorded = $ticket->report_odometer
+            ?? $ticket->test_odometer
             ?? ($ticket->loadMissing('vehicle')->vehicle?->odometer !== null ? (int) $ticket->vehicle->odometer : null);
         $this->assertStrictMatch($ticket, $actor, 'dispatch', $odometer, $lastRecorded, OdometerContinuityService::STAGE_PARK_PICKUP, $data['odometer_note'] ?? null, 'dispatch_odometer');
 
         return DB::transaction(function () use ($ticket, $odometer, $vendor, $data, $actor, $lastRecorded) {
+            // Concurrency / double-submit guard: take the ticket's row lock and RE-VALIDATE the transition
+            // against the freshly-read status INSIDE the transaction. A duplicate click or a concurrent
+            // transition on the same ticket blocks here until the first commits, then fails this guard
+            // instead of double-writing (here: raising a SECOND in-transit logistics leg for one car).
+            $this->assertTransition(
+                Maintenance::where('id', $ticket->id)->lockForUpdate()->firstOrFail(),
+                Maintenance::WF_IN_TRANSIT,
+            );
+
             $ticket->dispatch_odometer = $odometer;
             // Pickup continuity (strict-match park stage): recorded against the same last-recorded anchor the
             // gate above checked. An in-range drift stamps 'authorized_deviation' (+ its note) for the
             // /oversight/mileage audit board; an exact match is 'verified'.
-            $this->recordOdometerFlag($ticket, 'dispatch', $odometer, $lastRecorded, OdometerContinuityService::STAGE_PARK_PICKUP, $data['odometer_note'] ?? null, $actor);
+            $this->recordOdometerFlag($ticket, 'dispatch', $odometer, $lastRecorded, OdometerContinuityService::STAGE_PARK_PICKUP, $data['odometer_note'] ?? null, $actor, array_key_exists('odometer_confirmed', $data) ? (bool) $data['odometer_confirmed'] : null);
             $ticket->vendor_id         = $vendor->id;
             $ticket->garage            = $vendor->name;   // denormalised label the board shows
             $ticket->driver            = $actor->name;    // the Driver who took the car to the garage
             $ticket->dispatched_by     = $actor->id;
             $ticket->dispatched_at     = Carbon::now();
+            // A DRIVER has custody of this leg — clear any recovery flag left over from an EARLIER leg
+            // (e.g. the car arrived here by tow, then gets driven onward from its next garage). Without
+            // this, isRecovery() would keep reporting the stale prior leg's transport method instead of
+            // this one's, which the arrival odometer gate below depends on being current.
+            $ticket->recovery_unit_name  = null;
+            $ticket->recovery_unit_phone = null;
 
 
             // Car physically out now → legacy stage 'OUT' + out_date drives "In Maintenance".
@@ -2137,6 +3231,16 @@ class MaintenanceWorkflowService
             // confirmed with the MANDATORY arrival odometer (markUnderRepair) — NOT here.
             $ticket->workflow_status   = Maintenance::WF_IN_TRANSIT;
             $ticket->save();
+
+            // Raise the transport leg so the DRIVER reads as busy while physically taking the car to the
+            // garage (Driver Availability is sourced from LogisticsTask ONLY). This becomes the ticket's
+            // activeMove(), driving its live "In Transit" position; markUnderRepair() closes it on arrival.
+            if ($vehicle = $ticket->loadMissing('vehicle')->vehicle) {
+                $this->logistics->raiseMaintenanceLeg(
+                    $vehicle, $vendor->name, $actor->id, $ticket->id, $actor,
+                    'Maintenance pickup — driving to ' . $vendor->name
+                );
+            }
 
             // Car is physically out → recompute availability (→ "In Maintenance").
             $this->cascade($ticket->vehicle_id);
@@ -2206,6 +3310,16 @@ class MaintenanceWorkflowService
             );
         }
 
+        // At inspection_pending no garage is picked yet — that's the Supervisor's call, same as the
+        // classic "Assign Garage" screen. A Driver only gets a say once a garage is already assigned
+        // (awaiting_dispatch) and the tow turns out to be needed instead of a normal pickup.
+        if ($ticket->workflow_status === Maintenance::WF_INSPECTION_PENDING && ! $actor->can('maintenance.delegate')) {
+            throw new WorkflowTransitionException(
+                'Only a Supervisor can dispatch a recovery before a garage has been assigned.',
+                ['from' => $ticket->workflow_status]
+            );
+        }
+
         $odometer = (int) ($data['dispatch_odometer'] ?? 0);
         if ($odometer <= 0) {
             throw new WorkflowTransitionException('Capture the odometer reading before the recovery unit takes the car.', [
@@ -2231,12 +3345,26 @@ class MaintenanceWorkflowService
                 'field' => 'vendor_id',
             ]);
         }
-        return DB::transaction(function () use ($ticket, $odometer, $vendor, $unitName, $unitPhone, $data, $actor) {
+
+        // A recovery is a TOW, not a drive — the car is disabled and never moves under its own power between
+        // the last recorded reading and the truck picking it up, so the reading must match EXACTLY (not
+        // just "not lower"). The client locks the field to this value; enforce it here too so a direct API
+        // call can't slip in a different number. Skipped when there's no anchor to match (e.g. bootstrap).
+        $lastRecorded = $ticket->test_odometer
+            ?? ($ticket->loadMissing('vehicle')->vehicle?->odometer !== null ? (int) $ticket->vehicle->odometer : null);
+        if ($lastRecorded !== null && $odometer !== $lastRecorded) {
+            $this->logOdometerBlock($ticket, $actor, 'dispatch', $odometer, $lastRecorded, $odometer - $lastRecorded, 'must_increase', $data['odometer_note'] ?? null);
+            throw new WorkflowTransitionException(
+                'A towed car can\'t change mileage — the reading must match the last recorded one ('
+                    . number_format($lastRecorded) . ' km), not ' . number_format($odometer) . ' km.',
+                ['field' => 'dispatch_odometer']
+            );
+        }
+
+        return DB::transaction(function () use ($ticket, $odometer, $vendor, $unitName, $unitPhone, $data, $actor, $lastRecorded) {
             $ticket->dispatch_odometer = $odometer;
             // Pickup continuity — identical to a driver dispatch: >= the last recorded mileage, else flagged.
-            $lastRecorded = $ticket->test_odometer
-                ?? ($ticket->loadMissing('vehicle')->vehicle?->odometer !== null ? (int) $ticket->vehicle->odometer : null);
-            $this->recordOdometerFlag($ticket, 'dispatch', $odometer, $lastRecorded, OdometerContinuityService::STAGE_PICKUP, $data['odometer_note'] ?? null, $actor);
+            $this->recordOdometerFlag($ticket, 'dispatch', $odometer, $lastRecorded, OdometerContinuityService::STAGE_PICKUP, $data['odometer_note'] ?? null, $actor, array_key_exists('odometer_confirmed', $data) ? (bool) $data['odometer_confirmed'] : null);
 
             $ticket->vendor_id           = $vendor->id;
             $ticket->garage              = $vendor->name;
@@ -2328,21 +3456,26 @@ class MaintenanceWorkflowService
             ]);
         }
 
-        // The car was driven to the garage, so the arrival reading MUST be higher than the pickup
-        // reading — an equal-or-lower value is an error or a mis-keyed entry, not a valid arrival.
-        // (Skipped when there's no pickup reading to compare against, e.g. a ticket with no dispatch.)
+        // The arrival reading vs the pickup reading: a DRIVEN leg must show a strictly higher reading (the
+        // car covered real distance under its own power) — an equal-or-lower value is a mis-keyed entry.
+        // A RECOVERY leg (isRecovery() — see dispatch()'s reset, so this always reflects the CURRENT leg,
+        // never a stale earlier one) is towed, not driven: it doesn't accumulate mileage, so the SAME
+        // reading at arrival is legitimate — only a decrease is still impossible and blocked.
         $pickup = $ticket->dispatch_odometer !== null ? (int) $ticket->dispatch_odometer : null;
-        if ($pickup !== null && $odometer <= $pickup) {
-            // Audit the rejected arrival reading before throwing (the check-in rolls back, leaving no trace).
-            $this->logOdometerBlock($ticket, $actor, 'receive', $odometer, $pickup, $odometer - $pickup, 'must_increase', $data['odometer_note'] ?? null);
-            throw new WorkflowTransitionException(
-                'The arrival odometer (' . number_format($odometer) . ' km) must be higher than the pickup reading ('
-                    . number_format($pickup) . ' km) — the car was driven to the garage. Re-check the reading.',
-                ['field' => 'receive_odometer']
-            );
+        if ($ticket->isRecovery()) {
+            $this->assertNoDecrease($ticket, $actor, 'receive', $odometer, $pickup, $data['odometer_note'] ?? null, 'receive_odometer', 'pickup reading');
+        } else {
+            $this->assertMustIncrease($ticket, $actor, 'receive', $odometer, $pickup, $data['odometer_note'] ?? null, 'receive_odometer', 'pickup reading');
         }
 
         return DB::transaction(function () use ($ticket, $data, $actor, $odometer) {
+            // Concurrency / double-submit guard: lock the row and re-validate the transition against the
+            // freshly-read status, so a duplicate/concurrent arrival blocks then fails cleanly.
+            $this->assertTransition(
+                Maintenance::where('id', $ticket->id)->lockForUpdate()->firstOrFail(),
+                Maintenance::WF_UNDER_REPAIR,
+            );
+
             // ── Deferred Garage Hand-over ─────────────────────────────────────────────────────────
             // If this arrival is the destination of a PLANNED transfer, the car has now physically reached
             // the new garage — perform the hand-over the transfer request deliberately deferred: move every
@@ -2358,11 +3491,12 @@ class MaintenanceWorkflowService
                 }
             }
             $ticket->transfer_to_vendor_id = null; // the move is complete — clear the pending destination
+            $ticket->transfer_transport_method = null; // and its transport-method choice — a FUTURE transfer asks fresh, never inherits this one
 
             $ticket->receive_odometer = $odometer;
             // Garage-intake continuity vs the pickup reading: the drive to the garage moves the meter
             // forward (fine), only a backward reading is a discrepancy.
-            $this->recordOdometerFlag($ticket, 'receive', $odometer, $ticket->dispatch_odometer, OdometerContinuityService::STAGE_GARAGE_IN, $data['odometer_note'] ?? null, $actor);
+            $this->recordOdometerFlag($ticket, 'receive', $odometer, $ticket->dispatch_odometer, OdometerContinuityService::STAGE_GARAGE_IN, $data['odometer_note'] ?? null, $actor, array_key_exists('odometer_confirmed', $data) ? (bool) $data['odometer_confirmed'] : null);
             if (array_key_exists('garage_feedback', $data)) {
                 $ticket->garage_feedback = $this->clean($data['garage_feedback']);
             }
@@ -2381,18 +3515,24 @@ class MaintenanceWorkflowService
                 ->where('status', \App\Models\MaintenanceTask::STATUS_TRANSFERRED)
                 ->update(['status' => \App\Models\MaintenanceTask::STATUS_PENDING]);
 
-            // Per-fault "now at this garage" confirmation lands HERE, at the In-Workshop check-in — NOT at
-            // dispatch (garage pick), where it's suppressed. Only faults actually AT this garage are logged:
-            // a Pending-Assignment fault (current_vendor_id null) is on the car but not routed here yet, so
-            // it's skipped — it'll be logged when the delegate assigns it from the Dispatch Queue.
-            foreach ($ticket->tasks()->whereNotIn('status', \App\Models\MaintenanceTask::TERMINAL)->get() as $task) {
-                if ((int) $task->current_vendor_id !== (int) $ticket->vendor_id) {
-                    continue;
-                }
-                $this->log->recordTask($task, VehicleLogEvent::EVENT_TASK_ASSIGNED, $actor, [
-                    'description' => 'Fault "' . $task->symptom . '" under repair at ' . ($ticket->garage ?: 'the garage'),
-                    'meta'        => ['vendor_id' => $ticket->vendor_id, 'garage' => $ticket->garage],
-                ]);
+            // Fault LIST (not a prose sentence) for the single "In Workshop" event logged below — the
+            // timeline card shows a "Show Faults (N)" toggle instead of spelling every fault into the
+            // description, so a 6-fault ticket doesn't turn into a paragraph. Prefer the open faults on the
+            // ticket's task container (current_vendor_id isn't reliably stamped pre-arrival — a fault only
+            // gets routed to a garage via the supervisor's assign-dispatch step, not every dispatch path,
+            // e.g. a Recovery tow never calls it) — so every non-terminal task counts, not just ones already
+            // tagged to this vendor. Falls back to the inspector's findings, then the raw complaint, so the
+            // event never reads as fault-less just because the container has no task rows yet.
+            $faults = $ticket->tasks()
+                ->whereNotIn('status', \App\Models\MaintenanceTask::TERMINAL)
+                ->pluck('symptom')
+                ->filter()
+                ->values();
+            if ($faults->isEmpty()) {
+                $faults = collect($ticket->findings ?? [])->pluck('text')->filter()->values();
+            }
+            if ($faults->isEmpty() && $ticket->customer_complaint) {
+                $faults = collect([$ticket->customer_complaint]);
             }
 
             // Confirm Handover: the custodian's arrival IS the delivery of the transport task — close the
@@ -2404,10 +3544,18 @@ class MaintenanceWorkflowService
             }
 
             $this->cascade($ticket->vehicle_id);
+            // Description stays a short, fixed two-sentence summary — everything else (faults, odometer,
+            // confirmed-by) is structured `meta` the timeline card renders as chips + an expandable list,
+            // never inlined into the sentence itself.
             $this->log->record($ticket, VehicleLogEvent::EVENT_UNDER_REPAIR, $actor, [
-                'description' => 'وصلت السيارة إلى ' . ($ticket->garage ?: 'الكراج') . ' وتم إدخالها · قراءة عداد الوصول '
-                    . number_format($odometer) . ' كم، والإصلاح جارٍ (بواسطة ' . $actor->name . ')',
-                'meta'        => ['garage' => $ticket->garage, 'receive_odometer' => $odometer, 'garage_feedback' => $ticket->garage_feedback],
+                'description' => 'Vehicle arrived at ' . ($ticket->garage ?: 'the workshop') . '. Repair work has started.',
+                'meta'        => [
+                    'garage'          => $ticket->garage,
+                    'receive_odometer' => $odometer,
+                    'garage_feedback' => $ticket->garage_feedback,
+                    'faults'          => $faults->all() ?: null,
+                    'confirmed_by'    => $actor->name,
+                ],
             ]);
             $this->notifyControllers($ticket, 'maint_under_repair', 'info', 'Under repair', $actor);
 
@@ -2497,6 +3645,10 @@ class MaintenanceWorkflowService
                     'root_cause'    => $cause,
                     'root_cause_id' => $causeId,
                     'by'            => $actor->name,
+                    // Stamp the garage that DISCOVERED the fault (the ticket's current workshop) onto the
+                    // finding, so "Garage-Identified" can name where it was found — not just that it came
+                    // from a garage. Immutable on the finding even if the car later transfers garages.
+                    'garage'        => $ticket->garage,
                     'at'            => Carbon::now()->toIso8601String(),
                     'status_check'  => $this->statusConflictFor($f['text'], $vehicle),
                 ];
@@ -2552,6 +3704,13 @@ class MaintenanceWorkflowService
         $odometer = (int) ($data['return_odometer'] ?? 0);
 
         return DB::transaction(function () use ($ticket, $data, $actor, $odometer) {
+            // Concurrency / double-submit guard: lock the row and re-validate the transition against the
+            // freshly-read status, so a duplicate/concurrent mark-ready blocks then fails cleanly.
+            $this->assertTransition(
+                Maintenance::where('id', $ticket->id)->lockForUpdate()->firstOrFail(),
+                Maintenance::WF_REPAIR_REVIEW,
+            );
+
             if ($odometer >= 1) {
                 $ticket->return_odometer = $odometer;
                 // Garage IN vs OUT continuity: when we have an intake reading, OUT must be >= IN — a positive
@@ -2559,9 +3718,9 @@ class MaintenanceWorkflowService
                 // With no intake to compare, fall back to a plain forward-continuity check against the last
                 // reading (pickup, else the test anchor).
                 if ($ticket->receive_odometer !== null) {
-                    $this->recordOdometerFlag($ticket, 'return', $odometer, $ticket->receive_odometer, OdometerContinuityService::STAGE_GARAGE_OUT, $data['odometer_note'] ?? null, $actor);
+                    $this->recordOdometerFlag($ticket, 'return', $odometer, $ticket->receive_odometer, OdometerContinuityService::STAGE_GARAGE_OUT, $data['odometer_note'] ?? null, $actor, array_key_exists('odometer_confirmed', $data) ? (bool) $data['odometer_confirmed'] : null);
                 } else {
-                    $this->recordOdometerFlag($ticket, 'return', $odometer, $ticket->dispatch_odometer ?? $ticket->test_odometer, OdometerContinuityService::STAGE_RETURN, $data['odometer_note'] ?? null, $actor);
+                    $this->recordOdometerFlag($ticket, 'return', $odometer, $ticket->dispatch_odometer ?? $ticket->test_odometer, OdometerContinuityService::STAGE_RETURN, $data['odometer_note'] ?? null, $actor, array_key_exists('odometer_confirmed', $data) ? (bool) $data['odometer_confirmed'] : null);
                 }
             }
             if (array_key_exists('garage_feedback', $data)) {
@@ -2739,17 +3898,32 @@ class MaintenanceWorkflowService
         // The garage-OUT reading — captured the moment the driver collects the car (this is when it
         // physically leaves the garage, now that "Maintenance complete" no longer takes a reading). Stored
         // in return_odometer; a forward delta vs the garage-arrival reading means the garage road-tested it.
+        // A road test is OPTIONAL (not every job needs one), so equal to the arrival reading is legitimate —
+        // only a decrease is impossible and hard-blocked (see assertNoDecrease vs the stricter assertMustIncrease).
         $odometer = (int) ($data['return_odometer'] ?? 0);
+        if ($odometer >= 1) {
+            $prevGuard = $ticket->receive_odometer ?? $ticket->dispatch_odometer ?? $ticket->test_odometer;
+            $this->assertNoDecrease($ticket, $actor, 'return', $odometer, $prevGuard !== null ? (int) $prevGuard : null, $data['odometer_note'] ?? null, 'return_odometer', 'garage-arrival reading');
+        }
 
         return DB::transaction(function () use ($ticket, $data, $actor, $odometer) {
             if ($odometer >= 1) {
                 $ticket->return_odometer = $odometer;
                 $prev = $ticket->receive_odometer ?? $ticket->dispatch_odometer ?? $ticket->test_odometer;
-                $this->recordOdometerFlag($ticket, 'return', $odometer, $prev !== null ? (int) $prev : null, OdometerContinuityService::STAGE_GARAGE_OUT, $data['odometer_note'] ?? null, $actor);
+                $this->recordOdometerFlag($ticket, 'return', $odometer, $prev !== null ? (int) $prev : null, OdometerContinuityService::STAGE_GARAGE_OUT, $data['odometer_note'] ?? null, $actor, array_key_exists('odometer_confirmed', $data) ? (bool) $data['odometer_confirmed'] : null);
             }
             $ticket->picked_up_from_garage_at = Carbon::now();
             $ticket->picked_up_from_garage_by = $actor->id;
             $ticket->save();
+
+            // Raise the RETURN transport leg so the collecting driver reads as busy while driving the car
+            // back to base (Driver Availability is sourced from LogisticsTask ONLY). arriveAtPark() closes it.
+            if ($vehicle = $ticket->loadMissing('vehicle')->vehicle) {
+                $this->logistics->raiseMaintenanceLeg(
+                    $vehicle, 'Base / Parking', $actor->id, $ticket->id, $actor,
+                    'Returning from ' . ($ticket->garage ?: 'the garage') . ' to base'
+                );
+            }
 
             // Forward-only heal of the car's canonical mileage with the collection reading (mirrors the
             // other capture points).
@@ -2840,10 +4014,12 @@ class MaintenanceWorkflowService
      * Auto-branches by repair severity (Maintenance::isMajorRepair(), keyed off the inspector's mandatory
      * fault_severity grade) within the SAME transaction — no manual gate, no ticket ever rests in
      * in_our_park:
-     *   • minor repair (routine)           → straight to closed, the car is freed immediately.
-     *   • major repair (critical/moderate) → to ready_for_reinspection; the Inspector must perform a
-     *     final QA pass before the car is freed. cascade() is deferred until AFTER the branch decision
-     *     so the car is never briefly readable as "available" mid-transaction.
+     *   • minor repair (routine) with NO routine service → straight to closed, the car is freed immediately.
+     *   • major repair (critical/moderate) OR any ticket that performed a routine service (oil/battery/…)
+     *     → to ready_for_reinspection; the Inspector must perform a final QA pass before the car is freed.
+     *     The vehicle's service data is confirmed ONLY on that PASS (see confirmRoutineServices), so a
+     *     routine service can never bypass QA. cascade() is deferred until AFTER the branch decision so the
+     *     car is never briefly readable as "available" mid-transaction.
      *
      * @param array{cost?:mixed, vendor_id?:?int, notes?:?string, defer_invoice?:bool} $data
      */
@@ -2851,24 +4027,87 @@ class MaintenanceWorkflowService
     {
         $this->assertTransition($ticket, Maintenance::WF_IN_OUR_PARK);
 
-        return DB::transaction(function () use ($ticket, $data, $actor) {
+        // Custody continuity — the driver who collected the car from the garage MUST be the same driver who
+        // brings it back to base. The return leg is a single custody chain: whoever signed the car out of the
+        // garage (collectFromGarage → picked_up_from_garage_by) owns it until it is physically at our park.
+        // This prevents a hand-off in transit with no accountability. Only enforced when a collector is on
+        // record (it always is for a HTTP-driven flow, since collect-from-garage precedes arrive-at-park);
+        // legacy/imported tickets with no collector are left unblocked.
+        if ($ticket->picked_up_from_garage_by !== null && (int) $ticket->picked_up_from_garage_by !== (int) $actor->id) {
+            $collector = $ticket->loadMissing('pickedUpFromGarageBy')->pickedUpFromGarageBy;
+            throw new WorkflowTransitionException(
+                'This car was collected from the garage by ' . ($collector?->name ?: 'another driver')
+                . '. The same person who collected it must complete the arrival at our park.',
+                [
+                    'field'                    => 'actor',
+                    'picked_up_from_garage_by' => (int) $ticket->picked_up_from_garage_by,
+                    'actor_id'                 => (int) $actor->id,
+                ]
+            );
+        }
+
+        // Arrival-at-park odometer (mandatory — validated required at the controller edge) — the reading the
+        // moment the car is physically back at base, and the at-base anchor the final QA sign-off's strict
+        // ±5 km cap compares against. The return leg (garage → our park) is a DRIVEN trip — the car covered
+        // real distance getting back — so this reading must be strictly HIGHER than the garage-OUT reading
+        // (equal is impossible: a driven car can't arrive on the same odometer it left on). Uses the same
+        // must-increase gate as the driven garage arrival (markUnderRepair), not the softer no-decrease one.
+        // Guard runs OUTSIDE the transaction (it may throw + log a block event before any state changes),
+        // mirroring collectFromGarage. The >= 1 guard is kept defensively for any non-HTTP caller.
+        $odometer = (int) ($data['park_odometer'] ?? 0);
+        if ($odometer >= 1) {
+            $prevGuard = $ticket->return_odometer ?? $ticket->receive_odometer ?? $ticket->dispatch_odometer ?? $ticket->test_odometer;
+            $prev = $prevGuard !== null ? (int) $prevGuard : null;
+            $this->assertMustIncrease(
+                $ticket, $actor, 'park', $odometer, $prev, $data['odometer_note'] ?? null, 'park_odometer', 'garage departure reading',
+                $prev !== null
+                    ? 'Arrival odometer (' . number_format($odometer) . ' km) must be greater than the garage departure reading ('
+                        . number_format($prev) . ' km) — the vehicle must have travelled from the garage to our parking.'
+                    : null
+            );
+        }
+
+        return DB::transaction(function () use ($ticket, $data, $actor, $odometer) {
             $ticket->park_arrived_at = Carbon::now();
             $ticket->park_arrived_by = $actor->id;
             $ticket->workflow_status = Maintenance::WF_IN_OUR_PARK;
+
+            if ($odometer >= 1) {
+                $ticket->park_odometer = $odometer;
+                $prev = $ticket->return_odometer ?? $ticket->receive_odometer ?? $ticket->dispatch_odometer ?? $ticket->test_odometer;
+                $this->recordOdometerFlag($ticket, 'park', $odometer, $prev !== null ? (int) $prev : null, OdometerContinuityService::STAGE_RETURN, $data['odometer_note'] ?? null, $actor, array_key_exists('odometer_confirmed', $data) ? (bool) $data['odometer_confirmed'] : null);
+            }
+
             $ticket->save();
+
+            // The driver's arrival at base IS the delivery of the return transport leg — close the ticket's
+            // active move so the collecting driver reads as available again (Driver Availability = open
+            // LogisticsTask only) and the live position stops reading "In Transit".
+            $move = $ticket->activeMove()->first();
+            if ($move) {
+                $this->logistics->complete($move, $actor);
+            }
+
+            // Forward-only heal of the car's canonical mileage with the arrival reading (mirrors the other
+            // capture points).
+            if ($odometer >= 1 && ($vehicle = $ticket->loadMissing('vehicle')->vehicle)) {
+                $this->applyTestOdometer($vehicle, $odometer);
+            }
 
             $this->log->record($ticket, VehicleLogEvent::EVENT_READY, $actor, [
                 'description' => 'Arrived back at our park (by ' . $actor->name . ')',
-                'meta'        => ['garage' => $ticket->garage],
+                'meta'        => ['garage' => $ticket->garage, 'odometer' => $odometer >= 1 ? $odometer : null],
             ]);
 
-            if (! $ticket->isMajorRepair()) {
-                // Minor repair (routine) — auto-close straight away; close() owns the cascade that frees
-                // the car and the closing summary/notifications.
+            if (! $ticket->isMajorRepair() && ! $this->needsServiceReinspection($ticket)) {
+                // Minor repair (routine) that performed NO routine service — nothing to confirm to the
+                // vehicle, so auto-close straight away; close() owns the cascade that frees the car and
+                // the closing summary/notifications.
                 return $this->close($ticket, $data, $actor);
             }
 
-            // Major repair (critical/moderate) — do NOT free the car yet. Route to the final QA
+            // Major repair (critical/moderate) OR a routine service (oil/battery/…) — do NOT free the car
+            // yet, and do NOT touch the vehicle's service data. Route to the final QA
             // re-inspection instead of closing. This transition is intentionally NOT written as its own
             // timeline entry: the "Arrived back at our park" event above already covers the driver's leg,
             // and the QA re-inspection surfaces as the ticket's live stage — a second log line here just
@@ -2931,6 +4170,11 @@ class MaintenanceWorkflowService
      */
     public function close(Maintenance $ticket, array $data, User $actor): Maintenance
     {
+        // Is this close a genuine RE-INSPECTION PASS? Only a sign-off coming off ready_for_reinspection is
+        // the QC pass that may write the vehicle's service data (oil/battery anchors, history, reminders).
+        // A minor no-service ticket auto-closing from in_our_park is NOT a pass and must never touch it.
+        $fromReinspection = $ticket->workflow_status === Maintenance::WF_READY_REINSPECTION;
+
         // Final re-inspection odometer (optional) — the QC reading the inspector captures at sign-off, when
         // the car is physically back for the pass check. Recorded BEFORE the defer-invoice branch so BOTH
         // the deferred and full-close paths persist it (the PASS branch defaults to deferred). Runs the
@@ -2939,9 +4183,25 @@ class MaintenanceWorkflowService
         // it never overwrites the garage-OUT return_odometer captured at mark-ready.
         $reinspectOdo = isset($data['final_odometer']) && is_numeric($data['final_odometer']) ? (int) $data['final_odometer'] : null;
         if ($reinspectOdo !== null && $reinspectOdo > 0) {
-            $prev = $ticket->return_odometer ?? $ticket->receive_odometer ?? $ticket->dispatch_odometer ?? $ticket->test_odometer;
+            // The final QA sign-off is an at-OUR-PARK spot check: once the car is physically back at base
+            // (the park-arrival reading), it must NOT accumulate more than the ±5 km buffer before it's
+            // signed off — a bigger jump is an unlogged drive or a typo, so it's strictly capped. That cap
+            // is only valid against an at-base anchor: WHEN we have the park-arrival reading we compare to
+            // it strictly; WITHOUT it (legacy tickets / skipped capture) we can't tell a typo from the
+            // legitimate garage→base drive, so we fall back to the lenient no-decrease guard vs the last
+            // recorded reading.
+            $strict = $ticket->park_odometer !== null;
+            $prev   = $strict
+                ? (int) $ticket->park_odometer
+                : ($ticket->return_odometer ?? $ticket->receive_odometer ?? $ticket->dispatch_odometer ?? $ticket->test_odometer);
+            $prevInt = $prev !== null ? (int) $prev : null;
+            if ($strict) {
+                $this->assertStrictMatch($ticket, $actor, 'reinspect', $reinspectOdo, $prevInt, OdometerContinuityService::STAGE_REINSPECT, $data['odometer_note'] ?? null, 'final_odometer');
+            } else {
+                $this->assertNoDecrease($ticket, $actor, 'reinspect', $reinspectOdo, $prevInt, $data['odometer_note'] ?? null, 'final_odometer', 'last recorded reading');
+            }
             $ticket->reinspect_odometer = $reinspectOdo; // its own column → a distinct row in the mileage timeline
-            $this->recordOdometerFlag($ticket, 'reinspect', $reinspectOdo, $prev !== null ? (int) $prev : null, OdometerContinuityService::STAGE_RETURN, $data['odometer_note'] ?? null, $actor);
+            $this->recordOdometerFlag($ticket, 'reinspect', $reinspectOdo, $prevInt, $strict ? OdometerContinuityService::STAGE_REINSPECT : OdometerContinuityService::STAGE_RETURN, $data['odometer_note'] ?? null, $actor, array_key_exists('odometer_confirmed', $data) ? (bool) $data['odometer_confirmed'] : null);
             if ($vehicle = $ticket->loadMissing('vehicle')->vehicle) {
                 $this->applyTestOdometer($vehicle, $reinspectOdo); // forward-only heal, mirrors the other capture points
             }
@@ -2950,7 +4210,7 @@ class MaintenanceWorkflowService
         // Deferred-invoice decoupling — the sign-off passed but the paper invoice isn't ready. The car
         // STILL returns to service; the ticket parks in awaiting_invoice for the tracker + 3-day SLA to chase.
         if (! empty($data['defer_invoice'])) {
-            return $this->deferInvoice($ticket, $data, $actor);
+            return $this->deferInvoice($ticket, $data, $actor, $fromReinspection);
         }
 
         $this->assertTransition($ticket, Maintenance::WF_CLOSED);
@@ -2963,14 +4223,25 @@ class MaintenanceWorkflowService
             $ticket->vendor_id = (int) $data['vendor_id'];
         }
 
-        // Cost is intentionally NOT gated here (deferred-cost decoupling) — only the garage is.
-        if (! $ticket->vendor_id) {
+        // Cost is intentionally NOT gated here (deferred-cost decoupling) — only the garage is, and only for
+        // an in-shop repair. An ON-SITE (mobile) job never reaches a garage, so it carries no vendor_id.
+        if (! $ticket->isOnSite() && ! $ticket->vendor_id) {
             throw new WorkflowTransitionException('A garage (vendor) is required before closing the ticket.', [
                 'field' => 'vendor_id',
             ]);
         }
 
-        return DB::transaction(function () use ($ticket, $data, $actor) {
+        return DB::transaction(function () use ($ticket, $data, $actor, $fromReinspection) {
+            // Concurrency / double-submit guard: take the ticket's row lock and RE-VALIDATE the close
+            // transition against the freshly-read status INSIDE the transaction. Two people (or a
+            // double-click) closing the same ticket previously BOTH ran confirmRoutineServices — double
+            // oil/battery anchors, duplicated service reminders + history, two CLOSED events. The second
+            // caller now blocks here until the first commits, then fails this guard cleanly.
+            $this->assertTransition(
+                Maintenance::where('id', $ticket->id)->lockForUpdate()->firstOrFail(),
+                Maintenance::WF_CLOSED,
+            );
+
             // Car came back → 'IN' records the return and the cascade frees it. The inspector may
             // pass the date the car actually came back; if they don't, it's today.
             $ticket->event_status    = 'IN';
@@ -2992,6 +4263,14 @@ class MaintenanceWorkflowService
 
             $this->cascade($ticket->vehicle_id);   // → available unless another movement holds it
 
+            // Re-inspection PASS is the SINGLE source of truth for the vehicle's service data. Only a
+            // sign-off coming off ready_for_reinspection confirms the routine services performed on the
+            // ticket (oil/battery anchors, service history, reminders). A minor no-service ticket that
+            // auto-closed from in_our_park is not a QC pass and never reaches here with $fromReinspection.
+            if ($fromReinspection) {
+                $this->confirmRoutineServices($ticket, $actor);
+            }
+
             // Cost may legitimately be pending (deferred-cost decoupling) — say so rather than "AED 0".
             $costLabel = $ticket->cost !== null ? 'cost AED ' . number_format((float) $ticket->cost) : 'cost pending';
 
@@ -3001,6 +4280,21 @@ class MaintenanceWorkflowService
             ]);
 
             $vehicle = $ticket->loadMissing('vehicle')->vehicle;
+
+            // B4 — release the condition grounding. A car grounded Red (breakdown / critical) or
+            // flagged Yellow (needs maintenance) has now passed the final re-inspection, so its
+            // rent-blocking grade no longer holds. Freeing operational_status alone is NOT enough:
+            // rentBlockedByCondition() keeps a Red/Yellow car out of the rental pool, so it would stay
+            // unbookable until someone manually re-graded it. Clear it to Green. Orange (cosmetic,
+            // still rentable) is deliberately left untouched.
+            if ($vehicle && in_array($vehicle->condition_grade, ['red', 'yellow'], true)) {
+                $vehicle->update([
+                    'condition_grade'     => 'green',
+                    'condition_note'      => 'Auto-cleared on maintenance close #' . $ticket->id . ' — passed final re-inspection.',
+                    'condition_graded_at' => Carbon::now(),
+                    'condition_graded_by' => $actor->name ?? (string) $actor->id,
+                ]);
+            }
 
             // Close the loop with the Controllers (Marwa & Leen). For a CUSTOMER COMPLAINT the copy is
             // tailored into a Resolution Notification — they are the first to know the car passed the final
@@ -3053,26 +4347,646 @@ class MaintenanceWorkflowService
     }
 
     /**
+     * PAUSE MAINTENANCE & RETURN TO SERVICE — an operational pause, NOT a close/cancel. The repair had
+     * already started but a customer urgently needs this car, so the company temporarily interrupts the
+     * work and releases the car back into service (Available) while keeping the ticket fully intact:
+     *
+     *   • the exact stage the ticket held is remembered in `paused_from_status` (restored verbatim on
+     *     resume — nothing restarts); every finding, part, photo, note, technician assignment, odometer
+     *     reading and log entry stays on the row untouched;
+     *   • workflow_status → paused_returned_to_service (open, but fenced out of WF_TICKET_STATES so the canonical
+     *     "in maintenance" rule no longer counts the car — it becomes rentable);
+     *   • event_status → 'IN' so the operational cascade + the manual-garage rule stop reading the car as
+     *     physically in the shop, freeing it (its out_date is preserved so the mileage story is intact);
+     *   • the standing "owes maintenance" flag is raised on the vehicle (unless the caller already owns it),
+     *     so the car surfaces on the Vehicles list + fires the "back from rental, still owes the shop"
+     *     reminder when it returns.
+     *
+     * Idempotent + concurrency-safe (row lock + re-check): a double-submit / retry no-ops. `$flagVehicle`
+     * is false when the rental-creation path already owns the deferred-maintenance flag (OperationsService),
+     * true for a direct "Pause" from the ticket. `$actor` is nullable — a rental-form pull is a system
+     * side-effect with no acting user.
+     *
+     * Enterprise Handover Workflow — `$handoverData` is OPTIONAL and additive: the automated rental-pull
+     * call site (OperationsService::pauseWorkflowTicketForRental()) has no human present and never
+     * supplies it, so the core pause transition below is completely unchanged when it's null. When a
+     * human pauses from the ticket UI, the controller supplies the captured custody-transfer fields
+     * (odometer_reading, fuel_level, exterior_condition, interior_condition, damage_findings,
+     * missing_accessories, notes — plus the photo/signature record ids the controller saves best-effort
+     * AFTER this call, exactly like every other odometer checkpoint's storeOdometerPhoto() convention).
+     * The handover row itself is best-effort (try/catch + report()): a handover-write hiccup must never
+     * block the actual pause.
+     */
+    public function pauseForRental(Maintenance $ticket, ?string $reason, ?User $actor, bool $flagVehicle = true, ?array $handoverData = null): Maintenance
+    {
+        if ($ticket->isPausedReturnedToService()) {
+            return $ticket->load($this->eager()); // already paused — no-op
+        }
+        if (! $ticket->isPausable()) {
+            throw new WorkflowTransitionException(
+                'This maintenance ticket can\'t be paused from its current stage.',
+                ['from' => $ticket->workflow_status]
+            );
+        }
+
+        $reason = $this->clean($reason);
+
+        return DB::transaction(function () use ($ticket, $reason, $actor, $flagVehicle, $handoverData) {
+            // Row-lock + re-read so two concurrent pauses (double-click / retry) can't both apply — the
+            // second sees the first's committed write and no-ops instead of re-pausing.
+            $ticket = Maintenance::where('id', $ticket->id)->lockForUpdate()->firstOrFail();
+            if ($ticket->isPausedReturnedToService()) {
+                return $ticket->load($this->eager());
+            }
+            if (! $ticket->isPausable()) {
+                throw new WorkflowTransitionException(
+                    'This maintenance ticket can\'t be paused from its current stage.',
+                    ['from' => $ticket->workflow_status]
+                );
+            }
+
+            $fromStatus = $ticket->workflow_status;
+            $ticket->paused_from_status = $fromStatus;   // where to resume — restored verbatim
+            $ticket->paused_at          = Carbon::now();
+            $ticket->paused_by          = $actor?->id;
+            $ticket->paused_reason      = $reason;
+            $ticket->workflow_status    = Maintenance::WF_PAUSED_RETURNED_TO_SERVICE;
+            // Park the event: the car is released back into service, not in the shop. 'IN' takes it out of
+            // the manual-garage "in maintenance" set; out_date is intentionally KEPT so the odometer/mileage
+            // history is unbroken and resume can put it straight back to 'OUT'.
+            $ticket->event_status = 'IN';
+            $ticket->save(); // booted() re-stamps last_state_change_at → a fresh paused clock
+
+            $this->cascade($ticket->vehicle_id); // → available/rented (no longer counted as maintenance)
+
+            // Raise the standing "owes the workshop" flag unless the rental path already owns it.
+            $vehicle = $ticket->loadMissing('vehicle')->vehicle;
+            if ($flagVehicle && $vehicle) {
+                $this->operations->flagDeferredMaintenance(
+                    $vehicle,
+                    $reason ?: 'Maintenance paused — car released back into service.',
+                    $actor?->name
+                );
+            }
+
+            $this->log->record($ticket, VehicleLogEvent::EVENT_RETURNED_TO_SERVICE, $actor, [
+                'description' => 'Maintenance paused & car returned to service (was at ' . $this->stageLabel($fromStatus) . ')'
+                    . ($reason ? ' · ' . $reason : '')
+                    . ($actor ? ' (by ' . $actor->name . ')' : ' (rental pull)'),
+                'meta' => ['paused_from' => $fromStatus, 'reason' => $reason],
+            ]);
+
+            // Tell the controllers + supervisors the car left the shop early and owes a return visit.
+            $this->notifier->notifyByAnyPermission([self::NOTIFY_CONTROLLERS, self::NOTIFY_DISPATCHER], [
+                'type'     => 'maint_returned_to_service',
+                'category' => 'maintenance',
+                'severity' => 'warning',
+                'title'    => '⏸️ Maintenance paused · ' . $this->label($vehicle),
+                'body'     => trim($this->label($vehicle) . ' was pulled out of the workshop and released back into service — the repair is paused at '
+                    . $this->stageLabel($fromStatus) . ' and will resume when the car returns.'
+                    . ($reason ? ' Reason: ' . $reason . '.' : '')),
+                'url'      => $this->link($ticket),
+                'key'      => 'maint_wf:' . $ticket->id . ':paused',
+                'icon'     => 'pause',
+                'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no, 'paused_from' => $fromStatus],
+            ], $actor?->id);
+
+            // Enterprise Handover Workflow — the pause-leg custody handover, best-effort. Never present on
+            // the automated rental-pull call site.
+            if ($handoverData !== null) {
+                try {
+                    $handover = MaintenanceHandover::create([
+                        'maintenance_id'       => $ticket->id,
+                        'vehicle_id'           => $ticket->vehicle_id,
+                        'type'                 => MaintenanceHandover::TYPE_PAUSE,
+                        'odometer_reading'     => (int) ($handoverData['odometer_reading'] ?? 0),
+                        'fuel_level'           => $handoverData['fuel_level'] ?? '',
+                        'exterior_condition'   => $handoverData['exterior_condition'] ?? '',
+                        'interior_condition'   => $handoverData['interior_condition'] ?? '',
+                        'damage_findings'      => $handoverData['damage_findings'] ?? [],
+                        'missing_accessories'  => $handoverData['missing_accessories'] ?? [],
+                        'notes'                => $handoverData['notes'] ?? null,
+                        'actor_id'             => $actor?->id,
+                        'occurred_at'          => Carbon::now(),
+                        'workflow_status_snapshot' => $fromStatus,
+                        'reason'               => $reason,
+                    ]);
+                    $ticket->last_pause_handover_id = $handover->id;
+                    $ticket->save();
+                } catch (\Throwable $e) {
+                    report($e); // logged — the pause transition already committed
+                }
+            }
+
+            return $ticket->load($this->eager());
+        });
+    }
+
+    /**
+     * VEHICLE PHYSICALLY RETURNED — a light checkpoint, no odometer/handover required: it just stamps
+     * "the car is back" so the return handover paperwork is chased. From this moment the car is treated
+     * as unavailable to rent again (OperationsService::vehicleInMaintenance() reads
+     * Maintenance::isReturnedPendingHandover()) until the resume handover clears (or an incident is
+     * acknowledged) — a deliberate operational-status implication, not just a label change.
+     *
+     * Idempotent + concurrency-safe. Only legal while the ticket is paused AND still out (isPausedOut()).
+     */
+    public function markVehicleReturned(Maintenance $ticket, ?User $actor, ?string $note = null): Maintenance
+    {
+        if (! $ticket->isPausedOut()) {
+            throw new WorkflowTransitionException(
+                'This ticket has no paused-and-out vehicle to mark returned.',
+                ['from' => $ticket->workflow_status]
+            );
+        }
+
+        $note = $this->clean($note);
+
+        return DB::transaction(function () use ($ticket, $actor, $note) {
+            $ticket = Maintenance::where('id', $ticket->id)->lockForUpdate()->firstOrFail();
+            if (! $ticket->isPausedOut()) {
+                return $ticket->load($this->eager()); // already marked returned by a concurrent request
+            }
+
+            $ticket->vehicle_returned_at = Carbon::now();
+            $ticket->vehicle_returned_by = $actor?->id;
+            $ticket->save();
+
+            $this->cascade($ticket->vehicle_id); // → maintenance again (physically back, handover due)
+
+            $this->log->record($ticket, VehicleLogEvent::EVENT_VEHICLE_RETURNED, $actor, [
+                'description' => 'Vehicle physically returned — return handover due'
+                    . ($note ? ' · ' . $note : '')
+                    . ($actor ? ' (by ' . $actor->name . ')' : ''),
+                'meta' => ['note' => $note],
+            ]);
+
+            $vehicle = $ticket->loadMissing('vehicle')->vehicle;
+            $this->notifier->notifyByAnyPermission([self::NOTIFY_DISPATCHER, self::NOTIFY_CONTROLLERS], [
+                'type'     => 'maint_vehicle_returned',
+                'category' => 'maintenance',
+                'severity' => 'info',
+                'title'    => '🚗 Vehicle returned · ' . $this->label($vehicle),
+                'body'     => trim($this->label($vehicle) . ' is physically back — complete the return handover to resume the paused repair.'),
+                'url'      => $this->link($ticket),
+                'key'      => 'maint_wf:' . $ticket->id . ':vehicle_returned',
+                'icon'     => 'car',
+                'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no],
+            ], $actor?->id);
+
+            return $ticket->load($this->eager());
+        });
+    }
+
+    /**
+     * RESUME MAINTENANCE — the car is back (or staff choose to send it in again): the SAME ticket
+     * continues from the EXACT stage it paused at, UNLESS the mandatory return handover reveals a
+     * discrepancy against the pause handover beyond the configured thresholds — in which case the
+     * resume is held open (an Incident is raised) until a supervisor acknowledges it. Nothing restarts;
+     * the full history is untouched either way, and the resume handover itself is ALWAYS permanently
+     * saved regardless of what happens next.
+     *
+     * `$handoverData` is mandatory (every human-driven resume captures a full custody handover); every
+     * call site is the /resume controller action — there is no automated resume.
+     *
+     * Idempotent + concurrency-safe. Robust to interrupted operations: if paused_from_status is somehow
+     * missing it falls back to the dispatch queue (inspection_pending) so the ticket can never get stuck.
+     */
+    public function resumeMaintenance(Maintenance $ticket, User $actor, array $handoverData): Maintenance
+    {
+        if (! $ticket->isPausedReturnedToService()) {
+            throw new WorkflowTransitionException(
+                'This ticket isn\'t paused — there is nothing to resume.',
+                ['from' => $ticket->workflow_status]
+            );
+        }
+
+        return DB::transaction(function () use ($ticket, $actor, $handoverData) {
+            $ticket = Maintenance::where('id', $ticket->id)->lockForUpdate()->firstOrFail();
+            if (! $ticket->isPausedReturnedToService()) {
+                return $ticket->load($this->eager()); // already resumed by a concurrent request
+            }
+
+            // Step 1 — the resume-leg custody handover, ALWAYS captured (best-effort write; a storage
+            // hiccup here still lets the resume proceed straight to finalizing, matching the "never block
+            // the transition" convention of every other checkpoint).
+            $resumeHandover = null;
+            try {
+                $resumeHandover = MaintenanceHandover::create([
+                    'maintenance_id'       => $ticket->id,
+                    'vehicle_id'           => $ticket->vehicle_id,
+                    'type'                 => MaintenanceHandover::TYPE_RESUME,
+                    'odometer_reading'     => (int) ($handoverData['odometer_reading'] ?? 0),
+                    'fuel_level'           => $handoverData['fuel_level'] ?? '',
+                    'exterior_condition'   => $handoverData['exterior_condition'] ?? '',
+                    'interior_condition'   => $handoverData['interior_condition'] ?? '',
+                    'damage_findings'      => $handoverData['damage_findings'] ?? [],
+                    'missing_accessories'  => $handoverData['missing_accessories'] ?? [],
+                    'notes'                => $handoverData['notes'] ?? null,
+                    'actor_id'             => $actor->id,
+                    'occurred_at'          => Carbon::now(),
+                    'workflow_status_snapshot' => $ticket->workflow_status,
+                ]);
+                $ticket->last_resume_handover_id = $resumeHandover->id;
+                $ticket->save();
+            } catch (\Throwable $e) {
+                report($e);
+            }
+
+            // Step 2/3 — compare against the pause-leg handover, IF one exists (a legacy ticket paused
+            // before this feature shipped has none — skip comparison/incident logic entirely and finalize).
+            $pauseHandover = $ticket->lastPauseHandover;
+
+            if ($pauseHandover && $resumeHandover) {
+                $comparison = app(HandoverComparisonService::class)->compare($pauseHandover, $resumeHandover);
+
+                $comparisonRow = null;
+                try {
+                    $comparisonRow = MaintenanceHandoverComparison::create([
+                        'maintenance_id'       => $ticket->id,
+                        'pause_handover_id'    => $pauseHandover->id,
+                        'resume_handover_id'   => $resumeHandover->id,
+                        'mileage_delta'        => $comparison['mileage_delta'],
+                        'fuel_delta'           => $comparison['fuel_delta'],
+                        'new_damages'          => $comparison['new_damages'],
+                        'missing_accessories'  => $comparison['missing_accessories'],
+                        'condition_changes'    => $comparison['condition_changes'],
+                        'exceeds_threshold'    => $comparison['exceeds_threshold'],
+                        'threshold_breaches'   => $comparison['threshold_breaches'],
+                        'generated_at'         => Carbon::now(),
+                    ]);
+                } catch (\Throwable $e) {
+                    report($e);
+                }
+
+                if ($comparison['exceeds_threshold']) {
+                    try {
+                        $incident = MaintenanceIncident::create([
+                            'maintenance_id' => $ticket->id,
+                            'comparison_id'  => $comparisonRow?->id,
+                            'type'           => MaintenanceIncident::TYPE_HANDOVER_DISCREPANCY,
+                            'severity'       => 'moderate',
+                            'description'    => $this->composeIncidentDescription($comparison['threshold_breaches']),
+                            'status'         => MaintenanceIncident::STATUS_OPEN,
+                        ]);
+                        $ticket->active_incident_id = $incident->id;
+                        $ticket->save();
+
+                        $this->log->record($ticket, VehicleLogEvent::EVENT_HANDOVER_INCIDENT, $actor, [
+                            'description' => 'Return handover flagged a discrepancy vs the pause handover — resume held pending acknowledgement.',
+                            'meta' => ['comparison_id' => $comparisonRow?->id, 'breaches' => $comparison['threshold_breaches']],
+                        ]);
+
+                        $vehicle = $ticket->loadMissing('vehicle')->vehicle;
+                        $this->notifier->notifyByAnyPermission([self::NOTIFY_DISPATCHER, self::NOTIFY_CONTROLLERS], [
+                            'type'     => 'maint_handover_incident',
+                            'category' => 'maintenance',
+                            'severity' => 'warning',
+                            'title'    => '⚠️ Handover discrepancy · ' . $this->label($vehicle),
+                            'body'     => trim($this->label($vehicle) . ' returned with a flagged discrepancy — resume is on hold until a supervisor acknowledges it.'),
+                            'url'      => $this->link($ticket),
+                            'key'      => 'maint_wf:' . $ticket->id . ':handover_incident',
+                            'icon'     => 'alert-triangle',
+                            'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no],
+                        ], $actor->id);
+                    } catch (\Throwable $e) {
+                        report($e);
+                    }
+
+                    // The resume handover is already permanently saved above — return WITHOUT finalizing
+                    // the stage transition. workflow_status stays paused_returned_to_service.
+                    return $ticket->load($this->eager());
+                }
+            }
+
+            return $this->finalizeResume($ticket, $actor);
+        });
+    }
+
+    /**
+     * Shared finalize step for a resume that is NOT (or no longer) gated by an incident — used by both
+     * resumeMaintenance()'s clean path and acknowledgeIncident() (which finalizes the ALREADY-captured
+     * resume handover, no re-submission needed). Restores paused_from_status verbatim, puts event_status
+     * back to what that stage implies, clears the pause bookkeeping EXCEPT paused_at/paused_reason (kept
+     * permanently as the historical stamp of the most recent pause — event-sourced, see
+     * Maintenance::WF_PAUSED_RETURNED_TO_SERVICE), clears the vehicle-returned + active-incident pointers,
+     * and re-derives the car's operational status (→ maintenance again).
+     */
+    private function finalizeResume(Maintenance $ticket, ?User $actor): Maintenance
+    {
+        // Restore the exact stage. Guard against a lost anchor (never expected) so it can't get stuck.
+        $restore = in_array($ticket->paused_from_status, Maintenance::PAUSABLE_STATES, true)
+            ? $ticket->paused_from_status
+            : Maintenance::WF_INSPECTION_PENDING;
+
+        $ticket->workflow_status     = $restore;
+        $ticket->event_status        = in_array($restore, Maintenance::WF_PHYSICALLY_OUT_STATES, true) ? 'OUT' : 'IN';
+        $ticket->paused_from_status  = null;
+        $ticket->paused_by           = null;
+        // paused_at / paused_reason are DELIBERATELY KEPT — they become the permanent historical stamp of
+        // the most recent pause once resumed, not cleared bookkeeping.
+        $ticket->vehicle_returned_at = null;
+        $ticket->vehicle_returned_by = null;
+        $ticket->active_incident_id  = null;
+        $ticket->save(); // booted() re-stamps last_state_change_at → the resumed stage's clock restarts
+
+        $this->cascade($ticket->vehicle_id); // → maintenance (the car is back in the workflow)
+
+        // The debt is settled — the car is (back) in the workshop pipeline, so clear the standing flag.
+        $vehicle = $ticket->loadMissing('vehicle')->vehicle;
+        if ($vehicle) {
+            $this->operations->resolveDeferredMaintenance($vehicle);
+        }
+
+        $this->log->record($ticket, VehicleLogEvent::EVENT_RESUMED, $actor, [
+            'description' => 'Maintenance resumed — continuing at ' . $this->stageLabel($restore)
+                . ($actor ? ' (by ' . $actor->name . ')' : ''),
+            'meta' => ['resumed_to' => $restore],
+        ]);
+
+        $this->notifier->notifyByAnyPermission([self::NOTIFY_CONTROLLERS, self::NOTIFY_DISPATCHER], [
+            'type'     => 'maint_resumed',
+            'category' => 'maintenance',
+            'severity' => 'info',
+            'title'    => '▶️ Maintenance resumed · ' . $this->label($vehicle),
+            'body'     => trim($this->label($vehicle) . ' is back — the paused repair continues at '
+                . $this->stageLabel($restore) . '.'),
+            'url'      => $this->link($ticket),
+            'key'      => 'maint_wf:' . $ticket->id . ':resumed',
+            'icon'     => 'play',
+            'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no, 'resumed_to' => $restore],
+        ], $actor?->id);
+
+        return $ticket->load($this->eager());
+    }
+
+    /**
+     * ACKNOWLEDGE INCIDENT — a supervisor (maintenance.manage) reviews the flagged discrepancy and clears
+     * it, finalizing the resume that was held pending acknowledgement. No re-capture: the resume handover
+     * was already permanently saved in resumeMaintenance()'s step 1 regardless of the gate.
+     *
+     * Idempotent: acknowledging an already-acknowledged incident is a no-op.
+     */
+    public function acknowledgeIncident(MaintenanceIncident $incident, ?User $actor, ?string $note = null): Maintenance
+    {
+        $note = $this->clean($note);
+
+        return DB::transaction(function () use ($incident, $actor, $note) {
+            $incident = MaintenanceIncident::where('id', $incident->id)->lockForUpdate()->firstOrFail();
+            $ticket   = Maintenance::where('id', $incident->maintenance_id)->lockForUpdate()->firstOrFail();
+
+            if ($incident->status === MaintenanceIncident::STATUS_ACKNOWLEDGED) {
+                return $ticket->load($this->eager()); // already cleared — no-op
+            }
+
+            $incident->acknowledged_by      = $actor?->id;
+            $incident->acknowledged_at      = Carbon::now();
+            $incident->acknowledgement_note = $note;
+            $incident->status               = MaintenanceIncident::STATUS_ACKNOWLEDGED;
+            $incident->save();
+
+            $this->log->record($ticket, VehicleLogEvent::EVENT_INCIDENT_ACKNOWLEDGED, $actor, [
+                'description' => 'Handover discrepancy acknowledged — resume finalized'
+                    . ($note ? ' · ' . $note : '')
+                    . ($actor ? ' (by ' . $actor->name . ')' : ''),
+                'meta' => ['incident_id' => $incident->id],
+            ]);
+
+            return $this->finalizeResume($ticket, $actor);
+        });
+    }
+
+    /**
+     * TEMPORARILY RELEASE VEHICLE — the car physically leaves the workshop mid-repair (a road test, a
+     * customer test/delivery, an external inspection, storage, …) while the ticket stays EXACTLY where it
+     * is. This is deliberately NOT a pause: workflow_status is untouched (the car is still counted as
+     * in-maintenance and stays out of the rentable pool), the ticket is never closed/completed, and the
+     * repair simply continues when the car returns. All that changes is a vehicle-level overlay
+     * (active_temporary_release_id) plus an immutable out-leg log row capturing WHO/WHY/WHEN + odometer_out.
+     *
+     * `$data` = ['reason', 'reason_note', 'taken_by', 'odometer_out']. Idempotent + concurrency-safe (row
+     * lock + re-check): a double-submit no-ops on the already-out ticket.
+     */
+    public function temporarilyReleaseVehicle(Maintenance $ticket, array $data, User $actor): Maintenance
+    {
+        if (! $ticket->isTempReleasable()) {
+            throw new WorkflowTransitionException(
+                $ticket->isTemporarilyReleased()
+                    ? 'This vehicle is already temporarily released — record its return first.'
+                    : 'This maintenance ticket can\'t release the vehicle from its current stage.',
+                ['from' => $ticket->workflow_status]
+            );
+        }
+
+        return DB::transaction(function () use ($ticket, $data, $actor) {
+            $ticket = Maintenance::where('id', $ticket->id)->lockForUpdate()->firstOrFail();
+            if (! $ticket->isTempReleasable()) {
+                return $ticket->load($this->eager()); // a concurrent request already released it
+            }
+
+            $release = MaintenanceTemporaryRelease::create([
+                'maintenance_id'           => $ticket->id,
+                'vehicle_id'               => $ticket->vehicle_id,
+                'reason'                   => $data['reason'],
+                'reason_note'              => $this->clean($data['reason_note'] ?? null),
+                'taken_by'                 => trim((string) $data['taken_by']),
+                'released_by'              => $actor->id,
+                'released_at'              => Carbon::now(),
+                'odometer_out'             => (int) $data['odometer_out'],
+                'workflow_status_snapshot' => $ticket->workflow_status,
+            ]);
+
+            $ticket->active_temporary_release_id = $release->id;
+            $ticket->save(); // workflow_status intentionally UNCHANGED — no cascade, the car stays in-maintenance
+
+            $this->log->record($ticket, VehicleLogEvent::EVENT_TEMP_RELEASED, $actor, [
+                'description' => 'Vehicle temporarily released from the workshop (' . $release->reasonLabel() . ')'
+                    . ' — taken by ' . $release->taken_by
+                    . ' at ' . number_format($release->odometer_out) . ' km'
+                    . ($release->reason_note ? ' · ' . $release->reason_note : '')
+                    . ' (by ' . $actor->name . ')',
+                'meta' => [
+                    'temporary_release_id' => $release->id,
+                    'reason'               => $release->reason,
+                    'taken_by'             => $release->taken_by,
+                    'odometer_out'         => $release->odometer_out,
+                    'from_status'          => $ticket->workflow_status,
+                ],
+            ]);
+
+            $vehicle = $ticket->loadMissing('vehicle')->vehicle;
+            $this->notifier->notifyByAnyPermission([self::NOTIFY_CONTROLLERS, self::NOTIFY_DISPATCHER], [
+                'type'     => 'maint_temp_released',
+                'category' => 'maintenance',
+                'severity' => 'info',
+                'title'    => '🚗 Temporarily released · ' . $this->label($vehicle),
+                'body'     => trim($this->label($vehicle) . ' was taken out of the workshop for ' . $release->reasonLabel()
+                    . ' (by ' . $release->taken_by . ') — the repair stays open and continues when it returns.'),
+                'url'      => $this->link($ticket),
+                'key'      => 'maint_wf:' . $ticket->id . ':temp_released:' . $release->id,
+                'icon'     => 'car',
+                'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no, 'reason' => $release->reason],
+            ], $actor->id);
+
+            return $ticket->load($this->eager());
+        });
+    }
+
+    /**
+     * RETURN TEMPORARILY-RELEASED VEHICLE — the car is back at the workshop; close the open release leg
+     * (odometer_in + distance) and clear the overlay so the ticket presents at its (unchanged) stage
+     * again. The distance driven while out is recorded and treated as VALID travel: the authoritative
+     * vehicle mileage is advanced to odometer_in so the ongoing repair's remaining odometer checkpoints
+     * compare against the post-release reading and never mis-flag the trip as a discrepancy.
+     *
+     * `$data` = ['odometer_in', 'return_note']. Idempotent + concurrency-safe. Guards a backward reading
+     * (an odometer can't return lower than it left).
+     */
+    public function returnTemporarilyReleasedVehicle(Maintenance $ticket, array $data, User $actor): Maintenance
+    {
+        if (! $ticket->isTemporarilyReleased()) {
+            throw new WorkflowTransitionException(
+                'This vehicle isn\'t temporarily released — there is nothing to bring back.',
+                ['from' => $ticket->workflow_status]
+            );
+        }
+
+        $odometerIn = (int) $data['odometer_in'];
+
+        return DB::transaction(function () use ($ticket, $data, $actor, $odometerIn) {
+            $ticket = Maintenance::where('id', $ticket->id)->lockForUpdate()->firstOrFail();
+            if (! $ticket->isTemporarilyReleased()) {
+                return $ticket->load($this->eager()); // a concurrent request already brought it back
+            }
+
+            $release = MaintenanceTemporaryRelease::where('id', $ticket->active_temporary_release_id)
+                ->lockForUpdate()->first();
+
+            // Defensive: the pointer is set but the row is gone (never expected) — just clear the overlay.
+            if (! $release) {
+                $ticket->active_temporary_release_id = null;
+                $ticket->save();
+                return $ticket->load($this->eager());
+            }
+
+            // An odometer can't come back LOWER than it left — reject a backward reading outright.
+            if ($odometerIn < $release->odometer_out) {
+                throw new WorkflowTransitionException(
+                    'The return reading (' . number_format($odometerIn) . ' km) can\'t be lower than the '
+                    . 'out reading (' . number_format($release->odometer_out) . ' km) — re-check the dial.',
+                    ['field' => 'return_odometer']
+                );
+            }
+
+            $distance = $odometerIn - $release->odometer_out;
+
+            $release->returned_at  = Carbon::now();
+            $release->returned_by  = $actor->id;
+            $release->odometer_in  = $odometerIn;
+            $release->distance_km  = $distance;
+            $release->return_note  = $this->clean($data['return_note'] ?? null);
+            $release->save();
+
+            $ticket->active_temporary_release_id = null;
+            $ticket->save();
+
+            // Absorb the distance driven while out as VALID travel — advance the authoritative mileage so
+            // the repair's remaining odometer checkpoints anchor on the post-trip reading (never a
+            // backward/discrepancy flag). Never move it backwards.
+            $vehicle = $ticket->loadMissing('vehicle')->vehicle;
+            if ($vehicle && ($vehicle->odometer === null || $odometerIn > (int) $vehicle->odometer)) {
+                $vehicle->odometer = $odometerIn;
+                $vehicle->save();
+            }
+
+            $this->log->record($ticket, VehicleLogEvent::EVENT_TEMP_RETURNED, $actor, [
+                'description' => 'Vehicle returned to the workshop from a temporary release (' . $release->reasonLabel() . ')'
+                    . ' at ' . number_format($odometerIn) . ' km · ' . number_format($distance) . ' km driven while out'
+                    . ($release->return_note ? ' · ' . $release->return_note : '')
+                    . ' (by ' . $actor->name . ')',
+                'meta' => [
+                    'temporary_release_id' => $release->id,
+                    'odometer_out'         => $release->odometer_out,
+                    'odometer_in'          => $odometerIn,
+                    'distance_km'          => $distance,
+                ],
+            ]);
+
+            $this->notifier->notifyByAnyPermission([self::NOTIFY_CONTROLLERS, self::NOTIFY_DISPATCHER], [
+                'type'     => 'maint_temp_returned',
+                'category' => 'maintenance',
+                'severity' => 'info',
+                'title'    => '🔧 Back at the workshop · ' . $this->label($vehicle),
+                'body'     => trim($this->label($vehicle) . ' is back from its temporary release — '
+                    . number_format($distance) . ' km driven while out. The repair continues.'),
+                'url'      => $this->link($ticket),
+                'key'      => 'maint_wf:' . $ticket->id . ':temp_returned:' . $release->id,
+                'icon'     => 'wrench',
+                'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no, 'distance_km' => $distance],
+            ], $actor->id);
+
+            return $ticket->load($this->eager());
+        });
+    }
+
+    /** Auto-compose an Incident's description from the comparison's threshold breaches. */
+    private function composeIncidentDescription(array $breaches): string
+    {
+        if (empty($breaches)) {
+            return 'Handover comparison flagged a discrepancy.';
+        }
+        return implode(' ', array_filter(array_map(fn ($b) => $b['detail'] ?? null, $breaches)));
+    }
+
+    /** Human label for a workflow stage, for pause/resume audit copy. Falls back to the raw key. */
+    private function stageLabel(?string $status): string
+    {
+        return match ($status) {
+            Maintenance::WF_INSPECTION_PENDING  => 'Awaiting Dispatch',
+            Maintenance::WF_AWAITING_DISPATCH   => 'Awaiting Pickup',
+            Maintenance::WF_IN_TRANSIT          => 'In Transit',
+            Maintenance::WF_UNDER_REPAIR        => 'In Workshop',
+            Maintenance::WF_REPAIR_REVIEW       => 'Repair Review',
+            Maintenance::WF_READY_FOR_PICKUP    => 'Ready for Pickup',
+            Maintenance::WF_READY_REINSPECTION  => 'Final QA Re-inspection',
+            Maintenance::WF_REINSPECTION_FAILED => 'Re-inspection Failed',
+            default                             => $status ? str_replace('_', ' ', $status) : 'its previous stage',
+        };
+    }
+
+    /**
      * Deferred-invoice sign-off — the car passed re-inspection/QA and RETURNS TO SERVICE now, but the
      * invoice isn't ready. Operationally this behaves like close() (event 'IN', cascade frees the car,
      * the legacy closing note is composed) EXCEPT the ticket parks in `awaiting_invoice` instead of
      * `closed`, stamping the SLA clock. It's picked up by the /invoices/pending-submission tracker and
      * the daily 3-day overdue scan; entering the invoice (portal/line-items) or "mark received" closes it.
      */
-    public function deferInvoice(Maintenance $ticket, array $data, User $actor): Maintenance
+    public function deferInvoice(Maintenance $ticket, array $data, User $actor, bool $fromReinspection = false): Maintenance
     {
         $this->assertTransition($ticket, Maintenance::WF_AWAITING_INVOICE);
 
         if (! empty($data['vendor_id'])) {
             $ticket->vendor_id = (int) $data['vendor_id'];
         }
-        if (! $ticket->vendor_id) {
+        // Only an in-shop repair is gated on a garage. An ON-SITE (mobile) job — e.g. a routine oil change
+        // done in our park — never reaches a garage and carries no vendor_id, so it signs off without one.
+        // Mirrors the identical exemption in close(); deferInvoice is the default PASS path, so without this
+        // an on-site ticket at Final inspection is wrongly blocked by "a garage is required".
+        if (! $ticket->isOnSite() && ! $ticket->vendor_id) {
             throw new WorkflowTransitionException('A garage (vendor) is required before signing off the repair.', [
                 'field' => 'vendor_id',
             ]);
         }
 
-        return DB::transaction(function () use ($ticket, $data, $actor) {
+        return DB::transaction(function () use ($ticket, $data, $actor, $fromReinspection) {
+            // Concurrency / double-submit guard (same as close()): lock the row and re-validate the
+            // transition against the freshly-read status, so a double-click / concurrent sign-off can't
+            // run confirmRoutineServices twice (double service anchors + reminders).
+            $this->assertTransition(
+                Maintenance::where('id', $ticket->id)->lockForUpdate()->firstOrFail(),
+                Maintenance::WF_AWAITING_INVOICE,
+            );
+
             // Car is physically back and freed for service — identical to close(), minus the financial close.
             $ticket->event_status    = 'IN';
             $ticket->actual_in_date  = ! empty($data['actual_in_date'])
@@ -3085,12 +4999,34 @@ class MaintenanceWorkflowService
 
             $this->cascade($ticket->vehicle_id);   // → back in service (awaiting_invoice is NOT WF_TICKET_STATES)
 
+            // Deferring the invoice is still a PASSED final re-inspection — the car returned to service, so
+            // this is the moment the routine services are confirmed to the vehicle. The later invoice-close
+            // (finalizeInvoice) is a purely financial step and must NOT re-touch the service data.
+            if ($fromReinspection) {
+                $this->confirmRoutineServices($ticket, $actor);
+            }
+
             $this->log->record($ticket, VehicleLogEvent::EVENT_AWAITING_INVOICE, $actor, [
                 'description' => 'Re-inspected and returned to service — invoice pending (by ' . $actor->name . ')',
                 'meta'        => ['garage' => $ticket->garage, 'awaiting_invoice_since' => $ticket->awaiting_invoice_since?->toIso8601String()],
             ]);
 
             $vehicle = $ticket->loadMissing('vehicle')->vehicle;
+
+            // B4 — release the condition grounding, exactly as close() does. Signing off with the
+            // invoice deferred is still a PASSED final re-inspection: the car is back in service, so a
+            // Red (breakdown/critical) or Yellow grade no longer holds. Without this the car's
+            // operational_status is freed but rentBlockedByCondition() keeps it out of the rental pool
+            // until a manual re-grade — the exact gap that left awaiting-invoice cars unbookable.
+            if ($vehicle && in_array($vehicle->condition_grade, ['red', 'yellow'], true)) {
+                $vehicle->update([
+                    'condition_grade'     => 'green',
+                    'condition_note'      => 'Auto-cleared on sign-off (invoice pending) #' . $ticket->id . ' — passed final re-inspection.',
+                    'condition_graded_at' => Carbon::now(),
+                    'condition_graded_by' => $actor->name ?? (string) $actor->id,
+                ]);
+            }
+
             // Controllers + the Supervisor (who chases the garage) are told the invoice is now outstanding.
             $this->notifier->notifyByAnyPermission([self::NOTIFY_CONTROLLERS, self::NOTIFY_DISPATCHER], [
                 'type'     => 'maint_awaiting_invoice',
@@ -3110,14 +5046,14 @@ class MaintenanceWorkflowService
     }
 
     /**
-     * "Mark as Serviced" — complete an ON-SITE (mobile) ticket in one step. The mobile job is done where
-     * the car is parked, so this is the entire back-half of the workflow collapsed into a single action:
-     * NO garage dispatch, NO transit, NO re-inspection and NO QA. The car was never marked out of service
-     * (it only carried a "Pending Maintenance" tag), so this simply resolves the faults, closes the ticket
-     * and clears the tag.
+     * "Mark as Serviced" — complete the hands-on work of an ON-SITE (mobile) ticket. The mobile job is done
+     * where the car is parked (NO garage dispatch, NO transit), but it does NOT close the ticket and it does
+     * NOT touch the vehicle's service data. Instead it routes the ticket to the final QA re-inspection
+     * (ready_for_reinspection) — exactly like an in-shop repair — so the service anchors (oil/battery),
+     * history and reminders are confirmed ONLY on a re-inspection PASS (see close → confirmRoutineServices).
+     * This closes the loophole where an on-site oil/battery service could update the vehicle bypassing QA.
      *
-     * Deliberately separate from close(): close() is the workshop sign-off and REQUIRES a garage (vendor);
-     * an on-site job has none. It is strictly the WF_ON_SITE_PENDING → closed exit.
+     * A mobile job carries no garage vendor, so close() relaxes its vendor gate for on-site tickets.
      *
      * @param array{notes?:?string, cost?:mixed, vendor_id?:?int, actual_in_date?:?string} $data
      */
@@ -3128,7 +5064,7 @@ class MaintenanceWorkflowService
                 'workflow_status' => $ticket->workflow_status,
             ]);
         }
-        $this->assertTransition($ticket, Maintenance::WF_CLOSED);
+        $this->assertTransition($ticket, Maintenance::WF_READY_REINSPECTION);
 
         // A mobile vendor is OPTIONAL for on-site work (there may be no garage at all). Record the cost
         // if it was captured on the spot; otherwise it stays deferred like every other ticket.
@@ -3140,39 +5076,42 @@ class MaintenanceWorkflowService
         }
 
         return DB::transaction(function () use ($ticket, $data, $actor) {
-            // The car never physically left, so there is no OUT → IN journey; we still stamp an IN date so
-            // the closed visit reads consistently in the history surfaces.
+            // The car is physically present (never left), and the mobile work is finished — but it is NOT
+            // roadworthy-confirmed until the inspector's QA pass. Route to the re-inspection stage; the
+            // vehicle's service data stays untouched until that PASS closes the ticket.
             $ticket->event_status    = 'IN';
-            $ticket->actual_in_date  = ! empty($data['actual_in_date'])
-                ? Carbon::parse($data['actual_in_date'])->startOfDay()
-                : Carbon::today();
-            $ticket->wf_closed_by    = $actor->id;
-            $ticket->wf_closed_at    = Carbon::now();
-            $ticket->workflow_status = Maintenance::WF_CLOSED;
-            $ticket->maintenance_notes = $this->composeClosingSummary($ticket, $actor, $data['notes'] ?? null);
+            $ticket->repair_location = Maintenance::REPAIR_ON_SITE; // survives the status change → close() knows it's on-site
+            $ticket->workflow_status = Maintenance::WF_READY_REINSPECTION;
+            // Preserve the on-site mechanic's notes (the controller has already folded the mobile vendor
+            // name in) as garage feedback, so they carry into the closing summary composed at the PASS.
+            if ($note = $this->clean($data['notes'] ?? null)) {
+                $ticket->garage_feedback = trim(($ticket->garage_feedback ? $ticket->garage_feedback . "\n" : '') . $note);
+            }
             $ticket->save();
 
-            // The car was already available (on_site_pending is outside WF_TICKET_STATES); reconcile anyway
-            // so any lingering derived state settles and the "Pending Maintenance" tag clears.
+            // ready_for_reinspection ∈ WF_TICKET_STATES → the car reads "in maintenance" through the QA
+            // pass. Reconcile so that state settles.
             $this->cascade($ticket->vehicle_id);
 
             $vehicle   = $ticket->loadMissing('vehicle')->vehicle;
             $costLabel = $ticket->cost !== null ? 'cost AED ' . number_format((float) $ticket->cost) : 'cost pending';
 
-            $this->log->record($ticket, VehicleLogEvent::EVENT_CLOSED, $actor, [
-                'description' => 'On-site service completed · ' . $costLabel . ' (by ' . $actor->name . ')',
+            $this->log->record($ticket, VehicleLogEvent::EVENT_READY, $actor, [
+                'description' => 'On-site service completed · ' . $costLabel . ' — pending final QA re-inspection (by ' . $actor->name . ')',
                 'meta'        => ['cost' => $ticket->cost !== null ? (float) $ticket->cost : null, 'repair_location' => Maintenance::REPAIR_ON_SITE],
             ]);
 
-            // Close the loop with the Controllers — the on-site job is done and the car is untouched-available.
-            $this->notifier->notifyByPermission(self::NOTIFY_CONTROLLERS, [
-                'type'     => 'maint_on_site_done',
+            // Ask the Inspector for the final QA pass — the single point that returns the car to service and
+            // confirms any routine service to the vehicle record.
+            $this->notifier->notifyByPermission(self::NOTIFY_INSPECTOR, [
+                'type'     => 'maint_ready_reinspect',
                 'category' => 'maintenance',
-                'severity' => 'success',
-                'title'    => '✅ On-site service done · ' . $this->label($vehicle),
-                'body'     => trim($this->label($vehicle) . ' was serviced on-site and stays available · ' . $costLabel . '.'),
+                'severity' => 'warning',
+                'title'    => 'Final QA re-inspection · ' . $this->label($vehicle),
+                'body'     => trim($this->label($vehicle) . ' was serviced on-site · ' . $costLabel
+                                . ' — give it the final QA pass to return it to service.'),
                 'url'      => $this->link($ticket),
-                'key'      => 'maint_wf:' . $ticket->id . ':closed',
+                'key'      => 'maint_wf:' . $ticket->id . ':ready_for_reinspection',
                 'icon'     => 'check',
                 'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no, 'repair_location' => Maintenance::REPAIR_ON_SITE],
             ], $actor->id);
@@ -3202,6 +5141,10 @@ class MaintenanceWorkflowService
                 'description' => 'Outstanding invoice received — ticket closed (by ' . $actor->name . ')',
                 'meta'        => ['cost' => $ticket->cost !== null ? (float) $ticket->cost : null],
             ]);
+
+            // The vehicle's service data was already confirmed at the re-inspection PASS (deferInvoice) —
+            // receiving the invoice is a purely FINANCIAL step and must never touch the service anchors,
+            // history or reminders. See confirmRoutineServices (fired only on the PASS).
 
             return $ticket->load($this->eager());
         });
@@ -3929,6 +5872,12 @@ class MaintenanceWorkflowService
         return '/maintenance-workflow/' . $ticket->id;
     }
 
+    /** Deep link to the pre-maintenance Recommendations queue (Supervisor triage of inspection recommendations). */
+    private function recommendationsLink(): string
+    {
+        return '/maintenance-recommendations';
+    }
+
     /** Human label for a trigger_reason, for the audit-log description line. */
     private function reasonLabel(string $reason): string
     {
@@ -3953,6 +5902,89 @@ class MaintenanceWorkflowService
      * (see INCLUDE_COST_IN_SUMMARY). The result is stored in `maintenance_notes`, which every history
      * surface already renders unchanged.
      */
+    /**
+     * TICKET-AS-SOURCE-OF-TRUTH confirmation. Called at the single point a ticket is officially CLOSED
+     * (close / markServiced / finalizeInvoice — each ticket hits exactly one, exactly once, since a
+     * closed ticket can't re-open). For every routine service that was PERFORMED on this ticket (a
+     * completed oil-change / battery fault, left Pending Confirmation at fix time), we now apply it to
+     * the vehicle master record: Vehicle::recordServiceDone rolls the ServiceReminder forward, stamps the
+     * last-service anchor (oil) / battery_last_changed (battery), and advances the odometer — so the
+     * car's Service Status recomputes. Anchored to the ticket's confirmed closing odometer, dated to when
+     * the fault was actually resolved. Best-effort per fault: a failure is reported and never sinks the
+     * close. No planned or unconfirmed work ever reaches the vehicle — only a closed ticket does.
+     */
+    /**
+     * Does this ticket carry a ROUTINE SERVICE (oil / battery / filters / tyres) that must be confirmed to
+     * the vehicle record? Keyed off the fault symptoms (set at diagnosis, before the repair). When true, a
+     * minor ticket is NOT allowed to auto-close at park arrival — it is routed through the final QA
+     * re-inspection so the service data updates ONLY on a PASS, never on a bare return-to-park. Matches the
+     * same resolver confirmRoutineServices() uses at close, so routing and confirmation stay in lock-step.
+     */
+    private function needsServiceReinspection(Maintenance $ticket): bool
+    {
+        return $ticket->tasks()
+            ->whereNotIn('status', \App\Models\MaintenanceTask::NON_REPAIR_TERMINAL)
+            ->get(['id', 'symptom'])
+            ->contains(fn ($task) => Maintenance::serviceTypeForSymptom($task->symptom) !== null);
+    }
+
+    private function confirmRoutineServices(Maintenance $ticket, User $actor): void
+    {
+        $vehicle = $ticket->loadMissing('vehicle')->vehicle;
+        if (! $vehicle) {
+            return;
+        }
+
+        // The confirmed reading at sign-off: the QC re-inspection odometer, else the garage-OUT return,
+        // else the arrival reading, else the car's current mileage.
+        $odo = $ticket->reinspect_odometer
+            ?? $ticket->return_odometer
+            ?? $ticket->receive_odometer
+            ?? $vehicle->odometer;
+        if ($odo === null) {
+            return; // nothing to anchor the service to
+        }
+
+        $completed = $ticket->tasks()
+            ->where('status', \App\Models\MaintenanceTask::STATUS_COMPLETED)
+            ->get();
+
+        foreach ($completed as $task) {
+            $type = Maintenance::serviceTypeForSymptom($task->symptom);
+            if (! $type) {
+                continue; // ordinary fault — no recurring service to roll forward
+            }
+
+            // Curated routine services (oil / battery / filters / tyres) always sync — oil & battery also
+            // re-anchor the car's serviceStatus / battery date. A service matched only by a Service-Reminder
+            // LABEL (brakes, A/C, transmission — reminder-originated tickets) rolls ONLY an EXISTING reminder,
+            // so an ordinary fault that happens to be named like a service can't silently spawn a new reminder.
+            $isCurated = Maintenance::routineServiceTypeFor($task->symptom) !== null;
+            if (! $isCurated && ! $vehicle->serviceReminders()->where('service_type', $type)->exists()) {
+                continue;
+            }
+
+            try {
+                $date     = optional($task->resolved_at)->toDateString() ?: Carbon::now()->toDateString();
+                $reminder = $vehicle->recordServiceDone($type, (int) $odo, $date);
+
+                $this->log->recordTask($task, VehicleLogEvent::EVENT_SERVICE_LOGGED, $actor, [
+                    'description' => $reminder->displayName() . ' confirmed @ ' . number_format((int) $odo) . ' km'
+                        . ($reminder->next_due_odometer ? ' — next due at ' . number_format((int) $reminder->next_due_odometer) . ' km' : '')
+                        . ' (ticket closed by ' . $actor->name . ')',
+                    'meta'        => [
+                        'service_type'       => $type,
+                        'odometer'           => (int) $odo,
+                        'next_due_odometer'  => $reminder->next_due_odometer,
+                        'confirmed_at_close' => true,
+                    ],
+                ]);
+            } catch (\Throwable $e) {
+                report($e); // confirming the next-service schedule must never break the ticket close
+            }
+        }
+    }
+
     private function composeClosingSummary(Maintenance $ticket, User $actor, ?string $closingNote): string
     {
         $ticket->loadMissing('vendor', 'inspector', 'lineItems');
@@ -4140,6 +6172,6 @@ class MaintenanceWorkflowService
     /** Relations every transition returns hydrated for the API. */
     private function eager(): array
     {
-        return ['vendor', 'reason', 'vehicle:id,plate_no,make,model', 'inspector:id,name', 'requester:id,name', 'linkedContract:id,contract_no', 'assignedDriver:id,name', 'delegatedBy:id,name', 'watchers:id,name', 'lineItems'];
+        return ['vendor', 'reason', 'vehicle:id,plate_no,make,model,operational_status,odometer', 'inspector:id,name', 'requester:id,name', 'linkedContract:id,contract_no', 'assignedDriver:id,name', 'delegatedBy:id,name', 'pickedUpFromGarageBy:id,name', 'watchers:id,name', 'lineItems', 'activeTemporaryRelease', 'temporaryReleases'];
     }
 }

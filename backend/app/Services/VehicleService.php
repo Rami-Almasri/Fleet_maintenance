@@ -26,6 +26,13 @@ class VehicleService
             // Repair Location — an OPEN on-site (mobile) ticket. The car stays available, so this drives
             // the "Pending Maintenance" tag on the list without touching operational_status.
             'maintenances as open_on_site_count' => fn ($q) => $q->where('workflow_status', \App\Models\Maintenance::WF_ON_SITE_PENDING),
+            // MANDATORY maintenance — an open committed ticket the inspector marked NON-deferrable at the
+            // Decide step. The car is grounded until the workshop completes it; the rental form reads this
+            // to block the pull-out outright (vs a deferrable ticket, which it offers to pause).
+            'maintenances as mandatory_maintenance_count' => fn ($q) => $q
+                ->openWorkflow()
+                ->whereIn('workflow_status', \App\Models\Maintenance::WF_TICKET_STATES)
+                ->where('deferrable_for_rental', false),
         ])->get();
     }
     public function store(array $data)

@@ -20,8 +20,13 @@ class MaintenanceWorkflowResource extends JsonResource
 {
     /** workflow_status → human label. */
     private const LABELS = [
+        Maintenance::WF_PENDING_REVIEW         => 'Pending review',
+        Maintenance::WF_REVIEW_REJECTED        => 'Review rejected',
         Maintenance::WF_INSPECTION_REQUESTED  => 'Inspection requested',
         Maintenance::WF_INSPECTION_DIAGNOSTIC => 'Diagnostic',
+        Maintenance::WF_RECOMMENDATION_PENDING => 'Pending recommendation',
+        Maintenance::WF_AWAITING_PARTS         => 'Waiting for parts',
+        Maintenance::WF_RECOMMENDATION_DISMISSED => 'Recommendation dismissed',
         Maintenance::WF_INSPECTION_PENDING => 'Pending dispatch',
         Maintenance::WF_ON_SITE_PENDING    => 'Pending on-site service',
         Maintenance::WF_AWAITING_DISPATCH  => 'Awaiting dispatch',
@@ -32,10 +37,12 @@ class MaintenanceWorkflowResource extends JsonResource
         Maintenance::WF_IN_OUR_PARK        => 'In our park',
         Maintenance::WF_READY_REINSPECTION => 'Final QA re-inspection',
         Maintenance::WF_REINSPECTION_FAILED => 'Re-inspection failed',
+        Maintenance::WF_PAUSED_RETURNED_TO_SERVICE  => 'Paused — returned to service',
         Maintenance::WF_AWAITING_INVOICE   => 'Awaiting invoice',
         Maintenance::WF_CLOSED             => 'Closed',
         Maintenance::WF_DIAGNOSTIC_CLEARED => 'No maintenance needed',
         Maintenance::WF_COMPLAINT_TRIAGE   => 'Pending triage',
+        Maintenance::WF_TRIAGE_APPROVAL_PENDING => 'Awaiting routing approval',
         Maintenance::WF_COMPLAINT_RESOLVED => 'Resolved on-site',
     ];
 
@@ -52,13 +59,111 @@ class MaintenanceWorkflowResource extends JsonResource
             'vehicle_id'   => $t->vehicle_id,
             'plate'        => $t->plate ?: $t->vehicle?->plate_no,
             'car'          => $t->car_label ?: trim(($t->vehicle?->make ?? '') . ' ' . ($t->vehicle?->model ?? '')) ?: null,
+            // The car's live movement status (available / rented / maintenance / …) — the "current
+            // operational status" the Recommendations queue shows so a supervisor sees whether the car is
+            // free before approving. Only present when the vehicle is eager-loaded with the column.
+            'operational_status' => $t->vehicle?->operational_status,
+            // The car's current authoritative odometer (present when the vehicle is eager-loaded with the
+            // column). Used to pre-fill the "Odometer out" field on a Temporary Vehicle Release.
+            'vehicle_odometer'   => $t->vehicle?->odometer,
 
             // Lifecycle
             'workflow_status' => $status,
             'status_label'    => self::LABELS[$status] ?? $status,
             'stage_index'     => $stageIndex === false ? null : $stageIndex,
             'is_open'         => $status !== null && ! in_array($status, Maintenance::WF_TERMINAL, true),
-            'is_ticket'       => in_array($status, Maintenance::WF_TICKET_STATES, true), // false while a pure diagnostic
+            // A committed ticket (has real repair state). A paused ticket IS a real ticket — it just isn't
+            // counted as "in maintenance" operationally — so it reads true here for the UI's ticket surfaces.
+            'is_ticket'       => in_array($status, Maintenance::WF_TICKET_STATES, true) || $status === Maintenance::WF_PAUSED_RETURNED_TO_SERVICE, // false while a pure diagnostic
+
+            // Pause Maintenance & Return to Service — while paused, the stage the ticket will resume at,
+            // plus when/why it was paused. Null on any non-paused ticket.
+            'is_paused'                => $status === Maintenance::WF_PAUSED_RETURNED_TO_SERVICE,
+            'paused_from_status'       => $t->paused_from_status,
+            'paused_from_status_label' => $t->paused_from_status ? (self::LABELS[$t->paused_from_status] ?? $t->paused_from_status) : null,
+            'paused_at'                => optional($t->paused_at)->toIso8601String(),
+            'paused_reason'            => $t->paused_reason,
+
+            // Enterprise Handover Workflow — once physically returned (but not yet resumed) the vehicle
+            // is blocked from being rented out again; the open discrepancy incident (if any) gates the
+            // resume until acknowledged.
+            'vehicle_returned_at'          => optional($t->vehicle_returned_at)->toIso8601String(),
+            'is_returned_pending_handover' => $t->isReturnedPendingHandover(),
+            'active_incident'              => $this->whenLoaded('activeIncident', fn () => $t->activeIncident ? [
+                'id'                    => $t->activeIncident->id,
+                'type'                  => $t->activeIncident->type,
+                'severity'              => $t->activeIncident->severity,
+                'description'           => $t->activeIncident->description,
+                'status'                => $t->activeIncident->status,
+                'acknowledged_by_name'  => $t->activeIncident->acknowledgedBy?->name,
+                'acknowledged_at'       => optional($t->activeIncident->acknowledged_at)->toIso8601String(),
+                'acknowledgement_note'  => $t->activeIncident->acknowledgement_note,
+            ] : null),
+            'last_pause_handover' => $this->whenLoaded('lastPauseHandover', fn () => $t->lastPauseHandover ? [
+                'id'                  => $t->lastPauseHandover->id,
+                'odometer_reading'    => $t->lastPauseHandover->odometer_reading,
+                'fuel_level'          => $t->lastPauseHandover->fuel_level,
+                'exterior_condition'  => $t->lastPauseHandover->exterior_condition,
+                'interior_condition'  => $t->lastPauseHandover->interior_condition,
+                'damage_findings'     => $t->lastPauseHandover->damage_findings,
+                'missing_accessories' => $t->lastPauseHandover->missing_accessories,
+                'notes'               => $t->lastPauseHandover->notes,
+                'occurred_at'         => optional($t->lastPauseHandover->occurred_at)->toIso8601String(),
+            ] : null),
+            'last_resume_handover' => $this->whenLoaded('lastResumeHandover', fn () => $t->lastResumeHandover ? [
+                'id'                  => $t->lastResumeHandover->id,
+                'odometer_reading'    => $t->lastResumeHandover->odometer_reading,
+                'fuel_level'          => $t->lastResumeHandover->fuel_level,
+                'exterior_condition'  => $t->lastResumeHandover->exterior_condition,
+                'interior_condition'  => $t->lastResumeHandover->interior_condition,
+                'damage_findings'     => $t->lastResumeHandover->damage_findings,
+                'missing_accessories' => $t->lastResumeHandover->missing_accessories,
+                'notes'               => $t->lastResumeHandover->notes,
+                'occurred_at'         => optional($t->lastResumeHandover->occurred_at)->toIso8601String(),
+            ] : null),
+            'handover_comparisons' => $this->whenLoaded('handoverComparisons', fn () => $t->handoverComparisons->map(fn ($c) => [
+                'id'                   => $c->id,
+                'pause_handover_id'    => $c->pause_handover_id,
+                'resume_handover_id'   => $c->resume_handover_id,
+                'mileage_delta'        => $c->mileage_delta,
+                'fuel_delta'           => $c->fuel_delta,
+                'new_damages'          => $c->new_damages,
+                'missing_accessories'  => $c->missing_accessories,
+                'condition_changes'    => $c->condition_changes,
+                'exceeds_threshold'    => (bool) $c->exceeds_threshold,
+                'threshold_breaches'   => $c->threshold_breaches,
+                'generated_at'         => optional($c->generated_at)->toIso8601String(),
+            ])->values()),
+
+            // Temporary Vehicle Release — the car is out of the workshop MID-REPAIR (road test / customer
+            // test / external inspection / storage) while THIS ticket stays at its stage (workflow_status
+            // is unchanged). `temporarily_released` is the quick flag the drawer/board read; the open
+            // out-leg carries who/why/when + odometer OUT; the history lists every out→in round trip with
+            // the distance driven while out. Present when eager-loaded (board/show).
+            'temporarily_released'     => $t->isTemporarilyReleased(),
+            'active_temporary_release' => $this->whenLoaded('activeTemporaryRelease', fn () => $t->activeTemporaryRelease ? [
+                'id'           => $t->activeTemporaryRelease->id,
+                'reason'       => $t->activeTemporaryRelease->reason,
+                'reason_label' => $t->activeTemporaryRelease->reasonLabel(),
+                'reason_note'  => $t->activeTemporaryRelease->reason_note,
+                'taken_by'     => $t->activeTemporaryRelease->taken_by,
+                'released_at'  => optional($t->activeTemporaryRelease->released_at)->toIso8601String(),
+                'odometer_out' => $t->activeTemporaryRelease->odometer_out,
+            ] : null),
+            'temporary_releases'       => $this->whenLoaded('temporaryReleases', fn () => $t->temporaryReleases->map(fn ($r) => [
+                'id'           => $r->id,
+                'reason'       => $r->reason,
+                'reason_label' => $r->reasonLabel(),
+                'reason_note'  => $r->reason_note,
+                'taken_by'     => $r->taken_by,
+                'released_at'  => optional($r->released_at)->toIso8601String(),
+                'odometer_out' => $r->odometer_out,
+                'returned_at'  => optional($r->returned_at)->toIso8601String(),
+                'odometer_in'  => $r->odometer_in,
+                'distance_km'  => $r->distance_km,
+                'return_note'  => $r->return_note,
+                'is_open'      => $r->isOpen(),
+            ])->values()),
 
             // LIVE POSITION — the single, unified "where is the car / what's happening to it", fused from
             // the ticket status + its active garage stint + its active transit move. The board, command
@@ -90,8 +195,19 @@ class MaintenanceWorkflowResource extends JsonResource
             // Ready-entry-point chips (see DiagnosticGateService::dueChecks) — the exact Findings-catalog
             // keywords a system-raised ticket is due for, offered as one-tap suggestions at the Decide step.
             'suggested_findings'    => array_values($t->suggested_findings ?? []),
+            // Trigger Detail — the "why" snapshot behind a SYSTEM-generated (periodic) request: the rule(s)
+            // that fired, each rule's human reason + checklist, and the mileage/threshold/overdue/due values
+            // at detection. Null for human-raised requests. The Inspection Review Queue renders this so a
+            // machine request explains itself (see MaintenanceWorkflowService::buildTriggerDetail).
+            'trigger_detail'        => $t->trigger_detail ?: null,
             'test_drive_report'     => $t->test_drive_report,
             'severity'              => $t->severity,
+
+            // Last real inspection/test-drive this car had BEFORE this request — attached by
+            // MaintenanceWorkflowService::pendingReview() so a reviewer can see when it was last looked
+            // at (and what was found) before approving another. Null if never inspected. {at, ago_days,
+            // by, severity, summary}.
+            'last_test'             => $t->last_test ?? null,
 
             // Fault Severity — the inspector's mandatory diagnostic grade. Colour + symbol drive the
             // board chip + command view; it's the headline urgency a supervisor reads first.
@@ -120,6 +236,10 @@ class MaintenanceWorkflowResource extends JsonResource
             'tasks'          => MaintenanceTaskResource::collection($this->whenLoaded('tasks')),
             'tasks_progress' => $this->when($t->relationLoaded('tasks'), fn () => $t->tasksProgress()),
 
+            // Post-Repair Inspection — the ticket's durable QC verdicts (Repair Quality Check panel). Only
+            // present when eager-loaded; the drawer otherwise fetches them via /repair-inspections.
+            'repair_inspections' => RepairInspectionResource::collection($this->whenLoaded('repairInspections')),
+
             // Garage + handoff data
             'garage'               => $t->vendor?->name ?: $t->garage,
             'vendor_id'            => $t->vendor_id,
@@ -130,6 +250,9 @@ class MaintenanceWorkflowResource extends JsonResource
             // so the driver drives to the NEW shop, not the one the car is leaving.
             'transfer_to_vendor_id' => $t->transfer_to_vendor_id,
             'transfer_to_garage'    => $t->transferToVendor?->name,
+            // How this planned transfer's pickup leg will run — 'driver' | 'recovery' | null (legacy/no
+            // transfer pending). Drives which pickup action (dispatch vs recovery) resolveAction() offers.
+            'transfer_transport_method' => $t->transfer_transport_method,
             'dispatched_by_id'     => $t->dispatched_by,
             'dispatched_by_name'   => $t->driver,   // snapshot of who took the car
 
@@ -160,6 +283,7 @@ class MaintenanceWorkflowResource extends JsonResource
             'receive_odometer'     => $t->receive_odometer,
             'return_odometer'      => $t->return_odometer,
             'reinspect_odometer'   => $t->reinspect_odometer,
+            'park_odometer'        => $t->park_odometer,
             // Odometer Continuity verdicts per capture stage (test_drive|dispatch|receive|return|reinspect) — the
             // board/drawer surface a "Discrepancy" badge from these. See OdometerContinuityService.
             'odometer_flags'       => $t->odometer_flags ?: null,
@@ -262,21 +386,53 @@ class MaintenanceWorkflowResource extends JsonResource
 
 
             // Audit trail — who advanced the ticket, and when (the WhatsApp replacement).
+            // 'dispatched' = picked up by the driver/recovery unit (still in transit); 'repair_started' =
+            // arrival confirmed at the garage (repair clock starts). Both carry odometer + garage/driver
+            // context so the timeline reads as the real pickup → transit → arrival sequence instead of
+            // jumping straight from "Needs Dispatch" to a bare "Now at Garage" timestamp.
+            // Legacy system requests raised before the review gate existed — sitting at inspection_requested
+            // (already actionable on the board) but never reviewed. See MaintenanceWorkflowService::pendingReview().
+            'is_legacy_unreviewed' => $status === Maintenance::WF_INSPECTION_REQUESTED
+                && $t->requested_by === null && $t->reviewed_by === null,
+
             'handoffs' => [
                 'requested'      => $this->stamp($t->requested_by, $t->requested_at, $t->requester?->name),
+                'reviewed'       => $this->stamp($t->reviewed_by, $t->reviewed_at, $t->reviewer?->name),
                 'inspected'      => $this->stamp($t->inspected_by, $t->inspected_at, $t->inspector?->name),
-                'dispatched'     => $this->stamp($t->dispatched_by, $t->dispatched_at),
-                'repair_started' => $this->stamp($t->repair_started_by, $t->repair_started_at),
+                'dispatched'     => $this->stamp($t->dispatched_by, $t->dispatched_at, $t->isRecovery() ? $t->recovery_unit_name : $t->driver, [
+                    'odometer'    => $t->dispatch_odometer,
+                    'destination' => $t->vendor?->name ?: $t->garage,
+                    'is_recovery' => $t->isRecovery(),
+                ]),
+                'repair_started' => $this->stamp($t->repair_started_by, $t->repair_started_at, $t->isRecovery() ? $t->recovery_unit_name : $t->driver, [
+                    'odometer' => $t->receive_odometer,
+                    'garage'   => $t->vendor?->name ?: $t->garage,
+                ]),
                 'ready'          => $this->stamp($t->ready_by, $t->ready_at),
-                'picked_up_from_garage' => $this->stamp($t->picked_up_from_garage_by, $t->picked_up_from_garage_at),
+                'picked_up_from_garage' => $this->stamp($t->picked_up_from_garage_by, $t->picked_up_from_garage_at, $t->pickedUpFromGarageBy?->name),
                 'park_arrived'   => $this->stamp($t->park_arrived_by, $t->park_arrived_at),
                 'closed'         => $this->stamp($t->wf_closed_by, $t->wf_closed_at),
+            ],
+
+            // Inspection Request Review Gate — the Controller (Lin/Marwa) sign-off before the request
+            // is sent to the Inspector, and its outcome.
+            'review' => [
+                'reviewer_name'     => $t->reviewer?->name,
+                'reviewed_at'       => optional($t->reviewed_at)->toIso8601String(),
+                'notes'             => $t->review_notes,
+                'rejection_reason'  => $t->review_rejection_reason,
+                'sent_at'           => optional($t->review_sent_at)->toIso8601String(),
             ],
 
             // Return-leg checkpoint (Ready for Pickup → In Our Park): whether the driver has already
             // collected the car from the garage — the frontend uses this to switch the single primary
             // action from "Collect from Garage" to "Arrived at Park" without a workflow_status change.
             'picked_up_from_garage_at' => optional($t->picked_up_from_garage_at)->toIso8601String(),
+            // Custody of the return leg: the driver who collected the car from the garage is the ONLY one
+            // who may complete "Arrive at our park" (enforced in MaintenanceWorkflowService::arriveAtPark).
+            // The frontend uses this to hide the button for everyone else and show a custody note instead.
+            'picked_up_from_garage_by'      => $t->picked_up_from_garage_by,
+            'picked_up_from_garage_by_name' => $t->pickedUpFromGarageBy?->name,
 
             // "Time in Stage" — when the ticket entered its current workflow_status, and how long ago
             // (seconds, computed server-side so the SLA colour threshold is immune to client-clock skew).
@@ -284,6 +440,31 @@ class MaintenanceWorkflowResource extends JsonResource
             // this instead of the (misleading) creation date and reddens a stage that overstays its SLA.
             'last_state_change_at' => optional($t->last_state_change_at ?: $t->created_at)->toIso8601String(),
             'seconds_in_stage'     => $this->seconds($t->last_state_change_at ?: $t->created_at, now()),
+
+            // Pre-Maintenance Recommendation queue triage (present for every ticket; only meaningful while
+            // in / after the recommendation states). `is_recommendation` is the quick flag the Recommendations
+            // page reads; the rest drive the queue card (schedule badge, parts note, who/when triaged, and
+            // how a dismissed recommendation was closed).
+            'is_recommendation'  => $t->isRecommendation(),
+            // Triage Routing Approval — Abu Maroof's pending routing recommendation (destination + optional
+            // replacement + note + who/when), shown on the Recommendations page for the Supervisor to
+            // approve/reject. `is_triage_approval` is the quick flag; null payload on every other ticket.
+            'is_triage_approval' => $t->isTriageApproval(),
+            'triage_route'       => is_array($t->triage_route_request) ? [
+                'destination'         => $t->triage_route_request['destination'] ?? null,
+                'replacement_vehicle_id' => $t->triage_route_request['replacement_vehicle_id'] ?? null,
+                'note'                => $t->triage_route_request['note'] ?? null,
+                'recommended_by_name' => $t->triage_route_request['recommended_by_name'] ?? null,
+                'recommended_at'      => $t->triage_route_request['recommended_at'] ?? null,
+            ] : null,
+            'recommendation'     => [
+                'scheduled_for'    => optional($t->recommendation_scheduled_for)->toIso8601String(),
+                'disposition'      => $t->recommendation_disposition,
+                'note'             => $t->recommendation_note,
+                'parts_ready'      => (bool) $t->recommendation_parts_ready,
+                'reviewed_by_name' => $t->recommendationReviewer?->name,
+                'reviewed_at'      => optional($t->recommendation_reviewed_at)->toIso8601String(),
+            ],
 
             'created_at' => optional($t->created_at)->toIso8601String(),
             'updated_at' => optional($t->updated_at)->toIso8601String(),
@@ -335,15 +516,15 @@ class MaintenanceWorkflowResource extends JsonResource
     }
 
     /** One handoff stamp: who (id + optional snapshot name) and when. Null when not yet reached. */
-    private function stamp($userId, $at, ?string $name = null): ?array
+    private function stamp($userId, $at, ?string $name = null, array $meta = []): ?array
     {
         if (! $userId && ! $at) {
             return null;
         }
-        return [
+        return array_merge([
             'user_id' => $userId,
             'name'    => $name,
             'at'      => $at ? $at->toIso8601String() : null,
-        ];
+        ], $meta);
     }
 }

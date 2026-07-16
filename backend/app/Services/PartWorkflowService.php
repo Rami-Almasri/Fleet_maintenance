@@ -66,36 +66,90 @@ class PartWorkflowService
             'meta'        => ['part_request_id' => $req->id, 'part_class' => $req->part_class, 'source' => $req->source],
         ]);
 
+        // Real-time intelligence at REQUEST time: if this vehicle already received the same part recently,
+        // alert the admins to review BEFORE approval. (The purchase-time gate + investigation still apply
+        // later; this is the earlier, softer heads-up — it never blocks the request.)
+        $this->flagRequestDuplicate($req, $actor);
+
         return $req->fresh();
     }
 
-    public function review(PartRequest $req, User $actor, ?string $notes = null): PartRequest
+    /** Best-effort duplicate heads-up when a part is REQUESTED (pre-approval). Never throws, never blocks. */
+    private function flagRequestDuplicate(PartRequest $req, User $actor): void
     {
-        $this->guardStatus($req, [PartRequest::STATUS_REQUESTED], 'move to Under Review');
-        $req->forceFill([
-            'status'           => PartRequest::STATUS_UNDER_REVIEW,
-            'reviewed_by'      => $actor->id,
-            'reviewed_by_name' => $actor->name ?: $actor->email,
-            'reviewed_at'      => Carbon::now(),
-            'review_notes'     => $notes,
-        ])->save();
+        try {
+            $fault   = $req->task;
+            $verdict = $this->intel->detectDuplicate(
+                $req->vehicle_id, $req->part_name, $req->part_number, $req->category_key, $req->part_class,
+                null, false, $fault?->category_key, $fault?->symptom
+            );
+            if (empty($verdict['duplicate'])) {
+                return;
+            }
 
-        return $req->fresh();
+            $prev      = $this->intel->duplicateContext($verdict)['previous'] ?? null;
+            $sameFault = ! empty($verdict['same_fault']);
+
+            $this->logVehicle($req->vehicle_id, VehicleLogEvent::EVENT_PART_DUPLICATE_FLAGGED, $actor, $req->maintenance_id, [
+                'description' => ($sameFault ? 'Same part re-requested for the SAME fault: ' : 'Possible duplicate part requested: ') . $req->part_name
+                                 . ($verdict['days_between'] !== null ? " (last bought {$verdict['days_between']}d ago)" : ''),
+                'meta'        => ['part_request_id' => $req->id, 'priority' => $verdict['priority'], 'same_fault' => $sameFault, 'stage' => 'request'],
+            ]);
+
+            $this->notifier->notifyByAnyPermission(['parts.investigate'], [
+                'type'     => 'part_duplicate_request',
+                'category' => 'maintenance',
+                'severity' => $verdict['priority'] === PartInvestigation::PRIORITY_HIGH ? 'critical' : 'warning',
+                'title'    => $sameFault ? 'Same part bought again for the same fault' : 'Possible duplicate parts request',
+                'body'     => $sameFault
+                    ? "{$req->requested_by_name} requested {$req->part_name} AGAIN for the same fault"
+                      . ($fault?->symptom ? " (“{$fault->symptom}”)" : '')
+                      . ($verdict['days_between'] !== null ? " — the previous one was bought {$verdict['days_between']} day(s) ago" : '')
+                      . '. Likely a failed repair — review before approval.'
+                    : "{$req->requested_by_name} requested {$req->part_name} for a vehicle that already received it "
+                      . ($verdict['days_between'] !== null ? "{$verdict['days_between']} day(s) ago" : 'recently')
+                      . '. Please review before approval.',
+                'url'      => '/parts?vehicle_id=' . $req->vehicle_id,
+                'key'      => 'part_dup_req:' . $req->id,
+                'icon'     => 'alert',
+                'meta'     => [
+                    'vehicle_id'           => $req->vehicle_id,
+                    'part_request_id'      => $req->id,
+                    'previous_purchase_id' => $prev['purchase_id'] ?? null,
+                ],
+            ], $actor->id);
+        } catch (\Throwable $e) {
+            report($e); // intelligence is advisory — a failure here must never fail the request
+        }
     }
 
-    public function approve(PartRequest $req, User $actor): PartRequest
+    /**
+     * Approve a request. A duplicate heads-up is surfaced to the approver in the UI BEFORE this call
+     * (the same signal the purchase step uses); when they approve a flagged repeat anyway, the frontend
+     * passes their acknowledgment note through so the "warned & approved" decision is on the record.
+     */
+    public function approve(PartRequest $req, User $actor, ?string $note = null): PartRequest
     {
         $this->guardStatus($req, [PartRequest::STATUS_REQUESTED, PartRequest::STATUS_UNDER_REVIEW], 'approve');
-        $req->forceFill([
+        $ackDuplicate = $note !== null && trim($note) !== '';
+
+        $fill = [
             'status'           => PartRequest::STATUS_APPROVED,
             'approved_by'      => $actor->id,
             'approved_by_name' => $actor->name ?: $actor->email,
             'approved_at'      => Carbon::now(),
-        ])->save();
+        ];
+        if ($ackDuplicate) {
+            // Keep the acknowledgment on the request itself (review_notes) so the audit trail shows the
+            // approver was warned of the earlier buy and chose to proceed.
+            $prefix = $req->review_notes ? $req->review_notes . "\n" : '';
+            $fill['review_notes'] = trim($prefix . 'Approved despite duplicate: ' . trim($note));
+        }
+        $req->forceFill($fill)->save();
 
         $this->logVehicle($req->vehicle_id, VehicleLogEvent::EVENT_PART_APPROVED, $actor, $req->maintenance_id, [
-            'description' => "Part request approved: {$req->part_name}",
-            'meta'        => ['part_request_id' => $req->id],
+            'description' => "Part request approved: {$req->part_name}" . ($ackDuplicate ? ' (duplicate acknowledged)' : ''),
+            'meta'        => ['part_request_id' => $req->id, 'duplicate_ack' => $ackDuplicate],
         ]);
 
         return $req->fresh();
@@ -139,9 +193,12 @@ class PartWorkflowService
         return DB::transaction(function () use ($req, $data, $actor) {
             $partClass = $req->part_class ?: $this->intel->classify($req->part_name, $req->part_number, $req->category_key);
 
-            // Look for a prior buy of the same part on this vehicle, WITH A LOCK, before we insert.
+            // Look for a prior buy of the same part on this vehicle, WITH A LOCK, before we insert. The
+            // fault context (from the request's task) escalates a same-part-for-the-same-fault repeat.
+            $fault   = $req->task;
             $verdict = $this->intel->detectDuplicate(
-                $req->vehicle_id, $req->part_name, $req->part_number, $req->category_key, $partClass, null, true
+                $req->vehicle_id, $req->part_name, $req->part_number, $req->category_key, $partClass, null, true,
+                $fault?->category_key, $fault?->symptom
             );
 
             $purchase = new PartPurchase();

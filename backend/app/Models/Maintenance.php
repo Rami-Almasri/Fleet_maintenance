@@ -46,6 +46,14 @@ class Maintenance extends Model
      * MaintenanceWorkflowService maps the lifecycle onto event_status so the board, SLA and
      * operational_status cascade keep working. The middle four are the Controller dashboard columns.
      */
+    // Inspection Request Review Gate. A Driver/system-generated inspection request no longer jumps
+    // straight to the Inspector (Abu Maroof) — it parks HERE first, visible only to the Controllers
+    // (Lin & Marwa, `maintenance.manage`), who approve (→ inspection_requested, exactly the hand-off
+    // that used to fire immediately) or reject (→ review_rejected, terminal, nothing sent externally).
+    // Pre-ticket, like inspection_requested itself. See approveInspectionReview()/rejectInspectionReview().
+    public const WF_PENDING_REVIEW    = 'pending_review';           // Stage -1: awaiting Controller review before the Inspector is notified
+    // Terminal: the Controller rejected the request — no inspection ever happens, nothing external sent.
+    public const WF_REVIEW_REJECTED   = 'review_rejected';
     public const WF_INSPECTION_REQUESTED  = 'inspection_requested';  // Stage 0: a Driver requested an inspection — NOT a ticket yet
     public const WF_INSPECTION_DIAGNOSTIC = 'inspection_diagnostic'; // Stage 1: test-drive diagnostic — NOT a ticket yet
     public const WF_INSPECTION_PENDING = 'inspection_pending';       // Stage 2 (requires maintenance · IN-SHOP): ticket OPENED, awaiting the Supervisor's dispatch decision
@@ -58,6 +66,14 @@ class Maintenance extends Model
     public const WF_ON_SITE_PENDING    = 'on_site_pending';          // committed on-site job — car stays available, tagged "Pending Maintenance"
     public const WF_AWAITING_DISPATCH  = 'awaiting_dispatch';        // Phase 2: Supervisor picked the garage + assigned a driver — awaiting the driver's pickup
     public const WF_IN_TRANSIT         = 'in_transit';               // UC-3: odometer + garage captured, car en route
+
+    // Planned garage transfer — HOW the car will actually move to its new garage, chosen by the
+    // Supervisor at the moment Transfer is requested (beginGarageTransfer). Drives which pickup screen
+    // the ticket resolves to at awaiting_dispatch: 'driver' → the normal dispatch() form, 'recovery' →
+    // dispatchRecovery() (towing). Null = legacy default (driver), for tickets transferred before this
+    // choice existed.
+    public const TRANSPORT_DRIVER   = 'driver';
+    public const TRANSPORT_RECOVERY = 'recovery';
     public const WF_UNDER_REPAIR       = 'under_repair';             // UC-4: garage received the car
     // Supervisor Video-Review gate: the garage has FINISHED the repair and sent its video (uploaded to
     // the ticket by Waleed/Abdullah). Before the car returns to service, a supervisor reviews that video
@@ -96,12 +112,68 @@ class Maintenance extends Model
     // Terminal: the complaint was handled WITHOUT a garage visit (repaired at the customer / resolved on
     // the spot). No cost/garage is required — it simply closes the loop with a resolution note in the audit.
     public const WF_COMPLAINT_RESOLVED = 'complaint_resolved';
+    // Triage Routing Approval gate. When Abu Maroof (the Inspector) decides a complaint needs the car sent
+    // in — to a garage or to his own diagnostic — his decision is now a RECOMMENDATION, not an executed
+    // move: the ticket parks HERE while a Supervisor/delegate signs it off. His chosen destination +
+    // optional replacement + note are held on `triage_route_request` until then. Like the other pre-ticket
+    // states it is FENCED (NOT in WF_TICKET_STATES) — the car stays free and no garage is alerted until the
+    // Supervisor Approves (→ the real route runs) or Rejects (→ back to complaint_triage). See
+    // recommendTriageRoute() / approveTriageRoute() / rejectTriageRoute().
+    public const WF_TRIAGE_APPROVAL_PENDING = 'triage_approval_pending';
+
+    // ── PRE-MAINTENANCE RECOMMENDATION QUEUE ────────────────────────────────────────────────────────
+    // A recommendation is NOT a commitment to repair. When the Inspector files an in-shop "requires
+    // maintenance" report, the ticket lands HERE — a lightweight review queue the Supervisor triages —
+    // instead of jumping straight into the active dispatch pipeline (inspection_pending). Like the other
+    // pre-ticket states these are FENCED: NOT in WF_TICKET_STATES, so the car is never counted as an
+    // active maintenance job, never drives operational_status, links no contract and raises no garage
+    // alert. Only the Supervisor's explicit "Start Maintenance" advances it into inspection_pending, from
+    // which the existing workflow runs completely unchanged. See submitReport() + the recommendation* methods.
+    public const WF_RECOMMENDATION_PENDING = 'recommendation_pending'; // awaiting the Supervisor's review
+    // "Waiting for Parts" — the Supervisor approved the intent but the repair needs a spare part first. The
+    // car stays in the recommendation queue (still fenced, still Available) until parts are ready; it is NOT
+    // an active maintenance job while it waits. parts-ready returns it to recommendation_pending to start.
+    public const WF_AWAITING_PARTS = 'awaiting_parts';
+    // Terminal: the recommendation was dismissed WITHOUT any maintenance — either rejected or judged not
+    // required. The reason + which disposition is stored on recommendation_disposition / recommendation_note.
+    public const WF_RECOMMENDATION_DISMISSED = 'recommendation_dismissed';
+
+    // ── PAUSED — RETURNED TO SERVICE (operational pause) ────────────────────────────────────────────
+    // The repair had already started, but the car is urgently needed back in service — for a customer
+    // rental or any other operational reason: the company temporarily INTERRUPTS the maintenance and
+    // releases the car back into service (Available) WITHOUT closing, cancelling or completing the
+    // ticket. All progress, notes, parts, photos, technician assignments and audit history are preserved
+    // in place; the stage the ticket held is remembered in `paused_from_status`.
+    // Like the pre-ticket / awaiting-invoice states this is DELIBERATELY NOT in WF_TICKET_STATES, so the
+    // car is NOT counted as in-maintenance and is freely rentable while it waits — yet it is NOT in
+    // WF_TERMINAL either, so the ticket stays OPEN. Full Enterprise Handover Workflow: both the pause
+    // and the resume leg capture a full custody handover (odometer/fuel/condition/damage/signature —
+    // see MaintenanceHandover), and once the vehicle is marked physically RETURNED
+    // (`vehicle_returned_at`) it is blocked from being rented out again until the resume handover clears
+    // (or an open MaintenanceIncident is acknowledged) — see OperationsService::vehicleInMaintenance().
+    // "Resume Maintenance" restores paused_from_status and the car re-enters the pipeline at the
+    // identical stage (nothing restarts). See pauseForRental()/resumeMaintenance().
+    public const WF_PAUSED_RETURNED_TO_SERVICE = 'paused_returned_to_service';
+
+    /** The two live recommendation-queue states (pending + waiting-for-parts). Fenced pre-ticket, shown
+     *  only on the Maintenance Recommendations page — never on the active repair board. */
+    public const WF_RECOMMENDATION_STATES = [self::WF_RECOMMENDATION_PENDING, self::WF_AWAITING_PARTS];
+
+    /** How a dismissed recommendation was disposed of (recommendation_disposition column). */
+    public const RECO_REJECTED     = 'rejected';
+    public const RECO_NOT_REQUIRED = 'not_required';
+    public const RECO_DISPOSITIONS = [self::RECO_REJECTED, self::RECO_NOT_REQUIRED];
 
     /** Every workflow state, in lifecycle order. */
     public const WORKFLOW_STATUSES = [
+        self::WF_PENDING_REVIEW,
+        self::WF_REVIEW_REJECTED,
         self::WF_INSPECTION_REQUESTED,
         self::WF_COMPLAINT_TRIAGE,
+        self::WF_TRIAGE_APPROVAL_PENDING,
         self::WF_INSPECTION_DIAGNOSTIC,
+        self::WF_RECOMMENDATION_PENDING,
+        self::WF_AWAITING_PARTS,
         self::WF_INSPECTION_PENDING,
         self::WF_ON_SITE_PENDING,
         self::WF_AWAITING_DISPATCH,
@@ -112,14 +184,16 @@ class Maintenance extends Model
         self::WF_IN_OUR_PARK,
         self::WF_READY_REINSPECTION,
         self::WF_REINSPECTION_FAILED,
+        self::WF_PAUSED_RETURNED_TO_SERVICE,
         self::WF_AWAITING_INVOICE,
         self::WF_CLOSED,
         self::WF_DIAGNOSTIC_CLEARED,
         self::WF_COMPLAINT_RESOLVED,
+        self::WF_RECOMMENDATION_DISMISSED,
     ];
 
     /** Terminal states — a finished lifecycle, excluded from the live pipeline. */
-    public const WF_TERMINAL = [self::WF_CLOSED, self::WF_DIAGNOSTIC_CLEARED, self::WF_COMPLAINT_RESOLVED];
+    public const WF_TERMINAL = [self::WF_CLOSED, self::WF_DIAGNOSTIC_CLEARED, self::WF_COMPLAINT_RESOLVED, self::WF_RECOMMENDATION_DISMISSED, self::WF_REVIEW_REJECTED];
 
     /** The car is back on the road (repair done) — closed OR awaiting-invoice OR already in the park.
      *  Used where "is the car operationally free?" matters, distinct from WF_TERMINAL (which means the
@@ -138,7 +212,20 @@ class Maintenance extends Model
 
     /** The pre-ticket states: a Driver request or an in-progress diagnostic. Neither is a committed
      *  ticket — they raise no Logistics dispatch, link no contract and never drive operational_status. */
-    public const WF_PRE_TICKET = [self::WF_INSPECTION_REQUESTED, self::WF_COMPLAINT_TRIAGE, self::WF_INSPECTION_DIAGNOSTIC];
+    public const WF_PRE_TICKET = [
+        self::WF_PENDING_REVIEW,
+        self::WF_REVIEW_REJECTED,
+        self::WF_INSPECTION_REQUESTED,
+        self::WF_COMPLAINT_TRIAGE,
+        // A triage routing decision awaiting the Supervisor's approval is still pre-ticket — the car
+        // hasn't been committed to a garage yet, so it stays free and raises no dispatch.
+        self::WF_TRIAGE_APPROVAL_PENDING,
+        self::WF_INSPECTION_DIAGNOSTIC,
+        // The recommendation queue is pre-ticket too: an approved-to-repair decision hasn't been made yet,
+        // so a car sitting in recommendation_pending / awaiting_parts is NOT an active maintenance job.
+        self::WF_RECOMMENDATION_PENDING,
+        self::WF_AWAITING_PARTS,
+    ];
 
     /**
      * The states that count as a real, committed maintenance TICKET (a decision to repair was made).
@@ -163,6 +250,106 @@ class Maintenance extends Model
         // always auto-continues to closed (minor repair) or ready_for_reinspection (major repair) within
         // the same request, so no ticket ever rests here; whichever state it lands on governs freedom.
     ];
+
+    /**
+     * The stages a live repair can be PAUSED from (Pause Maintenance & Return to Service). These are the
+     * committed-ticket, in-progress states — a real repair is under way and the car is currently held in
+     * maintenance, which is exactly when a customer might need it pulled out. Terminal, pre-ticket,
+     * on-site (car already available), in-our-park (transient), awaiting-invoice (car already back) and
+     * an already-closed ticket are all excluded. Mirrors WF_TICKET_STATES minus WF_CLOSED.
+     */
+    public const PAUSABLE_STATES = [
+        self::WF_INSPECTION_PENDING,
+        self::WF_AWAITING_DISPATCH,
+        self::WF_IN_TRANSIT,
+        self::WF_UNDER_REPAIR,
+        self::WF_REPAIR_REVIEW,
+        self::WF_READY_REINSPECTION,
+        self::WF_REINSPECTION_FAILED,
+        self::WF_READY_FOR_PICKUP,
+    ];
+
+    /**
+     * The committed-ticket stages at which the car is physically OUT (event_status 'OUT' — dispatched to
+     * the garage and not yet returned). Used to restore event_status EXACTLY on resume: a ticket paused
+     * from one of these goes back to 'OUT', anything else (inspection_pending / awaiting_dispatch — the
+     * car was still parked at base) goes back to 'IN'. Mirrors the lifecycle→event_status mapping the
+     * workflow service applies at each transition (out_date is stamped at dispatch / in_transit).
+     */
+    public const WF_PHYSICALLY_OUT_STATES = [
+        self::WF_IN_TRANSIT,
+        self::WF_UNDER_REPAIR,
+        self::WF_REPAIR_REVIEW,
+        self::WF_READY_FOR_PICKUP,
+        self::WF_READY_REINSPECTION,
+        self::WF_REINSPECTION_FAILED,
+    ];
+
+    /** Can this ticket be paused (released back into service) from its current stage? */
+    public function isPausable(): bool
+    {
+        return in_array($this->workflow_status, self::PAUSABLE_STATES, true);
+    }
+
+    /**
+     * Rental Eligibility — did the inspector allow this car to be rented BEFORE maintenance completes?
+     * true = deferrable (a rental pauses the ticket, it resumes on return); false = mandatory
+     * maintenance (grounded until the workshop finishes). Decided once at the Decide step.
+     */
+    public function isDeferrableForRental(): bool
+    {
+        return (bool) $this->deferrable_for_rental;
+    }
+
+    /** Is this ticket currently paused, released back into service (repair on hold)? */
+    public function isPausedReturnedToService(): bool
+    {
+        return $this->workflow_status === self::WF_PAUSED_RETURNED_TO_SERVICE;
+    }
+
+    /** Paused AND the vehicle has been marked physically returned — a handover is due before resuming. */
+    public function isReturnedPendingHandover(): bool
+    {
+        return $this->isPausedReturnedToService() && $this->vehicle_returned_at !== null;
+    }
+
+    /** Paused and still out (no return handover captured yet) — the car is with the customer/operation. */
+    public function isPausedOut(): bool
+    {
+        return $this->isPausedReturnedToService() && $this->vehicle_returned_at === null;
+    }
+
+    // ── Temporary Vehicle Release ──────────────────────────────────────────────────────────────────
+    // The car leaves the workshop mid-repair (a road test, a customer test/delivery, an external
+    // inspection, storage, …) while the ticket stays put. Unlike a Pause & Return to Service, the
+    // workflow_status is NEVER changed, the car is NOT freed for rental, and the ticket is NOT
+    // closed/completed — the same repair simply continues when the car returns. The overlay is expressed
+    // purely through active_temporary_release_id (a pointer to the open MaintenanceTemporaryRelease row).
+
+    /**
+     * The stages a car may be temporarily taken out from. Same committed-ticket, in-progress set as a
+     * pause: a real repair is under way (or awaiting one) and there is a physical car to take out. A
+     * paused ticket (car already released into service) and terminal/pre-ticket/on-site tickets are
+     * excluded by virtue of not being in this set. Mirrors PAUSABLE_STATES.
+     */
+    public const TEMP_RELEASABLE_STATES = self::PAUSABLE_STATES;
+
+    /** Is the car currently out on a temporary release (repair continues untouched while it's away)? */
+    public function isTemporarilyReleased(): bool
+    {
+        return $this->active_temporary_release_id !== null;
+    }
+
+    /**
+     * Can the car be temporarily taken out from its current stage? Only a committed, in-progress ticket
+     * whose car isn't ALREADY out (temporary release or an operational pause) qualifies.
+     */
+    public function isTempReleasable(): bool
+    {
+        return in_array($this->workflow_status, self::TEMP_RELEASABLE_STATES, true)
+            && ! $this->isTemporarilyReleased()
+            && ! $this->isPausedReturnedToService();
+    }
 
     /**
      * REPAIR LOCATION — the Supervisor's "where does this repair happen?" decision, made at the Decide
@@ -252,8 +439,9 @@ class Maintenance extends Model
      * Is this finding/fault a SCHEDULED routine service (oil change, battery, …) rather than a one-off
      * fault? Returns the matching ServiceReminder service_type slug (oil_change / battery / …) when the
      * symptom text exactly matches a routine keyword in config('maintenance_findings.routine_service_types'),
-     * or null for an ordinary fault. Completing such a fault rolls its Service Reminder forward — see
-     * MaintenanceTaskService::advanceRoutineService + Vehicle::recordServiceDone.
+     * or null for an ordinary fault. When such a fault is confirmed at ticket close its Service Reminder
+     * rolls forward — see MaintenanceWorkflowService::confirmRoutineServices + Vehicle::recordServiceDone.
+     * (Broader sibling: serviceTypeForSymptom, which also matches other reminder types by label.)
      */
     public static function routineServiceTypeFor(?string $symptom): ?string
     {
@@ -269,6 +457,62 @@ class Maintenance extends Model
             }
         }
         return $map[$key] ?? null;
+    }
+
+    /**
+     * Broader sibling of routineServiceTypeFor: resolve a fault symptom to the ServiceReminder
+     * service_type slug whose loop should roll forward when the fault is confirmed at ticket close.
+     * This is the resolver MaintenanceWorkflowService::confirmRoutineServices uses — the SINGLE place a
+     * maintenance action reaches the vehicle record.
+     *
+     *   1) a curated routine keyword (oil change, battery replacement, filters, tyres) — via
+     *      routineServiceTypeFor; OR
+     *   2) any other Service-Reminder type matched by its display label (Brake Pads, A/C Service,
+     *      Transmission Service, …). We deliberately EXCLUDE 'battery' (only the exact "Battery
+     *      Replacement" routine keyword may stamp the battery date — a bare "Battery" fault must not) and
+     *      the catch-all 'general'.
+     */
+    public static function serviceTypeForSymptom(?string $symptom): ?string
+    {
+        if ($type = self::routineServiceTypeFor($symptom)) {
+            return $type;
+        }
+
+        $key = mb_strtolower(trim((string) $symptom));
+        if ($key === '') {
+            return null;
+        }
+
+        static $labelMap = null;
+        if ($labelMap === null) {
+            $labelMap = [];
+            foreach (\App\Models\ServiceReminder::TYPE_LABELS as $slug => $label) {
+                if (in_array($slug, ['battery', 'general'], true)) {
+                    continue;
+                }
+                $labelMap[mb_strtolower(trim($label))] = $slug;
+            }
+        }
+        return $labelMap[$key] ?? null;
+    }
+
+    /**
+     * Inverse of serviceTypeForSymptom: the canonical finding text to seed on a ticket for a given
+     * service_type slug, so a reminder → ticket → close round-trips (confirmRoutineServices can match it
+     * back). Prefers the curated routine keyword ('battery' → "Battery Replacement", 'oil_change' →
+     * "Oil Change") so the exact-match matcher recognises it; else the ServiceReminder label.
+     */
+    public static function serviceLabelForType(?string $slug): ?string
+    {
+        if (! $slug) {
+            return null;
+        }
+        foreach ((array) config('maintenance_findings.routine_service_types', []) as $keyword => $type) {
+            if ($type === $slug) {
+                return \Illuminate\Support\Str::title(trim($keyword));
+            }
+        }
+        return \App\Models\ServiceReminder::TYPE_LABELS[$slug] ?? \Illuminate\Support\Str::title(str_replace('_', ' ', $slug));
     }
 
     /**
@@ -451,13 +695,32 @@ class Maintenance extends Model
         'workflow_status',
         // Repair Location — 'in_shop' (workshop pipeline) | 'on_site' (mobile job, car stays available).
         'repair_location',
+        // Rental Eligibility — the inspector's one-time Decide-step call: may this car be rented BEFORE
+        // maintenance is finished? false = mandatory (grounded until complete); true = deferrable (rental
+        // pauses the ticket, resumes on return). Read by ContractEligibilityService::maintenanceCheck().
+        'deferrable_for_rental',
         // When the ticket ENTERED its current workflow_status — the "time in stage" anchor. Stamped
         // automatically on every status change (see booted()); never hand-set by the workflow service.
         'last_state_change_at',
+        // Pause Maintenance & Return to Service — the stage the ticket held before an operational pause
+        // (restored verbatim on resume), plus who paused it, when, and why. paused_at/paused_reason stay
+        // permanently as the historical stamp of the most recent pause (event-sourced); only
+        // paused_from_status/paused_by are reset once a resume finalizes.
+        'paused_from_status', 'paused_at', 'paused_by', 'paused_reason',
+        // Enterprise Handover Workflow — when/by-whom the vehicle was marked physically returned, the
+        // open discrepancy incident gating a resume, and quick pointers to the latest pause/resume
+        // handover rows (see MaintenanceHandover / MaintenanceHandoverComparison / MaintenanceIncident).
+        'vehicle_returned_at', 'vehicle_returned_by', 'active_incident_id',
+        'last_pause_handover_id', 'last_resume_handover_id',
+        // Temporary Vehicle Release — the currently-open release (car out of the shop mid-repair for a
+        // road test / customer test / external inspection / storage). Null when the car is at the shop.
+        // The ticket's workflow_status is UNCHANGED throughout — this is a vehicle-level overlay only.
+        'active_temporary_release_id',
         'linked_contract_id',
         'trigger_reason',
         'customer_complaint',
         'suggested_findings',
+        'trigger_detail',
         'test_drive_report',
         'findings',
         'test_odometer',
@@ -467,8 +730,12 @@ class Maintenance extends Model
         'receive_odometer',
         'return_odometer',
         'reinspect_odometer',
+        'park_odometer',
         'garage_feedback',
         'requested_by', 'requested_at',
+        // Inspection Request Review Gate — Controller (Lin & Marwa) sign-off before the request is
+        // sent to the Inspector.
+        'reviewed_by', 'reviewed_at', 'review_notes', 'review_rejection_reason', 'review_sent_at',
         'follow_ups',
         // Stage-timing anchors — durations are subtraction over these (see migration).
         'test_started_at', 'returned_at',
@@ -497,6 +764,18 @@ class Maintenance extends Model
         'invoice_requested_at', 'invoice_requested_by',
         // Awaiting-Invoice SLA — when the ticket entered awaiting_invoice (the 3-day overdue clock).
         'awaiting_invoice_since',
+        // Pre-Maintenance Recommendation queue — the Supervisor's triage of an inspection recommendation
+        // before it becomes an active maintenance job. scheduled_for = "review again on"; disposition +
+        // note = how a dismissed recommendation was closed / a parts note; parts_ready = the spare arrived.
+        'recommendation_scheduled_for',
+        'recommendation_disposition',
+        'recommendation_note',
+        'recommendation_parts_ready',
+        'recommendation_reviewed_by',
+        'recommendation_reviewed_at',
+        // Triage Routing Approval — Abu Maroof's recommended routing (destination + optional replacement +
+        // note + who/when) held while it awaits a Supervisor's approve/reject.
+        'triage_route_request',
     ];
 
     protected $casts = [
@@ -517,6 +796,7 @@ class Maintenance extends Model
         'test_drive_report'    => 'array',
         'findings'             => 'array',
         'suggested_findings'   => 'array',
+        'trigger_detail'       => 'array', // snapshot of WHY the system raised a periodic request (see systemRequestInspection)
         'follow_ups'           => 'array',
         'test_odometer'        => 'integer',
         'report_odometer'      => 'integer',
@@ -525,9 +805,14 @@ class Maintenance extends Model
         'receive_odometer'     => 'integer',
         'return_odometer'      => 'integer',
         'reinspect_odometer'   => 'integer',
+        'park_odometer'        => 'integer',
         'odometer_flags'       => 'array', // per-stage Odometer Continuity verdicts (OdometerContinuityService)
         'requested_at'         => 'datetime',
+        'reviewed_at'          => 'datetime',
+        'review_sent_at'       => 'datetime',
         'last_state_change_at' => 'datetime',
+        'paused_at'            => 'datetime',
+        'vehicle_returned_at'  => 'datetime',
         'test_started_at'      => 'datetime',
         'returned_at'          => 'datetime',
         'inspected_at'         => 'datetime',
@@ -541,6 +826,14 @@ class Maintenance extends Model
         'cost_recorded_at'     => 'datetime',
         'invoice_requested_at' => 'datetime',
         'awaiting_invoice_since' => 'datetime',
+        // Recommendation queue triage
+        'recommendation_scheduled_for' => 'datetime',
+        'recommendation_reviewed_at'   => 'datetime',
+        'recommendation_parts_ready'   => 'boolean',
+        // Rental Eligibility — deferrable (true) vs mandatory (false) maintenance.
+        'deferrable_for_rental'        => 'boolean',
+        // Triage Routing Approval — the pending routing recommendation (JSON).
+        'triage_route_request'         => 'array',
     ];
 
     /**
@@ -569,6 +862,12 @@ class Maintenance extends Model
     public function assignedDriver(): BelongsTo
     {
         return $this->belongsTo(User::class, 'assigned_driver_id');
+    }
+
+    /** The Supervisor who last triaged this recommendation (approve / reject / schedule / parts), if any. */
+    public function recommendationReviewer(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'recommendation_reviewed_by');
     }
 
     /** The Supervisor who delegated the current driver (pickup/dropoff), if any. */
@@ -619,6 +918,30 @@ class Maintenance extends Model
             ->whereNotIn('workflow_status', self::WF_TERMINAL);
     }
 
+    /** The pre-maintenance Recommendation queue — pending review + waiting-for-parts (fenced pre-ticket). */
+    public function scopeRecommendationQueue(Builder $q): Builder
+    {
+        return $q->whereIn('workflow_status', self::WF_RECOMMENDATION_STATES);
+    }
+
+    /** True while this ticket is in the recommendation queue (not yet an approved/active maintenance job). */
+    public function isRecommendation(): bool
+    {
+        return in_array($this->workflow_status, self::WF_RECOMMENDATION_STATES, true);
+    }
+
+    /** Triage routing recommendations awaiting a Supervisor's approve/reject (fenced pre-ticket). */
+    public function scopeTriageApprovalQueue(Builder $q): Builder
+    {
+        return $q->where('workflow_status', self::WF_TRIAGE_APPROVAL_PENDING);
+    }
+
+    /** True while Abu Maroof's routing decision is parked awaiting the Supervisor's approval. */
+    public function isTriageApproval(): bool
+    {
+        return $this->workflow_status === self::WF_TRIAGE_APPROVAL_PENDING;
+    }
+
     /** Tickets sitting in awaiting_invoice — the car is back in service but the invoice hasn't landed. */
     public function scopeAwaitingInvoice(Builder $q): Builder
     {
@@ -655,10 +978,22 @@ class Maintenance extends Model
         return $this->belongsTo(User::class, 'requested_by');
     }
 
+    /** The Controller (Lin/Marwa) who approved or rejected the inspection review. */
+    public function reviewer(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'reviewed_by');
+    }
+
     /** Who recorded the final (deferred) repair cost after the ticket was closed. */
     public function costRecordedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'cost_recorded_by');
+    }
+
+    /** The Driver (Logistics) who collected the car from the garage on the return leg. */
+    public function pickedUpFromGarageBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'picked_up_from_garage_by');
     }
 
     /** The maintenance (type-'U') contract this ticket was linked to at dispatch, if any. */
@@ -744,6 +1079,23 @@ class Maintenance extends Model
             return $base('closed', 'Closed', 'green', null);
         }
 
+        // (0) Temporary Vehicle Release — the car has physically left the workshop for a road test /
+        // customer test / external inspection / storage while the SAME repair continues. This is the car's
+        // real-world location right now, so it OUTRANKS the stage label below (the ticket_status is still
+        // e.g. under_repair — that's shown separately as the lifecycle stage). It never coincides with a
+        // logistics move (a temp release isn't a dispatched task), so no conflict with the moving check.
+        if ($this->isTemporarilyReleased()) {
+            $rel    = $this->activeTemporaryRelease;
+            $reason = $rel?->reasonLabel();
+            return $base('temporarily_released', 'Temporarily Released', 'amber',
+                'Out of the workshop' . ($reason ? ' · ' . $reason : '') . ' — repair still open, resumes on return',
+                [
+                    'garage'    => $this->vendor?->name ?: ($this->garage ?: null),
+                    'since'     => optional($rel?->released_at)->toIso8601String(),
+                    'taken_by'  => $rel?->taken_by,
+                ]);
+        }
+
         // (2) The car's single current garage — the ticket's own vendor (the Supervisor's dispatch /
         // transfer decision); every open fault sits at this one garage under the single-garage model.
         $garage = $this->vendor?->name ?: ($this->garage ?: null);
@@ -776,7 +1128,12 @@ class Maintenance extends Model
         return match ($status) {
             self::WF_INSPECTION_REQUESTED  => $base('inspection_requested', 'Inspection Requested', 'violet', 'A driver asked for a test drive'),
             self::WF_COMPLAINT_TRIAGE      => $base('complaint_triage', 'Pending Triage', 'amber', 'Customer complaint — Abu Maroof to triage'),
+            self::WF_TRIAGE_APPROVAL_PENDING => $base('triage_approval_pending', 'Awaiting Routing Approval', 'violet', 'Abu Maroof recommended sending the car in — awaiting the supervisor\'s approval'),
             self::WF_INSPECTION_DIAGNOSTIC => $base('under_diagnosis', 'Under Diagnosis', 'violet', 'Test-drive diagnostic in progress'),
+            // Pre-maintenance recommendation queue — a recommendation awaiting the Supervisor's review, or
+            // approved-but-waiting-for-parts. Fenced: the car is NOT an active maintenance job here.
+            self::WF_RECOMMENDATION_PENDING => $base('recommendation_pending', 'Pending Recommendation', 'violet', 'Recommended action awaiting the supervisor\'s approval'),
+            self::WF_AWAITING_PARTS         => $base('awaiting_parts', 'Waiting for Parts', 'amber', 'Approved — waiting for the spare part before maintenance can start'),
             self::WF_INSPECTION_PENDING    => $base('awaiting_dispatch', 'Awaiting Dispatch', 'amber', "Awaiting the supervisor's garage decision"),
             // On-Site (mobile) job — the car is NOT out; it stays where it's parked, tagged only.
             self::WF_ON_SITE_PENDING       => $base('on_site_pending', 'Pending On-Site Service', 'teal', 'Minor job — to be done where the car is parked (stays available)'),
@@ -795,6 +1152,10 @@ class Maintenance extends Model
             self::WF_REINSPECTION_FAILED   => $base('reinspection_failed', 'Re-inspection Failed', 'red', 'Faults still unresolved — awaiting the supervisor\'s re-dispatch' . ($garage ? ' · last: ' . $garage : ''), ['garage' => $garage]),
             self::WF_READY_FOR_PICKUP      => $base('ready_for_pickup', 'Ready for Pickup', 'teal', 'Signed off — awaiting driver pickup from the garage' . ($garage ? ' · ' . $garage : ''), ['garage' => $garage]),
             self::WF_IN_OUR_PARK           => $base('in_our_park', 'In Our Park', 'green', 'Back at base — being auto-evaluated (closes immediately, or routes to final QA for major repairs)'),
+            // Paused — returned to service — the repair is on hold and the car has been released back into
+            // service, so it is NOT moving and NOT at the garage right now; the ticket simply remembers
+            // where it will resume.
+            self::WF_PAUSED_RETURNED_TO_SERVICE => $base('paused', 'Paused — Returned to Service', 'slate', 'Maintenance paused — car released back into service' . ($garage ? ' · resumes at ' . $garage : ''), ['garage' => $garage]),
             default                        => $base('open', $this->workflow_status, 'slate', null),
         };
     }
@@ -828,6 +1189,58 @@ class Maintenance extends Model
             ->latestOfMany();
     }
 
+    // ── Enterprise Handover Workflow (Pause & Return to Service) ────────────────────────────────
+
+    /** Every custody-transfer event (pause + resume legs) ever captured on this ticket. */
+    public function handovers(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(MaintenanceHandover::class, 'maintenance_id');
+    }
+
+    /** Every generated pause↔resume comparison report on this ticket (one per resume, always). */
+    public function handoverComparisons(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(MaintenanceHandoverComparison::class, 'maintenance_id');
+    }
+
+    /** Every discrepancy incident ever raised on this ticket's handovers. */
+    public function incidents(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(MaintenanceIncident::class, 'maintenance_id');
+    }
+
+    /** The open incident currently gating a resume, if any. */
+    public function activeIncident(): BelongsTo
+    {
+        return $this->belongsTo(MaintenanceIncident::class, 'active_incident_id');
+    }
+
+    // ── Temporary Vehicle Release ──────────────────────────────────────────────────────────────────
+
+    /** Every temporary release ever logged on this ticket (each out→in round trip), newest first. */
+    public function temporaryReleases(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(MaintenanceTemporaryRelease::class, 'maintenance_id')->latest('id');
+    }
+
+    /** The currently-open temporary release (car is out right now), if any. */
+    public function activeTemporaryRelease(): BelongsTo
+    {
+        return $this->belongsTo(MaintenanceTemporaryRelease::class, 'active_temporary_release_id');
+    }
+
+    /** The most recent pause-leg handover (the "before" snapshot a resume is compared against). */
+    public function lastPauseHandover(): BelongsTo
+    {
+        return $this->belongsTo(MaintenanceHandover::class, 'last_pause_handover_id');
+    }
+
+    /** The most recent resume-leg handover. */
+    public function lastResumeHandover(): BelongsTo
+    {
+        return $this->belongsTo(MaintenanceHandover::class, 'last_resume_handover_id');
+    }
+
     /**
      * Video Evidence — the garage's repair videos, uploaded to the ticket by a supervisor (Waleed/
      * Abdullah) as the permanent record the repair review is based on. Newest first. See [[maintenance-workflow-engine]].
@@ -845,6 +1258,16 @@ class Maintenance extends Model
     public function tasks(): \Illuminate\Database\Eloquent\Relations\HasMany
     {
         return $this->hasMany(MaintenanceTask::class, 'maintenance_id');
+    }
+
+    /**
+     * Post-Repair Inspection verdicts recorded against this ticket at the final QC gate — the durable
+     * "did the fix hold?" record (fixed / still_exists / new_issue) that layers on top of the close /
+     * reopen transitions. Newest first. See [[reinspection-qc-layer]] / RepairInspectionService.
+     */
+    public function repairInspections(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(RepairInspection::class, 'maintenance_id')->latest('inspection_date');
     }
 
     /**

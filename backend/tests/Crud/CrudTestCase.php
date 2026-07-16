@@ -90,6 +90,12 @@ abstract class CrudTestCase extends TestCase
 
     protected function makeContract(array $overrides = []): int
     {
+        // A rental (type-C) now requires a vehicle and a customer, so a realistic contract auto-
+        // provisions both unless the caller supplies them. Callers testing overlap/double-booking
+        // pass an explicit vehicle_id to reuse the same car.
+        $overrides['vehicle_id']  = $overrides['vehicle_id']  ?? $this->makeVehicle();
+        $overrides['customer_id'] = $overrides['customer_id'] ?? $this->makeCustomer();
+
         $res = $this->postJson('/api/Contract', array_merge([
             'contract_no'   => 'C-' . strtoupper(uniqid()),
             'contract_type' => 'C',

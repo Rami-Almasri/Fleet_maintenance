@@ -18,6 +18,8 @@ class VehicleLogEvent extends Model
 {
     // ── Event types (the lifecycle action that was logged) ───────────────────────
     public const EVENT_INSPECTION_REQUESTED = 'inspection_requested'; // Stage 0 requestInspection(): Driver asks for a test drive
+    public const EVENT_REVIEW_APPROVED    = 'review_approved'; // approveInspectionReview(): Controller (Lin/Marwa) approved → sent to the Inspector
+    public const EVENT_REVIEW_REJECTED    = 'review_rejected'; // rejectInspectionReview(): Controller (Lin/Marwa) rejected — nothing sent externally
     public const EVENT_DIAGNOSTIC_STARTED = 'diagnostic_started'; // UC-1 open()/startDiagnostic(): Inspector starts a test drive
     public const EVENT_REPORT_FILED       = 'report_filed';       // UC-2 submitReport(requires=true): ticket born
     public const EVENT_DIAGNOSTIC_CLEARED = 'diagnostic_cleared'; // UC-2 submitReport(requires=false): no work needed
@@ -34,6 +36,20 @@ class VehicleLogEvent extends Model
     public const EVENT_DELEGATED         = 'delegated';         // delegate(): supervisor assigned a driver to pickup/dropoff
     public const EVENT_COST_RECORDED     = 'cost_recorded';     // recordCost(): final (deferred) repair cost entered after close
     public const EVENT_INVOICE_REQUESTED = 'invoice_requested'; // requestInvoice(): asked the garage for an itemised invoice (Path A)
+    public const EVENT_TRANSPORT_ASSIGNED = 'transport_assigned'; // beginGarageTransfer(): Supervisor chose Recovery Truck vs Company Driver for the transfer leg
+    public const EVENT_RETURNED_TO_SERVICE = 'returned_to_service'; // pauseForRental(): repair interrupted, car released back into service (ticket kept)
+    public const EVENT_RESUMED           = 'resumed';           // resumeMaintenance(): car back — the SAME ticket continues from the exact stage it paused at
+    // Enterprise Handover Workflow — the vehicle was physically handed back but the resume handover
+    // paperwork is still pending, a discrepancy was flagged on the pause↔resume comparison, or that
+    // discrepancy was cleared.
+    public const EVENT_VEHICLE_RETURNED     = 'vehicle_returned';     // markVehicleReturned(): car is physically back, handover due
+    public const EVENT_HANDOVER_INCIDENT    = 'handover_incident';    // resumeMaintenance(): comparison breached a threshold — resume gated
+    public const EVENT_INCIDENT_ACKNOWLEDGED = 'incident_acknowledged'; // acknowledgeIncident(): discrepancy cleared, resume finalized
+    // Temporary Vehicle Release — the car left the shop mid-repair (road test / customer test / external
+    // inspection / storage) and came back; the ticket's workflow_status never changed. See
+    // temporarilyReleaseVehicle() / returnTemporarilyReleasedVehicle().
+    public const EVENT_TEMP_RELEASED        = 'temp_released';        // car temporarily taken out of the workshop, ticket stays open
+    public const EVENT_TEMP_RETURNED        = 'temp_returned';        // car brought back to the workshop, distance recorded
     // ── Readiness-gate events (not part of the maintenance workflow, but on the same vehicle trail) ──
     public const EVENT_READINESS_CONFIRMED = 'readiness_confirmed'; // setReady(): a clean car returned to service (no advisories were open)
     public const EVENT_READINESS_OVERRIDE  = 'readiness_override';  // setReady(): a user proceeded PAST open readiness advisories — logged with the reason
@@ -58,12 +74,13 @@ class VehicleLogEvent extends Model
     public const EVENT_GARAGE_INVOICE_ACCEPTED  = 'garage_invoice_accepted';  // team accepted it → applied to the ticket
     public const EVENT_GARAGE_INVOICE_REJECTED  = 'garage_invoice_rejected';  // team rejected it
 
-    /**
-     * Audit bucket per event. Reuses Maintenance::FINDING_SOURCES vocabulary so the workflow
-     * log and the finding source on the visit speak the same language:
-     *   - 'inspector' = Abu Maroof's side (diagnostic, report, re-inspection/close)
-     *   - 'garage'    = the workshop side (dispatch, repair, ready, reopen)
-     */
+    // Pre-Maintenance Recommendation queue (Supervisor triage of an inspection recommendation).
+    public const EVENT_RECOMMENDATION_APPROVED  = 'recommendation_approved';  // approveRecommendation(): "Start Maintenance" → enters the dispatch pipeline
+    public const EVENT_RECOMMENDATION_DISMISSED = 'recommendation_dismissed'; // dismissRecommendation(): rejected / not-required, no maintenance
+    public const EVENT_RECOMMENDATION_SCHEDULED = 'recommendation_scheduled'; // scheduleRecommendation(): deferred to a later date, stays in the queue
+    public const EVENT_PARTS_ORDERED            = 'parts_ordered';            // orderParts(): approved but waiting for a spare part
+    public const EVENT_PARTS_READY              = 'parts_ready';              // partsReady(): the spare arrived → ready to start maintenance
+
     // ── Parts Purchase + Repair Intelligence — the part-request lifecycle on the vehicle trail ──────
     public const EVENT_PART_REQUESTED         = 'part_requested';          // a part request was opened (customer or garage source)
     public const EVENT_PART_APPROVED          = 'part_approved';           // the request was approved for purchase
@@ -74,8 +91,16 @@ class VehicleLogEvent extends Model
     public const EVENT_PART_DUPLICATE_FLAGGED = 'part_duplicate_flagged';  // duplicate-purchase detected → investigation opened
     public const EVENT_PART_RECURRENCE_FLAGGED = 'part_recurrence_flagged'; // a previously-fixed fault came back → warning/investigation
 
+    /**
+     * Audit bucket per event. Reuses Maintenance::FINDING_SOURCES vocabulary so the workflow
+     * log and the finding source on the visit speak the same language:
+     *   - 'inspector' = Abu Maroof's side (diagnostic, report, re-inspection/close)
+     *   - 'garage'    = the workshop side (dispatch, repair, ready, reopen)
+     */
     public const SOURCE_BY_EVENT = [
         self::EVENT_INSPECTION_REQUESTED => Maintenance::FINDING_INSPECTOR,
+        self::EVENT_REVIEW_APPROVED    => Maintenance::FINDING_INSPECTOR,
+        self::EVENT_REVIEW_REJECTED    => Maintenance::FINDING_INSPECTOR,
         self::EVENT_DIAGNOSTIC_STARTED => Maintenance::FINDING_INSPECTOR,
         self::EVENT_REPORT_FILED       => Maintenance::FINDING_INSPECTOR,
         self::EVENT_DIAGNOSTIC_CLEARED => Maintenance::FINDING_INSPECTOR,
@@ -102,6 +127,19 @@ class VehicleLogEvent extends Model
         self::EVENT_GARAGE_INVOICE_SUBMITTED => Maintenance::FINDING_GARAGE,   // the garage sent the invoice
         self::EVENT_GARAGE_INVOICE_ACCEPTED  => Maintenance::FINDING_INSPECTOR, // our team's audit decision
         self::EVENT_GARAGE_INVOICE_REJECTED  => Maintenance::FINDING_INSPECTOR,
+        self::EVENT_RETURNED_TO_SERVICE       => Maintenance::FINDING_INSPECTOR, // an operational decision to release the car
+        self::EVENT_RESUMED                   => Maintenance::FINDING_GARAGE,    // the car re-enters the repair pipeline
+        self::EVENT_VEHICLE_RETURNED          => Maintenance::FINDING_INSPECTOR, // an operational "it's back" checkpoint
+        self::EVENT_HANDOVER_INCIDENT         => Maintenance::FINDING_INSPECTOR, // a management-facing discrepancy flag
+        self::EVENT_INCIDENT_ACKNOWLEDGED     => Maintenance::FINDING_INSPECTOR, // a management sign-off clearing the gate
+        self::EVENT_TEMP_RELEASED             => Maintenance::FINDING_INSPECTOR, // an operational decision to take the car out
+        self::EVENT_TEMP_RETURNED             => Maintenance::FINDING_GARAGE,    // the car is back at the workshop
+        // Recommendation triage — a Supervisor's pre-garage management decision → inspector-side bucket.
+        self::EVENT_RECOMMENDATION_APPROVED  => Maintenance::FINDING_INSPECTOR,
+        self::EVENT_RECOMMENDATION_DISMISSED => Maintenance::FINDING_INSPECTOR,
+        self::EVENT_RECOMMENDATION_SCHEDULED => Maintenance::FINDING_INSPECTOR,
+        self::EVENT_PARTS_ORDERED            => Maintenance::FINDING_INSPECTOR,
+        self::EVENT_PARTS_READY              => Maintenance::FINDING_INSPECTOR,
     ];
 
     protected $fillable = [

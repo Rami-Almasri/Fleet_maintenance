@@ -247,8 +247,13 @@ class InspectionsGenerateTasks extends Command
      */
     private function agenda(array $conditions): string
     {
-        $downtime = collect($conditions)->firstWhere('directive', DiagnosticGateService::DIRECTIVE_DOWNTIME);
-        $routine  = collect($conditions)->reject(fn ($c) => ($c['directive'] ?? null) === DiagnosticGateService::DIRECTIVE_DOWNTIME);
+        $downtime   = collect($conditions)->firstWhere('directive', DiagnosticGateService::DIRECTIVE_DOWNTIME);
+        $inactivity = collect($conditions)->firstWhere('directive', DiagnosticGateService::DIRECTIVE_INACTIVITY);
+        $routine    = collect($conditions)->reject(fn ($c) => in_array(
+            $c['directive'] ?? null,
+            [DiagnosticGateService::DIRECTIVE_DOWNTIME, DiagnosticGateService::DIRECTIVE_INACTIVITY],
+            true
+        ));
 
         $parts = [];
 
@@ -261,6 +266,12 @@ class InspectionsGenerateTasks extends Command
             $items = $this->humanList($downtime['checklist'] ?? DiagnosticGateService::POST_DOWNTIME_CHECKLIST);
             $parts[] = 'Routine check overdue — ' . $days . ' day' . ($days === 1 ? '' : 's') . ' since last maintenance completion'
                 . ' — please check: ' . $items . '.';
+        }
+
+        // Inactivity — a car untouched (never re-rented) since its last test. Its own detail already spells
+        // out the "why" ("Vehicle inactive for N days since last test …"), so it rides through verbatim.
+        if ($inactivity) {
+            $parts[] = (string) ($inactivity['detail'] ?? 'Vehicle inactive since its last test — run a check-up.');
         }
 
         return implode(' ', $parts);

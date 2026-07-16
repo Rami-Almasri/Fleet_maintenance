@@ -75,6 +75,41 @@ class WorkflowOversightController extends Controller
 
             $names = $this->userNames($tickets, array_map(fn ($s) => self::STAGE_MAP[$s][2], array_keys(self::STAGE_MAP)));
 
+            // The odometer photo captured at each stage lives as an 'odometer' InspectionRecord, tagged with
+            // the phase string storeOdometerPhoto() used at that transition. Map each flag key to its phase so
+            // we can attach the shot the operator took to prove the reading. (transfer & reinspect capture a
+            // reading but no photo, so they have no entry.)
+            $stagePhotoPhase = [
+                'test_drive' => 'test',
+                'report'     => 'report',
+                'dispatch'   => 'pre',
+                'receive'    => 'arrival',
+                'return'     => 'garage_pickup',
+            ];
+            $vehicleIds = $tickets->pluck('vehicle_id')->filter()->unique()->values()->all();
+            $photos = \App\Models\InspectionRecord::query()
+                ->whereIn('vehicle_id', $vehicleIds)
+                ->where('body_part', 'odometer')
+                ->whereNotNull('s3_key')
+                ->get(['id', 'vehicle_id', 'phase', 's3_disk', 's3_key', 'captured_at'])
+                ->groupBy('vehicle_id');
+
+            // Photos are per-vehicle, so a car with several tickets can hold many shots of the same phase.
+            // Pick the one captured closest to the stage timestamp (the photo is saved seconds after the
+            // transition), and only within a 6-hour window so a later ticket's shot never bleeds in.
+            $matchPhoto = function ($vehicleId, $phase, $at) use ($photos) {
+                if (! $phase || ! $at) {
+                    return null;
+                }
+                $atTs = $at instanceof \DateTimeInterface ? $at->getTimestamp() : strtotime((string) $at);
+                $best = ($photos[$vehicleId] ?? collect())
+                    ->where('phase', $phase)
+                    ->filter(fn ($p) => $p->captured_at && abs($p->captured_at->getTimestamp() - $atTs) <= 6 * 3600)
+                    ->sortBy(fn ($p) => abs($p->captured_at->getTimestamp() - $atTs))
+                    ->first();
+                return $best?->viewUrl();
+            };
+
             $rows = collect();
             foreach ($tickets as $t) {
                 $flags = $t->odometer_flags ?? [];
@@ -103,9 +138,15 @@ class WorkflowOversightController extends Controller
                         'kind'            => $kind,                        // discrepancy | jump | test_drive | deviation | note
                         'tolerance_waived'=> (bool) ($flag['tolerance_waived'] ?? false),
                         'note'            => $flag['note'] ?? null,
+                        // Whether the operator ticked "I've checked — this reading is correct" on the
+                        // continuity nag: true/false when the step asked for it, null when it never did.
+                        'confirmed'       => array_key_exists('confirmed', $flag) ? (bool) $flag['confirmed'] : null,
                         'entered_by'      => $names[$t->{$byCol}] ?? null,
                         'at'              => optional($t->{$atCol})->toIso8601String(),
                         'outcome'         => 'recorded',                    // the reading was accepted onto the ticket
+                        // The odometer photo the operator took at this stage (short-lived signed URL), or null
+                        // when the stage captures no photo / none was saved.
+                        'photo_url'       => $matchPhoto($t->vehicle_id, $stagePhotoPhase[$key] ?? null, $t->{$atCol}),
                     ]);
                 }
             }
@@ -136,14 +177,16 @@ class WorkflowOversightController extends Controller
                     'kind'            => 'blocked',
                     'tolerance_waived'=> false,
                     'note'            => $b->note,
+                    'confirmed'       => null, // a rejected attempt never reached the acknowledgment gate
                     'entered_by'      => $b->actor?->name,
                     'at'              => optional($b->created_at)->toIso8601String(),
                     'outcome'         => 'blocked',                    // the workflow REJECTED this reading
+                    'photo_url'       => null,                         // a rejected attempt never saved a photo
                 ]);
             }
 
             // Blocked attempts first (the audit priority), then backward discrepancies, then most recent.
-            $order = ['blocked' => 0, 'discrepancy' => 1, 'jump' => 2, 'test_drive' => 3, 'deviation' => 4, 'note' => 5];
+            $order = ['blocked' => 0, 'discrepancy' => 1, 'jump' => 2, 'test_drive' => 3, 'deviation' => 4, 'note' => 5, 'ack' => 6];
             $sorted = $rows->sort(function ($a, $b) use ($order) {
                 return ($order[$a['kind']] ?? 9) <=> ($order[$b['kind']] ?? 9)
                     ?: strcmp((string) $b['at'], (string) $a['at']);
@@ -192,6 +235,12 @@ class WorkflowOversightController extends Controller
         // operator left an explanation (a deliberate site↔garage road trip waives the nag, so skip those).
         if ($delta !== null && abs($delta) > self::NOTE_THRESHOLD_KM && empty($flag['tolerance_waived']) && ! empty($flag['note'])) {
             return 'note';
+        }
+        // Otherwise-clean reading, but the operator actively ticked (or explicitly left unticked) the
+        // "I've checked — this reading is correct" box — surface it so a supervisor can see the
+        // acknowledgment happened, not just infer it from a note.
+        if (array_key_exists('confirmed', $flag)) {
+            return 'ack';
         }
         return null;
     }

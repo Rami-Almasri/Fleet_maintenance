@@ -11,7 +11,8 @@ class RemindersAndSchedulesTest extends CrudTestCase
     // ── Service Reminders ────────────────────────────────────────────────────
     public function test_service_reminder_crud_and_complete(): void
     {
-        $vehicle = $this->makeVehicle(['odometer' => 50000]);
+        // 'ready' status: completing an oil reminder now OPENS a maintenance ticket (assertActiveFleet).
+        $vehicle = $this->makeVehicle(['status' => 'ready', 'odometer' => 50000]);
 
         $res = $this->postJson('/api/ServiceReminders', [
             'vehicle_id'   => $vehicle,

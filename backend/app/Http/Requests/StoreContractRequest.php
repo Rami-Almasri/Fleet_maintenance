@@ -37,8 +37,11 @@ class StoreContractRequest extends FormRequest
             ],
             'contract_type' => 'nullable|string|max:50',
             'state' => 'nullable|in:open,closed',
-            'vehicle_id' => 'nullable|exists:vehicles,id',
-            'customer_id' => 'nullable|exists:customers,id',
+            // A real contract must name a vehicle (rental C, booking R, or maintenance U) — no orphans.
+            // A rental / booking must also name the customer it's for. (Left nullable only for the
+            // untyped edge case, which the web form never produces.)
+            'vehicle_id' => 'required_if:contract_type,C,R,U|nullable|exists:vehicles,id',
+            'customer_id' => 'required_if:contract_type,C,R|nullable|exists:customers,id',
 
             // Condition Acknowledgment (Omar Protocol booking gate): the sales agent's
             // confirmation that the customer was told about an Orange/Yellow car's condition.
