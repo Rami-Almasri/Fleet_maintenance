@@ -23,6 +23,7 @@ import { Link } from 'react-router-dom';
 import api from '../api/client';
 import useFetch from '../hooks/useFetch';
 import { usePermissions } from '../hooks/usePermissions';
+import { useAuth } from '../auth/AuthContext';
 import { useI18n } from '../i18n/I18nContext';
 import { useToast } from '../components/ui/Toast';
 import Icon from '../components/ui/Icon';
@@ -32,7 +33,7 @@ import {
 import TicketActionModal from '../components/workflow/TicketActionModal';
 import BreakdownIntakeModal from '../components/workflow/BreakdownIntakeModal';
 import ComplaintTriageModal from '../components/workflow/ComplaintTriageModal';
-import { resolveAction, stageAge, ago } from '../components/workflow/meta';
+import { resolveAction, stageAge, ago, custodyBlocked, custodyHolderName } from '../components/workflow/meta';
 import './MyMaintenanceQueue.css';
 
 // Reason → chip class. The visible label comes from workflow.reasonShort.<value>.
@@ -104,10 +105,19 @@ function TimeInStage({ tk, t }) {
 
 // The primary CTA(s) for a ticket, honoring permissions + custody. Uses .opx buttons so the controls
 // stay in the command-center theme; variant maps to the ops button palette.
-function CardActions({ tk, can, onAct, readonly, t }) {
+function CardActions({ tk, can, userId, onAct, readonly, t }) {
   const act = resolveAction(tk);
   const allowed = act && allows(can, act.perm);
   const canFollowUp = ['in_transit', 'under_repair'].includes(tk.workflow_status) && can('maintenance.logistics');
+
+  // Custody gate — a return/arrival leg may only be completed by the SAME driver who took the car
+  // (garage check-in) / collected it from the garage (arrival at our park). The backend bounces anyone
+  // else with a 422, so we hide the button and name the custodian instead of letting them tap and fail.
+  const custodyLocked = allowed && custodyBlocked(tk, userId);
+  const custodyHolder = custodyHolderName(tk, userId);
+  const custodyHint = act?.action === 'arriveAtPark'
+    ? t('queue.custody.arrive', { name: custodyHolder || t('queue.custody.theCollector') })
+    : t('queue.custody.checkin', { name: custodyHolder || t('queue.custody.theDriver') });
 
   if (readonly) {
     return (
@@ -121,7 +131,9 @@ function CardActions({ tk, can, onAct, readonly, t }) {
           {t('workflow.cardAction.followup')}
         </button>
       )}
-      {allowed ? (
+      {custodyLocked ? (
+        <span className="opx-hint">{custodyHint}</span>
+      ) : allowed ? (
         <button
           type="button"
           className={`opx-btn ${act.variant === 'danger' ? 'danger' : 'primary'}`}
@@ -137,7 +149,7 @@ function CardActions({ tk, can, onAct, readonly, t }) {
   );
 }
 
-function QueueCard({ tk, can, onAct, readonly = false }) {
+function QueueCard({ tk, can, userId, onAct, readonly = false }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const sev = sevOf(tk);
@@ -199,7 +211,7 @@ function QueueCard({ tk, can, onAct, readonly = false }) {
       </div>
 
       <div className="qc-foot">
-        <CardActions tk={tk} can={can} onAct={onAct} readonly={readonly} t={t} />
+        <CardActions tk={tk} can={can} userId={userId} onAct={onAct} readonly={readonly} t={t} />
         {nodes.length > 0 && (
           <button type="button" className="qc-tl-toggle" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
             <Icon.Clock className="h-3.5 w-3.5" /> {open ? t('queue.hideTimeline') : t('queue.showTimeline')}
@@ -221,6 +233,7 @@ export default function MyMaintenanceQueue() {
   const { t } = useI18n();
   const toast = useToast();
   const { can } = usePermissions();
+  const { user } = useAuth();
 
   const [modal, setModal] = useState(null);
   const [vehicles, setVehicles] = useState([]);
@@ -321,11 +334,12 @@ export default function MyMaintenanceQueue() {
     const needsAction = activeTickets.filter(({ tk, section }) => {
       if (section.readonly) return false;
       const act = resolveAction(tk);
-      return act && allows(can, act.perm);
+      // A custody-locked leg is another driver's to complete — not this user's action item.
+      return act && allows(can, act.perm) && !custodyBlocked(tk, user?.id);
     }).length;
     const awaitingQa = (counts.final_reinspections ?? (sections.final_reinspections?.length || 0));
     return { total: tickets.length, vehicles: vehicleIds.size, critical, needsAction, awaitingQa };
-  }, [activeTickets, counts, sections, can]);
+  }, [activeTickets, counts, sections, can, user?.id]);
 
   // Live activity — the most recent handoff stamps across the active tab's tickets. Real audit trail.
   const feedEvents = useMemo(() => {
@@ -447,7 +461,7 @@ export default function MyMaintenanceQueue() {
                             <p className="opx-empty" style={{ gridColumn: '1 / -1', padding: '26px 10px' }}>{t('queue.nothingHere')}</p>
                           ) : (
                             tickets.map((tk) => (
-                              <QueueCard key={tk.id} tk={tk} can={can} readonly={s.readonly}
+                              <QueueCard key={tk.id} tk={tk} can={can} userId={user?.id} readonly={s.readonly}
                                 onAct={(action, ticket) => setModal({ action, ticket })} />
                             ))
                           )}

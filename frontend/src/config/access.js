@@ -19,7 +19,6 @@ export const ROLE_BLOCKED_PATHS = {
   // but is walled off from the fleet dashboards, analytics and maintenance admin.
   logistics: [
     '/',                             // Dashboard
-    '/operations-center',            // Operations Center
     '/ops-dashboard',                // Delivery Command
     '/orders-board',                 // Orders Board
     '/overdue-rentals',              // Overdue Rentals
@@ -36,7 +35,6 @@ export const ROLE_BLOCKED_PATHS = {
   // boards; walled off from the fleet-wide command dashboards.
   supervisor: [
     '/',                   // Dashboard
-    '/operations-center',  // Operations Center
     '/analytics',          // Analytics
   ],
 };

@@ -933,6 +933,12 @@ const en = {
     awaitingInspector: 'Awaiting inspector',
     timeInStage: 'Time in this stage',
     noAccess: 'no access',
+    custody: {
+      checkin: 'Only {name} can check this car in at the garage',
+      arrive: 'Only {name} can complete the arrival at our park',
+      theDriver: 'the driver who picked up the car',
+      theCollector: 'the driver who collected the car from the garage',
+    },
     section: {
       complaint_triage:           { title: 'Complaint Triage',           hint: 'Customer complaints to handle — talk, resolve on-site, or send the car in' },
       pending_inspections:        { title: 'Pending Inspections',        hint: 'Requests to pick up and diagnostics to report on' },
@@ -2116,6 +2122,12 @@ const ar = {
     awaitingInspector: 'بانتظار المفتش',
     timeInStage: 'الوقت في هذه المرحلة',
     noAccess: 'لا صلاحية',
+    custody: {
+      checkin: 'فقط {name} يمكنه تسجيل دخول السيارة إلى الكراج',
+      arrive: 'فقط {name} يمكنه إتمام الوصول إلى موقفنا',
+      theDriver: 'السائق الذي استلم السيارة',
+      theCollector: 'السائق الذي استلم السيارة من الكراج',
+    },
     section: {
       complaint_triage:           { title: 'فرز الشكاوى',              hint: 'شكاوى عملاء للمعالجة — تحدّث أو حُلّ في الموقع أو أدخِل السيارة' },
       pending_inspections:        { title: 'فحوصات معلّقة',            hint: 'طلبات لاستلامها وتشخيصات لرفع تقريرها' },

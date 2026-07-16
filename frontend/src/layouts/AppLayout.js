@@ -70,7 +70,6 @@ const NAV_SECTIONS = [
   {
     title: 'Overview',
     items: [
-      { name: 'Operations Center', to: '/operations-center', icon: 'M12 2a10 10 0 1 0 10 10M12 2v4m0 12v4m10-10h-4M6 12H2m15.07-5.07-2.83 2.83M9.76 14.24l-2.83 2.83M12 12l4-4', desc: 'The flagship mission-control command surface: every vehicle shown across TWO independent dimensions — rental availability and maintenance lifecycle — with operational lanes, a live status matrix, fleet heatmap, readiness scores and a live activity stream. A car can be Available for rent while its repair is Paused. Always-dark ops view.' },
       { name: 'Dashboard', to: '/', icon: 'M3 12l9-9 9 9M5 10v10a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V10', desc: 'Fleet-wide overview: how many cars are available, rented, or in maintenance, plus key totals. Availability and composition come from the OfficeManager lifecycle status.' },
       { name: 'Analytics', to: '/analytics', icon: 'M4 20V10m6 10V4m6 16v-7M4 20h16', desc: 'A clean, glanceable analytics view — fleet activity, live status composition, utilization, maintenance visits, downtime trend and readiness — all real fleet data in a card grid.' },
       { name: 'Notifications', to: '/notifications', icon: 'M15 17h5l-1.4-1.4A2 2 0 0 1 18 14.2V11a6 6 0 0 0-4-5.7V5a2 2 0 1 0-4 0v.3A6 6 0 0 0 6 11v3.2a2 2 0 0 1-.6 1.4L4 17h5m6 0v1a3 3 0 1 1-6 0v-1m6 0H9', desc: 'Live fleet alerts — overdue rentals, maintenance overruns, expiring documents, service-due cars and approvals. The bell in the top bar updates in real time.' },
@@ -167,7 +166,6 @@ const SEARCH_ITEMS = NAV_SECTIONS.flatMap((s) => s.items.map((i) => ({ ...i, sec
 // App.js and the `permission:` middleware on the backend — keep the three in sync.
 const NAV_PERMISSIONS = {
   '/': 'dashboard.view',
-  '/operations-center': 'dashboard.view',
   '/ops-dashboard': 'dashboard.view',
   '/orders-board': 'dashboard.view',
   '/analytics': 'dashboard.view',

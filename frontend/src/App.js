@@ -11,7 +11,6 @@ import { pathBlockedForRoles, homePathForRoles } from './config/access';
 import AppLayout from './layouts/AppLayout';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
-import FleetOperationsCenter from './pages/ops/FleetOperationsCenter';
 import OpsDashboard from './pages/command/OpsDashboard';
 import OrdersBoard from './pages/command/OrdersBoard';
 import Analytics from './pages/Analytics';
@@ -126,8 +125,6 @@ export default function App() {
                 <Route path="/" element={<HomeGate />} />
 
                 <Route element={<RequirePermission permission="dashboard.view" />}>
-                  {/* Fleet Operations Center — the flagship dual-state command surface. */}
-                  <Route path="/operations-center" element={<FleetOperationsCenter />} />
                   <Route path="/ops-dashboard" element={<OpsDashboard />} />
                   <Route path="/orders-board" element={<OrdersBoard />} />
                   <Route path="/analytics" element={<Analytics />} />
