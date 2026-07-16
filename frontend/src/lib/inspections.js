@@ -133,27 +133,8 @@ export function computeFuelAudit(deliveryLevel, returnLevel, opts = {}) {
 }
 
 // ── API helpers ──────────────────────────────────────────────────────────────
-// Flow: compress (lib/imageCompression) → presign → PUT blob straight to S3 → save
-// the metadata row. The S3 PUT deliberately uses fetch (not the api client) so the
-// Sanctum bearer token is NOT sent to the storage host.
-
-export async function presignInspection({ contractId, vehicleId, phase, bodyPart, contentType, extension }) {
-  const res = await api.post('/Inspections/presign', {
-    contract_id: contractId ?? null,
-    vehicle_id: vehicleId ?? null,
-    phase,
-    body_part: bodyPart,
-    content_type: contentType,
-    extension,
-  });
-  return res.data.data; // { disk, key, upload_url, headers, expires_in }
-}
-
-export async function putToS3(uploadUrl, blob, headers = {}) {
-  const res = await fetch(uploadUrl, { method: 'PUT', body: blob, headers });
-  if (!res.ok) throw new Error(`S3 upload failed (${res.status})`);
-  return true;
-}
+// Flow: compress (lib/imageCompression) → POST the blob multipart to /Inspections,
+// which stores it on the local disk and persists the metadata row in one request.
 
 export async function saveInspection(record) {
   const res = await api.post('/Inspections', record);
@@ -173,36 +154,29 @@ export async function deleteInspection(id) {
 }
 
 /**
- * End-to-end capture: compress already done by caller; this presigns, uploads, and
- * persists the metadata row, returning the saved record. `damage` is the optional
+ * End-to-end capture: compression already done by caller; this uploads the photo
+ * (multipart, straight to the app server / local disk) and persists the metadata row
+ * in one request, returning the saved record. `damage` is the optional
  * { type, severity, note } flag for the zone.
  */
 export async function uploadInspectionPhoto({ compressed, contractId, vehicleId, phase, bodyPart, damage }) {
   const ext = (compressed.blob.type.split('/')[1] || 'jpg').replace('jpeg', 'jpg');
-  const { disk, key, upload_url, headers } = await presignInspection({
-    contractId,
-    vehicleId,
-    phase,
-    bodyPart,
-    contentType: compressed.blob.type || 'image/jpeg',
-    extension: ext,
-  });
-  await putToS3(upload_url, compressed.blob, headers);
-  return saveInspection({
-    contract_id: contractId ?? null,
-    vehicle_id: vehicleId ?? null,
-    phase,
-    body_part: bodyPart,
-    s3_disk: disk,
-    s3_key: key,
-    mime_type: compressed.blob.type || 'image/jpeg',
-    file_size: compressed.compressedSize,
-    width: compressed.width,
-    height: compressed.height,
-    captured_at: new Date().toISOString(),
-    damage_flagged: !!damage,
-    damage_type: damage?.type ?? null,
-    severity: damage?.severity ?? null,
-    note: damage?.note ?? null,
-  });
+  const fd = new FormData();
+  fd.append('photo', compressed.blob, `${bodyPart}-${Date.now()}.${ext}`);
+  if (contractId != null) fd.append('contract_id', contractId);
+  if (vehicleId != null) fd.append('vehicle_id', vehicleId);
+  fd.append('phase', phase);
+  fd.append('body_part', bodyPart);
+  fd.append('mime_type', compressed.blob.type || 'image/jpeg');
+  fd.append('file_size', compressed.compressedSize);
+  if (compressed.width) fd.append('width', compressed.width);
+  if (compressed.height) fd.append('height', compressed.height);
+  fd.append('captured_at', new Date().toISOString());
+  fd.append('damage_flagged', damage ? '1' : '0');
+  if (damage?.type) fd.append('damage_type', damage.type);
+  if (damage?.severity) fd.append('severity', damage.severity);
+  if (damage?.note) fd.append('note', damage.note);
+
+  const res = await api.post('/Inspections', fd);
+  return res.data.data; // InspectionRecordResource
 }

@@ -1877,42 +1877,8 @@ class MaintenanceWorkflowController extends Controller
     // ── Video Evidence — the garage's repair videos (the permanent repair record) ────
 
     /**
-     * Hand back a presigned S3 PUT URL so the browser uploads the garage's repair video DIRECTLY to S3
-     * (videos are large — they never touch the app server). The browser then POSTs the resulting key back
-     * to storeVideo(). Namespaced per ticket. Supervisor authority (maintenance.delegate).
-     */
-    public function presignVideo(Request $request, Maintenance $ticket)
-    {
-        try {
-            $data = $request->validate([
-                'content_type' => ['required', 'string', 'max:100'],
-                'extension'    => ['nullable', 'string', 'max:10'],
-            ]);
-            $ext = strtolower(preg_replace('/[^a-z0-9]/i', '', $data['extension'] ?? '')) ?: 'mp4';
-            $key = sprintf('maintenance-videos/ticket-%d/%s.%s', $ticket->id, (string) Str::uuid(), $ext);
-
-            $signed = Storage::disk('s3')->temporaryUploadUrl($key, now()->addMinutes(15), ['ContentType' => $data['content_type']]);
-
-            return ResponseHelper::SuccessResponse([
-                'disk'       => 's3',
-                'key'        => $key,
-                'upload_url' => $signed['url'],
-                'headers'    => $signed['headers'] ?? ['Content-Type' => $data['content_type']],
-                'expires_in' => 900,
-            ], 'Presigned upload URL generated', 200);
-        } catch (\Throwable $e) {
-            return ResponseHelper::FailureResponse(
-                null,
-                'Could not generate an upload URL. Check the S3 disk is configured (AWS_* env). Small clips can still upload directly. [' . $e->getMessage() . ']',
-                400
-            );
-        }
-    }
-
-    /**
-     * Persist one repair video against the ticket. Two paths: (a) after a browser-direct S3 PUT the client
-     * posts {s3_key, disk, content_type, …}; (b) a small-file fallback posts the raw `file` multipart,
-     * ingested to S3 (when configured) or the local `public` disk. Supervisor authority (maintenance.delegate).
+     * Persist one repair video (or still photo) against the ticket. The client posts the raw `file`
+     * multipart; it is stored on the local `public` disk. Supervisor authority (maintenance.delegate).
      */
     public function storeVideo(Request $request, Maintenance $ticket)
     {
@@ -1938,7 +1904,7 @@ class MaintenanceWorkflowController extends Controller
 
             if ($request->hasFile('file')) {
                 $file = $request->file('file');
-                $disk = config('filesystems.disks.s3.bucket') ? 's3' : 'public';
+                $disk = 'public';
                 $mime = (string) $file->getClientMimeType();
                 $kind = str_starts_with($mime, 'image/') ? 'image' : 'video';
                 $ext  = strtolower($file->getClientOriginalExtension() ?: ($file->guessExtension() ?: 'mp4'));
@@ -1963,7 +1929,7 @@ class MaintenanceWorkflowController extends Controller
                 $media = $ticket->media()->create([
                     'kind'                => str_starts_with($mime, 'image/') ? 'image' : 'video',
                     'maintenance_task_id' => $taskId,
-                    'disk'                => $data['disk'] ?? 's3',
+                    'disk'                => $data['disk'] ?? 'public',
                     's3_key'              => $data['s3_key'],
                     'content_type'        => $data['content_type'] ?? null,
                     'original_name'       => $data['original_name'] ?? null,
@@ -1995,7 +1961,7 @@ class MaintenanceWorkflowController extends Controller
         return $this->run(function () use ($ticket, $media) {
             abort_unless((int) $media->maintenance_id === (int) $ticket->id, 404);
             try {
-                Storage::disk($media->disk ?: 's3')->delete($media->s3_key);
+                Storage::disk($media->disk ?: 'public')->delete($media->s3_key);
             } catch (\Throwable $e) {
                 // best-effort — still remove the row even if the object is already gone
             }

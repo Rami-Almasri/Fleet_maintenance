@@ -10,8 +10,9 @@ use Illuminate\Support\Facades\Storage;
  * One Video Evidence row on a maintenance ticket — the garage's repair video, uploaded by a supervisor
  * (Waleed/Abdullah) as the permanent record the QA review is based on. See [[maintenance-workflow-engine]].
  *
- * Bytes live on S3 (when configured) or the local `public` disk; this row holds only the pointer +
- * metadata. `viewUrl()` returns a short-lived, signed URL so the video is never publicly listable.
+ * Bytes live on the local `public` disk; this row holds only the pointer + metadata. `viewUrl()`
+ * returns the file's public `/storage/...` URL. (`disk`/`s3_key` column names are legacy — they
+ * hold the local disk name and relative path now that storage is local-only.)
  */
 class MaintenanceMedia extends Model
 {
@@ -39,18 +40,14 @@ class MaintenanceMedia extends Model
     }
 
     /**
-     * A short-lived, signed URL to watch the video. On S3 we sign a 30-minute GET; on the local `public`
-     * disk we hand back the plain public URL (no signing available). Never throws — returns null when the
-     * object can't be resolved (e.g. S3 not configured), so the UI degrades to "unavailable".
+     * The public `/storage/...` URL to watch the video, served locally via the storage symlink.
+     * Never throws — returns null when the object can't be resolved, so the UI degrades to
+     * "unavailable" instead of a broken player.
      */
     public function viewUrl(): ?string
     {
-        $disk = $this->disk ?: 's3';
         try {
-            if ($disk === 's3') {
-                return Storage::disk('s3')->temporaryUrl($this->s3_key, now()->addMinutes(30));
-            }
-            return Storage::disk($disk)->url($this->s3_key);
+            return Storage::disk($this->disk ?: 'public')->url($this->s3_key);
         } catch (\Throwable $e) {
             return null;
         }

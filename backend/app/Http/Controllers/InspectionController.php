@@ -3,7 +3,6 @@
 namespace App\Http\Controllers;
 
 use App\Helpers\ResponseHelper;
-use App\Http\Requests\PresignInspectionRequest;
 use App\Http\Requests\StoreInspectionRequest;
 use App\Http\Resources\InspectionRecordResource;
 use App\Models\InspectionRecord;
@@ -14,14 +13,12 @@ use Illuminate\Support\Str;
 /**
  * Vehicle Inspection Workflow API.
  *
- * Upload flow keeps image bytes off the app server entirely:
+ * Upload flow (local storage):
  *   1. client compresses the photo in-browser, then
- *   2. POST /Inspections/presign  → server returns a short-lived signed S3 PUT URL,
- *   3. client PUTs the blob straight to S3, then
- *   4. POST /Inspections          → server persists the metadata row (+ damage flag).
+ *   2. POST /Inspections  (multipart) → server stores the image on the local `public`
+ *      disk and persists the metadata row (+ optional damage flag).
  *
- * Reads (GET) hand back records with a short-lived signed GET URL per photo, so the
- * bucket itself can stay private.
+ * Reads (GET) hand back records with a public `/storage/...` URL per photo.
  */
 class InspectionController extends Controller
 {
@@ -53,55 +50,34 @@ class InspectionController extends Controller
     }
 
     /**
-     * Hand back a presigned S3 PUT URL so the browser can upload one compressed
-     * photo directly. The object key namespaces by contract/phase/zone for tidy
-     * buckets and easy lifecycle rules.
+     * Persist one inspection record: an optional condition photo (uploaded multipart and
+     * stored on the local `public` disk) and/or a manual damage finding.
      */
-    public function presign(PresignInspectionRequest $request)
-    {
-        try {
-            $data = $request->validated();
-
-            $ext = strtolower(preg_replace('/[^a-z0-9]/i', '', $data['extension'] ?? 'jpg')) ?: 'jpg';
-            $contract = $data['contract_id'] ?? 'misc';
-            $key = sprintf(
-                'inspections/%s/%s/%s/%s.%s',
-                $contract,
-                $data['phase'],
-                $data['body_part'],
-                (string) Str::uuid(),
-                $ext
-            );
-
-            $disk = 's3';
-            // temporaryUploadUrl needs the flysystem S3 adapter (league/flysystem-aws-s3-v3).
-            $signed = Storage::disk($disk)->temporaryUploadUrl(
-                $key,
-                now()->addMinutes(10),
-                ['ContentType' => $data['content_type']]
-            );
-
-            return ResponseHelper::SuccessResponse([
-                'disk'       => $disk,
-                'key'        => $key,
-                'upload_url' => $signed['url'],
-                'headers'    => $signed['headers'] ?? ['Content-Type' => $data['content_type']],
-                'expires_in' => 600,
-            ], 'Presigned upload URL generated', 200);
-        } catch (\Throwable $e) {
-            return ResponseHelper::FailureResponse(
-                null,
-                'Could not generate an upload URL. Check the S3 disk is configured (AWS_* env) and the flysystem-aws-s3-v3 package is installed. ['.$e->getMessage().']',
-                400
-            );
-        }
-    }
-
-    /** Persist one inspection record (photo metadata and/or a manual damage finding). */
     public function store(StoreInspectionRequest $request)
     {
         try {
             $data = $request->validated();
+            unset($data['photo']); // handled below, not a model attribute
+
+            // Local direct upload: store the attached image on the `public` disk and
+            // record the pointer in the (legacy-named) s3_disk / s3_key columns.
+            if ($request->hasFile('photo')) {
+                $file     = $request->file('photo');
+                $contract = $data['contract_id'] ?? 'misc';
+                $ext      = strtolower($file->getClientOriginalExtension() ?: ($file->guessExtension() ?: 'jpg'));
+                $key      = $file->storeAs(
+                    sprintf('inspections/%s/%s/%s', $contract, $data['phase'], $data['body_part']),
+                    (string) Str::uuid().'.'.$ext,
+                    'public'
+                );
+                if (! $key) {
+                    return ResponseHelper::FailureResponse(null, 'The photo could not be stored.', 500);
+                }
+                $data['s3_disk']   = 'public';
+                $data['s3_key']    = $key;
+                $data['mime_type'] = $data['mime_type'] ?? $file->getClientMimeType();
+                $data['file_size'] = $data['file_size'] ?? $file->getSize();
+            }
 
             $hasPhoto = ! empty($data['s3_key']);
             $flagged  = (bool) ($data['damage_flagged'] ?? false);
@@ -116,7 +92,7 @@ class InspectionController extends Controller
             $user = $request->user();
             $record = InspectionRecord::create([
                 ...$data,
-                's3_disk'        => $data['s3_disk'] ?? 's3',
+                's3_disk'        => $data['s3_disk'] ?? 'public',
                 'damage_flagged' => $flagged,
                 'inspector_id'   => $user?->id,
                 'inspector_name' => $user?->name,
@@ -133,13 +109,13 @@ class InspectionController extends Controller
         }
     }
 
-    /** Delete a record and its S3 object (if any). */
+    /** Delete a record and its stored image (if any). */
     public function destroy(InspectionRecord $inspection)
     {
         try {
             if ($inspection->s3_key) {
                 try {
-                    Storage::disk($inspection->s3_disk ?: 's3')->delete($inspection->s3_key);
+                    Storage::disk($inspection->s3_disk ?: 'public')->delete($inspection->s3_key);
                 } catch (\Throwable $e) {
                     // best-effort: still remove the DB row even if the object is already gone
                 }

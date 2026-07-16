@@ -55,42 +55,25 @@ class InspectionRecord extends Model
     }
 
     /**
-     * A short-lived signed URL to view the photo, or null when this record is a
-     * pure damage finding with no image. Never exposes the bucket publicly.
+     * A viewable URL for the photo, or null when this record is a pure damage finding with no
+     * image. Storage is local-only now, so this hands back the plain public `/storage/...` URL
+     * (served via the storage symlink). `$minutes` is retained for signature compatibility.
+     * (`s3_disk`/`s3_key` column names are legacy — they hold the local disk + relative path.)
      */
     public function temporaryUrl(int $minutes = 30): ?string
     {
-        if (! $this->s3_key) {
-            return null;
-        }
-        try {
-            return Storage::disk($this->s3_disk ?: 's3')
-                ->temporaryUrl($this->s3_key, now()->addMinutes($minutes));
-        } catch (\Throwable $e) {
-            return null; // storage not configured / object missing — degrade gracefully
-        }
+        return $this->viewUrl($minutes);
     }
 
-    /**
-     * A viewable URL for the photo, disk-aware: an S3 disk hands back a short-lived SIGNED url
-     * (bucket stays private); the local `public` disk (the demo fallback when AWS_* isn't set)
-     * hands back its plain public `/storage/...` url. Null when there's no image or storage is
-     * unconfigured — so the UI degrades to a placeholder instead of a broken image.
-     */
     public function viewUrl(int $minutes = 60): ?string
     {
         if (! $this->s3_key) {
             return null;
         }
-        $disk = $this->s3_disk ?: 's3';
         try {
-            $storage = Storage::disk($disk);
-            if ($disk === 's3') {
-                return $storage->temporaryUrl($this->s3_key, now()->addMinutes($minutes));
-            }
-            return $storage->url($this->s3_key);
+            return Storage::disk($this->s3_disk ?: 'public')->url($this->s3_key);
         } catch (\Throwable $e) {
-            return null;
+            return null; // object missing / disk unresolved — degrade gracefully
         }
     }
 }

@@ -7,10 +7,10 @@ use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
 /**
- * Validates persistence of one inspection record AFTER its photo has been uploaded
- * straight to S3 (or for a photo-less damage finding). A record must carry either
- * an `s3_key` (a photo) or `damage_flagged=true` (a finding) — enforced in the
- * controller. When damage is flagged, a `damage_type` is required.
+ * Validates persistence of one inspection record. A record carries either a `photo`
+ * (uploaded multipart, stored locally by the controller) or `damage_flagged=true`
+ * (a photo-less finding) — enforced in the controller. When damage is flagged, a
+ * `damage_type` is required.
  */
 class StoreInspectionRequest extends FormRequest
 {
@@ -27,7 +27,10 @@ class StoreInspectionRequest extends FormRequest
             'phase'          => ['required', Rule::in(InspectionRecord::PHASES)],
             'body_part'      => 'required|string|max:40',
 
-            // image metadata (the bytes were PUT to S3 via the presigned URL)
+            // the condition photo, uploaded directly (multipart) to the local disk
+            'photo'          => 'nullable|image|max:10240', // 10 MB
+
+            // image metadata (server fills s3_key/s3_disk from the stored file)
             's3_key'         => 'nullable|string|max:1024',
             's3_disk'        => 'nullable|string|max:30',
             'mime_type'      => 'nullable|string|max:80',

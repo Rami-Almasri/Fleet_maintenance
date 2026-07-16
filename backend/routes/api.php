@@ -406,7 +406,6 @@ Route::middleware('auth:sanctum')->prefix('maintenance-tickets')->controller(Mai
     Route::post('/{ticket}/arrive-at-park', 'arriveAtPark')->middleware('permission:maintenance.logistics');
     // Video Evidence — the garage's repair videos, uploaded by a supervisor as the permanent repair record.
     // Presign + save + delete are supervisor authority; anyone who can view the ticket can watch them.
-    Route::post('/{ticket}/video/presign', 'presignVideo')->middleware('permission:maintenance.delegate');
     Route::post('/{ticket}/video', 'storeVideo')->middleware('permission:maintenance.delegate');
     Route::get('/{ticket}/media', 'listMedia')->middleware('permission:maintenance.view');
     Route::delete('/{ticket}/media/{media}', 'destroyMedia')->middleware('permission:maintenance.delegate');
@@ -596,11 +595,10 @@ Route::middleware(['auth:sanctum', 'permission:users.manage'])->prefix('simulati
 // Vehicle Inspection Workflow — condition photos (stored in S3-compatible object storage)
 // + rich manual damage flags (type/severity/note) per body zone, linked to a contract and
 // vehicle. Powers the hotspot diagram, the before/after slider and the Fleet Health reports.
-// Upload never touches the app server: client compresses → /presign → PUT to S3 → store metadata.
+// Local upload: client compresses → POST multipart to /Inspections (photo stored on the local disk).
 Route::middleware('auth:sanctum')->prefix('Inspections')->controller(InspectionController::class)->group(function () {
     Route::get('/', 'index')->middleware('permission:inspections.view');                 // list by ?contract_id= / ?vehicle_id=
-    Route::post('/presign', 'presign')->middleware('permission:inspections.manage');     // signed S3 PUT URL for one photo
-    Route::post('/', 'store')->middleware('permission:inspections.manage');              // persist record metadata after upload
+    Route::post('/', 'store')->middleware('permission:inspections.manage');              // upload photo (multipart) + persist record
     Route::delete('/{inspection}', 'destroy')->middleware('permission:inspections.manage');
 });
 
