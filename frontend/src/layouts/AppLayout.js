@@ -13,6 +13,7 @@ import Brand from '../components/Brand';
 import { useNotifications } from '../hooks/useNotifications';
 import { PageStatProvider, PageStatGauge } from '../components/PageStat';
 import { SHOW_FINANCIALS, DEMO_MODE } from '../config/features';
+import { pathBlockedForRoles } from '../config/access';
 
 // Thin gradient bar at the very top that fills as you scroll the page.
 function ScrollProgress() {
@@ -32,17 +33,6 @@ function ScrollProgress() {
     };
   }, []);
   return <div className="scroll-progress" style={{ width: `${pct}%`, opacity: pct > 0.5 ? 1 : 0 }} />;
-}
-
-// Soft drifting color field behind the whole app (pure CSS, see index.css).
-function Aurora() {
-  return (
-    <div className="aurora" aria-hidden="true">
-      <div className="aurora__blob aurora__blob--1" />
-      <div className="aurora__blob aurora__blob--2" />
-      <div className="aurora__blob aurora__blob--3" />
-    </div>
-  );
 }
 
 const greet = (h) => (h < 5 ? 'Good night' : h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : h < 22 ? 'Good evening' : 'Good night');
@@ -80,6 +70,7 @@ const NAV_SECTIONS = [
   {
     title: 'Overview',
     items: [
+      { name: 'Operations Center', to: '/operations-center', icon: 'M12 2a10 10 0 1 0 10 10M12 2v4m0 12v4m10-10h-4M6 12H2m15.07-5.07-2.83 2.83M9.76 14.24l-2.83 2.83M12 12l4-4', desc: 'The flagship mission-control command surface: every vehicle shown across TWO independent dimensions — rental availability and maintenance lifecycle — with operational lanes, a live status matrix, fleet heatmap, readiness scores and a live activity stream. A car can be Available for rent while its repair is Paused. Always-dark ops view.' },
       { name: 'Dashboard', to: '/', icon: 'M3 12l9-9 9 9M5 10v10a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V10', desc: 'Fleet-wide overview: how many cars are available, rented, or in maintenance, plus key totals. Availability and composition come from the OfficeManager lifecycle status.' },
       { name: 'Analytics', to: '/analytics', icon: 'M4 20V10m6 10V4m6 16v-7M4 20h16', desc: 'A clean, glanceable analytics view — fleet activity, live status composition, utilization, maintenance visits, downtime trend and readiness — all real fleet data in a card grid.' },
       { name: 'Notifications', to: '/notifications', icon: 'M15 17h5l-1.4-1.4A2 2 0 0 1 18 14.2V11a6 6 0 0 0-4-5.7V5a2 2 0 1 0-4 0v.3A6 6 0 0 0 6 11v3.2a2 2 0 0 1-.6 1.4L4 17h5m6 0v1a3 3 0 1 1-6 0v-1m6 0H9', desc: 'Live fleet alerts — overdue rentals, maintenance overruns, expiring documents, service-due cars and approvals. The bell in the top bar updates in real time.' },
@@ -114,7 +105,10 @@ const NAV_SECTIONS = [
     items: [
       { name: 'Workflow Journey', to: '/inspections/history', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-5 7h4m-4 4h4', desc: 'A stage-by-stage timeline of every step each car takes through the workflow — inspection, dispatch, garage arrival, repair, movement and readiness — each row headlined by the workflow stage it reached (absorbs the old Activity Feed, Vehicle Status, Vehicle Life-Stream & Workflow Hub). Click any car to follow just its own journey.' },
       { name: 'Workflow', to: '/maintenance-workflow', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-3 7-3 3 3 3m6-6 3 3-3 3', desc: 'The live maintenance ticket pipeline (Inspector → Supervisor → Driver → Garage → Re-inspection). Open a ticket and advance it through the stages; the board updates in real time.' },
+      { name: 'Recommendations', to: '/maintenance-recommendations', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-3 8h.01M9 11h6m-6 3h4', desc: 'Inspection recommendations awaiting a supervisor’s review, before any maintenance starts. Approve to begin work, order parts first, schedule for later, or dismiss — a recommendation-only car never clutters the active board.' },
       { name: 'My Queue', to: '/my-maintenance-queue', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-3 9 2 2 4-4', desc: 'Your role-scoped maintenance work in one place: Abu Maroof (Inspector) sees pending inspections and final re-inspections; a Supervisor (Dispatcher) sees tickets awaiting a garage + driver assignment; a Driver sees active trips/dispatches and cars waiting on a follow-up.' },
+      { name: 'Inspection Review', to: '/inspection-review', icon: 'M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Controllers (Lin & Marwa) review inspection requests before they reach Abu Maroof — approve to send it on, or reject with a reason.' },
+      { name: 'Inspection Intelligence', to: '/inspection-intelligence', icon: 'M12 3v1m0 16v1m9-9h-1M4 12H3m15.36 6.36-.7-.7M6.34 6.34l-.7-.7m12.72 0-.7.7M6.34 17.66l-.7.7M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z', desc: 'Mission Control for the AUTOMATIC inspection engine (the daily Proactive Diagnostic Monitor): why the system requests inspections, which rule fired, which cars qualify now, and which were skipped and why. Read-only monitoring & debugging.' },
       { name: 'Approvals', to: '/maintenance-approvals', icon: 'M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Maintenance items waiting for sign-off before work proceeds.' },
       { name: 'Pending Invoices', to: '/invoices/pending-submission', icon: 'M9 12h6m-6 4h4m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2zM14 3v5h5M12 8v.01', desc: 'Repairs that are done and the car is back in service, but the garage invoice hasn’t arrived yet. Anything past the 3-day window is flagged red; mark an invoice received to close the ticket.' },
       { name: 'Foresight', to: '/maintenance-foresight', icon: 'M9.66 17h4.68M12 3v1m6.36 1.64-.7.7M21 12h-1M4 12H3m3.34-5.66-.7-.7M7 17a5 5 0 1 1 10 0', desc: 'Predictive maintenance: cars showing early mechanical warning signs (service overdue, chronic faults, aging battery) caught before they fail — with the downtime, parts-wait risk and lost rental revenue estimated from the fleet’s own repair history.' },
@@ -125,6 +119,7 @@ const NAV_SECTIONS = [
       { name: 'Keyword Risk', to: '/finding-keywords', icon: 'M20.59 13.41 13.42 20.6a2 2 0 0 1-2.83 0l-7-7A2 2 0 0 1 3 12V5a2 2 0 0 1 2-2h7a2 2 0 0 1 1.42.59l7.17 7.17a2 2 0 0 1 0 2.83zM7.5 7.5h.01', desc: 'The fault-keyword library the inspection picker offers, each graded by risk (🔴 critical / 🟡 moderate / 🟢 routine). Add, edit or retire keywords and set how serious each fault type is.' },
       { name: 'Parts Purchase', to: '/parts', icon: 'M20 7h-9M14 17H5M17 20a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM7 10a3 3 0 1 0 0-6 3 3 0 0 0 0 6z', desc: 'The Parts Purchase + Repair Intelligence board: request a part (customer or garage), approve, buy (garage or supplier) and install it — with duplicate-purchase detection and repair history.' },
       { name: 'Part Investigations', to: '/part-investigations', icon: 'M12 9v4m0 4h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z', desc: 'Admin inbox for duplicate-purchase and fault-recurrence alerts: review why the same part or fault repeated, capture the reason, and approve or reject the exception.' },
+      { name: 'Recurring Fault Reviews', to: '/recurring-fault-reviews', icon: 'M3 2v6h6M3 8a9 9 0 1 0 2.6-4.36L3 8', desc: 'Cars that came back with the SAME confirmed fault after a completed repair. Each case shows the previous ticket, garage, parts used, days and distance since the repair, and how many times it recurred — so management can decide whether the earlier repair failed, it is a new failure, workshop responsibility, customer misuse, or needs investigation.' },
       { name: 'Cost Analytics', to: '/maintenance-analytics', financial: true, icon: 'M3 3v18h18M7 15l3-3 3 3 5-5', desc: 'Maintenance cost trends and breakdowns across the fleet — spend by car, garage, and over time.' },
     ],
   },
@@ -153,6 +148,7 @@ const NAV_SECTIONS = [
       { name: 'Sync Audit', to: '/sync-audit', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-6 9 2 2 4-4', desc: 'Read-only history of CMD sync runs: how many contracts each execution scanned, updated, and auto-corrected (e.g. stale dates cleared).' },
       { name: 'Notification Test', to: '/notification-test', icon: 'M15 17h5l-1.4-1.4A2 2 0 0 1 18 14.2V11a6 6 0 0 0-4-5.7V5a2 2 0 1 0-4 0v.3A6 6 0 0 0 6 11v3.2a2 2 0 0 1-.6 1.4L4 17h5m6 0v1a3 3 0 1 1-6 0v-1m6 0H9', desc: 'Admin-only console to fire realistic test notifications on demand (overdue service, rental expiry, invoice overdue, inspection due) and confirm they reach the bell — with a Force flag to trigger even when the live condition isn’t met.' },
       { name: 'Simulation', to: '/simulation', demoOnly: true, icon: 'M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z', desc: 'Admin-only demo console (only shown in Demo Mode): force a real "Service Due" oil alert or a fault-discovery ticket on a real car, watch the system react end-to-end, then roll it all back with one click.' },
+      { name: 'Users', to: '/users', icon: 'M16 5.5a3 3 0 0 1 0 5.8M3 20a6 6 0 0 1 12 0M9 8.2a3.2 3.2 0 1 1 0-6.4 3.2 3.2 0 0 1 0 6.4zM21 20a6 6 0 0 0-4-5.6', desc: 'Every account, its status and Spatie role(s) — admin-only.' },
     ],
   },
   {
@@ -170,13 +166,19 @@ const SEARCH_ITEMS = NAV_SECTIONS.flatMap((s) => s.items.map((i) => ({ ...i, sec
 // "always visible to any authenticated user". These mirror the route guards in
 // App.js and the `permission:` middleware on the backend — keep the three in sync.
 const NAV_PERMISSIONS = {
-  '/parts': 'parts.view',
-  '/part-investigations': 'parts.investigate',
   '/': 'dashboard.view',
+  '/operations-center': 'dashboard.view',
   '/ops-dashboard': 'dashboard.view',
   '/orders-board': 'dashboard.view',
+  '/analytics': 'dashboard.view',
   '/notifications': null,
   '/settings': null,
+  '/team-presence': 'logistics.view',
+  '/invoices/pending-submission': 'maintenance.view',
+  '/finding-keywords': 'maintenance.view',
+  '/parts': 'parts.view',
+  '/part-investigations': 'parts.investigate',
+  '/recurring-fault-reviews': 'maintenance.recurring.view',
   '/vehicles': 'vehicles.view',
   '/odometer-approvals': 'vehicles.approve_odometer',
   '/driver-dispatch': 'logistics.view',
@@ -192,11 +194,14 @@ const NAV_PERMISSIONS = {
   '/overdue-rentals': 'dashboard.view',
   '/maintenance': 'maintenance.view',
   '/inspections/history': 'insights.view',
-  '/maintenance-hub': 'insights.view',
+  '/maintenance-hub': 'maintenance.view',
   '/maintenance-workflow': 'maintenance.view',
+  '/maintenance-recommendations': 'maintenance.view',
   '/my-maintenance-queue': 'maintenance.view',
   '/maintenance-foresight': 'maintenance.view',
   '/cost-capture': 'maintenance.manage',
+  '/inspection-review': 'maintenance.manage',
+  '/inspection-intelligence': 'maintenance.view',
   '/maintenance-approvals': 'maintenance.approve',
   '/garages': 'maintenance.view',
   '/vendors': 'vendors.view',
@@ -219,6 +224,7 @@ const NAV_PERMISSIONS = {
   '/sync-audit': 'sync.run',
   '/notification-test': 'users.manage',
   '/simulation': 'users.manage',
+  '/users': 'users.manage',
 };
 
 // Quick actions surfaced at the top of the command palette. `run` receives a
@@ -275,24 +281,24 @@ function NavItem({ item, onNavigate, collapsed, badgeCount = 0 }) {
       onClick={onNavigate}
       className={({ isActive }) =>
         [
-          'group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200',
+          'group relative flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors duration-150',
           collapsed ? 'lg:justify-center lg:gap-0 lg:px-0' : '',
           isActive
-            ? 'bg-gradient-to-r from-brand-500/25 via-brand-500/10 to-transparent text-white ring-1 ring-inset ring-white/10 shadow-[inset_0_1px_0_0_rgb(255_255_255_/_0.08)]'
-            : 'text-steel-300 hover:bg-white/[0.06] hover:text-white',
+            ? 'bg-accent-400/[0.10] text-white ring-1 ring-inset ring-accent-400/15'
+            : 'text-steel-300 hover:bg-white/[0.05] hover:text-white',
         ].join(' ')
       }
     >
       {({ isActive }) => (
         <>
-          {/* active accent bar */}
+          {/* active accent bar — Faster yellow signature */}
           <span
-            className={`absolute start-0 top-1/2 h-6 w-1 -translate-y-1/2 rounded-e-full bg-gradient-to-b from-brand-400 to-violet-400 shadow-[0_0_10px_rgb(var(--brand-500)_/_0.7)] transition-all duration-200 ${
-              isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-40'
+            className={`absolute start-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-e-full bg-accent-400 transition-opacity duration-150 ${
+              isActive ? 'opacity-100' : 'opacity-0'
             }`}
           />
           <svg
-            className={`h-[18px] w-[18px] shrink-0 transition-colors ${isActive ? 'text-violet-300' : 'text-steel-400 group-hover:text-steel-200'}`}
+            className={`h-[18px] w-[18px] shrink-0 transition-colors ${isActive ? 'text-accent-400' : 'text-steel-400 group-hover:text-steel-200'}`}
             fill="none" viewBox="0 0 24 24" stroke="currentColor"
             strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"
           >
@@ -364,7 +370,7 @@ function NavSection({ section, collapsed, open, onToggle, onNavigate, badges = {
 
 export default function AppLayout() {
   const { user, logout } = useAuth();
-  const { can } = usePermissions();
+  const { can, roles } = usePermissions();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -372,7 +378,11 @@ export default function AppLayout() {
   // SHOW_FINANCIALS is off (Financial Decoupling), the money-rollup destinations
   // (Cost Analytics, Profitability, Financial Conflicts, Reconciliation, Net
   // Profit) are also hidden so no financial page is reachable from the UI.
-  const navVisible = (i) => can(NAV_PERMISSIONS[i.to]) && (SHOW_FINANCIALS || !i.financial) && (!i.demoOnly || DEMO_MODE);
+  const navVisible = (i) =>
+    can(NAV_PERMISSIONS[i.to]) &&
+    !pathBlockedForRoles(i.to, roles) &&
+    (SHOW_FINANCIALS || !i.financial) &&
+    (!i.demoOnly || DEMO_MODE);
   const visibleSections = NAV_SECTIONS
     .map((s) => ({ ...s, items: s.items.filter(navVisible) }))
     .filter((s) => s.items.length > 0);
@@ -480,7 +490,7 @@ export default function AppLayout() {
 
   // Reflect the current page in the browser tab title.
   useEffect(() => {
-    document.title = pageName ? `${pageName} · FleetView` : 'FleetView';
+    document.title = pageName ? `${pageName} · Faster` : 'Faster';
   }, [pageName]);
 
   // Track recently visited nav pages (exact matches only) for the palette.
@@ -499,7 +509,6 @@ export default function AppLayout() {
   return (
     <PageStatProvider>
     <div className="min-h-screen">
-      <Aurora />
       <ScrollProgress />
       {/* Mobile overlay */}
       {open && (
@@ -508,12 +517,12 @@ export default function AppLayout() {
 
       {/* Sidebar */}
       <aside
-        className={`fixed inset-y-0 start-0 z-40 flex w-64 transform flex-col bg-gradient-to-b from-navy-900 via-navy-950 to-navy-950 text-steel-300 shadow-2xl ring-1 ring-white/5 transition-all duration-300 ease-out lg:translate-x-0 ${
+        className={`fixed inset-y-0 start-0 z-40 flex w-64 transform flex-col bg-navy-950 text-steel-300 shadow-xl transition-all duration-300 ease-out lg:translate-x-0 ${
           collapsed ? 'lg:w-20' : 'lg:w-64'
         } ${open ? 'translate-x-0' : 'max-lg:-translate-x-full max-lg:rtl:translate-x-full'}`}
       >
-        {/* hairline seam + soft brand glow along the sidebar's outer edge */}
-        <div className="pointer-events-none absolute inset-y-0 end-0 w-px bg-gradient-to-b from-transparent via-white/10 to-transparent" />
+        {/* plain hairline seam along the sidebar's outer edge */}
+        <div className="pointer-events-none absolute inset-y-0 end-0 w-px bg-white/[0.07]" />
 
         {/* Brand — top-left identity slot (logo-ready; see components/Brand.js). */}
         <div className={`flex h-16 shrink-0 items-center border-b border-white/[0.06] px-5 ${collapsed ? 'lg:justify-center lg:px-0' : ''}`}>
@@ -580,7 +589,7 @@ export default function AppLayout() {
           </button>
 
           <div className="flex min-w-0 flex-1 items-center gap-2">
-            <h2 className="truncate text-[15px] font-semibold text-slate-800">{current?.name || 'FleetView'}</h2>
+            <h2 className="truncate text-[15px] font-semibold text-slate-800">{current?.name || 'Faster'}</h2>
           </div>
 
           <div className="flex items-center gap-3">
@@ -618,7 +627,7 @@ export default function AppLayout() {
               <p className="text-sm font-semibold leading-tight text-slate-900">{user?.name}</p>
               <p className="text-xs text-slate-500">{user?.email}</p>
             </div>
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-violet-500 text-sm font-semibold text-white shadow-sm ring-2 ring-white">
+            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-indigo-600 text-sm font-semibold text-white shadow-sm ring-2 ring-white">
               {initial}
             </div>
             <button

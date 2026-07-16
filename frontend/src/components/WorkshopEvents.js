@@ -202,8 +202,8 @@ export default function WorkshopEvents({ vehicleId, contractId, defaultDate, exp
     <Card className="p-6">
       <div className="mb-4 flex items-center justify-between">
         <div>
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Workshop Events</h3>
-          <p className="mt-0.5 text-xs text-gray-400">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Workshop Events</h3>
+          <p className="mt-0.5 text-xs text-slate-400">
             {contractId
               ? 'What happened on this visit — the problem and the fix, newest first.'
               : 'The garage log for this car — newest first. The issue keyword sets the priority.'}
@@ -213,17 +213,17 @@ export default function WorkshopEvents({ vehicleId, contractId, defaultDate, exp
       </div>
 
       {events.length === 0 ? (
-        <p className="py-6 text-center text-sm text-gray-400">
+        <p className="py-6 text-center text-sm text-slate-400">
           No workshop events yet.{canManage ? ' Click “+ Add event” to log the first one.' : ''}
         </p>
       ) : (
-        <ol className="relative space-y-3 border-l-2 border-gray-100 pl-5">
+        <ol className="relative space-y-3 border-l-2 border-slate-100 pl-5">
           {events.map((ev) => {
             const lvl = LEVEL[ev.priority];
             return (
               <li key={ev.tombstoned ? `t${ev.tombstone_id}` : ev.id} className="relative">
-                <span className={`absolute -left-[27px] top-1.5 h-3 w-3 rounded-full ring-4 ring-white ${ev.tombstoned ? 'bg-gray-300' : (ev.stage === 'IN' ? 'bg-emerald-500' : 'bg-indigo-400')}`} />
-                <div className={`rounded-xl border p-4 shadow-soft ${ev.tombstoned ? 'border-dashed border-gray-200 bg-gray-50/70' : 'border-gray-100 bg-white'}`}>
+                <span className={`absolute -left-[27px] top-1.5 h-3 w-3 rounded-full ring-4 ring-white ${ev.tombstoned ? 'bg-slate-300' : (ev.stage === 'IN' ? 'bg-emerald-500' : 'bg-indigo-400')}`} />
+                <div className={`rounded-xl border p-4 shadow-soft ${ev.tombstoned ? 'border-dashed border-slate-200 bg-slate-50/70' : 'border-slate-100 bg-white'}`}>
                   <div className={`flex flex-wrap items-center gap-2 ${ev.tombstoned ? 'opacity-60' : ''}`}>
                     <Badge tone={STAGE_TONE[ev.stage] || 'slate'}>{ev.stage || '—'}</Badge>
                     {lvl && <Badge tone={lvl.tone}>{lvl.emoji} {lvl.label}</Badge>}
@@ -234,14 +234,14 @@ export default function WorkshopEvents({ vehicleId, contractId, defaultDate, exp
                     {ev.tombstoned
                       ? <Badge tone="red" title="Removed — hidden from the board and kept out of future syncs">🗑 Removed</Badge>
                       : !ev.editable && <Badge tone="gray" title="Synced from the Google Sheet — read-only here">📄 Sheet</Badge>}
-                    <span className="ml-auto text-xs text-gray-400">{ev.out_date ? fmtDate(ev.out_date) : '—'}</span>
+                    <span className="ml-auto text-xs text-slate-400">{ev.out_date ? fmtDate(ev.out_date) : '—'}</span>
                   </div>
 
                   <div className={ev.tombstoned ? 'opacity-60' : ''}>
                     {ev.issues?.length > 0 && (
                       <div className="mt-2 flex flex-wrap gap-1.5">
                         {ev.issues.map((t) => (
-                          <span key={t} className="rounded-full bg-gray-50 px-2.5 py-0.5 text-xs font-medium text-gray-600 ring-1 ring-inset ring-gray-200">{t}</span>
+                          <span key={t} className="rounded-full bg-slate-50 px-2.5 py-0.5 text-xs font-medium text-slate-600 ring-1 ring-inset ring-slate-200">{t}</span>
                         ))}
                       </div>
                     )}
@@ -255,20 +255,20 @@ export default function WorkshopEvents({ vehicleId, contractId, defaultDate, exp
                       {ev.maintenance_type && <Info label="Type" value={ev.maintenance_type} />}
                     </div>
 
-                    {ev.notes && <p className="mt-2 whitespace-pre-line text-sm text-gray-600">{ev.notes}</p>}
+                    {ev.notes && <p className="mt-2 whitespace-pre-line text-sm text-slate-600">{ev.notes}</p>}
                   </div>
 
                   {canManage && (ev.tombstoned ? (
                     <div className="mt-3 flex items-center gap-2">
                       <button onClick={() => restore(ev)} className="text-xs font-medium text-emerald-600 hover:text-emerald-700">↺ Restore</button>
-                      <span className="text-xs text-gray-400">— removed from the board &amp; future syncs</span>
+                      <span className="text-xs text-slate-400">— removed from the board &amp; future syncs</span>
                     </div>
                   ) : (
                     <div className="mt-3 flex gap-2">
                       {ev.editable && (
                         <>
                           <button onClick={() => openEdit(ev)} className="text-xs font-medium text-indigo-600 hover:text-indigo-700">Edit</button>
-                          <span className="text-gray-200">·</span>
+                          <span className="text-slate-200">·</span>
                         </>
                       )}
                       <button onClick={() => remove(ev)} className="text-xs font-medium text-red-500 hover:text-red-600">
@@ -302,7 +302,7 @@ export default function WorkshopEvents({ vehicleId, contractId, defaultDate, exp
               {STAGES.map((s) => <option key={s} value={s}>{s}</option>)}
             </Select>
             <label className="block">
-              <span className="mb-1 block text-sm font-medium text-gray-700">Garage / Vendor</span>
+              <span className="mb-1 block text-sm font-medium text-slate-700">Garage / Vendor</span>
               <SearchSelect value={form.vendor_id} onChange={(v) => setVal('vendor_id', v)} options={vendorOptions} placeholder="Search garage / vendor…" />
               {err('vendor_id') && <span className="mt-1 block text-xs text-red-600">{err('vendor_id')}</span>}
             </label>
@@ -311,21 +311,21 @@ export default function WorkshopEvents({ vehicleId, contractId, defaultDate, exp
           {/* Issue keywords — each sets the priority via the reason vocabulary */}
           <div>
             <div className="mb-1.5 flex items-center justify-between">
-              <span className="text-sm font-medium text-gray-700">Issue keywords</span>
+              <span className="text-sm font-medium text-slate-700">Issue keywords</span>
               {predicted && <Badge tone={LEVEL[predicted].tone}>Priority: {LEVEL[predicted].emoji} {LEVEL[predicted].label}</Badge>}
             </div>
             <div className="flex flex-wrap gap-2">
               {tags.map((t) => {
                 const lvl = levelOf(t);
                 return (
-                  <span key={t} className="inline-flex items-center gap-1 rounded-full bg-gray-50 px-3 py-1 text-sm font-medium text-gray-700 ring-1 ring-inset ring-gray-200">
+                  <span key={t} className="inline-flex items-center gap-1 rounded-full bg-slate-50 px-3 py-1 text-sm font-medium text-slate-700 ring-1 ring-inset ring-slate-200">
                     {lvl && <span aria-hidden>{LEVEL[lvl].emoji}</span>}
                     {t}
                     <button type="button" onClick={() => removeTag(t)} className="opacity-50 hover:opacity-100">×</button>
                   </span>
                 );
               })}
-              {tags.length === 0 && <span className="text-sm text-gray-400">Pick one or more below — the most severe sets the priority.</span>}
+              {tags.length === 0 && <span className="text-sm text-slate-400">Pick one or more below — the most severe sets the priority.</span>}
             </div>
             {reasons.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1.5">
@@ -337,7 +337,7 @@ export default function WorkshopEvents({ vehicleId, contractId, defaultDate, exp
                       key={r.reason}
                       onClick={() => addTag(r.reason)}
                       title={LEVEL[r.level]?.label || ''}
-                      className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-600 ring-1 ring-inset ring-gray-200 transition hover:bg-gray-200"
+                      className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600 ring-1 ring-inset ring-slate-200 transition hover:bg-slate-200"
                     >
                       + {r.reason}
                     </button>
@@ -397,8 +397,8 @@ export default function WorkshopEvents({ vehicleId, contractId, defaultDate, exp
 function Info({ label, value }) {
   return (
     <div>
-      <p className="text-xs text-gray-400">{label}</p>
-      <p className="font-medium text-gray-800">{value}</p>
+      <p className="text-xs text-slate-400">{label}</p>
+      <p className="font-medium text-slate-800">{value}</p>
     </div>
   );
 }

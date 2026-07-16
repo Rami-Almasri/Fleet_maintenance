@@ -6,10 +6,7 @@ import { usePermissions } from '../hooks/usePermissions';
 import { useAuth } from '../auth/AuthContext';
 import { useI18n } from '../i18n/I18nContext';
 import { useToast } from '../components/ui/Toast';
-import Button from '../components/ui/Button';
 import Icon from '../components/ui/Icon';
-import { EmptyState } from '../components/ui/Misc';
-import { Skeleton } from '../components/ui/Skeleton';
 import TicketActionModal from '../components/workflow/TicketActionModal';
 import TicketDetailDrawer from '../components/workflow/TicketDetailDrawer';
 import TicketCommandView from '../components/workflow/TicketCommandView';
@@ -19,344 +16,259 @@ import ComplaintTriageModal from '../components/workflow/ComplaintTriageModal';
 import BreakdownIntakeModal from '../components/workflow/BreakdownIntakeModal';
 import TestIntakeModal from '../components/workflow/TestIntakeModal';
 import CreateMoveModal from './logistics/CreateMoveModal';
-import { resolveAction, allows, ctaLabel, SEVERITY_CHIP, TASK_STATUS, stageAge, isAtGarage, custodyBlocked } from '../components/workflow/meta';
+import {
+  resolveAction, allows, ctaLabel, TASK_STATUS, stageAge, stageSeconds,
+  isAtGarage, custodyBlocked, custodyHolderName, fmtDuration,
+} from '../components/workflow/meta';
 import { SHOW_VIDEO_REVIEW } from '../config/features';
+import {
+  KpiTile, CommandPanel, ScoreRing, OpsClock,
+} from '../components/ops';
+import '../components/ops/ops.css';
+import './maintenance-workflow.css';
 
-// The Controller-dashboard lanes (match the API's board.columns keys). Titles + role
-// captions are resolved from the i18n catalog (workflow.lane.<key>) at render time.
-// The "repair_review" lane is the Supervisor Video-Review gate — hidden while that gate
-// is parked (SHOW_VIDEO_REVIEW = false); "Mark Ready" then flows straight to the final gate.
-const LANES = [
-  { key: 'requested',       tone: '#d946ef' },
-  { key: 'diagnostic',      tone: '#8b5cf6' },
-  { key: 'pending',         tone: '#a855f7' }, // ticket open — awaiting the Supervisor's dispatch
-  { key: 'awaiting_pickup', tone: '#f59e0b' }, // garage + driver assigned — awaiting pickup
-  { key: 'in_transit',      tone: '#f59e0b' }, // Now at Garage — arrival checkpoint: confirm arrival + log the mandatory odometer (no repairs here)
-  { key: 'under_repair',    tone: '#f97316' }, // In Workshop — the repair itself: cost, faults & timeline
-  ...(SHOW_VIDEO_REVIEW ? [{ key: 'repair_review', tone: '#7c3aed' }] : []), // Supervisor Video-Review: garage finished — Waleed/Abdullah review the video
-  { key: 'ready_for_pickup', tone: '#10b981' }, // signed off — awaiting the driver's RETURN leg (collect + arrive)
-  { key: 'qa_reinspection',  tone: '#9333ea' }, // Final QA — major repair, back at our park, awaiting the Inspector's sign-off (replaces the always-empty in_our_park transient lane)
-  { key: 'reinspection_failed', tone: '#dc2626' }, // QC: came back but still broken — supervisor re-dispatches
-  { key: 'on_site',         tone: '#0d9488' }, // On-Site (mobile) — separate side-lane; car stays available, one "Mark as Serviced" step closes it
+// The Cockpit board lanes. Titles here are the operator-facing names used in the redesigned
+// control surface; each maps to the API board.columns key(s) it draws from. The first eight are
+// the canonical pipeline (always shown, left→right = the ticket journey); the rest are EXCEPTION
+// lanes appended only when they actually hold tickets, so no live ticket is ever hidden.
+const PRIMARY_LANES = [
+  { key: 'requested',        name: 'Needs Test Drive',   tone: '#d946ef', hint: 'Vehicles need a test drive to confirm the issue' },
+  { key: 'diagnostic',       name: 'Being Inspected',    tone: '#8b5cf6', hint: 'Currently under inspection or diagnostic' },
+  { key: 'pending',          name: 'Needs Dispatch',     tone: '#a855f7', hint: 'Ready to be dispatched to a garage' },
+  { key: 'awaiting_pickup',  name: 'Awaiting Pickup',    tone: '#f59e0b', hint: 'Garage + driver assigned — awaiting pickup' },
+  { key: 'in_transit',       name: 'En Route to Garage', tone: '#f59e0b', hint: 'On the way to the garage' },
+  { key: 'under_repair',     name: 'In Workshop',        tone: '#f97316', hint: 'Being worked on at the garage' },
+  { key: 'ready_for_pickup', name: 'Ready for Pickup',   tone: '#10b981', hint: 'Work complete — awaiting collection' },
+  { key: 'qa_reinspection',  name: 'Final QA',           tone: '#9333ea', hint: 'Back at our park, awaiting re-inspection sign-off' },
+];
+const EXCEPTION_LANES = [
+  ...(SHOW_VIDEO_REVIEW ? [{ key: 'repair_review', name: 'Video Review', tone: '#7c3aed', hint: 'Awaiting supervisor video sign-off' }] : []),
+  { key: 'reinspection_failed',     name: 'Sent Back — QA Failed', tone: '#dc2626', hint: 'Came back still broken — supervisor re-dispatches' },
+  { key: 'paused',                  name: 'Paused',                tone: '#64748b', hint: 'Repair on hold — car released to service' },
+  { key: 'returned_waiting_resume', name: 'Returned — Resume Due', tone: '#f97316', hint: 'Physically back — return handover pending' },
+  { key: 'on_site',                 name: 'On-Site Service',       tone: '#0d9488', hint: 'Minor job done where the car is parked' },
 ];
 
-// How many cards a lane shows before collapsing the rest behind a "Show more" button.
+// Cards shown per lane before the "+N more" toggle. Keeps every collapsed column short and roughly
+// even (no scroll); expanding a lane reveals all its cards on demand.
 const LANE_PAGE_SIZE = 3;
 
-// Fault-severity filter chips for the board toolbar ('' = show all). Mirrors the inspector's grades.
+// Board column keys whose tickets are "waiting on us" for the next step — feeds the Workshop-Control
+// "Waiting action" tile. Module-scoped so it's a stable useMemo dependency.
+const WAITING_STAGES = ['requested', 'pending', 'awaiting_pickup', 'ready_for_pickup', 'qa_reinspection', 'returned_waiting_resume'];
+
+// Fault-severity tone (resource's fault_severity_tone) → dark opx chip class.
+const SEV_OPX = { red: 'crit', orange: 'paused', amber: 'paused', green: 'avail' };
+// Position chip tone → opx chip class.
+const POS_OPX = { blue: 'rented', red: 'crit', amber: 'paused', violet: 'reserved', green: 'avail', cyan: 'rented', teal: 'avail', slate: 'blocked' };
+const POSITION_ICON = { in_transit: '🚚', in_workshop: '🔧', repair_review: '🎬', awaiting_pickup: '📦', awaiting_dispatch: '📋', awaiting_reinspection: '✅', under_diagnosis: '🔍', inspection_requested: '🚩', reinspection_failed: '⛔', complaint_triage: '📣', ready_for_pickup: '🧳', in_our_park: '🏁', paused: '⏸️', temporarily_released: '🚗' };
+
 const SEV_FILTERS = [
-  { value: '', key: 'filterAll' },
-  { value: 'critical', key: 'critical', emoji: '🔴' },
-  { value: 'moderate', key: 'moderate', emoji: '🟡' },
-  { value: 'high', key: 'high', emoji: '🟠' },
-  { value: 'routine', key: 'routine', emoji: '🟢' },
+  { value: '', label: 'All' },
+  { value: 'critical', label: '🔴 Critical' },
+  { value: 'moderate', label: '🟡 Moderate' },
+  { value: 'routine', label: '🟢 Routine' },
 ];
 
-// Live-position chip tones (from the backend's unified position.tone) + the icon per phase, so the
-// card shows WHERE the car is — In Transit / In Workshop — as a moving part of this same ticket.
-const POSITION_TONE = {
-  blue:   'bg-sky-50 text-sky-700 ring-sky-200',
-  red:    'bg-red-50 text-red-700 ring-red-200',
-  amber:  'bg-amber-50 text-amber-700 ring-amber-200',
-  violet: 'bg-violet-50 text-violet-700 ring-violet-200',
-  green:  'bg-emerald-50 text-emerald-700 ring-emerald-200',
-  cyan:   'bg-cyan-50 text-cyan-700 ring-cyan-200',
-  teal:   'bg-teal-50 text-teal-700 ring-teal-200',
-  slate:  'bg-slate-50 text-slate-600 ring-slate-200',
-};
-const POSITION_ICON = { in_transit: '🚚', in_workshop: '🔧', repair_review: '🎬', awaiting_pickup: '📦', awaiting_dispatch: '📋', awaiting_reinspection: '✅', under_diagnosis: '🔍', inspection_requested: '🚩', reinspection_failed: '⛔', complaint_triage: '📣', ready_for_pickup: '🧳', in_our_park: '🏁' };
+const payload = (r) => (r && r.data && 'data' in r.data ? r.data.data : r?.data);
 
-// A single board card — deliberately dense and quiet. It shows only what a controller needs to
-// scan the lane (plate, who has the car) plus the ONE primary stage action; everything
-// else (full history, findings, photos, secondary actions) lives one click away in the drawer.
-function TicketCard({ tk, tone, can, userId, active, onOpen, onAct }) {
+// One dark board card — the Cockpit restyle of the classic ticket card. It keeps EVERY operator
+// affordance (severity, complaint/breakdown flags, live position, single-garage fault routing,
+// custody gate, delegation, the one primary stage action) — only the skin changed to the .opx tokens.
+function TicketCard({ tk, tone, can, userId, active, onSelect, onAct }) {
   const { t } = useI18n();
   const cardRef = useRef(null);
-
-  // When this card is the deep-link / active target, scroll it into view once it renders.
   useEffect(() => {
-    if (active && cardRef.current) {
-      cardRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }
+    if (active && cardRef.current) cardRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, [active]);
 
   const act = resolveAction(tk);
   const allowed = act && allows(can, act.perm);
-  // "Mark Ready" is gated: blocked until every fault on the ticket is fixed (or cancelled).
   const openFaults = tk.tasks_progress?.open ?? 0;
   const readyBlocked = act?.action === 'ready' && openFaults > 0;
   const readyHint = `Fix all ${openFaults} open fault${openFaults > 1 ? 's' : ''} first`;
-  // "Now at Garage" custody gate: only the driver who picked the car up may check it in.
-  const custodyLocked = act?.action === 'receive' && custodyBlocked(tk, userId);
-  const custodyHint = `Only ${tk.dispatched_by_name || 'the driver who picked up the car'} can check it in`;
+  const custodyLocked = custodyBlocked(tk, userId);
+  const custodyHolder = custodyHolderName(tk, userId);
+  const custodyHint = act?.action === 'arriveAtPark'
+    ? `Only ${custodyHolder || 'the driver who collected the car from the garage'} can complete the arrival at our park`
+    : `Only ${custodyHolder || 'the driver who picked up the car'} can check it in`;
   const tasks = tk.tasks || [];
-  const canRoute = can('maintenance.delegate'); // the Supervisor's dispatch authority routes faults
-  // Follow-up notes (Waleed/Abdullah) surfaced right on the card — only while the car is In Workshop
-  // (under_repair), i.e. actually at the garage being worked on. Mirrors the drawer's canFollowUp.
+  const canRoute = can('maintenance.delegate');
   const canFollowUp = can('maintenance.delegate') && tk.workflow_status === 'under_repair';
   const driverName = tk.dispatched_by_name || tk.assigned_driver_name;
   const delegated = tk.delegation?.status === 'driver_assigned' && tk.delegation.driver_name;
-  // Critical tickets get a card-level red accent so they pop out of the lane at a glance — the
-  // active (deep-link) ring still wins so a focused card is never visually ambiguous.
   const critical = tk.fault_severity === 'critical';
-  // Customer complaints jump the queue: management must prioritise them above all else, so the card
-  // wears a bold "Customer Complaint" badge (and a rose accent when it isn't already critical-red).
   const isComplaint = tk.trigger_reason === 'customer_reported';
-  // A breakdown grounds the car (condition RED / In-Maintenance) — surfaced as "Disabled" in this context,
-  // and once it's on a recovery truck the same Disabled state holds. A hard, unmissable red pill.
   const isDisabled = tk.maintenance_type === 'breakdown' || tk.is_recovery;
-  // Time in the CURRENT stage (not the misleading creation date). `age.over` reddens the label once a
-  // stage overstays its SLA (e.g. a supervisor sitting on a Pending-Dispatch ticket past 4h).
   const age = stageAge(tk, t);
+  const sevCls = SEV_OPX[tk.fault_severity_tone] || 'paused';
+
+  const railCls = active ? 'sel' : critical ? 'sev-crit' : isComplaint ? 'sev-paused' : '';
 
   return (
     <div
       ref={cardRef}
-      onClick={() => onOpen(tk)}
+      onClick={() => onSelect(tk)}
       role="button"
       tabIndex={0}
-      onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onOpen(tk))}
-      className={`group cursor-pointer overflow-hidden rounded-lg border bg-white transition focus:outline-none ${
-        active
-          ? 'border-indigo-500 bg-indigo-50/40 shadow-md animate-pulse-ring'
-          : critical
-            ? 'border-red-200 ring-1 ring-red-100 shadow-sm hover:-translate-y-px hover:border-red-300 hover:shadow-md'
-            : isComplaint
-              ? 'border-rose-200 ring-1 ring-rose-100 shadow-sm hover:-translate-y-px hover:border-rose-300 hover:shadow-md'
-              : 'border-slate-200 shadow-sm hover:-translate-y-px hover:border-slate-300 hover:shadow-md'
-      }`}
+      onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onSelect(tk))}
+      className={`mwf-card ${railCls}`}
     >
-      <div className="flex">
-        {/* Left status rail — the lane colour, doubling as a click affordance. */}
-        <span className="w-1 shrink-0" style={{ background: tone }} />
-
-        <div className="min-w-0 flex-1 px-2.5 py-2">
-          {/* Vehicle identification — plate as the bold scan-key, vehicle name beneath it (mirrors the
-              drawer's plate-title + car-subtitle), so a controller IDs the car without opening it. */}
-          <div className="flex items-start justify-between gap-2">
-            <span className="inline-flex min-w-0 flex-col">
-              <span className="inline-flex min-w-0 items-center gap-1.5 font-mono text-sm font-bold tracking-wider text-slate-800">
-                <Icon.Car className="h-3.5 w-3.5 shrink-0 text-slate-400" strokeWidth={2} />
-                <span className="truncate">{tk.plate || `#${tk.id}`}</span>
-              </span>
-              {tk.car && (
-                <span className="mt-0.5 truncate pl-5 text-[11px] font-medium text-slate-500" title={tk.car}>
-                  {tk.car}
-                </span>
-              )}
-            </span>
-            <span className="flex shrink-0 items-center gap-1">
-              {/* Time in this stage — reddens once the stage overstays its SLA (supervisor slacking). */}
-              {age && (
-                <span
-                  className={`inline-flex items-center gap-0.5 text-[10px] font-semibold tabular-nums ${age.over ? 'text-red-600' : 'text-slate-400'}`}
-                  title={t('queue.timeInStage')}
-                >
-                  <Icon.Clock className="h-3 w-3" />
-                  {age.label}
-                </span>
-              )}
-              {/* Open the full-page command view (the rich single-ticket page). */}
-              <Link
-                to={`/maintenance-workflow/${tk.id}`}
-                onClick={(e) => e.stopPropagation()}
-                className="rounded-md p-0.5 text-slate-300 opacity-0 transition hover:bg-slate-100 hover:text-indigo-600 group-hover:opacity-100"
-                title={t('workflow.detail.eyebrow', { id: tk.id })}
-              >
-                <Icon.ArrowRight className="h-3.5 w-3.5" />
-              </Link>
-            </span>
+      <span className="mwf-rail" style={{ background: tone }} />
+      <div className="mwf-card-bd">
+        {/* Plate + vehicle + time-in-stage + jump-to-command-view */}
+        <div className="mwf-card-top">
+          <div className="mwf-id">
+            <span className="mwf-plate"><Icon.Car className="h-3.5 w-3.5" strokeWidth={2} />{tk.plate || `#${tk.id}`}</span>
+            {tk.car && <span className="mwf-car" title={tk.car}>{tk.car}</span>}
           </div>
+          <div className="mwf-id-right">
+            {age && (
+              <span className={`mwf-age ${age.over ? 'over' : ''}`} title={t('queue.timeInStage')}>
+                <Icon.Clock className="h-3 w-3" />{age.label}
+              </span>
+            )}
+            <Link
+              to={`/maintenance-workflow/${tk.id}`}
+              onClick={(e) => e.stopPropagation()}
+              className="mwf-jump"
+              title={t('workflow.detail.eyebrow', { id: tk.id })}
+              aria-label={t('workflow.detail.eyebrow', { id: tk.id })}
+            >
+              <Icon.ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+            </Link>
+          </div>
+        </div>
 
-          {/* Customer Complaint — the top-priority flag. Management dispatches these first, so it's the
-              boldest chip on the card (filled rose, above even the severity grade). */}
+        {/* Flags */}
+        <div className="mwf-flags">
           {isComplaint && (
-            <div className="mt-1.5">
-              <span
-                className="inline-flex items-center gap-1 rounded-full bg-rose-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white shadow-sm ring-1 ring-inset ring-rose-700/40"
-                title={tk.customer_complaint || t('workflow.complaint.badge')}
-              >
-                📣 {t('workflow.complaint.badge')}
-              </span>
-            </div>
+            <span className="mwf-pill crit" title={tk.customer_complaint || t('workflow.complaint.badge')}>📣 {t('workflow.complaint.badge')}</span>
           )}
-
-          {/* Disabled — a breakdown-grounded car (or one on a recovery truck). Reuses the RED /
-              In-Maintenance grounding, labelled "Disabled" for the breakdown/recovery context. */}
           {isDisabled && (
-            <div className="mt-1.5 flex flex-wrap items-center gap-1">
-              <span className="inline-flex items-center gap-1 rounded-full bg-red-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white shadow-sm ring-1 ring-inset ring-red-700/40">
-                ⛔ {t('workflow.status.disabled')}
-              </span>
-              {tk.is_recovery && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800 ring-1 ring-inset ring-amber-600/20" title={tk.recovery_unit_phone || ''}>
-                  🛻 {tk.recovery_unit_name}
-                </span>
-              )}
-            </div>
+            <>
+              <span className="mwf-pill crit">⛔ {t('workflow.status.disabled')}</span>
+              {tk.is_recovery && <span className="mwf-pill paused" title={tk.recovery_unit_phone || ''}>🛻 {tk.recovery_unit_name}</span>}
+            </>
           )}
-
-          {/* Request agenda — the "why" behind a system/driver-raised inspection (a customer complaint
-              already has its own rose badge above). For a system Post-Downtime request this is where the
-              idle duration shows ("Vehicle idle for 25 days — go check: Battery, Fluids, and Brakes"), so
-              the inspector sees how long the car has sat, and what to check, without opening the ticket. */}
-          {tk.customer_complaint && tk.trigger_reason !== 'customer_reported' && (
-            <div className="mt-1.5">
-              <p
-                className="line-clamp-2 rounded-md bg-amber-50 px-2 py-1 text-[10px] font-medium leading-snug text-amber-800 ring-1 ring-inset ring-amber-600/15"
-                title={tk.customer_complaint}
-              >
-                🕗 {tk.customer_complaint}
-              </p>
-            </div>
-          )}
-
-          {/* Fault severity — the inspector's grade, surfaced up top as the card's headline urgency. */}
           {tk.fault_severity && (
-            <div className="mt-1.5">
-              <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ring-1 ring-inset ${SEVERITY_CHIP[tk.fault_severity_tone] || SEVERITY_CHIP.amber}`}>
-                {tk.fault_severity_emoji} {t(`workflow.faultSeverity.${tk.fault_severity}`)}
-              </span>
-            </div>
+            <span className={`opx-chip ${sevCls}`}><span className="cd" />{tk.fault_severity_emoji} {t(`workflow.faultSeverity.${tk.fault_severity}`)}</span>
           )}
-
-          {/* "Sent back" — this car already came back broken and was re-dispatched to a garage. Shown
-              at a glance so nobody has to open the ticket to learn it's a repeat trip. */}
           {tk.sent_back && (
-            <div className="mt-1.5">
-              <span
-                className="inline-flex max-w-full items-center gap-1 rounded-md bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-700 ring-1 ring-inset ring-rose-600/20"
-                title={
-                  tk.sent_back.changed
-                    ? t('workflow.board.sentBackTipChanged', { from: tk.sent_back.from_garage || '—', to: tk.sent_back.to_garage || '—' })
-                    : t('workflow.board.sentBackTipSame', { to: tk.sent_back.to_garage || '—' })
-                }
-              >
-                <span>⛔</span>
-                <span className="truncate">{t('workflow.board.sentBack')}{tk.sent_back.count > 1 ? ` ×${tk.sent_back.count}` : ''}</span>
-              </span>
-            </div>
-          )}
-
-          {/* Live position — the unified "where is the car" (In Transit / In Workshop / …), derived on
-              the server from this ticket's status + active garage stint + active move. The logistics
-              leg shows here, ON the ticket, not on a separate board. */}
-          {tk.position?.label && (
-            <div className="mt-1.5 flex flex-wrap items-center gap-1">
-              <span
-                className={`inline-flex max-w-full items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-semibold ring-1 ring-inset ${POSITION_TONE[tk.position.tone] || POSITION_TONE.slate} ${tk.position.moving ? 'animate-pulse' : ''}`}
-                title={tk.position.detail || tk.position.label}
-              >
-                <span>{POSITION_ICON[tk.position.phase] || '•'}</span>
-                <span className="truncate">
-                  {tk.position.label}{tk.position.garage ? ` · ${tk.position.garage}` : ''}
-                  {tk.position.transfer && tk.position.destination ? ` → ${tk.position.destination}` : ''}
-                </span>
-              </span>
-              {/* Transfer flag — an at-a-glance marker that this car is being moved between garages. */}
-              {tk.position.transfer && (
-                <span className="inline-flex items-center gap-0.5 rounded-md bg-violet-100 px-1.5 py-0.5 text-[10px] font-bold text-violet-700 ring-1 ring-inset ring-violet-200">
-                  🔀 {t('workflow.position.transfer')}
-                </span>
-              )}
-            </div>
-          )}
-
-          {/* Single-garage routing — the faults grouped under the car's ONE current garage, so a
-              controller sees every fault and where the car is, without opening the ticket. */}
-          {tasks.length > 0 && (
-            <div className="mt-2 space-y-1">
-              {/* Group header — the single current garage all faults sit at (shown once). */}
-              <div className="flex items-center gap-1 text-[10px] font-semibold text-slate-500">
-                <Icon.Wrench className="h-3 w-3 shrink-0 text-slate-400" />
-                <span className="truncate" title={tk.garage || ''}>
-                  {tk.garage || <span className="italic font-normal text-slate-400">{t('workflow.task.unassigned')}</span>}
-                </span>
-                <span className="text-slate-300">·</span>
-                <span className="shrink-0 text-slate-400">{tasks.length}</span>
-              </div>
-              {tasks.map((task) => {
-                const st = TASK_STATUS[task.status] || TASK_STATUS.pending;
-                const failCount = Number(task.reinspection_failures) || 0;
-                return (
-                  <div key={task.id} className="flex items-center gap-1.5 rounded-md bg-slate-50 px-1.5 py-1 ring-1 ring-inset ring-slate-100" title={task.symptom}>
-                    <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${st.dot}`} />
-                    <span className="truncate text-[10px] font-medium text-slate-700">{task.symptom}</span>
-                    {/* QC blame — this fault came back unfixed before; shows which garage + how many times. */}
-                    {failCount > 0 && (
-                      <span
-                        className="ms-auto inline-flex shrink-0 items-center gap-0.5 rounded bg-red-100 px-1 py-0.5 text-[9px] font-bold text-red-700"
-                        title={t('workflow.reinspect.unresolvedBadge', { n: failCount, garage: task.last_failed_garage || t('workflow.task.unassigned') })}
-                      >
-                        ⛔{failCount > 1 ? `×${failCount}` : ''}
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
-              {/* "Manage faults" only appears once the car is at the garage stage — before that
-                  (awaiting dispatch) there's nothing to work on yet. It's hidden again at
-                  ready_for_pickup: by then the faults are fixed and there's nothing left to route. */}
-              {canRoute && isAtGarage(tk) && tk.workflow_status !== 'ready_for_pickup' && (
-                <div onClick={(e) => e.stopPropagation()}>
-                  <button
-                    type="button"
-                    onClick={() => onAct('route', tk)}
-                    className="mt-0.5 inline-flex w-full items-center justify-center gap-1 rounded-md border border-dashed border-slate-300 px-2 py-1 text-[10px] font-semibold text-slate-500 transition hover:border-indigo-300 hover:bg-indigo-50/50 hover:text-indigo-600"
-                  >
-                    <Icon.Wrench className="h-3 w-3" /> {t('workflow.task.route')}
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Who has the car / delegation — the only attribution kept on the card */}
-          {(driverName || delegated) && (
-            <div className="mt-1 flex items-center gap-1.5 text-[11px] text-slate-500">
-              {delegated ? (
-                <span className="inline-flex items-center gap-1 font-medium text-indigo-600">
-                  <Icon.Car className="h-3 w-3 shrink-0" />
-                  {t('workflow.delegation.assigned')} · {tk.delegation.driver_name}
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1 truncate">
-                  <Icon.Truck className="h-3 w-3 shrink-0 text-slate-400" />
-                  <span className="truncate">{driverName}</span>
-                </span>
-              )}
-            </div>
-          )}
-
-          {/* Add note — management follow-up (Waleed/Abdullah), on the card so it's one tap while the car
-              is out, no drawer needed. */}
-          {canFollowUp && (
-            <div className="mt-1.5" onClick={(e) => e.stopPropagation()}>
-              <button
-                type="button"
-                onClick={() => onAct('followup', tk)}
-                className="inline-flex w-full items-center justify-center gap-1 rounded-md border border-dashed border-slate-300 px-2 py-1 text-[10px] font-semibold text-slate-500 transition hover:border-indigo-300 hover:bg-indigo-50/50 hover:text-indigo-600"
-              >
-                <Icon.Plus className="h-3 w-3" /> {t('workflow.cardAction.followup')}
-              </button>
-            </div>
-          )}
-
-          {/* Primary action only — secondary actions moved to the drawer */}
-          {allowed && custodyLocked && (
-            <div className="mt-2.5" onClick={(e) => e.stopPropagation()}>
-              <p className="text-center text-[10px] font-medium text-amber-600">{custodyHint}</p>
-            </div>
-          )}
-          {allowed && !custodyLocked && (
-            <div className="mt-2.5" onClick={(e) => e.stopPropagation()}>
-              <Button size="sm" variant={act.variant} disabled={readyBlocked} title={readyBlocked ? readyHint : undefined} onClick={() => onAct(act.action, tk)} className="w-full justify-center">
-                {ctaLabel(t, tk)}
-              </Button>
-              {readyBlocked && <p className="mt-1 text-center text-[10px] font-medium text-amber-600">{readyHint}</p>}
-            </div>
+            <span className="mwf-pill crit">⛔ {t('workflow.board.sentBack')}{tk.sent_back.count > 1 ? ` ×${tk.sent_back.count}` : ''}</span>
           )}
         </div>
+
+        {/* System / driver-raised agenda (a complaint has its own pill above) */}
+        {tk.customer_complaint && tk.trigger_reason !== 'customer_reported' && (
+          <p className="mwf-agenda" title={tk.customer_complaint}>🕗 {tk.customer_complaint}</p>
+        )}
+
+        {/* Live position — where the car actually is */}
+        {tk.position?.label && (
+          <div className="mwf-flags">
+            <span className={`opx-chip mwf-pos ${POS_OPX[tk.position.tone] || 'blocked'} ${tk.position.moving ? 'moving' : ''}`} title={tk.position.detail || tk.position.label}>
+              <span aria-hidden="true">{POSITION_ICON[tk.position.phase] || '•'}</span>
+              {tk.position.label}{tk.position.garage ? ` · ${tk.position.garage}` : ''}
+              {tk.position.transfer && tk.position.destination ? ` → ${tk.position.destination}` : ''}
+            </span>
+          </div>
+        )}
+
+        {/* Single-garage fault routing */}
+        {tasks.length > 0 && (
+          <div className="mwf-tasks">
+            <div className="mwf-tasks-hd">
+              <Icon.Wrench className="h-3 w-3" />
+              <span className="gn" title={tk.garage || ''}>{tk.garage || <em>{t('workflow.task.unassigned')}</em>}</span>
+              <span className="ct">{tasks.length}</span>
+            </div>
+            {tasks.map((task) => {
+              const st = TASK_STATUS[task.status] || TASK_STATUS.pending;
+              const failCount = Number(task.reinspection_failures) || 0;
+              return (
+                <div key={task.id} className="mwf-task" title={task.symptom}>
+                  <span className={`mwf-dot ${st.dot}`} />
+                  <span>{task.symptom}</span>
+                  {failCount > 0 && <span className="mwf-fail" title={t('workflow.reinspect.unresolvedBadge', { n: failCount, garage: task.last_failed_garage || t('workflow.task.unassigned') })}>⛔{failCount > 1 ? `×${failCount}` : ''}</span>}
+                </div>
+              );
+            })}
+            {canRoute && isAtGarage(tk) && tk.workflow_status !== 'ready_for_pickup' && (
+              <button type="button" className="mwf-ghost" onClick={(e) => { e.stopPropagation(); onAct('route', tk); }}>
+                <Icon.Wrench className="h-3 w-3" /> {t('workflow.task.route')}
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Custody / delegation */}
+        {(driverName || delegated) && (
+          <div className="mwf-who">
+            {delegated ? (
+              <><Icon.Car className="h-3 w-3" />{t('workflow.delegation.assigned')} · {tk.delegation.driver_name}</>
+            ) : (
+              <><Icon.Truck className="h-3 w-3" /><span>{driverName}</span></>
+            )}
+          </div>
+        )}
+
+        {canFollowUp && (
+          <button type="button" className="mwf-ghost" onClick={(e) => { e.stopPropagation(); onAct('followup', tk); }}>
+            <Icon.Plus className="h-3 w-3" /> {t('workflow.cardAction.followup')}
+          </button>
+        )}
+
+        {/* Primary stage action */}
+        {allowed && custodyLocked && <p className="mwf-warn">{custodyHint}</p>}
+        {allowed && !custodyLocked && (
+          <div onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              className={`opx-btn ${act.variant === 'danger' ? 'danger' : 'primary'} mwf-cta`}
+              disabled={readyBlocked}
+              title={readyBlocked ? readyHint : undefined}
+              onClick={() => onAct(act.action, tk)}
+            >
+              {ctaLabel(t, tk)}
+            </button>
+            {readyBlocked && <p className="mwf-warn">{readyHint}</p>}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// A single board column (lane) — colored top accent, header with count, cards or an empty state.
+function Lane({ lane, loading, expanded, onToggle, cardProps }) {
+  const tickets = lane.tickets;
+  const shown = expanded ? tickets : tickets.slice(0, LANE_PAGE_SIZE);
+  const hidden = tickets.length - shown.length;
+  return (
+    <div className="mwf-lane">
+      <span className="mwf-lane-accent" style={{ background: lane.tone }} />
+      <div className="mwf-lane-hd">
+        <span className="dot" style={{ background: lane.tone, boxShadow: `0 0 8px ${lane.tone}` }} />
+        <span className="nm">{lane.name}</span>
+        <span className="ct" style={{ color: lane.tone, background: `${lane.tone}22` }}>{tickets.length}</span>
+      </div>
+      <div className="mwf-lane-bd">
+        {loading ? (
+          <><div className="opx-skel" style={{ height: 88 }} /><div className="opx-skel" style={{ height: 88 }} /></>
+        ) : tickets.length === 0 ? (
+          <div className="mwf-empty">
+            <span className="ic"><Icon.Check className="h-4 w-4" /></span>
+            <p className="t">No tickets</p>
+            <p className="h">{lane.hint}</p>
+          </div>
+        ) : (
+          <>
+            {shown.map((tk) => <TicketCard key={tk.id} tk={tk} tone={lane.tone} active={tk.id === cardProps.selectedId} {...cardProps} />)}
+            {hidden > 0 && <button type="button" className="opx-lane-more" onClick={onToggle}>+{hidden} more</button>}
+            {expanded && tickets.length > LANE_PAGE_SIZE && <button type="button" className="opx-lane-more" onClick={onToggle}>Show less</button>}
+          </>
+        )}
       </div>
     </div>
   );
@@ -368,25 +280,25 @@ export default function MaintenanceWorkflow() {
   const { can } = usePermissions();
   const { user } = useAuth();
   const { id } = useParams();
-  const focusId = id ? Number(id) : null; // deep-link target from a notification
+  const focusId = id ? Number(id) : null;
 
-  const [modal, setModal] = useState(null);            // { action, ticket } | { action:'request' }
-  // A deep-linked ticket (/maintenance-workflow/:id) opens the full-page command view;
-  // a click on a board card opens the lighter slide-over drawer instead.
-  const [detail, setDetail] = useState(null);          // open drawer { id, summary? }
-  const [detailReload, setDetailReload] = useState(0); // bumped to refresh the drawer after an action
+  const [modal, setModal] = useState(null);
+  const [detail, setDetail] = useState(null);
+  const [detailReload, setDetailReload] = useState(0);
   const [vehicles, setVehicles] = useState([]);
   const [garages, setGarages] = useState([]);
   const [findingsCatalog, setFindingsCatalog] = useState([]);
-  const [maintTypes, setMaintTypes] = useState([]); // permission-scoped classification values (technician → routine/breakdown)
-  const [keywordMeta, setKeywordMeta] = useState({}); // keyword → { risk, tone, emoji, ar } (bilingual + risk chips)
-  const [faultCausesCatalog, setFaultCausesCatalog] = useState({}); // symptom → probable root causes (diagnostic step)
-  const [drivers, setDrivers] = useState([]); // delegation picker — logistics users (supervisors only)
-  const [sevFilter, setSevFilter] = useState(''); // board fault-severity filter ('' = all)
-  const [expandedLanes, setExpandedLanes] = useState({}); // lane.key → true once "Show more" is clicked
+  const [maintTypes, setMaintTypes] = useState([]);
+  const [keywordMeta, setKeywordMeta] = useState({});
+  const [faultCausesCatalog, setFaultCausesCatalog] = useState({});
+  const [drivers, setDrivers] = useState([]);
+  const [sevFilter, setSevFilter] = useState('');
+  const [query, setQuery] = useState('');
+  const [view, setView] = useState('board');        // board | list
+  const [expandedLanes, setExpandedLanes] = useState({});
+  const [fleet, setFleet] = useState(null);         // /Dashboard fleet_status
 
-  // Real-time board: silent background revalidation every 6s (no skeleton flash, scroll &
-  // filters preserved), paused while a modal/drawer is open so the view never shifts mid-action.
+  // Real-time board (silent revalidation every 6s), paused while a modal/drawer is open.
   const fetcher = useCallback(async () => (await api.get('/maintenance-tickets/board')).data.data, []);
   const { data, loading, error, reload } = useFetch(fetcher, [], {
     refreshInterval: 6000,
@@ -395,8 +307,6 @@ export default function MaintenanceWorkflow() {
 
   const canDelegate = can('maintenance.delegate');
 
-  // Reference lists for the pickers: vehicles for "open", garages for dispatch/close, and the
-  // central Findings keyword library (config-backed) for the test-drive & garage-findings steps.
   useEffect(() => {
     let alive = true;
     Promise.all([api.get('/Vehicle'), api.get('/Vendor'), api.get('/maintenance-tickets/findings-catalog')])
@@ -404,7 +314,6 @@ export default function MaintenanceWorkflow() {
         if (!alive) return;
         const vlist = v.data?.data;
         const allVehicles = Array.isArray(vlist) ? vlist : vlist?.items || [];
-        // Only Ready + Rented cars can be flagged for inspection
         setVehicles(allVehicles.filter((veh) => ['ready', 'rented'].includes(veh.status)));
         const glist = g.data?.data;
         const all = Array.isArray(glist) ? glist : glist?.items || [];
@@ -415,49 +324,117 @@ export default function MaintenanceWorkflow() {
         setFaultCausesCatalog(f.data?.data?.fault_causes || {});
         setMaintTypes((f.data?.data?.maintenance_types || []).map((x) => x.value));
       })
-      .catch(() => { /* pickers just stay empty / fall back to the built-in list */ });
+      .catch(() => { /* pickers fall back to empty */ });
     return () => { alive = false; };
   }, []);
 
-  // The delegation picker's driver list — only a supervisor (maintenance.delegate) may load it.
+  // Fleet-status donut for the bottom command row (existing endpoint only).
+  useEffect(() => {
+    let alive = true;
+    const load = () => {
+      api.get('/Dashboard', { params: { expiring_days: 7 } }).then((r) => { if (alive) setFleet(payload(r)?.fleet_status || null); }).catch(() => {});
+    };
+    load();
+    const iv = setInterval(() => { if (document.visibilityState === 'visible') load(); }, 30000);
+    return () => { alive = false; clearInterval(iv); };
+  }, []);
+
   useEffect(() => {
     if (!canDelegate) return undefined;
     let alive = true;
     api.get('/maintenance-tickets/assignable-drivers')
       .then((r) => { if (alive) setDrivers(Array.isArray(r.data?.data) ? r.data.data : []); })
-      .catch(() => { /* leave the picker empty on failure */ });
+      .catch(() => {});
     return () => { alive = false; };
   }, [canDelegate]);
 
-  // Memoised so its identity is stable while `data` is unchanged — otherwise the `lanes` useMemo below
-  // (which depends on it) would recompute on every render.
   const columns = useMemo(() => data?.columns || {}, [data]);
   const counts = data?.counts || {};
 
   const onDone = (message) => {
     setModal(null);
     if (message) toast.success(message);
-    reload({ silent: true });      // swap in the new board state with no skeleton flash
-    setDetailReload((n) => n + 1); // refresh the drawer if it's open
+    reload({ silent: true });
+    setDetailReload((n) => n + 1);
   };
 
   const canInitiate = can('maintenance.initiate');
   const canLogistics = can('maintenance.logistics');
-  const canManage = can('maintenance.manage'); // Operations controllers (Marwa & Leen) — complaint intake
+  const canManage = can('maintenance.manage');
 
-  const lanes = useMemo(() => LANES.map((l) => {
-    const own = columns[l.key] || [];
-    const merged = (l.mergeKeys || []).flatMap((k) => columns[k] || []);
-    let tickets = [...merged, ...own];
-    if (sevFilter) tickets = tickets.filter((tk) => tk.fault_severity === sevFilter);
-    return { ...l, tickets };
-  }), [columns, sevFilter]);
+  // Client-side filters shared by the board + list.
+  const matchesFilters = useCallback((tk) => {
+    if (sevFilter && tk.fault_severity !== sevFilter) return false;
+    if (query) {
+      const q = query.toLowerCase();
+      const hay = [tk.plate, tk.car, tk.garage, tk.customer_complaint, ...(tk.tasks || []).map((x) => x.symptom)]
+        .filter(Boolean).join(' ').toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  }, [sevFilter, query]);
 
-  const openDetail = (tk) => setDetail({ id: tk.id, summary: tk });
+  const buildLanes = useCallback((defs) => defs.map((l) => ({
+    ...l,
+    tickets: (columns[l.key] || []).filter(matchesFilters),
+  })), [columns, matchesFilters]);
 
-  // Deep-linked to a single ticket → render the full-page command view; the board's
-  // action modals (rendered below) stay shared, and an action there bumps detailReload
-  // so the command view refreshes itself.
+  const primaryLanes = useMemo(() => buildLanes(PRIMARY_LANES), [buildLanes]);
+  // Always show every stage lane (empty ones render their "No tickets" state) so the board keeps a
+  // stable shape and no stage is ever hidden.
+  const exceptionLanes = useMemo(() => buildLanes(EXCEPTION_LANES), [buildLanes]);
+  const allLanes = useMemo(() => [...primaryLanes, ...exceptionLanes], [primaryLanes, exceptionLanes]);
+  const allTickets = useMemo(() => allLanes.flatMap((l) => l.tickets), [allLanes]);
+
+  // ---- Today's Workshop Control — action-oriented, not reporting ----
+  // A true workshop snapshot: computed over ALL open tickets (independent of the search/severity
+  // filter above), so the strip always answers "what needs action now" for the whole shop.
+  const openTotal = counts.open_total ?? allTickets.length;
+  const allOpen = useMemo(
+    () => [...PRIMARY_LANES, ...EXCEPTION_LANES].flatMap((l) => columns[l.key] || []),
+    [columns],
+  );
+  // "Stale" = SLA breached in the current stage, or parked > 3 days — the same rule the board reddens by.
+  const isStale = useCallback((tk) => {
+    const a = stageAge(tk, t); const s = stageSeconds(tk);
+    return (a && a.over) || (s != null && s > 3 * 86400);
+  }, [t]);
+  // 🔴 Needs attention — blocked (came back QA-failed) or overdue; a human is needed now. Deduped by id.
+  const attentionIds = useMemo(() => {
+    const ids = new Set((columns.reinspection_failed || []).map((x) => x.id));
+    for (const tk of allOpen) if (isStale(tk)) ids.add(tk.id);
+    return ids;
+  }, [columns, allOpen, isStale]);
+  const needsAttention = attentionIds.size;
+  // 🟠 Waiting action — sitting in a "waiting on us" stage (inspection / dispatch-approval / collection),
+  // and not already flagged red above.
+  const waitingAction = useMemo(() => {
+    let n = 0;
+    for (const key of WAITING_STAGES) for (const tk of (columns[key] || [])) if (!attentionIds.has(tk.id)) n += 1;
+    return n;
+  }, [columns, attentionIds]);
+  // 🟢 Completed today — closed since midnight (from the board count; back in the fleet).
+  const completedToday = counts.completed_today ?? 0;
+  // ⏱ Oldest open ticket — the single job that's been open the longest.
+  const oldestOpen = useMemo(() => {
+    let best = null;
+    for (const tk of allOpen) {
+      if (!tk.created_at) continue;
+      if (!best || tk.created_at < best.created_at) best = tk;
+    }
+    return best;
+  }, [allOpen]);
+  const oldestAge = oldestOpen ? fmtDuration(Math.max(0, Math.floor((Date.now() - new Date(oldestOpen.created_at).getTime()) / 1000))) : '—';
+
+  const fs = fleet || {};
+  const fleetTotal = (fs.available ?? 0) + (fs.rented ?? 0) + (fs.maintenance ?? 0);
+  const availPct = fleetTotal ? Math.round(((fs.available ?? 0) / fleetTotal) * 100) : 0;
+
+  // Clicking a ticket opens the full detail drawer directly (it seeds from the board summary, then
+  // lazy-loads the full ticket) — no intermediate "select → View Details" step.
+  const openDetail = (tk) => { setDetail({ id: tk.id, summary: tk }); };
+
+  // Deep-linked single ticket → the full-page command view (unchanged wiring).
   if (focusId) {
     return (
       <>
@@ -469,207 +446,153 @@ export default function MaintenanceWorkflow() {
           onAct={(action, ticket) => setModal({ action, ticket })}
         />
         {modal?.action === 'logistics' && (
-          <CreateMoveModal
-            open
-            lockedVehicle={modal.ticket ? { id: modal.ticket.vehicle_id, plate: modal.ticket.plate, label: modal.ticket.car } : null}
-            maintenanceId={modal.ticket?.id || null}
-            onClose={() => setModal(null)}
-            onCreated={() => onDone()}
-          />
+          <CreateMoveModal open lockedVehicle={modal.ticket ? { id: modal.ticket.vehicle_id, plate: modal.ticket.plate, label: modal.ticket.car } : null} maintenanceId={modal.ticket?.id || null} onClose={() => setModal(null)} onCreated={() => onDone()} />
         )}
         {modal?.action === 'route' && (
-          <TaskRoutingModal
-            ticket={modal.ticket}
-            garages={garages}
-            onClose={() => setModal(null)}
-            onDone={() => { reload({ silent: true }); setDetailReload((n) => n + 1); }}
-          />
+          <TaskRoutingModal ticket={modal.ticket} garages={garages} onClose={() => setModal(null)} onDone={() => { reload({ silent: true }); setDetailReload((n) => n + 1); }} />
         )}
         {modal?.action === 'triage' && (
-          <ComplaintTriageModal
-            ticket={modal.ticket}
-            vehicles={vehicles}
-            onClose={() => setModal(null)}
-            onDone={onDone}
-          />
+          <ComplaintTriageModal ticket={modal.ticket} vehicles={vehicles} onClose={() => setModal(null)} onDone={onDone} />
         )}
         {modal && !['logistics', 'route', 'complaint', 'breakdown', 'triage', 'test'].includes(modal.action) && (
-          <TicketActionModal
-            action={modal.action}
-            ticket={modal.ticket || null}
-            vehicles={vehicles}
-            garages={garages}
-            findingsCatalog={findingsCatalog}
-            keywordMeta={keywordMeta}
-            faultCausesCatalog={faultCausesCatalog}
-            assignableDrivers={drivers}
-            allowedTypes={maintTypes}
-            onClose={() => setModal(null)}
-            onDone={onDone}
-          />
+          <TicketActionModal action={modal.action} ticket={modal.ticket || null} vehicles={vehicles} garages={garages} findingsCatalog={findingsCatalog} keywordMeta={keywordMeta} faultCausesCatalog={faultCausesCatalog} assignableDrivers={drivers} allowedTypes={maintTypes} onClose={() => setModal(null)} onDone={onDone} />
         )}
       </>
     );
   }
 
+  const cardProps = {
+    can, userId: user?.id,
+    selectedId: detail?.id,
+    onSelect: openDetail,
+    onAct: (action, ticket) => setModal({ action, ticket }),
+  };
+
   return (
-    <div className="py-8">
-      <div className="mx-auto max-w-[1700px] space-y-6 px-4 sm:px-6 lg:px-8">
-        {/* Command deck — same language as the single-ticket command view, so the
-            board and the focused page feel like one system. The pipeline strip mirrors
-            the ticket journey: lanes flow left→right with live, glowing counts. */}
-        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-navy-900 via-navy-900 to-navy-950 px-6 py-7 shadow-xl ring-1 ring-white/10 sm:px-8">
-          <div className="pointer-events-none absolute -right-20 -top-24 h-64 w-64 rounded-full bg-brand-500/25 blur-3xl" />
-          <div className="pointer-events-none absolute -bottom-24 left-1/4 h-64 w-64 rounded-full bg-violet-500/15 blur-3xl" />
+    <div className="opx mwf">
+      {/* Command header */}
+      <header className="opx-head">
+        <h1>
+          Maintenance Workflow
+          <span className="live"><span className="d" />{t('workflow.board.live')}</span>
+        </h1>
+        <OpsClock />
+        <div className="seg" style={{ marginLeft: 12 }}>
+          <button className={view === 'board' ? 'on' : ''} onClick={() => setView('board')}>Board</button>
+          <button className={view === 'list' ? 'on' : ''} onClick={() => setView('list')}>List</button>
+        </div>
+        <div className="mwf-head-actions">
+          {canManage && <button className="opx-btn primary" onClick={() => setModal({ action: 'test' })}><Icon.Plus className="h-4 w-4" /> {t('workflow.testIntake.newTest')}</button>}
+          {canManage && <button className="opx-btn" onClick={() => setModal({ action: 'complaint' })}>📣 {t('workflow.board.newComplaint')}</button>}
+          {canLogistics && <button className="opx-btn" onClick={() => setModal({ action: 'request' })}><Icon.Plus className="h-4 w-4" /> {t('workflow.board.requestInspection')}</button>}
+        </div>
+      </header>
 
-          <div className="relative space-y-6">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="min-w-0">
-                <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-brand-300/90">
-                  <span className="relative flex h-2 w-2"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-70" /><span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" /></span>
-                  Maintenance Control · {t('workflow.board.live')}
-                </p>
-                <h1 className="mt-2 font-display text-3xl font-bold tracking-tight text-white">{t('workflow.board.title')}</h1>
-                <p className="mt-1 max-w-2xl text-sm text-slate-300">{t('workflow.board.subtitle')}</p>
-              </div>
-              <div className="flex shrink-0 items-center gap-5">
-                <div className="text-right">
-                  <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Open tickets</p>
-                  <p className="font-display text-3xl font-bold text-white tabular-nums">
-                    {loading ? '—' : (counts.open_total ?? lanes.reduce((a, l) => a + l.tickets.length, 0))}
-                  </p>
-                </div>
-                {/* Complaint Intake — the Operations controllers (Marwa & Leen) log a customer
-                    complaint straight into the dispatch queue. Gated to maintenance.manage. */}
-                {canManage && (
-                  <Button onClick={() => setModal({ action: 'test' })}>
-                    <Icon.Plus className="h-4 w-4" /> {t('workflow.testIntake.newTest')}
-                  </Button>
-                )}
-                {canManage && (
-                  <Button variant="secondary" onClick={() => setModal({ action: 'complaint' })}>
-                    <span aria-hidden>📣</span> {t('workflow.board.newComplaint')}
-                  </Button>
-                )}
-                {canLogistics && (
-                  <Button variant={canManage ? 'secondary' : 'primary'} onClick={() => setModal({ action: 'request' })}>
-                    <Icon.Plus className="h-4 w-4" /> {t('workflow.board.requestInspection')}
-                  </Button>
-                )}
-              </div>
+      <div className="opx-body">
+        {/* TODAY'S WORKSHOP CONTROL — action-oriented: what needs a decision right now, not reporting. */}
+        <div className="opx-grid opx-c12 mwf-kpis">
+          <div className="opx-span-3"><KpiTile tone={needsAttention > 0 ? 'hot' : ''} label="🔴 Needs<br>Attention" value={loading ? '—' : needsAttention} foot="blocked or overdue" footTone={needsAttention > 0 ? 'down' : 'flat'} /></div>
+          <div className="opx-span-3"><KpiTile tone="warm" label="🟠 Waiting<br>Action" value={loading ? '—' : waitingAction} foot="inspection · approval · pickup" /></div>
+          <div className="opx-span-3"><KpiTile tone="good" label="🟢 Completed<br>Today" value={loading ? '—' : completedToday} foot="back in fleet" /></div>
+          <div className="opx-span-3"><KpiTile label="⏱ Oldest<br>Open" value={loading ? '—' : oldestAge} foot={oldestOpen ? (oldestOpen.plate || `#${oldestOpen.id}`) : 'no open tickets'} /></div>
+        </div>
+
+        {error && <div className="mwf-error">{error}</div>}
+
+        {/* Toolbar */}
+        <div className="mwf-toolbar">
+          <div className="mwf-search">
+            <Icon.Search className="h-4 w-4" />
+            <input className="opx-input" placeholder="Search tickets, vehicles, faults…" value={query} onChange={(e) => setQuery(e.target.value)} style={{ paddingLeft: 34 }} />
+          </div>
+          <select className="opx-select" value={sevFilter} onChange={(e) => setSevFilter(e.target.value)}>
+            {SEV_FILTERS.map((f) => <option key={f.value || 'all'} value={f.value}>{f.label}</option>)}
+          </select>
+          {(query || sevFilter) && (
+            <button className="opx-btn" onClick={() => { setQuery(''); setSevFilter(''); }}>Clear</button>
+          )}
+          <span className="mwf-toolbar-meta">{allTickets.length} shown</span>
+        </div>
+
+        {/* BOARD */}
+        {view === 'board' && (
+          <div className="mwf-board">
+            {allLanes.map((lane) => (
+              <Lane
+                key={lane.key}
+                lane={lane}
+                loading={loading}
+                expanded={!!expandedLanes[lane.key]}
+                onToggle={() => setExpandedLanes((p) => ({ ...p, [lane.key]: !p[lane.key] }))}
+                cardProps={cardProps}
+              />
+            ))}
+          </div>
+        )}
+
+        {/* LIST */}
+        {view === 'list' && (
+          <CommandPanel title="All open tickets" label={`${allTickets.length}`} bodyFlush>
+            <div className="opx-tblwrap">
+              <table className="opx-tbl">
+                <thead>
+                  <tr><th>Vehicle</th><th>Stage</th><th>Severity</th><th>Garage</th><th>Faults</th><th>In stage</th><th className="r">Action</th></tr>
+                </thead>
+                <tbody>
+                  {allTickets.map((tk) => {
+                    const a = stageAge(tk, t);
+                    const laneName = [...PRIMARY_LANES, ...EXCEPTION_LANES].find((l) => l.key === tk.workflow_status)?.name || tk.status_label || tk.workflow_status;
+                    return (
+                      <tr key={tk.id} className={tk.fault_severity === 'critical' ? 'rt-crit' : ''} onClick={() => openDetail(tk)} style={{ cursor: 'pointer' }}>
+                        <td><Link to={`/maintenance-workflow/${tk.id}`} className="opx-plate2" onClick={(e) => e.stopPropagation()}>{tk.plate || `#${tk.id}`}</Link><div className="opx-sub">{tk.car || ''}</div></td>
+                        <td className="opx-mono2">{laneName}</td>
+                        <td>{tk.fault_severity ? <span className={`opx-chip ${SEV_OPX[tk.fault_severity_tone] || 'paused'}`}><span className="cd" />{t(`workflow.faultSeverity.${tk.fault_severity}`)}</span> : '—'}</td>
+                        <td className="opx-mono2">{tk.garage || '—'}</td>
+                        <td className="opx-mono2">{(tk.tasks || []).length || '—'}</td>
+                        <td className={`opx-mono2 ${a?.over ? 'mwf-over' : ''}`}>{a?.label || '—'}</td>
+                        <td className="r"><Link to={`/maintenance-workflow/${tk.id}`} className="opx-ibtn go" onClick={(e) => e.stopPropagation()}>Open</Link></td>
+                      </tr>
+                    );
+                  })}
+                  {allTickets.length === 0 && !loading && <tr><td colSpan={7}><div className="opx-empty">No open tickets match the filters</div></td></tr>}
+                </tbody>
+              </table>
             </div>
+          </CommandPanel>
+        )}
 
-            {/* Pipeline overview */}
-            <div className="-mx-1 overflow-x-auto pb-1">
-              <div className="flex min-w-[720px] items-center gap-2">
-                {lanes.map((lane, i) => (
-                  <div key={lane.key} className="flex flex-1 items-center gap-2">
-                    <div className="flex-1 rounded-2xl border border-white/10 bg-white/5 px-3.5 py-3 backdrop-blur transition hover:border-white/20 hover:bg-white/10">
-                      <div className="flex items-center gap-1.5">
-                        <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: lane.tone, boxShadow: `0 0 8px ${lane.tone}` }} />
-                        <p className="truncate text-[11px] font-semibold text-white">{t(`workflow.lane.${lane.key}.title`)}</p>
-                      </div>
-                      <p className="mt-1 font-display text-2xl font-bold tabular-nums text-white">{loading ? '—' : lane.tickets.length}</p>
-                      <p className="truncate text-[10px] font-medium text-slate-400">{t(`workflow.lane.${lane.key}.role`)}</p>
-                    </div>
-                    {i < lanes.length - 1 && <Icon.ArrowRight className="h-4 w-4 shrink-0 text-white/25" />}
+        {/* BOTTOM COMMAND ROW — fleet status only. (Per-ticket detail lives in the click-to-open drawer;
+            the Recent Activity feed was removed at the operator's request.) */}
+        <div className="opx-grid opx-c12 mwf-bottom">
+          <div className="opx-span-12">
+            <CommandPanel title="Fleet Status" label="live">
+              {!fleet ? <div className="opx-skel" style={{ height: 170 }} /> : (
+                <div className="mwf-fleet">
+                  <ScoreRing value={availPct} label="Available" size={116} />
+                  <div className="mwf-fleet-legend">
+                    <div><span className="d" style={{ background: '#34d399' }} />Available<b>{fs.available ?? 0}</b></div>
+                    <div><span className="d" style={{ background: '#60a5fa' }} />Rented<b>{fs.rented ?? 0}</b></div>
+                    <div><span className="d" style={{ background: '#fb7185' }} />Maintenance<b>{fs.maintenance ?? 0}</b></div>
+                    <div className="tot"><span>Total fleet</span><b>{fleetTotal}</b></div>
                   </div>
-                ))}
-              </div>
-            </div>
+                </div>
+              )}
+            </CommandPanel>
           </div>
         </div>
 
-        {error && <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error}</div>}
-
-        {/* Fault-severity filter — supervisors narrow the board to the urgency they care about. */}
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">{t('workflow.faultSeverity.label')}</span>
-          {SEV_FILTERS.map((f) => {
-            const active = sevFilter === f.value;
-            return (
-              <button
-                key={f.value || 'all'}
-                type="button"
-                onClick={() => setSevFilter(f.value)}
-                className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ring-1 ring-inset transition ${active ? 'bg-slate-900 text-white ring-slate-900' : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'}`}
-              >
-                {f.emoji && <span>{f.emoji}</span>}
-                {t(`workflow.faultSeverity.${f.key}`)}
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-7">
-          {lanes.map((lane) => (
-            <div key={lane.key} className="flex flex-col overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-soft">
-              {/* lane-colour accent + header */}
-              <div className="h-1 w-full" style={{ background: lane.tone }} />
-              <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-2.5">
-                <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: lane.tone, boxShadow: `0 0 8px ${lane.tone}99` }} />
-                <p className="min-w-0 flex-1 font-display text-[13px] font-bold leading-tight text-slate-900">{t(`workflow.lane.${lane.key}.title`)}</p>
-                <span
-                  className="shrink-0 rounded-full px-2 py-0.5 font-display text-xs font-bold tabular-nums"
-                  style={{ background: `${lane.tone}1a`, color: lane.tone }}
-                >
-                  {lane.tickets.length}
-                </span>
-              </div>
-
-              {/* cards — tinted body so the white ticket cards pop */}
-              <div className="flex min-h-[200px] flex-1 flex-col gap-2.5 bg-slate-50/60 p-2.5">
-                {loading ? (
-                  <>
-                    <Skeleton className="h-20 rounded-xl" />
-                    <Skeleton className="h-20 rounded-xl" />
-                  </>
-                ) : lane.tickets.length === 0 ? (
-                  <div className="flex flex-1 flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-slate-200 py-8 text-center">
-                    <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white text-slate-300 shadow-sm ring-1 ring-slate-100">
-                      <Icon.Check className="h-4 w-4" />
-                    </span>
-                    <p className="text-[11px] font-medium text-slate-400">{t('workflow.board.noTicketsHere')}</p>
-                  </div>
-                ) : (
-                  <>
-                    {(expandedLanes[lane.key] ? lane.tickets : lane.tickets.slice(0, LANE_PAGE_SIZE)).map((tk) => (
-                      <TicketCard
-                        key={tk.id}
-                        tk={tk}
-                        tone={lane.tone}
-                        can={can}
-                        userId={user?.id}
-                        active={tk.id === detail?.id}
-                        onOpen={openDetail}
-                        onAct={(action, ticket) => setModal({ action, ticket })}
-                      />
-                    ))}
-                    {!expandedLanes[lane.key] && lane.tickets.length > LANE_PAGE_SIZE && (
-                      <button
-                        onClick={() => setExpandedLanes((prev) => ({ ...prev, [lane.key]: true }))}
-                        className="rounded-lg py-2 text-center text-[11px] font-semibold text-indigo-600 hover:bg-white hover:text-indigo-700"
-                      >
-                        {t('workflow.board.showMore', { count: lane.tickets.length - LANE_PAGE_SIZE })}
-                      </button>
-                    )}
-                  </>
-                )}
-              </div>
+        {!loading && openTotal === 0 && (
+          <div className="opx-empty" style={{ marginTop: 20 }}>
+            <div className="big">🔧</div>
+            {t('workflow.board.noOpenTitle')}
+            <div className="opx-hint" style={{ marginTop: 8 }}>
+              {canLogistics ? t('workflow.board.emptyLogistics') : canInitiate ? t('workflow.board.emptyInspector') : t('workflow.board.emptyOther')}
             </div>
-          ))}
-        </div>
-
-        {!loading && (counts.open_total ?? 0) === 0 && (
-          <EmptyState
-            icon={<Icon.Wrench className="h-7 w-7" />}
-            title={t('workflow.board.noOpenTitle')}
-            message={canLogistics ? t('workflow.board.emptyLogistics') : canInitiate ? t('workflow.board.emptyInspector') : t('workflow.board.emptyOther')}
-          />
+          </div>
         )}
       </div>
 
-      {/* Detail slide-over — the full ticket: history, findings, odometer photos, and every action. */}
+      {/* Detail slide-over — the full ticket: history, findings, odometer photos, every action. */}
       {detail && (
         <TicketDetailDrawer
           ticketId={detail.id}
@@ -684,66 +607,24 @@ export default function MaintenanceWorkflow() {
         />
       )}
 
-      {/* Dispatch a car straight from its ticket — the move is linked to this maintenance ticket. */}
       {modal?.action === 'logistics' && (
-        <CreateMoveModal
-          open
-          lockedVehicle={modal.ticket ? { id: modal.ticket.vehicle_id, plate: modal.ticket.plate, label: modal.ticket.car } : null}
-          maintenanceId={modal.ticket?.id || null}
-          onClose={() => setModal(null)}
-          onCreated={() => onDone()}
-        />
+        <CreateMoveModal open lockedVehicle={modal.ticket ? { id: modal.ticket.vehicle_id, plate: modal.ticket.plate, label: modal.ticket.car } : null} maintenanceId={modal.ticket?.id || null} onClose={() => setModal(null)} onCreated={() => onDone()} />
       )}
-
-      {/* Multi-garage task routing — assign / transfer faults to garages independently. */}
       {modal?.action === 'route' && (
-        <TaskRoutingModal
-          ticket={modal.ticket}
-          garages={garages}
-          onClose={() => setModal(null)}
-          onDone={() => { reload(); setDetailReload((n) => n + 1); }}
-        />
+        <TaskRoutingModal ticket={modal.ticket} garages={garages} onClose={() => setModal(null)} onDone={() => { reload(); setDetailReload((n) => n + 1); }} />
       )}
-
-      {/* Complaint Intake — Operations logs a customer complaint → ticket opens in the dispatch queue. */}
       {modal?.action === 'complaint' && (
-        <ComplaintIntakeModal
-          vehicles={vehicles}
-          onClose={() => setModal(null)}
-          onDone={onDone}
-        />
+        <ComplaintIntakeModal vehicles={vehicles} onClose={() => setModal(null)} onDone={onDone} />
       )}
-
-      {/* Breakdown Intake — a technician reports a not-driveable car → ticket opens grounded in the
-          dispatch queue, car set RED. */}
       {modal?.action === 'breakdown' && (
-        <BreakdownIntakeModal
-          vehicles={vehicles}
-          onClose={() => setModal(null)}
-          onDone={onDone}
-        />
+        <BreakdownIntakeModal vehicles={vehicles} onClose={() => setModal(null)} onDone={onDone} />
       )}
-
-      {/* Test Intake — the tabbed front door: Routine (oil/battery/tyres) · Scheduled (park-time +
-          Breakdown) · Accidents (→ Damage & Accidents log). */}
       {modal?.action === 'test' && (
-        <TestIntakeModal
-          vehicles={vehicles}
-          onClose={() => setModal(null)}
-          onDone={onDone}
-        />
+        <TestIntakeModal vehicles={vehicles} onClose={() => setModal(null)} onDone={onDone} />
       )}
-
-      {/* Complaint Triage — Abu Maroof handles a logged complaint (talk / resolve on-site / send in). */}
       {modal?.action === 'triage' && (
-        <ComplaintTriageModal
-          ticket={modal.ticket}
-          vehicles={vehicles}
-          onClose={() => setModal(null)}
-          onDone={onDone}
-        />
+        <ComplaintTriageModal ticket={modal.ticket} vehicles={vehicles} onClose={() => setModal(null)} onDone={onDone} />
       )}
-
       {modal && !['logistics', 'route', 'complaint', 'breakdown', 'triage', 'test'].includes(modal.action) && (
         <TicketActionModal
           action={modal.action}

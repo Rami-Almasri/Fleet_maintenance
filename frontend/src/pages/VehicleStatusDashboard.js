@@ -347,7 +347,7 @@ export default function VehicleStatusDashboard() {
               rowKey={(r) => r.id}
               loading={loading && !data}
               onRowClick={(r) => setSelected({ id: r.id, title: r.title, subtitle: r.subtitle })}
-              empty="No cars in maintenance right now. 🎉"
+              empty="No cars in maintenance right now."
               stickyHeader
             />
           )}

@@ -79,12 +79,12 @@ function ForesightCard({ c, onIssue, highlight }) {
               <Badge tone={t.tone}>{t.label}</Badge>
               {c.parts_wait_risk && (
                 <Tooltip content="Parts-wait risk — this kind of repair has kept cars stuck in the garage for weeks before, often waiting on parts.">
-                  <Badge tone="violet">⏳ May wait for parts</Badge>
+                  <Badge tone="violet" dot>May wait for parts</Badge>
                 </Tooltip>
               )}
               {c.negative_yield && (
                 <Tooltip content="Negative Yield — real net profit over the last 12 months is below its repair spend, so it costs more to keep than it earns.">
-                  <Badge tone="red">📉 Negative yield</Badge>
+                  <Badge tone="red" dot>Negative yield</Badge>
                 </Tooltip>
               )}
             </div>
@@ -137,7 +137,7 @@ function ForesightCard({ c, onIssue, highlight }) {
                   {recurring.map((s, i) => (
                     <div key={`r${i}`}>
                       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                        <span className="inline-flex items-center rounded-md bg-red-600 px-1.5 py-0.5 text-xs font-bold tabular-nums text-white">{s.count}×</span>
+                        <span className="inline-flex items-center rounded-lg bg-red-600 px-1.5 py-0.5 text-xs font-bold tabular-nums text-white">{s.count}×</span>
                         <span className="font-semibold capitalize text-slate-800">
                           {s.issue || (s.type === 'frequent_breakdowns' ? 'Breaks down a lot' : s.label)}
                         </span>
@@ -320,7 +320,7 @@ function ForesightCard({ c, onIssue, highlight }) {
                   </span>
                 </button>
                 {b.variance && (
-                  <p className="mt-1 flex items-start gap-1.5 rounded-md bg-orange-50 px-2 py-1 text-[11px] text-orange-700 ring-1 ring-inset ring-orange-200">
+                  <p className="mt-1 flex items-start gap-1.5 rounded-lg bg-orange-50 px-2 py-1 text-[11px] text-orange-700 ring-1 ring-inset ring-orange-200">
                     <svg className="mt-px h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 9v4m0 4h.01M10.29 3.86l-8.18 14.14A2 2 0 0 0 3.84 21h16.32a2 2 0 0 0 1.73-3L13.71 3.86a2 2 0 0 0-3.42 0z" /></svg>
                     <span>
                       <span className="font-semibold">Warning:</span> historical data suggests the{' '}
@@ -345,7 +345,7 @@ function ForesightCard({ c, onIssue, highlight }) {
       )}
 
       {/* Recommended action */}
-      <div className="mt-4 flex items-start gap-3 rounded-xl bg-gradient-to-r from-indigo-50 to-violet-50/60 px-4 py-3 ring-1 ring-inset ring-indigo-100">
+      <div className="mt-4 flex items-start gap-3 rounded-xl bg-slate-50 px-4 py-3 ring-1 ring-inset ring-slate-200/70">
         <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white text-indigo-500 shadow-sm ring-1 ring-inset ring-indigo-100">
           <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
         </span>
@@ -369,7 +369,7 @@ function ForesightCard({ c, onIssue, highlight }) {
 function Stat({ label, value, sub, accent = 'slate' }) {
   const tone = { slate: 'text-slate-900', emerald: 'text-emerald-600', red: 'text-red-600' }[accent];
   return (
-    <div className="rounded-xl bg-gradient-to-b from-white to-slate-50/60 px-3 py-2.5 ring-1 ring-inset ring-slate-200/70 transition hover:ring-slate-300">
+    <div className="rounded-xl bg-slate-50/60 px-3 py-2.5 ring-1 ring-inset ring-slate-200/70 transition hover:ring-slate-300">
       <p className="text-[11px] font-medium text-slate-400">{label}</p>
       <p className={`mt-0.5 text-base font-bold tracking-tight ${tone}`}>{value}</p>
       {sub && <p className="text-[11px] text-slate-400">{sub}</p>}
@@ -586,7 +586,7 @@ export default function MaintenanceForesight() {
                 faults shows once, with its main problem + a "+N more" count, not one row per fault. */}
             {sessions.length > 0 && (
               <SectionCard
-                title="🅿️ Cars stuck the longest"
+                title="Cars stuck the longest"
                 subtitle="One line per workshop visit — the longest stays, regardless of how many problems were fixed in the session. Click a row to open the exact car and repair."
               >
                 <DataTable
@@ -635,7 +635,7 @@ export default function MaintenanceForesight() {
                 every time it occurs), so you know which parts fail most and should be pre-ordered. */}
             {parts.length > 0 && (
               <SectionCard
-                title="⏳ Problems that keep cars stuck the longest"
+                title="Problems that keep cars stuck the longest"
                 subtitle={'Per problem: how often each fault shows up and its typical/longest stay when it is the main job — so you know which parts to pre-order. "Times" counts every occurrence; "Longest" is credited to the visit’s main problem. Click a "longest" number to jump to the car and repair.'}
               >
                 <DataTable
@@ -693,7 +693,7 @@ export default function MaintenanceForesight() {
             {/* Workshop stalling — garages holding cars hostage */}
             {stalling.length > 0 && (
               <SectionCard
-                title="⛔ Garages that keep cars too long"
+                title="Garages that keep cars too long"
                 subtitle="Garages that took the same car in 3+ times within 10 days for the same problem — slow or waiting on parts, not the car's fault. Push these garages, not the car."
                 bodyClass="space-y-3 p-5"
               >

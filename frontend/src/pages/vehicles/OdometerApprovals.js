@@ -270,8 +270,8 @@ export default function OdometerApprovals() {
       >
         {reviewing && (
           <div className="space-y-3">
-            <p className="text-sm text-gray-600">
-              Requester's reason: <span className="italic text-gray-800">"{reviewing.request.note}"</span>
+            <p className="text-sm text-slate-600">
+              Requester's reason: <span className="italic text-slate-800">"{reviewing.request.note}"</span>
             </p>
             <Textarea
               label={reviewing.action === 'approve' ? 'Approval note (optional)' : 'Reason for rejection (optional)'}

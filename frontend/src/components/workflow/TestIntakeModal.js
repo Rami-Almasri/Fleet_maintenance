@@ -1,13 +1,15 @@
-// Test Intake — the refined Workflow Hub front door. A single tabbed modal that starts the right kind
-// of test, each tab with its own labels + flow:
+// Inspection Request — the Workflow Hub front door for Controllers (Lin & Marwa). A single tabbed modal
+// that REQUESTS the right kind of inspection; it never performs one. Managers pick a car, a type and
+// optional notes — nothing they can't know. The Inspector (Abu Maroof) captures the odometer, photo, OCR,
+// tyres/battery/oil and findings later, when he opens the assigned ticket and presses Start Inspection.
 //
-//   • Routine   — an Oil / Battery / Tyres check. Captures the odometer (+ photo) and starts a diagnostic
-//                 (trigger_reason = periodic, test_kind = routine_check). The On-Site vs In-Shop choice —
-//                 and, if In-Shop, the alert to Waleed & Abdullah — happens later at the Decide step.
+//   • Routine   — an Oil / Battery / Tyres check. Requests an inspection (trigger_reason = periodic,
+//                 test_kind = routine_check). The odometer, On-Site vs In-Shop choice and any alerts all
+//                 happen later on the Inspector's side.
 //   • Scheduled — a park-time based check. Shows how long the car has been parked (auto-computed from its
-//                 last movement) and offers the Breakdown checkbox. Unchecked → a normal diagnostic
+//                 last movement) and offers the Breakdown checkbox. Unchecked → a normal inspection request
 //                 (test_kind = scheduled_dormancy). Checked → the car won't start, so it routes to the
-//                 Breakdown path (grounds the car; recovery handles the tow) — no test drive / odometer.
+//                 Breakdown path (grounds the car; recovery handles the tow) — no inspection.
 //   • Accidents — accident documentation lives in the existing Damage & Accidents log; this tab links
 //                 straight there so it's reachable from one place.
 //
@@ -20,9 +22,8 @@ import { useI18n } from '../../i18n/I18nContext';
 import Modal from '../ui/Modal';
 import Button from '../ui/Button';
 import Icon from '../ui/Icon';
-import { Input, Textarea } from '../ui/Field';
+import { Textarea } from '../ui/Field';
 import VehicleStatusSelect from './VehicleStatusSelect';
-import { compressImage, formatBytes } from '../../lib/imageCompression';
 
 const TABS = [
   { key: 'routine',   icon: '🛢️', accent: 'indigo' },
@@ -36,9 +37,7 @@ export default function TestIntakeModal({ vehicles = [], onClose, onDone }) {
 
   const [tab, setTab] = useState('routine');
   const [vehicleId, setVehicleId] = useState('');
-  const [odometer, setOdometer] = useState('');
-  const [photo, setPhoto] = useState(null);           // { blob, url, width, height, compressedSize }
-  const [compressing, setCompressing] = useState(false);
+  const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
 
@@ -60,25 +59,7 @@ export default function TestIntakeModal({ vehicles = [], onClose, onDone }) {
     return () => { alive = false; };
   }, [tab, vehicleId]);
 
-  async function onPhoto(e) {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    setCompressing(true);
-    setError(null);
-    try {
-      setPhoto(await compressImage(file, { maxDimension: 1400, quality: 0.7 }));
-    } catch {
-      setError(t('workflow.photo.readError'));
-    } finally {
-      setCompressing(false);
-    }
-  }
-
-  // A diagnostic-starting tab (Routine, or Scheduled without Breakdown) needs the odometer + its photo.
-  const needsDiagnostic = tab === 'routine' || (tab === 'scheduled' && !isBreakdown);
-  const disabled = saving || compressing || !vehicleId
-    || (needsDiagnostic && (!odometer || Number(odometer) <= 0 || !photo))
+  const disabled = saving || !vehicleId
     || (tab === 'scheduled' && isBreakdown && !breakdownNote.trim());
 
   async function submit() {
@@ -87,7 +68,7 @@ export default function TestIntakeModal({ vehicles = [], onClose, onDone }) {
     setError(null);
     try {
       if (tab === 'scheduled' && isBreakdown) {
-        // The car won't start — route to the Breakdown path (grounds it; recovery tows it). No odometer.
+        // The car won't start — route to the Breakdown path (grounds it; recovery tows it). No inspection.
         await api.post('/maintenance-tickets/breakdown', {
           vehicle_id: Number(vehicleId),
           fault_description: breakdownNote.trim(),
@@ -96,14 +77,13 @@ export default function TestIntakeModal({ vehicles = [], onClose, onDone }) {
         return;
       }
 
-      // Routine / Scheduled diagnostic — multipart (odometer reading + its photo).
-      const fd = new FormData();
-      fd.append('vehicle_id', String(Number(vehicleId)));
-      fd.append('trigger_reason', 'periodic');
-      fd.append('test_kind', tab === 'routine' ? 'routine_check' : 'scheduled_dormancy');
-      fd.append('test_odometer', String(Number(odometer)));
-      if (photo?.blob) fd.append('odometer_photo', photo.blob, 'odometer.jpg');
-      await api.post('/maintenance-tickets', fd);
+      // Routine / Scheduled — REQUEST an inspection (no odometer/photo; the Inspector captures those).
+      await api.post('/maintenance-tickets/request-inspection', {
+        vehicle_id: Number(vehicleId),
+        trigger_reason: 'periodic',
+        test_kind: tab === 'routine' ? 'routine_check' : 'scheduled_dormancy',
+        notes: notes.trim() || null,
+      });
       onDone?.(t(tab === 'routine' ? 'workflow.testIntake.routineSuccess' : 'workflow.testIntake.scheduledSuccess'));
     } catch (e) {
       setError(e?.response?.data?.message || t('workflow.error.generic'));
@@ -112,49 +92,24 @@ export default function TestIntakeModal({ vehicles = [], onClose, onDone }) {
     }
   }
 
-  // The odometer photo tile — mirrors the one the driver/inspector steps use.
-  const photoTile = photo ? (
-    <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-2">
-      <img src={photo.url} alt={t('workflow.field.odometerPhoto')} className="h-16 w-16 rounded-lg object-cover ring-1 ring-slate-200" />
-      <div className="min-w-0 text-xs text-slate-500">
-        <p className="font-semibold text-slate-700">{t('workflow.photo.ready')}</p>
-        <p className="tabular-nums">{formatBytes(photo.compressedSize)} · {photo.width}×{photo.height}</p>
-      </div>
-      <button type="button" onClick={() => setPhoto(null)} className="ms-auto rounded-lg px-2 py-1 text-xs font-medium text-red-500 hover:bg-red-50">{t('common.remove')}</button>
-    </div>
-  ) : (
-    <label className={`flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed px-4 py-4 text-sm transition ${compressing ? 'border-slate-200 text-slate-400' : 'border-slate-300 text-slate-500 hover:border-indigo-400 hover:text-indigo-600'}`}>
-      <Icon.Gauge className="h-5 w-5" />
-      {compressing ? t('workflow.photo.processing') : t('workflow.photo.scan')}
-      <input type="file" accept="image/*" capture="environment" className="hidden" onChange={onPhoto} disabled={compressing} />
-    </label>
-  );
-
   const vehiclePicker = (
     <div>
-      <span className="mb-1 block text-sm font-medium text-gray-700">
+      <span className="mb-1 block text-sm font-medium text-slate-700">
         {t('workflow.field.vehicle')}<span className="ms-0.5 text-red-500">*</span>
       </span>
       <VehicleStatusSelect value={vehicleId} onChange={setVehicleId} vehicles={vehicles} placeholder={t('workflow.ph.searchVehicle')} />
     </div>
   );
 
-  const odometerFields = (
-    <>
-      <Input
-        label={t('workflow.field.odometerKm')}
-        type="number"
-        min="1"
-        required
-        value={odometer}
-        onChange={(e) => setOdometer(e.target.value)}
-        placeholder={t('workflow.ph.odometerExample')}
-      />
-      <div>
-        <span className="mb-1 block text-sm font-medium text-gray-700">{t('workflow.field.odometerPhoto')}<span className="ms-0.5 text-red-500">*</span></span>
-        {photoTile}
-      </div>
-    </>
+  const notesField = (
+    <Textarea
+      label={t('workflow.testIntake.notesLabel')}
+      rows={3}
+      value={notes}
+      onChange={(e) => setNotes(e.target.value)}
+      placeholder={t('workflow.testIntake.notesPlaceholder')}
+      maxLength={2000}
+    />
   );
 
   // Footer button changes per tab (Accidents redirects instead of submitting).
@@ -176,7 +131,7 @@ export default function TestIntakeModal({ vehicles = [], onClose, onDone }) {
       >
         {tab === 'scheduled' && isBreakdown
           ? <><span aria-hidden>⚠️</span> {t('workflow.testIntake.reportBreakdown')}</>
-          : t('workflow.testIntake.startTest')}
+          : t('workflow.testIntake.requestInspection')}
       </Button>
     </>
   );
@@ -217,7 +172,7 @@ export default function TestIntakeModal({ vehicles = [], onClose, onDone }) {
               <span>{t('workflow.testIntake.routineHint')}</span>
             </p>
             {vehiclePicker}
-            {odometerFields}
+            {notesField}
           </>
         )}
 
@@ -281,7 +236,7 @@ export default function TestIntakeModal({ vehicles = [], onClose, onDone }) {
                 </p>
               </>
             ) : (
-              odometerFields
+              notesField
             )}
           </>
         )}

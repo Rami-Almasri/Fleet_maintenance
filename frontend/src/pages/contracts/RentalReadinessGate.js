@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import api from '../../api/client';
 import Button from '../../components/ui/Button';
-import { Spinner } from '../../components/ui/Misc';
 import { useToast } from '../../components/ui/Toast';
 
 // The 8-point Rental Readiness Checklist — the interactive gate shown right before a rental/booking
@@ -62,7 +61,7 @@ export default function RentalReadinessGate({ vehicleId, vehicleLabel, onBack, o
   return (
     <div className="fixed inset-0 z-40 overflow-y-auto bg-slate-900/40 backdrop-blur-sm">
       <div className="mx-auto my-8 max-w-3xl px-4">
-        <div className="rounded-2xl bg-white shadow-xl ring-1 ring-slate-200">
+        <div role="dialog" aria-modal="true" aria-label="Rental Readiness Checklist" className="rounded-2xl bg-white shadow-xl ring-1 ring-slate-200">
           {/* Header */}
           <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-6 py-5">
             <div>
@@ -83,7 +82,11 @@ export default function RentalReadinessGate({ vehicleId, vehicleLabel, onBack, o
           {/* Checklist */}
           <div className="px-6 py-4">
             {loading ? (
-              <div className="flex justify-center py-16"><Spinner className="h-7 w-7" /></div>
+              <div className="space-y-2" aria-hidden="true">
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <div key={i} className="shimmer h-14 rounded-xl bg-slate-100" />
+                ))}
+              </div>
             ) : (
               <ol className="space-y-2">
                 {points.map((p, i) => {
@@ -113,7 +116,7 @@ export default function RentalReadinessGate({ vehicleId, vehicleLabel, onBack, o
                                   variant={a.variant}
                                   onClick={() => setField(p.field, a.value)}
                                   loading={busyField === p.field}
-                                  className="!px-2.5 !py-1 text-xs"
+                                  size="sm"
                                 >
                                   {a.label}
                                 </Button>
@@ -139,14 +142,9 @@ export default function RentalReadinessGate({ vehicleId, vehicleLabel, onBack, o
 
           {/* Footer */}
           <div className="flex items-center justify-between gap-3 border-t border-slate-100 px-6 py-4">
-            <button
-              type="button"
-              onClick={onBack}
-              disabled={saving}
-              className="text-sm font-medium text-slate-500 transition hover:text-slate-700"
-            >
+            <Button type="button" variant="ghost" onClick={onBack} disabled={saving}>
               ← Back to contract
-            </button>
+            </Button>
             <div className="flex items-center gap-3">
               {!loading && (
                 <Button variant="secondary" onClick={load} disabled={saving || busyField}>Re-check</Button>

@@ -1,0 +1,107 @@
+/* =======================================================================
+   My Maintenance Queue — page-scoped layer on top of the Cockpit+ (.opx)
+   design system. Uses the same theme variables (--ink, --line, --crit …) so
+   it renders correctly in both Platinum (light) and Cockpit (dark) themes.
+   ======================================================================= */
+
+/* ---- role selector: icon + task counter per role ---- */
+.opx .qroles { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 18px; }
+.opx .qrole {
+  --rail: var(--brand);
+  display: inline-flex; align-items: center; gap: 11px;
+  padding: 10px 14px 10px 12px; border-radius: 13px; cursor: pointer;
+  border: 1px solid var(--line); background: linear-gradient(180deg, var(--panel-2), var(--deep));
+  color: var(--ink-2); transition: transform .16s, border-color .16s, color .16s;
+  font-family: inherit;
+}
+.opx .qrole:hover { color: var(--ink); border-color: var(--line-2); transform: translateY(-2px); }
+.opx .qrole-ic {
+  width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center;
+  background: var(--ov2); color: var(--ink-3); flex: none;
+}
+.opx .qrole-txt { font-size: 13px; font-weight: 600; letter-spacing: -.01em; }
+.opx .qrole-ct {
+  font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--ink-2);
+  min-width: 24px; height: 22px; padding: 0 7px; border-radius: 7px;
+  display: grid; place-items: center; background: var(--ov2);
+}
+.opx .qrole.on {
+  border-color: var(--rail); color: var(--ink);
+  box-shadow: 0 0 0 1px var(--rail), 0 14px 30px -18px var(--rail);
+}
+.opx .qrole.on .qrole-ic { background: var(--rail); color: #fff; }
+.opx .qrole.on .qrole-ct { background: var(--rail); color: #fff; }
+
+/* ---- sections column + card grid ---- */
+.opx .qsections { display: flex; flex-direction: column; gap: 16px; }
+.opx .qsec-hint {
+  margin: 0 0 12px; font-size: 11.5px; color: var(--ink-3); line-height: 1.5;
+  max-width: 62ch;
+}
+.opx .qgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(288px, 1fr)); gap: 13px; }
+
+/* ---- ticket card (extends .opx-card) ---- */
+.opx .qc { cursor: default; padding: 13px 14px; display: flex; flex-direction: column; }
+.opx .qc .top { align-items: flex-start; }
+.opx .qc .model { min-width: 0; }
+.opx .qc .model span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 15ch; }
+.opx .qc .now { align-self: flex-start; }
+
+.opx .qc-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+.opx .qc-quote {
+  margin: 10px 0 0; font-size: 11.5px; color: var(--ink-2); line-height: 1.45; font-style: italic;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.opx .qc-pos {
+  display: flex; align-items: center; gap: 6px; margin-top: 10px;
+  font-size: 11.5px; color: var(--ink-2); font-weight: 500;
+}
+.opx .qc-pos svg { color: var(--ink-3); flex: none; }
+
+.opx .qc-prog { margin-top: 11px; }
+.opx .opx-prog { height: 5px; border-radius: 4px; background: var(--ov2); overflow: hidden; }
+.opx .opx-prog i { display: block; height: 100%; border-radius: 4px; transition: width .5s cubic-bezier(.2,.7,.3,1); }
+
+.opx .qc-foot {
+  margin-top: 12px; padding-top: 11px; border-top: 1px solid var(--line);
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;
+}
+.opx .qc-actions { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.opx .qc-actions .opx-btn { padding: 8px 13px; }
+.opx .qc-tl-toggle {
+  display: inline-flex; align-items: center; gap: 5px; margin-left: auto;
+  font-family: var(--mono); font-size: 10.5px; font-weight: 600; letter-spacing: .02em;
+  color: var(--ink-3); background: none; border: none; cursor: pointer; padding: 4px 2px;
+}
+.opx .qc-tl-toggle:hover { color: var(--cyan); }
+.opx .qc-tl-toggle svg { width: 13px; height: 13px; }
+
+.opx .qc-timeline {
+  margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--line-2);
+  animation: qc-reveal .22s ease-out both;
+}
+.opx .qc-tl-h {
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--ink-3); font-weight: 600; margin-bottom: 12px;
+}
+/* tighten the shared JourneyMap inside the compact card */
+.opx .qc-timeline .opx-jn { padding-bottom: 14px; }
+.opx .qc-timeline .opx-jn .h { font-size: 12px; }
+.opx .qc-timeline .opx-jn:last-child { padding-bottom: 2px; }
+@keyframes qc-reveal { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+
+/* ---- right rail ---- */
+.opx .qside { display: flex; flex-direction: column; gap: 16px; position: sticky; top: 78px; }
+.opx .qload { display: flex; flex-direction: column; gap: 11px; }
+.opx .qload-row { display: grid; grid-template-columns: 1fr 96px auto; align-items: center; gap: 10px; }
+.opx .qload-lbl {
+  font-size: 11.5px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.opx .qload-track { height: 7px; border-radius: 5px; background: var(--ov2); overflow: hidden; }
+.opx .qload-track i { display: block; height: 100%; border-radius: 5px; transition: width .5s ease; min-width: 2px; }
+.opx .qload-ct { font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--ink); text-align: right; }
+
+/* ---- responsive: collapse the side rail below the sections ---- */
+@media (max-width: 1100px) {
+  .opx .qside { position: static; }
+}

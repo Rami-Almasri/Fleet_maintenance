@@ -1,13 +1,13 @@
 // Form field primitives with label + error support.
 
 const baseInput =
-  'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 disabled:bg-gray-50 disabled:text-gray-400';
+  'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 disabled:bg-slate-50 disabled:text-slate-400';
 
 function Wrap({ label, error, required, children }) {
   return (
     <label className="block">
       {label && (
-        <span className="mb-1 block text-sm font-medium text-gray-700">
+        <span className="mb-1 block text-sm font-medium text-slate-700">
           {label}
           {required && <span className="ms-0.5 text-red-500">*</span>}
         </span>

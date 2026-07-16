@@ -3,6 +3,10 @@
 // last repair's date, downtime and garage. This alerts the inspector to a recurring/chronic issue the
 // instant they pick the tag, so a car that keeps coming back for the same fault is impossible to miss.
 //
+// This is READ-ONLY reference history at diagnosis. The authoritative recurring-fault detection now
+// happens later, at the workshop-confirmation stage (RecurringFaultService) — this panel does not raise
+// duplicate alerts or block anything.
+//
 // Data source: GET /maintenance-tickets/vehicle/{id}/fault-insights?tags[]=…  (closed tickets only).
 // It renders nothing when there is no vehicle, no tags, or no prior history — so it only ever appears
 // when there is a real recurrence to flag.
@@ -26,7 +30,7 @@ function fmtDate(iso) {
 export default function FaultHistoryInsight({ vehicleId, tags = [], excludeTicketId }) {
   const { t } = useI18n();
   const [insights, setInsights] = useState([]);
-  const tagKey = tags.join(''); // stable dependency for the tag set
+  const tagKey = tags.join(''); // stable dependency for the tag set
 
   useEffect(() => {
     if (!vehicleId || !tags.length) {

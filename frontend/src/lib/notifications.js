@@ -232,7 +232,7 @@ export const INBOX_CATEGORIES = [
     icon: 'wrench',
     blurb: 'Cars awaiting a test drive or re-inspection',
     empty: 'No test-drive notifications',
-    types: ['maint_inspection_requested', 'maint_ready_reinspect', 'maint_reinspection_failed'],
+    types: ['maint_review_pending', 'maint_review_approved', 'maint_review_rejected', 'maint_inspection_requested', 'maint_ready_reinspect', 'maint_reinspection_failed'],
   },
 ];
 

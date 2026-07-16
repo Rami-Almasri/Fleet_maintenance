@@ -138,7 +138,7 @@ function QuickFixModal({ vehicleLabel, link, onClose, onSaved }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm" onClick={onClose}>
-      <div className="w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+      <div role="dialog" aria-modal="true" aria-label={`Quick Fix — ${vehicleLabel}`} className="w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
           <div>
             <h3 className="text-base font-semibold text-slate-900">Quick Fix — {vehicleLabel}</h3>
@@ -146,7 +146,9 @@ function QuickFixModal({ vehicleLabel, link, onClose, onSaved }) {
               Corrections are an overlay; they don't change the synced contract and survive the next sync.
             </p>
           </div>
-          <button onClick={onClose} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600">✕</button>
+          <button onClick={onClose} aria-label="Close" className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
+            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
         </div>
 
         <div className="space-y-4 px-5 py-4">
@@ -294,7 +296,7 @@ export default function MileageChainAudit({ embedded = false }) {
   const refreshBtn = (
     <button
       onClick={reload}
-      className="inline-flex items-center gap-1.5 text-sm font-medium text-gray-500 transition hover:text-gray-700"
+      className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 transition hover:text-slate-700"
     >
       <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
         <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v6h6M20 20v-6h-6M20 9A8 8 0 0 0 6.3 5.3L4 8m16 8-2.3 2.7A8 8 0 0 1 4 15" />
@@ -330,7 +332,7 @@ export default function MileageChainAudit({ embedded = false }) {
 
         {/* Semantic funnel */}
         <div className="flex flex-wrap items-center gap-2">
-          <span className="mr-1 text-xs font-medium uppercase tracking-wide text-gray-500">Show</span>
+          <span className="mr-1 text-xs font-medium uppercase tracking-wide text-slate-500">Show</span>
           {FILTERS.map((f) => (
             <button
               key={f.key}
@@ -338,7 +340,7 @@ export default function MileageChainAudit({ embedded = false }) {
               className={`rounded-full px-3 py-1.5 text-xs font-semibold ring-1 transition ${
                 filter === f.key
                   ? 'bg-indigo-600 text-white ring-indigo-600 shadow-sm'
-                  : 'bg-white text-gray-600 ring-gray-300 hover:bg-gray-50'
+                  : 'bg-white text-slate-600 ring-slate-300 hover:bg-slate-50'
               }`}
             >
               {f.label}

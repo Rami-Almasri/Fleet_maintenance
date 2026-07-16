@@ -6,10 +6,12 @@ import Button from '../ui/Button';
 import Badge from '../ui/Badge';
 import Icon from '../ui/Icon';
 import { Skeleton } from '../ui/Skeleton';
+import { EmptyState } from '../ui/Misc';
 import { useToast } from '../ui/Toast';
 import { useCountUp } from '../ui/Gauge';
 import FindingsList from './FindingsList';
-import { resolveAction, allows, ctaLabel, ago, fmtDuration, fmtDateTime, REASON_TONE, custodyBlocked } from './meta';
+import TicketParts from './TicketParts';
+import { resolveAction, allows, ctaLabel, ago, fmtDuration, fmtDateTime, REASON_TONE, custodyBlocked, custodyHolderName, isAtGarage } from './meta';
 import { SHOW_FINANCIALS } from '../../config/features';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -122,7 +124,7 @@ function JourneyTimeline({ tk, tone, t }) {
                   </span>
                 </span>
                 <p className={`mt-2 text-[11px] font-semibold leading-tight ${reached ? 'text-white' : 'text-slate-500'}`}>
-                  {t(`workflow.detail.handoff.${step.handoffKey}`)}
+                  {t(`workflow.detail.handoff.${step.handoffKey === 'dispatched' && h?.is_recovery ? 'dispatched_recovery' : step.handoffKey}`)}
                 </p>
                 {h?.at ? (
                   <p className="mt-0.5 text-[10px] leading-tight text-slate-400">
@@ -174,8 +176,8 @@ function Panel({ title, icon, accent = '#6366f1', action, children, className = 
   return (
     <section className={`overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-soft ${className}`}>
       <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-5 py-3">
-        <h3 className="flex items-center gap-2 text-sm font-bold text-slate-800">
-          <span className="flex h-6 w-6 items-center justify-center rounded-md" style={{ background: `${accent}1a`, color: accent }}>{icon}</span>
+        <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+          <span className="flex h-6 w-6 items-center justify-center rounded-lg" style={{ background: `${accent}1a`, color: accent }}>{icon}</span>
           {title}
         </h3>
         {action}
@@ -213,7 +215,7 @@ function TestDriveReport({ report }) {
       {report.symptoms?.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {report.symptoms.map((s, i) => (
-            <span key={i} className="inline-flex items-center rounded-md bg-violet-50 px-2 py-0.5 text-xs text-violet-700 ring-1 ring-inset ring-violet-200">{s}</span>
+            <span key={i} className="inline-flex items-center rounded-full bg-violet-50 px-2 py-0.5 text-xs text-violet-700 ring-1 ring-inset ring-violet-200">{s}</span>
           ))}
         </div>
       )}
@@ -247,6 +249,7 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
   const [auditBusy, setAuditBusy] = useState(false);
   const [rejecting, setRejecting] = useState(false);  // toggles the reject-reason box
   const [rejectNote, setRejectNote] = useState('');
+  const [partsOpenSignal, setPartsOpenSignal] = useState(0); // "Request Part" action → opens the Parts modal
 
   const load = useCallback(async () => {
     if (!ticketId) return;
@@ -352,7 +355,8 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
             readOnly
             value={url}
             onFocus={(e) => e.target.select()}
-            className="min-w-0 flex-1 rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-2 text-xs text-slate-600"
+            aria-label={t('workflow.garageInvoice.linkTitle')}
+            className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-2 text-xs text-slate-600 outline-none transition focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10"
           />
           <Button
             size="sm"
@@ -363,7 +367,7 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
           </Button>
         </div>
         {link.expires_at && <p className="text-[11px] text-slate-400">{t('workflow.garageInvoice.expires', { date: fmtDateTime(link.expires_at) })}</p>}
-        <button onClick={onGenerate} disabled={busy} className="text-[11px] font-medium text-indigo-600 disabled:text-slate-300">{t('workflow.garageInvoice.regenerate')}</button>
+        <button onClick={onGenerate} disabled={busy} className="text-[11px] font-medium text-indigo-600 transition-colors duration-150 hover:text-indigo-700 disabled:cursor-not-allowed disabled:text-slate-300">{t('workflow.garageInvoice.regenerate')}</button>
       </div>
     ) : (
       <div className="space-y-2">
@@ -387,7 +391,7 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
       <div className="py-8">
         <div className="mx-auto max-w-[1400px] space-y-6 px-4 sm:px-6 lg:px-8">
           {backLink}
-          <Skeleton className="h-64 rounded-3xl" />
+          <Skeleton className="h-64 rounded-2xl" />
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
             <Skeleton className="h-80 rounded-2xl lg:col-span-2" />
             <Skeleton className="h-80 rounded-2xl" />
@@ -421,13 +425,21 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
   const openFaults = tk.tasks_progress?.open ?? 0;
   const readyBlocked = act?.action === 'ready' && openFaults > 0;
   const readyHint = `Fix all ${openFaults} open fault${openFaults > 1 ? 's' : ''} first`;
-  // "Now at Garage" custody gate: only the driver who picked the car up may check it in.
-  const custodyLocked = act?.action === 'receive' && custodyBlocked(tk, userId);
-  const custodyHint = `Only ${tk.dispatched_by_name || 'the driver who picked up the car'} can check it in`;
+  // Custody gate: a return/arrival leg may only be completed by the same driver who took the car.
+  // custodyBlocked() is scoped to the gated states, so no per-action guard is needed here.
+  const custodyLocked = custodyBlocked(tk, userId);
+  const custodyHolder = custodyHolderName(tk, userId);
+  const custodyHint = act?.action === 'arriveAtPark'
+    ? `Only ${custodyHolder || 'the driver who collected the car from the garage'} can complete the arrival at our park`
+    : `Only ${custodyHolder || 'the driver who picked up the car'} can check it in`;
   // Follow-up is a supervisor (Waleed/Abdullah) monitoring action — an additive log they can file while
   // the car is out for repair, independent of the stage's primary garage-dispatch action. Same gate as
   // the detail drawer + the backend route (maintenance.delegate over the out-for-repair states).
   const canFollowUp = ['in_transit', 'under_repair', 'repair_review'].includes(tk.workflow_status) && can('maintenance.delegate');
+  // "Manage faults" — same gate as the drawer/board card: Supervisor's dispatch authority once the
+  // car is at the garage stage, but not once every fault is already fixed (ready_for_pickup).
+  const canRoute = can('maintenance.delegate') && isAtGarage(tk)
+    && tk.workflow_status !== 'ready_for_pickup' && (tk.tasks?.length > 0);
   // Invoice surfaces (request/enter/garage-link) apply to a committed ticket AND to one parked in
   // awaiting_invoice (repair done, invoice outstanding) — which is not a WF_TICKET_STATE so is_ticket is false.
   const invoicing = tk.is_ticket || tk.workflow_status === 'awaiting_invoice';
@@ -452,17 +464,16 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
         </div>
 
         {/* ── COMMAND DECK ─────────────────────────────────────────────────── */}
-        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-navy-900 via-navy-900 to-navy-950 px-6 py-7 shadow-xl ring-1 ring-white/10 sm:px-8">
-          {/* lane-tinted glows */}
-          <div className="pointer-events-none absolute -right-20 -top-24 h-64 w-64 rounded-full blur-3xl" style={{ background: `${tone}40` }} />
-          <div className="pointer-events-none absolute -bottom-24 left-1/4 h-64 w-64 rounded-full bg-brand-500/15 blur-3xl" />
+        <div className="relative overflow-hidden rounded-2xl bg-navy-950 px-6 py-7 ring-1 ring-white/10 sm:px-8">
+          {/* subtle lane-tinted wash (flat, no drifting glow) */}
+          <div className="pointer-events-none absolute inset-0" style={{ backgroundImage: `radial-gradient(38rem 26rem at 92% -20%, ${tone}22, transparent 60%)` }} />
 
           <div className="relative space-y-6">
             {/* identity row */}
             <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
               <div className="flex flex-wrap items-center gap-4">
                 {/* license plate */}
-                <span className="inline-flex items-center gap-2 rounded-xl border border-white/25 bg-white/95 px-4 py-2 font-mono text-2xl font-bold tracking-[0.18em] text-navy-900 shadow-lg">
+                <span className="inline-flex items-center gap-2 rounded-xl border border-white/25 bg-white/95 px-4 py-2 font-mono text-2xl font-bold tracking-[0.18em] text-navy-900 shadow-card">
                   <Icon.Car className="h-6 w-6 text-navy-500" strokeWidth={2} />
                   {tk.plate || `#${tk.id}`}
                 </span>
@@ -580,11 +591,22 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
                   <Fact icon={<Icon.Coins className="h-4 w-4" />} label={t('workflow.detail.cost')} value={`AED ${Number(tk.cost).toLocaleString()}`} />
                 )}
               </dl>
+              {/* The issue text is stored in customer_complaint for EVERY origin (a real complaint, a
+                  driver's test-drive note, or the system's routine agenda), so label it by trigger_reason —
+                  only a genuine customer_reported ticket is a "Customer complaint" (amber); the rest are
+                  neutral notes. */}
               {tk.customer_complaint && (
-                <div className="mt-4 rounded-xl border border-amber-100 bg-amber-50/60 px-4 py-3">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-500">{t('workflow.detail.complaint')}</p>
-                  <p className="mt-1 text-sm text-amber-900">{tk.customer_complaint}</p>
-                </div>
+                tk.trigger_reason === 'customer_reported' ? (
+                  <div className="mt-4 rounded-xl border border-amber-100 bg-amber-50/60 px-4 py-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-500">{t('workflow.detail.complaint')}</p>
+                    <p className="mt-1 text-sm text-amber-900">{tk.customer_complaint}</p>
+                  </div>
+                ) : (
+                  <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{t(tk.trigger_reason === 'periodic' ? 'workflow.detail.agenda' : 'workflow.detail.driverNote')}</p>
+                    <p className="mt-1 text-sm text-slate-700">{tk.customer_complaint}</p>
+                  </div>
+                )
               )}
             </Panel>
 
@@ -596,9 +618,24 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
 
             <Panel title={t('workflow.detail.findings')} icon={<Icon.Flag className="h-4 w-4" />} accent="#f59e0b">
               {tk.findings?.length ? <FindingsList findings={tk.findings} tasks={tk.tasks} /> : (
-                <p className="text-sm text-slate-400">{t('workflow.detail.noFindings')}</p>
+                <EmptyState title={t('workflow.detail.noFindings')} icon={<Icon.Flag className="h-6 w-6" />} />
               )}
             </Panel>
+
+            {/* Parts — requested against this ticket, filed here in-context. The /parts board still owns
+                the review → approve → purchase → install lifecycle. */}
+            {can('parts.view') && (
+              <TicketParts
+                ticketId={ticketId}
+                ticket={tk}
+                tasks={tk.tasks}
+                canView={can('parts.view')}
+                canRequest={can('parts.request')}
+                openSignal={partsOpenSignal}
+                onChanged={load}
+                variant="command"
+              />
+            )}
 
             {/* Audit trail — newest at the top, with an up-arrow FROM each stage TO the next one above,
                 so the progression is explicit. Dwell time is computed in chronological order (the gap to
@@ -622,13 +659,20 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
                   // Display newest-first (flip): the latest stage sits on top, each arrow points UP to it.
                   return rows.slice().reverse().map((r, ri) => {
                     const hasEarlierBelow = ri < rows.length - 1;
+                    // 'dispatched'/'repair_started' carry odometer + garage/destination context so the
+                    // timeline reads as pickup → transit → arrival instead of a bare timestamp.
+                    const labelKey = r.step.handoffKey === 'dispatched' && r.h.is_recovery ? 'dispatched_recovery' : r.step.handoffKey;
+                    const subline = [
+                      r.h.odometer != null ? `${Number(r.h.odometer).toLocaleString()} km` : null,
+                      r.step.handoffKey === 'dispatched' ? r.h.destination : (r.step.handoffKey === 'repair_started' ? r.h.garage : null),
+                    ].filter(Boolean).join(' · ');
                     return (
                       <Fragment key={r.step.key}>
                         <li className="relative flex gap-3 px-1 py-1">
                           <span className="mt-1 h-3 w-3 shrink-0 rounded-full ring-4 ring-white" style={{ background: tone }} />
                           <div className="min-w-0 flex-1">
                             <div className="flex items-baseline justify-between gap-2">
-                              <p className="text-sm font-semibold text-slate-800">{t(`workflow.detail.handoff.${r.step.handoffKey}`)}</p>
+                              <p className="text-sm font-semibold text-slate-800">{t(`workflow.detail.handoff.${labelKey}`)}</p>
                               {r.dwell != null && (
                                 <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums ${r.running ? 'bg-amber-50 text-amber-600' : 'bg-slate-100 text-slate-500'}`}>
                                   {fmtDuration(r.dwell)}{r.running ? ' so far' : ''}
@@ -639,6 +683,7 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
                               {r.h.name ? `${r.h.name} · ` : ''}{fmtDateTime(r.h.at)}
                               {r.h.at && <span className="text-slate-400"> · {ago(r.h.at, t)}</span>}
                             </p>
+                            {subline && <p className="text-xs text-slate-400">{subline}</p>}
                           </div>
                         </li>
                         {/* arrow FROM this stage TO the next one (above) → explicit workflow progression */}
@@ -678,7 +723,7 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
           {/* sidebar */}
           <div className="space-y-6">
             {/* Take action */}
-            {(allowed || canFollowUp) && (
+            {(allowed || canFollowUp || canRoute || can('parts.request')) && (
               <Panel title="Take action" icon={<Icon.Spark className="h-4 w-4" />} accent={tone}>
                 <div className="flex flex-col gap-2">
                   {allowed && custodyLocked && (
@@ -692,11 +737,24 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
                       {readyBlocked && <span className="text-center text-[11px] font-medium text-amber-600">{readyHint}</span>}
                     </>
                   )}
+                  {/* Manage faults — mark a fault fixed/reopen/transfer the car. Same gate as the drawer
+                      and board card so this full-page view has feature parity. */}
+                  {canRoute && (
+                    <Button variant="secondary" onClick={() => onAct('route', tk)} className="w-full justify-center">
+                      <Icon.Wrench className="h-4 w-4" /> {t('workflow.task.route')}
+                    </Button>
+                  )}
                   {/* Follow-up — supervisors (Waleed/Abdullah) log a monitoring note while the car is in
                       the workshop. Additive: never blocks or replaces the garage-dispatch primary action. */}
                   {canFollowUp && (
                     <Button variant="secondary" onClick={() => onAct('followup', tk)} className="w-full justify-center">
                       {t('workflow.cardAction.followup')}
+                    </Button>
+                  )}
+                  {/* Request Part — file a part request against this ticket without leaving the page. */}
+                  {can('parts.request') && (
+                    <Button variant="secondary" onClick={() => setPartsOpenSignal((n) => n + 1)} className="w-full justify-center">
+                      <Icon.Wrench className="h-4 w-4" /> Request Part
                     </Button>
                   )}
                 </div>
@@ -743,7 +801,7 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
                           onChange={(e) => setRejectNote(e.target.value)}
                           rows={2}
                           placeholder={t('workflow.garageInvoice.rejectPlaceholder')}
-                          className="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm focus:border-red-400 focus:outline-none focus:ring-1 focus:ring-red-400"
+                          className="w-full rounded-xl border border-slate-200 px-2.5 py-2 text-sm outline-none transition focus:border-red-400 focus:ring-4 focus:ring-red-500/10"
                         />
                         <div className="flex gap-2">
                           <Button size="sm" variant="danger" disabled={auditBusy} onClick={() => auditGarageInvoice('reject')} className="flex-1 justify-center">{t('workflow.garageInvoice.confirmReject')}</Button>

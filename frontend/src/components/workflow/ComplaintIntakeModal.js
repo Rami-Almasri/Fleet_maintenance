@@ -87,7 +87,7 @@ export default function ComplaintIntakeModal({ vehicles = [], onClose, onDone })
       <div className="space-y-4">
         {/* Vehicle — restricted to cars out on rent (only a renter can raise a complaint). */}
         <div>
-          <span className="mb-1 block text-sm font-medium text-gray-700">
+          <span className="mb-1 block text-sm font-medium text-slate-700">
             {t('workflow.complaint.vehicleLabel')}<span className="ms-0.5 text-red-500">*</span>
           </span>
           {rentedVehicles.length === 0 ? (

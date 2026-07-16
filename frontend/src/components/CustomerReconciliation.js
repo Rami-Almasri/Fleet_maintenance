@@ -20,7 +20,7 @@ export default function CustomerReconciliation({ ledger = [], totals }) {
 
   return (
     <Card>
-      <button type="button" onClick={() => setOpen((v) => !v)} className="flex w-full items-center justify-between gap-3 px-6 py-4 text-left">
+      <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="flex w-full items-center justify-between gap-3 px-6 py-4 text-left transition-colors duration-150 hover:bg-slate-50/60">
         <div className="flex items-center gap-3">
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-100 text-indigo-600">
             <Icon.Scale className="h-5 w-5" />
@@ -32,7 +32,7 @@ export default function CustomerReconciliation({ ledger = [], totals }) {
         </div>
         <span className="flex items-center gap-2 text-sm font-medium text-indigo-600">
           {open ? 'Hide' : 'Show'}
-          <svg className={`h-4 w-4 transition-transform ${open ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 9l-7 7-7-7" /></svg>
+          <svg aria-hidden="true" className={`h-4 w-4 transition-transform ${open ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 9l-7 7-7-7" /></svg>
         </span>
       </button>
 

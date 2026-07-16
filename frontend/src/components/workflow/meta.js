@@ -31,7 +31,34 @@ export const ACTION = {
   ready_for_reinspection: { action: 'reinspect', perm: ['maintenance.initiate', 'maintenance.delegate'], variant: 'primary' },
   // Re-inspection failed → the Supervisor re-dispatches (reuses the assign-garage action, from this state).
   reinspection_failed:    { action: 'assign',    perm: 'maintenance.delegate',  variant: 'danger' },
+  // Paused — Returned to Service — the car is back (or being sent in); Resume continues from the exact
+  // paused stage. A controller (manage) or supervisor (delegate) may resume.
+  paused_returned_to_service: { action: 'resume', perm: ['maintenance.manage', 'maintenance.delegate'], variant: 'primary' },
 };
+
+// Is this ticket currently paused — released back into service, repair on hold? Mirrors
+// App\Models\Maintenance::isPausedReturnedToService().
+export const isPaused = (tk) => tk?.workflow_status === 'paused_returned_to_service';
+
+// Paused AND the vehicle hasn't been marked physically returned yet — still out with the customer/
+// operation. Mirrors App\Models\Maintenance::isPausedOut(). Drives the "Mark Returned" secondary button.
+export const isPausedOut = (tk) => isPaused(tk) && !tk?.vehicle_returned_at;
+
+// The committed-ticket stages a live repair can be PAUSED from (Pause Maintenance & Return to Service).
+// Mirrors App\Models\Maintenance::PAUSABLE_STATES — the drawer offers a secondary "Pause" button on these.
+export const PAUSABLE_STATES = [
+  'inspection_pending', 'awaiting_dispatch', 'in_transit', 'under_repair',
+  'repair_review', 'ready_for_reinspection', 'reinspection_failed', 'ready_for_pickup',
+];
+export const isPausable = (tk) => PAUSABLE_STATES.includes(tk?.workflow_status);
+
+// Temporary Vehicle Release — the car is taken OUT of the workshop mid-repair (road test / customer
+// test / external inspection / storage) WITHOUT pausing: the ticket stays at its stage. Mirrors
+// App\Models\Maintenance::isTemporarilyReleased() / isTempReleasable() (TEMP_RELEASABLE_STATES ==
+// PAUSABLE_STATES). The drawer offers a secondary "Temporarily Release" / "Return to Workshop" button.
+export const isTemporarilyReleased = (tk) => !!tk?.temporarily_released;
+export const isTempReleasable = (tk) =>
+  PAUSABLE_STATES.includes(tk?.workflow_status) && !isTemporarilyReleased(tk) && !isPaused(tk);
 
 // Some statuses need a DYNAMIC action beyond a pure workflow_status lookup. ready_for_pickup covers BOTH
 // legs of the driver's return trip (collect the car from the garage, then arrive at our park) — the
@@ -47,9 +74,20 @@ export function resolveAction(tk) {
   // A Breakdown can't be driven in — Recovery (towing) is the only sensible dispatch path, so it
   // OUTRANKS the classic "Assign Garage" screen the moment the ticket is born (inspection_pending), not
   // just after a garage happens to already be picked. dispatchRecovery() accepts the garage inline, so
-  // there is no separate gate to clear first. Still offered (as a secondary button) at awaiting_dispatch
-  // for the rarer case a car assigned the classic way turns out to need towing after all.
-  if ((tk.workflow_status === 'inspection_pending' || tk.workflow_status === 'awaiting_dispatch') && tk.maintenance_type === 'breakdown') {
+  // there is no separate gate to clear first. At inspection_pending ("Needs Dispatch") no garage is
+  // assigned yet, so this is still the Supervisor's call — a Driver can't act on it here. Still offered
+  // (as a secondary button, now also to the Driver) at awaiting_dispatch, once a garage is already
+  // picked and the car assigned the classic way turns out to need towing after all.
+  if (tk.workflow_status === 'inspection_pending' && tk.maintenance_type === 'breakdown') {
+    return { action: 'recovery', perm: 'maintenance.delegate', variant: 'danger' };
+  }
+  if (tk.workflow_status === 'awaiting_dispatch' && tk.maintenance_type === 'breakdown') {
+    return { action: 'recovery', perm: ['maintenance.logistics', 'maintenance.delegate'], variant: 'danger' };
+  }
+  // A planned garage-to-garage TRANSFER where the Supervisor chose "Recovery Truck" at the Transfer
+  // dialog (transfer_transport_method) — the pickup leg runs through the same Recovery dispatch form
+  // as a breakdown tow, not the driver dispatch() form, even though maintenance_type isn't 'breakdown'.
+  if (tk.workflow_status === 'awaiting_dispatch' && tk.transfer_transport_method === 'recovery') {
     return { action: 'recovery', perm: ['maintenance.logistics', 'maintenance.delegate'], variant: 'danger' };
   }
   return ACTION[tk.workflow_status];
@@ -58,13 +96,33 @@ export function resolveAction(tk) {
 // Does the user hold the permission(s) a card action needs (array = any-of)?
 export const allows = (can, perm) => (Array.isArray(perm) ? perm.some(can) : can(perm));
 
-// The "Now at Garage" check-in (in_transit → under_repair) is custody-gated on the backend: ONLY the
-// driver who physically picked the car up (dispatched_by_id) may confirm arrival — no supervisor
-// override, no exceptions. Mirrors MaintenanceWorkflowService::markUnderRepair() so the button reflects
-// the same rule instead of letting anyone else tap it and bounce off a 422.
+// Custody gates — a return/arrival leg may only be completed by the SAME driver who took the car,
+// enforced on the backend so the button reflects the rule instead of letting anyone else tap it and
+// bounce off a 422. Two legs are gated:
+//   • "Now at Garage" check-in (in_transit → under_repair): only the driver who picked the car up
+//     (dispatched_by_id) — mirrors MaintenanceWorkflowService::markUnderRepair().
+//   • "Arrive at our park" (ready_for_pickup, after collect): only the driver who collected it from the
+//     garage (picked_up_from_garage_by) — mirrors MaintenanceWorkflowService::arriveAtPark().
 export function custodyBlocked(tk, userId) {
-  if (!tk || tk.workflow_status !== 'in_transit' || !tk.dispatched_by_id) return false;
-  return Number(tk.dispatched_by_id) !== Number(userId);
+  if (!tk) return false;
+  if (tk.workflow_status === 'in_transit' && tk.dispatched_by_id) {
+    return Number(tk.dispatched_by_id) !== Number(userId);
+  }
+  // The arrival leg only exists once the car has been collected (picked_up_from_garage_at set); before
+  // that the action is "Collect from Garage", which any driver may run.
+  if (tk.workflow_status === 'ready_for_pickup' && tk.picked_up_from_garage_at && tk.picked_up_from_garage_by) {
+    return Number(tk.picked_up_from_garage_by) !== Number(userId);
+  }
+  return false;
+}
+
+// The name of the driver who holds custody on a gated leg (for the "in X's custody" note shown when the
+// action button is hidden). Returns null when the current user IS the custodian or the leg isn't gated.
+export function custodyHolderName(tk, userId) {
+  if (!custodyBlocked(tk, userId)) return null;
+  if (tk.workflow_status === 'in_transit') return tk.dispatched_by_name || null;
+  if (tk.workflow_status === 'ready_for_pickup') return tk.picked_up_from_garage_by_name || null;
+  return null;
 }
 
 // The primary CTA's label for a ticket. Normally `workflow.cardAction.<action>`, but the arrival
@@ -108,6 +166,14 @@ export const TASK_STATUS = {
   transferred: { chip: 'bg-violet-50 text-violet-700 ring-violet-200',    dot: 'bg-violet-500' },
   completed:   { chip: 'bg-emerald-50 text-emerald-700 ring-emerald-200', dot: 'bg-emerald-500' },
   cancelled:   { chip: 'bg-slate-100 text-slate-500 ring-slate-200',      dot: 'bg-slate-300' },
+};
+
+// A routine/reminder service that was PERFORMED inside a ticket carries a vehicle-sync confirmation
+// state: 'pending_confirmation' until the ticket is closed (vehicle record NOT updated yet), then
+// 'confirmed'. Labels resolve from workflow.task.confirm.<key>.
+export const SERVICE_CONFIRM = {
+  pending_confirmation: { chip: 'bg-amber-50 text-amber-800 ring-amber-300',    icon: '⏳' },
+  confirmed:            { chip: 'bg-emerald-50 text-emerald-700 ring-emerald-200', icon: '✓' },
 };
 
 // "3h ago" / "2d ago" / "45m ago" from a duration in seconds, localized via `t`.

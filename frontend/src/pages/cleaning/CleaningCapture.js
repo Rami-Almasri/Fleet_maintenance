@@ -201,7 +201,7 @@ export default function CleaningCapture() {
               <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">Vehicle</p>
               <div className="flex items-center gap-2">
                 <span className="font-semibold text-slate-900">{carLabel}</span>
-                {plate && <span className="rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-xs text-slate-600">{plate}</span>}
+                {plate && <span className="rounded-lg bg-slate-100 px-1.5 py-0.5 font-mono text-xs text-slate-600">{plate}</span>}
               </div>
             </div>
             <div>

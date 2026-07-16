@@ -11,7 +11,7 @@ import { useEffect, useState } from 'react';
 
 // Tone → solid fill colour (vivid, reads on both themes).
 const TONE = {
-  brand:   '#3b82f6',
+  brand:   '#C9920C',
   blue:    '#3b82f6',
   success: '#10b981',
   emerald: '#10b981',
@@ -22,7 +22,7 @@ const TONE = {
   red:     '#ef4444',
   rose:    '#f43f5e',
   cyan:    '#22d3ee',
-  violet:  '#06b6d4',
+  violet:  '#EAB308',
   slate:   '#94a3b8',
 };
 const color = (t) => TONE[t] || TONE.brand;
@@ -123,7 +123,7 @@ export function TimelineBar({ segments = [], height = 12, showLegend = true, cla
         <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2">
           {data.map((s, i) => (
             <div key={i} className="flex items-center gap-2 text-xs">
-              <span className="h-2.5 w-2.5 rounded-sm" style={{ background: color(s.tone) }} />
+              <span className="h-2.5 w-2.5 rounded-[3px]" style={{ background: color(s.tone) }} />
               <span className="font-medium text-slate-500">{s.label}</span>
               <span className="font-semibold tabular-nums text-slate-700">
                 {s.value}

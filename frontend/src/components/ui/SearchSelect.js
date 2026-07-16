@@ -62,18 +62,18 @@ export default function SearchSelect({ value, onChange, options = [], placeholde
     <div
       data-searchselect-menu
       style={{ position: 'fixed', top: rect.top + 4, left: rect.left, width: rect.width }}
-      className="z-50 max-h-64 overflow-auto rounded-lg border border-gray-200 bg-white py-1 shadow-lg"
+      className="z-50 max-h-64 overflow-auto rounded-lg border border-slate-200 bg-white py-1 shadow-lg"
     >
-      {filtered.length === 0 && <div className="px-3 py-2 text-sm text-gray-400">{loading ? 'Loading…' : 'No matches'}</div>}
+      {filtered.length === 0 && <div className="px-3 py-2 text-sm text-slate-400">{loading ? 'Loading…' : 'No matches'}</div>}
       {filtered.map((o) => (
         <button
           key={o.id}
           type="button"
           onClick={() => { onChange(o.id); setOpen(false); setQuery(''); }}
-          className={`block w-full px-3 py-2 text-left hover:bg-gray-50 ${String(o.id) === String(value) ? 'bg-indigo-50' : ''}`}
+          className={`block w-full px-3 py-2 text-left hover:bg-slate-50 ${String(o.id) === String(value) ? 'bg-indigo-50' : ''}`}
         >
-          <div className="text-sm font-medium text-gray-900">{o.label}</div>
-          {o.sub && <div className="text-xs text-gray-400">{o.sub}</div>}
+          <div className="text-sm font-medium text-slate-900">{o.label}</div>
+          {o.sub && <div className="text-xs text-slate-400">{o.sub}</div>}
         </button>
       ))}
     </div>,
@@ -88,10 +88,10 @@ export default function SearchSelect({ value, onChange, options = [], placeholde
         onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
         onFocus={() => { setOpen(true); setQuery(''); }}
         placeholder={loading ? 'Loading…' : placeholder}
-        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
+        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
       />
       {value && !open && (
-        <button type="button" onClick={() => onChange('')} className="absolute right-2 top-1.5 rounded p-1 text-gray-400 hover:text-gray-600" title="Clear">
+        <button type="button" onClick={() => onChange('')} className="absolute right-2 top-1.5 rounded p-1 text-slate-400 hover:text-slate-600" title="Clear">
           <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
         </button>
       )}

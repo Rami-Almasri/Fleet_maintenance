@@ -3,23 +3,14 @@ import { Link } from 'react-router-dom';
 import api from '../api/client';
 import useFetch from '../hooks/useFetch';
 import { useToast } from '../components/ui/Toast';
-import Badge, { VehicleStatusBadge, OperationalBadge, ConditionBadge, DeferredMaintenanceBadge } from '../components/ui/Badge';
 import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import ConfirmDialog from '../components/ui/ConfirmDialog';
-import Pagination from '../components/ui/Pagination';
-import { PageHeader, SearchInput } from '../components/ui/Misc';
-import { Select } from '../components/ui/Field';
-import MetricCard, { MetricGrid } from '../components/ui/MetricCard';
-import DataTable, { SectionCard } from '../components/ui/Table';
-import { MetricGridSkeleton } from '../components/ui/Skeleton';
-import Icon from '../components/ui/Icon';
 import { usePageStat } from '../components/PageStat';
 import { usePermissions } from '../hooks/usePermissions';
 import VehicleForm, { VEHICLE_STATUSES, vehicleToForm, cleanPayload } from './vehicles/VehicleForm';
-import DispatchModal from './vehicles/DispatchModal';
-import PickUpModal from './vehicles/PickUpModal';
-import ConditionGradeModal from './vehicles/ConditionGradeModal';
+import DualState from '../components/ops/DualState';
+import { CommandPanel, StatGaugeTile } from '../components/ops';
 
 const PAGE_SIZE = 12;
 
@@ -47,18 +38,6 @@ export default function Vehicles() {
   // delete confirm
   const [toDelete, setToDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
-
-  // logistics dispatch modal
-  const [dispatchFor, setDispatchFor] = useState(null);
-  const canDispatch = can('logistics.dispatch');
-
-  // visual condition grading modal
-  const [gradeFor, setGradeFor] = useState(null);
-  const canManage = can('vehicles.manage');
-
-  // Inspector's-Pad "Pick Up for maintenance" modal (odometer-gated intake).
-  const [pickUpFor, setPickUpFor] = useState(null);
-  const canPickup = can('maintenance.initiate');
 
   // Deferred Maintenance: supervisors/ops can Resolve (dismiss) the "owes maintenance" flag.
   const canResolveDefer = can('maintenance.manage');
@@ -169,183 +148,136 @@ export default function Vehicles() {
     }
   };
 
-  // Vehicle list columns — presentation only; all values come straight from the row.
-  const columns = [
-    {
-      key: 'plate', header: 'Plate No.', cellClass: 'font-medium',
-      render: (v) => (
-        <Link to={`/vehicles/${v.id}`} className="text-indigo-600 hover:text-indigo-700">{v.plate_no || '—'}</Link>
-      ),
-    },
-    {
-      key: 'makeModel', header: 'Make / Model', cellClass: 'text-slate-700',
-      render: (v) => [v.make, v.model].filter(Boolean).join(' ') || '—',
-    },
-    {
-      key: 'year', header: 'Year', align: 'right', cellClass: 'tabular-nums text-slate-500',
-      render: (v) => v.year || '—',
-    },
-    {
-      key: 'vin', header: 'VIN', cellClass: 'font-mono text-xs text-slate-500',
-      render: (v) => v.vin,
-    },
-    {
-      // Car status = the OfficeManager lifecycle status (status_no).
-      key: 'status', header: 'Car Status',
-      tooltip: 'OfficeManager lifecycle status (status_no) — the car’s standing in the fleet, e.g. ready, sold, out of order.',
-      render: (v) => (
-        <div className="flex flex-wrap items-center gap-1.5">
-          <VehicleStatusBadge status={v.status} />
-          {v.for_sale && <Badge tone="amber">🏷️ For sale</Badge>}
-          {/* Visual Condition Grade — only shown when it needs attention (orange/red). */}
-          <ConditionBadge grade={v.condition_grade} />
-        </div>
-      ),
-    },
-    {
-      // Contract status = the car's live movement from its open contract.
-      key: 'contractStatus', header: 'Contract Status',
-      tooltip: 'Live operational status derived from the car’s open contract (rented, in maintenance, reserved) — distinct from the OM lifecycle status.',
-      render: (v) => (
-        <div className="flex flex-wrap items-center gap-1.5">
-          <OperationalBadge status={v.operational_status} destination={v.transit_destination} />
-          {v.reserved && <Badge tone="violet">📅 Reserved</Badge>}
-          <DeferredMaintenanceBadge pending={v.is_deferred_maintenance} note={v.deferred_maintenance_reason} />
-          {!v.operational_status && !v.reserved && !v.is_deferred_maintenance && <span className="text-slate-400">—</span>}
-        </div>
-      ),
-    },
-    {
-      key: 'actions', header: 'Actions', align: 'right', headerClass: 'sr-only',
-      render: (v) => (
-        <div className="flex justify-end gap-2">
-          {canPickup && v.available && (
-            <Button variant="secondary" size="sm" onClick={() => setPickUpFor(v)} title="Open a maintenance ticket for this car (requires the current odometer)">
-              🔧 Pick up
-            </Button>
-          )}
-          {canDispatch && v.available && (
-            <Button variant="secondary" size="sm" onClick={() => setDispatchFor(v)} title="Move this car to another location">
-              🚚 Dispatch
-            </Button>
-          )}
-          {canManage && (
-            <Button variant="secondary" size="sm" onClick={() => setGradeFor(v)} title="Set the visual condition grade (green / orange / red)">
-              🎨 Grade
-            </Button>
-          )}
-          {canResolveDefer && v.is_deferred_maintenance && (
-            <Button variant="secondary" size="sm" onClick={() => resolveDefer(v)} title="Clear the 'owes maintenance' flag (sent back to the workshop, or no longer needed)">
-              ✓ Resolve
-            </Button>
-          )}
-          <Link to={`/vehicles/${v.id}`}>
-            <Button variant="secondary" size="sm">View</Button>
-          </Link>
-          <Button variant="secondary" size="sm" onClick={() => openEdit(v)}>Edit</Button>
-          <Button variant="ghost" size="sm" className="text-red-600 hover:bg-red-50" onClick={() => setToDelete(v)}>
-            Delete
-          </Button>
-        </div>
-      ),
-    },
+  // Row presentation helpers (mission-control telemetry rows).
+  const fmtKm = (n) => (n == null ? '—' : `${Number(n).toLocaleString()} km`);
+  const rowTone = (v) => {
+    if (v.is_deferred_maintenance) return 'rt-paused';
+    if (['red', 'yellow'].includes(v.condition_grade)) return 'rt-crit';
+    if (v.under_maintenance || v.operational_status === 'maintenance') return 'rt-maint';
+    if (v.available) return 'rt-avail';
+    return '';
+  };
+  const condChip = (v) => {
+    const g = v.condition_grade;
+    if (g === 'red' || g === 'yellow') return <span className="ds-chip sm ds-crit"><span className="ds-dot" />Grounded</span>;
+    if (g === 'orange') return <span className="ds-chip sm ds-paused"><span className="ds-dot" />Watch</span>;
+    return <span className="ds-chip sm ds-none"><span className="ds-dot" />OK</span>;
+  };
+  const KPIS = [
+    { key: 'available', label: 'Available', value: availableCount, tone: 'avail', icon: 'car', hint: 'Free to rent or send for maintenance' },
+    { key: 'reserved', label: 'Reserved', value: reservedCount, tone: 'reserved', icon: 'calendar', hint: 'Open reservation / booking' },
+    { key: 'rented', label: 'Rented', value: rentedCount, tone: 'rented', icon: 'car', hint: 'Currently out on rent' },
+    { key: 'maint', label: 'In Maintenance', value: maintCount, tone: 'maint', icon: 'wrench', hint: 'Currently in the garage' },
   ];
 
   return (
-    <div className="py-8">
-      <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
-        <PageHeader
-          title="Vehicles"
-          subtitle={loading ? 'Loading…' : `${filtered.length} of ${list.length} vehicles`}
-        >
-          <Button onClick={openCreate}>
-            <Icon.Plus className="h-4 w-4" />
-            Add New Vehicle
-          </Button>
-        </PageHeader>
-
-        {/* Quick-filter KPI tiles — each card toggles its live-movement filter (sold/disposed excluded). */}
-        {loading ? (
-          <MetricGridSkeleton count={4} />
-        ) : (
-          <MetricGrid cols={4}>
-            <MetricCard
-              label="Available"
-              value={availableCount}
-              tone={flag === 'available' ? 'emerald' : 'slate'}
-              icon={<Icon.Check className="h-5 w-5" />}
-              hint="Free to rent or send for maintenance"
-              tooltip="Cars with no open contract — free to rent out or send for maintenance."
-              onClick={() => toggleFlag('available')}
-            />
-            <MetricCard
-              label="Reserved"
-              value={reservedCount}
-              tone={flag === 'reserved' ? 'violet' : 'slate'}
-              icon={<Icon.Calendar className="h-5 w-5" />}
-              hint="Open reservation / booking"
-              tooltip="Cars with an open reservation/booking."
-              onClick={() => toggleFlag('reserved')}
-            />
-            <MetricCard
-              label="Rented"
-              value={rentedCount}
-              tone={flag === 'rented' ? 'blue' : 'slate'}
-              icon={<Icon.Car className="h-5 w-5" />}
-              hint="Currently out on rent"
-              tooltip="Cars currently out on rent."
-              onClick={() => toggleFlag('rented')}
-            />
-            <MetricCard
-              label="In maintenance"
-              value={maintCount}
-              tone={flag === 'maint' ? 'amber' : 'slate'}
-              icon={<Icon.Wrench className="h-5 w-5" />}
-              hint="Currently in the garage"
-              tooltip="Cars currently in the garage."
-              onClick={() => toggleFlag('maint')}
-            />
-          </MetricGrid>
-        )}
-
+    <>
+    <div className="opx">
+      <div className="opx-body">
         {error && (
-          <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error}</div>
+          <div style={{ marginBottom: 16, borderRadius: 12, border: '1px solid rgba(251,113,133,.3)', background: 'rgba(251,113,133,.08)', color: '#fb7185', padding: '12px 16px', fontSize: 13 }}>{error}</div>
         )}
 
-        <SectionCard
-          title="Fleet"
-          subtitle={loading ? 'Loading…' : `${filtered.length} of ${list.length} vehicles`}
-          actions={
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <SearchInput
-                className="sm:w-72"
-                value={search}
-                onChange={(v) => resetFilters(() => setSearch(v))}
-                placeholder="Search plate, VIN, make or model…"
+        {/* KPI strip — each tile is a live filter over the active fleet (sold/disposed excluded). */}
+        <div className="opx-grid opx-c12" style={{ marginBottom: 16 }}>
+          {KPIS.map((k) => (
+            <div className="opx-span-3" key={k.key}>
+              <StatGaugeTile
+                label={k.label}
+                value={loading ? '—' : k.value}
+                hint={k.hint}
+                tone={k.tone}
+                icon={k.icon}
+                percent={active.length ? (k.value / active.length) * 100 : 0}
+                active={flag === k.key}
+                onClick={() => toggleFlag(k.key)}
               />
-              <Select className="sm:w-48" value={status} onChange={(e) => resetFilters(() => setStatus(e.target.value))}>
-                <option value="">All statuses</option>
-                {VEHICLE_STATUSES.map((s) => (
-                  <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>
-                ))}
-              </Select>
             </div>
-          }
+          ))}
+        </div>
+
+        {/* Fleet Registry — the mission-control telemetry table. */}
+        <CommandPanel
+          title="Fleet Registry"
+          dotColor="#22d3ee"
+          label={loading ? 'loading' : `${filtered.length} of ${list.length}`}
+          meta={`${availableCount} available · ${rentedCount} on rent · ${maintCount} in shop`}
+          bodyFlush
+          action={can('vehicles.manage') ? (
+            <button className="opx-btn primary" onClick={openCreate}>+ Add Vehicle</button>
+          ) : null}
         >
-          <DataTable
-            columns={columns}
-            rows={paged}
-            rowKey={(v) => v.id}
-            loading={loading}
-            skeletonRows={PAGE_SIZE}
-            empty="No vehicles found. Try adjusting your search or filters."
-          />
+          <div className="opx-toolbar">
+            <input
+              className="opx-input"
+              value={search}
+              placeholder="Search plate, VIN, make or model…"
+              onChange={(e) => resetFilters(() => setSearch(e.target.value))}
+            />
+            <select className="opx-select" value={status} onChange={(e) => resetFilters(() => setStatus(e.target.value))}>
+              <option value="">All statuses</option>
+              {VEHICLE_STATUSES.map((s) => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
+            </select>
+            {flag && <button className="opx-ibtn" onClick={() => toggleFlag(flag)}>✕ Clear filter</button>}
+          </div>
+
+          <div className="opx-tblwrap">
+            <table className="opx-tbl">
+              <thead>
+                <tr>
+                  <th>Vehicle</th>
+                  <th>Year · VIN</th>
+                  <th className="r">Odometer</th>
+                  <th>Rental · Maintenance</th>
+                  <th>Condition</th>
+                  <th className="r">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading ? (
+                  <tr><td colSpan={6}><div className="opx-skel" style={{ height: 260 }} /></td></tr>
+                ) : paged.length === 0 ? (
+                  <tr><td colSpan={6}><div className="opx-empty"><div className="big">🛰️</div>No vehicles match your search or filters.</div></td></tr>
+                ) : paged.map((v) => (
+                  <tr key={v.id} className={rowTone(v)}>
+                    <td>
+                      <Link to={`/vehicles/${v.id}`} className="opx-plate2">{v.plate_no || '—'}</Link>
+                      <div className="opx-sub">{[v.make, v.model].filter(Boolean).join(' ') || '—'}</div>
+                    </td>
+                    <td>
+                      <div className="opx-mono2">{v.year || '—'}</div>
+                      <div className="opx-sub" style={{ fontFamily: 'var(--mono)' }}>{v.vin || '—'}</div>
+                    </td>
+                    <td className="r opx-mono2">{fmtKm(v.odometer)}</td>
+                    <td><DualState vehicle={v} /></td>
+                    <td>{condChip(v)}</td>
+                    <td>
+                      <div className="opx-actions">
+                        {canResolveDefer && v.is_deferred_maintenance && <button className="opx-ibtn" onClick={() => resolveDefer(v)} title="Clear the deferred-maintenance flag">✓ Resolve</button>}
+                        <Link to={`/vehicles/${v.id}`} className="opx-ibtn go">View</Link>
+                        <button className="opx-ibtn" onClick={() => openEdit(v)}>Edit</button>
+                        <button className="opx-ibtn danger" onClick={() => setToDelete(v)}>Delete</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
 
           {!loading && filtered.length > 0 && (
-            <Pagination page={safePage} pageCount={pageCount} total={filtered.length} pageSize={PAGE_SIZE} onPage={setPage} />
+            <div className="opx-pager">
+              <span>{(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, filtered.length)} of {filtered.length}</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <button className="opx-ibtn" disabled={safePage <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))} style={{ opacity: safePage <= 1 ? 0.4 : 1 }}>‹ Prev</button>
+                <span>Page {safePage} / {pageCount}</span>
+                <button className="opx-ibtn" disabled={safePage >= pageCount} onClick={() => setPage((p) => Math.min(pageCount, p + 1))} style={{ opacity: safePage >= pageCount ? 0.4 : 1 }}>Next ›</button>
+              </div>
+            </div>
           )}
-        </SectionCard>
+        </CommandPanel>
       </div>
+    </div>
 
       {/* Create / Edit modal */}
       <Modal
@@ -364,30 +296,6 @@ export default function Vehicles() {
         <VehicleForm values={form} onChange={onField} errors={formErrors} />
       </Modal>
 
-      {/* Logistics dispatch */}
-      <DispatchModal
-        open={!!dispatchFor}
-        vehicle={dispatchFor}
-        onClose={() => setDispatchFor(null)}
-        onDispatched={reload}
-      />
-
-      {/* Pick up for maintenance (odometer-gated) */}
-      <PickUpModal
-        open={!!pickUpFor}
-        vehicle={pickUpFor}
-        onClose={() => setPickUpFor(null)}
-        onPickedUp={reload}
-      />
-
-      {/* Visual condition grading */}
-      <ConditionGradeModal
-        open={!!gradeFor}
-        vehicle={gradeFor}
-        onClose={() => setGradeFor(null)}
-        onSaved={reload}
-      />
-
       {/* Delete confirm */}
       <ConfirmDialog
         open={!!toDelete}
@@ -398,6 +306,6 @@ export default function Vehicles() {
         confirmText="Delete"
         message={toDelete ? `This will remove ${[toDelete.make, toDelete.model].filter(Boolean).join(' ')} (${toDelete.plate_no || toDelete.vin}). This can be undone via the database (soft delete).` : ''}
       />
-    </div>
+    </>
   );
 }

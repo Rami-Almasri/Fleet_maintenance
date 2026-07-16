@@ -3,7 +3,9 @@ import { useParams, Link } from 'react-router-dom';
 import api from '../../api/client';
 import useFetch from '../../hooks/useFetch';
 import Badge, { ContractTypeBadge, ContractStateBadge } from '../../components/ui/Badge';
-import { Card, Spinner } from '../../components/ui/Misc';
+import { EmptyState, Spinner } from '../../components/ui/Misc';
+import { CommandPanel } from '../../components/ops';
+import Button from '../../components/ui/Button';
 import CustomerReconciliation from '../../components/CustomerReconciliation';
 import { useCountUp } from '../../components/ui/Gauge';
 import { aed2, fmtDate, num } from '../../lib/format';
@@ -25,16 +27,16 @@ const STAT_TONE = {
 function Stat({ label, value, icon, tone = 'gray', format, highlight }) {
   const t = STAT_TONE[tone] || STAT_TONE.gray;
   return (
-    <div className="hover-lift rounded-2xl border border-slate-200/60 bg-white px-5 py-4 shadow-soft">
+    <div className="opx-kpi">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-xs font-medium text-slate-500">{label}</p>
+        <p className="lbl" style={{ marginBottom: 0 }}>{label}</p>
         {icon && (
           <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${t.bg}`}>
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={icon} /></svg>
           </span>
         )}
       </div>
-      <p className={`mt-1.5 text-2xl font-bold tracking-tight ${highlight ? t.text : 'text-slate-900'}`}>
+      <p className="v tnum" style={{ fontSize: 26, marginTop: 8 }}>
         <CountUp value={value} format={format} />
       </p>
     </div>
@@ -43,9 +45,9 @@ function Stat({ label, value, icon, tone = 'gray', format, highlight }) {
 
 function Field({ label, value }) {
   return (
-    <div className="flex justify-between gap-4 py-1.5 text-sm">
-      <span className="text-slate-500">{label}</span>
-      <span className="text-right font-medium text-slate-900">{value || '—'}</span>
+    <div className="flex justify-between gap-4 py-1.5 text-sm" style={{ borderBottom: '1px solid var(--line)' }}>
+      <span style={{ color: 'var(--ink-3)' }}>{label}</span>
+      <span className="text-right font-medium" style={{ color: 'var(--ink)' }}>{value || '—'}</span>
     </div>
   );
 }
@@ -85,21 +87,19 @@ export default function CustomerProfile() {
   const initials = (c.name_en || '?').trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase() || '?';
 
   return (
-    <div className="py-8">
+    <div className="opx py-8">
       <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
         {/* Back */}
         <Link to="/customers" className="inline-flex items-center gap-1 text-sm font-medium text-slate-500 transition hover:text-slate-700">
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 19l-7-7 7-7" /></svg>
+          <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 19l-7-7 7-7" /></svg>
           Customers
         </Link>
 
         {/* Hero */}
-        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 p-6 shadow-card sm:p-8">
-          <div className="pointer-events-none absolute -right-16 -top-20 h-64 w-64 rounded-full bg-indigo-500/20 blur-3xl" />
-          <div className="pointer-events-none absolute -bottom-24 left-1/4 h-64 w-64 rounded-full bg-violet-500/10 blur-3xl" />
+        <div className="relative overflow-hidden rounded-2xl bg-navy-950 p-6 shadow-card sm:p-8">
           <div className="relative flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
             <div className="flex items-start gap-4">
-              <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-500 text-xl font-bold text-white shadow-glow ring-1 ring-inset ring-white/20">
+              <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-indigo-600 text-xl font-bold text-white ring-1 ring-inset ring-white/20">
                 {initials}
               </div>
               <div className="min-w-0">
@@ -164,41 +164,34 @@ export default function CustomerProfile() {
 
         {/* Contact + Documents */}
         <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-          <Card className="p-6">
-            <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">Contact</h3>
+          <CommandPanel title="Contact" dotColor="#22d3ee">
             <Field label="Mobile" value={c.mobile1} />
             <Field label="Mobile 2" value={c.mobile2} />
             <Field label="WhatsApp" value={c.whatsapp} />
             <Field label="Email" value={c.email} />
             <Field label="City" value={c.city} />
             <Field label="Address" value={c.address} />
-          </Card>
-          <Card className="p-6">
-            <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">Documents</h3>
+          </CommandPanel>
+          <CommandPanel title="Documents" dotColor="#8b7bfb">
             <Field label="Passport" value={c.passport_no} />
             <Field label="Passport Expiry" value={fmtDate(c.passport_expiry)} />
             <Field label="License" value={c.license_no} />
             <Field label="License Expiry" value={fmtDate(c.license_expiry)} />
             <Field label="Emirates ID" value={c.id_no} />
             <Field label="ID Expiry" value={fmtDate(c.id_expiry)} />
-          </Card>
+          </CommandPanel>
         </div>
 
         {/* Per-category account reconciliation rolled up across all contracts */}
         {SHOW_FINANCIALS && <CustomerReconciliation ledger={categoryLedger} totals={ledgerTotals} />}
 
         {/* Rental history — a timeline of this customer's contracts */}
-        <Card>
-          <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
-            <div>
-              <h3 className="text-base font-semibold text-slate-900">Rental History</h3>
-              <p className="mt-0.5 text-xs text-slate-400">Every contract for this customer, newest first.</p>
-            </div>
-            <Badge tone="gray">{num(contracts.length)} total</Badge>
-          </div>
-
+        <CommandPanel title="Rental History" dotColor="#34d399" label="ledger" meta={`${num(contracts.length)} total · newest first`} bodyFlush>
           {contracts.length === 0 ? (
-            <p className="px-6 py-10 text-center text-sm text-slate-400">No contracts for this customer.</p>
+            <EmptyState
+              title="No contracts yet"
+              message="Contracts appear here automatically once this customer rents a car."
+            />
           ) : (
             <div className="relative px-6 py-6">
               <span aria-hidden className="pointer-events-none absolute bottom-8 left-10 top-8 w-px bg-slate-200" />
@@ -237,19 +230,20 @@ export default function CustomerProfile() {
 
               {contracts.length > CONTRACTS_PREVIEW && (
                 <div className="mt-5 flex justify-center">
-                  <button
-                    type="button"
+                  <Button
+                    variant="secondary"
                     onClick={() => setShowAllContracts((v) => !v)}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-600 shadow-soft transition hover:border-slate-300 hover:text-slate-900"
+                    className="rounded-full"
+                    aria-expanded={showAllContracts}
                   >
                     {showAllContracts ? 'Show less' : `Show ${hiddenContracts} more`}
-                    <svg className={`h-4 w-4 transition-transform ${showAllContracts ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 9l-7 7-7-7" /></svg>
-                  </button>
+                    <svg aria-hidden="true" className={`h-4 w-4 transition-transform ${showAllContracts ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 9l-7 7-7-7" /></svg>
+                  </Button>
                 </div>
               )}
             </div>
           )}
-        </Card>
+        </CommandPanel>
       </div>
     </div>
   );

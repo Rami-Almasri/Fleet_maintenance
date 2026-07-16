@@ -6,8 +6,8 @@ import { useEffect, useRef, useState } from 'react';
 
 // Named palettes → [from, to] gradient stops. Mirrors Gauge.js PALETTES exactly.
 export const PALETTES = {
-  indigo:  { from: '#3b82f6', to: '#22d3ee' },
-  brand:   { from: '#3b82f6', to: '#22d3ee' },
+  indigo:  { from: '#B37F0A', to: '#FACC15' },
+  brand:   { from: '#B37F0A', to: '#FACC15' },
   emerald: { from: '#10b981', to: '#34d399' },
   success: { from: '#10b981', to: '#34d399' },
   blue:    { from: '#3b82f6', to: '#60a5fa' },
@@ -15,7 +15,7 @@ export const PALETTES = {
   orange:  { from: '#f97316', to: '#fb923c' },
   alert:   { from: '#f97316', to: '#fb923c' },
   red:     { from: '#ef4444', to: '#f87171' },
-  violet:  { from: '#06b6d4', to: '#22d3ee' },
+  violet:  { from: '#D9A310', to: '#FDE047' },
   cyan:    { from: '#06b6d4', to: '#22d3ee' },
   teal:    { from: '#2dd4bf', to: '#5eead4' },
   purple:  { from: '#8b5cf6', to: '#a78bfa' },

@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api/client';
 import useFetch from '../hooks/useFetch';
 import { Card, Spinner } from '../components/ui/Misc';
 import MetricCard, { MetricGrid } from '../components/ui/MetricCard';
-import CountUp from '../components/ui/CountUp';
 import DataTable, { SectionCard } from '../components/ui/Table';
 import { MetricGridSkeleton, Skeleton } from '../components/ui/Skeleton';
 import { Tooltip } from '../components/ui/Tooltip';
@@ -33,17 +32,13 @@ const SORTS = [
 // push the three past 100% of owned. The numeric columns keep the true owned-based percentages.
 function SplitBar({ rented, maintenance, idle }) {
   const total = rented + maintenance + idle || 1;
-  // Grow each segment from 0 → its share on mount, so the bars animate into place.
-  const [grown, setGrown] = useState(false);
-  useEffect(() => {
-    const id = requestAnimationFrame(() => setGrown(true));
-    return () => cancelAnimationFrame(id);
-  }, []);
+  // Static bars (no grow animation) — each segment sits at its final share and
+  // its exact day count is available on hover, so the Idle column can be dropped.
   const seg = (v, cls, label) =>
     v > 0 ? (
       <div
-        className={`${cls} transition-[width] duration-700 ease-out`}
-        style={{ width: grown ? `${((v / total) * 100).toFixed(1)}%` : '0%' }}
+        className={cls}
+        style={{ width: `${((v / total) * 100).toFixed(1)}%` }}
         title={`${label}: ${num(v)} days`}
       />
     ) : null;
@@ -123,7 +118,7 @@ function TimeMachine({ cars }) {
 
   return (
     <SectionCard
-      title="🕒 Time machine"
+      title="Time machine"
       subtitle="Pick a car and a day to see what it was doing then — or add a “to” date to count how many days it was rented, in the workshop, or available."
       bodyClass="p-5"
     >
@@ -189,9 +184,7 @@ function RangeStat({ tone, label, value, sub }) {
   };
   return (
     <div className={`rounded-xl px-3 py-3 text-center ring-1 ring-inset ${tones[tone] || tones.amber}`}>
-      <p className="text-2xl font-extrabold tabular-nums">
-        <CountUp value={value || 0} format={(n) => num(Math.round(n))} />
-      </p>
+      <p className="text-2xl font-extrabold tabular-nums">{num(Math.round(value || 0))}</p>
       <p className="text-[11px] font-semibold uppercase tracking-wide opacity-80">{label}</p>
       {sub != null && <p className="text-[11px] opacity-70">{sub}</p>}
     </div>
@@ -229,11 +222,6 @@ function RangeResult({ r }) {
 
         <div className="mt-4">
           <SplitBar rented={r.rented_days} maintenance={r.maintenance_days} idle={r.idle_days} />
-          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-400">
-            <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-500" /> Rented</span>
-            <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-red-500" /> In workshop</span>
-            <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-slate-300" /> Available</span>
-          </div>
         </div>
 
         {r.counted_from && r.counted_from !== r.from && (
@@ -397,15 +385,12 @@ export default function FleetUtilization() {
         <div className="animate-fade-in-up space-y-4">
           <div className="min-w-0">
             <div className="flex items-center gap-2.5">
-              <span className="h-7 w-1.5 rounded-full bg-gradient-to-b from-indigo-500 to-violet-500" />
+              <span className="h-7 w-1 rounded-full bg-indigo-500" />
               <h1 className="text-2xl font-bold tracking-tight text-slate-900">Fleet Utilization</h1>
             </div>
             <p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-500 sm:pl-4">
-              How every car's time splits between{' '}
-              <span className="font-semibold text-emerald-600">earning on rent</span>,{' '}
-              <span className="font-semibold text-red-600">in the workshop</span>, and{' '}
-              <span className="font-semibold text-amber-600">sitting idle</span> — measured from each car's first
-              rental, so new cars aren't branded as downtime.
+              How every car's time splits between earning on rent, in the workshop, and sitting idle —
+              measured from each car's first rental, so new cars aren't branded as downtime.
             </p>
           </div>
 
@@ -415,19 +400,18 @@ export default function FleetUtilization() {
           ) : (
             <div className="flex flex-wrap items-center gap-2 sm:pl-4">
               <ScopeChip
-                tone="indigo"
-                icon={<Icon.Calendar className="h-4 w-4" />}
+                icon={<Icon.Calendar className="h-4 w-4 text-slate-400" />}
                 tip="Performance is anchored on each car's In-Service Date (first rental). Time owned before the first rental is excluded so new cars aren't penalized as downtime."
               >
                 {win.lifetime
                   ? 'Lifetime · since first rental'
-                  : <>{fmtDate(win.from)} <span className="text-indigo-400">→</span> {fmtDate(win.to)}</>}
+                  : <>{fmtDate(win.from)} <span className="text-slate-300">→</span> {fmtDate(win.to)}</>}
               </ScopeChip>
               <ScopeChip icon={<Icon.Car className="h-4 w-4 text-slate-400" />}>
                 <span className="font-bold text-slate-900">{num(s.cars || 0)}</span> cars
               </ScopeChip>
-              <ScopeChip tone="red" icon={<Icon.Wrench className="h-4 w-4" />}>
-                <span className="font-bold">{num(s.cars_in_maintenance || 0)}</span> saw the workshop
+              <ScopeChip icon={<Icon.Wrench className="h-4 w-4 text-slate-400" />}>
+                <span className="font-bold text-slate-900">{num(s.cars_in_maintenance || 0)}</span> saw the workshop
               </ScopeChip>
               {s.pending_service > 0 && (
                 <ScopeChip
@@ -450,7 +434,7 @@ export default function FleetUtilization() {
             <MetricCard
               className="hover-lift"
               label="Avg utilization"
-              value={<CountUp value={s.avg_utilization_pct} format={(n) => pct(s.avg_utilization_pct == null ? null : Math.round(n))} />}
+              value={pct(s.avg_utilization_pct == null ? null : Math.round(s.avg_utilization_pct))}
               tone="emerald"
               icon={<Icon.Percent className="h-5 w-5" />}
               hint="of in-service days on rent"
@@ -459,7 +443,7 @@ export default function FleetUtilization() {
             <MetricCard
               className="hover-lift"
               label="Avg downtime"
-              value={<CountUp value={s.avg_downtime_pct} format={(n) => pct(s.avg_downtime_pct == null ? null : Math.round(n))} />}
+              value={pct(s.avg_downtime_pct == null ? null : Math.round(s.avg_downtime_pct))}
               tone="red"
               icon={<Icon.Wrench className="h-5 w-5" />}
               hint="of in-service days in workshop"
@@ -468,7 +452,7 @@ export default function FleetUtilization() {
             <MetricCard
               className="hover-lift"
               label="Maintenance days"
-              value={<CountUp value={s.total_days_maintenance || 0} format={(n) => num(Math.round(n))} />}
+              value={num(Math.round(s.total_days_maintenance || 0))}
               tone="slate"
               icon={<Icon.Clock className="h-5 w-5" />}
               hint="fleet total in window"
@@ -477,7 +461,7 @@ export default function FleetUtilization() {
             <MetricCard
               className="hover-lift"
               label="Idle days"
-              value={<CountUp value={s.total_days_idle || 0} format={(n) => num(Math.round(n))} />}
+              value={num(Math.round(s.total_days_idle || 0))}
               tone="amber"
               icon={<Icon.Activity className="h-5 w-5" />}
               hint="available, not earning"
@@ -486,7 +470,7 @@ export default function FleetUtilization() {
             <MetricCard
               className="hover-lift"
               label="Rent lost to downtime"
-              value={<CountUp value={s.revenue_lost_downtime || 0} format={(n) => aed2(n)} />}
+              value={aed2(s.revenue_lost_downtime || 0)}
               tone="red"
               icon={<Icon.Cash className="h-5 w-5" />}
               hint="downtime × daily rate"
@@ -621,9 +605,6 @@ export default function FleetUtilization() {
           </p>
         </Card>
 
-        {/* Time machine — point-in-time status of any one car on any day */}
-        {!loading && carOptions.length > 0 && <TimeMachine cars={carOptions} />}
-
         {/* Table */}
         {error ? (
           <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error}</div>
@@ -655,23 +636,13 @@ export default function FleetUtilization() {
                         </span>
                       )}
                       {c.car && <span className="block text-xs text-slate-400">{[c.car, c.year].filter(Boolean).join(' · ')}</span>}
-                    </>
-                  ),
-                },
-                {
-                  key: 'in_service',
-                  header: 'In service',
-                  align: 'right',
-                  tooltip: 'In-Service anchor: days since the car\'s first rental. Onboarding time before the first rental is excluded.',
-                  cellClass: 'tabular-nums text-slate-600',
-                  render: (c) => (
-                    <>
-                      {days(c.days_in_service)}
-                      {c.owned_since && (
-                        <span className="block text-[11px] text-slate-400" title={`In service since ${c.in_service_date || '—'} · owned since ${c.owned_since}`}>
-                          owned {days(c.days_owned)}
-                        </span>
-                      )}
+                      {/* In-service days folded in here (its own column was removed to declutter). */}
+                      <span
+                        className="block text-[11px] text-slate-400"
+                        title={`In service ${days(c.days_in_service)}${c.owned_since ? ` · owned ${days(c.days_owned)} (since ${c.owned_since})` : ''}${c.in_service_date ? ` · first rental ${c.in_service_date}` : ''}`}
+                      >
+                        {days(c.days_in_service)} in service
+                      </span>
                     </>
                   ),
                 },
@@ -723,17 +694,10 @@ export default function FleetUtilization() {
                   ),
                 },
                 {
-                  key: 'idle',
-                  header: 'Idle',
-                  align: 'right',
-                  tooltip: 'Available days that earned nothing (not rented, not in the workshop).',
-                  cellClass: 'tabular-nums text-slate-500',
-                  render: (c) => days(c.days_idle),
-                },
-                {
                   key: 'split',
                   header: 'Split',
                   headerClass: 'w-40',
+                  tooltip: 'Rented / in-maintenance / idle split of in-service days. Hover a segment for its exact day count (including idle days).',
                   render: (c) => <SplitBar rented={c.days_rented} maintenance={c.days_maintenance} idle={c.days_idle || 0} />,
                 },
                 {
@@ -748,6 +712,9 @@ export default function FleetUtilization() {
             />
           </SectionCard>
         )}
+
+        {/* Time machine — a secondary power-user tool, kept below the main breakdown. */}
+        {!loading && carOptions.length > 0 && <TimeMachine cars={carOptions} />}
       </div>
     </div>
   );

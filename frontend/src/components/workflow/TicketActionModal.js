@@ -37,6 +37,7 @@ import { evaluateContinuity, needsConfirm, needsNote, isHardBlocked, stageIgnore
 import OdometerContinuityHint from './OdometerContinuityHint';
 import SignaturePad from './SignaturePad';
 import { isPaused } from './meta';
+import { useAuth } from '../../auth/AuthContext';
 
 // Enterprise Handover Workflow — CONTRACT with backend/config/maintenance_handover.php. Small, fixed
 // enums, so hardcoded client-side rather than fetched.
@@ -44,6 +45,27 @@ const FUEL_SCALE = ['E', '1/4', '1/2', '3/4', 'F'];
 const CONDITION_PRESETS = ['Good', 'Minor scratches', 'Damaged'];
 const ACCESSORY_KEYS = ['spare_tire', 'jack', 'first_aid_kit', 'warning_triangle', 'floor_mats', 'charging_cable'];
 const DAMAGE_SEVERITY = ['routine', 'moderate', 'critical']; // reuses App\Models\Maintenance::FAULT_SEVERITIES vocabulary
+
+// Temporary Vehicle Release — why the car left the shop mid-repair. CONTRACT with
+// App\Models\MaintenanceTemporaryRelease::REASONS; visible labels resolve from the i18n catalog.
+const TEMP_RELEASE_REASONS = ['road_test', 'customer_test', 'external_inspection', 'other'];
+
+// The car's last known odometer reading for a ticket — the highest of the vehicle's authoritative
+// odometer and every reading captured on the ticket's mileage chain (readings only go forward). Used to
+// pre-fill the "Odometer out" field on a Temporary Vehicle Release so the operator sees + edits it.
+function lastKnownOdometer(tk) {
+  if (!tk) return null;
+  const candidates = [
+    tk.vehicle_odometer,
+    tk.reinspect_odometer, tk.park_odometer, tk.return_odometer,
+    tk.receive_odometer, tk.dispatch_odometer, tk.report_odometer, tk.test_odometer,
+  ].map((v) => (v == null ? null : Number(v))).filter((v) => v != null && !Number.isNaN(v));
+  return candidates.length ? Math.max(...candidates) : null;
+}
+
+// Post-Repair Inspection — the structured reasons a repair did not hold (Case B). CONTRACT with
+// App\Models\RepairInspection::REASONS; visible labels resolve from the i18n catalog at render time.
+const FAILURE_REASONS = ['wrong_diagnosis', 'part_failed', 'repair_incomplete', 'wrong_part', 'customer_complaint', 'unknown'];
 
 // Persisted enum values — these are CONTRACT with the backend and never localize.
 // Their visible labels are resolved from the i18n catalog at render time.
@@ -396,8 +418,14 @@ function HandoverFields({
 
 export default function TicketActionModal({ action, ticket, vehicles = [], garages = [], findingsCatalog = [], keywordMeta = {}, faultCausesCatalog = {}, assignableDrivers = [], allowedTypes = null, onClose, onDone }) {
   const { t } = useI18n();
+  const { user: currentUser } = useAuth();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [stale, setStale] = useState(false); // the ticket moved on under us (concurrent edit) → offer a refresh, not a red error
+
+  // Never dismiss the modal (backdrop / ESC / X) while a request is in flight: closing mid-submit lets
+  // the operator reopen and fire the same non-idempotent action again (duplicate dispatch / notification).
+  const guardedClose = () => { if (!busy) onClose?.(); };
 
   // Context-Aware Classification — the maintenance types this user may actually pick. `allowedTypes`
   // is the permission-scoped value list from the findings catalog (a technician gets only routine +
@@ -477,7 +505,14 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   const [delegationTask, setDelegationTask] = useState('pickup'); // delegate: pickup | dropoff
   const [recommended, setRecommended] = useState('');
   const [notes, setNotes] = useState('');
-  const [odometer, setOdometer] = useState('');
+  // Pre-fill the reading for a Temporary Vehicle Release with the car's last known odometer (editable).
+  const [odometer, setOdometer] = useState(() => {
+    if (action === 'temporarilyRelease') {
+      const last = lastKnownOdometer(ticket);
+      return last != null ? String(last) : '';
+    }
+    return '';
+  });
   const [vendorId, setVendorId] = useState(ticket?.vendor_id ? String(ticket.vendor_id) : '');
   const [onsiteVendor, setOnsiteVendor] = useState(''); // serviced: free-text on-site vendor/mechanic (NOT a garage from the list)
   const [assignNote, setAssignNote] = useState(''); // assign: supervisor's reason/note when (re)assigning the garage
@@ -496,10 +531,15 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   // note the supervisor reads. A car back from the garage may have some faults fixed and some not.
   const [broken, setBroken] = useState({});        // { [taskId]: true } → this fault is not fixed
   const [brokenNote, setBrokenNote] = useState({}); // { [taskId]: 'what is still wrong' }
+  const [brokenReason, setBrokenReason] = useState({}); // { [taskId]: 'wrong_diagnosis' } → structured failure reason (Case B)
   const [requiresMaintenance, setRequiresMaintenance] = useState(true); // decide: open ticket | clear diagnostic
   const [faultSeverity, setFaultSeverity] = useState(() => ticket?.fault_severity || ''); // decide: mandatory fault-severity grade
   // decide: Repair Location — 'in_shop' (garage → alerts Waleed & Abdullah) | 'on_site' (mobile; car stays free).
   const [repairLocation, setRepairLocation] = useState('in_shop');
+  // decide: Rental Eligibility — the inspector's ONE-TIME call. false (default) = mandatory maintenance
+  // (car grounded until the workshop finishes); true = deferrable (a customer may still take it — the
+  // rental pauses this ticket and it resumes on return). Carried by the ticket for its whole life.
+  const [deferrableForRental, setDeferrableForRental] = useState(() => !!ticket?.deferrable_for_rental);
 
   // Hard coupling (Rev. 11 Gate 1): a Breakdown is, by definition, 🔴 critical. The moment the inspector
   // classifies a ticket as Breakdown at the Decide step, force the grade to critical and lock the picker
@@ -515,17 +555,16 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   useEffect(() => {
     if (locationLocked && repairLocation !== 'in_shop') setRepairLocation('in_shop');
   }, [locationLocked, repairLocation]);
+  // A Breakdown grounds the car — it can never be deferred for a rental. Force + lock Mandatory (the
+  // backend keeps deferrable_for_rental off for a grounded car too).
+  useEffect(() => {
+    if (locationLocked && deferrableForRental) setDeferrableForRental(false);
+  }, [locationLocked, deferrableForRental]);
   const [photo, setPhoto] = useState(null);       // dispatch odometer: compressed { blob, url, width, height, compressedSize }
   const [compressing, setCompressing] = useState(false);
   const [findingTags, setFindingTags] = useState([]); // 'finding': selected garage-finding tags
   const [findingSeverity, setFindingSeverity] = useState('');
-  // 'ready': actual repair time (hours) attributed to each fault tag, keyed by the finding text.
-  const [repairTimes, setRepairTimes] = useState({});
-  // 'ready': actual COST (AED) attributed to each fault, keyed by the finding text. A quick, per-fault
-  // alternative to the full Parts & Labor editor — each becomes a finding-linked labor line on submit,
-  // so it rolls into the ticket total + per-fault cost reports (Diagnosis-First stays satisfied).
-  const [repairCosts, setRepairCosts] = useState({});
-  // 'ready' & 'lineitems': the structured Parts + Labor breakdown (auto-sums into the ticket cost).
+  // 'lineitems': the structured Parts + Labor breakdown (auto-sums into the ticket cost).
   // Seeded from the ticket on the deferred-edit ('lineitems') path so it opens with the current set.
   const [lineItems, setLineItems] = useState(() => (action === 'lineitems' ? (ticket?.line_items ?? []) : []));
   // Garage Invoice Validation ('lineitems'): the garage's printed receipt total + the explanation for any
@@ -547,6 +586,12 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   const [handoverNotes, setHandoverNotes] = useState('');
   const signatureRef = useRef(null);
   const [signatureReady, setSignatureReady] = useState(false); // re-rendered on stroke so invalid() reacts
+
+  // Temporary Vehicle Release — the reason the car left the shop + who took it. Reuses `odometer` for the
+  // reading (out on release, in on return) and `notes` for the reason detail / return note. `takenBy`
+  // defaults to the signed-in user (they're the one taking custody); still editable if someone else does.
+  const [releaseReason, setReleaseReason] = useState('road_test');
+  const [takenBy, setTakenBy] = useState(() => currentUser?.name || '');
 
   const garageOptions = useMemo(
     () => garages.map((g) => ({ id: g.id, label: g.name, sub: g.phone || g.type })),
@@ -575,10 +620,13 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
     // Collect-from-garage (garage-OUT reading) — vs the garage-arrival reading, so a forward delta reads as
     // the garage having road-tested it (garage-transfer stage → tolerance waived; backward still flags).
     if (action === 'collectFromGarage') return ticket?.receive_odometer ?? ticket?.dispatch_odometer ?? ticket?.test_odometer ?? null;
+    // Arrival at our park (return-leg checkpoint 2) — compared to the garage-OUT collect reading, so a
+    // short garage→base drive reads as clean forward travel; a decrease flags a Discrepancy.
+    if (action === 'arriveAtPark') return ticket?.return_odometer ?? ticket?.receive_odometer ?? ticket?.dispatch_odometer ?? ticket?.test_odometer ?? null;
     if (action === 'receive') return ticket?.dispatch_odometer ?? null;
     // Re-inspection sign-off — the QC reading is compared to the last one on the chain (the garage-out
     // return reading, else the earlier captures), so it reads as clean forward continuity by default.
-    if (action === 'reinspect') return ticket?.return_odometer ?? ticket?.receive_odometer ?? ticket?.dispatch_odometer ?? ticket?.test_odometer ?? null;
+    if (action === 'reinspect') return ticket?.park_odometer ?? ticket?.return_odometer ?? ticket?.receive_odometer ?? ticket?.dispatch_odometer ?? ticket?.test_odometer ?? null;
     if (action === 'start') return vehicles.find((v) => String(v.id) === String(ticket?.vehicle_id))?.odometer ?? null;
     if (action === 'open') return vehicles.find((v) => String(v.id) === String(vehicleId))?.odometer ?? null;
     return null;
@@ -603,9 +651,17 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
       // Collect-from-garage — the car leaves the garage: garage-OUT continuity (forward = a road test,
       // tolerance waived; backward still flags a Discrepancy).
       case 'collectFromGarage': return STAGE.GARAGE_OUT;
+      // Arrival at our park — the car was DRIVEN back from the garage, so the reading must be strictly
+      // higher than the garage-OUT reading (equal is impossible: a driven car can't arrive on the same
+      // odometer it left on). Hard-blocks an equal/backward value, mirroring the backend arriveAtPark().
+      case 'arriveAtPark': return STAGE.PARK_ARRIVAL;
       // 'ready' captures no odometer (car doesn't move in the workshop) → no continuity stage.
-      // Re-inspection sign-off — plain forward-continuity vs the last recorded reading.
-      case 'reinspect': return STAGE.RETURN;
+      // Re-inspection sign-off — an at-our-park spot check: once the car is back at base (the park-arrival
+      // reading) it shouldn't have moved, so a strict ±5 km cap applies. That cap needs an at-base anchor:
+      // with a park-arrival reading we compare to it strictly (STAGE.REINSPECT); without one we can't tell
+      // a typo from the legitimate garage→base drive, so we keep the lenient forward-continuity (STAGE.RETURN).
+      // Mirrors the backend close() branch — keep the prevOdometer chain (park_odometer first) in step.
+      case 'reinspect': return ticket?.park_odometer != null ? STAGE.REINSPECT : STAGE.RETURN;
       default: return null;
     }
   }, [action, ticket]);
@@ -673,15 +729,6 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   // makes the reason note mandatory.
   const reFailGarageChanged = action === 'reinspect' && reFail && !!vendorId && String(vendorId) !== String(ticket?.vendor_id || '');
 
-  // 'ready' step — per-fault cost boxes turn into finding-linked labor lines (quantity 1 × the amount),
-  // merged with any lines from the Parts & Labor editor. When present they own the cost, so the
-  // lump-sum fallback below is hidden (same rule as when the editor has lines).
-  const perFaultCostLines = () =>
-    Object.entries(repairCosts)
-      .filter(([, v]) => v !== '' && v != null && !Number.isNaN(Number(v)) && Number(v) > 0)
-      .map(([text, v]) => ({ kind: 'labor', finding_text: text, description: text, quantity: 1, unit_price: Number(v) }));
-  const hasPerFaultCost = perFaultCostLines().length > 0;
-
   // Compress the odometer photo on-device (6–12 MP phone shot → ~200–600 KB) before it
   // rides along with the dispatch POST. Optional — the dispatch works fine without it.
   async function onOdometerPhoto(e) {
@@ -739,7 +786,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
       case 'receive':
         return { url: `${base}/${ticket.id}/under-repair`, body: { receive_odometer: odometer ? Number(odometer) : null, garage_feedback: feedback || null, expected_return_date: returnDate || null } };
       case 'ready':
-        return { url: `${base}/${ticket.id}/ready`, body: { garage_feedback: feedback || null, cost: cost === '' ? null : Number(cost) } };
+        return { url: `${base}/${ticket.id}/ready`, body: { garage_feedback: feedback || null } };
       case 'lineitems':
         // Deferred edit / Garage Invoice Validation — replace the whole Parts + Labor set (JSON PUT, any
         // state), reconciled against the receipt total with a mandatory explanation for any variance.
@@ -768,6 +815,13 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
       case 'markReturned':
         // Vehicle Physically Returned — a light checkpoint, no odometer/handover required.
         return { url: `${base}/${ticket.id}/mark-returned`, body: { note: notes.trim() || null } };
+      case 'temporarilyRelease':
+        // Temporary Vehicle Release — take the car OUT mid-repair (ticket stays at its stage). JSON:
+        // reason + who took it + odometer OUT; `notes` carries the free-text detail (required for "other").
+        return { url: `${base}/${ticket.id}/temporary-release`, body: { reason: releaseReason, reason_note: notes.trim() || null, taken_by: takenBy.trim(), release_odometer: Number(odometer) } };
+      case 'returnFromRelease':
+        // Return Vehicle to Workshop — the odometer IN (distance is computed server-side) + an optional note.
+        return { url: `${base}/${ticket.id}/return-from-release`, body: { return_odometer: Number(odometer), return_note: notes.trim() || null } };
       case 'approveRepair':
         // Supervisor Video-Review — APPROVE (video reviewed) → advance to re-inspection. No fields.
         return { url: `${base}/${ticket.id}/approve-repair`, body: {} };
@@ -792,9 +846,15 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
           return { url: `${base}/${ticket.id}/close`, body: { cost: cost === '' ? null : Number(cost), vendor_id: vendorId ? Number(vendorId) : null, actual_in_date: inDate || null, notes: notes || null, defer_invoice: deferInvoice, final_odometer: odometer ? Number(odometer) : null, odometer_note: odoNote.trim() || null, odometer_confirmed: odoAckRequired ? odoConfirmed : null } };
         }
         // FAIL — some faults still broken → back to the supervisor for re-dispatch, with per-fault blame.
+        // Each still-broken fault carries a STRUCTURED failure reason (Case B) so a failed repair is
+        // never just a free-text note — it feeds the repeated-failure / part-failure intelligence.
         const failed_notes = {};
-        brokenIds.forEach((id) => { if (brokenNote[id]?.trim()) failed_notes[id] = brokenNote[id].trim(); });
-        return { url: `${base}/${ticket.id}/reopen`, body: { reason: notes || null, failed_task_ids: brokenIds, failed_notes, redispatch_vendor_id: reFailGarageChanged ? Number(vendorId) : null } };
+        const failure_reasons = {};
+        brokenIds.forEach((id) => {
+          if (brokenNote[id]?.trim()) failed_notes[id] = brokenNote[id].trim();
+          failure_reasons[id] = brokenReason[id] || 'unknown';
+        });
+        return { url: `${base}/${ticket.id}/reopen`, body: { reason: notes || null, failed_task_ids: brokenIds, failed_notes, failure_reasons, redispatch_vendor_id: reFailGarageChanged ? Number(vendorId) : null } };
       }
       default:
         return null;
@@ -808,7 +868,12 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
     // is unaffected). On PASS the car is physically back, so the final QC odometer is mandatory — plus the
     // shared >10 km ack/note gate. No odometer is asked on the FAIL branch (the car goes back out).
     if (action === 'reinspect') {
-      if (reFail) return reFailGarageChanged && !notes.trim();
+      if (reFail) {
+        // Every still-broken fault needs a structured failure reason (Case B). Re-routing to a different
+        // garage additionally needs a written reason (same-garage fail is unaffected).
+        const missingReason = perFault && brokenIds.some((id) => !brokenReason[id]);
+        return missingReason || (reFailGarageChanged && !notes.trim());
+      }
       return !odometer || Number(odometer) < 1 || odoGateBlocked;
     }
     // Open & Start: the inspector captures the odometer reading + photo BEFORE the test drive (both mandatory).
@@ -832,11 +897,8 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
     // Arrival check-in ("Now at Garage"): the arrival odometer AND its photo are BOTH mandatory (the
     // integrity gate before the car enters the workshop); acknowledge abnormal continuity too.
     if (action === 'receive') return !odometer || Number(odometer) < 1 || !photo || compressing || odoGateBlocked;
-    // Mark ready: final odometer AND its photo are both mandatory (data-integrity gate). Diagnosis-First:
-    // any parts/labor line must be linked to a finding (line items themselves stay optional here).
-    // Mark ready ("Maintenance complete"): no odometer/photo here (the car didn't move in the workshop).
-    // Diagnosis-First still holds — any parts/labor line must be linked to a finding.
-    if (action === 'ready') return lineItemsUnlinked(lineItems);
+    // Mark ready ("Maintenance complete"): no odometer/photo and no cost/parts here — nothing to block.
+    // Cost, parts & labor are itemised later through the invoice link.
     // Garage Invoice Validation: every line linked to a finding (Diagnosis-First), AND the itemised sum
     // reconciled against the receipt total (a mismatch needs a variance explanation before saving).
     if (action === 'lineitems') {
@@ -857,13 +919,26 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
     // Both return-leg checkpoints CANNOT complete without their mandatory photo.
     // Collect from garage: the garage-OUT odometer AND the "received from garage" photo are both mandatory.
     if (action === 'collectFromGarage') return !odometer || Number(odometer) < 1 || !photo || compressing || odoGateBlocked;
-    if (action === 'arriveAtPark') return !photo || compressing;
+    // Arrival at park: the arrival odometer AND its photo are both mandatory (the reading is the at-base
+    // anchor the final QA sign-off's ±5 km cap needs), and the reading must clear the continuity/>10 km gate.
+    if (action === 'arriveAtPark') return !odometer || Number(odometer) < 1 || !photo || compressing || odoGateBlocked;
     // Pause / Resume — Enterprise Handover Workflow: odometer + photo + fuel + both conditions +
     // signature are all mandatory (matches the backend's `required` validation on both legs).
     if (action === 'pause' || action === 'resume') {
       return !odometer || Number(odometer) < 1 || !photo || compressing
         || !fuelLevel || !exteriorCondition.trim() || !interiorCondition.trim()
         || !signatureReady;
+    }
+    // Temporary release: a reason + the OUT odometer are mandatory; "Other" needs a detail. `taken_by`
+    // is NOT gated — it defaults to the signed-in user server-side when left blank.
+    if (action === 'temporarilyRelease') {
+      return !releaseReason || !odometer || Number(odometer) < 1
+        || (releaseReason === 'other' && !notes.trim());
+    }
+    // Return to workshop: the IN odometer is mandatory and can't be below the recorded OUT reading.
+    if (action === 'returnFromRelease') {
+      const outKm = ticket?.active_temporary_release?.odometer_out;
+      return !odometer || Number(odometer) < 1 || (outKm != null && Number(odometer) < Number(outKm));
     }
     return false;
   }
@@ -886,11 +961,29 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
     </label>
   );
 
+  // High-consequence, hard-to-undo steps get a tailored confirmation before they fire (a mis-click on
+  // the re-inspection FAIL wrongly blames a garage and re-queues the car; a PASS returns it to the
+  // rentable fleet). Returns the confirm message, or null when no confirmation is needed.
+  function confirmPrompt() {
+    const who = ticket ? (ticket.plate || `#${ticket.id}`) : '';
+    if (action === 'reinspect') {
+      if (reFail) {
+        const n = Object.values(broken).filter(Boolean).length;
+        return t('workflow.confirm.reinspectFail', { who, count: n });
+      }
+      return t('workflow.confirm.reinspectPass', { who });
+    }
+    return null;
+  }
+
   async function submit() {
     const r = resolve();
     if (!r) return;
+    const ask = confirmPrompt();
+    if (ask && !window.confirm(ask)) return;
     setBusy(true);
     setErr('');
+    setStale(false);
     try {
       // Steps that carry the odometer image go as multipart (ingested server-side): the test-drive
       // start (open/start), dispatch, and ready — all carry the mandatory odometer photo. JSON otherwise.
@@ -920,22 +1013,16 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
           if (feedback) fd.append('garage_feedback', feedback);
           if (returnDate) fd.append('expected_return_date', returnDate);
         } else if (action === 'ready') {
-          // No odometer here — the car doesn't move inside the workshop (removed the final-reading capture).
+          // No odometer here — the car doesn't move inside the workshop. Cost, parts & labor are NOT
+          // captured at this step; they're itemised later through the invoice link.
           if (feedback) fd.append('garage_feedback', feedback);
-          if (cost !== '') fd.append('cost', String(Number(cost)));
-          // Per-fault repair time: only the faults the user gave a (valid, non-negative) number.
-          const rt = Object.entries(repairTimes)
-            .filter(([, v]) => v !== '' && v != null && !Number.isNaN(Number(v)) && Number(v) >= 0)
-            .map(([text, v]) => ({ text, hours: Number(v) }));
-          if (rt.length) fd.append('repair_times', JSON.stringify(rt));
-          // Structured Parts + Labor breakdown — the editor's lines PLUS any quick per-fault cost boxes
-          // (each a finding-linked labor line). Both feed the one line_items channel the backend re-sums.
-          const li = [...serializeLineItems(lineItems), ...perFaultCostLines()];
-          if (li.length) fd.append('line_items', JSON.stringify(li));
         } else if (action === 'collectFromGarage') {
           // Garage-OUT reading (car leaves the garage) + the mandatory "received from garage" photo below.
           fd.append('return_odometer', String(Number(odometer)));
         } else if (action === 'arriveAtPark') {
+          // Optional arrival odometer — only sent when the driver entered one; the shared odometer_note /
+          // odometer_confirmed appenders below carry the >10 km gap ack when the gate asked for it.
+          if (odometer) fd.append('park_odometer', String(Number(odometer)));
           if (notes) fd.append('notes', notes);
         } else if (action === 'pause' || action === 'resume') {
           // Enterprise Handover Workflow — the full custody handover, mirrored field-for-field against
@@ -973,6 +1060,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
           if (notes) fd.append('notes', notes);
           if (maintType) fd.append('maintenance_type', maintType);
           if (requiresMaintenance && repairLocation) fd.append('repair_location', repairLocation);
+          if (requiresMaintenance) fd.append('deferrable_for_rental', deferrableForRental ? '1' : '0');
           if (odometer) fd.append('report_odometer', String(Number(odometer)));
         } else {
           // start | open — the inspector's odometer reading at test-drive start (the chain anchor).
@@ -1020,7 +1108,18 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
 
       onDone?.(successMessage());
     } catch (e) {
-      setErr(e.response?.data?.message || t('workflow.error.generic'));
+      // Distinguish a STALE-STATE conflict (someone else advanced this ticket while the modal was open —
+      // the server's transition guard rejects it with from/to/allowed context) from a normal, fixable
+      // error. A stale conflict isn't the operator's fault, so we prompt a refresh instead of a red error.
+      const ctx = e.response?.data?.data;
+      const staleConflict = e.response?.status === 422 && ctx && ctx.from && Array.isArray(ctx.allowed);
+      if (staleConflict) {
+        setStale(true);
+        setErr(t('workflow.error.stale'));
+      } else {
+        setStale(false);
+        setErr(e.response?.data?.message || t('workflow.error.generic'));
+      }
     } finally {
       setBusy(false);
     }
@@ -1049,6 +1148,8 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
       case 'pause': return t('workflow.success.pause', { who });
       case 'resume': return t('workflow.success.resume', { who });
       case 'markReturned': return t('workflow.success.markReturned', { who });
+      case 'temporarilyRelease': return t('workflow.success.temporarilyRelease', { who });
+      case 'returnFromRelease': return t('workflow.success.returnFromRelease', { who });
       case 'approveRepair': return t('workflow.success.approveRepair', { who });
       case 'requestRefix': return t('workflow.success.requestRefix', { who });
       case 'collectFromGarage': return t('workflow.success.collectFromGarage', { who });
@@ -1071,21 +1172,34 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   return (
     <Modal
       open
-      onClose={onClose}
+      onClose={guardedClose}
       size={['decide', 'ready', 'lineitems', 'pause', 'resume'].includes(action) ? 'lg' : 'md'}
       title={t(`workflow.meta.${action}.title`)}
       subtitle={ticket ? `${ticket.plate || `#${ticket.id}`}${ticket.car ? ` · ${ticket.car}` : ''}` : t(`workflow.meta.${action}.sub`)}
       footer={
         <>
-          <Button variant="secondary" onClick={onClose} disabled={busy}>{t('common.cancel')}</Button>
-          <Button variant={submitVariant} onClick={submit} loading={busy} disabled={invalid()}>
+          <Button variant="secondary" onClick={guardedClose} disabled={busy}>{t('common.cancel')}</Button>
+          <Button variant={submitVariant} onClick={submit} loading={busy} disabled={invalid() || stale}>
             {submitLabel}
           </Button>
         </>
       }
     >
       <div className="space-y-4">
-        {err && <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{err}</div>}
+        {stale ? (
+          <div className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 ring-1 ring-inset ring-amber-500/30">
+            <p>{err}</p>
+            <button
+              type="button"
+              className="mt-2 rounded-md bg-amber-600 px-3 py-1 text-xs font-semibold text-white transition hover:bg-amber-700"
+              onClick={() => onDone?.()}
+            >
+              {t('common.refresh')}
+            </button>
+          </div>
+        ) : (
+          err && <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{err}</div>
+        )}
 
         {/* Stage timing — per-stage durations + total downtime, at a glance on any existing ticket */}
         {ticket && <StageTimeline ticket={ticket} t={t} />}
@@ -1299,6 +1413,45 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                 </p>
               </div>
             )}
+
+            {/* Rental Eligibility — the inspector's ONE-TIME call, decided here right after the faults are
+                identified and then respected by every later rental decision. Deferrable = a customer may
+                still take the car (the rental pauses this ticket, it resumes on return); Mandatory = the
+                car is grounded until the workshop finishes. A breakdown is locked to Mandatory (grounded). */}
+            {requiresMaintenance && (
+              <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+                <span className="mb-1.5 block text-sm font-semibold text-slate-700">{t('workflow.rentalEligibility.label')}<Req /></span>
+                <div className="flex gap-2">
+                  {[
+                    { value: false, icon: '🔒', title: t('workflow.rentalEligibility.mandatory'), sub: t('workflow.rentalEligibility.mandatorySub') },
+                    { value: true, icon: '🔄', title: t('workflow.rentalEligibility.deferrable'), sub: t('workflow.rentalEligibility.deferrableSub') },
+                  ].map((opt) => {
+                    const active = deferrableForRental === opt.value;
+                    // A breakdown grounds the car — it can never be deferred for a rental.
+                    const optDisabled = locationLocked && opt.value === true;
+                    return (
+                      <button
+                        key={String(opt.value)}
+                        type="button"
+                        disabled={optDisabled}
+                        onClick={() => setDeferrableForRental(opt.value)}
+                        className={`flex-1 rounded-xl border px-3 py-2.5 text-start transition ${
+                          active ? 'border-indigo-500 bg-indigo-50 ring-1 ring-indigo-500' : 'border-slate-200 bg-white hover:border-slate-300'
+                        } ${optDisabled ? 'cursor-not-allowed opacity-40' : ''}`}
+                      >
+                        <span className="block text-sm font-semibold text-slate-800"><span aria-hidden>{opt.icon}</span> {opt.title}</span>
+                        <span className="mt-0.5 block text-xs text-slate-500">{opt.sub}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="mt-1.5 text-xs text-slate-400">
+                  {locationLocked
+                    ? t('workflow.rentalEligibility.breakdownLocked')
+                    : (deferrableForRental ? t('workflow.rentalEligibility.deferrableHint') : t('workflow.rentalEligibility.mandatoryHint'))}
+                </p>
+              </div>
+            )}
           </>
         )}
 
@@ -1486,64 +1639,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
               {t('workflow.hint.readyGate')}
             </div>
             <Textarea label={t('workflow.field.garageFeedback')} value={feedback} onChange={(e) => setFeedback(e.target.value)} placeholder={t('workflow.ph.whatWasDone')} />
-
-            {/* Granular per-fault time + cost: attribute the ACTUAL repair time (hours) AND cost (AED) to
-                each fault. Both optional — hours powers the Garage Efficiency & Fault Recurrence reports;
-                each cost becomes a finding-linked labor line that rolls into the ticket total. */}
-            {ticket?.findings?.length > 0 && (
-              <div>
-                <span className="mb-1.5 block text-sm font-medium text-slate-700">{t('workflow.field.timeCostPerFault')}</span>
-                <div className="space-y-1.5">
-                  {ticket.findings.map((f, i) => (
-                    <div key={f.text ? `${f.text}-${i}` : i} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5">
-                      <span className="min-w-0 flex-1 truncate text-sm text-slate-700">
-                        {f.text}
-                        {f.source && <span className="ms-1.5 text-[10px] font-medium uppercase tracking-wide text-slate-400">{f.source}</span>}
-                      </span>
-                      {/* Hours */}
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.5"
-                        value={repairTimes[f.text] ?? ''}
-                        onChange={(e) => setRepairTimes((p) => ({ ...p, [f.text]: e.target.value }))}
-                        placeholder="0"
-                        aria-label={`${f.text} · ${t('workflow.field.hoursShort')}`}
-                        className="w-16 rounded-lg border border-slate-300 px-2 py-1 text-sm tabular-nums text-slate-700 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
-                      />
-                      <span className="text-xs text-slate-400">{t('workflow.field.hoursShort')}</span>
-                      {/* Cost (AED) */}
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={repairCosts[f.text] ?? ''}
-                        onChange={(e) => setRepairCosts((p) => ({ ...p, [f.text]: e.target.value }))}
-                        placeholder="0.00"
-                        aria-label={`${f.text} · ${t('workflow.field.aedShort')}`}
-                        className="w-24 rounded-lg border border-slate-300 px-2 py-1 text-sm tabular-nums text-slate-700 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
-                      />
-                      <span className="text-xs text-slate-400">{t('workflow.field.aedShort')}</span>
-                    </div>
-                  ))}
-                </div>
-                <p className="mt-1.5 text-xs text-slate-400">{t('workflow.hint.timeCostHint')}</p>
-              </div>
-            )}
-
-            {/* Structured Parts + Labor breakdown — itemise the bill so cost is tracked per part and
-                per repair (auto-summed). When any line is added it OWNS the cost, so the lump-sum
-                field below is only the fallback for a quick total with no breakdown. */}
-            <div className="border-t border-slate-100 pt-4">
-              <span className="mb-1.5 block text-sm font-semibold text-slate-700">{t('workflow.lineItem.heading')}</span>
-              <LineItemsEditor value={lineItems} onChange={setLineItems} catalog={findingsCatalog} findings={ticket?.findings || []} />
-            </div>
-
-            {/* Lump-sum fallback — only when there's no itemised cost at all (no editor lines AND no
-                per-fault cost boxes), so we never double up the total. */}
-            {lineItems.length === 0 && !hasPerFaultCost && (
-              <Input label={t('workflow.field.repairCostAed')} type="number" min="0" value={cost} onChange={(e) => setCost(e.target.value)} placeholder={t('workflow.ph.costExample')} />
-            )}
+            {/* Cost, parts & labor are NOT captured here — they're itemised later via the invoice link. */}
           </>
         )}
 
@@ -1684,6 +1780,73 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
           </div>
         )}
 
+        {/* Temporary Vehicle Release — take the car OUT of the workshop mid-repair (road test / customer
+            test / external inspection / storage). The ticket stays at its stage; only the OUT odometer +
+            who/why are captured now. */}
+        {action === 'temporarilyRelease' && (
+          <div className="space-y-3">
+            <div className="rounded-lg bg-amber-50/70 px-3 py-2 text-sm text-amber-700 ring-1 ring-inset ring-amber-600/10">
+              {t('workflow.tempRelease.hint')}
+            </div>
+            <Select label={t('workflow.tempRelease.reasonLabel')} value={releaseReason} onChange={(e) => setReleaseReason(e.target.value)} required>
+              {TEMP_RELEASE_REASONS.map((r) => (
+                <option key={r} value={r}>{t(`workflow.tempRelease.reason.${r}`)}</option>
+              ))}
+            </Select>
+            <Textarea
+              label={releaseReason === 'other' ? t('workflow.tempRelease.detailLabelReq') : t('workflow.tempRelease.detailLabel')}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={2}
+              placeholder={t('workflow.tempRelease.detailPlaceholder')}
+            />
+            <div>
+              <Input label={t('workflow.tempRelease.takenByLabel')} value={takenBy} onChange={(e) => setTakenBy(e.target.value)} placeholder={currentUser?.name || t('workflow.tempRelease.takenByPlaceholder')} />
+              <p className="mt-1 text-xs text-slate-400">{t('workflow.tempRelease.takenByHint')}</p>
+            </div>
+            <div>
+              <Input label={t('workflow.tempRelease.odometerOutLabel')} type="number" min="1" required value={odometer} onChange={(e) => setOdometer(e.target.value)} placeholder={t('workflow.ph.odometerExample')} />
+              {lastKnownOdometer(ticket) != null && (
+                <p className="mt-1 text-xs text-slate-400">{t('workflow.tempRelease.odometerOutHint', { km: lastKnownOdometer(ticket).toLocaleString() })}</p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Return Vehicle to Workshop — the temporarily-released car is back; capture the IN odometer.
+            The distance driven while out is computed and shown live. */}
+        {action === 'returnFromRelease' && (() => {
+          const rel = ticket?.active_temporary_release;
+          const outKm = rel?.odometer_out;
+          const dist = outKm != null && odometer !== '' && Number(odometer) >= Number(outKm)
+            ? Number(odometer) - Number(outKm) : null;
+          return (
+            <div className="space-y-3">
+              {rel && (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-500">{t('workflow.tempRelease.outFor')}</span>
+                    <span className="font-semibold text-slate-700">{rel.reason_label}{rel.taken_by ? ` · ${rel.taken_by}` : ''}</span>
+                  </div>
+                  {outKm != null && (
+                    <div className="mt-1 flex items-center justify-between">
+                      <span className="text-slate-500">{t('workflow.tempRelease.odometerOutLabel')}</span>
+                      <span className="font-semibold tabular-nums text-slate-700">{Number(outKm).toLocaleString()} km</span>
+                    </div>
+                  )}
+                </div>
+              )}
+              <Input label={t('workflow.tempRelease.odometerInLabel')} type="number" min="1" required value={odometer} onChange={(e) => setOdometer(e.target.value)} placeholder={outKm != null ? t('workflow.ph.startedAt', { km: Number(outKm).toLocaleString() }) : t('workflow.ph.odometerExample')} />
+              {dist != null && (
+                <div className="rounded-lg bg-emerald-50/70 px-3 py-2 text-sm text-emerald-700 ring-1 ring-inset ring-emerald-600/10">
+                  {t('workflow.tempRelease.distanceDriven', { km: dist.toLocaleString() })}
+                </div>
+              )}
+              <Textarea label={t('workflow.tempRelease.returnNoteLabel')} value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} />
+            </div>
+          );
+        })()}
+
         {/* UC-5a — Supervisor Video-Review: APPROVE. Waleed/Abdullah confirm the garage's video looks
             good → the car advances to the final re-inspection. A video must exist first. */}
         {action === 'approveRepair' && (
@@ -1744,6 +1907,12 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
           <div className="space-y-3">
             <div className="rounded-lg bg-emerald-50/70 px-3 py-2 text-xs text-emerald-700 ring-1 ring-inset ring-emerald-600/10">
               {t('workflow.hint.arriveAtPark')}
+            </div>
+            {/* Arrival odometer — the reading as the car lands back at base (mandatory). Continuity-checked
+                vs the garage-OUT collect reading; becomes the at-base anchor for the final QA ±5 km cap. */}
+            <div>
+              <Input label={t('workflow.field.arrivalOdometerKm')} type="number" min="1" required value={odometer} onChange={(e) => setOdometer(e.target.value)} placeholder={ticket?.return_odometer ? t('workflow.ph.collectedAt', { km: Number(ticket.return_odometer).toLocaleString() }) : t('workflow.ph.odometerExample')} />
+              <OdometerContinuityHint previous={prevOdometer} continuity={continuity} confirmed={odoConfirmed} onConfirm={setOdoConfirmed} noteRequired={odoNoteRequired} note={odoNote} onNote={setOdoNote} ignoreTolerance={ignoreOdoTolerance} t={t} />
             </div>
             <div>
               <span className="mb-1 block text-sm font-medium text-slate-700">{t('workflow.field.arrivalPhoto')}<Req /></span>
@@ -1820,14 +1989,29 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                           </div>
                         </div>
                         {isBroken && (
-                          <input
-                            type="text"
-                            value={brokenNote[task.id] ?? ''}
-                            onChange={(e) => setBrokenNote((p) => ({ ...p, [task.id]: e.target.value }))}
-                            placeholder={t('workflow.reinspect.faultNotePh')}
-                            aria-label={t('workflow.reinspect.faultNotePh')}
-                            className="mt-2 w-full rounded-lg border border-red-200 bg-white px-2.5 py-1.5 text-sm text-slate-700 outline-none transition focus:border-red-400 focus:ring-2 focus:ring-red-400/20"
-                          />
+                          <>
+                            {/* Structured failure reason (Case B) — mandatory so a failed repair is never
+                                just a free-text note. Feeds the repeated-failure / part-failure intelligence. */}
+                            <select
+                              value={brokenReason[task.id] || ''}
+                              onChange={(e) => setBrokenReason((p) => ({ ...p, [task.id]: e.target.value }))}
+                              aria-label={t('workflow.reinspect.reasonLabel')}
+                              className={`mt-2 w-full rounded-lg border bg-white px-2.5 py-1.5 text-sm outline-none transition focus:ring-2 focus:ring-red-400/20 ${brokenReason[task.id] ? 'border-red-200 text-slate-700' : 'border-red-300 text-slate-400'}`}
+                            >
+                              <option value="">{t('workflow.reinspect.reasonPlaceholder')}</option>
+                              {FAILURE_REASONS.map((r) => (
+                                <option key={r} value={r}>{t(`workflow.reinspect.reason.${r}`)}</option>
+                              ))}
+                            </select>
+                            <input
+                              type="text"
+                              value={brokenNote[task.id] ?? ''}
+                              onChange={(e) => setBrokenNote((p) => ({ ...p, [task.id]: e.target.value }))}
+                              placeholder={t('workflow.reinspect.faultNotePh')}
+                              aria-label={t('workflow.reinspect.faultNotePh')}
+                              className="mt-2 w-full rounded-lg border border-red-200 bg-white px-2.5 py-1.5 text-sm text-slate-700 outline-none transition focus:border-red-400 focus:ring-2 focus:ring-red-400/20"
+                            />
+                          </>
                         )}
                       </div>
                     );
@@ -1967,6 +2151,18 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
             )}
             {ticket?.customer_complaint && (
               <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">“{ticket.customer_complaint}”</p>
+            )}
+
+            {/* Reviewer's hand-off note — the office's optional message typed when the request was
+                approved (see /inspection-review). Shown here so the inspector reads it before the drive. */}
+            {ticket?.review?.notes && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2">
+                <p className="mb-0.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-amber-700">
+                  <Icon.Info className="h-3.5 w-3.5" /> {t('workflow.hint.reviewNote')}
+                  {ticket.review.reviewer_name && <span className="font-normal normal-case text-amber-600/80">· {ticket.review.reviewer_name}</span>}
+                </p>
+                <p className="text-sm text-amber-900">“{ticket.review.notes}”</p>
+              </div>
             )}
 
             {/* Odometer at test-drive start — mandatory reading + photo, the chain's start anchor */}

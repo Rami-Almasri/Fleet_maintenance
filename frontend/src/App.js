@@ -6,9 +6,12 @@ import { ToastProvider } from './components/ui/Toast';
 import { NotificationsProvider } from './hooks/useNotifications';
 import ProtectedRoute from './components/ProtectedRoute';
 import RequirePermission from './components/RequirePermission';
+import { usePermissions } from './hooks/usePermissions';
+import { pathBlockedForRoles, homePathForRoles } from './config/access';
 import AppLayout from './layouts/AppLayout';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
+import FleetOperationsCenter from './pages/ops/FleetOperationsCenter';
 import OpsDashboard from './pages/command/OpsDashboard';
 import OrdersBoard from './pages/command/OrdersBoard';
 import Analytics from './pages/Analytics';
@@ -27,7 +30,10 @@ import MaintenanceAnalytics from './pages/MaintenanceAnalytics';
 import MaintenanceApprovals from './pages/MaintenanceApprovals';
 import MaintenanceBoard from './pages/MaintenanceBoard';
 import MaintenanceWorkflow from './pages/MaintenanceWorkflow';
+import MaintenanceRecommendations from './pages/MaintenanceRecommendations';
 import MyMaintenanceQueue from './pages/MyMaintenanceQueue';
+import InspectionReviewQueue from './pages/InspectionReviewQueue';
+import InspectionIntelligenceCenter from './pages/InspectionIntelligenceCenter';
 import MaintenanceForesight from './pages/MaintenanceForesight';
 import FleetUtilization from './pages/FleetUtilization';
 import MaintenanceSwap from './pages/MaintenanceSwap';
@@ -38,6 +44,7 @@ import Garages from './pages/Garages';
 import FindingKeywords from './pages/FindingKeywords';
 import Parts from './pages/Parts';
 import PartInvestigations from './pages/PartInvestigations';
+import RecurringFaultReviews from './pages/RecurringFaultReviews';
 import DamageAccidents from './pages/DamageAccidents';
 import OverdueRentals from './pages/OverdueRentals';
 import Profitability from './pages/Profitability';
@@ -51,6 +58,7 @@ import Notifications from './pages/Notifications';
 import Settings from './pages/Settings';
 import NotificationTestConsole from './pages/NotificationTestConsole';
 import SimulationPanel from './pages/SimulationPanel';
+import Users from './pages/Users';
 import NotFound from './pages/NotFound';
 import GarageInvoicePortal from './pages/GarageInvoicePortal';
 import PendingInvoices from './pages/PendingInvoices';
@@ -66,6 +74,20 @@ import RentalOperationsHub from './pages/rentals/RentalOperationsHub';
 import BookingReadiness from './pages/booking/BookingReadiness';
 import CleaningCapture from './pages/cleaning/CleaningCapture';
 import FleetHealth from './pages/inspections/FleetHealth';
+
+// Index route ("/"). Normally the Dashboard, but roles blocked from it (the
+// driver) are redirected to a home they can actually see instead of hitting the
+// inline "Forbidden" notice on every fresh load. See config/access.js.
+function HomeGate() {
+  const { can, roles } = usePermissions();
+  if (pathBlockedForRoles('/', roles)) {
+    return <Navigate to={homePathForRoles(roles)} replace />;
+  }
+  if (!can('dashboard.view')) {
+    return <Navigate to="/notifications" replace />;
+  }
+  return <Dashboard />;
+}
 
 export default function App() {
   return (
@@ -96,10 +118,16 @@ export default function App() {
                   <Route path="/notification-test" element={<NotificationTestConsole />} />
                   {/* Admin-only Simulation Panel — force a live demo scenario, gated again server-side by demo_mode. */}
                   <Route path="/simulation" element={<SimulationPanel />} />
+                  {/* Admin-only account directory — every user, their status and role(s). */}
+                  <Route path="/users" element={<Users />} />
                 </Route>
 
+                {/* Index route handles its own gating (redirects roles blocked from the Dashboard). */}
+                <Route path="/" element={<HomeGate />} />
+
                 <Route element={<RequirePermission permission="dashboard.view" />}>
-                  <Route path="/" element={<Dashboard />} />
+                  {/* Fleet Operations Center — the flagship dual-state command surface. */}
+                  <Route path="/operations-center" element={<FleetOperationsCenter />} />
                   <Route path="/ops-dashboard" element={<OpsDashboard />} />
                   <Route path="/orders-board" element={<OrdersBoard />} />
                   <Route path="/analytics" element={<Analytics />} />
@@ -159,9 +187,6 @@ export default function App() {
                   <Route path="/reminders/service" element={<Navigate to="/inspections/schedules?tab=service" replace />} />
                 </Route>
 
-                <Route element={<RequirePermission permission="billing.view" />}>
-                </Route>
-
                 {/* Registrations now lives inside the Fleet Health hub — keep the old path working
                     (deep-links / bookmarks) by redirecting into its tab. */}
                 <Route element={<RequirePermission permission="registration.view" />}>
@@ -181,6 +206,8 @@ export default function App() {
                   <Route path="/maintenance-workflow" element={<MaintenanceWorkflow />} />
                   {/* Deep link from notifications: focuses one ticket on the board */}
                   <Route path="/maintenance-workflow/:id" element={<MaintenanceWorkflow />} />
+                  {/* Pre-maintenance Recommendation queue — Supervisor triage before the active board */}
+                  <Route path="/maintenance-recommendations" element={<MaintenanceRecommendations />} />
                   <Route path="/my-maintenance-queue" element={<MyMaintenanceQueue />} />
                   <Route path="/invoices/pending-submission" element={<PendingInvoices />} />
                   <Route path="/maintenance-foresight" element={<MaintenanceForesight />} />
@@ -198,9 +225,16 @@ export default function App() {
                 <Route element={<RequirePermission permission="parts.investigate" />}>
                   <Route path="/part-investigations" element={<PartInvestigations />} />
                 </Route>
+                {/* Recurring Fault Reviews — management inbox for confirmed faults that came back after a fix. */}
+                <Route element={<RequirePermission permission="maintenance.recurring.view" />}>
+                  <Route path="/recurring-fault-reviews" element={<RecurringFaultReviews />} />
+                </Route>
 
                 <Route element={<RequirePermission permission="maintenance.manage" />}>
                   <Route path="/cost-capture" element={<QuickCostInput />} />
+                  {/* Inspection Request Review Gate — Controllers (Lin & Marwa) approve/reject before Abu Maroof is notified */}
+                  <Route path="/inspection-review" element={<InspectionReviewQueue />} />
+                  <Route path="/inspection-intelligence" element={<InspectionIntelligenceCenter />} />
                 </Route>
 
                 <Route element={<RequirePermission permission="maintenance.approve" />}>

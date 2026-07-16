@@ -89,7 +89,7 @@ export default function ExchangeChainPanel({ contract }) {
         <span className="font-semibold">{pair.child_vehicle}</span>
         {' '}
         <Badge tone="slate">{gapLabel(pair.gap_hours)}</Badge>
-        {pair.held_days > 0 && <span className="ml-1 text-xs text-slate-500">held {pair.held_days}d</span>}
+        {pair.held_days > 0 && <span className="ms-1 text-xs text-slate-500">held {pair.held_days}d</span>}
       </p>
       {SHOW_FINANCIALS && pair.carried_total > 0 && (
         <p className="mt-1 text-xs text-slate-600">
@@ -116,7 +116,7 @@ export default function ExchangeChainPanel({ contract }) {
   return (
     <Card className="p-6">
       <div className="mb-4 flex items-center justify-between">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Chain of Contracts</h3>
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Chain of Contracts</h3>
         {linked && (
           <Button size="sm" variant="ghost" loading={busy} disabled={busy} onClick={unlink}>Unlink this contract</Button>
         )}
@@ -127,8 +127,8 @@ export default function ExchangeChainPanel({ contract }) {
           {chain.map((n, i) => (
             <div key={n.id}>
               {i > 0 && (
-                <div className="flex items-center gap-2 py-1 pl-4 text-xs text-slate-400">
-                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M19 14l-7 7m0 0l-7-7m7 7V3" /></svg>
+                <div className="flex items-center gap-2 py-1 ps-4 text-xs text-slate-400">
+                  <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M19 14l-7 7m0 0l-7-7m7 7V3" /></svg>
                   {gapLabel(n.gap_hours) || 'swap'}
                 </div>
               )}

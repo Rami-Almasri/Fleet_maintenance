@@ -20,10 +20,58 @@ const STATUS_BADGE = {
   cancelled:   { label: 'Cancelled',     cls: 'bg-slate-100 text-slate-500 ring-slate-200' },
 };
 
+// Shown on an open (no other badge) finding while the TICKET itself is paused — released back into
+// service with the repair on hold. Same class shape as STATUS_BADGE above.
+const PAUSED_BADGE = { label: 'Paused', cls: 'bg-slate-100 text-slate-500 ring-slate-200' };
+
+// Vehicle-sync confirmation for a PERFORMED routine service: the vehicle record is updated only when the
+// ticket closes, so a performed-but-open service reads "Pending Confirmation", a closed one "Confirmed".
+const CONFIRM_BADGE = {
+  pending_confirmation: { label: '⏳ Pending Confirmation', cls: 'bg-amber-50 text-amber-800 ring-amber-300' },
+  confirmed:            { label: '✓ Confirmed',            cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
+};
+
 // Normalise a symptom/finding label so "Rough idle / misfire" matches across whitespace/case quirks.
 const norm = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
 
-export default function FindingsList({ findings = [], tasks = [], compact = false }) {
+// Part-request lifecycle → the little marker shown next to a part listed under its fault. Installed reads
+// as a green ✓ (fitted); the earlier stages get a coloured dot; the off-ramps read muted + struck-through.
+const PART_STATUS = {
+  requested:    { dot: 'bg-slate-300',  label: 'Requested' },
+  under_review: { dot: 'bg-blue-400',   label: 'Under review' },
+  approved:     { dot: 'bg-cyan-400',   label: 'Approved' },
+  purchased:    { dot: 'bg-violet-400', label: 'Purchased' },
+  installed:    { check: true,          label: 'Installed' },
+  completed:    { check: true,          label: 'Installed' },
+  rejected:     { dot: 'bg-slate-300',  label: 'Rejected',  muted: true },
+  cancelled:    { dot: 'bg-slate-300',  label: 'Cancelled', muted: true },
+};
+
+// The parts ordered/fitted for one fault — so opening the fault shows what it needed at a glance.
+function FaultParts({ parts }) {
+  return (
+    <div className="mt-1 ms-3 border-s border-slate-200 ps-2.5">
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Parts</p>
+      <ul className="mt-0.5 space-y-0.5">
+        {parts.map((p) => {
+          const st = PART_STATUS[p.status] || { dot: 'bg-slate-300', label: p.status };
+          return (
+            <li key={p.id} className="flex items-center gap-1.5 text-[11px]">
+              {st.check
+                ? <span className="font-bold text-emerald-600">✓</span>
+                : <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${st.dot}`} />}
+              <span className={st.muted ? 'text-slate-400 line-through' : 'font-medium text-slate-700'}>{p.part_name}</span>
+              {p.quantity > 1 && <span className="text-slate-400">×{Math.round(p.quantity)}</span>}
+              <span className="text-slate-400">· {st.label}</span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+export default function FindingsList({ findings = [], tasks = [], compact = false, paused = false }) {
   if (!findings.length) {
     return compact ? null : <p className="text-xs text-slate-400">No findings recorded yet.</p>;
   }
@@ -34,13 +82,15 @@ export default function FindingsList({ findings = [], tasks = [], compact = fals
   tasks.forEach((tk) => { if (tk?.symptom) taskBySymptom[norm(tk.symptom)] = tk; });
   const statusFor = (f) => {
     const tk = taskBySymptom[norm(f.text)];
-    if (!tk) return null;
+    if (!tk) return paused ? PAUSED_BADGE : null; // no fault-task match (or no tasks at all) → still-open
     const badge = tk.is_incorrect ? STATUS_BADGE.cancelled : STATUS_BADGE[tk.status];
-    if (!badge) return null;
+    // A settled fault (fixed/in-progress/cancelled) keeps its own badge even while the ticket is paused;
+    // only a genuinely open fault falls back to the "Paused" badge.
+    if (!badge) return paused ? PAUSED_BADGE : null;
     // A completed fault keeps the garage that fixed it in current_vendor_id — surface its name so the
     // "✓ Fixed" badge reads "✓ Fixed · <Garage>" (where the repair actually happened).
     const garage = tk.status === 'completed' && !tk.is_incorrect ? tk.current_garage : null;
-    return { ...badge, garage };
+    return { ...badge, garage, confirm: tk.service_confirmation || null };
   };
 
   const groups = {};
@@ -65,15 +115,21 @@ export default function FindingsList({ findings = [], tasks = [], compact = fals
             <div className="flex flex-wrap gap-1.5">
               {groups[s].map((f, i) => {
                 const badge = statusFor(f);
-                return (
+                // Parts ordered/fitted for THIS fault (from the matched fault-task). Shown only in the full
+                // (non-compact) view; a fault with parts breaks onto its own line so the list reads under it.
+                const task = taskBySymptom[norm(f.text)];
+                const parts = (!compact && task?.parts?.length) ? task.parts : null;
+                const chip = (
                   <span
-                    key={i}
                     title={f.by ? `Added by ${f.by}` : undefined}
-                    className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs ring-1 ${meta.chip}`}
+                    className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs ring-1 ${meta.chip}`}
                   >
                     {f.text}
                     {/* Diagnosed root cause (Symptom → Root-Cause) — the structured "why" behind the symptom. */}
                     {f.root_cause && <span className="font-medium opacity-80">→ {f.root_cause}</span>}
+                    {/* Which garage DISCOVERED it — stamped when a garage-identified finding is added, so the
+                        accountability trail names where the fault was found (e.g. "🔧 Al Habtoor"). */}
+                    {f.garage && <span className="font-medium opacity-70">· 🔧 {f.garage}</span>}
                     {f.severity && <span className="opacity-60">· {f.severity}</span>}
                     {f.repair_hours != null && <span className="font-semibold opacity-80">· {f.repair_hours}h</span>}
                     {/* Live fix status — so a fixed fault reads as done the moment the ticket is opened. */}
@@ -83,7 +139,21 @@ export default function FindingsList({ findings = [], tasks = [], compact = fals
                         {badge.garage && <span className="ml-1 font-semibold opacity-80">· {badge.garage}</span>}
                       </span>
                     )}
+                    {/* Vehicle-sync state for a performed routine service — Pending Confirmation until close. */}
+                    {badge?.confirm && CONFIRM_BADGE[badge.confirm] && (
+                      <span className={`ml-0.5 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold ring-1 ring-inset ${CONFIRM_BADGE[badge.confirm].cls}`}>
+                        {CONFIRM_BADGE[badge.confirm].label}
+                      </span>
+                    )}
                   </span>
+                );
+                // A fault WITH parts breaks onto its own line (w-full) with the parts listed beneath it;
+                // otherwise the finding stays an inline chip that wraps with the others (display:contents).
+                return (
+                  <div key={i} className={parts ? 'w-full' : 'contents'}>
+                    {chip}
+                    {parts && <FaultParts parts={parts} />}
+                  </div>
                 );
               })}
             </div>

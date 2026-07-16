@@ -19,7 +19,7 @@ const STATUS = {
   needs_review:     { tone: 'amber',   bar: 'bg-amber-400',   label: 'Needs review' },
   within_tolerance: { tone: 'blue',    bar: 'bg-blue-400',    label: 'Within tolerance' },
   correct:          { tone: 'green',   bar: 'bg-emerald-400', label: 'Matching' },
-  no_history:       { tone: 'gray',    bar: 'bg-gray-200',    label: 'No history' },
+  no_history:       { tone: 'gray',    bar: 'bg-slate-200',    label: 'No history' },
   fixed:            { tone: 'emerald', bar: 'bg-emerald-400', label: 'Fixed ✓' },
 };
 
@@ -31,7 +31,7 @@ const km = (v) => (v === null || v === undefined ? '—' : `${num(v)} km`);
 // The coloured pill that explains the gap in plain words.
 function DiffPill({ diff }) {
   if (diff === null || diff === undefined) {
-    return <span className="inline-flex items-center gap-1.5 rounded-full bg-gray-50 px-2.5 py-1 text-xs font-medium text-gray-400 ring-1 ring-inset ring-gray-200">No contract history</span>;
+    return <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-400 ring-1 ring-inset ring-slate-200">No contract history</span>;
   }
   if (diff === 0) {
     return <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-600 ring-1 ring-inset ring-emerald-600/20">✓ Matches history</span>;
@@ -56,7 +56,7 @@ function ReconCard({ row, applied, busy, canApply, onApply }) {
   const actionable = !ov && row.scanner_value != null && diff !== 0;
 
   return (
-    <div className="group relative overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-soft ring-1 ring-slate-900/5 transition hover:-translate-y-0.5 hover:shadow-md">
+    <div className="group relative overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-soft ring-1 ring-slate-900/5 transition hover:-translate-y-0.5 hover:shadow-card">
       <span className={`absolute inset-y-0 left-0 w-1.5 ${meta.bar}`} />
       <div className="p-5 pl-6">
         {/* Identity + status */}
@@ -65,7 +65,7 @@ function ReconCard({ row, applied, busy, canApply, onApply }) {
             <Link to={`/vehicles/${row.vehicle_id}`} className="text-lg font-bold text-indigo-600 hover:text-indigo-700">
               {row.plate || `#${row.vehicle_id}`}
             </Link>
-            <p className="truncate text-xs text-gray-400">{row.car || '—'}</p>
+            <p className="truncate text-xs text-slate-400">{row.car || '—'}</p>
           </div>
           <Badge tone={meta.tone}>{meta.label}</Badge>
         </div>
@@ -73,10 +73,10 @@ function ReconCard({ row, applied, busy, canApply, onApply }) {
         {/* The comparison: suspect system value → trusted scanner value */}
         <div className="mt-4 grid grid-cols-[1fr_auto_1fr] items-center gap-2 rounded-xl bg-slate-50/70 px-4 py-3 ring-1 ring-inset ring-slate-100">
           <div>
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">System now</p>
-            <p className="mt-0.5 text-xl font-bold tabular-nums text-gray-500">{km(system)}</p>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">System now</p>
+            <p className="mt-0.5 text-xl font-bold tabular-nums text-slate-500">{km(system)}</p>
           </div>
-          <svg className="h-5 w-5 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+          <svg className="h-5 w-5 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
             <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14M13 6l6 6-6 6" />
           </svg>
           <Tooltip
@@ -85,7 +85,7 @@ function ReconCard({ row, applied, busy, canApply, onApply }) {
               : 'The trusted odometer the scanner rebuilt from contract history.'}
           >
             <div className="text-right">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Scanner value</p>
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Scanner value</p>
               <p className="mt-0.5 text-xl font-bold tabular-nums text-emerald-600">{km(row.scanner_value)}</p>
             </div>
           </Tooltip>
@@ -103,7 +103,7 @@ function ReconCard({ row, applied, busy, canApply, onApply }) {
               </Button>
             </Tooltip>
           ) : actionable && !canApply ? (
-            <span className="text-xs text-gray-300">No permission</span>
+            <span className="text-xs text-slate-300">No permission</span>
           ) : null}
         </div>
       </div>
@@ -161,7 +161,7 @@ export default function MileageReconciliation({ embedded = false }) {
     { key: 'needs_review',     status: 'needs_review',     value: s.needs_review,     bar: 'bg-amber-400',   dot: 'bg-amber-400',   label: 'Needs review' },
     { key: 'within_tolerance', status: 'within_tolerance', value: s.within_tolerance, bar: 'bg-blue-400',    dot: 'bg-blue-400',    label: 'Within 100 km', tip: 'Within tolerance: the system odometer is within ±100 km of the scanner value, so no action is needed.' },
     { key: 'matching',         status: 'correct',          value: s.matching,         bar: 'bg-emerald-400', dot: 'bg-emerald-400', label: 'Already matching' },
-    { key: 'no_history',       status: 'no_history',       value: s.no_history,       bar: 'bg-gray-300',    dot: 'bg-gray-300',    label: 'No history' },
+    { key: 'no_history',       status: 'no_history',       value: s.no_history,       bar: 'bg-slate-300',    dot: 'bg-slate-300',    label: 'No history' },
   ];
 
   // When a legend filter is active, narrow the loaded rows to that category (client-side).
@@ -178,7 +178,7 @@ export default function MileageReconciliation({ embedded = false }) {
   const refreshBtn = (
     <button
       onClick={reload}
-      className="inline-flex items-center gap-1.5 text-sm font-medium text-gray-500 transition hover:text-gray-700"
+      className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 transition hover:text-slate-700"
     >
       <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
         <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v6h6M20 20v-6h-6M20 9A8 8 0 0 0 6.3 5.3L4 8m16 8-2.3 2.7A8 8 0 0 1 4 15" />
@@ -209,21 +209,21 @@ export default function MileageReconciliation({ embedded = false }) {
           <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="text-4xl font-bold tracking-tight text-amber-600 tabular-nums">{num(s.needs_review)}</p>
-              <p className="mt-1 text-sm font-medium text-gray-600">
+              <p className="mt-1 text-sm font-medium text-slate-600">
                 car{s.needs_review === 1 ? '' : 's'} need a mileage review
-                <span className="text-gray-400"> · of {num(active)} active</span>
+                <span className="text-slate-400"> · of {num(active)} active</span>
               </p>
             </div>
             {s.total_gap_km > 0 && (
               <div className="text-left sm:text-right">
-                <p className="text-2xl font-bold tracking-tight text-gray-900 tabular-nums">{km(s.total_gap_km)}</p>
-                <p className="text-xs text-gray-400">total odometer gap to reconcile</p>
+                <p className="text-2xl font-bold tracking-tight text-slate-900 tabular-nums">{km(s.total_gap_km)}</p>
+                <p className="text-xs text-slate-400">total odometer gap to reconcile</p>
               </div>
             )}
           </div>
 
           {/* Segmented funnel bar — each block is clickable to filter to that category */}
-          <div className="mt-5 flex h-3 overflow-hidden rounded-full bg-gray-100">
+          <div className="mt-5 flex h-3 overflow-hidden rounded-full bg-slate-100">
             {segments.map((seg) => seg.value > 0 && (
               <button
                 key={seg.key}
@@ -251,12 +251,12 @@ export default function MileageReconciliation({ embedded = false }) {
                     className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-sm transition disabled:cursor-not-allowed disabled:opacity-40 ${
                       isActive
                         ? 'bg-white shadow-sm ring-2 ring-indigo-400'
-                        : 'ring-1 ring-transparent hover:bg-white/70 hover:ring-gray-200'
+                        : 'ring-1 ring-transparent hover:bg-white/70 hover:ring-slate-200'
                     }`}
                   >
                     <span className={`h-2.5 w-2.5 rounded-full ${seg.dot}`} />
-                    <span className="font-bold tabular-nums text-gray-800">{num(seg.value)}</span>
-                    <span className="text-gray-500">{seg.label}</span>
+                    <span className="font-bold tabular-nums text-slate-800">{num(seg.value)}</span>
+                    <span className="text-slate-500">{seg.label}</span>
                   </button>
                   {seg.tip && <InfoTip content={seg.tip} />}
                 </span>
@@ -277,7 +277,7 @@ export default function MileageReconciliation({ embedded = false }) {
         {/* Controls: gap threshold + full-fleet audit toggle */}
         <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="mr-1 text-xs font-medium uppercase tracking-wide text-gray-500">Show gaps</span>
+            <span className="mr-1 text-xs font-medium uppercase tracking-wide text-slate-500">Show gaps</span>
             {THRESHOLDS.map((t) => (
               <button
                 key={t}
@@ -286,19 +286,19 @@ export default function MileageReconciliation({ embedded = false }) {
                 className={`rounded-full px-3 py-1.5 text-xs font-semibold ring-1 transition disabled:opacity-40 ${
                   minDiff === t && !thresholdsDisabled
                     ? 'bg-indigo-600 text-white ring-indigo-600 shadow-sm'
-                    : 'bg-white text-gray-600 ring-gray-300 hover:bg-gray-50'
+                    : 'bg-white text-slate-600 ring-slate-300 hover:bg-slate-50'
                 }`}
               >
                 {t === 0 ? 'Any gap' : `> ${num(t)} km`}
               </button>
             ))}
           </div>
-          <label className="ml-auto flex cursor-pointer select-none items-center gap-2 text-xs font-medium text-gray-600">
+          <label className="ml-auto flex cursor-pointer select-none items-center gap-2 text-xs font-medium text-slate-600">
             <input
               type="checkbox"
               checked={showAll}
               onChange={(e) => setShowAll(e.target.checked)}
-              className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+              className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
             />
             Show every car (incl. matching &amp; no-history)
           </label>
@@ -350,7 +350,7 @@ export default function MileageReconciliation({ embedded = false }) {
                 />
               ))}
             </div>
-            <p className="px-1 text-xs text-gray-400">
+            <p className="px-1 text-xs text-slate-400">
               Showing {num(displayedRows.length)} car{displayedRows.length === 1 ? '' : 's'}. “Apply baseline” sets the stored odometer to the scanner value.
             </p>
           </>

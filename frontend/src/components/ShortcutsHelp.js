@@ -25,7 +25,7 @@ const GROUPS = [
 
 function Key({ children }) {
   return (
-    <kbd className="inline-flex min-w-[1.6rem] items-center justify-center rounded-md border border-slate-200 bg-gradient-to-b from-white to-slate-50 px-1.5 py-1 text-[11px] font-semibold text-slate-600 shadow-sm">
+    <kbd className="inline-flex min-w-[1.6rem] items-center justify-center rounded-lg border border-slate-200 bg-slate-50 px-1.5 py-1 text-[11px] font-semibold text-slate-600 shadow-sm">
       {children}
     </kbd>
   );
@@ -44,12 +44,12 @@ export default function ShortcutsHelp({ open, onClose }) {
       >
         <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
           <div className="flex items-center gap-3">
-            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-500 text-white shadow-glow">
+            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-600 text-white shadow-sm">
               <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path strokeLinecap="round" strokeLinejoin="round" d="M7 8h10M7 12h6m-6 4h10M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z" /></svg>
             </span>
             <div>
               <h2 className="text-base font-bold text-slate-900">Keyboard Shortcuts</h2>
-              <p className="text-xs text-slate-500">Move faster across FleetView</p>
+              <p className="text-xs text-slate-500">Move faster across the app</p>
             </div>
           </div>
           <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600" aria-label="Close">

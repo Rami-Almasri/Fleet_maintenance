@@ -40,12 +40,17 @@ const STATUS_LABEL = {
   cancelled: 'Cancelled',
 };
 // The tiles staff filter by (the terminals stay reachable via the status dropdown).
-const TILE_STATUSES = ['requested', 'under_review', 'approved', 'purchased', 'installed', 'completed'];
+// 'under_review' is retired (the Review step was removed) so it's no longer a headline tile;
+// STATUS_META/STATUS_LABEL keep it defined so any legacy row still renders its badge.
+const TILE_STATUSES = ['requested', 'approved', 'purchased', 'installed', 'completed'];
 const ALL_STATUSES = [...TILE_STATUSES, 'rejected', 'cancelled'];
 
 const CLASS_TONE = { consumable: 'gray', standard: 'blue', major: 'amber' };
 const CLASS_LABEL = { consumable: 'Consumable', standard: 'Standard', major: 'Major' };
 const SOURCE_TONE = { customer: 'violet', garage: 'amber' };
+
+// Where a prior part was bought, for the duplicate warning's "Bought from …" line.
+const sourceLabel = (src) => (src === 'garage' ? 'Garage' : src === 'supplier' ? 'Parts supplier' : null);
 
 // The five reasons the buyer must pick when a duplicate purchase is flagged.
 const DUP_REASONS = [
@@ -56,228 +61,11 @@ const DUP_REASONS = [
   ['other', 'Other'],
 ];
 
-const vehLabel = (v) => `${v.plate_no || v.plate || `#${v.id}`} · ${[v.make, v.model].filter(Boolean).join(' ') || v.vin || ''}`.trim();
 
 function StatusBadge({ status }) {
   return <Badge tone={STATUS_TONE[status] || 'gray'}>{STATUS_LABEL[status] || status}</Badge>;
 }
 
-const EMPTY_REQUEST = {
-  source: 'garage',
-  vehicle_id: '',
-  customer_id: '',
-  maintenance_id: '',
-  maintenance_task_id: '',
-  part_name: '',
-  part_number: '',
-  quantity: 1,
-  repair_location: 'garage',
-  reason: '',
-  estimated_price: '',
-  currency: 'AED',
-  notes: '',
-};
-
-// ─── Create request modal ────────────────────────────────────────────────────
-function CreateRequestModal({ open, onClose, onCreated, vehicles, customers }) {
-  const toast = useToast();
-  const [form, setForm] = useState(EMPTY_REQUEST);
-  const [errors, setErrors] = useState({});
-  const [saving, setSaving] = useState(false);
-
-  useEffect(() => { if (open) { setForm(EMPTY_REQUEST); setErrors({}); } }, [open]);
-
-  const set = (field, value) => setForm((f) => ({ ...f, [field]: value }));
-
-  const submit = async () => {
-    setSaving(true);
-    setErrors({});
-    try {
-      const body = {
-        source: form.source,
-        vehicle_id: form.vehicle_id || null,
-        part_name: form.part_name.trim(),
-        part_number: form.part_number.trim() || null,
-        repair_location: form.repair_location,
-        quantity: Number(form.quantity) || 1,
-        reason: form.reason.trim(),
-        estimated_price: form.estimated_price === '' ? null : Number(form.estimated_price),
-        currency: form.currency || 'AED',
-        notes: form.notes.trim() || null,
-      };
-      if (form.source === 'customer') body.customer_id = form.customer_id || null;
-      if (form.source === 'garage') {
-        body.maintenance_id = form.maintenance_id ? Number(form.maintenance_id) : null;
-        body.maintenance_task_id = form.maintenance_task_id ? Number(form.maintenance_task_id) : null;
-      }
-      await api.post('/part-requests', body);
-      toast.success('Part request submitted');
-      onCreated();
-      onClose();
-    } catch (err) {
-      const res = err.response?.data;
-      if (res?.errors) { setErrors(res.errors); toast.error('Please fix the highlighted fields'); }
-      else toast.error(res?.message || res?.msg || 'Could not submit the request');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Modal
-      open={open}
-      onClose={() => !saving && onClose()}
-      title="New Part Request"
-      subtitle="Request a part for a customer car or an open garage ticket"
-      size="lg"
-      footer={
-        <>
-          <Button variant="secondary" onClick={onClose} disabled={saving}>Cancel</Button>
-          <Button onClick={submit} loading={saving}>Submit request</Button>
-        </>
-      }
-    >
-      <div className="space-y-4">
-        {/* Source toggle */}
-        <div>
-          <span className="mb-1 block text-sm font-medium text-slate-700">Source</span>
-          <div className="inline-flex rounded-lg border border-slate-300 p-0.5">
-            {['garage', 'customer'].map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => set('source', s)}
-                className={`rounded-md px-4 py-1.5 text-sm font-semibold capitalize transition ${form.source === s ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50'}`}
-              >
-                {s === 'garage' ? 'Garage ticket' : 'Customer'}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div>
-            <span className="mb-1 block text-sm font-medium text-slate-700">Vehicle<span className="ms-0.5 text-red-500">*</span></span>
-            <SearchSelect
-              value={form.vehicle_id}
-              onChange={(v) => set('vehicle_id', v)}
-              options={vehicles.map((v) => ({ id: v.id, label: vehLabel(v), sub: v.vin || undefined }))}
-              placeholder="Pick the car…"
-            />
-            {errors.vehicle_id && <span className="mt-1 block text-xs text-red-600">{errors.vehicle_id[0]}</span>}
-          </div>
-
-          {form.source === 'customer' ? (
-            <div>
-              <span className="mb-1 block text-sm font-medium text-slate-700">Customer<span className="ms-0.5 text-red-500">*</span></span>
-              <SearchSelect
-                value={form.customer_id}
-                onChange={(v) => set('customer_id', v)}
-                options={customers.map((c) => ({ id: c.id, label: c.name || `#${c.id}` }))}
-                placeholder="Pick the customer…"
-              />
-              {errors.customer_id && <span className="mt-1 block text-xs text-red-600">{errors.customer_id[0]}</span>}
-            </div>
-          ) : (
-            <div className="grid grid-cols-2 gap-3">
-              <Input
-                label="Ticket #"
-                type="number"
-                placeholder="Maintenance ID"
-                value={form.maintenance_id}
-                error={errors.maintenance_id?.[0]}
-                onChange={(e) => set('maintenance_id', e.target.value)}
-              />
-              <Input
-                label="Fault task #"
-                type="number"
-                placeholder="Optional"
-                value={form.maintenance_task_id}
-                error={errors.maintenance_task_id?.[0]}
-                onChange={(e) => set('maintenance_task_id', e.target.value)}
-              />
-            </div>
-          )}
-        </div>
-
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Input
-            label="Part name"
-            required
-            placeholder="e.g. Front brake pads"
-            value={form.part_name}
-            error={errors.part_name?.[0]}
-            onChange={(e) => set('part_name', e.target.value)}
-          />
-          <Input
-            label="Part number"
-            placeholder="Optional"
-            value={form.part_number}
-            error={errors.part_number?.[0]}
-            onChange={(e) => set('part_number', e.target.value)}
-          />
-        </div>
-
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <Input
-            label="Quantity"
-            type="number"
-            min={1}
-            value={form.quantity}
-            error={errors.quantity?.[0]}
-            onChange={(e) => set('quantity', e.target.value)}
-          />
-          <Select
-            label="Repair location"
-            value={form.repair_location}
-            error={errors.repair_location?.[0]}
-            onChange={(e) => set('repair_location', e.target.value)}
-          >
-            <option value="garage">In garage</option>
-            <option value="onsite">On-site</option>
-          </Select>
-          {/* Price entry stays visible even while money DISPLAY is hidden — it is a record, not a rolled-up figure. */}
-          <div className="grid grid-cols-[1fr_auto] gap-2">
-            <Input
-              label="Est. price"
-              type="number"
-              min={0}
-              step="0.01"
-              placeholder="Optional"
-              value={form.estimated_price}
-              error={errors.estimated_price?.[0]}
-              onChange={(e) => set('estimated_price', e.target.value)}
-            />
-            <Input
-              label="Cur."
-              className="w-20"
-              value={form.currency}
-              onChange={(e) => set('currency', e.target.value)}
-            />
-          </div>
-        </div>
-
-        <Textarea
-          label="Reason"
-          required
-          rows={3}
-          placeholder="Why is this part needed?"
-          value={form.reason}
-          error={errors.reason?.[0]}
-          onChange={(e) => set('reason', e.target.value)}
-        />
-        <Textarea
-          label="Notes"
-          rows={2}
-          placeholder="Anything else (optional)"
-          value={form.notes}
-          error={errors.notes?.[0]}
-          onChange={(e) => set('notes', e.target.value)}
-        />
-      </div>
-    </Modal>
-  );
-}
 
 // ─── Purchase modal (with duplicate-purchase intelligence) ───────────────────
 function PurchaseModal({ open, request, onClose, onDone, vendors }) {
@@ -405,10 +193,15 @@ function PurchaseModal({ open, request, onClose, onDone, vendors }) {
               ⚠ Attention: this vehicle already received {prev?.part_name || 'this part'} {num(dup.days_between)} day(s) ago.
             </p>
             <ul className="mt-1.5 space-y-0.5 text-xs">
-              {SHOW_FINANCIALS && prev?.purchase_price != null && (
+              {/* Prior-purchase price shown even while SHOW_FINANCIALS hides other money — it is the recorded
+                  spend the duplicate warning is about (accountability context), not a computed roll-up. */}
+              {prev?.purchase_price != null && (
                 <li>Previous cost {aed(prev.purchase_price)} {prev.currency && prev.currency !== 'AED' ? `(${prev.currency})` : ''}.</li>
               )}
               {prev?.purchased_by && <li>Previous purchase by {prev.purchased_by}.</li>}
+              {prev?.source && (
+                <li>Bought from {prev.source_name ? <span className="font-medium">{prev.source_name}</span> : sourceLabel(prev.source)}{prev.source_name && sourceLabel(prev.source) ? ` (${sourceLabel(prev.source)})` : ''}.</li>
+              )}
               {dup.part_class && <li>Part class: <span className="font-medium capitalize">{dup.part_class}</span> · window {num(dup.window_days)} day(s).</li>}
             </ul>
             <div className="mt-3">
@@ -657,6 +450,82 @@ function RejectModal({ open, request, onClose, onDone }) {
   );
 }
 
+// ─── Approve modal (duplicate heads-up BEFORE approval) ──────────────────────
+// Only shown when the pre-approval duplicate check trips — a clean request is
+// approved directly with no modal. Mirrors the purchase-step warning so the
+// approver sees the prior spend before green-lighting a repeat buy. The full
+// mandatory reason stays at the purchase step (where money is committed); here
+// an optional note is enough and is kept on the request for the audit trail.
+function ApproveModal({ open, request, dup, onClose, onDone }) {
+  const toast = useToast();
+  const [note, setNote] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => { if (open) setNote(''); }, [open]);
+
+  const submit = async () => {
+    setSaving(true);
+    try {
+      await api.post(`/part-requests/${request.id}/approve`, { notes: note.trim() || null });
+      toast.success('Request approved');
+      onDone();
+      onClose();
+    } catch (err) {
+      toast.error(err.response?.data?.message || err.response?.data?.msg || 'Could not approve the request');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const prev = dup?.context?.previous;
+  const high = dup?.priority === 'high';
+
+  return (
+    <Modal
+      open={open}
+      onClose={() => !saving && onClose()}
+      title="Approve — possible duplicate"
+      subtitle={request ? `${request.part_name} · ${request.vehicle?.plate || `#${request.vehicle?.id}`}` : ''}
+      size="md"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button variant={high ? 'danger' : 'success'} onClick={submit} loading={saving}>Approve anyway</Button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <div className={`rounded-xl px-4 py-3 text-sm ring-1 ring-inset ${high ? 'bg-red-50 text-red-800 ring-red-600/25' : 'bg-amber-50 text-amber-800 ring-amber-600/25'}`}>
+          <p className="font-semibold">
+            ⚠ Attention: this vehicle already received {prev?.part_name || 'this part'} {num(dup?.days_between)} day(s) ago.
+          </p>
+          <ul className="mt-1.5 space-y-0.5 text-xs">
+            {prev?.purchase_price != null && (
+              <li>Previous cost {aed(prev.purchase_price)} {prev.currency && prev.currency !== 'AED' ? `(${prev.currency})` : ''}.</li>
+            )}
+            {prev?.purchased_by && <li>Previous purchase by {prev.purchased_by}.</li>}
+            {prev?.source && (
+              <li>Bought from {prev.source_name ? <span className="font-medium">{prev.source_name}</span> : sourceLabel(prev.source)}{prev.source_name && sourceLabel(prev.source) ? ` (${sourceLabel(prev.source)})` : ''}.</li>
+            )}
+            {dup?.part_class && <li>Part class: <span className="font-medium capitalize">{dup.part_class}</span> · window {num(dup.window_days)} day(s).</li>}
+            {dup?.same_fault && <li className="font-medium">Same fault as before — the earlier repair may have failed.</li>}
+          </ul>
+        </div>
+        <Textarea
+          label="Reason for approving again (optional)"
+          rows={2}
+          placeholder="e.g. previous part failed, wrong diagnosis, customer request…"
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+        />
+        <p className="text-xs text-slate-400">
+          A full reason is still required at the purchase step — this note is kept on the request for the audit trail.
+        </p>
+      </div>
+    </Modal>
+  );
+}
+
 // ─── Page ────────────────────────────────────────────────────────────────────
 export default function Parts() {
   const toast = useToast();
@@ -666,11 +535,11 @@ export default function Parts() {
   const canReview = can('parts.investigate') || can('maintenance.manage');
 
   // Modals hold a request → pause background polling while any is open.
-  const [createOpen, setCreateOpen] = useState(false);
   const [purchaseFor, setPurchaseFor] = useState(null);
   const [installFor, setInstallFor] = useState(null);
   const [rejectFor, setRejectFor] = useState(null);
-  const anyModal = createOpen || !!purchaseFor || !!installFor || !!rejectFor;
+  const [approveFor, setApproveFor] = useState(null); // { request, dup } — set only when a duplicate trips
+  const anyModal = !!purchaseFor || !!installFor || !!rejectFor || !!approveFor;
 
   const fetcher = useCallback(async () => {
     const r = await api.get('/part-requests', { params: { per_page: 200 } });
@@ -683,22 +552,14 @@ export default function Parts() {
 
   const requests = useMemo(() => data?.requests || [], [data]);
 
-  // Option lists for the create / purchase forms.
-  const [vehicles, setVehicles] = useState([]);
-  const [customers, setCustomers] = useState([]);
+  // Vendor list for the purchase form (garages + parts suppliers).
   const [vendors, setVendors] = useState([]);
   useEffect(() => {
     let alive = true;
-    Promise.all([
-      api.get('/Vehicle').catch(() => null),
-      api.get('/Customer').catch(() => null),
-      api.get('/Vendor').catch(() => null),
-    ]).then(([v, c, ve]) => {
+    api.get('/Vendor').catch(() => null).then((ve) => {
       if (!alive) return;
-      const list = (r) => { const p = payload(r); return Array.isArray(p) ? p : p?.items || []; };
-      setVehicles(list(v));
-      setCustomers(list(c));
-      setVendors(list(ve));
+      const p = payload(ve);
+      setVendors(Array.isArray(p) ? p : p?.items || []);
     });
     return () => { alive = false; };
   }, []);
@@ -750,16 +611,35 @@ export default function Parts() {
   };
   const isBusy = (req, action) => busy === `${req.id}:${action}`;
 
+  // Approve runs a duplicate heads-up FIRST: a clean request approves straight through,
+  // a flagged one opens the warning modal so the approver sees the prior spend before proceeding.
+  const onApprove = async (req) => {
+    setBusy(`${req.id}:approve`);
+    let dup = null;
+    try {
+      dup = payload(await api.get('/part-purchases/duplicate-check', {
+        params: { vehicle_id: req.vehicle?.id, part_name: req.part_name, part_number: req.part_number || undefined },
+      }));
+    } catch { dup = null; } // advisory only — never block approval on the check
+    if (dup?.duplicate) { setApproveFor({ request: req, dup }); setBusy(null); return; }
+    try {
+      await api.post(`/part-requests/${req.id}/approve`, {});
+      toast.success('Request approved');
+      reload({ silent: true });
+    } catch (err) {
+      toast.error(err.response?.data?.message || err.response?.data?.msg || 'Action failed');
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const rowActions = (r) => {
     const actions = [];
+    // 'under_review' kept in the guard so any legacy row in that state can still be actioned,
+    // but the Review step itself is retired — a request goes straight to Approve/Reject.
     if (['requested', 'under_review'].includes(r.status) && canReview) {
-      if (r.status === 'requested') {
-        actions.push(
-          <Button key="review" variant="ghost" size="sm" loading={isBusy(r, 'review')} onClick={() => runAction(r, 'review', 'Marked under review')}>Review</Button>,
-        );
-      }
       actions.push(
-        <Button key="approve" variant="success" size="sm" loading={isBusy(r, 'approve')} onClick={() => runAction(r, 'approve', 'Request approved')}>Approve</Button>,
+        <Button key="approve" variant="success" size="sm" loading={isBusy(r, 'approve')} onClick={() => onApprove(r)}>Approve</Button>,
         <Button key="reject" variant="ghost" size="sm" className="text-red-600 hover:bg-red-50" onClick={() => setRejectFor(r)}>Reject</Button>,
       );
     }
@@ -782,14 +662,9 @@ export default function Parts() {
           title="Parts Purchase"
           subtitle={loading ? '…' : `${num(filtered.length)} of ${num(requests.length)} part requests`}
         >
-          {canRequest && (
-            <Button onClick={() => setCreateOpen(true)}>
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 5v14M5 12h14" />
-              </svg>
-              New Part Request
-            </Button>
-          )}
+          {/* Requests are initiated from inside the maintenance ticket (vehicle → ticket → fault), not here.
+              This board is the purchasing hub: review → approve → purchase → install → investigations. */}
+          <span className="text-xs text-slate-400">Requests start from a maintenance ticket</span>
         </PageHeader>
 
         {/* Status summary tiles (click to filter) */}
@@ -814,7 +689,6 @@ export default function Parts() {
           <SearchInput className="flex-1" value={search} onChange={(v) => { setSearch(v); setPage(1); }} placeholder="Search part, plate, customer…" />
           <Select className="sm:w-44" value={source} onChange={(e) => { setSource(e.target.value); setPage(1); }}>
             <option value="">All sources</option>
-            <option value="customer">Customer</option>
             <option value="garage">Garage</option>
           </Select>
           <Select className="sm:w-48" value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }}>
@@ -894,13 +768,6 @@ export default function Parts() {
         </Card>
       </div>
 
-      <CreateRequestModal
-        open={createOpen}
-        onClose={() => setCreateOpen(false)}
-        onCreated={() => reload({ silent: true })}
-        vehicles={vehicles}
-        customers={customers}
-      />
       <PurchaseModal
         open={!!purchaseFor}
         request={purchaseFor}
@@ -918,6 +785,13 @@ export default function Parts() {
         open={!!rejectFor}
         request={rejectFor}
         onClose={() => setRejectFor(null)}
+        onDone={() => reload({ silent: true })}
+      />
+      <ApproveModal
+        open={!!approveFor}
+        request={approveFor?.request}
+        dup={approveFor?.dup}
+        onClose={() => setApproveFor(null)}
         onDone={() => reload({ silent: true })}
       />
     </div>

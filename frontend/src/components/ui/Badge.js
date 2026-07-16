@@ -1,7 +1,7 @@
 import { useState } from 'react';
 
 const TONES = {
-  gray: 'bg-gray-100 text-gray-600 ring-gray-500/20',
+  gray: 'bg-slate-100 text-slate-600 ring-slate-500/20',
   green: 'bg-emerald-100 text-emerald-700 ring-emerald-600/20',
   emerald: 'bg-emerald-100 text-emerald-700 ring-emerald-600/20',
   red: 'bg-red-100 text-red-700 ring-red-600/20',
@@ -15,11 +15,20 @@ const TONES = {
   yellow: 'bg-yellow-100 text-yellow-800 ring-yellow-600/20',
 };
 
-export default function Badge({ tone = 'gray', children, className = '' }) {
+// Solid dot colour per tone — the enterprise status affordance that replaces the
+// old emoji. Rendered in the tone's own hue so the chip reads at a glance.
+const DOTS = {
+  gray: 'bg-slate-400', slate: 'bg-slate-400', green: 'bg-emerald-500', emerald: 'bg-emerald-500',
+  red: 'bg-red-500', amber: 'bg-amber-500', blue: 'bg-blue-500', violet: 'bg-violet-500',
+  cyan: 'bg-cyan-500', indigo: 'bg-indigo-500', orange: 'bg-orange-500', yellow: 'bg-yellow-500',
+};
+
+export default function Badge({ tone = 'gray', dot = false, children, className = '' }) {
   return (
     <span
-      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ring-1 ring-inset ${TONES[tone] || TONES.gray} ${className}`}
+      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ring-1 ring-inset ${TONES[tone] || TONES.gray} ${className}`}
     >
+      {dot && <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${DOTS[tone] || DOTS.gray}`} />}
       {children}
     </span>
   );
@@ -45,38 +54,38 @@ export function VehicleStatusBadge({ status }) {
 // The car's CURRENT movement (operational_status), derived from its open contracts —
 // distinct from the OM lifecycle `status`. This is the single live-state badge.
 const OPERATIONAL = {
-  available:   { tone: 'green',  label: '✅ Available' },
-  rented:      { tone: 'blue',   label: '🔑 Rented' },
-  maintenance: { tone: 'amber',  label: '🔧 In maintenance' },
-  test:        { tone: 'cyan',   label: '🧪 Test drive' },
-  transfer:    { tone: 'indigo', label: '🚚 Transfer' },
-  sale_prep:   { tone: 'slate',  label: '🏷️ Sale prep' },
-  in_transit:  { tone: 'violet', label: '🚚 In transit' },
+  available:   { tone: 'green',  label: 'Available' },
+  rented:      { tone: 'blue',   label: 'Rented' },
+  maintenance: { tone: 'amber',  label: 'In maintenance' },
+  test:        { tone: 'cyan',   label: 'Test drive' },
+  transfer:    { tone: 'indigo', label: 'Transfer' },
+  sale_prep:   { tone: 'slate',  label: 'Sale prep' },
+  in_transit:  { tone: 'violet', label: 'In transit' },
 };
 
 // `destination` is only used for in_transit, to spell out "In transit → Deals on Wheels".
 export function OperationalBadge({ status, destination }) {
   const m = OPERATIONAL[status];
   if (!m) return null;
-  const label = status === 'in_transit' && destination ? `🚚 In transit → ${destination}` : m.label;
-  return <Badge tone={m.tone}>{label}</Badge>;
+  const label = status === 'in_transit' && destination ? `In transit → ${destination}` : m.label;
+  return <Badge tone={m.tone} dot>{label}</Badge>;
 }
 
 // A STANDING safety warning for cars that must not be treated as rentable
 // (left the fleet or flagged). Shown permanently ALONGSIDE the live status —
 // never replaced by it — so staff can't mistakenly rent a sold/suspended car.
 const VEHICLE_WARNING = {
-  sold:         { tone: 'red',   label: '⛔ Sold' },
-  disposed:     { tone: 'red',   label: '⛔ Disposed' },
-  returned:     { tone: 'red',   label: '⛔ Returned' },
-  out_of_order: { tone: 'red',   label: '⛔ Out of order' },
-  suspended:    { tone: 'amber', label: '⚠️ Suspended' },
+  sold:         { tone: 'red',   label: 'Sold' },
+  disposed:     { tone: 'red',   label: 'Disposed' },
+  returned:     { tone: 'red',   label: 'Returned' },
+  out_of_order: { tone: 'red',   label: 'Out of order' },
+  suspended:    { tone: 'amber', label: 'Suspended' },
 };
 
 export function VehicleWarningTag({ status }) {
   const m = VEHICLE_WARNING[status];
   if (!m) return null;
-  return <Badge tone={m.tone} className="font-semibold">{m.label}</Badge>;
+  return <Badge tone={m.tone} dot className="font-semibold">{m.label}</Badge>;
 }
 
 // Deferred Maintenance — a standing warning for a car that was pulled out of the workshop
@@ -86,7 +95,7 @@ export function DeferredMaintenanceBadge({ pending, note }) {
   if (!pending) return null;
   return (
     <span title={note ? `Owes maintenance — ${note}` : 'Pulled from the workshop for a customer — must go back to the garage once it returns.'}>
-      <Badge tone="red" className="whitespace-nowrap font-semibold normal-case">🛠️↩️ Owes maintenance</Badge>
+      <Badge tone="red" dot className="whitespace-nowrap font-semibold normal-case">Owes maintenance</Badge>
     </span>
   );
 }
@@ -109,7 +118,7 @@ export const CONDITION_GRADE = {
 export function ConditionBadge({ grade, showGreen = false }) {
   const m = CONDITION_GRADE[grade];
   if (!m || (grade === 'green' && !showGreen)) return null;
-  return <Badge tone={m.tone} className="font-semibold">{m.icon} {m.label}</Badge>;
+  return <Badge tone={m.tone} dot className="font-semibold">{m.label}</Badge>;
 }
 
 // A tiny condition dot for dense grids (the dashboard Fleet Pulse). Hidden for Perfect.
@@ -130,7 +139,7 @@ export function OmStatusButton({ status }) {
       <button
         type="button"
         onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShow((s) => !s); }}
-        className="rounded-md border border-gray-200 bg-white px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500 transition hover:bg-gray-50"
+        className="rounded-lg border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500 transition hover:bg-slate-50"
         title="Show the OfficeManager status to compare"
       >
         OM

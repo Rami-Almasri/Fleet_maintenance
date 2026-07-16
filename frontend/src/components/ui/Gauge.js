@@ -41,8 +41,8 @@ export function useCountUp(end = 0, duration = 1100) {
 // --line token so gauges read correctly in both Platinum and Cockpit.
 const TRACK = 'rgb(var(--line))';
 const PALETTES = {
-  indigo:  { from: '#3b82f6', to: '#22d3ee' },   // brand: navy → cyan
-  brand:   { from: '#3b82f6', to: '#22d3ee' },
+  indigo:  { from: '#B37F0A', to: '#FACC15' },   // brand: molten gold → electric yellow
+  brand:   { from: '#B37F0A', to: '#FACC15' },
   emerald: { from: '#10b981', to: '#34d399' },   // success green
   success: { from: '#10b981', to: '#34d399' },
   blue:    { from: '#3b82f6', to: '#60a5fa' },
@@ -50,7 +50,7 @@ const PALETTES = {
   orange:  { from: '#f97316', to: '#fb923c' },   // alert orange
   alert:   { from: '#f97316', to: '#fb923c' },
   red:     { from: '#ef4444', to: '#f87171' },
-  violet:  { from: '#06b6d4', to: '#22d3ee' },
+  violet:  { from: '#D9A310', to: '#FDE047' },   // accent: bright yellow sheen
   cyan:    { from: '#06b6d4', to: '#22d3ee' },
   slate:   { from: '#64748b', to: '#94a3b8' },
 };

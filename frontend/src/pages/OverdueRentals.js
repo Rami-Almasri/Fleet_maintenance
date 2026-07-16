@@ -124,7 +124,7 @@ export default function OverdueRentals() {
           </>
         )}
 
-        <p className="text-xs text-gray-400">
+        <p className="text-xs text-slate-400">
           Note: a rental only appears here once its planned <span className="font-medium">rental days</span> are known (filled in by the
           OfficeManager <span className="font-medium">Contracts</span> sync). Rentals not yet synced won't show until that data arrives.
         </p>

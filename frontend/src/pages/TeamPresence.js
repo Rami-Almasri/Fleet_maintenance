@@ -110,7 +110,7 @@ export default function TeamPresence() {
         >
           <button
             onClick={reload}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-600 shadow-sm transition hover:bg-gray-50"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 shadow-sm transition hover:bg-slate-50"
           >
             <Icon.Clock className="h-4 w-4" />
             Refresh
@@ -157,7 +157,7 @@ export default function TeamPresence() {
 
         {!loading && filtered.length === 0 && (
           <SectionCard title="Team">
-            <div className="px-6 py-12 text-center text-sm text-gray-500">No one matches this filter.</div>
+            <div className="px-6 py-12 text-center text-sm text-slate-500">No one matches this filter.</div>
           </SectionCard>
         )}
 

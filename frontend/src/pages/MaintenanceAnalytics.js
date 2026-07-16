@@ -34,68 +34,68 @@ export default function MaintenanceAnalytics() {
             <div className="flex items-center justify-between border-b border-red-100 bg-red-50/60 px-6 py-4">
               <div>
                 <h3 className="text-base font-semibold text-red-700">🔁 Recurring Faults</h3>
-                <p className="mt-0.5 text-xs text-gray-500">Cars that came back for the SAME fault 3+ times — chronic problems worth investigating.</p>
+                <p className="mt-0.5 text-xs text-slate-500">Cars that came back for the SAME fault 3+ times — chronic problems worth investigating.</p>
               </div>
               <Badge tone="red">{num(recurring.length)}</Badge>
             </div>
             <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-100 text-sm">
-                <thead className="bg-gray-50/60">
-                  <tr className="text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                    <th className="px-6 py-3">Car</th>
-                    <th className="px-6 py-3">Recurring fault</th>
-                    <th className="px-6 py-3 text-center">Times</th>
-                    <th className="px-6 py-3">Last</th>
+              <table className="min-w-full divide-y divide-slate-100 text-sm">
+                <thead className="bg-slate-50/90">
+                  <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    <th className="px-5 py-3.5">Car</th>
+                    <th className="px-5 py-3.5">Recurring fault</th>
+                    <th className="px-5 py-3.5 text-center">Times</th>
+                    <th className="px-5 py-3.5">Last</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-50">
+                <tbody className="divide-y divide-slate-100">
                   {recurring.slice(0, 30).map((r, i) => (
-                    <tr key={i} className="hover:bg-gray-50/60">
-                      <td className="px-6 py-3">
+                    <tr key={i} className="hover:bg-indigo-50/40 transition-colors">
+                      <td className="px-5 py-3.5">
                         <Link to={`/vehicles/${r.vehicle_id}`} className="font-medium text-indigo-600 hover:text-indigo-700">{r.plate || `#${r.vehicle_id}`}</Link>
-                        <div className="text-xs text-gray-400">{r.car || '—'}</div>
+                        <div className="text-xs text-slate-400">{r.car || '—'}</div>
                       </td>
-                      <td className="px-6 py-3">
+                      <td className="px-5 py-3.5">
                         <Badge tone={r.level === 'critical' ? 'red' : 'amber'}>{r.reason}</Badge>
                       </td>
-                      <td className="px-6 py-3 text-center font-semibold text-red-600">{r.visits}×</td>
-                      <td className="px-6 py-3 text-gray-500">{fmtDate(r.last_date)}</td>
+                      <td className="px-5 py-3.5 text-center font-semibold text-red-600">{r.visits}×</td>
+                      <td className="px-5 py-3.5 text-slate-500">{fmtDate(r.last_date)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
             {recurring.length > 30 && (
-              <div className="border-t border-gray-100 px-6 py-2 text-xs text-gray-400">Showing the top 30 of {num(recurring.length)}.</div>
+              <div className="border-t border-slate-100 px-6 py-2 text-xs text-slate-400">Showing the top 30 of {num(recurring.length)}.</div>
             )}
           </Card>
         )}
 
         {/* Average cost per service (fleet-wide) */}
         <Card>
-          <div className="border-b border-gray-100 px-6 py-4">
-            <h3 className="text-base font-semibold text-gray-900">Average Cost per Service</h3>
-            <p className="mt-0.5 text-xs text-gray-400">Across all vehicles (items with a recorded cost).</p>
+          <div className="border-b border-slate-100 px-6 py-4">
+            <h3 className="text-base font-semibold text-slate-900">Average Cost per Service</h3>
+            <p className="mt-0.5 text-xs text-slate-400">Across all vehicles (items with a recorded cost).</p>
           </div>
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-100 text-sm">
-              <thead className="bg-gray-50/60">
-                <tr className="text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                  <th className="px-6 py-3">Service</th>
-                  <th className="px-6 py-3 text-center">Visits</th>
-                  <th className="px-6 py-3 text-right">Average</th>
-                  <th className="px-6 py-3 text-right">Lowest</th>
-                  <th className="px-6 py-3 text-right">Highest</th>
+            <table className="min-w-full divide-y divide-slate-100 text-sm">
+              <thead className="bg-slate-50/90">
+                <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  <th className="px-5 py-3.5">Service</th>
+                  <th className="px-5 py-3.5 text-center">Visits</th>
+                  <th className="px-5 py-3.5 text-right">Average</th>
+                  <th className="px-5 py-3.5 text-right">Lowest</th>
+                  <th className="px-5 py-3.5 text-right">Highest</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-50">
+              <tbody className="divide-y divide-slate-100">
                 {averages.map((s) => (
-                  <tr key={s.service} className="hover:bg-gray-50/60">
-                    <td className="px-6 py-3 font-medium text-gray-900">{s.service}</td>
-                    <td className="px-6 py-3 text-center text-gray-500">{num(s.visits)}</td>
-                    <td className="px-6 py-3 text-right font-medium text-gray-900">{aed2(s.avg_cost)}</td>
-                    <td className="px-6 py-3 text-right text-emerald-600">{aed2(s.min_cost)}</td>
-                    <td className="px-6 py-3 text-right text-red-600">{aed2(s.max_cost)}</td>
+                  <tr key={s.service} className="hover:bg-indigo-50/40 transition-colors">
+                    <td className="px-5 py-3.5 font-medium text-slate-900">{s.service}</td>
+                    <td className="px-5 py-3.5 text-center text-slate-500">{num(s.visits)}</td>
+                    <td className="px-5 py-3.5 text-right font-medium text-slate-900">{aed2(s.avg_cost)}</td>
+                    <td className="px-5 py-3.5 text-right text-emerald-600">{aed2(s.min_cost)}</td>
+                    <td className="px-5 py-3.5 text-right text-red-600">{aed2(s.max_cost)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -106,8 +106,8 @@ export default function MaintenanceAnalytics() {
 
         {/* Vendor price comparison per service */}
         <div>
-          <h3 className="mb-1 text-base font-semibold text-gray-900">Vendor Price Comparison</h3>
-          <p className="mb-4 text-xs text-gray-400">For each service, which garage is cheapest vs most expensive. Biggest price gaps first.</p>
+          <h3 className="mb-1 text-base font-semibold text-slate-900">Vendor Price Comparison</h3>
+          <p className="mb-4 text-xs text-slate-400">For each service, which garage is cheapest vs most expensive. Biggest price gaps first.</p>
 
           {comparison.length === 0 && (
             <Card><EmptyState title="Not enough data" message="Vendor comparison needs maintenance items with costs and a garage assigned." /></Card>
@@ -116,37 +116,37 @@ export default function MaintenanceAnalytics() {
           <div className="space-y-4">
             {comparison.map((c) => (
               <Card key={c.service}>
-                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 px-6 py-4">
-                  <h4 className="font-semibold text-gray-900">{c.service}</h4>
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-6 py-4">
+                  <h4 className="font-semibold text-slate-900">{c.service}</h4>
                   <div className="flex items-center gap-2 text-xs">
                     <Badge tone="gray">{num(c.vendor_count)} {c.vendor_count === 1 ? 'garage' : 'garages'}</Badge>
                     {c.spread > 0 && <Badge tone="amber">spread {aed2(c.spread)}</Badge>}
                   </div>
                 </div>
                 <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-gray-100 text-sm">
-                    <thead className="bg-gray-50/60">
-                      <tr className="text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                        <th className="px-6 py-3">Garage</th>
-                        <th className="px-6 py-3 text-center">Times</th>
-                        <th className="px-6 py-3 text-right">Avg</th>
-                        <th className="px-6 py-3 text-right">Lowest</th>
-                        <th className="px-6 py-3 text-right">Highest</th>
-                        <th className="px-6 py-3"></th>
+                  <table className="min-w-full divide-y divide-slate-100 text-sm">
+                    <thead className="bg-slate-50/90">
+                      <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        <th className="px-5 py-3.5">Garage</th>
+                        <th className="px-5 py-3.5 text-center">Times</th>
+                        <th className="px-5 py-3.5 text-right">Avg</th>
+                        <th className="px-5 py-3.5 text-right">Lowest</th>
+                        <th className="px-5 py-3.5 text-right">Highest</th>
+                        <th className="px-5 py-3.5"></th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-50">
+                    <tbody className="divide-y divide-slate-100">
                       {c.vendors.map((v, idx) => {
                         const isCheapest = idx === 0 && c.vendor_count > 1;
                         const isDearest = idx === c.vendors.length - 1 && c.vendor_count > 1;
                         return (
                           <tr key={`${v.vendor_id}`} className={isCheapest ? 'bg-emerald-50/50' : ''}>
-                            <td className="px-6 py-3 font-medium text-gray-900">{v.vendor || '—'}</td>
-                            <td className="px-6 py-3 text-center text-gray-500">{num(v.visits)}</td>
-                            <td className="px-6 py-3 text-right font-medium text-gray-900">{aed2(v.avg_cost)}</td>
-                            <td className="px-6 py-3 text-right text-gray-600">{aed2(v.min_cost)}</td>
-                            <td className="px-6 py-3 text-right text-gray-600">{aed2(v.max_cost)}</td>
-                            <td className="px-6 py-3">
+                            <td className="px-5 py-3.5 font-medium text-slate-900">{v.vendor || '—'}</td>
+                            <td className="px-5 py-3.5 text-center text-slate-500">{num(v.visits)}</td>
+                            <td className="px-5 py-3.5 text-right font-medium text-slate-900">{aed2(v.avg_cost)}</td>
+                            <td className="px-5 py-3.5 text-right text-slate-600">{aed2(v.min_cost)}</td>
+                            <td className="px-5 py-3.5 text-right text-slate-600">{aed2(v.max_cost)}</td>
+                            <td className="px-5 py-3.5">
                               {isCheapest && <Badge tone="green">Best price</Badge>}
                               {isDearest && <Badge tone="red">Most expensive</Badge>}
                             </td>

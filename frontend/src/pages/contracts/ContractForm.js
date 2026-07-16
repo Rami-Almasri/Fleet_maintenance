@@ -5,7 +5,7 @@ import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
 import ConfirmDialog from '../../components/ui/ConfirmDialog';
 import { usePermissions } from '../../hooks/usePermissions';
-import { Card, Spinner } from '../../components/ui/Misc';
+import { Card, PageHeader, Spinner } from '../../components/ui/Misc';
 import { Input, Select } from '../../components/ui/Field';
 import SearchSelect from '../../components/ui/SearchSelect';
 import { aed2 } from '../../lib/format';
@@ -36,7 +36,7 @@ const MAINTENANCE_CUSTOMER_NAME = 'ABDULLAH HESHAM FAWAZ';
 function Section({ title, children, cols = 2 }) {
   return (
     <Card className="p-6">
-      <h3 className="mb-4 text-xs font-semibold uppercase tracking-wide text-gray-400">{title}</h3>
+      <h3 className="mb-4 text-xs font-semibold uppercase tracking-wide text-slate-400">{title}</h3>
       <div className={`grid grid-cols-1 gap-4 ${cols === 3 ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>{children}</div>
     </Card>
   );
@@ -300,7 +300,12 @@ export default function ContractForm() {
   const inMaintenance = isHandover
     && (selectedVehicle?.operational_status === 'maintenance' || !!selectedVehicle?.under_maintenance);
   const owesMaintenance = isHandover && !!selectedVehicle?.is_deferred_maintenance;
-  const deferAdvisory = inMaintenance || owesMaintenance;
+  // MANDATORY maintenance — the inspector marked this ticket non-deferrable at the Decide step. Unlike a
+  // deferrable in-shop car (which we offer to pull out), a mandatory car is grounded until the workshop
+  // finishes: an absolute block, like Red, with no pull-out offer.
+  const mandatoryMaintenance = isHandover && !!selectedVehicle?.maintenance_mandatory;
+  // Only a DEFERRABLE in-shop car gets the "pull it out / rent anyway?" confirm — never a mandatory one.
+  const deferAdvisory = (inMaintenance || owesMaintenance) && !mandatoryMaintenance;
 
   // Switching to Maintenance auto-fills the workshop owner as both the "Responsible"
   // and the billed Customer (#10097), the moment the type flips — new contracts only,
@@ -402,9 +407,33 @@ export default function ContractForm() {
   // Gate the save on the vehicle's condition grade before doing anything else (new
   // handovers only — editing an existing contract just corrects data).
   const submit = () => {
+    // Required-field gate — mirrors the backend required_if rules (StoreContractRequest) so a missing
+    // vehicle/customer is caught inline on the field instead of only after a 422 round-trip. A real
+    // contract (rental C / booking R / maintenance U) must name a vehicle; a rental/booking must also
+    // name the customer.
+    const type = form.contract_type || 'C';
+    const missing = {};
+    if (['C', 'R', 'U'].includes(type) && !form.vehicle_id) {
+      missing.vehicle_id = ['Select a vehicle for this contract.'];
+    }
+    if (['C', 'R'].includes(type) && !form.customer_id) {
+      missing.customer_id = ['Select a customer for this contract.'];
+    }
+    if (Object.keys(missing).length) {
+      setErrors(missing);
+      toast.error('Please fix the highlighted fields');
+      return;
+    }
+
     // Red = absolute block, no exception.
     if (!isEdit && isHandover && conditionBlocksRent) {
       toast.error('This vehicle is graded Red (critical / grounded) and cannot be rented or booked. Pick another car or send it to maintenance.');
+      return;
+    }
+    // Mandatory maintenance = absolute block. The inspector marked this ticket non-deferrable at the
+    // Decide step, so the car is grounded until the workshop completes it — no pull-out is offered.
+    if (!isEdit && mandatoryMaintenance) {
+      toast.error('This vehicle is in mandatory maintenance and cannot be rented until the workshop completes it. Pick another car.');
       return;
     }
     // Yellow = manager-overridable. Managers get a reason prompt; everyone else is blocked.
@@ -464,7 +493,7 @@ export default function ContractForm() {
       // Deferred Maintenance: renting a car that's in the workshop pulls it out early — tell the
       // backend to close the maintenance ticket (no dual contracts) and raise the "owes maintenance"
       // flag. Only sent for a new handover on an in-shop car; the confirm prompt already fired.
-      if (!isEdit && isHandover && inMaintenance) {
+      if (!isEdit && isHandover && inMaintenance && !mandatoryMaintenance) {
         payload.pull_from_maintenance = true;
       }
       // coerce numeric fields
@@ -517,6 +546,10 @@ export default function ContractForm() {
         // Backend safety net: a Yellow car needs a manager override. Re-open it for managers.
         toast.error(r.errors.manager_override[0] || 'A manager override is required for this vehicle.');
         if (canOverrideYellow) setMgrOverride(true);
+      } else if (r?.errors?.vehicle_id) {
+        // Backend safety net: a hard vehicle-level block (mandatory maintenance, sold, already rented…).
+        // vehicle_id isn't a visible field, so surface it as a toast rather than an inline error.
+        toast.error(r.errors.vehicle_id[0] || 'This vehicle cannot be rented or booked.');
       } else if (r?.errors) { setErrors(r.errors); toast.error('Please fix the highlighted fields'); }
       else toast.error(r?.message || r?.msg || 'Could not save contract');
     } finally {
@@ -526,21 +559,25 @@ export default function ContractForm() {
 
   if (loading) return <div className="flex justify-center py-24"><Spinner className="h-8 w-8" /></div>;
 
-  const inputCls = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500';
+  // Matches the Field.js baseInput look exactly, so hand-wired inputs and <Input> fields read identically.
+  const inputCls = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20';
 
   return (
     <div className="py-8">
       <div className="mx-auto max-w-5xl space-y-6 px-4 sm:px-6 lg:px-8">
-        <div>
-          <Link to={isEdit ? `/contracts/${id}` : '/contracts'} className="inline-flex items-center gap-1 text-sm font-medium text-gray-500 transition hover:text-gray-700">
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 19l-7-7 7-7" /></svg>
+        <div className="space-y-2">
+          <Link to={isEdit ? `/contracts/${id}` : '/contracts'} className="inline-flex items-center gap-1 text-sm font-medium text-slate-500 transition-colors hover:text-slate-700">
+            <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 19l-7-7 7-7" /></svg>
             {isEdit ? 'Contract' : 'Contracts'}
           </Link>
-          <h1 className="mt-2 text-2xl font-bold tracking-tight text-gray-900">{isEdit ? `Edit Contract #${form.contract_no || id}` : 'New Contract'}</h1>
+          <PageHeader
+            title={isEdit ? `Edit Contract #${form.contract_no || id}` : 'New Contract'}
+            subtitle={isEdit ? 'Correct the recorded details of this contract.' : 'Fill in the sections below — auto-filled values stay editable.'}
+          />
         </div>
 
         {wallet > 0 && (
-          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 shadow-sm">
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 shadow-soft">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <p className="text-sm font-semibold text-emerald-800">
@@ -568,7 +605,7 @@ export default function ContractForm() {
             error={err('contract_no')}
             readOnly={!isEdit}
             title={!isEdit ? 'Generated automatically' : undefined}
-            className={!isEdit ? 'bg-gray-50 text-gray-500' : ''}
+            className={!isEdit ? 'bg-slate-50 text-slate-500' : ''}
           />
           <Select label="Type" value={form.contract_type || 'C'} onChange={set('contract_type')} error={err('contract_type')}>
             {TYPES.map((t) => <option key={t.v} value={t.v}>{t.l}</option>)}
@@ -582,7 +619,7 @@ export default function ContractForm() {
         <Section title="Parties">
           <label className="block">
             <div className="mb-1 flex items-center justify-between">
-              <span className="flex items-center gap-1.5 text-sm font-medium text-gray-700">
+              <span className="flex items-center gap-1.5 text-sm font-medium text-slate-700">
                 Customer
                 {auto.customer_id && (
                   <span className="rounded-full bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-600 ring-1 ring-indigo-100">✨ auto</span>
@@ -623,7 +660,7 @@ export default function ContractForm() {
             {err('customer_id') && <span className="mt-1 block text-xs text-red-600">{err('customer_id')}</span>}
           </label>
           <label className="block">
-            <span className="mb-1 block text-sm font-medium text-gray-700">Vehicle</span>
+            <span className="mb-1 block text-sm font-medium text-slate-700">Vehicle</span>
             <SearchSelect value={form.vehicle_id} onChange={onVehicleChange} options={vehicleOptions} placeholder="Search plate / VIN…" />
             {err('vehicle_id') && <span className="mt-1 block text-xs text-red-600">{err('vehicle_id')}</span>}
           </label>
@@ -631,7 +668,7 @@ export default function ContractForm() {
 
         {/* Visual Condition Grade alert — a car picked for a rental/booking that isn't Perfect. */}
         {isHandover && conditionGrade === 'orange' && (
-          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-800 shadow-sm">
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-800 shadow-soft">
             <p className="font-semibold">⚠️ This vehicle has minor cosmetic issues.</p>
             <p className="mt-0.5">
               {conditionNote ? `“${conditionNote}” — ` : ''}
@@ -640,7 +677,7 @@ export default function ContractForm() {
           </div>
         )}
         {isHandover && conditionGrade === 'yellow' && (
-          <div className="rounded-2xl border border-yellow-300 bg-yellow-50 px-5 py-4 text-sm text-yellow-800 shadow-sm">
+          <div className="rounded-2xl border border-yellow-300 bg-yellow-50 px-5 py-4 text-sm text-yellow-800 shadow-soft">
             <p className="font-semibold">🔧 This vehicle is graded Yellow (maintenance needed).</p>
             <p className="mt-0.5">
               {conditionNote ? `“${conditionNote}” — ` : ''}
@@ -651,7 +688,7 @@ export default function ContractForm() {
           </div>
         )}
         {isHandover && conditionGrade === 'red' && (
-          <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-800 shadow-sm">
+          <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-800 shadow-soft">
             <p className="font-semibold">⛔ This vehicle is graded Red (critical / grounded).</p>
             <p className="mt-0.5">
               {conditionNote ? `“${conditionNote}” — ` : ''}
@@ -662,7 +699,7 @@ export default function ContractForm() {
 
         {/* Deferred Maintenance — advisory only (never a block); a confirm prompt fires on submit. */}
         {inMaintenance && (
-          <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-800 shadow-sm">
+          <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-800 shadow-soft">
             <p className="font-semibold">🛠️↩️ This vehicle is currently in the workshop.</p>
             <p className="mt-0.5">
               Renting it will <span className="font-semibold">close its maintenance ticket</span> and flag it to return to the
@@ -671,7 +708,7 @@ export default function ContractForm() {
           </div>
         )}
         {!inMaintenance && owesMaintenance && (
-          <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-800 shadow-sm">
+          <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-800 shadow-soft">
             <p className="font-semibold">🛠️↩️ This vehicle is flagged for deferred maintenance.</p>
             <p className="mt-0.5">
               {selectedVehicle?.deferred_maintenance_reason ? `“${selectedVehicle.deferred_maintenance_reason}” — ` : ''}
@@ -708,7 +745,7 @@ export default function ContractForm() {
           <>
             <Section title="Maintenance Details" cols={2}>
               <label className="block">
-                <span className="mb-1 block text-sm font-medium text-gray-700">Garage / Vendor</span>
+                <span className="mb-1 block text-sm font-medium text-slate-700">Garage / Vendor</span>
                 <SearchSelect value={form.vendor_id} onChange={(v) => setVal('vendor_id', v)} options={vendorOptions} placeholder="Search garage / vendor…" />
                 {err('vendor_id') && <span className="mt-1 block text-xs text-red-600">{err('vendor_id')}</span>}
               </label>
@@ -727,7 +764,7 @@ export default function ContractForm() {
             {/* Issue keywords / tags */}
             <Card className="p-6">
               <div className="mb-3 flex items-center justify-between">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Issue Keywords / Tags</h3>
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Issue Keywords / Tags</h3>
                 {predicted && (
                   <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset ${LEVEL_CHIP[predicted]}`}>
                     Priority: {LEVEL_META[predicted].emoji} {LEVEL_META[predicted].label}
@@ -738,13 +775,13 @@ export default function ContractForm() {
                 {tags.map((t) => {
                   const lvl = levelOf(t);
                   return (
-                    <span key={t} className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-sm font-medium ring-1 ring-inset ${lvl ? LEVEL_CHIP[lvl] : 'bg-gray-50 text-gray-700 ring-gray-200'}`}>
+                    <span key={t} className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-sm font-medium ring-1 ring-inset ${lvl ? LEVEL_CHIP[lvl] : 'bg-slate-50 text-slate-700 ring-slate-200'}`}>
                       {t}
-                      <button type="button" onClick={() => removeTag(t)} className="opacity-50 hover:opacity-100">×</button>
+                      <button type="button" onClick={() => removeTag(t)} aria-label={`Remove ${t}`} className="opacity-50 transition hover:opacity-100">×</button>
                     </span>
                   );
                 })}
-                {tags.length === 0 && <span className="text-sm text-gray-400">No issues yet — pick from the list below; each one sets the maintenance priority.</span>}
+                {tags.length === 0 && <span className="text-sm text-slate-400">No issues yet — pick from the list below; each one sets the maintenance priority.</span>}
               </div>
               <div className="mt-3 flex gap-2">
                 <input
@@ -758,7 +795,7 @@ export default function ContractForm() {
               </div>
               {reasons.length > 0 && (
                 <div className="mt-3">
-                  <p className="mb-1.5 text-xs text-gray-400">Common reasons (colour = priority):</p>
+                  <p className="mb-1.5 text-xs text-slate-400">Common reasons (colour = priority):</p>
                   <div className="flex flex-wrap gap-1.5">
                     {reasons
                       .filter((r) => !tags.some((x) => x.toLowerCase() === r.reason.toLowerCase()))
@@ -768,7 +805,7 @@ export default function ContractForm() {
                           key={r.reason}
                           onClick={() => addTag(r.reason)}
                           title={`${LEVEL_META[r.level]?.label || ''}${r.reason_ar ? ' · ' + r.reason_ar : ''}`}
-                          className={`rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition hover:brightness-95 ${LEVEL_CHIP[r.level] || 'bg-gray-100 text-gray-600 ring-gray-200'}`}
+                          className={`rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition hover:brightness-95 ${LEVEL_CHIP[r.level] || 'bg-slate-100 text-slate-600 ring-slate-200'}`}
                         >
                           + {r.reason}
                         </button>
@@ -781,11 +818,11 @@ export default function ContractForm() {
             {/* Invoice-style maintenance items */}
             <Card className="p-6">
               <div className="mb-4 flex items-center justify-between">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Maintenance Items</h3>
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Maintenance Items</h3>
                 <Button variant="secondary" onClick={addItem}>+ Add item</Button>
               </div>
               <div className="space-y-2">
-                <div className="hidden gap-2 px-1 text-xs font-medium uppercase tracking-wide text-gray-400 sm:grid sm:grid-cols-12">
+                <div className="hidden gap-2 px-1 text-xs font-medium uppercase tracking-wide text-slate-400 sm:grid sm:grid-cols-12">
                   <div className="sm:col-span-5">Service</div>
                   <div className="text-right sm:col-span-2">Cost</div>
                   <div className="sm:col-span-4">Notes</div>
@@ -796,22 +833,22 @@ export default function ContractForm() {
                     <input className={`${inputCls} sm:col-span-5`} value={it.service_name} onChange={(e) => setItem(idx, 'service_name', e.target.value)} placeholder="e.g. Oil Change" />
                     <input type="number" step="0.01" className={`${inputCls} text-right sm:col-span-2`} value={it.cost} onChange={(e) => setItem(idx, 'cost', e.target.value)} placeholder="0.00" />
                     <input className={`${inputCls} sm:col-span-4`} value={it.notes} onChange={(e) => setItem(idx, 'notes', e.target.value)} placeholder="Notes (optional)" />
-                    <button type="button" onClick={() => removeItem(idx)} className="rounded-lg px-2 py-2 text-sm font-medium text-red-500 hover:bg-red-50 sm:col-span-1" title="Remove">Remove</button>
+                    <Button type="button" variant="ghost" size="sm" onClick={() => removeItem(idx)} className="text-red-600 hover:bg-red-50 sm:col-span-1" title="Remove">Remove</Button>
                   </div>
                 ))}
                 {items.length === 0 && (
-                  <p className="py-4 text-center text-sm text-gray-400">No items yet. Click “+ Add item” to add services like Oil Change, Brake Pads, Filter, Labor…</p>
+                  <p className="py-4 text-center text-sm text-slate-400">No items yet. Click “+ Add item” to add services like Oil Change, Brake Pads, Filter, Labor…</p>
                 )}
               </div>
-              <div className="mt-4 flex items-center justify-between border-t border-gray-100 pt-4">
-                <span className="text-sm font-medium text-gray-500">Total Maintenance Cost</span>
-                <span className="text-xl font-bold text-gray-900">{aed2(itemsTotal)}</span>
+              <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-4">
+                <span className="text-sm font-medium text-slate-500">Total Maintenance Cost</span>
+                <span className="text-xl font-bold text-slate-900">{aed2(itemsTotal)}</span>
               </div>
             </Card>
 
             <Section title="Notes" cols={1}>
               <label className="block sm:col-span-2">
-                <span className="mb-1 block text-sm font-medium text-gray-700">Maintenance Notes</span>
+                <span className="mb-1 block text-sm font-medium text-slate-700">Maintenance Notes</span>
                 <textarea value={form.maintenance_notes || ''} onChange={set('maintenance_notes')} rows={3} className={inputCls} />
               </label>
             </Section>
@@ -825,7 +862,7 @@ export default function ContractForm() {
             </Section>
 
             {rentEstimate && (
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-indigo-100 bg-gradient-to-r from-indigo-50 to-violet-50 px-5 py-4 shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-indigo-100 bg-indigo-50 px-5 py-4 shadow-soft">
                 <div>
                   <p className="text-sm font-semibold text-indigo-900">
                     Estimated rent · {aed2(rentEstimate.total)}
@@ -858,7 +895,7 @@ export default function ContractForm() {
           </>
         )}
 
-        <div className="flex justify-end gap-3">
+        <div className="flex items-center justify-end gap-3 border-t border-slate-200/60 pt-5">
           <Button variant="secondary" onClick={() => navigate(isEdit ? `/contracts/${id}` : '/contracts')} disabled={saving}>Cancel</Button>
           <Button onClick={submit} loading={saving}>{isEdit ? 'Save Changes' : 'Create Contract'}</Button>
         </div>
@@ -921,7 +958,7 @@ export default function ContractForm() {
             rows={2}
             autoFocus
             placeholder="Why is this Yellow car being rented?"
-            className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-300"
+            className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
           />
         </label>
       </ConfirmDialog>

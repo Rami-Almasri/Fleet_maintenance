@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useNotifications } from '../hooks/useNotifications';
 import NotificationRow from './NotificationRow';
+import Button from './ui/Button';
 
 export default function NotificationBell() {
   const navigate = useNavigate();
@@ -47,11 +48,14 @@ export default function NotificationBell() {
     <div ref={wrapRef} className="relative">
       <button
         onClick={() => setOpen((v) => !v)}
-        className={`relative rounded-xl p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-700 ${open ? 'bg-slate-100 text-slate-700' : ''}`}
+        className={`relative rounded-xl p-2 text-slate-500 transition-colors duration-150 hover:bg-slate-100 hover:text-slate-700 ${open ? 'bg-slate-100 text-slate-700' : ''}`}
         title="Notifications"
         aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ''}`}
+        aria-haspopup="true"
+        aria-expanded={open}
       >
         <svg
+          aria-hidden="true"
           className={`h-[22px] w-[22px] ${ringing ? 'animate-bell' : ''}`}
           style={{ transformOrigin: 'top center' }}
           fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"
@@ -60,7 +64,7 @@ export default function NotificationBell() {
         </svg>
 
         {unreadCount > 0 && (
-          <span className="absolute -right-0.5 -top-0.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-gradient-to-br from-red-500 to-rose-600 px-1 text-[10px] font-bold text-white shadow-sm ring-2 ring-white">
+          <span className="absolute -right-0.5 -top-0.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white shadow-sm ring-2 ring-white">
             {badge}
           </span>
         )}
@@ -71,19 +75,19 @@ export default function NotificationBell() {
           {/* mobile scrim */}
           <div className="fixed inset-0 z-30 sm:hidden" onClick={() => setOpen(false)} />
 
-          <div className="absolute right-0 z-40 mt-2 w-[min(92vw,24rem)] origin-top-right animate-pop overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-2xl ring-1 ring-slate-900/5">
+          <div className="absolute right-0 z-40 mt-2 w-[min(92vw,24rem)] origin-top-right animate-pop overflow-hidden rounded-2xl border border-slate-200/60 bg-white shadow-card">
             {/* header */}
-            <div className="flex items-center justify-between gap-2 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white px-4 py-3">
+            <div className="flex items-center justify-between gap-2 border-b border-slate-100 bg-slate-50 px-4 py-3">
               <div className="flex items-center gap-2">
                 <h3 className="text-sm font-semibold text-slate-800">Notifications</h3>
                 {unreadCount > 0 && (
-                  <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-bold text-indigo-700">{unreadCount} new</span>
+                  <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-bold tabular-nums text-indigo-700">{unreadCount} new</span>
                 )}
               </div>
               {unreadCount > 0 && (
-                <button onClick={markAllRead} className="text-xs font-medium text-indigo-600 transition hover:text-indigo-800">
+                <Button variant="ghost" size="sm" onClick={markAllRead} className="text-indigo-600 hover:bg-indigo-50 hover:text-indigo-700">
                   Mark all read
-                </button>
+                </Button>
               )}
             </div>
 
@@ -91,16 +95,16 @@ export default function NotificationBell() {
             <div className="max-h-[60vh] divide-y divide-slate-100 overflow-y-auto sidebar-scroll">
               {latest.length === 0 ? (
                 <div className="flex flex-col items-center justify-center px-6 py-12 text-center">
-                  <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-slate-100 to-slate-50 text-slate-300">
-                    <svg className="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                  <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100 text-slate-300">
+                    <svg aria-hidden="true" className="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M15 17h5l-1.4-1.4A2 2 0 0 1 18 14.2V11a6 6 0 0 0-4-5.7V5a2 2 0 1 0-4 0v.3A6 6 0 0 0 6 11v3.2a2 2 0 0 1-.6 1.4L4 17h5" />
                     </svg>
                   </div>
                   <p className="mt-3 text-sm font-semibold text-slate-700">You're all caught up</p>
                   <p className="mt-0.5 text-xs text-slate-400">New fleet alerts will appear here in real time.</p>
-                  <button onClick={sendDemo} className="mt-4 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-500 transition hover:bg-slate-50 hover:text-slate-700">
+                  <Button variant="secondary" size="sm" onClick={sendDemo} className="mt-4">
                     Send a test alert
-                  </button>
+                  </Button>
                 </div>
               ) : (
                 latest.map((n) => (
@@ -111,15 +115,17 @@ export default function NotificationBell() {
 
             {/* footer */}
             <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50/60 px-4 py-2.5">
-              <button onClick={sendDemo} className="text-[11px] font-medium text-slate-400 transition hover:text-slate-600">
+              <Button variant="ghost" size="sm" onClick={sendDemo} className="font-medium text-slate-400 hover:text-slate-600">
                 Send test
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => { setOpen(false); navigate('/notifications'); }}
-                className="text-xs font-semibold text-indigo-600 transition hover:text-indigo-800"
+                className="text-indigo-600 hover:bg-indigo-50 hover:text-indigo-700"
               >
                 View all →
-              </button>
+              </Button>
             </div>
           </div>
         </>

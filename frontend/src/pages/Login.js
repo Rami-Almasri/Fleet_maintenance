@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
+import { homePathForRoles } from '../config/access';
 
 export default function Login() {
   const { login } = useAuth();
@@ -16,8 +17,9 @@ export default function Login() {
     setError('');
     setLoading(true);
     try {
-      await login(email, password);
-      navigate('/', { replace: true });
+      const loggedIn = await login(email, password);
+      // Land on a home the user can actually see (the driver can't open the Dashboard).
+      navigate(homePathForRoles(loggedIn?.roles ?? []), { replace: true });
     } catch (err) {
       // `msg` may be a string ("Invalid credentials") OR a Laravel validation bag
       // ({ email: [...], password: [...] }). Flatten the bag to its first message so we
@@ -32,33 +34,35 @@ export default function Login() {
 
   return (
     <div className="grid min-h-screen lg:grid-cols-2">
-      {/* Brand panel */}
-      <div className="relative hidden overflow-hidden bg-slate-900 lg:block">
-        <div className="absolute inset-0 bg-gradient-to-br from-indigo-600 via-violet-600 to-fuchsia-600 opacity-90" />
-        {/* floating orbs */}
-        <div className="absolute -left-20 -top-20 h-80 w-80 animate-float rounded-full bg-white/10 blur-2xl" />
-        <div className="absolute bottom-0 right-0 h-96 w-96 animate-float rounded-full bg-indigo-300/20 blur-3xl" style={{ animationDelay: '1.5s' }} />
+      {/* Brand panel — calm solid navy with a single faint brand wash */}
+      <div className="relative hidden overflow-hidden bg-navy-950 lg:block">
+        <div
+          className="pointer-events-none absolute inset-0"
+          style={{ backgroundImage: 'radial-gradient(42rem 32rem at 92% -12%, rgb(250 204 21 / 0.14), transparent 60%)' }}
+        />
         <div className="relative flex h-full flex-col justify-between p-12 text-white">
           <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white/15 text-xl font-bold backdrop-blur">F</div>
-            <span className="text-xl font-bold tracking-tight">FleetView</span>
+            <div className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-2xl bg-white/10 p-1.5 ring-1 ring-inset ring-accent-400/25 backdrop-blur">
+              <img src="/brand-logo.webp" alt="Faster" className="h-full w-full object-contain drop-shadow-[0_0_10px_rgba(250,204,21,0.4)]" />
+            </div>
+            <span className="text-xl font-bold tracking-tight">Faster</span>
           </div>
           <div>
             <h2 className="max-w-md text-4xl font-bold leading-tight tracking-tight">
-              Your fleet, fully in sync.
+              Your fleet, <span className="text-accent-400">fully in sync.</span>
             </h2>
             <p className="mt-4 max-w-md text-base text-white/80">
-              Cars, contracts, invoices and customers — live from OfficeManager, in one clean dashboard.
+              Vehicles, maintenance, contracts and customers — live and unified in one fast, clean command center.
             </p>
             <div className="mt-8 flex flex-wrap gap-2">
-              {['Vehicles', 'Contracts', 'Invoices', 'Data Health'].map((t) => (
+              {['Vehicles', 'Maintenance', 'Contracts', 'Data Health'].map((t) => (
                 <span key={t} className="rounded-full bg-white/10 px-3 py-1 text-sm font-medium backdrop-blur ring-1 ring-inset ring-white/15">
                   {t}
                 </span>
               ))}
             </div>
           </div>
-          <p className="text-sm text-white/50">© {new Date().getFullYear()} FleetView · Management Suite</p>
+          <p className="text-sm text-white/50">© {new Date().getFullYear()} Faster · Fleet Maintenance</p>
         </div>
       </div>
 
@@ -66,7 +70,10 @@ export default function Login() {
       <div className="flex items-center justify-center px-4 py-12">
         <div className="w-full max-w-sm animate-fade-in-up">
           <div className="mb-8 flex flex-col items-center lg:hidden">
-            <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-500 text-xl font-bold text-white shadow-glow">F</div>
+            <div className="mb-3 flex h-12 w-12 items-center justify-center overflow-hidden rounded-2xl bg-navy-950 p-1.5 shadow-sm ring-1 ring-accent-400/25">
+              <img src="/brand-logo.webp" alt="Faster" className="h-full w-full object-contain drop-shadow-[0_0_6px_rgba(250,204,21,0.35)]" />
+            </div>
+            <span className="text-lg font-bold tracking-tight text-slate-900">Faster</span>
           </div>
 
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">Welcome back</h1>
@@ -122,7 +129,7 @@ export default function Login() {
             <button
               type="submit"
               disabled={loading}
-              className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-b from-indigo-500 to-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-indigo-600/25 transition-all duration-150 hover:to-indigo-700 active:scale-[0.98] disabled:opacity-60 disabled:active:scale-100"
+              className="focus-ring-self flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors duration-150 hover:bg-indigo-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 active:translate-y-px disabled:opacity-60 disabled:active:translate-y-0"
             >
               {loading && (
                 <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">

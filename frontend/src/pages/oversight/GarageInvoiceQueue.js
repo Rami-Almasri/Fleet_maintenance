@@ -87,41 +87,41 @@ export default function GarageInvoiceQueue() {
             <p className="text-xs text-slate-400">{t('oversight.common.emptyBody')}</p>
           </div>
         ) : (
-          <div className="overflow-x-auto rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
-            <table className="w-full min-w-[760px] text-sm">
-              <thead className="border-b border-slate-100 bg-slate-50/70 text-left text-xs uppercase tracking-wide text-slate-400">
-                <tr>
-                  <th className="px-4 py-3 font-semibold">{t('oversight.common.vehicle')}</th>
-                  <th className="px-4 py-3 font-semibold">{t('oversight.garage.garage')}</th>
-                  <th className="px-4 py-3 font-semibold">{t('oversight.garage.left')}</th>
-                  <th className="px-4 py-3 text-center font-semibold">{t('oversight.garage.faults')}</th>
-                  <th className="px-4 py-3 font-semibold">{t('oversight.garage.invoice')}</th>
-                  <th className="px-4 py-3 text-right font-semibold" />
+          <div className="overflow-x-auto rounded-2xl border border-slate-200/60 bg-white shadow-soft">
+            <table className="w-full min-w-[760px] border-separate border-spacing-0 text-sm">
+              <thead>
+                <tr className="text-left">
+                  <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">{t('oversight.common.vehicle')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">{t('oversight.garage.garage')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">{t('oversight.garage.left')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-center text-xs font-semibold uppercase tracking-wide text-slate-500">{t('oversight.garage.faults')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">{t('oversight.garage.invoice')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500" />
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody>
                 {rows.map((r) => (
-                  <tr key={r.ticket_id} className={r.needs_request ? 'bg-amber-50/30' : ''}>
-                    <td className="px-4 py-3">
+                  <tr key={r.ticket_id} className={`transition-colors ${r.needs_request ? 'bg-amber-50/50 hover:bg-amber-50' : 'bg-white even:bg-slate-50/40 hover:bg-indigo-50/40'}`}>
+                    <td className="border-b border-slate-100 px-5 py-3.5">
                       <Link to={`/maintenance-workflow/${r.ticket_id}`} className="font-mono font-semibold text-slate-900 hover:text-indigo-600">{r.plate_no || `#${r.ticket_id}`}</Link>
                       {r.car && <p className="text-xs text-slate-400">{r.car}</p>}
                     </td>
-                    <td className="px-4 py-3 text-slate-600">
+                    <td className="border-b border-slate-100 px-5 py-3.5 text-slate-600">
                       <span className="inline-flex items-center gap-1.5"><Icon.Wrench className="h-3.5 w-3.5 text-slate-300" />{r.garage || <span className="text-slate-300">—</span>}</span>
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="border-b border-slate-100 px-5 py-3.5">
                       <p className="text-slate-500">{fmtDate(r.left_at)}</p>
                       {r.days_since != null && <p className="text-[11px] text-slate-400">{t('oversight.garage.daysAgo', { n: r.days_since })}</p>}
                     </td>
-                    <td className="px-4 py-3 text-center tabular-nums text-slate-600">{r.faults || 0}</td>
-                    <td className="px-4 py-3">
+                    <td className="border-b border-slate-100 px-5 py-3.5 text-center tabular-nums text-slate-600">{r.faults || 0}</td>
+                    <td className="border-b border-slate-100 px-5 py-3.5">
                       {r.invoice_requested ? (
                         <span className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2 py-0.5 text-xs font-semibold text-sky-700"><Icon.Clock className="h-3 w-3" />{t('oversight.garage.requested')}</span>
                       ) : (
                         <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700"><Icon.Alert className="h-3 w-3" />{t('oversight.garage.notRequested')}</span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-right">
+                    <td className="border-b border-slate-100 px-5 py-3.5 text-right">
                       <Link to={`/maintenance-workflow/${r.ticket_id}`} className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-indigo-600 hover:bg-indigo-50">
                         {t('oversight.garage.request')} <Icon.ArrowRight className="h-3 w-3" />
                       </Link>

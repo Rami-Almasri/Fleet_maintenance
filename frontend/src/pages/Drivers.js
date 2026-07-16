@@ -168,44 +168,44 @@ export default function Drivers() {
 
         <Card>
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-100 text-sm stagger-rows">
-              <thead className="bg-gray-50/60">
-                <tr className="text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                  <th className="px-6 py-3">Name</th>
-                  <th className="px-6 py-3">Phone</th>
-                  <th className="px-6 py-3">Licence No.</th>
-                  <th className="px-6 py-3">Licence Expiry</th>
-                  <th className="px-6 py-3">Status</th>
-                  {canManage && <th className="px-6 py-3 text-right">Actions</th>}
+            <table className="min-w-full border-separate border-spacing-0 text-sm stagger-rows">
+              <thead className="bg-slate-50/90">
+                <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Name</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Phone</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Licence No.</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Licence Expiry</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Status</th>
+                  {canManage && <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-right">Actions</th>}
                 </tr>
               </thead>
 
               {loading ? (
                 <TableSkeleton cols={canManage ? 6 : 5} />
               ) : (
-                <tbody className="divide-y divide-gray-50">
+                <tbody>
                   {paged.map((d) => {
                     const days = daysToExpiry(d.license_expiry);
                     const exp = days !== null && days <= 30 ? dayBadge(days) : null;
                     return (
-                      <tr key={d.id} className="hover:bg-gray-50/60">
-                        <td className="px-6 py-3 font-medium text-gray-900">
+                      <tr key={d.id} className="bg-white transition-colors even:bg-slate-50/40 hover:bg-indigo-50/40">
+                        <td className="border-b border-slate-100 px-5 py-3.5 font-medium text-slate-900">
                           {d.name || '—'}
-                          {d.origin && d.origin !== 'web' && <span className="ml-2 text-xs text-gray-400">({d.origin})</span>}
+                          {d.origin && d.origin !== 'web' && <span className="ml-2 text-xs text-slate-400">({d.origin})</span>}
                         </td>
-                        <td className="px-6 py-3 text-gray-600" dir="ltr">{d.phone || <span className="text-gray-300">—</span>}</td>
-                        <td className="px-6 py-3 text-gray-600">{d.license_no || <span className="text-gray-300">—</span>}</td>
-                        <td className="px-6 py-3 text-gray-600">
+                        <td className="border-b border-slate-100 px-5 py-3.5 text-slate-600" dir="ltr">{d.phone || <span className="text-slate-300">—</span>}</td>
+                        <td className="border-b border-slate-100 px-5 py-3.5 text-slate-600">{d.license_no || <span className="text-slate-300">—</span>}</td>
+                        <td className="border-b border-slate-100 px-5 py-3.5 text-slate-600">
                           {d.license_expiry ? (
                             <span className="inline-flex items-center gap-2">
                               {fmtDate(d.license_expiry)}
                               {exp && <Badge tone={exp.tone}>{days < 0 ? 'expired' : `${days}d`}</Badge>}
                             </span>
-                          ) : <span className="text-gray-300">—</span>}
+                          ) : <span className="text-slate-300">—</span>}
                         </td>
-                        <td className="px-6 py-3"><Badge tone={STATUS_TONE[d.status] || 'gray'}>{d.status || '—'}</Badge></td>
+                        <td className="border-b border-slate-100 px-5 py-3.5"><Badge tone={STATUS_TONE[d.status] || 'gray'}>{d.status || '—'}</Badge></td>
                         {canManage && (
-                          <td className="px-6 py-3">
+                          <td className="border-b border-slate-100 px-5 py-3.5">
                             <div className="flex justify-end gap-2">
                               <Button variant="secondary" size="sm" onClick={() => openEdit(d)}>Edit</Button>
                               <Button variant="ghost" size="sm" className="text-red-600 hover:bg-red-50" onClick={() => setToDelete(d)}>Delete</Button>

@@ -23,7 +23,7 @@ const TYPE_TONE = {
   fuel_station: 'amber',
   other: 'gray',
 };
-const DOT = { blue: 'bg-blue-500', violet: 'bg-violet-500', emerald: 'bg-emerald-500', cyan: 'bg-cyan-500', amber: 'bg-amber-500', gray: 'bg-gray-400' };
+const DOT = { blue: 'bg-blue-500', violet: 'bg-violet-500', emerald: 'bg-emerald-500', cyan: 'bg-cyan-500', amber: 'bg-amber-500', gray: 'bg-slate-400' };
 const TYPES = ['garage', 'parts_supplier', 'insurance', 'service_center', 'fuel_station', 'other'];
 const label = (t) => (t || '').replace(/_/g, ' ');
 
@@ -162,14 +162,14 @@ export default function Vendors() {
             <button
               key={tile.t}
               onClick={() => toggleType(tile.t)}
-              className={`relative flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-5 py-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${type === tile.t ? 'ring-2 ring-indigo-500' : 'ring-1 ring-gray-900/5'}`}
+              className={`hover-lift relative flex items-center justify-between rounded-2xl border border-slate-200/60 bg-white px-5 py-4 text-left shadow-soft ${type === tile.t ? 'ring-2 ring-indigo-500' : ''}`}
             >
               <div>
                 <div className="flex items-center gap-2">
                   <span className={`h-2 w-2 rounded-full ${DOT[TYPE_TONE[tile.t]]}`} />
-                  <p className="text-xs font-medium text-gray-500">{tile.label}</p>
+                  <p className="text-xs font-medium text-slate-500">{tile.label}</p>
                 </div>
-                <p className="mt-1 text-2xl font-bold tracking-tight text-gray-900">{loading ? '…' : num(counts[tile.t] || 0)}</p>
+                <p className="mt-1 font-display text-2xl font-bold tracking-tight text-slate-900">{loading ? '…' : num(counts[tile.t] || 0)}</p>
               </div>
               {type === tile.t && <span className="text-xs font-medium text-indigo-600">Filtering ✓</span>}
             </button>
@@ -196,42 +196,42 @@ export default function Vendors() {
 
         <Card>
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-100 text-sm stagger-rows">
-              <thead className="bg-gray-50/60">
-                <tr className="text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                  <th className="px-6 py-3">Name</th>
-                  <th className="px-6 py-3">Type</th>
-                  <th className="px-6 py-3">Phone</th>
-                  <th className="px-6 py-3">Specialization / Link</th>
-                  <th className="px-6 py-3">Cars Insured</th>
-                  <th className="px-6 py-3">Status</th>
-                  {canManage && <th className="px-6 py-3 text-right">Actions</th>}
+            <table className="min-w-full border-separate border-spacing-0 text-sm stagger-rows">
+              <thead className="bg-slate-50/90">
+                <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Name</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Type</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Phone</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Specialization / Link</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-right">Cars Insured</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Status</th>
+                  {canManage && <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-right">Actions</th>}
                 </tr>
               </thead>
 
               {loading ? (
                 <TableSkeleton cols={canManage ? 7 : 6} />
               ) : (
-                <tbody className="divide-y divide-gray-50">
+                <tbody>
                   {paged.map((v) => (
-                    <tr key={v.id} className="hover:bg-gray-50/60">
-                      <td className="px-6 py-3 font-medium text-gray-900">{v.name}</td>
-                      <td className="px-6 py-3"><Badge tone={TYPE_TONE[v.type] || 'gray'}>{label(v.type)}</Badge></td>
-                      <td className="px-6 py-3 text-gray-600" dir="ltr">{v.phone || <span className="text-gray-300">—</span>}</td>
-                      <td className="px-6 py-3 text-gray-600">
+                    <tr key={v.id} className="bg-white transition-colors even:bg-slate-50/40 hover:bg-indigo-50/40">
+                      <td className="border-b border-slate-100 px-5 py-3.5 font-medium text-slate-900">{v.name}</td>
+                      <td className="border-b border-slate-100 px-5 py-3.5"><Badge tone={TYPE_TONE[v.type] || 'gray'}>{label(v.type)}</Badge></td>
+                      <td className="border-b border-slate-100 px-5 py-3.5 text-slate-600" dir="ltr">{v.phone || <span className="text-slate-300">—</span>}</td>
+                      <td className="border-b border-slate-100 px-5 py-3.5 text-slate-600">
                         {isUrl(v.notes) ? (
                           <a href={v.notes} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-medium text-indigo-600 hover:text-indigo-700">
                             Map
                             <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M14 5h5v5M19 5l-9 9M10 5H5v14h14v-5" /></svg>
                           </a>
-                        ) : (v.notes || <span className="text-gray-300">—</span>)}
+                        ) : (v.notes || <span className="text-slate-300">—</span>)}
                       </td>
-                      <td className="px-6 py-3 text-gray-600">{v.type === 'insurance' ? num(v.insured_vehicles_count || 0) : <span className="text-gray-300">—</span>}</td>
-                      <td className="px-6 py-3">
+                      <td className="border-b border-slate-100 px-5 py-3.5 text-right tabular-nums text-slate-600">{v.type === 'insurance' ? num(v.insured_vehicles_count || 0) : <span className="text-slate-300">—</span>}</td>
+                      <td className="border-b border-slate-100 px-5 py-3.5">
                         {v.active ? <Badge tone="green">Active</Badge> : <Badge tone="gray">Inactive</Badge>}
                       </td>
                       {canManage && (
-                        <td className="px-6 py-3">
+                        <td className="border-b border-slate-100 px-5 py-3.5">
                           <div className="flex justify-end gap-2">
                             <Button variant="secondary" size="sm" onClick={() => openEdit(v)}>Edit</Button>
                             <Button variant="ghost" size="sm" className="text-red-600 hover:bg-red-50" onClick={() => setToDelete(v)}>Delete</Button>

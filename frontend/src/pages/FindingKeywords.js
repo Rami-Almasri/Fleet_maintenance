@@ -27,7 +27,8 @@ export default function FindingKeywords() {
   const toast = useToast();
   const { can } = usePermissions();
   const { t, lang } = useI18n();
-  const canManage = can('maintenance.manage');
+  const canManage = can('maintenance.manage');                  // edit / re-grade / delete (curation)
+  const canAdd = canManage || can('maintenance.initiate');      // add a keyword (inspectors contribute)
 
   const fetcher = useCallback(async () => {
     const { data } = await api.get('/finding-keywords');
@@ -162,7 +163,7 @@ export default function FindingKeywords() {
           title={t('findingKeywords.title')}
           subtitle={loading ? '…' : t('findingKeywords.subtitle', { shown: num(filtered.length), total: num(counts.total) })}
         >
-          {canManage && (
+          {canAdd && (
             <Button onClick={openCreate}>
               <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M12 5v14M5 12h14" />
@@ -174,22 +175,22 @@ export default function FindingKeywords() {
 
         {/* Risk summary tiles (click to filter) */}
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          <div className="rounded-2xl border border-gray-100 bg-white px-5 py-4 shadow-sm ring-1 ring-gray-900/5">
-            <p className="text-xs font-medium text-gray-500">{t('findingKeywords.tileAll')}</p>
-            <p className="mt-1 text-2xl font-bold tracking-tight text-gray-900">{loading ? '…' : num(counts.total)}</p>
+          <div className="rounded-2xl border border-slate-200/60 bg-white px-5 py-4 shadow-soft">
+            <p className="text-xs font-medium text-slate-500">{t('findingKeywords.tileAll')}</p>
+            <p className="mt-1 font-display text-2xl font-bold tracking-tight text-slate-900">{loading ? '…' : num(counts.total)}</p>
           </div>
           {RISK_ORDER.map((r) => (
             <button
               key={r}
               onClick={() => toggleRisk(r)}
-              className={`relative flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-5 py-4 text-start shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${risk === r ? 'ring-2 ring-indigo-500' : 'ring-1 ring-gray-900/5'}`}
+              className={`hover-lift relative flex items-center justify-between rounded-2xl border border-slate-200/60 bg-white px-5 py-4 text-start shadow-soft ${risk === r ? 'ring-2 ring-indigo-500' : ''}`}
             >
               <div>
                 <div className="flex items-center gap-2">
                   <span>{RISK_EMOJI[r]}</span>
-                  <p className="text-xs font-medium text-gray-500">{riskLabel(r)}</p>
+                  <p className="text-xs font-medium text-slate-500">{riskLabel(r)}</p>
                 </div>
-                <p className="mt-1 text-2xl font-bold tracking-tight text-gray-900">{loading ? '…' : num(counts[r] || 0)}</p>
+                <p className="mt-1 font-display text-2xl font-bold tracking-tight text-slate-900">{loading ? '…' : num(counts[r] || 0)}</p>
               </div>
               {risk === r && <span className="text-xs font-medium text-indigo-600">✓</span>}
             </button>
@@ -220,40 +221,40 @@ export default function FindingKeywords() {
 
         <Card>
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-100 text-sm stagger-rows">
-              <thead className="bg-gray-50/60">
-                <tr className="text-start text-xs font-semibold uppercase tracking-wide text-gray-500">
-                  <th className="px-6 py-3 text-start">{t('findingKeywords.colKeyword')}</th>
-                  <th className="px-6 py-3 text-start">{t('findingKeywords.colCategory')}</th>
-                  <th className="px-6 py-3 text-start">{t('findingKeywords.colRisk')}</th>
-                  <th className="px-6 py-3 text-start">{t('findingKeywords.colDetail')}</th>
-                  <th className="px-6 py-3 text-start">{t('findingKeywords.colStatus')}</th>
-                  {canManage && <th className="px-6 py-3 text-end">{t('findingKeywords.colActions')}</th>}
+            <table className="min-w-full border-separate border-spacing-0 text-sm stagger-rows">
+              <thead className="bg-slate-50/90">
+                <tr className="text-start text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-start">{t('findingKeywords.colKeyword')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-start">{t('findingKeywords.colCategory')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-start">{t('findingKeywords.colRisk')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-start">{t('findingKeywords.colDetail')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-start">{t('findingKeywords.colStatus')}</th>
+                  {canManage && <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-end">{t('findingKeywords.colActions')}</th>}
                 </tr>
               </thead>
 
               {loading ? (
                 <TableSkeleton cols={canManage ? 6 : 5} />
               ) : (
-                <tbody className="divide-y divide-gray-50">
+                <tbody>
                   {paged.map((k) => {
                     const secondary = kwSecondary(k);
                     return (
-                      <tr key={k.id} className={`hover:bg-gray-50/60 ${k.is_active ? '' : 'opacity-60'}`}>
-                        <td className="px-6 py-3">
-                          <div className="font-medium text-gray-900">{kwPrimary(k)}</div>
-                          {secondary && <div className="text-xs text-gray-400" dir="auto">{secondary}</div>}
+                      <tr key={k.id} className={`bg-white transition-colors even:bg-slate-50/40 hover:bg-indigo-50/40 ${k.is_active ? '' : 'opacity-60'}`}>
+                        <td className="border-b border-slate-100 px-5 py-3.5">
+                          <div className="font-medium text-slate-900">{kwPrimary(k)}</div>
+                          {secondary && <div className="text-xs text-slate-400" dir="auto">{secondary}</div>}
                         </td>
-                        <td className="px-6 py-3 text-gray-600">{rowCatLabel(k)}</td>
-                        <td className="px-6 py-3">
+                        <td className="border-b border-slate-100 px-5 py-3.5 text-slate-600">{rowCatLabel(k)}</td>
+                        <td className="border-b border-slate-100 px-5 py-3.5">
                           <Badge tone={RISK_TONE[k.risk] || 'amber'}>{RISK_EMOJI[k.risk]} {riskLabel(k.risk)}</Badge>
                         </td>
-                        <td className="px-6 py-3 max-w-md text-gray-600">{k.description || <span className="text-gray-300">—</span>}</td>
-                        <td className="px-6 py-3">
+                        <td className="border-b border-slate-100 px-5 py-3.5 max-w-md text-slate-600">{k.description || <span className="text-slate-300">—</span>}</td>
+                        <td className="border-b border-slate-100 px-5 py-3.5">
                           {k.is_active ? <Badge tone="green">{t('findingKeywords.active')}</Badge> : <Badge tone="gray">{t('findingKeywords.hidden')}</Badge>}
                         </td>
                         {canManage && (
-                          <td className="px-6 py-3">
+                          <td className="border-b border-slate-100 px-5 py-3.5">
                             <div className="flex justify-end gap-2">
                               <Button variant="secondary" size="sm" onClick={() => openEdit(k)}>{t('common.edit')}</Button>
                               <Button variant="ghost" size="sm" className="text-red-600 hover:bg-red-50" onClick={() => setToDelete(k)}>{t('findingKeywords.remove')}</Button>
@@ -346,10 +347,10 @@ export default function FindingKeywords() {
             onChange={(e) => onField('description', e.target.value)}
           />
 
-          <label className="flex items-center gap-2 text-sm text-gray-700">
+          <label className="flex items-center gap-2 text-sm text-slate-700">
             <input
               type="checkbox"
-              className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+              className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
               checked={form.is_active}
               onChange={(e) => onField('is_active', e.target.checked)}
             />

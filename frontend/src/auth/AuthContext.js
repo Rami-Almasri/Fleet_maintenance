@@ -1,12 +1,20 @@
-import { createContext, useContext, useState, useCallback } from 'react';
+import { createContext, useContext, useState, useCallback, useMemo } from 'react';
 import api from '../api/client';
 
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => {
-    const raw = localStorage.getItem('user');
-    return raw ? JSON.parse(raw) : null;
+    // Guard the parse: a corrupted `user` entry must NOT throw here. This runs in
+    // AuthProvider, which wraps the whole tree ABOVE the ErrorBoundary, so an
+    // uncaught throw would white-screen the entire app instead of showing login.
+    try {
+      const raw = localStorage.getItem('user');
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      localStorage.removeItem('user');
+      return null;
+    }
   });
   const [token, setToken] = useState(() => localStorage.getItem('token'));
 
@@ -33,11 +41,14 @@ export function AuthProvider({ children }) {
     setUser(null);
   }, []);
 
-  return (
-    <AuthContext.Provider value={{ user, token, isAuthenticated: !!token, login, logout }}>
-      {children}
-    </AuthContext.Provider>
+  // Stable context value — only changes when auth actually changes, so the
+  // app-wide consumers of useAuth() don't re-render on unrelated parent renders.
+  const value = useMemo(
+    () => ({ user, token, isAuthenticated: !!token, login, logout }),
+    [user, token, login, logout]
   );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {

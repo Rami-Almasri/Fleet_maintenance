@@ -8,20 +8,20 @@ export default function NotificationRow({ n, onOpen, onDismiss, compact = false 
   return (
     <div
       className={[
-        'group relative flex gap-3 transition-colors',
+        'group relative flex gap-3 transition-colors duration-150',
         compact ? 'px-3 py-3' : 'px-4 py-4 sm:px-5',
         n.read ? 'bg-white' : 'bg-indigo-50/40',
         'hover:bg-slate-50',
       ].join(' ')}
     >
       {/* unread accent rail */}
-      {!n.read && <span className={`absolute inset-y-0 left-0 w-[3px] ${theme.accent}`} />}
+      {!n.read && <span aria-hidden="true" className={`absolute inset-y-0 left-0 w-[3px] ${theme.accent}`} />}
 
       {/* severity icon tile */}
       <div
         className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white shadow-sm ${theme.iconBg}`}
       >
-        <svg className="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <svg aria-hidden="true" className="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
           <path d={iconPath(n.icon)} />
         </svg>
       </div>
@@ -36,7 +36,7 @@ export default function NotificationRow({ n, onOpen, onDismiss, compact = false 
           <p className={`truncate text-sm ${n.read ? 'font-medium text-slate-700' : 'font-semibold text-slate-900'}`}>
             {n.title}
           </p>
-          {!n.read && <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${theme.dot}`} />}
+          {!n.read && <span aria-label="unread" className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${theme.dot}`} />}
         </div>
         <p className={`mt-0.5 ${compact ? 'line-clamp-2' : ''} text-[13px] leading-snug text-slate-500`}>{n.body}</p>
         <div className="mt-1.5 flex items-center gap-2">
@@ -55,11 +55,11 @@ export default function NotificationRow({ n, onOpen, onDismiss, compact = false 
         <button
           type="button"
           onClick={(e) => { e.stopPropagation(); onDismiss(n.id); }}
-          className="absolute right-2 top-2 rounded-lg p-1 text-slate-300 opacity-0 transition hover:bg-slate-100 hover:text-slate-500 group-hover:opacity-100"
+          className="absolute right-2 top-2 rounded-lg p-1 text-slate-300 opacity-0 transition-colors duration-150 hover:bg-slate-100 hover:text-slate-500 focus-visible:opacity-100 group-hover:opacity-100"
           title="Dismiss"
           aria-label="Dismiss notification"
         >
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M6 18L18 6M6 6l12 12" />
           </svg>
         </button>

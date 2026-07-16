@@ -40,7 +40,7 @@ function Shortcut({ keys, label }) {
         {keys.map((k, i) => (
           <kbd
             key={i}
-            className="inline-flex min-w-[1.5rem] items-center justify-center rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-slate-600 shadow-sm"
+            className="inline-flex min-w-[1.5rem] items-center justify-center rounded-lg border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-slate-600 shadow-sm"
           >
             {k}
           </kbd>
@@ -68,11 +68,10 @@ export default function Settings() {
   return (
     <div className="py-8">
       <div className="mx-auto max-w-4xl space-y-6 px-4 sm:px-6 lg:px-8">
-        {/* Hero header — matches the Dashboard's navy identity band */}
-        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-navy-900 via-navy-800 to-navy-950 px-6 py-7 shadow-xl ring-1 ring-white/10 sm:px-8">
-          <div className="pointer-events-none absolute -right-16 -top-16 h-56 w-56 rounded-full bg-brand-500/25 blur-3xl" />
+        {/* Hero header — clean navy identity band */}
+        <div className="relative overflow-hidden rounded-2xl bg-navy-950 px-6 py-7 ring-1 ring-white/10 sm:px-8">
           <div className="relative flex items-center gap-5">
-            <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-500 text-2xl font-bold text-white shadow-lg ring-2 ring-white/20">
+            <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-indigo-600 text-2xl font-bold text-white ring-2 ring-white/20">
               {initial}
             </div>
             <div className="min-w-0">
@@ -86,7 +85,7 @@ export default function Settings() {
         {/* Appearance */}
         <SectionCard
           title="Appearance"
-          subtitle="Tune how FleetView looks and reads on your device"
+          subtitle="Tune how Faster looks and reads on your device"
         >
           <div className="px-1">
             <Row title="Theme" desc={`Currently ${theme === 'dark' ? 'Cockpit (dark)' : 'Platinum (light)'} — switch between the day and night surfaces.`}>
@@ -152,7 +151,7 @@ export default function Settings() {
         {/* Keyboard shortcuts */}
         <SectionCard
           title="Keyboard Shortcuts"
-          subtitle="Move around FleetView without touching the mouse"
+          subtitle="Move around Faster without touching the mouse"
           actions={<Badge tone="gray">power user</Badge>}
         >
           <div className="grid grid-cols-1 gap-x-10 px-1 sm:grid-cols-2">
@@ -171,7 +170,7 @@ export default function Settings() {
         </SectionCard>
 
         {/* About / build info */}
-        <SectionCard title="About" subtitle="This build of FleetView">
+        <SectionCard title="About" subtitle="This build of Faster">
           <div className="px-1">
             <Row title="Financial widgets" desc="Money figures (balances, wallets, invoice/payment & cost totals) across the app.">
               <Badge tone={SHOW_FINANCIALS ? 'emerald' : 'gray'}>{SHOW_FINANCIALS ? 'Visible' : 'Hidden'}</Badge>

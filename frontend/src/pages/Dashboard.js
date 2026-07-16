@@ -1,4 +1,4 @@
-import { useCallback, useState, useEffect } from 'react';
+import { useCallback, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api/client';
 import useFetch from '../hooks/useFetch';
@@ -9,7 +9,6 @@ import { SectionCard } from '../components/ui/Table';
 import { MetricGridSkeleton, Skeleton } from '../components/ui/Skeleton';
 import { InfoTip } from '../components/ui/Tooltip';
 import Icon from '../components/ui/Icon';
-import { RadialGauge, useCountUp } from '../components/ui/Gauge';
 import FleetStatusCard from '../components/ui/FleetStatusCard';
 import { TimelineBar } from '../components/ui/Progress';
 import BarChart from '../components/ui/BarChart';
@@ -17,7 +16,6 @@ import LineChart from '../components/ui/LineChart';
 import Sparkline from '../components/ui/Sparkline';
 import FleetPulseGrid from '../components/FleetPulseGrid';
 import { usePageStat } from '../components/PageStat';
-import { MaintenanceBoardPanel } from './MaintenanceBoard';
 import { aed, aed2, fmtDate } from '../lib/format';
 import { SHOW_FINANCIALS } from '../config/features';
 import { useAuth } from '../auth/AuthContext';
@@ -41,7 +39,7 @@ const aedK = (n) => {
 function PlateChip({ plate }) {
   if (!plate) return <span className="text-slate-300">—</span>;
   return (
-    <span className="inline-flex items-center rounded-md border border-slate-300 bg-slate-50 px-2 py-0.5 font-mono text-xs font-semibold tracking-wider text-slate-700">
+    <span className="inline-flex items-center rounded-lg border border-slate-300 bg-slate-50 px-2 py-0.5 font-mono text-xs font-semibold tracking-wider text-slate-700">
       {plate}
     </span>
   );
@@ -57,45 +55,18 @@ function urgency(days) {
   return { ring: '#10b981', text: 'text-emerald-600' };
 }
 
-// A small animated countdown ring — the "days left" rendered as a depleting arc
-// over a 30-day window, with the number (or "!" when expired) in the centre.
-// This replaces a flat expiry cell with a glanceable, alive indicator.
-function MiniCountRing({ days, label }) {
-  const size = 60, stroke = 5;
-  const r = (size - stroke) / 2;
-  const c = 2 * Math.PI * r;
+// A calm, static expiry readout — "days left" as a plain coloured number (or
+// "expired"), replacing the animated countdown ring. The colour still encodes
+// urgency (red = expired, amber = this week, blue = this month, green = ahead).
+function ExpiryStat({ days, label }) {
   const u = urgency(days);
-  const ratio = days == null ? 0 : Math.max(0, Math.min(1, days / 30));
-  const [grow, setGrow] = useState(0);
-  useEffect(() => {
-    const id = requestAnimationFrame(() => setGrow(ratio));
-    return () => cancelAnimationFrame(id);
-  }, [ratio]);
-  const center = days == null ? '—' : days < 0 ? '!' : days;
-  const expired = days != null && days < 0;
+  const text = days == null ? '—' : days < 0 ? 'expired' : `${days}d`;
   return (
-    <div className="flex flex-col items-center gap-1">
-      <div className="relative inline-flex items-center justify-center" style={{ width: size, height: size }}>
-        <svg width={size} height={size} className="-rotate-90">
-          <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgb(var(--line))" strokeWidth={stroke} />
-          <circle
-            cx={size / 2} cy={size / 2} r={r} fill="none" stroke={u.ring} strokeWidth={stroke}
-            strokeLinecap="round" strokeDasharray={c}
-            strokeDashoffset={expired ? 0 : c * (1 - grow)}
-            style={{ transition: 'stroke-dashoffset 1.1s cubic-bezier(0.22,1,0.36,1)' }}
-          />
-        </svg>
-        <span className={`absolute font-display text-lg font-bold tabular-nums ${u.text}`}>{center}</span>
-      </div>
+    <div className="text-center">
+      <p className={`font-display text-base font-bold tabular-nums ${u.text}`}>{text}</p>
       <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{label}</span>
     </div>
   );
-}
-
-// A number that counts up from 0 on mount — used in the greeting header.
-function CountUp({ value, format }) {
-  const v = useCountUp(value);
-  return <>{format ? format(v) : Math.round(v).toLocaleString()}</>;
 }
 
 // Percent change vs. a prior value. Returns null when there's no basis to compare
@@ -445,14 +416,6 @@ export default function Dashboard() {
     ]),
   ];
 
-  // The three sub-tiles under the Rent Status gauge (Gatra's Hired / Pending / Cancelled,
-  // re-cast as our real operational states: rented / available / in the shop).
-  const rentTiles = [
-    { label: 'Rented',    val: rented,    icon: <Icon.Car className="h-4 w-4" />,    cls: 'bg-blue-50 text-blue-600' },
-    { label: 'Available', val: available, icon: <Icon.Check className="h-4 w-4" />,  cls: 'bg-emerald-50 text-emerald-600' },
-    { label: 'In Shop',   val: maint,     icon: <Icon.Wrench className="h-4 w-4" />, cls: 'bg-amber-50 text-amber-600' },
-  ];
-
   // KPI tiles — each maps to a semantic tone, a design-system icon, a short hint
   // and a tooltip that defines the metric. The whole tile links via MetricCard's `to`.
   const cards = [
@@ -465,16 +428,6 @@ export default function Dashboard() {
       label: 'Overdue Rentals', key: 'overdue_rentals', tone: 'red', icon: <Icon.Clock className="h-5 w-5" />,
       to: '/overdue-rentals', hint: 'Past estimated return date',
       tooltip: 'Open rental contracts whose expected return date has already passed — contact the customer for an extension.',
-    },
-    {
-      label: 'Cars in Maintenance', key: 'cars_in_maintenance', tone: 'amber', icon: <Icon.Wrench className="h-5 w-5" />,
-      to: '/maintenance', hint: 'Currently in the garage',
-      tooltip: 'Vehicles whose live operational status is "in maintenance" — not earning while under repair.',
-    },
-    {
-      label: 'Active Contracts', key: 'active_contracts', tone: 'blue', icon: <Icon.Invoice className="h-5 w-5" />,
-      to: '/contracts', hint: 'Cars currently out',
-      tooltip: 'Open rental contracts — cars that are currently checked out to a customer.',
     },
     {
       label: 'Expiring Documents', key: 'expiring_registrations', tone: 'amber', icon: <Icon.Alert className="h-5 w-5" />,
@@ -499,37 +452,28 @@ export default function Dashboard() {
   ];
 
   return (
-    <div className="py-8">
+    <div className="opx py-8">
       <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
         {/* Greeting header — a light, personable "Good morning, {name}!" band with a live
             pulse, the last-updated stamp, the fleet-size counter, and the view switcher. */}
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">
-            <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-indigo-500">
-              <span className="relative flex h-2 w-2">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-70" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
-              </span>
-              Fleet Command Center · Live
-            </p>
-            <h1 className="mt-1.5 font-display text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
-              {greeting()}{firstName ? `, ${firstName}` : ''}!
-            </h1>
-            <p className="mt-1 text-sm text-slate-500">
+            <div className="opx-hint" style={{ letterSpacing: '.16em', textTransform: 'uppercase', marginBottom: 7, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span className="h-1.5 w-1.5 rounded-full" style={{ background: 'var(--avail)', boxShadow: '0 0 8px var(--avail)' }} />
+              Fleet Command · Live
+            </div>
+            <div className="flex items-center gap-2.5">
+              <span className="h-5 w-1 rounded-full bg-indigo-500" />
+              <h1 className="font-display text-2xl font-bold tracking-tight" style={{ color: 'var(--ink)' }}>
+                {greeting()}{firstName ? `, ${firstName}` : ''}
+              </h1>
+            </div>
+            <p className="mt-1.5 text-sm sm:ps-3.5" style={{ color: 'var(--ink-3)' }}>
               Live snapshot of your fleet's {SHOW_FINANCIALS ? 'finances and operations' : 'status and operations'}.
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-2 rounded-xl border border-slate-200/70 bg-white px-4 py-2 shadow-soft">
-              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-100 text-indigo-600"><Icon.Car className="h-5 w-5" /></span>
-              <div className="text-right">
-                <p className="text-[11px] font-medium text-slate-400">Fleet size</p>
-                <p className="font-display text-lg font-bold leading-none tabular-nums text-slate-900">
-                  {loading ? '—' : <CountUp value={fleetTotal} />}
-                </p>
-              </div>
-            </div>
             <span className="hidden text-xs font-medium text-slate-400 sm:inline">Updated {fmtDate(new Date())}</span>
             {/* View toggle — flip between the analytical "Metrics" view and the live "Fleet Pulse" wall. */}
             <div className="inline-flex rounded-xl bg-slate-100 p-1">
@@ -561,10 +505,9 @@ export default function Dashboard() {
 
         {view === 'metrics' && (
           <>
-        {/* ── Command band — the Gatra-style hero row: Available Cars + Workshop Activity
-            on the left, the Rent Status gauge in the middle, and the Statistics column
-            on the right. Everything below maps to a real endpoint (no fake widgets). ── */}
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        {/* ── Command band — Available Cars + Workshop Activity on the left, the
+            Statistics column on the right. Every widget maps to a real endpoint. ── */}
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           {/* Left column — Available Cars (condition bar) + Workshop Activity (line) */}
           <div className="space-y-6">
             {/* Available Cars — the count free to rent, with a live condition split. */}
@@ -631,44 +574,6 @@ export default function Dashboard() {
             </Card>
           </div>
 
-          {/* Center — Rent Status radial gauge with the operational sub-tiles. */}
-          <Card className="flex flex-col p-5">
-            <div className="flex items-center gap-1.5">
-              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-100 text-blue-600"><Icon.Gauge className="h-4 w-4" /></span>
-              <h2 className="text-sm font-semibold text-slate-800">Rent Status</h2>
-              <InfoTip content="How much of the fleet is earning right now. The ring fills to utilization — rented ÷ total. The tiles below split every car into rented, available and in the shop." />
-            </div>
-
-            <div className="flex flex-1 flex-col items-center justify-center pt-6 pb-2">
-              {loading ? (
-                <Skeleton className="h-[168px] w-[168px] rounded-full" />
-              ) : (
-                <RadialGauge value={rented} max={fleetTotal} color="indigo" size={168} stroke={14} format={(v) => Math.round(v).toLocaleString()} />
-              )}
-            </div>
-
-            {!loading && (
-              <p className="mt-4 text-center">
-                <span className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-600">
-                  {utilization}% fleet utilization
-                </span>
-              </p>
-            )}
-
-            <div className="mt-4 grid grid-cols-3 gap-2">
-              {rentTiles.map((t) => (
-                <div key={t.label} className="rounded-2xl border border-slate-200/60 p-3 text-center">
-                  <span className={`mx-auto flex h-8 w-8 items-center justify-center rounded-lg ${t.cls}`}>{t.icon}</span>
-                  <p className="mt-1.5 font-display text-lg font-bold tabular-nums text-slate-900">{loading ? '—' : t.val.toLocaleString()}</p>
-                  <p className="text-[11px] font-medium text-slate-400">{t.label}</p>
-                </div>
-              ))}
-            </div>
-            <p className="mt-3 text-center text-xs text-slate-400">
-              {loading ? '' : `${rented} of ${fleetTotal} cars currently rented out`}
-            </p>
-          </Card>
-
           {/* Right — Statistics: real MoM KPIs with trailing sparklines. */}
           <Card className="p-5">
             <div className="flex items-center justify-between">
@@ -688,7 +593,7 @@ export default function Dashboard() {
           </Card>
         </div>
 
-        {/* Fleet composition — the big glowing status donut beside a live capacity gauge. */}
+        {/* Fleet composition — the status donut beside a compact utilization summary. */}
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           {loading ? (
             <Card className="lg:col-span-2">
@@ -704,50 +609,42 @@ export default function Dashboard() {
               segments={fleetStatusSegments}
               headerRight={
                 <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200">
-                  <span className="relative flex h-2 w-2">
-                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                    <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
-                  </span>
+                  <span className="h-2 w-2 rounded-full bg-emerald-500" />
                   Live
                 </span>
               }
             />
           )}
 
-          <Card>
-            <div className="border-b border-slate-100 px-6 py-4">
-              <h2 className="flex items-center gap-1.5 text-base font-semibold text-slate-900">
-                Capacity
-                <InfoTip content="Dead Capacity = the share of the fleet not earning because it's in the shop or out of order. The bar splits every car into rented, available and in-shop right now." />
-              </h2>
-              <p className="mt-0.5 text-xs text-slate-500">Idle vs. earning, right now</p>
+          {/* Compact utilization summary — the two headline percentages that the
+              removed Rent Status / Capacity gauges used to show, as plain numbers. */}
+          <Card className="flex flex-col justify-center gap-5 p-6">
+            <div>
+              <p className="flex items-center gap-1 text-xs font-medium text-slate-500">
+                Fleet Utilization
+                <InfoTip content="Share of the fleet earning right now — rented ÷ total." />
+              </p>
+              <p className="mt-1 font-display text-3xl font-bold tabular-nums text-slate-900">
+                {loading ? '—' : `${utilization}%`}
+              </p>
+              <p className="mt-0.5 text-xs text-slate-400">{loading ? '' : `${rented} of ${fleetTotal} cars earning`}</p>
             </div>
-            <div className="space-y-7 px-6 py-7">
-              {loading ? (
-                <div className="flex justify-center"><Skeleton className="h-28 w-28 rounded-full" /></div>
-              ) : (
-                <div className="flex justify-center pb-7">
-                  <RadialGauge value={downtimePct} max={100} color="orange" label="Dead capacity" format={(v) => `${Math.round(v)}%`} size={128} stroke={11} />
-                </div>
-              )}
-              {!loading && (
-                <TimelineBar
-                  className="w-full"
-                  segments={[
-                    { label: 'Rented', value: rented, tone: 'brand' },
-                    { label: 'Available', value: available, tone: 'success' },
-                    { label: 'In shop', value: maint, tone: 'alert' },
-                    { label: 'Other', value: unavailable, tone: 'slate' },
-                  ]}
-                />
-              )}
+            <div className="border-t border-slate-100 pt-5">
+              <p className="flex items-center gap-1 text-xs font-medium text-slate-500">
+                Idle Capacity
+                <InfoTip content="Share of the fleet not earning because it's in the shop or out of order." />
+              </p>
+              <p className={`mt-1 font-display text-3xl font-bold tabular-nums ${downtimePct > 0 ? 'text-amber-600' : 'text-slate-900'}`}>
+                {loading ? '—' : `${downtimePct}%`}
+              </p>
+              <p className="mt-0.5 text-xs text-slate-400">{loading ? '' : `${deadCount} cars in shop / out of order`}</p>
             </div>
           </Card>
         </div>
 
         {/* KPI cards */}
         {loading ? (
-          <MetricGridSkeleton count={8} />
+          <MetricGridSkeleton count={5} />
         ) : (
           <MetricGrid cols={4}>
             {cards.filter((card) => SHOW_FINANCIALS || card.key !== 'negative_yield').map((card) => (
@@ -847,7 +744,28 @@ export default function Dashboard() {
               <Link to="/maintenance" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">Open full board →</Link>
             </div>
           </div>
-          <MaintenanceBoardPanel />
+          <Card className="flex flex-col items-start justify-between gap-4 p-5 sm:flex-row sm:items-center">
+            <div className="flex items-center gap-4">
+              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-600">
+                <Icon.Wrench className="h-6 w-6" />
+              </span>
+              <div>
+                <p className="font-display text-2xl font-bold leading-none tabular-nums text-slate-900">
+                  {loading ? '—' : maint.toLocaleString()}
+                </p>
+                <p className="mt-1 text-sm text-slate-500">
+                  cars currently in the workshop{outOfOrder ? ` · ${outOfOrder} out of order` : ''}
+                </p>
+              </div>
+            </div>
+            <Link
+              to="/maintenance"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-indigo-700"
+            >
+              Open board
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+            </Link>
+          </Card>
         </section>
 
         {/* Expiring soon — registration / insurance due in the next 30 days,
@@ -867,7 +785,7 @@ export default function Dashboard() {
               {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-[92px] rounded-2xl" />)}
             </div>
           ) : expiring.length === 0 ? (
-            <p className="py-8 text-center text-sm text-slate-400">Nothing expiring soon 🎉</p>
+            <p className="py-8 text-center text-sm text-slate-400">Nothing expiring soon.</p>
           ) : (
             <div className="stagger grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {expiring.map((r, i) => {
@@ -887,9 +805,9 @@ export default function Dashboard() {
                         <span className="mt-1 inline-block"><PlateChip plate={r.plate_no} /></span>
                       </div>
                     </div>
-                    <div className="flex shrink-0 gap-2">
-                      <MiniCountRing days={r.registration_days_left} label="Mulkiya" />
-                      <MiniCountRing days={r.insurance_days_left} label="Insurance" />
+                    <div className="flex shrink-0 gap-4">
+                      <ExpiryStat days={r.registration_days_left} label="Mulkiya" />
+                      <ExpiryStat days={r.insurance_days_left} label="Insurance" />
                     </div>
                   </Link>
                 );
@@ -967,18 +885,13 @@ export default function Dashboard() {
                       )}
                       {/* days late — bold, with a ping on the worst offenders */}
                       <div className="flex shrink-0 items-center gap-2 sm:w-24 sm:justify-end">
-                        {hot && (
-                          <span className="relative flex h-2 w-2">
-                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-70" />
-                            <span className="relative inline-flex h-2 w-2 rounded-full bg-red-500" />
-                          </span>
-                        )}
+                        {hot && <span className="h-2 w-2 rounded-full bg-red-500" title="7+ days overdue" />}
                         <span className="font-display text-lg font-bold tabular-nums text-red-600">{r.days_overdue}<span className="ml-0.5 text-xs font-semibold text-red-400">d</span></span>
                       </div>
                     </div>
                     {/* relative-lateness bar */}
                     <div className="mt-2.5 h-1 overflow-hidden rounded-full bg-slate-100">
-                      <div className="h-full rounded-full bg-gradient-to-r from-red-400 to-red-600" style={{ width: `${latePct}%` }} />
+                      <div className="h-full rounded-full bg-red-500" style={{ width: `${latePct}%` }} />
                     </div>
                   </div>
                 );

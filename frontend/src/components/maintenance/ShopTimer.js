@@ -39,7 +39,7 @@ export default function ShopTimer({ sessions = [], compact = false }) {
                 </span>
               )}
               <span
-                className="inline-flex items-center gap-1.5 rounded-md bg-red-50 px-2 py-0.5 text-[11px] font-medium text-red-700 ring-1 ring-inset ring-red-200"
+                className="inline-flex items-center gap-1.5 rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-medium text-red-700 ring-1 ring-inset ring-red-200"
                 title={`${s.label}: ${fmtDate(s.start)} → ${fmtDate(s.end)}`}
               >
                 <span className="font-semibold tabular-nums">{s.days}d</span>

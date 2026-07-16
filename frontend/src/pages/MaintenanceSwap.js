@@ -168,11 +168,11 @@ function ActionCard({ car, onProcess }) {
       {/* The crucial distinction: WITH CUSTOMER (blue, needs a renew) vs AVAILABLE (green, direct). */}
       <div className="mt-2.5">
         {withCustomer ? (
-          <span className="inline-flex items-center gap-1.5 rounded-md bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700 ring-1 ring-inset ring-blue-200">
+          <span className="inline-flex items-center gap-1.5 rounded-lg bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700 ring-1 ring-inset ring-blue-200">
             <Icon.Users className="h-3.5 w-3.5" /> With customer · {car.customer} · #{car.contractNo}
           </span>
         ) : (
-          <span className="inline-flex items-center gap-1.5 rounded-md bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">
+          <span className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">
             <Icon.Check className="h-3.5 w-3.5" /> Available · no active rental
           </span>
         )}
@@ -214,7 +214,7 @@ function PoolCard({ car }) {
             title={car.owesMaintenanceNote ? `Owes maintenance — ${car.owesMaintenanceNote}` : 'Pulled from the workshop for a customer — must go back to the garage.'}
             className="mt-1 inline-flex items-center gap-1 rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-700"
           >
-            🛠️↩️ Owes maintenance
+            Owes maintenance
           </span>
         )}
       </div>

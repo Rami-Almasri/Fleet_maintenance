@@ -1,0 +1,79 @@
+/* =======================================================================
+   Canonical dual-state identity — the ONE way FleetView shows a vehicle's
+   two independent dimensions (Rental Availability + Maintenance Lifecycle)
+   everywhere in the app. Theme-agnostic (reads on light & dark): each chip
+   is coloured text on a translucent tint + border, so it never depends on
+   the page background. Paused has a fixed amber identity used system-wide.
+   ======================================================================= */
+.ds-dual{display:inline-flex;flex-wrap:wrap;gap:4px}
+.ds-dual.stack{flex-direction:column;align-items:flex-start}
+
+.ds-chip{display:inline-flex;align-items:center;gap:5px;border-radius:999px;font-weight:700;
+  letter-spacing:.01em;white-space:nowrap;border:1px solid transparent;line-height:1.1;
+  font-variant-numeric:tabular-nums}
+.ds-chip.sm{font-size:10.5px;padding:2.5px 8px}
+.ds-chip.md{font-size:12px;padding:4px 10px}
+.ds-dot{width:6px;height:6px;border-radius:50%;flex:none}
+.ds-crit-dot{width:6px;height:6px;border-radius:50%;flex:none;background:#e11d48;
+  box-shadow:0 0 0 0 rgba(225,29,72,.5);animation:ds-pulse 1.8s ease-out infinite}
+@keyframes ds-pulse{0%,100%{box-shadow:0 0 0 0 rgba(225,29,72,.5)}50%{box-shadow:0 0 0 4px rgba(225,29,72,0)}}
+
+/* semantic tones — fixed hex, legible on white and on dark */
+.ds-avail   {color:#059669;background:rgba(16,185,129,.13);border-color:rgba(16,185,129,.30)}
+.ds-avail  .ds-dot{background:#10b981}
+.ds-rented  {color:#2563eb;background:rgba(59,130,246,.13);border-color:rgba(59,130,246,.30)}
+.ds-rented .ds-dot{background:#3b82f6}
+.ds-reserved{color:#7c3aed;background:rgba(139,92,246,.13);border-color:rgba(139,92,246,.30)}
+.ds-reserved .ds-dot{background:#8b5cf6}
+.ds-transit {color:#0891b2;background:rgba(6,182,212,.13);border-color:rgba(6,182,212,.30)}
+.ds-transit .ds-dot{background:#06b6d4}
+.ds-blocked {color:#64748b;background:rgba(100,116,139,.14);border-color:rgba(100,116,139,.30)}
+.ds-blocked .ds-dot{background:#64748b}
+.ds-paused  {color:#d97706;background:rgba(245,158,11,.16);border-color:rgba(245,158,11,.36)}
+.ds-paused .ds-dot{background:#f59e0b}
+.ds-repair  {color:#2563eb;background:rgba(59,130,246,.11);border-color:rgba(59,130,246,.26)}
+.ds-repair .ds-dot{background:#3b82f6}
+.ds-inspect {color:#7c3aed;background:rgba(139,92,246,.11);border-color:rgba(139,92,246,.26)}
+.ds-inspect .ds-dot{background:#8b5cf6}
+.ds-crit    {color:#e11d48;background:rgba(225,29,72,.13);border-color:rgba(225,29,72,.32)}
+.ds-crit .ds-dot{background:#e11d48}
+.ds-none    {color:#94a3b8;background:rgba(148,163,184,.10);border-color:rgba(148,163,184,.24)}
+.ds-none .ds-dot{background:#94a3b8}
+
+/* -------- paused ribbon: the fixed full-width "returned to service" strip -------- */
+.ds-ribbon{display:flex;align-items:center;gap:12px;border-radius:12px;padding:11px 15px;
+  border:1px solid rgba(245,158,11,.34);
+  background:linear-gradient(90deg,rgba(245,158,11,.12),rgba(245,158,11,.03));
+  position:relative;overflow:hidden}
+.ds-ribbon::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:#f59e0b;
+  box-shadow:0 0 14px 1px rgba(245,158,11,.6)}
+.ds-ribbon.crit{border-color:rgba(225,29,72,.34);background:linear-gradient(90deg,rgba(225,29,72,.12),rgba(225,29,72,.03))}
+.ds-ribbon.crit::before{background:#e11d48;box-shadow:0 0 14px 1px rgba(225,29,72,.6)}
+.ds-ribbon-ic{font-size:16px;flex:none}
+.ds-ribbon-tx{min-width:0;flex:1}
+.ds-ribbon-tx b{display:block;font-size:12.5px;font-weight:700;color:#b45309;letter-spacing:.01em}
+.ds-ribbon.crit .ds-ribbon-tx b{color:#be123c}
+.ds-ribbon-tx span{display:block;font-size:11.5px;color:#8a6d3b;margin-top:1px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ds-ribbon.crit .ds-ribbon-tx span{color:#9f1239}
+.ds-ribbon-tag{flex:none;font-family:ui-monospace,"JetBrains Mono",Menlo,monospace;font-size:10px;
+  font-weight:700;text-transform:uppercase;letter-spacing:.08em;padding:3px 9px;border-radius:7px;
+  color:#b45309;background:rgba(245,158,11,.16);border:1px solid rgba(245,158,11,.3)}
+.ds-ribbon.crit .ds-ribbon-tag{color:#be123c;background:rgba(225,29,72,.14);border-color:rgba(225,29,72,.3)}
+
+/* dark-theme nudge: on the app's Cockpit dark theme, lift chip text a touch so
+   it pops on the dark background. In light mode (incl. a light .opx surface) the
+   darker base colours above are used, which read correctly on white. */
+[data-theme='dark'] .ds-avail{color:#34d399}
+[data-theme='dark'] .ds-rented{color:#60a5fa}
+[data-theme='dark'] .ds-reserved{color:#a78bfa}
+[data-theme='dark'] .ds-transit{color:#22d3ee}
+[data-theme='dark'] .ds-repair{color:#60a5fa}
+[data-theme='dark'] .ds-inspect{color:#a78bfa}
+[data-theme='dark'] .ds-paused{color:#fbbf24}
+[data-theme='dark'] .ds-crit{color:#fb7185}
+[data-theme='dark'] .ds-blocked{color:#94a3b8}
+[data-theme='dark'] .ds-none{color:#8592ab}
+[data-theme='dark'] .ds-ribbon-tx b{color:#fbbf24}
+[data-theme='dark'] .ds-ribbon-tx span{color:#c9a45e}
+[data-theme='dark'] .ds-ribbon.crit .ds-ribbon-tx b{color:#fb7185}

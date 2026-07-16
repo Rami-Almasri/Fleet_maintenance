@@ -22,7 +22,7 @@ export function isSignificantOdometerChange(original, next) {
 function Section({ title, children }) {
   return (
     <div>
-      <h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-400">{title}</h4>
+      <h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">{title}</h4>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">{children}</div>
     </div>
   );
@@ -46,7 +46,7 @@ export default function VehicleForm({ values, onChange, errors = {} }) {
       <Section title="Details">
         <Input label="Make" value={values.make || ''} onChange={set('make')} error={err('make')} placeholder="AUDI" />
         <Input label="Model" value={values.model || ''} onChange={set('model')} error={err('model')} placeholder="A5" />
-        <Input label="Year" type="number" value={values.year || ''} onChange={set('year')} error={err('year')} placeholder="2025" />
+        <Input label="Year" type="number" min={1950} max={new Date().getFullYear() + 1} value={values.year || ''} onChange={set('year')} error={err('year')} placeholder="2025" />
         <Input label="Color" value={values.color || ''} onChange={set('color')} error={err('color')} placeholder="Black" />
       </Section>
 
@@ -66,8 +66,8 @@ export default function VehicleForm({ values, onChange, errors = {} }) {
             <option key={s} value={s}>{s}</option>
           ))}
         </Select>
-        <Input label="Odometer (km)" type="number" value={values.odometer ?? ''} onChange={set('odometer')} error={err('odometer')} />
-        <Input label="Engine Hours" type="number" step="0.1" value={values.engine_hours ?? ''} onChange={set('engine_hours')} error={err('engine_hours')} />
+        <Input label="Odometer (km)" type="number" min="0" value={values.odometer ?? ''} onChange={set('odometer')} error={err('odometer')} />
+        <Input label="Engine Hours" type="number" min="0" step="0.1" value={values.engine_hours ?? ''} onChange={set('engine_hours')} error={err('engine_hours')} />
       </Section>
 
       {needsOdometerNote && (

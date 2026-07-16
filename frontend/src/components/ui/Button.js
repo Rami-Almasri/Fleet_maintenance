@@ -1,15 +1,17 @@
+// Solid, flat enterprise fills — no gradients. Each variant carries a clear
+// hover (one step darker) and its own focus ring colour. Restrained by design.
 const VARIANTS = {
   primary:
-    'bg-gradient-to-b from-indigo-500 to-indigo-600 text-white shadow-sm shadow-indigo-600/20 hover:from-indigo-500 hover:to-indigo-700 focus-visible:outline-indigo-600',
+    'bg-indigo-600 text-white shadow-sm hover:bg-indigo-700 focus-visible:outline-indigo-600',
   secondary:
-    'bg-white text-slate-700 ring-1 ring-inset ring-slate-200 shadow-sm hover:bg-slate-50 hover:ring-slate-300 focus-visible:outline-slate-400',
+    'bg-white text-slate-700 ring-1 ring-inset ring-slate-300 shadow-sm hover:bg-slate-50 hover:ring-slate-400 focus-visible:outline-slate-400',
   ghost: 'text-slate-600 hover:bg-slate-100',
   danger:
-    'bg-gradient-to-b from-red-500 to-red-600 text-white shadow-sm shadow-red-600/20 hover:to-red-700 focus-visible:outline-red-600',
+    'bg-red-600 text-white shadow-sm hover:bg-red-700 focus-visible:outline-red-600',
   success:
-    'bg-gradient-to-b from-emerald-500 to-emerald-600 text-white shadow-sm shadow-emerald-600/20 hover:to-emerald-700 focus-visible:outline-emerald-600',
+    'bg-emerald-600 text-white shadow-sm hover:bg-emerald-700 focus-visible:outline-emerald-600',
   warning:
-    'bg-gradient-to-b from-amber-500 to-amber-600 text-white shadow-sm shadow-amber-600/20 hover:to-amber-700 focus-visible:outline-amber-600',
+    'bg-amber-500 text-white shadow-sm hover:bg-amber-600 focus-visible:outline-amber-500',
 };
 
 const SIZES = {
@@ -30,7 +32,7 @@ export default function Button({
   return (
     <button
       disabled={disabled || loading}
-      className={`inline-flex items-center justify-center rounded-xl font-semibold transition-all duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-60 disabled:active:scale-100 ${VARIANTS[variant] || VARIANTS.primary} ${SIZES[size] || SIZES.md} ${className}`}
+      className={`focus-ring-self inline-flex items-center justify-center rounded-lg font-semibold transition-colors duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60 disabled:active:translate-y-0 ${VARIANTS[variant] || VARIANTS.primary} ${SIZES[size] || SIZES.md} ${className}`}
       {...props}
     >
       {loading && (

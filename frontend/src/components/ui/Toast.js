@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 const ToastContext = createContext(null);
@@ -24,11 +24,18 @@ export function ToastProvider({ children }) {
     [remove]
   );
 
-  const api = {
-    success: (m) => push(m, 'success'),
-    error: (m) => push(m, 'error'),
-    info: (m) => push(m, 'info'),
-  };
+  // Memoize the context value so it stays referentially stable across renders.
+  // `push` is stable (useCallback), so this object only changes once. Without
+  // this, every toast pushed a NEW api object → all consumers re-rendered and any
+  // effect depending on the toast fn (e.g. notification polling) restarted.
+  const api = useMemo(
+    () => ({
+      success: (m) => push(m, 'success'),
+      error: (m) => push(m, 'error'),
+      info: (m) => push(m, 'info'),
+    }),
+    [push]
+  );
 
   return (
     <ToastContext.Provider value={api}>
@@ -47,9 +54,9 @@ export function ToastProvider({ children }) {
                     <path d={tone.icon} />
                   </svg>
                 </span>
-                <p className="flex-1 text-sm text-gray-700">{t.message}</p>
-                <button onClick={() => remove(t.id)} className="text-gray-400 transition hover:text-gray-600">
-                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <p className="flex-1 text-sm text-slate-700">{t.message}</p>
+                <button onClick={() => remove(t.id)} aria-label="Dismiss notification" className="text-slate-400 transition hover:text-slate-600">
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" aria-hidden="true">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                   </svg>
                 </button>

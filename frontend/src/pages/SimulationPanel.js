@@ -203,7 +203,7 @@ export default function SimulationPanel() {
                       </Button>
                     )}
                     {e.scenario === 'oil_alert' && e.vehicle && (
-                      <Button variant="ghost" size="sm" onClick={() => navigate(`/vehicles/${e.vehicle.id}?logOil=1`)}>
+                      <Button variant="ghost" size="sm" onClick={() => navigate(`/vehicles/${e.vehicle.id}?serviceTicket=oil_change`)}>
                         View
                       </Button>
                     )}

@@ -127,13 +127,13 @@ function UpdateCard({ rec }) {
                 <td className="px-4 py-2">
                   {fmtVal(ch.old) === null
                     ? <Dash />
-                    : <span className="rounded-md bg-red-50 px-1.5 py-0.5 text-red-600 line-through decoration-red-300">{fmtVal(ch.old)}</span>}
+                    : <span className="rounded-lg bg-red-50 px-1.5 py-0.5 text-red-600 line-through decoration-red-300">{fmtVal(ch.old)}</span>}
                 </td>
                 <td className="px-1 py-2 text-slate-300"><Icon.ArrowRight className="h-4 w-4" /></td>
                 <td className="px-4 py-2">
                   {fmtVal(ch.new) === null
-                    ? <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-slate-400">cleared</span>
-                    : <span className="rounded-md bg-emerald-50 px-1.5 py-0.5 font-medium text-emerald-700">{fmtVal(ch.new)}</span>}
+                    ? <span className="rounded-lg bg-slate-100 px-1.5 py-0.5 text-slate-400">cleared</span>
+                    : <span className="rounded-lg bg-emerald-50 px-1.5 py-0.5 font-medium text-emerald-700">{fmtVal(ch.new)}</span>}
                 </td>
               </tr>
             );

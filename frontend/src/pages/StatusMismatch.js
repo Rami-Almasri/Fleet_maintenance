@@ -25,42 +25,42 @@ function Group({ g }) {
           </h3>
           <span className="text-xs font-medium uppercase tracking-wide opacity-70">{sev.label}</span>
         </div>
-        <p className="mt-1 text-xs font-normal text-gray-500">{g.description}</p>
+        <p className="mt-1 text-xs font-normal text-slate-500">{g.description}</p>
       </div>
 
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-gray-100 text-sm">
-          <thead className="bg-gray-50/60">
-            <tr className="text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-              <th className="px-6 py-3">Car</th>
-              <th className="px-6 py-3">Vehicle status</th>
-              <th className="px-6 py-3">Contract reality</th>
-              <th className="px-6 py-3">Customer</th>
-              <th className="px-6 py-3 text-right">Open</th>
+        <table className="min-w-full border-separate border-spacing-0 text-sm">
+          <thead>
+            <tr>
+              <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Car</th>
+              <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Vehicle status</th>
+              <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Contract reality</th>
+              <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Customer</th>
+              <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Open</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-50">
+          <tbody>
             {g.items.map((it, i) => (
-              <tr key={i} className="hover:bg-gray-50/60">
-                <td className="px-6 py-3">
+              <tr key={i} className="bg-white transition-colors even:bg-slate-50/40 hover:bg-indigo-50/40">
+                <td className="border-b border-slate-100 px-5 py-3.5">
                   {it.vehicle_id
                     ? <Link to={`/vehicles/${it.vehicle_id}`} className="font-medium text-indigo-600 hover:text-indigo-700">{it.plate || `#${it.vehicle_id}`}</Link>
-                    : <span className="text-gray-400">{it.plate || '—'}</span>}
-                  <div className="text-xs text-gray-400">{it.car || '—'}</div>
+                    : <span className="text-slate-400">{it.plate || '—'}</span>}
+                  <div className="text-xs text-slate-400">{it.car || '—'}</div>
                 </td>
-                <td className="px-6 py-3">
+                <td className="border-b border-slate-100 px-5 py-3.5">
                   <Badge tone={sev.tone}>{it.vehicle_status}</Badge>
                 </td>
-                <td className="px-6 py-3 text-gray-600">{it.contract_state}</td>
-                <td className="px-6 py-3 text-gray-700">
+                <td className="border-b border-slate-100 px-5 py-3.5 text-slate-600">{it.contract_state}</td>
+                <td className="border-b border-slate-100 px-5 py-3.5 text-slate-700">
                   {it.customer_id
                     ? <Link to={`/customers/${it.customer_id}`} className="text-indigo-600 hover:text-indigo-700">{it.customer || '—'}</Link>
-                    : (it.customer || <span className="text-gray-300">—</span>)}
+                    : (it.customer || <span className="text-slate-300">—</span>)}
                 </td>
-                <td className="px-6 py-3 text-right">
+                <td className="border-b border-slate-100 px-5 py-3.5 text-right">
                   {it.contract_id
                     ? <Link to={`/contracts/${it.contract_id}`} className="text-xs font-medium text-indigo-600 hover:text-indigo-700">Contract →</Link>
-                    : (it.vehicle_id ? <Link to={`/vehicles/${it.vehicle_id}`} className="text-xs font-medium text-indigo-600 hover:text-indigo-700">Car →</Link> : <span className="text-gray-300">—</span>)}
+                    : (it.vehicle_id ? <Link to={`/vehicles/${it.vehicle_id}`} className="text-xs font-medium text-indigo-600 hover:text-indigo-700">Car →</Link> : <span className="text-slate-300">—</span>)}
                 </td>
               </tr>
             ))}
@@ -68,7 +68,7 @@ function Group({ g }) {
         </table>
       </div>
       {g.shown < g.count && (
-        <div className="border-t border-gray-100 px-6 py-2 text-xs text-gray-400">
+        <div className="border-t border-slate-100 px-6 py-2 text-xs text-slate-400">
           Showing the first {num(g.shown)} of {num(g.count)}.
         </div>
       )}
@@ -108,17 +108,17 @@ export default function StatusMismatch({ embedded = false }) {
       )}
 
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-          <div className="rounded-2xl border border-gray-100 bg-white px-5 py-4 shadow-sm ring-1 ring-gray-900/5">
-            <p className="text-xs font-medium text-gray-500">Total mismatches</p>
-            <p className="mt-1 text-2xl font-bold tracking-tight text-gray-900">{num(data?.total_mismatches)}</p>
+          <div className="rounded-2xl border border-slate-200/60 bg-white px-5 py-4 shadow-soft">
+            <p className="text-xs font-medium text-slate-500">Total mismatches</p>
+            <p className="mt-1 font-display text-2xl font-bold tracking-tight text-slate-900">{num(data?.total_mismatches)}</p>
           </div>
-          <div className="rounded-2xl border border-gray-100 bg-white px-5 py-4 shadow-sm ring-1 ring-gray-900/5">
-            <p className="text-xs font-medium text-gray-500">🔴 Out, status wrong</p>
-            <p className="mt-1 text-2xl font-bold tracking-tight text-red-600">{num(outCases)}</p>
+          <div className="rounded-2xl border border-slate-200/60 bg-white px-5 py-4 shadow-soft">
+            <p className="flex items-center gap-1.5 text-xs font-medium text-slate-500"><span className="h-1.5 w-1.5 rounded-full bg-red-500" />Out, status wrong</p>
+            <p className="mt-1 font-display text-2xl font-bold tracking-tight text-red-600">{num(outCases)}</p>
           </div>
-          <div className="rounded-2xl border border-gray-100 bg-white px-5 py-4 shadow-sm ring-1 ring-gray-900/5">
-            <p className="text-xs font-medium text-gray-500">🟡 Stale (no contract)</p>
-            <p className="mt-1 text-2xl font-bold tracking-tight text-amber-600">{num(staleCases)}</p>
+          <div className="rounded-2xl border border-slate-200/60 bg-white px-5 py-4 shadow-soft">
+            <p className="flex items-center gap-1.5 text-xs font-medium text-slate-500"><span className="h-1.5 w-1.5 rounded-full bg-amber-500" />Stale (no contract)</p>
+            <p className="mt-1 font-display text-2xl font-bold tracking-tight text-amber-600">{num(staleCases)}</p>
           </div>
         </div>
 

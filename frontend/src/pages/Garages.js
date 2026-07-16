@@ -6,13 +6,13 @@ import Badge from '../components/ui/Badge';
 import { Card, PageHeader, Spinner, EmptyState } from '../components/ui/Misc';
 import { aed2, num } from '../lib/format';
 
-const DOT = { on_track: 'bg-emerald-500', at_risk: 'bg-amber-500', breached: 'bg-red-500', unknown: 'bg-gray-300' };
+const DOT = { on_track: 'bg-emerald-500', at_risk: 'bg-amber-500', breached: 'bg-red-500', unknown: 'bg-slate-300' };
 const PRIO_DOT = { critical: 'bg-red-500', special: 'bg-violet-500', minor: 'bg-amber-500', routine: 'bg-emerald-500' };
 
-function Stat({ label, value, tone = 'text-gray-900' }) {
+function Stat({ label, value, tone = 'text-slate-900' }) {
   return (
     <div>
-      <p className="text-xs font-medium text-gray-500">{label}</p>
+      <p className="text-xs font-medium text-slate-500">{label}</p>
       <p className={`mt-0.5 text-lg font-bold tracking-tight ${tone}`}>{value}</p>
     </div>
   );
@@ -46,7 +46,7 @@ export default function Garages() {
         <div className="grid grid-cols-3 gap-4">
           <Card className="px-5 py-4"><Stat label="Garages" value={num(garages.length)} /></Card>
           <Card className="px-5 py-4"><Stat label="Cars in garages now" value={num(totals.inNow)} /></Card>
-          <Card className="px-5 py-4"><Stat label="🔴 Overdue now" value={num(totals.overdue)} tone={totals.overdue > 0 ? 'text-red-600' : 'text-gray-900'} /></Card>
+          <Card className="px-5 py-4"><Stat label="Overdue now" value={num(totals.overdue)} tone={totals.overdue > 0 ? 'text-red-600' : 'text-slate-900'} /></Card>
         </div>
 
         {garages.length === 0 && <Card><EmptyState title="No garage activity" message="Once maintenance visits have a garage assigned, they'll show here." /></Card>}
@@ -54,8 +54,8 @@ export default function Garages() {
         <div className="space-y-4">
           {garages.map((g) => (
             <Card key={g.vendor_id}>
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-6 py-4">
-                <h3 className="text-base font-semibold text-gray-900">{g.garage}</h3>
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-6 py-4">
+                <h3 className="text-base font-semibold text-slate-900">{g.garage}</h3>
                 <div className="flex flex-wrap items-center gap-2">
                   {g.in_garage_now > 0 && <Badge tone="blue">{g.in_garage_now} in garage</Badge>}
                   {g.overdue_now > 0 && <Badge tone="red">{g.overdue_now} overdue</Badge>}
@@ -67,28 +67,28 @@ export default function Garages() {
 
               <div className="grid grid-cols-2 gap-4 px-6 py-4 sm:grid-cols-5">
                 <Stat label="Total jobs" value={num(g.jobs)} />
-                <Stat label="In garage now" value={num(g.in_garage_now)} tone={g.in_garage_now > 0 ? 'text-blue-600' : 'text-gray-900'} />
-                <Stat label="Late returns" value={num(g.late_returns)} tone={g.late_returns > 0 ? 'text-red-600' : 'text-gray-900'} />
-                <Stat label="Avg delay" value={g.avg_delay_days != null ? `${g.avg_delay_days}d` : '—'} tone={g.avg_delay_days ? 'text-red-600' : 'text-gray-900'} />
+                <Stat label="In garage now" value={num(g.in_garage_now)} tone={g.in_garage_now > 0 ? 'text-blue-600' : 'text-slate-900'} />
+                <Stat label="Late returns" value={num(g.late_returns)} tone={g.late_returns > 0 ? 'text-red-600' : 'text-slate-900'} />
+                <Stat label="Avg delay" value={g.avg_delay_days != null ? `${g.avg_delay_days}d` : '—'} tone={g.avg_delay_days ? 'text-red-600' : 'text-slate-900'} />
                 <Stat label="Total spent" value={aed2(g.total_spent)} />
               </div>
 
               {g.current_cars.length > 0 && (
-                <div className="border-t border-gray-100 px-6 py-3">
-                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Cars here now</p>
+                <div className="border-t border-slate-100 px-6 py-3">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Cars here now</p>
                   <div className="flex flex-wrap gap-2">
                     {g.current_cars.map((car) => (
                       <Link
                         key={car.id}
                         to={`/contracts/${car.id}`}
-                        className="inline-flex flex-col gap-0.5 rounded-lg border border-gray-200 px-3 py-1.5 text-sm hover:bg-gray-50"
+                        className="inline-flex flex-col gap-0.5 rounded-lg border border-slate-200 px-3 py-1.5 text-sm hover:bg-slate-50"
                       >
                         <span className="flex items-center gap-2">
                           <span className={`h-2 w-2 rounded-full ${DOT[car.status] || DOT.unknown}`} />
-                          <span className="font-medium text-gray-800">{car.plate || `#${car.id}`}</span>
-                          <span className="text-xs text-gray-400">{car.days_out}d{car.overdue_days > 0 ? ` · +${car.overdue_days} late` : ''}</span>
+                          <span className="font-medium text-slate-800">{car.plate || `#${car.id}`}</span>
+                          <span className="text-xs text-slate-400">{car.days_out}d{car.overdue_days > 0 ? ` · +${car.overdue_days} late` : ''}</span>
                         </span>
-                        {car.car && <span className="pl-4 text-xs text-gray-500">{car.car}</span>}
+                        {car.car && <span className="pl-4 text-xs text-slate-500">{car.car}</span>}
                       </Link>
                     ))}
                   </div>
@@ -96,21 +96,21 @@ export default function Garages() {
               )}
 
               {g.current_cars.length === 0 && g.recent_cars?.length > 0 && (
-                <div className="border-t border-gray-100 px-6 py-3">
-                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Recent cars handled</p>
+                <div className="border-t border-slate-100 px-6 py-3">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Recent cars handled</p>
                   <div className="flex flex-wrap gap-2">
                     {g.recent_cars.map((car) => (
                       <Link
                         key={car.id}
                         to={`/vehicles/${car.id}`}
-                        className="inline-flex flex-col gap-0.5 rounded-lg border border-gray-200 px-3 py-1.5 text-sm hover:bg-gray-50"
+                        className="inline-flex flex-col gap-0.5 rounded-lg border border-slate-200 px-3 py-1.5 text-sm hover:bg-slate-50"
                       >
                         <span className="flex items-center gap-2">
                           <span className={`h-2 w-2 rounded-full ${PRIO_DOT[car.priority] || PRIO_DOT.routine}`} />
-                          <span className="font-medium text-gray-800">{car.plate || `#${car.id}`}</span>
-                          <span className="text-xs text-gray-400">{car.date || ''}</span>
+                          <span className="font-medium text-slate-800">{car.plate || `#${car.id}`}</span>
+                          <span className="text-xs text-slate-400">{car.date || ''}</span>
                         </span>
-                        {car.car && <span className="pl-4 text-xs text-gray-500">{car.car}</span>}
+                        {car.car && <span className="pl-4 text-xs text-slate-500">{car.car}</span>}
                       </Link>
                     ))}
                   </div>

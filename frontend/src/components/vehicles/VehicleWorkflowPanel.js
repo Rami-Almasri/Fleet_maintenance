@@ -19,7 +19,7 @@ const STAGE = {
   inspection_diagnostic:  { label: 'Diagnostic',       tone: 'violet' },
   inspection_pending:     { label: 'Needs Dispatch',   tone: 'indigo' },
   awaiting_dispatch:      { label: 'Ready for Pickup', tone: 'indigo' },
-  in_transit:             { label: 'Now at Garage',     tone: 'blue' },
+  in_transit:             { label: 'En Route to Garage', tone: 'blue' },
   under_repair:           { label: 'In Workshop',       tone: 'amber' },
   ready_for_reinspection: { label: 'Ready',             tone: 'cyan' },
   closed:                 { label: 'Closed',            tone: 'green' },

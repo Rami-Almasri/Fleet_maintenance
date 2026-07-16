@@ -54,87 +54,6 @@ function NavStrip() {
   );
 }
 
-// ---- Maintenance Pulse (fleet vital signs) --------------------------------
-// The "open this first in the morning" strip: how many cars are down, what we
-// spent this week, how fast the garages are turning cars around, and how many
-// came back. Data is the /Maintenance/board `pulse` block (single aggregate
-// queries — no per-card cost).
-function PulseStat({ icon, label, value, sub, accent = 'text-slate-900' }) {
-  return (
-    <div className="flex items-center gap-3 rounded-xl bg-white/70 px-4 py-3 ring-1 ring-inset ring-white/70">
-      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-indigo-50 text-indigo-600 ring-1 ring-inset ring-indigo-100">
-        {icon}
-      </span>
-      <div className="min-w-0">
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</p>
-        <p className={`text-xl font-bold tabular-nums ${accent}`}>{value}</p>
-        {sub && <p className="truncate text-[11px] text-slate-400">{sub}</p>}
-      </div>
-    </div>
-  );
-}
-
-function MaintenancePulse({ pulse }) {
-  const avg = pulse.avg_repair_days;
-  return (
-    <section className="overflow-hidden rounded-2xl border border-slate-200/70 bg-gradient-to-br from-indigo-50 via-white to-white shadow-soft ring-1 ring-slate-900/5">
-      <div className="flex items-center gap-2 border-b border-slate-100 px-5 py-3">
-        <span className="relative flex h-2.5 w-2.5" aria-hidden="true">
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
-        </span>
-        <h2 className="flex items-center gap-1.5 text-sm font-bold text-slate-800">
-          <Icon.Activity className="h-4 w-4 text-indigo-500" />
-          Maintenance Pulse
-        </h2>
-        <span className="ml-auto hidden text-[11px] font-medium text-slate-400 sm:inline">Live fleet health</span>
-      </div>
-      <div className="grid grid-cols-2 gap-3 p-4 lg:grid-cols-4">
-        <PulseStat
-          icon={<Icon.Wrench className="h-5 w-5" />}
-          label="In the garage"
-          value={num(pulse.in_garage)}
-          sub="cars off the road now"
-        />
-        {SHOW_FINANCIALS && (
-          <PulseStat
-            icon={<Icon.Coins className="h-5 w-5" />}
-            label="Spend this week"
-            value={aed(pulse.spend_week)}
-            sub="repairs started this week"
-          />
-        )}
-        <PulseStat
-          icon={<Icon.Clock className="h-5 w-5" />}
-          label="Avg repair time"
-          value={avg != null ? `${avg}d` : '—'}
-          sub="last 90 days turnaround"
-        />
-        <PulseStat
-          icon={<Icon.Check className="h-5 w-5" />}
-          label="Back this week"
-          value={num(pulse.completed_week)}
-          sub="visits completed"
-          accent="text-emerald-600"
-        />
-        {/* Predictive KPI — cars approaching their service (by km or projected date). Actionable:
-            drills into the Foresight page. Amber (and a pulse) only when there's something to act on. */}
-        {pulse.service_due_soon != null && (
-          <Link to="/maintenance-foresight" className="rounded-xl transition hover:-translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400">
-            <PulseStat
-              icon={<Icon.Gauge className="h-5 w-5" />}
-              label="Service due soon"
-              value={num(pulse.service_due_soon)}
-              sub={pulse.service_due_soon > 0 ? 'approaching the interval →' : 'all serviced'}
-              accent={pulse.service_due_soon > 0 ? 'text-amber-600' : 'text-slate-900'}
-            />
-          </Link>
-        )}
-      </div>
-    </section>
-  );
-}
-
 // How many days a still-open car is running past the fleet's average turnaround.
 // null when we can't compare (no avg, or the car is still under average).
 function overAvg(daysOut, avg) {
@@ -151,8 +70,8 @@ const LIGHT = {
   // The linked visit already came back (latest sheet event = IN) — closed, never overdue.
   returned: { dot: 'bg-sky-500', text: 'Returned', tone: 'sky' },
   // No maintenance record is strictly linked to this contract (no stale visit borrowed).
-  no_log: { dot: 'bg-gray-300', text: 'No log', tone: 'gray' },
-  unknown: { dot: 'bg-gray-300', text: '—', tone: 'gray' },
+  no_log: { dot: 'bg-slate-300', text: 'No log', tone: 'gray' },
+  unknown: { dot: 'bg-slate-300', text: '—', tone: 'gray' },
 };
 
 // Severity classification per maintenance situation (reason -> status, from the sheet).
@@ -206,8 +125,8 @@ function PingPong({ events }) {
     .map((e) => `${e.stage} · out ${e.out_date || '—'}${e.actual_in_date ? ` · in ${e.actual_in_date}` : ''}`)
     .join('\n');
   return (
-    <div className="mt-1 max-w-[150px] text-[10px] leading-tight text-gray-400" title={full}>
-      {shown.join(' → ')} <span className="text-gray-300">({codes.length})</span>
+    <div className="mt-1 max-w-[150px] text-[10px] leading-tight text-slate-400" title={full}>
+      {shown.join(' → ')} <span className="text-slate-300">({codes.length})</span>
     </div>
   );
 }
@@ -229,22 +148,22 @@ function GarageLog({ car, onClose }) {
           {car.events.map((e, i) => {
             const si = stageInfo(e.stage);
             return (
-              <li key={i} className="rounded-xl border border-gray-100 p-3">
+              <li key={i} className="rounded-xl border border-slate-100 p-3">
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-                  <span className="font-medium text-gray-400">{i + 1}.</span>
+                  <span className="font-medium text-slate-400">{i + 1}.</span>
                   <Badge tone={si.tone}>{si.label}</Badge>
-                  {e.out_date && <span className="text-gray-500">out {fmtDate(e.out_date)}</span>}
-                  {e.expected_return_date && <span className="text-gray-400">· due {fmtDate(e.expected_return_date)}</span>}
+                  {e.out_date && <span className="text-slate-500">out {fmtDate(e.out_date)}</span>}
+                  {e.expected_return_date && <span className="text-slate-400">· due {fmtDate(e.expected_return_date)}</span>}
                   {e.actual_in_date && <span className="text-emerald-600">· back {fmtDate(e.actual_in_date)}</span>}
-                  {e.garage && <span className="text-gray-400">· {e.garage}</span>}
-                  {SHOW_FINANCIALS && e.cost ? <span className="ml-auto font-medium text-gray-600">{aed2(e.cost)}</span> : null}
+                  {e.garage && <span className="text-slate-400">· {e.garage}</span>}
+                  {SHOW_FINANCIALS && e.cost ? <span className="ml-auto font-medium text-slate-600">{aed2(e.cost)}</span> : null}
                 </div>
                 {e.services && e.services.length > 0 && (
                   <div className="mt-1.5 flex flex-wrap gap-1">
                     {e.services.map((t) => <Badge key={t} tone="indigo">{t}</Badge>)}
                   </div>
                 )}
-                {e.notes && <p className="mt-1.5 whitespace-pre-wrap text-xs leading-relaxed text-gray-600">{e.notes}</p>}
+                {e.notes && <p className="mt-1.5 whitespace-pre-wrap text-xs leading-relaxed text-slate-600">{e.notes}</p>}
               </li>
             );
           })}
@@ -317,12 +236,12 @@ function ManageModal({ open, car, vehicles, onClose }) {
       {!car && (
         <div className="mb-4 grid gap-4 sm:grid-cols-2">
           <div>
-            <span className="mb-1 block text-sm font-medium text-gray-700">Car</span>
+            <span className="mb-1 block text-sm font-medium text-slate-700">Car</span>
             <SearchSelect value={vehicleId} onChange={setVehicleId} options={carOptions} placeholder="Search plate / make / model…" />
           </div>
           {vehicleId && (
             <div>
-              <span className="mb-1 block text-sm font-medium text-gray-700">Contract / visit</span>
+              <span className="mb-1 block text-sm font-medium text-slate-700">Contract / visit</span>
               <Select value={contractId} onChange={(e) => setContractId(e.target.value)} disabled={loadingContracts}>
                 <option value="">{loadingContracts ? 'Loading contracts…' : 'Whole car — all visits'}</option>
                 {contracts.map((co) => (
@@ -332,7 +251,7 @@ function ManageModal({ open, car, vehicles, onClose }) {
                 ))}
               </Select>
               {!loadingContracts && contracts.length === 0 && (
-                <p className="mt-1 text-xs text-gray-400">No maintenance contracts for this car — logging against the whole car.</p>
+                <p className="mt-1 text-xs text-slate-400">No maintenance contracts for this car — logging against the whole car.</p>
               )}
             </div>
           )}
@@ -347,7 +266,7 @@ function ManageModal({ open, car, vehicles, onClose }) {
           expectedReturn={chosenContract?.expected_return_date}
         />
       ) : (
-        <p className="py-8 text-center text-sm text-gray-400">Choose a car above to see and manage its workshop events.</p>
+        <p className="py-8 text-center text-sm text-slate-400">Choose a car above to see and manage its workshop events.</p>
       )}
     </Modal>
   );
@@ -357,11 +276,11 @@ function ManageModal({ open, car, vehicles, onClose }) {
 function Fact({ label, hint, children }) {
   return (
     <div className="min-w-0">
-      <dt className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+      <dt className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
         {label}
-        {hint && <span className="ml-1 font-normal normal-case text-gray-300">· {hint}</span>}
+        {hint && <span className="ml-1 font-normal normal-case text-slate-300">· {hint}</span>}
       </dt>
-      <dd className="mt-0.5 truncate text-xs font-medium text-gray-700">{children}</dd>
+      <dd className="mt-0.5 truncate text-xs font-medium text-slate-700">{children}</dd>
     </div>
   );
 }
@@ -376,7 +295,6 @@ const PHASES = [
     subLabel: 'Just sent — no garage update yet',
     hint: 'Car arrived at the garage but no workshop log entry yet',
     accent: '#8b5cf6',
-    colBg: 'bg-violet-50/40',
   },
   {
     key: 'in_transit',
@@ -384,7 +302,6 @@ const PHASES = [
     subLabel: 'Car driving to the garage',
     hint: 'Car has been dispatched and is in transit to the garage',
     accent: '#3b82f6',
-    colBg: 'bg-blue-50/40',
   },
   {
     key: 'repair',
@@ -392,7 +309,6 @@ const PHASES = [
     subLabel: 'Being repaired / follow-ups',
     hint: 'Car is actively being worked on at the garage',
     accent: '#f59e0b',
-    colBg: 'bg-amber-50/40',
   },
   {
     key: 'ready',
@@ -400,7 +316,6 @@ const PHASES = [
     subLabel: 'Returned or under final check',
     hint: 'Repair done — car is back or under final test before return',
     accent: '#10b981',
-    colBg: 'bg-emerald-50/40',
   },
 ];
 const PHASE_BY_KEY = Object.fromEntries(PHASES.map((p) => [p.key, p]));
@@ -459,7 +374,7 @@ function PhaseCard({ c, accent, avgDays, canManage, onLog, onManage, onDragStart
       draggable
       onDragStart={(e) => onDragStart(e, c)}
       onDragEnd={onDragEnd}
-      className={`group cursor-grab overflow-hidden rounded-xl border border-slate-100 bg-white shadow-sm transition hover:shadow-md hover:border-slate-200 active:cursor-grabbing ${dragging ? 'opacity-40 ring-2 ring-indigo-300' : ''}`}
+      className={`group cursor-grab overflow-hidden rounded-xl border border-slate-100 bg-white shadow-soft transition hover:shadow-card hover:border-slate-200 active:cursor-grabbing ${dragging ? 'opacity-40 ring-2 ring-indigo-300' : ''}`}
     >
       {/* Phase colour accent — top strip */}
       <div className="h-0.5 w-full" style={{ background: accent }} />
@@ -488,11 +403,12 @@ function PhaseCard({ c, accent, avgDays, canManage, onLog, onManage, onDragStart
           className="shrink-0"
           title={c.priority_matched ? `Matched keyword: "${c.priority_matched}"` : 'Routine'}
         >
-          <Badge tone={prio.tone}>{prio.emoji} {prio.label}</Badge>
+          <Badge tone={prio.tone} dot>{prio.label}</Badge>
         </span>
       </div>
 
-      {/* Meta-chips: top issue · days out · garage */}
+      {/* Meta-chips: the three that matter at a glance — top issue · days out · garage.
+          (Responsible now lives on the accountability line; cost stays in the full card.) */}
       <div className="flex flex-wrap gap-1 border-t border-slate-50 px-3 py-1.5">
         {topIssue ? (
           <MetaChip icon={<Icon.Wrench className="h-3 w-3" />} title={issues.join(', ')}>
@@ -505,13 +421,16 @@ function PhaseCard({ c, accent, avgDays, canManage, onLog, onManage, onDragStart
           <MetaChip icon={<Icon.Clock className="h-3 w-3" />}>{c.days_out}d out</MetaChip>
         )}
         {c.garage && <MetaChip icon={<GarageIcon />}>{c.garage}</MetaChip>}
-        {c.responsible && <MetaChip icon={<Icon.Users className="h-3 w-3" />} title="Accountable person">{c.responsible}</MetaChip>}
-        {SHOW_FINANCIALS && c.cost ? <MetaChip icon={<Icon.Coins className="h-3 w-3" />}>{aed2(c.cost)}</MetaChip> : null}
       </div>
 
       {/* Accountability + freshness line: who owns it, when it last moved, over-average flag */}
-      {(updated || over != null) && (
+      {(c.responsible || updated || over != null) && (
         <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 border-t border-slate-50 px-3 py-1 text-[10px] text-slate-400">
+          {c.responsible && (
+            <span className="inline-flex items-center gap-1 font-medium text-slate-500" title="Accountable person">
+              <Icon.Users className="h-2.5 w-2.5" /> {c.responsible}
+            </span>
+          )}
           {updated && (
             <span className="inline-flex items-center gap-1" title={`Last updated ${fmtDate(c.last_update)}`}>
               <Icon.Clock className="h-2.5 w-2.5" /> {updated}
@@ -560,24 +479,17 @@ function PhaseColumn({ phase, cars, avgDays, isOver, canManage, onLog, onManage,
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
-      className={`flex flex-col overflow-hidden rounded-2xl border transition ${isOver ? 'border-indigo-400 ring-2 ring-indigo-300' : 'border-slate-200/70'} ${isOver ? 'bg-indigo-50/60' : phase.colBg}`}
+      className={`flex flex-col overflow-hidden rounded-2xl border bg-white transition ${isOver ? 'border-indigo-400 ring-2 ring-indigo-300' : 'border-slate-200/70'}`}
     >
-      {/* Column header: thick top border in phase colour + sub-label + coloured count */}
+      {/* Column header: thin top accent in the phase colour + sub-label + neutral count */}
       <div className="border-b border-slate-200/60 px-3.5 pb-3 pt-3.5" style={{ borderTopWidth: 3, borderTopColor: phase.accent, borderTopStyle: 'solid' }}>
         <div className="flex items-start gap-2">
-          <span
-            className="mt-0.5 h-2 w-2 shrink-0 rounded-full"
-            style={{ background: phase.accent, boxShadow: `0 0 6px ${phase.accent}99` }}
-          />
           <div className="min-w-0 flex-1">
             <h3 className="text-sm font-bold text-slate-800">{phase.label}</h3>
             <p className="text-[10px] font-medium uppercase tracking-wide text-slate-400">{phase.subLabel}</p>
           </div>
           <div className="flex items-center gap-1.5">
-            <span
-              className="rounded-full px-2 py-0.5 text-xs font-bold tabular-nums text-white"
-              style={{ background: phase.accent }}
-            >
+            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold tabular-nums text-slate-700">
               {cars.length}
             </span>
             <InfoTip content={phase.hint} />
@@ -624,7 +536,7 @@ function MaintenanceCard({ c, avgDays, canManage, onLog, onManage }) {
   const updated = fmtAgo(c.last_update);
 
   return (
-    <div className="group relative flex flex-col overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-soft ring-1 ring-slate-900/5 transition hover:-translate-y-0.5 hover:shadow-md">
+    <div className="group relative flex flex-col overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-soft ring-1 ring-slate-900/5 transition hover:-translate-y-0.5 hover:shadow-card">
       {/* Left accent bar = SLA status traffic light */}
       <span className={`absolute inset-y-0 left-0 w-1.5 ${light.dot}`} />
 
@@ -644,21 +556,21 @@ function MaintenanceCard({ c, avgDays, canManage, onLog, onManage }) {
               )}
               {c.type && <Badge tone="slate">{c.type}</Badge>}
             </div>
-            <p className="mt-0.5 truncate text-xs text-gray-400">{c.car || '—'}</p>
+            <p className="mt-0.5 truncate text-xs text-slate-400">{c.car || '—'}</p>
           </div>
           <span
             className="shrink-0"
             title={c.priority_matched ? `Matched keyword: "${c.priority_matched}"` : 'No critical/minor keywords — treated as routine'}
           >
-            <Badge tone={prio.tone}>{prio.emoji} {prio.label}</Badge>
+            <Badge tone={prio.tone} dot>{prio.label}</Badge>
           </span>
         </div>
 
         {/* Status + live stage + days out */}
         <div className="flex flex-wrap items-center gap-2">
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-gray-50 px-2.5 py-1 ring-1 ring-inset ring-gray-200">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-50 px-2.5 py-1 ring-1 ring-inset ring-slate-200">
             <span className={`h-2 w-2 rounded-full ${light.dot}`} />
-            <span className="text-xs font-medium text-gray-600">{light.text}</span>
+            <span className="text-xs font-medium text-slate-600">{light.text}</span>
             {c.overdue_days > 0 && <span className="text-xs font-semibold text-orange-500">+{c.overdue_days}d</span>}
           </span>
           <button
@@ -675,7 +587,7 @@ function MaintenanceCard({ c, avgDays, canManage, onLog, onManage }) {
             )}
           </button>
           {c.days_out != null && (
-            <span className="ml-auto text-xs font-medium text-gray-500">{c.days_out}d out</span>
+            <span className="ml-auto text-xs font-medium text-slate-500">{c.days_out}d out</span>
           )}
         </div>
 
@@ -716,27 +628,30 @@ function MaintenanceCard({ c, avgDays, canManage, onLog, onManage }) {
 
         {/* Issues + note */}
         <div>
-          <div className="flex flex-wrap gap-1">
-            {(c.issues || []).slice(0, 6).map((t) => <Badge key={t} tone="indigo">{t}</Badge>)}
-            {(!c.issues || c.issues.length === 0) && <span className="text-xs text-gray-300">No issues logged</span>}
+          <div className="flex flex-wrap items-center gap-1">
+            {(c.issues || []).slice(0, 4).map((t) => <Badge key={t} tone="indigo">{t}</Badge>)}
+            {c.issues && c.issues.length > 4 && (
+              <span className="text-[11px] font-medium text-slate-400" title={c.issues.join(', ')}>+{c.issues.length - 4} more</span>
+            )}
+            {(!c.issues || c.issues.length === 0) && <span className="text-xs text-slate-300">No issues logged</span>}
           </div>
           {c.notes && (
-            <p className="mt-1.5 line-clamp-2 text-xs leading-relaxed text-gray-400" title={c.notes}>{c.notes}</p>
+            <p className="mt-1.5 line-clamp-2 text-xs leading-relaxed text-slate-400" title={c.notes}>{c.notes}</p>
           )}
         </div>
 
         {/* Facts grid */}
-        <dl className="grid grid-cols-2 gap-x-4 gap-y-2.5 border-t border-gray-100 pt-3">
-          <Fact label="Garage">{c.garage || <span className="text-gray-300">—</span>}</Fact>
-          {SHOW_FINANCIALS && <Fact label="Cost">{c.cost ? aed2(c.cost) : <span className="text-gray-300">—</span>}</Fact>}
-          <Fact label="Out" hint="API">{c.out_date ? fmtDate(c.out_date) : <span className="text-gray-300">—</span>}</Fact>
-          <Fact label="In" hint="API">{c.in_date ? fmtDate(c.in_date) : <span className="text-gray-300">—</span>}</Fact>
-          <Fact label="Due" hint="sheet">{c.due_sheet ? fmtDate(c.due_sheet) : <span className="text-gray-300">—</span>}</Fact>
-          <Fact label="Back" hint="sheet">{c.sheet_back ? fmtDate(c.sheet_back) : <span className="text-gray-300">—</span>}</Fact>
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-2.5 border-t border-slate-100 pt-3">
+          <Fact label="Garage">{c.garage || <span className="text-slate-300">—</span>}</Fact>
+          {SHOW_FINANCIALS && <Fact label="Cost">{c.cost ? aed2(c.cost) : <span className="text-slate-300">—</span>}</Fact>}
+          <Fact label="Out" hint="API">{c.out_date ? fmtDate(c.out_date) : <span className="text-slate-300">—</span>}</Fact>
+          <Fact label="In" hint="API">{c.in_date ? fmtDate(c.in_date) : <span className="text-slate-300">—</span>}</Fact>
+          <Fact label="Due" hint="sheet">{c.due_sheet ? fmtDate(c.due_sheet) : <span className="text-slate-300">—</span>}</Fact>
+          <Fact label="Back" hint="sheet">{c.sheet_back ? fmtDate(c.sheet_back) : <span className="text-slate-300">—</span>}</Fact>
           {SHOW_FINANCIALS && (
             <div className="col-span-2 min-w-0">
-              <dt className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
-                Net margin <span className="font-normal normal-case text-gray-300">· car lifetime</span>
+              <dt className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                Net margin <span className="font-normal normal-case text-slate-300">· car lifetime</span>
               </dt>
               <dd className="mt-0.5">
                 {c.net_margin != null ? (
@@ -746,14 +661,14 @@ function MaintenanceCard({ c, avgDays, canManage, onLog, onManage }) {
                   >
                     {c.net_margin >= 0 ? '+' : '−'}{aed2(Math.abs(c.net_margin))}
                   </span>
-                ) : <span className="text-xs text-gray-300">—</span>}
+                ) : <span className="text-xs text-slate-300">—</span>}
               </dd>
             </div>
           )}
         </dl>
 
         {canManage && (
-          <div className="flex justify-end border-t border-gray-100 pt-3">
+          <div className="flex justify-end border-t border-slate-100 pt-3">
             <button
               type="button"
               onClick={() => onManage(c)}
@@ -868,11 +783,11 @@ export function MaintenanceBoardPanel({ publishStat = false, manageable = false,
   };
 
   const priorityFilters = [
-    { key: '', label: 'All', n: cars.length },
-    { key: 'critical', label: '🔴 Critical', n: s.critical },
-    { key: 'special', label: '🟣 Special', n: s.special },
-    { key: 'minor', label: '🟡 Minor', n: s.minor },
-    { key: 'routine', label: '🟢 Routine', n: s.routine },
+    { key: '', label: 'All', n: cars.length, dot: null },
+    { key: 'critical', label: 'Critical', n: s.critical, dot: 'bg-red-500' },
+    { key: 'special', label: 'Special', n: s.special, dot: 'bg-violet-500' },
+    { key: 'minor', label: 'Minor', n: s.minor, dot: 'bg-amber-500' },
+    { key: 'routine', label: 'Routine', n: s.routine, dot: 'bg-emerald-500' },
   ];
 
   // Workshop-stage filter chips. We always list the four operational stages actually
@@ -897,9 +812,6 @@ export function MaintenanceBoardPanel({ publishStat = false, manageable = false,
         {error && (
           <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error}</div>
         )}
-
-        {/* Fleet vital signs — the "open this first in the morning" strip. */}
-        {showPulse && pulse && <MaintenancePulse pulse={pulse} />}
 
         {canManage && (
           <div className="flex items-center justify-end">
@@ -941,6 +853,45 @@ export function MaintenanceBoardPanel({ publishStat = false, manageable = false,
             hint="Past expected return"
             tooltip="Cars past their expected return date — the maintenance SLA is breached."
           />
+          {/* Live pulse metrics — merged into the one metric row (was a separate gradient
+              "Maintenance Pulse" panel). Only when the panel opts into the pulse + data exists. */}
+          {showPulse && pulse && (
+            <>
+              <MetricCard
+                label="Avg repair time"
+                value={pulse.avg_repair_days != null ? `${pulse.avg_repair_days}d` : '—'}
+                tone="slate"
+                icon={<Icon.Clock className="h-5 w-5" />}
+                hint="Last 90 days turnaround"
+              />
+              <MetricCard
+                label="Back this week"
+                value={num(pulse.completed_week)}
+                tone="emerald"
+                icon={<Icon.Check className="h-5 w-5" />}
+                hint="Visits completed"
+              />
+              {pulse.service_due_soon != null && (
+                <MetricCard
+                  label="Service due soon"
+                  value={num(pulse.service_due_soon)}
+                  tone={pulse.service_due_soon > 0 ? 'amber' : 'slate'}
+                  icon={<Icon.Gauge className="h-5 w-5" />}
+                  hint={pulse.service_due_soon > 0 ? 'Approaching the interval' : 'All serviced'}
+                  to="/maintenance-foresight"
+                />
+              )}
+              {SHOW_FINANCIALS && (
+                <MetricCard
+                  label="Spend this week"
+                  value={aed(pulse.spend_week)}
+                  tone="slate"
+                  icon={<Icon.Coins className="h-5 w-5" />}
+                  hint="Repairs started this week"
+                />
+              )}
+            </>
+          )}
         </MetricGrid>
 
         <SectionCard
@@ -964,12 +915,13 @@ export function MaintenanceBoardPanel({ publishStat = false, manageable = false,
               <button
                 key={f.key || 'all'}
                 onClick={() => setPriority(f.key)}
-                className={`rounded-full px-3 py-1 text-xs font-medium ring-1 transition ${
+                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ring-1 transition ${
                   priority === f.key
                     ? 'bg-indigo-600 text-white ring-indigo-600'
                     : 'bg-white text-slate-600 ring-slate-300 hover:bg-slate-50'
                 }`}
               >
+                {f.dot && <span className={`h-1.5 w-1.5 rounded-full ${f.dot}`} />}
                 {f.label}{f.n != null ? ` (${num(f.n)})` : ''}
               </button>
             ))}

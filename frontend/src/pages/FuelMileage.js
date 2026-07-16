@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import useFetch from '../hooks/useFetch';
 import { PageHeader, SearchInput } from '../components/ui/Misc';
+import Button from '../components/ui/Button';
 import MetricCard, { MetricGrid } from '../components/ui/MetricCard';
 import DataTable, { SectionCard } from '../components/ui/Table';
 import Pagination from '../components/ui/Pagination';
@@ -207,14 +208,9 @@ export default function FuelMileage({ embedded = false }) {
               {p.label}
             </button>
           ))}
-          <button
-            type="button"
-            onClick={exportCsv}
-            disabled={!rows.length}
-            className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-sm font-medium text-slate-600 ring-1 ring-inset ring-slate-200 transition hover:bg-slate-50 disabled:opacity-40"
-          >
+          <Button variant="secondary" size="sm" onClick={exportCsv} disabled={!rows.length} className="ml-auto">
             <Icon.Download className="h-4 w-4" /> Export CSV
-          </button>
+          </Button>
         </div>
 
         {error && (
@@ -347,9 +343,9 @@ function VehicleLedgerDrawer({ vehicle, from, to, onClose, onOpenProfile }) {
       footer={vehicle && (
         <div className="flex items-center justify-between">
           <span className="text-xs text-slate-400">{num(t.contracts)} trip{t.contracts === 1 ? '' : 's'} in period</span>
-          <button onClick={() => onOpenProfile(vehicle.vehicle_id)} className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-indigo-700">
+          <Button size="sm" onClick={() => onOpenProfile(vehicle.vehicle_id)}>
             Open car profile <Icon.ArrowRight className="h-4 w-4" />
-          </button>
+          </Button>
         </div>
       )}
     >
@@ -379,7 +375,7 @@ function VehicleLedgerDrawer({ vehicle, from, to, onClose, onOpenProfile }) {
       ) : (
         <div className="overflow-hidden rounded-xl ring-1 ring-slate-200">
           <table className="min-w-full divide-y divide-slate-200 text-sm">
-            <thead className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-400">
+            <thead className="bg-slate-50/90 text-[11px] uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-3 py-2 text-left font-semibold">Trip</th>
                 <th className="px-3 py-2 text-left font-semibold">Out → In</th>

@@ -8,10 +8,7 @@ import Badge from '../components/ui/Badge';
 import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import { Input, Select } from '../components/ui/Field';
-import { PageHeader } from '../components/ui/Misc';
-import MetricCard, { MetricGrid } from '../components/ui/MetricCard';
-import { SectionCard } from '../components/ui/Table';
-import { MetricGridSkeleton } from '../components/ui/Skeleton';
+import { CommandPanel, StatGaugeTile } from '../components/ops';
 import Icon from '../components/ui/Icon';
 import CreateMoveModal from './logistics/CreateMoveModal';
 import { useI18n } from '../i18n/I18nContext';
@@ -153,7 +150,7 @@ function OdometerModal({ open, task, action, busy, onClose, onSubmit }) {
           t={t}
         />
         <div>
-          <span className="mb-1 block text-sm font-medium text-gray-700">Odometer photo<span className="ms-0.5 text-red-500">*</span></span>
+          <span className="mb-1 block text-sm font-medium text-slate-700">Odometer photo<span className="ms-0.5 text-red-500">*</span></span>
           <input
             type="file" accept="image/*" capture="environment"
             onChange={(e) => setPhoto(e.target.files?.[0] || null)}
@@ -187,8 +184,10 @@ function ReassignControl({ task, assignees, busy, onReassign }) {
   );
 }
 
-// A pooled move any driver can take.
-function PoolCard({ task, busy, onClaim }) {
+// A pooled move up for grabs. Drivers (canClaim) get the Claim button; everyone else with
+// logistics.view (e.g. supervisors) sees it read-only for operational awareness — visibility isn't
+// gated, only the action is.
+function PoolCard({ task, busy, canClaim, onClaim }) {
   return (
     <div className="rounded-xl border border-blue-200 bg-blue-50/40 p-4">
       <div className="flex items-start justify-between gap-3">
@@ -202,12 +201,16 @@ function PoolCard({ task, busy, onClaim }) {
           <p className="mt-1 text-xs text-slate-400">
             Decided by {task.decided_by || 'a coordinator'}{task.dispatched_at && ` · ${ago(task.dispatched_at)}`}
           </p>
-          {task.notes && <p className="mt-2 rounded-md bg-white/70 px-2 py-1 text-xs text-slate-500">{task.notes}</p>}
+          {task.notes && <p className="mt-2 rounded-lg bg-white/70 px-2 py-1 text-xs text-slate-500">{task.notes}</p>}
         </div>
         <Badge tone="blue">Up for grabs</Badge>
       </div>
-      <div className="mt-3 flex justify-end border-t border-blue-100 pt-3">
-        <Button size="sm" loading={busy === 'claim'} onClick={() => onClaim(task)}>Claim Task</Button>
+      <div className="mt-3 flex items-center justify-end border-t border-blue-100 pt-3">
+        {canClaim ? (
+          <Button size="sm" loading={busy === 'claim'} onClick={() => onClaim(task)}>Claim Task</Button>
+        ) : (
+          <span className="text-xs text-slate-400">Awaiting a driver to claim</span>
+        )}
       </div>
     </div>
   );
@@ -216,6 +219,7 @@ function PoolCard({ task, busy, onClaim }) {
 // A move the signed-in driver owns — the execution buttons live here.
 function MyTaskCard({ task, busy, onAction, onStatus }) {
   const actions = task.next_actions || [];
+  const anyBusy = !!busy; // an action (pickup/deliver/return/status) is in flight on THIS task
   return (
     <div className="rounded-xl border border-violet-200 bg-violet-50/40 p-4">
       <div className="flex items-start justify-between gap-3">
@@ -229,18 +233,20 @@ function MyTaskCard({ task, busy, onAction, onStatus }) {
           <p className="mt-1 text-xs text-slate-400">
             Decided by {task.decided_by || '—'}{task.status_changed_at && ` · ${task.status_label || task.status || 'updated'} since ${ago(task.status_changed_at)}`}
           </p>
-          {task.notes && <p className="mt-2 rounded-md bg-white/70 px-2 py-1 text-xs text-slate-500">{task.notes}</p>}
+          {task.notes && <p className="mt-2 rounded-lg bg-white/70 px-2 py-1 text-xs text-slate-500">{task.notes}</p>}
         </div>
         <Badge tone={PHASE_TONE[task.status] || 'slate'}>{task.status_label || task.status || '—'}</Badge>
       </div>
 
-      {/* One-click "where is it?" reply presets, so a coordinator ping is answered in a tap. */}
+      {/* One-click "where is it?" reply presets, so a coordinator ping is answered in a tap. Disabled
+          while ANY action on this task is in flight, so a double-tap can't fire two status posts. */}
       <div className="mt-3 flex flex-wrap gap-1.5">
         {(task.status_presets || []).map((s) => (
           <button
             key={s}
             onClick={() => onStatus(task, s)}
-            className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-600 hover:border-indigo-300 hover:text-indigo-600"
+            disabled={anyBusy}
+            className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-600 hover:border-indigo-300 hover:text-indigo-600 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {s}
           </button>
@@ -255,6 +261,7 @@ function MyTaskCard({ task, busy, onAction, onStatus }) {
             size="sm"
             variant={a.action === 'return' ? 'success' : 'primary'}
             loading={busy === a.action}
+            disabled={anyBusy && busy !== a.action}
             onClick={() => onAction(task, a.action)}
           >
             {needsOdometer(task, a.action) ? `📷 ${a.label}` : a.label}
@@ -372,14 +379,16 @@ export default function LogisticsDispatch() {
 
   const fetcher = useCallback(async () => {
     const empty = { drivers: [], summary: {} };
+    // The pool is fetched for everyone with logistics.view (which gates this page) — supervisors see
+    // how many moves are up for grabs for operational awareness, even though only drivers can Claim.
     const [mine, pool, all, roster] = await Promise.all([
       api.get('/logistics/my-queue').then((r) => r.data.data?.tasks || []).catch(() => []),
-      canClaim ? api.get('/logistics/pool').then((r) => r.data.data?.tasks || []).catch(() => []) : Promise.resolve([]),
+      api.get('/logistics/pool').then((r) => r.data.data?.tasks || []).catch(() => []),
       api.get('/logistics').then((r) => r.data.data?.tasks || []).catch(() => []),
       api.get('/logistics/drivers').then((r) => r.data.data || empty).catch(() => empty),
     ]);
     return { mine, pool, all, roster };
-  }, [canClaim]);
+  }, []);
   const { data, loading, error, reload } = useFetch(fetcher);
 
   // Driver list for the reassign dropdown — only a coordinator needs (and may fetch) it.
@@ -400,6 +409,11 @@ export default function LogisticsDispatch() {
   // Fire a lifecycle action. Garage-trip steps that need the odometer proof open the capture modal
   // first; `return` grabs a GPS fix (best-effort) to prove the car is home.
   const act = async (task, action) => {
+    // Cancelling a live move is destructive and easy to mis-tap (it sits next to Ping/Reassign): it
+    // voids the trip and strands the linked maintenance ticket. Confirm before firing.
+    if (action === 'cancel' && !window.confirm(
+      `Cancel this move${task.destination ? ` to ${task.destination}` : ''}? The car is released from this trip and its driver is left with no task.`
+    )) return;
     if (['pickup', 'deliver', 'return'].includes(action) && needsOdometer(task, action)) {
       setOdoModal({ task, action });
       return;
@@ -468,12 +482,16 @@ export default function LogisticsDispatch() {
   };
 
   const postStatus = async (task, status) => {
+    if (busyId && busyId.startsWith(`${task.id}:`)) return; // already acting on this task — ignore double-taps
+    setBusyId(`${task.id}:status`);
     try {
       await api.post(`/logistics/${task.id}/status`, { status });
       toast.success(`Status: ${status}`);
       reload();
     } catch (err) {
       fail(err, 'Could not post status');
+    } finally {
+      setBusyId(null);
     }
   };
 
@@ -485,88 +503,94 @@ export default function LogisticsDispatch() {
   const board = all.filter((t) => !mine.some((m) => m.id === t.id));
 
   return (
-    <div className="py-8">
-      <div className="mx-auto max-w-5xl space-y-6 px-4 sm:px-6 lg:px-8">
-        <PageHeader
-          title="Driver Dispatch"
-          subtitle={loading ? 'Loading…' : `${mine.length} in your queue · ${pool.length} up for grabs · ${all.length} in transit fleet-wide`}
-        >
-          {canDispatch && (
-            <Button onClick={() => setCreateOpen(true)}>+ New Move</Button>
-          )}
-        </PageHeader>
+    <div className="opx py-8">
+      <div className="mx-auto max-w-6xl space-y-4 px-4 sm:px-6 lg:px-8">
+        <div className="flex flex-wrap items-end justify-between gap-4" style={{ marginBottom: 4 }}>
+          <div>
+            <div className="opx-hint" style={{ letterSpacing: '.16em', textTransform: 'uppercase', marginBottom: 6 }}>Movement Control · Live</div>
+            <h1 className="font-display" style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-.02em', color: 'var(--ink)', margin: 0 }}>Driver Dispatch</h1>
+            <p style={{ marginTop: 6, fontSize: 13.5, color: 'var(--ink-3)' }}>
+              {loading ? 'Loading…' : `${mine.length} in your queue · ${pool.length} up for grabs · ${all.length} in transit fleet-wide`}
+            </p>
+          </div>
+          {canDispatch && <button className="opx-btn primary" onClick={() => setCreateOpen(true)}>+ New Move</button>}
+        </div>
 
-        {loading ? (
-          <MetricGridSkeleton count={3} />
-        ) : (
-          <MetricGrid cols={3}>
-            <MetricCard label="My Queue" value={mine.length} tone={mine.length ? 'violet' : 'slate'}
-              icon={<Icon.Truck className="h-5 w-5" />} hint="Moves you've claimed" />
-            <MetricCard label="Up for grabs" value={pool.length} tone={pool.length ? 'blue' : 'slate'}
-              icon={<Icon.Flag className="h-5 w-5" />} hint="Pooled moves awaiting a driver" />
-            <MetricCard label="In transit (fleet)" value={all.length} tone="slate"
-              icon={<Icon.Car className="h-5 w-5" />} hint="Every car currently on a move" />
-          </MetricGrid>
-        )}
+        <div className="opx-grid opx-c12" style={{ marginBottom: 4 }}>
+          <div className="opx-span-4">
+            <StatGaugeTile label="My Queue" value={loading ? '—' : mine.length} hint="Moves you've claimed" tone={mine.length ? 'reserved' : 'avail'} icon="check" percent={all.length ? (mine.length / all.length) * 100 : (mine.length ? 100 : 6)} />
+          </div>
+          <div className="opx-span-4">
+            <StatGaugeTile label="Up for Grabs" value={loading ? '—' : pool.length} hint="Pooled moves awaiting a driver" tone={pool.length ? 'cyan' : 'avail'} icon="calendar" percent={all.length ? (pool.length / all.length) * 100 : (pool.length ? 100 : 6)} />
+          </div>
+          <div className="opx-span-4">
+            <StatGaugeTile label="In Transit · Fleet" value={loading ? '—' : all.length} hint="Every car currently on a move" tone="rented" icon="car" percent={all.length ? 100 : 6} />
+          </div>
+        </div>
 
         {error && (
-          <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error}</div>
+          <div style={{ borderRadius: 12, border: '1px solid rgba(251,113,133,.3)', background: 'rgba(251,113,133,.08)', color: '#fb7185', padding: '12px 16px', fontSize: 13 }}>{error}</div>
         )}
 
         {/* Driver availability — who's free and what everyone else is doing right now. */}
-        <SectionCard
+        <CommandPanel
           title="Drivers"
-          subtitle={loading
-            ? 'Loading…'
-            : `${roster.summary?.available ?? 0} available · ${roster.summary?.busy ?? 0} busy · ${roster.summary?.total ?? 0} total`}
+          dotColor="#34d399"
+          label="roster"
+          meta={loading ? 'loading' : `${roster.summary?.available ?? 0} available · ${roster.summary?.busy ?? 0} busy · ${roster.summary?.total ?? 0} total`}
         >
           {loading ? (
-            <p className="px-1 py-6 text-center text-sm text-slate-400">Loading drivers…</p>
+            <p className="opx-empty">Loading drivers…</p>
           ) : roster.drivers.length === 0 ? (
-            <p className="px-1 py-6 text-center text-sm text-slate-400">No drivers found.</p>
+            <p className="opx-empty">No drivers found.</p>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {roster.drivers.map((d) => <DriverChip key={d.id} d={d} />)}
             </div>
           )}
-        </SectionCard>
+        </CommandPanel>
 
-        {/* Available to claim — only for field drivers. */}
-        {canClaim && (
-          <SectionCard title="Available to claim" subtitle="Pooled moves — tap Claim to take the job. First driver wins.">
-            {!loading && pool.length === 0 ? (
-              <p className="px-1 py-6 text-center text-sm text-slate-400">Nothing waiting to be claimed. 🎉</p>
-            ) : (
-              <div className="grid gap-3 sm:grid-cols-2">
-                {pool.map((t) => <PoolCard key={t.id} task={t} busy={busyFor(t.id, 'claim')} onClaim={(x) => act(x, 'claim')} />)}
-              </div>
-            )}
-          </SectionCard>
-        )}
+        {/* Pooled moves up for grabs — drivers can claim; supervisors see it read-only for awareness. */}
+        <CommandPanel
+          title={canClaim ? 'Available to Claim' : 'Up for Grabs'}
+          dotColor="#22d3ee"
+          label="pool"
+          meta={canClaim ? 'first driver wins' : 'read-only — only drivers can claim'}
+        >
+          {!loading && pool.length === 0 ? (
+            <p className="opx-empty">Nothing waiting to be claimed.</p>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2">
+              {pool.map((t) => (
+                <PoolCard key={t.id} task={t} busy={busyFor(t.id, 'claim')} canClaim={canClaim} onClaim={(x) => act(x, 'claim')} />
+              ))}
+            </div>
+          )}
+        </CommandPanel>
 
         {/* My active tasks — the driver's execution lane. */}
-        <SectionCard title="My Queue" subtitle="Cars you're moving — step each one along as you go.">
+        <CommandPanel title="My Queue" dotColor="#a78bfa" label="execution" meta="step each car along as you go">
           {!loading && mine.length === 0 ? (
-            <p className="px-1 py-6 text-center text-sm text-slate-400">Nothing assigned to you right now.</p>
+            <p className="opx-empty">Nothing assigned to you right now.</p>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2">
               {mine.map((t) => (
                 <MyTaskCard
                   key={t.id}
                   task={t}
-                  busy={busyFor(t.id, 'pickup') || busyFor(t.id, 'deliver') || busyFor(t.id, 'return')}
+                  busy={busyId && busyId.startsWith(`${t.id}:`) ? busyId.split(':')[1] : null}
                   onAction={act}
                   onStatus={postStatus}
                 />
               ))}
             </div>
           )}
-        </SectionCard>
+        </CommandPanel>
 
         {/* Oversight board — Decided by / Current Status / Assigned to, plus supervisor controls. */}
-        <SectionCard title="Dispatch board — fleet" subtitle="Every car on the move, so anyone can answer “where is it?”.">
+        <CommandPanel title="Dispatch Board · Fleet" dotColor="#60a5fa" label="where is it?" meta="every car on the move">
           {!loading && board.length === 0 ? (
-            <p className="px-1 py-6 text-center text-sm text-slate-400">No other cars in transit.</p>
+            <p className="opx-empty">No other cars in transit.</p>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2">
               {board.map((t) => (
@@ -583,7 +607,7 @@ export default function LogisticsDispatch() {
               ))}
             </div>
           )}
-        </SectionCard>
+        </CommandPanel>
       </div>
 
       <CreateMoveModal open={createOpen} onClose={() => setCreateOpen(false)} onCreated={reload} />

@@ -62,7 +62,7 @@ export default function BreakdownIntakeModal({ vehicles = [], onClose, onDone })
       <div className="space-y-4">
         {/* Vehicle — grouped by availability, same picker the rest of the workflow uses. */}
         <div>
-          <span className="mb-1 block text-sm font-medium text-gray-700">
+          <span className="mb-1 block text-sm font-medium text-slate-700">
             {t('workflow.field.vehicle')}<span className="ms-0.5 text-red-500">*</span>
           </span>
           <VehicleStatusSelect value={vehicleId} onChange={setVehicleId} vehicles={vehicles} placeholder={t('workflow.ph.searchVehicle')} />

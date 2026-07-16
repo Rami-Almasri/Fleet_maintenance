@@ -21,9 +21,10 @@ const KIND = {
   test_drive:  { labelKey: 'oversight.mileage.kindTestDrive',   cls: 'bg-sky-100 text-sky-700',        icon: 'Route' },
   deviation:   { labelKey: 'oversight.mileage.kindDeviation',   cls: 'bg-violet-100 text-violet-700',  icon: 'Info' },
   note:        { labelKey: 'oversight.mileage.kindNote',        cls: 'bg-slate-100 text-slate-600',    icon: 'Info' },
+  ack:         { labelKey: 'oversight.mileage.kindAck',         cls: 'bg-emerald-100 text-emerald-700', icon: 'Check' },
 };
 
-const FILTERS = ['all', 'blocked', 'discrepancy', 'jump', 'test_drive', 'deviation', 'note'];
+const FILTERS = ['all', 'blocked', 'discrepancy', 'jump', 'test_drive', 'deviation', 'note', 'ack'];
 
 // Magnitude buckets — filter rows by the absolute size of the odometer change (delta).
 // null delta rows carry no measurable change and only show under 'all'.
@@ -42,6 +43,7 @@ export default function MileageDiscrepancies() {
   const [filter, setFilter] = useState('all');
   const [mag, setMag] = useState('all');
   const [q, setQ] = useState('');
+  const [lightbox, setLightbox] = useState(null); // { url, label, plate } of the odometer photo being viewed
 
   useEffect(() => {
     let alive = true;
@@ -121,48 +123,68 @@ export default function MileageDiscrepancies() {
         ) : rows.length === 0 ? (
           <Empty t={t} />
         ) : (
-          <div className="overflow-x-auto rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
-            <table className="w-full min-w-[880px] text-sm">
-              <thead className="border-b border-slate-100 bg-slate-50/70 text-left text-xs uppercase tracking-wide text-slate-400">
-                <tr>
-                  <th className="px-4 py-3 font-semibold">{t('oversight.common.vehicle')}</th>
-                  <th className="px-4 py-3 font-semibold">{t('oversight.mileage.transition')}</th>
-                  <th className="px-4 py-3 text-right font-semibold">{t('oversight.mileage.expected')}</th>
-                  <th className="px-4 py-3 text-right font-semibold">{t('oversight.mileage.entered')}</th>
-                  <th className="px-4 py-3 text-right font-semibold">{t('oversight.mileage.change')}</th>
-                  <th className="px-4 py-3 font-semibold">{t('oversight.mileage.kind')}</th>
-                  <th className="px-4 py-3 font-semibold">{t('oversight.common.enteredBy')}</th>
-                  <th className="px-4 py-3 font-semibold">{t('oversight.common.when')}</th>
+          <div className="overflow-x-auto rounded-2xl border border-slate-200/60 bg-white shadow-soft">
+            <table className="w-full min-w-[880px] border-separate border-spacing-0 text-sm">
+              <thead>
+                <tr className="text-left">
+                  <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">{t('oversight.common.vehicle')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">{t('oversight.mileage.transition')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">{t('oversight.mileage.expected')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">{t('oversight.mileage.entered')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">{t('oversight.mileage.change')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-center text-xs font-semibold uppercase tracking-wide text-slate-500">{t('oversight.mileage.photo')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">{t('oversight.mileage.kind')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">{t('oversight.common.enteredBy')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">{t('oversight.common.when')}</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody>
                 {rows.map((r, i) => {
                   const k = KIND[r.kind] || KIND.note;
                   const KIco = Icon[k.icon] || Icon.Info;
                   return (
-                    <tr key={`${r.ticket_id}-${r.stage_key}-${i}`} className={r.kind === 'blocked' ? 'bg-red-50' : (r.kind === 'discrepancy' ? 'bg-red-50/40' : '')}>
-                      <td className="px-4 py-3">
+                    <tr key={`${r.ticket_id}-${r.stage_key}-${i}`} className={`transition-colors ${r.kind === 'blocked' ? 'bg-red-50 hover:bg-red-100/60' : (r.kind === 'discrepancy' ? 'bg-red-50/40 hover:bg-red-50' : 'bg-white even:bg-slate-50/40 hover:bg-indigo-50/40')}`}>
+                      <td className="border-b border-slate-100 px-5 py-3.5">
                         <Link to={`/maintenance-workflow/${r.ticket_id}`} className="font-mono font-semibold text-slate-900 hover:text-indigo-600">{r.plate_no || `#${r.ticket_id}`}</Link>
                         {r.car && <p className="text-xs text-slate-400">{r.car}</p>}
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="border-b border-slate-100 px-5 py-3.5">
                         <span className="font-medium text-slate-700">{r.stage_label}</span>
                         {r.outcome === 'blocked' && <span className="ms-1 rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">{t('oversight.mileage.rejected')}</span>}
                         {r.tolerance_waived && <span className="ms-1 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">{t('oversight.mileage.waived')}</span>}
                       </td>
-                      <td className="px-4 py-3 text-right tabular-nums text-slate-500">{fmtKm(r.previous)}</td>
-                      <td className={`px-4 py-3 text-right font-semibold tabular-nums ${r.outcome === 'blocked' ? 'text-red-600 line-through decoration-red-400' : 'text-slate-900'}`}>{fmtKm(r.reading)}</td>
-                      <td className={`px-4 py-3 text-right font-semibold tabular-nums ${r.delta < 0 ? 'text-red-600' : 'text-slate-600'}`}>
+                      <td className="border-b border-slate-100 px-5 py-3.5 text-right tabular-nums text-slate-500">{fmtKm(r.previous)}</td>
+                      <td className={`border-b border-slate-100 px-5 py-3.5 text-right font-semibold tabular-nums ${r.outcome === 'blocked' ? 'text-red-600 line-through decoration-red-400' : 'text-slate-900'}`}>{fmtKm(r.reading)}</td>
+                      <td className={`border-b border-slate-100 px-5 py-3.5 text-right font-semibold tabular-nums ${r.delta < 0 ? 'text-red-600' : 'text-slate-600'}`}>
                         {r.delta == null ? '—' : `${r.delta > 0 ? '+' : ''}${Number(r.delta).toLocaleString()}`}
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="border-b border-slate-100 px-5 py-3.5 text-center">
+                        {r.photo_url ? (
+                          <button
+                            type="button"
+                            onClick={() => setLightbox({ url: r.photo_url, label: r.stage_label, plate: r.plate_no || `#${r.ticket_id}` })}
+                            className="group inline-flex h-11 w-11 items-center justify-center overflow-hidden rounded-lg ring-1 ring-slate-200 transition hover:ring-indigo-400"
+                            title={t('oversight.mileage.viewPhoto')}
+                          >
+                            <img src={r.photo_url} alt={t('oversight.mileage.photo')} className="h-full w-full object-cover transition group-hover:scale-105" loading="lazy" />
+                          </button>
+                        ) : (
+                          <span className="text-slate-300" title={t('oversight.mileage.noPhoto')}><Icon.Camera className="mx-auto h-4 w-4" /></span>
+                        )}
+                      </td>
+                      <td className="border-b border-slate-100 px-5 py-3.5">
                         <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ${k.cls}`}>
                           <KIco className="h-3 w-3" /> {t(k.labelKey)}
                         </span>
+                        {r.confirmed != null && (
+                          <span className={`ms-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${r.confirmed ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                            {r.confirmed ? t('oversight.mileage.confirmed') : t('oversight.mileage.notConfirmed')}
+                          </span>
+                        )}
                         {r.note && <p className="mt-1 max-w-[220px] truncate text-xs italic text-slate-500" title={r.note}>“{r.note}”</p>}
                       </td>
-                      <td className="px-4 py-3 text-slate-600">{r.entered_by || <span className="text-slate-300">{t('oversight.common.system')}</span>}</td>
-                      <td className="px-4 py-3 text-slate-500">{fmtDate(r.at)}</td>
+                      <td className="border-b border-slate-100 px-5 py-3.5 text-slate-600">{r.entered_by || <span className="text-slate-300">{t('oversight.common.system')}</span>}</td>
+                      <td className="border-b border-slate-100 px-5 py-3.5 text-slate-500">{fmtDate(r.at)}</td>
                     </tr>
                   );
                 })}
@@ -171,6 +193,31 @@ export default function MileageDiscrepancies() {
           </div>
         )}
       </div>
+
+      {lightbox && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 p-4 backdrop-blur-sm"
+          onClick={() => setLightbox(null)}
+        >
+          <div className="relative max-h-[90vh] max-w-3xl overflow-hidden rounded-2xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-5 py-3">
+              <div>
+                <p className="font-mono text-sm font-semibold text-slate-900">{lightbox.plate}</p>
+                <p className="text-xs text-slate-500">{lightbox.label} · {t('oversight.mileage.odometerPhoto')}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setLightbox(null)}
+                className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                aria-label={t('common.close')}
+              >
+                <Icon.X className="h-5 w-5" />
+              </button>
+            </div>
+            <img src={lightbox.url} alt={lightbox.label} className="max-h-[75vh] w-auto object-contain" />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

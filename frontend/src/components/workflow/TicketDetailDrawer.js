@@ -8,9 +8,11 @@ import Badge from '../ui/Badge';
 import Icon from '../ui/Icon';
 import { Skeleton } from '../ui/Skeleton';
 import FindingsList from './FindingsList';
+import RepairQualityCheck from './RepairQualityCheck';
 import VideoEvidence from './VideoEvidence';
 import InvoicesPanel from './InvoicesPanel';
-import { resolveAction, allows, ctaLabel, ago, fmtDuration, fmtDateTime, SEVERITY_CHIP, custodyBlocked, isAtGarage } from './meta';
+import TicketParts from './TicketParts';
+import { resolveAction, allows, ctaLabel, ago, fmtDuration, fmtDateTime, SEVERITY_CHIP, custodyBlocked, custodyHolderName, isAtGarage, isPausable, isPaused, isPausedOut, isTempReleasable, isTemporarilyReleased } from './meta';
 import { SHOW_VIDEO_REVIEW } from '../../config/features';
 
 // workflow_status → the lane colour, reused for the status pill so the drawer reads as the
@@ -21,6 +23,7 @@ const STATUS_TONE = {
   in_transit: '#f97316', under_repair: '#f97316', repair_review: '#7c3aed',
   ready_for_pickup: '#0ea5e9', in_our_park: '#0ea5e9',
   ready_for_reinspection: '#10b981', closed: '#64748b', diagnostic_cleared: '#10b981',
+  paused_returned_to_service: '#64748b',
 };
 
 // The audit trail, in lifecycle order. Label keys live under workflow.detail.handoff.<key>.
@@ -67,15 +70,15 @@ const fmtDay = (d) => {
 // ── Small presentational helpers ──────────────────────────────────────────────
 function Section({ title, icon, action, children }) {
   return (
-    <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-soft">
-      <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-4 py-2.5">
-        <h3 className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-500">
+    <section className="overflow-hidden rounded-xl border border-slate-200/70 bg-white shadow-soft">
+      <div className="flex items-center justify-between gap-2 border-b border-slate-100 bg-slate-50/60 px-4 py-2.5">
+        <h3 className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.08em] text-slate-500">
           {icon}
           {title}
         </h3>
         {action}
       </div>
-      <div className="px-4 py-3.5">{children}</div>
+      <div className="px-4 py-4">{children}</div>
     </section>
   );
 }
@@ -100,6 +103,8 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
   const [diag, setDiag] = useState(null); // { idle, last_check, conditions[] } — diagnostic context panel
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [ackBusyId, setAckBusyId] = useState(null); // Handover Comparison Report — incident id being acknowledged
+  const [partsOpenSignal, setPartsOpenSignal] = useState(0); // footer "Request Part" → opens the Parts modal
 
   const load = useCallback(async () => {
     if (!ticketId) return;
@@ -120,6 +125,20 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
       setLoading(false);
     }
   }, [ticketId, t]);
+
+  // Enterprise Handover Workflow — a supervisor clears a flagged pause/resume discrepancy, finalizing
+  // the resume that was held pending it. No re-capture: the resume handover was already saved.
+  const acknowledgeIncident = useCallback(async (incidentId) => {
+    setAckBusyId(incidentId);
+    try {
+      await api.post(`/maintenance-tickets/${ticketId}/incidents/${incidentId}/acknowledge`, {});
+      await load();
+    } catch (e) {
+      setError(e?.response?.data?.message || t('workflow.detail.loadError'));
+    } finally {
+      setAckBusyId(null);
+    }
+  }, [ticketId, load, t]);
 
   // (Re)load when the target ticket changes or the parent bumps reloadKey after an action.
   useEffect(() => {
@@ -156,16 +175,22 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
     return () => { alive = false; };
   }, [ticketId, reloadKey]);
 
-  const tone = STATUS_TONE[tk?.workflow_status] || '#64748b';
+  // Paused — Returned to Service splits into two visual sub-states on the ONE workflow_status: still
+  // out with the customer (slate) vs physically back and the handover paperwork is due (orange).
+  const tone = tk?.is_returned_pending_handover ? '#f97316' : (STATUS_TONE[tk?.workflow_status] || '#64748b');
   const act = tk && resolveAction(tk);
   const allowed = act && allows(can, act.perm);
   // "Mark Ready" is gated: blocked until every fault on the ticket is fixed (or cancelled).
   const openFaults = tk?.tasks_progress?.open ?? 0;
   const readyBlocked = act?.action === 'ready' && openFaults > 0;
   const readyHint = `Fix all ${openFaults} open fault${openFaults > 1 ? 's' : ''} first`;
-  // "Now at Garage" custody gate: only the driver who picked the car up may check it in.
-  const custodyLocked = act?.action === 'receive' && custodyBlocked(tk, userId);
-  const custodyHint = `Only ${tk?.dispatched_by_name || 'the driver who picked up the car'} can check it in`;
+  // Custody gate: a return/arrival leg may only be completed by the same driver who took the car.
+  // custodyBlocked() is scoped to the gated states, so no per-action guard is needed here.
+  const custodyLocked = custodyBlocked(tk, userId);
+  const custodyHolder = custodyHolderName(tk, userId);
+  const custodyHint = act?.action === 'arriveAtPark'
+    ? `Only ${custodyHolder || 'the driver who collected the car from the garage'} can complete the arrival at our park`
+    : `Only ${custodyHolder || 'the driver who picked up the car'} can check it in`;
   // Follow-up is MANAGEMENT authority (Waleed/Abdullah) — they chase the garage, not the driver. Only
   // shown while the car is In Workshop (under_repair), i.e. actually at the garage being worked on.
   const canFollowUp = tk && tk.workflow_status === 'under_repair' && can('maintenance.delegate');
@@ -177,6 +202,18 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
   // Supervisor Video-Review: the secondary "request a re-fix" (the primary "approve" comes from ACTION).
   // The whole gate is hidden while parked (SHOW_VIDEO_REVIEW = false).
   const canRefix = SHOW_VIDEO_REVIEW && tk && tk.workflow_status === 'repair_review' && can('maintenance.delegate');
+  // Pause Maintenance & Return to Service — pull a mid-repair car out for a customer (the controllers'
+  // decision). Offered on any in-progress stage; the ticket keeps all its state and Resume continues here.
+  const canPause = tk && isPausable(tk) && can('maintenance.manage');
+  // Vehicle Physically Returned — a light checkpoint (no handover required yet) offered while the car
+  // is paused and still out; once flagged, "Resume" (the primary action) takes over and captures the
+  // full return handover. Mirrors isPausedOut() — controller, supervisor, or the driver/logistics claim.
+  const canMarkReturn = tk && isPausedOut(tk) && (can('maintenance.manage') || can('maintenance.delegate') || can('logistics.claim'));
+  // Temporary Vehicle Release — take the car OUT of the workshop mid-repair (road test / customer test /
+  // external inspection / storage) WITHOUT pausing; the ticket stays at its stage. Releasing it is the
+  // controllers' call; bringing it back may also be a supervisor or the driver/logistics claim role.
+  const canTempRelease = tk && isTempReleasable(tk) && can('maintenance.manage');
+  const canReturnRelease = tk && isTemporarilyReleased(tk) && (can('maintenance.manage') || can('maintenance.delegate') || can('logistics.claim'));
   // Video Evidence is relevant once the car has reached the garage (or whenever any video already exists).
   const showVideo = SHOW_VIDEO_REVIEW && tk && (tk.has_video
     || ['under_repair', 'repair_review', 'ready_for_pickup', 'in_our_park', 'ready_for_reinspection', 'reinspection_failed', 'closed'].includes(tk.workflow_status));
@@ -195,6 +232,11 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
       {tk.workflow_status === 'under_repair' && can('maintenance.logistics') && (
         <Button size="sm" variant="secondary" onClick={() => onAct('finding', tk)}>{t('workflow.board.addFinding')}</Button>
       )}
+      {can('parts.request') && (
+        <Button size="sm" variant="secondary" onClick={() => setPartsOpenSignal((n) => n + 1)}>
+          <Icon.Wrench className="h-3.5 w-3.5" /> Request Part
+        </Button>
+      )}
       {canRoute && (
         <Button size="sm" variant="secondary" onClick={() => onAct('route', tk)}>
           <Icon.Wrench className="h-3.5 w-3.5" /> {t('workflow.task.route')}
@@ -205,6 +247,22 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
       )}
       {canRefix && (
         <Button size="sm" variant="secondary" onClick={() => onAct('requestRefix', tk)}>{t('workflow.cardAction.requestRefix')}</Button>
+      )}
+      {canPause && (
+        <Button size="sm" variant="secondary" onClick={() => onAct('pause', tk)}>{t('workflow.cardAction.pause')}</Button>
+      )}
+      {canMarkReturn && (
+        <Button size="sm" variant="secondary" onClick={() => onAct('markReturned', tk)}>{t('workflow.cardAction.markReturned')}</Button>
+      )}
+      {canTempRelease && (
+        <Button size="sm" variant="secondary" onClick={() => onAct('temporarilyRelease', tk)}>
+          <span aria-hidden>🚗</span> {t('workflow.cardAction.temporarilyRelease')}
+        </Button>
+      )}
+      {canReturnRelease && (
+        <Button size="sm" variant="secondary" onClick={() => onAct('returnFromRelease', tk)}>
+          <span aria-hidden>🔧</span> {t('workflow.cardAction.returnFromRelease')}
+        </Button>
       )}
       {/* Recovery (towing) — offered as a SECONDARY button only when it isn't already the PRIMARY action
           below (resolveAction() makes Recovery primary for any Breakdown ticket at inspection_pending or
@@ -305,16 +363,24 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
                 return sorted.map((key, si) => {
                   const h = tk.handoffs[key];
                   const hasEarlierBelow = si < sorted.length - 1; // an up-arrow links to the stage below
+                  // 'dispatched'/'repair_started' carry odometer + garage/destination context so the
+                  // timeline reads as pickup → transit → arrival instead of a bare timestamp.
+                  const labelKey = key === 'dispatched' && h.is_recovery ? 'dispatched_recovery' : key;
+                  const subline = [
+                    h.odometer != null ? `${Number(h.odometer).toLocaleString()} km` : null,
+                    key === 'dispatched' ? h.destination : (key === 'repair_started' ? h.garage : null),
+                  ].filter(Boolean).join(' · ');
                   return (
                     <Fragment key={key}>
                       <li className="relative flex gap-2.5 px-2 py-1">
                         <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-indigo-500 ring-2 ring-white" />
                         <div className="min-w-0 flex-1">
-                          <p className="text-sm font-semibold text-slate-800">{t(`workflow.detail.handoff.${key}`)}</p>
+                          <p className="text-sm font-semibold text-slate-800">{t(`workflow.detail.handoff.${labelKey}`)}</p>
                           <p className="text-xs text-slate-500">
                             {h.name ? `${h.name} · ` : ''}{fmtDateTime(h.at)}
                             {h.at && <span className="text-slate-400"> · {ago(h.at, t)}</span>}
                           </p>
+                          {subline && <p className="text-xs text-slate-400">{subline}</p>}
                         </div>
                       </li>
                       {/* arrow FROM this stage TO the next one (above) → explicit workflow progression */}
@@ -346,9 +412,13 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
               <Fact label={t('workflow.detail.contract')} value={tk.linked_contract_no} mono />
               {tk.cost != null && <Fact label={t('workflow.detail.cost')} value={`AED ${Number(tk.cost).toLocaleString()}`} />}
             </dl>
+            {/* customer_complaint holds the issue text for every origin — label it by trigger_reason so a
+                system routine agenda / driver note isn't mislabeled as a "Customer complaint". */}
             {tk.customer_complaint && (
               <div className="mt-3 border-t border-slate-100 pt-3">
-                <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">{t('workflow.detail.complaint')}</p>
+                <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                  {t(tk.trigger_reason === 'customer_reported' ? 'workflow.detail.complaint' : tk.trigger_reason === 'periodic' ? 'workflow.detail.agenda' : 'workflow.detail.driverNote')}
+                </p>
                 <p className="mt-1 text-sm text-slate-700">{tk.customer_complaint}</p>
               </div>
             )}
@@ -444,10 +514,75 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
 
           {/* Findings */}
           <Section title={t('workflow.detail.findings')} icon={<Icon.Flag className="h-3.5 w-3.5 text-slate-400" />}>
-            {tk.findings?.length ? <FindingsList findings={tk.findings} tasks={tk.tasks} /> : (
+            {tk.findings?.length ? <FindingsList findings={tk.findings} tasks={tk.tasks} paused={isPaused(tk)} /> : (
               <p className="text-xs text-slate-400">{t('workflow.detail.noFindings')}</p>
             )}
           </Section>
+
+          {/* Parts — every part requested against this ticket + a technician's in-context "Request Part".
+              Approve/purchase/install still happen on the standalone /parts board. */}
+          {can('parts.view') && (
+            <TicketParts
+              ticketId={ticketId}
+              ticket={tk}
+              tasks={tk.tasks}
+              canView={can('parts.view')}
+              canRequest={can('parts.request')}
+              openSignal={partsOpenSignal}
+              onChanged={load}
+              variant="drawer"
+            />
+          )}
+
+          {/* Repair Quality Check — the post-repair inspection verdicts (Fixed / Problem still exists /
+              New problem found) recorded at sign-off. Self-fetches; renders nothing before the QC stage. */}
+          <RepairQualityCheck ticketId={ticketId} workflowStatus={tk.workflow_status} reloadKey={reloadKey} />
+
+          {/* Handover Comparison Report — pause vs. resume custody-handover snapshots, permanently
+              attached to the ticket's history. A breach that exceeded the configured thresholds shows
+              its linked Incident + an Acknowledge action (maintenance.manage only). */}
+          {tk.handover_comparisons?.length > 0 && (
+            <Section title={t('workflow.detail.handoverReport')} icon={<Icon.Shield className="h-3.5 w-3.5 text-slate-400" />}>
+              <div className="space-y-3">
+                {tk.handover_comparisons.map((c) => (
+                  <div key={c.id} className={`rounded-xl border px-3.5 py-3 ${c.exceeds_threshold ? 'border-red-200 bg-red-50/50' : 'border-slate-200 bg-slate-50/60'}`}>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className={`inline-flex items-center gap-1.5 text-xs font-bold ${c.exceeds_threshold ? 'text-red-700' : 'text-emerald-700'}`}>
+                        <span className="h-2 w-2 rounded-full" style={{ background: c.exceeds_threshold ? '#ef4444' : '#10b981' }} />
+                        {c.exceeds_threshold ? t('workflow.detail.handoverBreach') : t('workflow.detail.handoverClean')}
+                      </span>
+                      <span className="text-[11px] text-slate-400">{fmtDateTime(c.generated_at)}</span>
+                    </div>
+                    <dl className="mt-2.5 grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
+                      <Fact label={t('workflow.detail.handoverMileageDelta')} value={c.mileage_delta != null ? `${c.mileage_delta > 0 ? '+' : ''}${Number(c.mileage_delta).toLocaleString()} km` : null} />
+                      <Fact label={t('workflow.detail.handoverFuelDelta')} value={c.fuel_delta} />
+                      <Fact label={t('workflow.detail.handoverNewDamages')} value={c.new_damages?.length ? c.new_damages.map((d) => d.location || d).join(', ') : null} />
+                      <Fact label={t('workflow.detail.handoverMissingAccessories')} value={c.missing_accessories?.length ? c.missing_accessories.join(', ') : null} />
+                      <Fact label={t('workflow.detail.handoverConditionChanges')} value={c.condition_changes && Object.keys(c.condition_changes).length ? Object.entries(c.condition_changes).map(([k, v]) => `${k}: ${v}`).join(', ') : null} />
+                    </dl>
+                    {c.exceeds_threshold && tk.active_incident && tk.active_incident.status === 'open' && (
+                      <div className="mt-3 flex items-center justify-between gap-2 rounded-lg bg-white px-3 py-2 ring-1 ring-inset ring-red-200">
+                        <div className="min-w-0">
+                          <p className="text-xs font-semibold text-red-700">{tk.active_incident.description || t('workflow.detail.incidentStatus')}</p>
+                          <p className="text-[11px] text-slate-400">{tk.active_incident.severity}</p>
+                        </div>
+                        {can('maintenance.manage') && (
+                          <Button size="sm" variant="danger" loading={ackBusyId === tk.active_incident.id} onClick={() => acknowledgeIncident(tk.active_incident.id)}>
+                            {t('workflow.detail.acknowledgeIncident')}
+                          </Button>
+                        )}
+                      </div>
+                    )}
+                    {c.exceeds_threshold && tk.active_incident?.status === 'acknowledged' && (
+                      <p className="mt-2 text-[11px] font-medium text-emerald-600">
+                        {t('workflow.detail.acknowledged')} · {tk.active_incident.acknowledged_by_name} · {fmtDateTime(tk.active_incident.acknowledged_at)}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </Section>
+          )}
 
           {/* Video Evidence — the garage's repair videos (the permanent video record). Supervisors upload +
               delete; anyone viewing the ticket can watch. Shown once the car has reached the garage. */}
@@ -733,7 +868,7 @@ function TestDriveReport({ report, tasks = [] }) {
           {report.symptoms.map((s, i) => {
             const badge = badgeFor(s);
             return (
-              <span key={i} className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 text-xs text-slate-600 ring-1 ring-inset ring-slate-200">
+              <span key={i} className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 ring-1 ring-inset ring-slate-200">
                 {s}
                 {badge && (
                   <span className={`ml-0.5 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold ring-1 ring-inset ${badge.cls}`}>

@@ -2,11 +2,8 @@ import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api/client';
 import useFetch from '../../hooks/useFetch';
-import { PageHeader } from '../../components/ui/Misc';
-import { SectionCard } from '../../components/ui/Table';
-import { MetricGridSkeleton } from '../../components/ui/Skeleton';
-import Badge, { ContractTypeBadge } from '../../components/ui/Badge';
-import Icon from '../../components/ui/Icon';
+import { ContractTypeBadge } from '../../components/ui/Badge';
+import { CommandPanel, StatGaugeTile } from '../../components/ops';
 import { fmtDate, num } from '../../lib/format';
 
 // Expected return = out date + contracted days (OfficeManager has no due-date field). Mirrors the
@@ -21,30 +18,10 @@ function dueDate(out, days) {
 // Collapse the compact readiness verdict into one chip: red when a car can't be handed over, amber
 // when it's deliverable but carrying advisories, green when it's clean. Null while readiness is absent.
 function readinessChip(r) {
-  if (!r) return { tone: 'slate', label: 'No vehicle' };
-  if (r.blocked) return { tone: 'red', label: `Blocked · ${r.blocker_count}` };
-  if (r.warn_count > 0) return { tone: 'amber', label: `Ready · ${r.warn_count} advisory` };
-  return { tone: 'green', label: 'Ready' };
-}
-
-function KpiTile({ label, value, tone = 'slate', Glyph }) {
-  const soft = {
-    slate: 'bg-slate-100 text-slate-600',
-    emerald: 'bg-emerald-100 text-emerald-600',
-    red: 'bg-red-100 text-red-600',
-    indigo: 'bg-indigo-100 text-indigo-600',
-  }[tone];
-  return (
-    <div className="flex items-center gap-3 rounded-2xl border border-slate-200/70 bg-white px-5 py-4 shadow-soft">
-      <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${soft}`}>
-        <Glyph className="h-5 w-5" />
-      </span>
-      <div>
-        <p className="text-2xl font-bold leading-none text-slate-900">{num(value)}</p>
-        <p className="mt-1 text-xs font-medium text-slate-500">{label}</p>
-      </div>
-    </div>
-  );
+  if (!r) return { tone: 'blocked', label: 'No vehicle' };
+  if (r.blocked) return { tone: 'crit', label: `Blocked · ${r.blocker_count}` };
+  if (r.warn_count > 0) return { tone: 'paused', label: `Ready · ${r.warn_count} advisory` };
+  return { tone: 'avail', label: 'Ready' };
 }
 
 function RentalRow({ r }) {
@@ -52,36 +29,35 @@ function RentalRow({ r }) {
   const due = dueDate(r.out_date, r.days);
   const overdue = r.contract_type === 'C' && !r.in_date && due && new Date(due) < new Date();
   const vehLabel = r.vehicle?.plate_no || [r.vehicle?.make, r.vehicle?.model].filter(Boolean).join(' ') || '—';
+  const rail = overdue || r.readiness?.blocked ? 'rt-crit' : (r.readiness && !r.readiness.blocked && !r.readiness.warn_count ? 'rt-avail' : '');
   return (
-    <tr className="hover:bg-slate-50/60">
-      <td className="px-4 py-3">
-        <Link to={`/contracts/${r.id}`} className="font-semibold text-indigo-600 hover:text-indigo-700">
-          #{r.contract_no || r.id}
-        </Link>
-        <div className="mt-1"><ContractTypeBadge type={r.contract_type} /></div>
+    <tr className={rail}>
+      <td>
+        <Link to={`/contracts/${r.id}`} className="opx-plate2">#{r.contract_no || r.id}</Link>
+        <div className="opx-sub" style={{ marginTop: 4 }}><ContractTypeBadge type={r.contract_type} /></div>
       </td>
-      <td className="px-4 py-3">
+      <td>
         {r.vehicle ? (
-          <Link to={`/vehicles/${r.vehicle.id}`} className="text-sm font-medium text-slate-800 hover:text-indigo-600">{vehLabel}</Link>
-        ) : <span className="text-sm text-slate-400">—</span>}
+          <Link to={`/vehicles/${r.vehicle.id}`} className="opx-mono2" style={{ textDecoration: 'none', color: 'var(--ink)' }}>{vehLabel}</Link>
+        ) : <span className="opx-sub">—</span>}
         {r.readiness?.condition_grade && r.readiness.condition_grade !== 'green' && (
-          <span className="ml-2 text-xs capitalize text-slate-400">{r.readiness.condition_grade}</span>
+          <span className="opx-sub" style={{ marginLeft: 8, textTransform: 'capitalize' }}>{r.readiness.condition_grade}</span>
         )}
       </td>
-      <td className="px-4 py-3">
+      <td>
         {r.customer ? (
-          <Link to={`/customers/${r.customer.id}`} className="text-sm text-slate-700 hover:text-indigo-600">
+          <Link to={`/customers/${r.customer.id}`} style={{ fontSize: 13, color: 'var(--ink-2)', textDecoration: 'none' }}>
             {r.customer.name_en || `#${r.customer.customer_no}`}
           </Link>
-        ) : <span className="text-sm text-slate-400">—</span>}
+        ) : <span className="opx-sub">—</span>}
       </td>
-      <td className="px-4 py-3 text-sm text-slate-600">{fmtDate(r.out_date) || '—'}</td>
-      <td className="px-4 py-3 text-sm">
-        {due ? <span className={overdue ? 'font-semibold text-red-600' : 'text-slate-600'}>{fmtDate(due)}{overdue ? ' · overdue' : ''}</span> : <span className="text-slate-400">—</span>}
+      <td className="opx-mono2">{fmtDate(r.out_date) || '—'}</td>
+      <td className="opx-mono2">
+        {due ? <span style={overdue ? { color: 'var(--crit)', fontWeight: 700 } : undefined}>{fmtDate(due)}{overdue ? ' · overdue' : ''}</span> : '—'}
       </td>
-      <td className="px-4 py-3 text-right">
-        <Badge tone={chip.tone}>{chip.label}</Badge>
-        {r.readiness && <span className="ml-2 text-xs text-slate-400">{r.readiness.pass_count}/{r.readiness.total}</span>}
+      <td className="r">
+        <span className={`opx-chip ${chip.tone}`}><span className="cd" />{chip.label}</span>
+        {r.readiness && <span className="opx-sub" style={{ marginLeft: 8, fontFamily: 'var(--mono)' }}>{r.readiness.pass_count}/{r.readiness.total}</span>}
       </td>
     </tr>
   );
@@ -104,6 +80,8 @@ export default function RentalOperationsHub() {
 
   const rows = useMemo(() => data?.items || [], [data]);
   const readyCount = useMemo(() => rows.filter((r) => r.readiness && !r.readiness.blocked).length, [rows]);
+  const total = data?.total || rows.length;
+  const blocked = data?.blocked || 0;
 
   const shown = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -116,71 +94,80 @@ export default function RentalOperationsHub() {
   }, [rows, q, onlyBlocked]);
 
   return (
-    <div className="py-8">
-      <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
-        <PageHeader
-          title="Rental Operations"
-          subtitle="Check cars in and out. Every active rental and upcoming booking with its car's live 9-point readiness — open a contract for the full condition checklist before you hand the keys over."
-        />
+    <div className="opx">
+      <div className="opx-body">
+        <div style={{ marginBottom: 18 }}>
+          <div className="opx-hint" style={{ letterSpacing: '.16em', textTransform: 'uppercase', marginBottom: 6 }}>Check-in · Check-out Control</div>
+          <h1 className="font-display" style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-.02em', color: 'var(--ink)', margin: 0 }}>Rental Operations</h1>
+          <p style={{ marginTop: 6, maxWidth: 720, fontSize: 13.5, color: 'var(--ink-3)', lineHeight: 1.5 }}>
+            Every active rental and upcoming booking with its car's live 9-point readiness — open a contract for the full condition checklist before you hand the keys over.
+          </p>
+        </div>
 
-        {error && <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error}</div>}
-
-        {loading && !rows.length ? (
-          <MetricGridSkeleton count={3} />
-        ) : (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <KpiTile label="Active & upcoming" value={data?.total || 0} tone="indigo" Glyph={Icon.Car} />
-            <KpiTile label="Ready to hand over" value={readyCount} tone="emerald" Glyph={Icon.Check} />
-            <KpiTile label="Blocked" value={data?.blocked || 0} tone="red" Glyph={Icon.Alert} />
-          </div>
+        {error && (
+          <div style={{ marginBottom: 16, borderRadius: 12, border: '1px solid rgba(251,113,133,.3)', background: 'rgba(251,113,133,.08)', color: '#fb7185', padding: '12px 16px', fontSize: 13 }}>{error}</div>
         )}
 
-        <SectionCard
-          title="Rentals & bookings"
-          subtitle="Active rentals (car out) and active/upcoming bookings"
-          actions={<span className="text-xs text-slate-400">{num(shown.length)}</span>}
-        >
-          <div className="space-y-3">
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="relative flex-1 min-w-[12rem]">
-                <Icon.Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                <input
-                  value={q}
-                  onChange={(e) => setQ(e.target.value)}
-                  placeholder="Search plate, customer, contract…"
-                  className="w-full rounded-full border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm text-slate-700 placeholder:text-slate-400 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
-                />
-              </div>
-              <button
-                type="button"
-                onClick={() => setOnlyBlocked((v) => !v)}
-                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition ${onlyBlocked ? 'bg-red-600 text-white' : 'bg-slate-100 text-slate-500 hover:text-slate-700'}`}
-              >
-                <Icon.Alert className="h-3.5 w-3.5" /> Blocked only
-              </button>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-slate-100 text-sm">
-                <thead>
-                  <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-400">
-                    <th className="px-4 py-2">Contract</th>
-                    <th className="px-4 py-2">Vehicle</th>
-                    <th className="px-4 py-2">Customer</th>
-                    <th className="px-4 py-2">Out</th>
-                    <th className="px-4 py-2">Due back</th>
-                    <th className="px-4 py-2 text-right">Readiness</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-50">
-                  {shown.length ? shown.map((r) => <RentalRow key={r.id} r={r} />) : (
-                    <tr><td colSpan={6} className="px-4 py-12 text-center text-sm text-slate-400">{rows.length ? 'No rentals match.' : 'No active rentals or upcoming bookings.'}</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+        {/* KPI strip */}
+        <div className="opx-grid opx-c12" style={{ marginBottom: 16 }}>
+          <div className="opx-span-4">
+            <StatGaugeTile label="Active & Upcoming" value={loading ? '—' : num(total)} hint="Rentals out + bookings" tone="cyan" icon="calendar" percent={100} />
           </div>
-        </SectionCard>
+          <div className="opx-span-4">
+            <StatGaugeTile label="Ready to Hand Over" value={loading ? '—' : num(readyCount)} hint="Passes the readiness gate" tone="avail" icon="check" percent={total ? (readyCount / total) * 100 : 0} />
+          </div>
+          <div className="opx-span-4">
+            <StatGaugeTile label="Blocked" value={loading ? '—' : num(blocked)} hint="Cannot hand over yet" tone={blocked ? 'crit' : 'avail'} icon="alert" percent={total ? (blocked / total) * 100 : 4} active={onlyBlocked} onClick={() => setOnlyBlocked((v) => !v)} />
+          </div>
+        </div>
+
+        {/* Rentals & bookings — telemetry table */}
+        <CommandPanel
+          title="Rentals & Bookings"
+          dotColor="#22d3ee"
+          label={loading ? 'loading' : `${shown.length} of ${rows.length}`}
+          meta="active rentals (car out) · active/upcoming bookings"
+          bodyFlush
+        >
+          <div className="opx-toolbar">
+            <input
+              className="opx-input"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search plate, customer, contract…"
+            />
+            <button
+              type="button"
+              onClick={() => setOnlyBlocked((v) => !v)}
+              className={`opx-ibtn ${onlyBlocked ? 'danger' : ''}`}
+              style={onlyBlocked ? { borderColor: 'var(--crit)', color: 'var(--crit)' } : undefined}
+            >
+              ⚠ Blocked only
+            </button>
+          </div>
+
+          <div className="opx-tblwrap">
+            <table className="opx-tbl">
+              <thead>
+                <tr>
+                  <th>Contract</th>
+                  <th>Vehicle</th>
+                  <th>Customer</th>
+                  <th>Out</th>
+                  <th>Due Back</th>
+                  <th className="r">Readiness</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading ? (
+                  <tr><td colSpan={6}><div className="opx-skel" style={{ height: 260 }} /></td></tr>
+                ) : shown.length ? shown.map((r) => <RentalRow key={r.id} r={r} />) : (
+                  <tr><td colSpan={6}><div className="opx-empty"><div className="big">🅿️</div>{rows.length ? 'No rentals match.' : 'No active rentals or upcoming bookings.'}</div></td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </CommandPanel>
       </div>
     </div>
   );

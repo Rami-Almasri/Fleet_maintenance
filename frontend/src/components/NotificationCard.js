@@ -1,4 +1,14 @@
 import { severityTheme, iconPath, timeAgo, actionLabel, metaChips } from '../lib/notifications';
+import Button from './ui/Button';
+
+// Severity → Button variant, so the CTA carries the card's urgency colour while
+// still rendering through the shared Button primitive.
+const SEVERITY_BUTTON_VARIANT = {
+  critical: 'danger',
+  warning: 'warning',
+  info: 'primary',
+  success: 'success',
+};
 
 // A single, self-contained alert card for the notifications "to-do board".
 //
@@ -14,8 +24,8 @@ export default function NotificationCard({ n, onAction, onMarkRead, onDismiss })
   return (
     <article
       className={[
-        'group relative flex flex-col overflow-hidden rounded-2xl border border-slate-200/70',
-        'border-l-4 shadow-soft transition-all duration-150 hover:-translate-y-0.5 hover:shadow-lg',
+        'group relative flex flex-col overflow-hidden rounded-2xl border border-slate-200/60',
+        'border-l-4 shadow-soft hover-lift',
         theme.border,
         n.read ? 'bg-white' : theme.cardTint,
       ].join(' ')}
@@ -23,7 +33,7 @@ export default function NotificationCard({ n, onAction, onMarkRead, onDismiss })
       {/* header: icon · severity chip · time */}
       <div className={`flex items-start gap-3 px-4 pt-4 ${n.read ? '' : theme.headTint}`}>
         <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white shadow-sm ${theme.iconBg}`}>
-          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <svg aria-hidden="true" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
             <path d={iconPath(n.icon)} />
           </svg>
         </div>
@@ -46,11 +56,11 @@ export default function NotificationCard({ n, onAction, onMarkRead, onDismiss })
           <button
             type="button"
             onClick={() => onDismiss(n.id)}
-            className="-mr-1 -mt-1 rounded-lg p-1 text-slate-300 opacity-0 transition hover:bg-slate-100 hover:text-slate-500 focus:opacity-100 group-hover:opacity-100"
+            className="-mr-1 -mt-1 rounded-lg p-1 text-slate-300 opacity-0 transition-colors duration-150 hover:bg-slate-100 hover:text-slate-500 focus-visible:opacity-100 group-hover:opacity-100"
             title="Dismiss"
             aria-label="Dismiss notification"
           >
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
@@ -67,10 +77,10 @@ export default function NotificationCard({ n, onAction, onMarkRead, onDismiss })
             <span
               key={i}
               className={[
-                'inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-semibold',
-                c.plate ? 'bg-slate-100 font-mono text-slate-600'
-                  : c.tone === 'strong' ? `${theme.chipBg} ${theme.chipText}`
-                  : 'bg-slate-100 text-slate-600',
+                'inline-flex items-center rounded-lg px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset',
+                c.plate ? 'bg-slate-50 font-mono tabular-nums text-slate-600 ring-slate-200'
+                  : c.tone === 'strong' ? `${theme.chipBg} ${theme.chipText} ring-transparent`
+                  : 'bg-slate-50 text-slate-600 ring-slate-200',
               ].join(' ')}
             >
               {c.text}

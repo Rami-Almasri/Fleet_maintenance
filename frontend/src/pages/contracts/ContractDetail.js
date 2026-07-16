@@ -4,7 +4,8 @@ import api from '../../api/client';
 import useFetch from '../../hooks/useFetch';
 import Badge, { ContractTypeBadge, ContractStateBadge } from '../../components/ui/Badge';
 import Button from '../../components/ui/Button';
-import { Card, Spinner } from '../../components/ui/Misc';
+import { Card, Spinner, ErrorState } from '../../components/ui/Misc';
+import { CommandPanel } from '../../components/ops';
 import ExchangeChainPanel from '../../components/ExchangeChainPanel';
 import WorkshopEvents from '../../components/WorkshopEvents';
 import ContractInvoices from '../../components/ContractInvoices';
@@ -19,17 +20,16 @@ function Section({ title, pairs }) {
   const visible = pairs.filter(([, v]) => v !== null && v !== undefined && v !== '' && v !== '—');
   if (visible.length === 0) return null;
   return (
-    <Card className="p-6">
-      <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-400">{title}</h3>
+    <CommandPanel title={title} dotColor="#22d3ee">
       <div className="grid grid-cols-1 gap-x-8 gap-y-1 sm:grid-cols-2">
         {visible.map(([label, value]) => (
-          <div key={label} className="flex justify-between gap-4 py-1.5 text-sm">
-            <span className="text-gray-500">{label}</span>
-            <span className="text-right font-medium text-gray-900">{value}</span>
+          <div key={label} className="flex justify-between gap-4 py-1.5 text-sm" style={{ borderBottom: '1px solid var(--line)' }}>
+            <span style={{ color: 'var(--ink-3)' }}>{label}</span>
+            <span className="text-right font-medium" style={{ color: 'var(--ink)' }}>{value}</span>
           </div>
         ))}
       </div>
-    </Card>
+    </CommandPanel>
   );
 }
 
@@ -166,8 +166,10 @@ export default function ContractDetail() {
   if (error || !c) {
     return (
       <div className="mx-auto max-w-3xl px-4 py-12">
-        <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error || 'Not found'}</div>
-        <Link to="/contracts" className="mt-4 inline-block text-sm font-medium text-indigo-600">← Back to contracts</Link>
+        <Card>
+          <ErrorState title="Couldn’t load this contract" message={error || 'Contract not found.'} onRetry={reload} />
+        </Card>
+        <Link to="/contracts" className="mt-4 inline-block text-sm font-medium text-indigo-600 transition-colors hover:text-indigo-700">← Back to contracts</Link>
       </div>
     );
   }
@@ -193,7 +195,7 @@ export default function ContractDetail() {
     } else if (c.state === 'open') {
       mStatus = { label: 'In garage', tone: 'text-amber-600', dot: 'bg-amber-500', badge: 'amber' };
     } else if (ret) {
-      mStatus = { label: 'Returned', tone: 'text-gray-600', dot: 'bg-gray-400', badge: 'gray' };
+      mStatus = { label: 'Returned', tone: 'text-slate-600', dot: 'bg-slate-400', badge: 'gray' };
     }
   }
   // Garage for this maintenance visit. The contract header's vendor is usually empty, so
@@ -274,7 +276,7 @@ export default function ContractDetail() {
       ] : []);
 
   return (
-    <div className="py-8">
+    <div className="opx py-8">
       <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
         {/* Back */}
         <Link to="/contracts" className="inline-flex items-center gap-1 text-sm font-medium text-slate-500 transition hover:text-slate-700">
@@ -283,7 +285,7 @@ export default function ContractDetail() {
         </Link>
 
         {/* Hero */}
-        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 p-6 shadow-card sm:p-8">
+        <div className="relative overflow-hidden rounded-2xl bg-navy-950 p-6 shadow-card sm:p-8">
           <div className="pointer-events-none absolute -right-16 -top-20 h-64 w-64 rounded-full bg-indigo-500/20 blur-3xl" />
           <div className="pointer-events-none absolute -bottom-24 left-1/4 h-64 w-64 rounded-full bg-violet-500/10 blur-3xl" />
           <div className="relative flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
@@ -344,16 +346,16 @@ export default function ContractDetail() {
         {stats.length > 0 && (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           {stats.map((s) => (
-            <div key={s.label} className="hover-lift rounded-2xl border border-slate-200/60 bg-white px-5 py-4 shadow-soft">
+            <div key={s.label} className="opx-kpi">
               <div className="flex items-center justify-between gap-2">
-                <p className="text-xs font-medium text-slate-500">{s.label}</p>
+                <p className="lbl" style={{ marginBottom: 0 }}>{s.label}</p>
                 {s.icon && (
                   <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${MILE_TONE[s.accent] || MILE_TONE.slate}`}>
                     <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={s.icon} /></svg>
                   </span>
                 )}
               </div>
-              <p className={`mt-1.5 ${s.small ? 'text-base' : 'text-2xl'} truncate font-bold tracking-tight ${s.tone || 'text-slate-900'}`} title={typeof s.value === 'string' ? s.value : undefined}>{s.value}</p>
+              <p className={`v tnum truncate ${s.small ? '' : ''}`} style={{ fontSize: s.small ? 16 : 26, marginTop: 8 }} title={typeof s.value === 'string' ? s.value : undefined}>{s.value}</p>
             </div>
           ))}
         </div>
@@ -384,8 +386,8 @@ export default function ContractDetail() {
               <h3 className="text-xs font-semibold uppercase tracking-wide text-red-500">Overdue — extension estimate</h3>
               <Badge tone="red">{overdueBilling.lateDays}d past due</Badge>
             </div>
-            <p className="mb-5 text-sm text-gray-600">
-              Expected return was <span className="font-medium text-gray-900">{fmtDate(rentalDue.due)}</span> and the car is still out.
+            <p className="mb-5 text-sm text-slate-600">
+              Expected return was <span className="font-medium text-slate-900">{fmtDate(rentalDue.due)}</span> and the car is still out.
               If the lease is extended, here’s the estimated charge for the extra {overdueBilling.lateDays} day{overdueBilling.lateDays === 1 ? '' : 's'}.
             </p>
 
@@ -430,11 +432,11 @@ export default function ContractDetail() {
         {(c.contract_type === 'U' || (c.items && c.items.length > 0)) && (
           <Card className="p-6">
             <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Maintenance</h3>
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Maintenance</h3>
               {garageName && (
-                <span className="text-sm text-gray-600">
-                  {garageLabel}: <span className="font-medium text-gray-900">{garageName}</span>
-                  {garage?.as_of && <span className="text-gray-400"> · {fmtDate(garage.as_of)}</span>}
+                <span className="text-sm text-slate-600">
+                  {garageLabel}: <span className="font-medium text-slate-900">{garageName}</span>
+                  {garage?.as_of && <span className="text-slate-400"> · {fmtDate(garage.as_of)}</span>}
                 </span>
               )}
             </div>
@@ -455,8 +457,8 @@ export default function ContractDetail() {
                 .filter(([, v]) => v !== null && v !== undefined && v !== '')
                 .map(([l, v]) => (
                   <div key={l} className="flex justify-between gap-4 py-1.5 text-sm">
-                    <span className="text-gray-500">{l}</span>
-                    <span className="text-right font-medium text-gray-900">{v}</span>
+                    <span className="text-slate-500">{l}</span>
+                    <span className="text-right font-medium text-slate-900">{v}</span>
                   </div>
                 ))}
             </div>
@@ -471,37 +473,37 @@ export default function ContractDetail() {
 
             {c.items?.length > 0 ? (
               <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-100 text-sm stagger-rows">
-                  <thead className="bg-gray-50/60">
-                    <tr className="text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                      <th className="px-4 py-2">Service</th>
-                      <th className="px-4 py-2 text-right">Cost</th>
-                      <th className="px-4 py-2">Notes</th>
+                <table className="min-w-full text-sm stagger-rows">
+                  <thead className="bg-slate-50/90">
+                    <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Service</th>
+                      <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-right">Cost</th>
+                      <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Notes</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-50">
+                  <tbody>
                     {c.items.map((it) => (
-                      <tr key={it.id}>
-                        <td className="px-4 py-2 font-medium text-gray-900">{it.service_name}</td>
-                        <td className="px-4 py-2 text-right text-gray-700">{aed2(it.cost)}</td>
-                        <td className="px-4 py-2 text-gray-500">{it.notes || '—'}</td>
+                      <tr key={it.id} className="transition-colors even:bg-slate-50/40 hover:bg-indigo-50/40">
+                        <td className="border-b border-slate-100 px-5 py-3.5 font-medium text-slate-900">{it.service_name}</td>
+                        <td className="border-b border-slate-100 px-5 py-3.5 text-right tabular-nums text-slate-700">{aed2(it.cost)}</td>
+                        <td className="border-b border-slate-100 px-5 py-3.5 text-slate-500">{it.notes || '—'}</td>
                       </tr>
                     ))}
                   </tbody>
                   <tfoot>
-                    <tr className="border-t border-gray-200">
-                      <td className="px-4 py-2 text-right font-semibold text-gray-700">Total</td>
-                      <td className="px-4 py-2 text-right font-bold text-gray-900">{aed2(c.maintenance_total ?? c.items.reduce((s, i) => s + Number(i.cost || 0), 0))}</td>
+                    <tr className="border-t border-slate-200">
+                      <td className="px-5 py-3 text-right font-semibold text-slate-700">Total</td>
+                      <td className="px-5 py-3 text-right font-bold tabular-nums text-slate-900">{aed2(c.maintenance_total ?? c.items.reduce((s, i) => s + Number(i.cost || 0), 0))}</td>
                       <td />
                     </tr>
                   </tfoot>
                 </table>
               </div>
             ) : (
-              <p className="text-sm text-gray-400">No items recorded.</p>
+              <p className="text-sm text-slate-400">No items recorded.</p>
             )}
 
-            {c.maintenance_notes && <p className="mt-4 whitespace-pre-line text-sm text-gray-700">{c.maintenance_notes}</p>}
+            {c.maintenance_notes && <p className="mt-4 whitespace-pre-line text-sm text-slate-700">{c.maintenance_notes}</p>}
           </Card>
         )}
 
@@ -524,7 +526,7 @@ export default function ContractDetail() {
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <Section title="Parties" pairs={[
-            ['Customer', c.customer ? <Link to={`/customers/${c.customer_id}`} className="text-indigo-600 hover:text-indigo-700">{c.customer.name_en || `#${c.customer.customer_no}`}{c.customer.name_en ? <span className="ml-1.5 text-xs text-gray-400">#{c.customer.customer_no}</span> : null}</Link> : '—'],
+            ['Customer', c.customer ? <Link to={`/customers/${c.customer_id}`} className="text-indigo-600 hover:text-indigo-700">{c.customer.name_en || `#${c.customer.customer_no}`}{c.customer.name_en ? <span className="ml-1.5 text-xs text-slate-400">#{c.customer.customer_no}</span> : null}</Link> : '—'],
             ['Vehicle', c.vehicle?.plate_no ? <Link to={`/vehicles/${c.vehicle_id}`} className="text-indigo-600 hover:text-indigo-700">{c.vehicle.plate_no} · {[c.vehicle.make, c.vehicle.model].filter(Boolean).join(' ')}</Link> : (c.vehicle_id || '—')],
             ['Reference', c.reference],
             ['Source', c.source],
@@ -576,8 +578,8 @@ export default function ContractDetail() {
 
         {c.remarks && (
           <Card className="p-6">
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Remarks</h3>
-            <p className="text-sm text-gray-700">{c.remarks}</p>
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Remarks</h3>
+            <p className="text-sm text-slate-700">{c.remarks}</p>
           </Card>
         )}
       </div>

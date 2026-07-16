@@ -9,6 +9,7 @@ import api from '../api/client';
 import useFetch from '../hooks/useFetch';
 import { useAuth } from '../auth/AuthContext';
 import Icon from '../components/ui/Icon';
+import { PageHeader } from '../components/ui/Misc';
 import { Skeleton } from '../components/ui/Skeleton';
 import { InfoTip } from '../components/ui/Tooltip';
 import { FleetDonut, useCountUp } from '../components/ui/Gauge';
@@ -68,7 +69,7 @@ export default function Analytics() {
       trends: trendsRes.data.data || { cost: [], downtime: [] },
     };
   }, []);
-  const { data, loading } = useFetch(fetcher);
+  const { data, loading, error } = useFetch(fetcher);
 
   const kpis = data?.kpis || {};
   const trends = data?.trends || { cost: [], downtime: [] };
@@ -110,20 +111,19 @@ export default function Analytics() {
     <div className="py-8">
       <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
         {/* Welcome header */}
-        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200/70 pb-6">
-          <h1 className="font-display text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
-            Welcome, {firstName}!
-          </h1>
-          <div className="flex items-center gap-4">
-            <span className="text-sm font-medium text-slate-500">{today}</span>
-            <span className="flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-violet-500 text-sm font-bold text-white shadow-glow">
-              {initials}
-            </span>
-          </div>
-        </div>
+        <PageHeader title={`Welcome, ${firstName}!`} subtitle="Fleet analytics at a glance — live from the same feeds as the Dashboard">
+          <span className="text-sm font-medium text-slate-500">{today}</span>
+          <span className="flex h-11 w-11 items-center justify-center rounded-full bg-indigo-600 text-sm font-bold text-white shadow-sm ring-2 ring-white">
+            {initials}
+          </span>
+        </PageHeader>
+
+        {error && (
+          <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error}</div>
+        )}
 
         {/* 3 × 2 card grid */}
-        <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+        <div className="stagger grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
           {/* 1 — Fleet Activity (area sparkline) */}
           <PanelCard
             title="Fleet Activity"
@@ -160,7 +160,7 @@ export default function Analytics() {
             <ul className="space-y-2.5">
               {segments.map((s) => (
                 <li key={s.label} className="flex items-center gap-2.5 text-sm">
-                  <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: DOT[s.tone] }} />
+                  <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${DOT_BG[s.tone]}`} />
                   <span className="font-medium text-slate-600">{s.label}</span>
                   <span className="ml-auto font-semibold tabular-nums text-slate-800">
                     {loading ? '—' : s.value}
@@ -235,10 +235,7 @@ export default function Analytics() {
                 const pct = total ? Math.round((val / total) * 100) : 0;
                 return (
                   <div key={row.key} className="flex items-center gap-3">
-                    <span
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
-                      style={{ background: `${DOT[row.tone]}1f`, color: DOT[row.tone] }}
-                    >
+                    <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${CHIP_TONE[row.tone]}`}>
                       {row.icon}
                     </span>
                     <div className="min-w-0 flex-1">
@@ -262,12 +259,20 @@ export default function Analytics() {
   );
 }
 
-// Solid legend-dot colours (aligned with the ProgressBar / FleetDonut palettes).
-const DOT = {
-  emerald: '#10b981',
-  blue:    '#3b82f6',
-  amber:   '#f59e0b',
-  red:     '#ef4444',
+// Solid legend-dot / tinted-chip tones (aligned with the ProgressBar / FleetDonut
+// palettes) — Tailwind classes so the dark "Cockpit" override layer remaps them.
+const DOT_BG = {
+  emerald: 'bg-emerald-500',
+  blue:    'bg-blue-500',
+  amber:   'bg-amber-500',
+  red:     'bg-red-500',
+};
+
+const CHIP_TONE = {
+  emerald: 'bg-emerald-50 text-emerald-600',
+  blue:    'bg-blue-50 text-blue-600',
+  amber:   'bg-amber-50 text-amber-600',
+  red:     'bg-red-50 text-red-600',
 };
 
 const READINESS = [

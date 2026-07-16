@@ -19,13 +19,14 @@
 import { useMemo, useState } from 'react';
 import api from '../../api/client';
 import { useI18n } from '../../i18n/I18nContext';
+import { usePermissions } from '../../hooks/usePermissions';
 import Modal from '../ui/Modal';
 import Button from '../ui/Button';
 import SearchSelect from '../ui/SearchSelect';
 import { Input, Textarea } from '../ui/Field';
 import Icon from '../ui/Icon';
 import Tooltip from '../ui/Tooltip';
-import { TASK_STATUS, isAtGarage } from './meta';
+import { TASK_STATUS, SERVICE_CONFIRM, isAtGarage } from './meta';
 import { evaluateContinuity, needsNote, stageIgnoresTolerance, STAGE } from '../../lib/odometerContinuity';
 import OdometerContinuityHint, { odoGateBlocked } from './OdometerContinuityHint';
 import { uploadRepairVideo } from '../../lib/maintenanceMedia';
@@ -35,12 +36,36 @@ const FIX_STAGE_LABEL = { presigning: 'Preparing upload…', uploading: 'Uploadi
 
 const TERMINAL = ['completed', 'cancelled'];
 
+// "12 Jul 2026" from an ISO string; empty when unparseable.
+const fmtDay = (iso) => {
+  if (!iso) return '';
+  try {
+    return new Date(iso).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
+  } catch {
+    return '';
+  }
+};
+
+// Workshop confirmation verdicts — the technician's per-fault review at the In Workshop stage. Only
+// `confirmed` triggers recurring-fault intelligence server-side; the rest simply record the finding.
+const CONFIRM_VERDICTS = ['confirmed', 'not_found', 'different_cause'];
+const CONFIRM_TONE = {
+  confirmed:       { icon: '✓', active: 'bg-emerald-600 text-white ring-emerald-600', idle: 'bg-white text-emerald-700 ring-emerald-300 hover:bg-emerald-50' },
+  not_found:       { icon: '∅', active: 'bg-slate-600 text-white ring-slate-600', idle: 'bg-white text-slate-600 ring-slate-300 hover:bg-slate-100' },
+  different_cause: { icon: '≠', active: 'bg-amber-500 text-white ring-amber-500', idle: 'bg-white text-amber-700 ring-amber-300 hover:bg-amber-50' },
+};
+
 export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone }) {
   const { t } = useI18n();
+  const { can } = usePermissions();
+  const canApprove = can('maintenance.recurring.manage'); // clear a blocked recurring-fault repair
   const [tasks, setTasks] = useState(ticket?.tasks || []);
   const [garage, setGarage] = useState(ticket?.garage || null);
   const [wfStatus, setWfStatus] = useState(ticket?.workflow_status); // tracks live stage so a transfer flips it at once
   const [transferOpen, setTransferOpen] = useState(false);
+  // "How will the vehicle be transferred?" — asked BEFORE the transfer form itself; null = not chosen
+  // yet (shows the choice, not the form). The rest of the transfer form/API call is unchanged either way.
+  const [transportMethod, setTransportMethod] = useState(null);
   const [vendorId, setVendorId] = useState('');
   const [reason, setReason] = useState('');
   const [odometer, setOdometer] = useState('');       // Mileage Gate — mandatory current reading on transfer
@@ -96,6 +121,11 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
   // Can a fault be marked fixed right now? Only once the car is at the garage stage. Derived from the
   // LIVE stage so a transfer (which rolls the ticket back to in_transit) hides fault management at once.
   const carAtGarage = isAtGarage({ workflow_status: wfStatus });
+  // Only offer the "how will it be transferred?" choice when the car's CURRENT leg is a recovery tow —
+  // it may or may not still need a tow onward, so it's a real decision. A car that arrived by a normal
+  // driver is presumably still drivable, so a further transfer goes straight through the driver flow
+  // with no dialog. ticket.is_recovery always reflects the current leg (dispatch() clears it on pickup).
+  const offerTransportChoice = carAtGarage && !!ticket?.is_recovery;
 
   // Pull the refreshed ticket (faults + current garage + stage) out of any action response.
   const apply = (res) => {
@@ -111,6 +141,35 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
     setError(null);
     try {
       apply(await api.post(`/maintenance-tasks/${task.id}/status`, { status }));
+    } catch (e) {
+      setError(e?.response?.data?.message || t('workflow.error.generic'));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  // Workshop confirmation — record the technician's verdict on whether the reported fault is real. A
+  // `confirmed` verdict opens a recurring-fault review; if the fault recurred it also BLOCKS the repair
+  // (repair_gate=pending) until a manager approves it below.
+  const confirmTask = async (task, confirmation_status) => {
+    setBusyId(task.id);
+    setError(null);
+    try {
+      apply(await api.post(`/maintenance-tasks/${task.id}/confirm`, { confirmation_status }));
+    } catch (e) {
+      setError(e?.response?.data?.message || t('workflow.error.generic'));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  // Approve / reject a blocked recurring-fault repair (managers only). Approve unblocks the repair; reject
+  // cancels the fault so we don't pay to repair the same thing twice.
+  const repairApproval = async (task, decision) => {
+    setBusyId(task.id);
+    setError(null);
+    try {
+      apply(await api.post(`/maintenance-tasks/${task.id}/repair-approval`, { decision }));
     } catch (e) {
       setError(e?.response?.data?.message || t('workflow.error.generic'));
     } finally {
@@ -203,9 +262,11 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
         odometer: Number(odometer),
         odometer_note: odoNote.trim() || null,
         acknowledge_conflict: acknowledge,
+        transport_method: transportMethod || 'driver',
       });
       apply(res);
       setTransferOpen(false);
+      setTransportMethod(null);
       setConflict(null);
       setVendorId('');
       setReason('');
@@ -258,7 +319,20 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
               )}
             </span>
           </span>
-          <Button size="sm" variant="secondary" disabled={busy} onClick={() => setTransferOpen((v) => !v)}>
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={busy}
+            onClick={() => {
+              setTransferOpen((v) => !v);
+              // Ask "how" ONLY when the car's current leg is a recovery tow (offerTransportChoice) — a
+              // genuine open decision. Otherwise (pre-arrival re-route, OR the car arrived by a normal
+              // driver and is presumably still drivable) skip straight to the driver transfer flow with
+              // no dialog — transport_method 'driver' is sent but ignored server-side on the pre-arrival
+              // branch, same as before.
+              setTransportMethod(offerTransportChoice ? null : 'driver');
+            }}
+          >
             <Icon.ArrowRight className="h-3.5 w-3.5" /> {t('workflow.task.transferCar')}
           </Button>
         </div>
@@ -281,9 +355,55 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
         </div>
       )}
 
-      {/* Whole-car transfer form — all open faults move together to the next garage (sequential). */}
-      {transferOpen && garage && (
+      {/* Step 1 of Transfer — "How will the vehicle be transferred?" Only asked when the car's CURRENT
+          leg is a recovery tow (offerTransportChoice) — it may or may not still need towing onward, so
+          it's a genuine open decision. A car that arrived by a normal driver skips this screen entirely
+          (see the button's onClick above) and goes straight to the driver transfer form — it's presumably
+          still drivable, so there's nothing to ask. Same for a pre-arrival re-route (not carAtGarage). */}
+      {transferOpen && garage && offerTransportChoice && !transportMethod && (
+        <div className="mb-3 space-y-2.5 rounded-xl bg-slate-50 p-3 ring-1 ring-inset ring-slate-200">
+          <p className="text-sm font-semibold text-slate-700">{t('workflow.task.transportMethodQuestion')}</p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <button
+              type="button"
+              onClick={() => setTransportMethod('recovery')}
+              className="flex flex-col items-start gap-1 rounded-xl border border-slate-200 bg-white p-3 text-left transition hover:border-red-300 hover:bg-red-50/50"
+            >
+              <span className="flex items-center gap-1.5 text-sm font-semibold text-slate-800">🛻 {t('workflow.task.transportRecovery')}</span>
+              <span className="text-xs text-slate-500">{t('workflow.task.transportRecoveryHint')}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setTransportMethod('driver')}
+              className="flex flex-col items-start gap-1 rounded-xl border border-slate-200 bg-white p-3 text-left transition hover:border-indigo-300 hover:bg-indigo-50/50"
+            >
+              <span className="flex items-center gap-1.5 text-sm font-semibold text-slate-800">🚗 {t('workflow.task.transportDriver')}</span>
+              <span className="text-xs text-slate-500">{t('workflow.task.transportDriverHint')}</span>
+            </button>
+          </div>
+          <div className="flex justify-end">
+            <Button size="sm" variant="ghost" onClick={() => setTransferOpen(false)}>{t('common.cancel')}</Button>
+          </div>
+        </div>
+      )}
+
+      {/* Whole-car transfer form — all open faults move together to the next garage (sequential).
+          Unchanged from before except it now carries the chosen transport_method along on submit. */}
+      {transferOpen && garage && transportMethod && (
         <div className="mb-3 space-y-2 rounded-xl bg-slate-50 p-3 ring-1 ring-inset ring-slate-200">
+          {/* The chosen-method chip (+ the ability to change it) only makes sense once a real choice was
+              offered — a driver-arrived car or a pre-arrival re-route skipped the dialog entirely, so
+              there's nothing to show or change. */}
+          {offerTransportChoice && (
+            <div className="flex items-center justify-between">
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 ring-1 ring-inset ring-slate-200">
+                {transportMethod === 'recovery' ? '🛻' : '🚗'} {transportMethod === 'recovery' ? t('workflow.task.transportRecovery') : t('workflow.task.transportDriver')}
+              </span>
+              <button type="button" className="text-xs font-medium text-indigo-600 hover:text-indigo-700" onClick={() => setTransportMethod(null)}>
+                {t('workflow.task.transportChange')}
+              </button>
+            </div>
+          )}
           <SearchSelect
             value={vendorId}
             onChange={setVendorId}
@@ -349,7 +469,7 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
           )}
 
           <div className="flex justify-end gap-2">
-            <Button size="sm" variant="ghost" disabled={transferring} onClick={() => setTransferOpen(false)}>
+            <Button size="sm" variant="ghost" disabled={transferring} onClick={() => { setTransferOpen(false); setTransportMethod(null); }}>
               {t('common.cancel')}
             </Button>
             <Button size="sm" variant="primary" disabled={transferring || !vendorId || !odoValid || reasonMissing} onClick={() => transferCar(false)}>
@@ -390,12 +510,27 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
                         <span className={`h-1.5 w-1.5 rounded-full ${st.dot}`} />
                         {t(`workflow.task.status.${task.status}`)}
                       </span>
+                      {/* Persistent workshop-confirmation verdict badge — stays visible after the fault is fixed. */}
+                      {task.confirmation_status && (
+                        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-semibold ring-1 ring-inset ${CONFIRM_TONE[task.confirmation_status]?.idle || 'bg-slate-50 text-slate-600 ring-slate-200'}`}>
+                          {CONFIRM_TONE[task.confirmation_status]?.icon} {t(`workflow.task.review.${task.confirmation_status}`)}
+                        </span>
+                      )}
                       {/* Where this fault was fixed — so after a transfer, faults already resolved at the
                           PREVIOUS garage stay attributed to it instead of looking like they're at the new one. */}
                       {task.status === 'completed' && task.current_garage && (
                         <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 font-medium text-emerald-700 ring-1 ring-inset ring-emerald-200">
                           ✓ {t('workflow.task.fixedAt', { garage: task.current_garage })}
                         </span>
+                      )}
+                      {/* Routine service performed → its vehicle-sync state: Pending Confirmation until the
+                          ticket is closed, then Confirmed. The vehicle record never updates before closure. */}
+                      {task.service_confirmation && SERVICE_CONFIRM[task.service_confirmation] && (
+                        <Tooltip content={t(`workflow.task.confirm.${task.service_confirmation}Hint`)}>
+                          <span className={`inline-flex cursor-help items-center gap-1 rounded-full px-2 py-0.5 font-semibold ring-1 ring-inset ${SERVICE_CONFIRM[task.service_confirmation].chip}`}>
+                            {SERVICE_CONFIRM[task.service_confirmation].icon} {t(`workflow.task.confirm.${task.service_confirmation}`)}
+                          </span>
+                        </Tooltip>
                       )}
                       {/* Delegate overruled the inspector — a mis-diagnosis, distinct from a plain cancel.
                           Hover/focus the badge to read WHY it was rejected (the delegate's reason). */}
@@ -428,7 +563,7 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
                         {/* "Mark fixed" only appears once the car is actually at the garage — in earlier
                             stages (awaiting dispatch / in transit) there's nothing to mark fixed yet.
                             Opens the fix-evidence panel (video + note) rather than completing outright. */}
-                        {carAtGarage && (
+                        {carAtGarage && task.repair_gate !== 'pending' && (
                           <Button size="sm" variant="success" disabled={busy || rowBusy || fixTask != null || disputeTask != null} onClick={() => openFix(task)}>
                             {t('workflow.task.complete')}
                           </Button>
@@ -443,6 +578,94 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
                     ) : null}
                   </div>
                 </div>
+
+                {/* Workshop confirmation gate — In Workshop, the technician reviews EVERY reported fault
+                    ("does it exist?") before repair. Only "Confirmed" lets the server open a recurring-fault
+                    review. Informational + non-blocking; independent of the repair status below. */}
+                {wfStatus === 'under_repair' && !terminal && (
+                  <div className="mt-2.5 rounded-lg bg-slate-50 p-2.5 ring-1 ring-inset ring-slate-200">
+                    {/* Recurring-fault repair gate. PENDING → a blocking red panel: the repair cannot start
+                        until a manager approves it. Otherwise the soft amber "Previous repair found" note.
+                        Both surface the previous-repair details from the report-time flag. */}
+                    {task.repair_gate === 'pending' ? (
+                      <div className="mb-2 rounded-lg border border-red-300 bg-red-50 p-2.5">
+                        <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-red-800">
+                          <Icon.Alert className="h-3.5 w-3.5" /> {t('workflow.task.review.gateRequired')}
+                        </p>
+                        <dl className="mt-1.5 space-y-0.5 text-[11px] text-red-900">
+                          {task.recurrence?.garage && (
+                            <div className="flex flex-wrap gap-x-1.5"><dt className="text-red-700">{t('workflow.task.review.lastRepairedBy')}:</dt><dd className="font-semibold">{task.recurrence.garage}</dd></div>
+                          )}
+                          {task.recurrence?.repair_days != null && (
+                            <div className="flex flex-wrap gap-x-1.5"><dt className="text-red-700">{t('workflow.task.review.repairDuration')}:</dt><dd className="font-semibold">{t('workflow.task.review.durationDays', { n: task.recurrence.repair_days })}</dd></div>
+                          )}
+                          {task.recurrence?.repaired_on && (
+                            <div className="flex flex-wrap gap-x-1.5"><dt className="text-red-700">{t('workflow.task.review.fixedOn')}:</dt><dd className="font-semibold">{fmtDay(task.recurrence.repaired_on)}</dd></div>
+                          )}
+                        </dl>
+                        <p className="mt-1.5 text-[11px] font-semibold text-red-800">
+                          {t('workflow.task.review.status')}: {t('workflow.task.review.waitingApproval')}
+                        </p>
+                        {canApprove ? (
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            <Button size="sm" variant="success" disabled={busy || rowBusy} onClick={() => repairApproval(task, 'approve')}>
+                              {t('workflow.task.review.approveRepair')}
+                            </Button>
+                            <Button size="sm" variant="ghost" className="text-red-600 hover:bg-red-100" disabled={busy || rowBusy} onClick={() => repairApproval(task, 'reject')}>
+                              {t('workflow.task.review.reject')}
+                            </Button>
+                          </div>
+                        ) : (
+                          <p className="mt-1.5 text-[11px] italic text-red-600">{t('workflow.task.review.waitingApprovalHint')}</p>
+                        )}
+                      </div>
+                    ) : task.recurrence_flagged ? (
+                      <div className="mb-2 rounded-lg border border-amber-300 bg-amber-50 p-2.5">
+                        <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-amber-800">
+                          <Icon.Alert className="h-3.5 w-3.5" /> {t('workflow.task.review.prevRepairFound')}
+                        </p>
+                        <dl className="mt-1.5 space-y-0.5 text-[11px] text-amber-900">
+                          {task.recurrence?.garage && (
+                            <div className="flex flex-wrap gap-x-1.5"><dt className="text-amber-700">{t('workflow.task.review.lastRepairedBy')}:</dt><dd className="font-semibold">{task.recurrence.garage}</dd></div>
+                          )}
+                          {task.recurrence?.repair_days != null && (
+                            <div className="flex flex-wrap gap-x-1.5"><dt className="text-amber-700">{t('workflow.task.review.repairDuration')}:</dt><dd className="font-semibold">{t('workflow.task.review.durationDays', { n: task.recurrence.repair_days })}</dd></div>
+                          )}
+                          {task.recurrence?.repaired_on && (
+                            <div className="flex flex-wrap gap-x-1.5"><dt className="text-amber-700">{t('workflow.task.review.fixedOn')}:</dt><dd className="font-semibold">{fmtDay(task.recurrence.repaired_on)}</dd></div>
+                          )}
+                        </dl>
+                        {task.repair_gate === 'approved' ? (
+                          <p className="mt-1.5 flex items-center gap-1 text-[11px] font-semibold text-emerald-700">
+                            ✓ {t('workflow.task.review.repairApprovedBy', { name: task.repair_gate_by || '—' })}
+                          </p>
+                        ) : (
+                          <p className="mt-1.5 text-[11px] font-medium text-amber-800">{t('workflow.task.review.mayBeRecurring')}</p>
+                        )}
+                      </div>
+                    ) : null}
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{t('workflow.task.review.title')}</p>
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {CONFIRM_VERDICTS.map((v) => {
+                        const activeVerdict = task.confirmation_status === v;
+                        return (
+                          <button
+                            key={v}
+                            type="button"
+                            disabled={busy || rowBusy}
+                            onClick={() => confirmTask(task, v)}
+                            className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ring-inset transition-colors disabled:opacity-50 ${activeVerdict ? CONFIRM_TONE[v].active : CONFIRM_TONE[v].idle}`}
+                          >
+                            {CONFIRM_TONE[v].icon} {t(`workflow.task.review.${v}`)}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {task.confirmation_status && task.confirmed_by && (
+                      <p className="mt-1.5 text-[11px] text-slate-400">{t('workflow.task.review.reviewedBy', { name: task.confirmed_by })}</p>
+                    )}
+                  </div>
+                )}
 
                 {/* Fix Evidence — capture a repair video + resolution note before completing the fault. */}
                 {isFixing && (

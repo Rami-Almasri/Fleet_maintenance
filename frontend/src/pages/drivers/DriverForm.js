@@ -5,7 +5,7 @@ export const DRIVER_STATUSES = ['active', 'suspended'];
 function Section({ title, children }) {
   return (
     <div>
-      <h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-400">{title}</h4>
+      <h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">{title}</h4>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">{children}</div>
     </div>
   );

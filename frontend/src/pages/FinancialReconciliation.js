@@ -182,7 +182,7 @@ export default function FinancialReconciliation() {
 
             {/* Three-way comparison */}
             <div className="grid gap-5 lg:grid-cols-3">
-              <SectionCard title="Fleet ledger" subtitle="What FleetView reports (synced from OfficeManager)">
+              <SectionCard title="Fleet ledger" subtitle="What Faster reports (synced from OfficeManager)">
                 <div className="px-5 py-3">
                   <Line label="Income" hint="ex-VAT, reference" value={aed2(data.fleet.income)} tone="text-slate-500" />
                   <Line label="Billed" hint="incl. VAT" value={aed2(data.fleet.billed)} />

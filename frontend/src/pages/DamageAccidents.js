@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../api/client';
 import useFetch from '../hooks/useFetch';
 import Badge from '../components/ui/Badge';
+import Button from '../components/ui/Button';
 import { Card, PageHeader, Spinner, EmptyState, SearchInput } from '../components/ui/Misc';
 import { Select } from '../components/ui/Field';
 import { aed2, fmtDate, num } from '../lib/format';
@@ -32,11 +33,10 @@ function ReasonBadge({ reason, level }) {
 }
 
 // Red = renter fault · Green = third party · Grey = the record doesn't say.
-function FaultBadge({ fault, liable, isAccident }) {
-  const car = isAccident ? '🚗 ' : '';
-  if (fault === 'renter') return <Badge tone="red">{car}Renter at fault</Badge>;
-  if (fault === 'third_party') return <Badge tone="green">{car}Third party</Badge>;
-  return <Badge tone="gray">{liable || 'Not specified'}</Badge>;
+function FaultBadge({ fault, liable }) {
+  if (fault === 'renter') return <Badge tone="red" dot>Renter at fault</Badge>;
+  if (fault === 'third_party') return <Badge tone="green" dot>Third party</Badge>;
+  return <Badge tone="gray" dot>{liable || 'Not specified'}</Badge>;
 }
 
 function Stat({ label, value, tone = 'slate' }) {
@@ -56,7 +56,7 @@ function IncidentRow({ inc, open, onToggle }) {
   const details = [inc.service_sup, inc.service_main].filter(Boolean);
   return (
     <Fragment>
-      <tr className="cursor-pointer hover:bg-slate-50/60" onClick={onToggle}>
+      <tr className="cursor-pointer transition-colors hover:bg-indigo-50/40" onClick={onToggle}>
         <td className="px-4 py-3">
           <Link to={`/vehicles/${inc.vehicle_id}`} onClick={(e) => e.stopPropagation()} className="font-medium text-indigo-600 hover:text-indigo-700">
             {inc.plate || `#${inc.vehicle_id}`}
@@ -182,7 +182,7 @@ export default function DamageAccidents() {
         <div className="rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-2.5 text-xs text-slate-600">
           <span className="mr-4 inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-red-500" /> <b>Red</b> — renter at fault</span>
           <span className="mr-4 inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-emerald-500" /> <b>Green</b> — third party (insured accident)</span>
-          <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-gray-400" /> <b>Grey</b> — the record doesn’t state fault</span>
+          <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-slate-400" /> <b>Grey</b> — the record doesn’t state fault</span>
         </div>
 
         {/* Filters */}
@@ -206,7 +206,7 @@ export default function DamageAccidents() {
           <Card>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-slate-100 text-sm">
-                <thead className="bg-slate-50/60">
+                <thead className="bg-slate-50/90">
                   <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                     <th className="px-4 py-3">Vehicle</th>
                     <th className="px-4 py-3">Date</th>
@@ -228,9 +228,7 @@ export default function DamageAccidents() {
             <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3 text-xs text-slate-400">
               <span>Showing {num(shown.length)} of {num(incidents.length)}{incidents.length !== (data?.incidents?.length || 0) ? ` (filtered from ${num(data?.incidents?.length || 0)})` : ''}</span>
               {shown.length < incidents.length && (
-                <button onClick={() => setLimit((l) => l + PAGE)} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-medium text-slate-600 transition hover:bg-slate-50">
-                  Show more
-                </button>
+                <Button variant="secondary" size="sm" onClick={() => setLimit((l) => l + PAGE)}>Show more</Button>
               )}
             </div>
           </Card>

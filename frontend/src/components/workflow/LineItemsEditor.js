@@ -169,7 +169,7 @@ export default function LineItemsEditor({
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-indigo-100 bg-indigo-50/60 px-3 py-2.5">
           <span className="flex items-center gap-2 text-sm font-semibold text-slate-700">
-            <span className="flex h-6 w-6 items-center justify-center rounded-md bg-indigo-100 text-indigo-600">
+            <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-indigo-100 text-indigo-600">
               <Icon.Wrench className="h-3.5 w-3.5" />
             </span>
             {t('workflow.lineItem.parts')}
@@ -286,7 +286,7 @@ export default function LineItemsEditor({
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-sky-100 bg-sky-50/60 px-3 py-2.5">
           <span className="flex items-center gap-2 text-sm font-semibold text-slate-700">
-            <span className="flex h-6 w-6 items-center justify-center rounded-md bg-sky-100 text-sky-600">
+            <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-sky-100 text-sky-600">
               <Icon.Clock className="h-3.5 w-3.5" />
             </span>
             {t('workflow.lineItem.labor')}

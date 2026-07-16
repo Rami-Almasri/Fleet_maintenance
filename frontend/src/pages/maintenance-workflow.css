@@ -1,0 +1,134 @@
+/* =======================================================================
+   Maintenance Workflow — Cockpit board skin.
+   Layers on top of components/ops/ops.css (the .opx design tokens): the board
+   lanes, dark ticket cards and the bottom command row. Theme-aware via the
+   same --panel/--ink/--line variables, so it reads in Platinum and Cockpit.
+   ======================================================================= */
+
+.mwf .mwf-head-actions{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto}
+@media(max-width:900px){.mwf .mwf-head-actions{margin-left:0;width:100%}}
+
+.mwf .mwf-kpis{margin-bottom:16px}
+.mwf .mwf-error{margin-bottom:14px;padding:11px 14px;border-radius:11px;font-size:13px;
+  color:var(--crit);background:rgba(251,113,133,.08);border:1px solid rgba(251,113,133,.3)}
+
+/* ---- toolbar ---- */
+.mwf-toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:16px}
+.mwf-search{position:relative;display:flex;align-items:center}
+.mwf-search>svg{position:absolute;left:11px;color:var(--ink-3);pointer-events:none}
+.mwf-search .opx-input{min-width:280px}
+.mwf-toolbar-meta{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--ink-3);letter-spacing:.04em}
+
+/* ---- board — responsive dashboard grid: 4 lanes per row, wrapping ---- */
+/* Lanes size to content; in-lane paging (show first LANE_PAGE_SIZE cards + "+N more") keeps the
+   collapsed board compact and roughly even without any internal scroll. */
+.mwf-board{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));align-items:start;
+  gap:14px;padding-bottom:8px;margin-bottom:18px}
+@media(max-width:1360px){.mwf-board{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:1000px){.mwf-board{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:620px){.mwf-board{grid-template-columns:1fr}}
+
+.mwf-lane{position:relative;display:flex;flex-direction:column;background:linear-gradient(180deg,var(--panel),var(--deep));
+  border:1px solid var(--line);border-radius:15px;overflow:hidden;min-height:240px}
+.mwf-lane-accent{position:absolute;top:0;left:0;right:0;height:3px}
+.mwf-lane-hd{display:flex;align-items:center;gap:8px;padding:12px 12px 10px;border-bottom:1px solid var(--line)}
+.mwf-lane-hd .dot{width:8px;height:8px;border-radius:50%;flex:none}
+.mwf-lane-hd .nm{font-size:11.5px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:var(--ink-2);line-height:1.2}
+.mwf-lane-hd .ct{margin-left:auto;font-family:var(--mono);font-size:12px;font-weight:800;border-radius:8px;padding:1px 9px;flex:none}
+.mwf-lane-bd{display:flex;flex-direction:column;gap:9px;padding:10px;flex:1}
+
+.mwf-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;
+  padding:26px 10px;text-align:center;border:1px dashed var(--line);border-radius:12px}
+.mwf-empty .ic{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:var(--ink-3);
+  background:var(--ov2);border:1px solid var(--line)}
+.mwf-empty .t{font-size:12px;font-weight:600;color:var(--ink-2)}
+.mwf-empty .h{font-size:11px;color:var(--ink-3);line-height:1.5;max-width:180px}
+
+/* ---- dark ticket card ---- */
+.mwf-card{position:relative;display:flex;background:linear-gradient(180deg,var(--panel-2),var(--deep));
+  border:1px solid var(--line);border-radius:12px;overflow:hidden;cursor:pointer;transition:.15s}
+.mwf-card:hover{border-color:var(--line-2);transform:translateY(-2px);box-shadow:0 16px 34px -24px rgba(0,0,0,.9)}
+.mwf-card.sev-crit{border-color:rgba(251,113,133,.34)}
+.mwf-card.sev-paused{border-color:rgba(245,165,36,.3)}
+.mwf-card.sel{border-color:var(--cyan);box-shadow:0 0 0 1px var(--cyan),0 0 26px -12px rgba(34,211,238,.7)}
+.mwf-rail{width:3px;flex:none}
+.mwf-card-bd{flex:1;min-width:0;padding:10px 11px;display:flex;flex-direction:column;gap:8px}
+
+.mwf-card-top{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+.mwf-id{display:flex;flex-direction:column;min-width:0;gap:2px}
+.mwf-plate{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:13px;font-weight:800;
+  letter-spacing:.05em;color:var(--ink)}
+.mwf-plate svg{color:var(--ink-3);flex:none}
+.mwf-car{font-size:11px;font-weight:500;color:var(--ink-3);padding-left:20px;line-height:1.4;overflow-wrap:anywhere;word-break:break-word}
+.mwf-id-right{display:flex;align-items:center;gap:5px;flex:none}
+.mwf-age{display:inline-flex;align-items:center;gap:3px;font-family:var(--mono);font-size:10px;font-weight:600;color:var(--ink-3)}
+.mwf-age.over{color:var(--crit)}
+.mwf-jump{display:grid;place-items:center;padding:2px;border-radius:7px;color:var(--ink-3);transition:.15s}
+.mwf-jump:hover{color:var(--cyan);background:var(--ov2)}
+
+.mwf-flags{display:flex;flex-wrap:wrap;gap:5px;align-items:center}
+.mwf-flags:empty{display:none}
+.mwf-pill{display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:700;
+  letter-spacing:.02em;padding:2.5px 9px;border-radius:999px;border:1px solid transparent;white-space:nowrap}
+.mwf-pill.crit{color:var(--crit);background:rgba(251,113,133,.12);border-color:rgba(251,113,133,.34)}
+.mwf-pill.paused{color:var(--paused);background:rgba(245,165,36,.12);border-color:rgba(245,165,36,.32)}
+.opx-chip.moving{animation:mwf-pulse 1.6s ease-in-out infinite}
+@keyframes mwf-pulse{0%,100%{opacity:1}50%{opacity:.55}}
+/* live-position chip: full width, wraps instead of clipping long garage/destination text */
+.mwf-pos{display:flex;width:100%;white-space:normal;text-align:left;align-items:flex-start;
+  height:auto;line-height:1.4;overflow-wrap:anywhere;word-break:break-word}
+/* severity/complaint/disabled pills: allow wrap so no label is ever cut off */
+.mwf .opx-chip,.mwf-pill{white-space:normal;height:auto;overflow-wrap:anywhere}
+
+.mwf-agenda{font-size:11.5px;line-height:1.5;color:var(--ink-2);background:rgba(245,165,36,.07);
+  border:1px solid rgba(245,165,36,.18);border-left:2.5px solid var(--paused);border-radius:8px;padding:7px 10px;margin:0;
+  overflow-wrap:anywhere;word-break:break-word}
+
+.mwf-tasks{display:flex;flex-direction:column;gap:5px;padding:8px;border-radius:10px;background:var(--ov);border:1px solid var(--line)}
+.mwf-tasks-hd{display:flex;align-items:flex-start;gap:5px;font-size:11px;font-weight:600;color:var(--ink-2)}
+.mwf-tasks-hd svg{flex:none;margin-top:2px}
+.mwf-tasks-hd em{font-style:italic;color:var(--ink-3)}
+.mwf-tasks-hd .gn{flex:1;min-width:0;overflow-wrap:anywhere;word-break:break-word;line-height:1.45}
+.mwf-tasks-hd .ct{flex:none;margin-top:1px}
+.mwf-task{display:flex;align-items:flex-start;gap:6px;font-size:11px;line-height:1.45;color:var(--ink-2);min-width:0}
+.mwf-task>span:not(.mwf-dot):not(.mwf-fail){overflow-wrap:anywhere;word-break:break-word}
+.mwf-dot{width:6px;height:6px;border-radius:50%;flex:none;margin-top:5px}
+.mwf-fail{margin-left:auto;font-family:var(--mono);font-size:9px;font-weight:700;color:var(--crit);
+  background:rgba(251,113,133,.14);border-radius:999px;padding:1px 5px;flex:none}
+
+.mwf-who{display:flex;align-items:flex-start;gap:5px;font-size:11px;line-height:1.45;color:var(--ink-3);min-width:0}
+.mwf-who svg{flex:none;margin-top:2px}
+.mwf-who span{overflow-wrap:anywhere;word-break:break-word}
+
+.mwf-ghost{display:inline-flex;width:100%;align-items:center;justify-content:center;gap:5px;
+  font-size:11px;font-weight:600;color:var(--ink-3);padding:6px;border-radius:9px;border:1px dashed var(--line);
+  background:transparent;cursor:pointer;transition:.15s}
+.mwf-ghost:hover{color:var(--cyan);border-color:var(--cyan);background:var(--ov2)}
+
+.mwf-cta{width:100%;justify-content:center}
+.mwf-cta:disabled{opacity:.5;cursor:not-allowed}
+.mwf-warn{margin:0;text-align:center;font-size:10.5px;color:var(--paused)}
+
+/* ---- list view over-age ---- */
+.mwf-over{color:var(--crit)!important}
+
+/* ---- bottom command row ---- */
+.mwf-bottom{margin-top:4px}
+.mwf-detail{display:flex;flex-direction:column;gap:14px}
+.mwf-dl{display:grid;grid-template-columns:auto 1fr;gap:7px 16px;margin:0}
+.mwf-dl dt{font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-3);align-self:center}
+.mwf-dl dd{margin:0;font-size:12.5px;color:var(--ink);font-weight:500}
+.mwf-detail-faults .lbl{font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.08em;
+  color:var(--ink-3);margin:0 0 6px}
+.mwf-detail-faults .mwf-task{padding:4px 0}
+.mwf-detail-actions{display:flex;gap:8px;flex-wrap:wrap}
+
+.mwf-fleet{display:flex;align-items:center;gap:18px}
+.mwf-fleet-legend{flex:1;display:flex;flex-direction:column;gap:8px;min-width:0}
+.mwf-fleet-legend>div{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-2)}
+.mwf-fleet-legend .d{width:9px;height:9px;border-radius:3px;flex:none}
+.mwf-fleet-legend b{margin-left:auto;font-family:var(--mono);font-weight:700;color:var(--ink)}
+.mwf-fleet-legend .tot{margin-top:4px;padding-top:9px;border-top:1px solid var(--line);color:var(--ink-3)}
+.mwf-fleet-legend .tot span{font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.06em}
+
+@media(max-width:760px){.mwf-fleet{flex-direction:column;gap:12px}}

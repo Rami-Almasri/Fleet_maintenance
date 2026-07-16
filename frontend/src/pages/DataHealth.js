@@ -20,7 +20,7 @@ function RowLink({ it }) {
   if (it.contract_id) return <Link to={`/contracts/${it.contract_id}`} className="text-xs font-medium text-indigo-600 hover:text-indigo-700">Contract →</Link>;
   if (it.vehicle_id) return <Link to={`/vehicles/${it.vehicle_id}`} className="text-xs font-medium text-indigo-600 hover:text-indigo-700">Car →</Link>;
   if (it.customer_id) return <Link to={`/customers/${it.customer_id}`} className="text-xs font-medium text-indigo-600 hover:text-indigo-700">Customer →</Link>;
-  return <span className="text-gray-300">—</span>;
+  return <span className="text-slate-300">—</span>;
 }
 
 function Record({ it }) {
@@ -30,8 +30,8 @@ function Record({ it }) {
       <div>
         {it.vehicle_id
           ? <Link to={`/vehicles/${it.vehicle_id}`} className="font-medium text-indigo-600 hover:text-indigo-700">{it.plate || `#${it.vehicle_id}`}</Link>
-          : <span className="font-medium text-gray-700">{it.plate || '—'}</span>}
-        <div className="text-xs text-gray-400">{it.car || '—'}{it.contract_no ? ` · contract ${it.contract_no}` : ''}{it.ticket_id ? ` · ticket #${it.ticket_id}` : ''}</div>
+          : <span className="font-medium text-slate-700">{it.plate || '—'}</span>}
+        <div className="text-xs text-slate-400">{it.car || '—'}{it.contract_no ? ` · contract ${it.contract_no}` : ''}{it.ticket_id ? ` · ticket #${it.ticket_id}` : ''}</div>
       </div>
     );
   }
@@ -40,7 +40,7 @@ function Record({ it }) {
       <Link to={`/customers/${it.customer_id}`} className="font-medium text-indigo-600 hover:text-indigo-700">{it.customer || `Customer #${it.customer_id}`}</Link>
     );
   }
-  return <span className="text-gray-500">{it.contract_no ? `Contract ${it.contract_no}` : '—'}</span>;
+  return <span className="text-slate-500">{it.contract_no ? `Contract ${it.contract_no}` : '—'}</span>;
 }
 
 function Group({ g }) {
@@ -56,31 +56,31 @@ function Group({ g }) {
           </h3>
           <span className="text-xs font-medium uppercase tracking-wide opacity-70">{sev.label}</span>
         </div>
-        <p className="mt-1 text-xs font-normal text-gray-500">{g.description}</p>
+        <p className="mt-1 text-xs font-normal text-slate-500">{g.description}</p>
       </div>
 
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-gray-100 text-sm">
-          <thead className="bg-gray-50/60">
-            <tr className="text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-              <th className="px-6 py-3">Record</th>
-              <th className="px-6 py-3">What's missing</th>
-              <th className="px-6 py-3 text-right">Open</th>
+        <table className="min-w-full border-separate border-spacing-0 text-sm">
+          <thead>
+            <tr>
+              <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Record</th>
+              <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">What's missing</th>
+              <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Open</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-50">
+          <tbody>
             {g.items.map((it, i) => (
-              <tr key={i} className="hover:bg-gray-50/60">
-                <td className="px-6 py-3"><Record it={it} /></td>
-                <td className="px-6 py-3 text-gray-600">{it.detail}</td>
-                <td className="px-6 py-3 text-right"><RowLink it={it} /></td>
+              <tr key={i} className="bg-white transition-colors even:bg-slate-50/40 hover:bg-indigo-50/40">
+                <td className="border-b border-slate-100 px-5 py-3.5"><Record it={it} /></td>
+                <td className="border-b border-slate-100 px-5 py-3.5 text-slate-600">{it.detail}</td>
+                <td className="border-b border-slate-100 px-5 py-3.5 text-right"><RowLink it={it} /></td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
       {g.shown < g.count && (
-        <div className="border-t border-gray-100 px-6 py-2 text-xs text-gray-400">
+        <div className="border-t border-slate-100 px-6 py-2 text-xs text-slate-400">
           Showing the first {num(g.shown)} of {num(g.count)}.
         </div>
       )}
@@ -88,11 +88,13 @@ function Group({ g }) {
   );
 }
 
-function Stat({ label, value, tone = 'text-gray-900' }) {
+function Stat({ label, value, dot, tone = 'text-slate-900' }) {
   return (
-    <div className="rounded-2xl border border-gray-100 bg-white px-5 py-4 shadow-sm ring-1 ring-gray-900/5">
-      <p className="text-xs font-medium text-gray-500">{label}</p>
-      <p className={`mt-1 text-2xl font-bold tracking-tight ${tone}`}>{value}</p>
+    <div className="rounded-2xl border border-slate-200/60 bg-white px-5 py-4 shadow-soft">
+      <p className="flex items-center gap-1.5 text-xs font-medium text-slate-500">
+        {dot && <span className={`h-1.5 w-1.5 rounded-full ${dot}`} />}{label}
+      </p>
+      <p className={`mt-1 font-display text-2xl font-bold tracking-tight ${tone}`}>{value}</p>
     </div>
   );
 }
@@ -154,9 +156,9 @@ function DataHealthPanel({ data, loading, error, only = null }) {
       {!only && (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           <Stat label="Total issues" value={num(data?.total_issues)} />
-          <Stat label="🔴 Must fix" value={num(data?.critical)} tone="text-red-600" />
-          <Stat label="🟡 Incomplete" value={num(data?.warning)} tone="text-amber-600" />
-          <Stat label="🔵 Nice to fill" value={num(data?.info)} tone="text-blue-600" />
+          <Stat label="Must fix" dot="bg-red-500" value={num(data?.critical)} tone="text-red-600" />
+          <Stat label="Incomplete" dot="bg-amber-500" value={num(data?.warning)} tone="text-amber-600" />
+          <Stat label="Nice to fill" dot="bg-blue-500" value={num(data?.info)} tone="text-blue-600" />
         </div>
       )}
 

@@ -16,10 +16,18 @@ export const STAGE = {
   TEST: 'test',             // inspector's start reading vs the car's current mileage (strict match — car in our park)
   PICKUP: 'pickup',         // generic pickup reading vs the last recorded mileage (logistics round-trip)
   PARK_PICKUP: 'park_pickup',// maintenance driver collecting the car FROM OUR PARK for the garage (strict match)
-  GARAGE_IN: 'garage_in',   // garage intake (receive) vs the pickup reading
+  GARAGE_IN: 'garage_in',   // garage intake (receive) vs the pickup reading — DRIVEN leg, must be strictly higher
+  GARAGE_IN_RECOVERY: 'garage_in_recovery', // garage intake vs pickup, but the leg was a RECOVERY TOW — the car
+                                             // doesn't accumulate mileage under its own power, so the SAME
+                                             // reading is legitimate; only a decrease is still impossible.
   GARAGE_OUT: 'garage_out', // car leaves the garage (return) vs the intake reading
+  PARK_ARRIVAL: 'park_arrival', // car driven back FROM the garage TO our park — a DRIVEN leg, so the arrival
+                                 // reading must be strictly higher than the garage-OUT reading (it covered
+                                 // real distance getting home). Mirrors the backend arriveAtPark() must-increase.
   RETURN: 'return',         // final reading vs the last recorded, when there's no intake to compare
   TRANSFER: 'transfer',     // car driven from one garage to another vs the last recorded mileage
+  TEST_END: 'test_end',     // end-of-test-drive reading vs the start-of-drive anchor — the car WAS driven, so forward movement is expected, not a strict match
+  REINSPECT: 'reinspect',   // final QA sign-off vs the park-arrival reading — the car is back at OUR PARK and shouldn't have moved, so a strict ±TOLERANCE cap applies
 };
 
 // Verdict statuses (contract with the badges in TicketDetailDrawer + labels.js).
@@ -37,7 +45,7 @@ export const STATUS = {
 // previous reading (the inspector's test capture, and the driver collecting the car for the garage). An exact
 // match is expected; a +1..TOLERANCE_KM drift is tolerated only WITH a note; anything beyond, or any backward
 // reading, HARD-blocks submit. Mirror of STRICT_MATCH_STAGES in OdometerContinuityService.php — keep in step.
-export const STRICT_MATCH_STAGES = new Set([STAGE.TEST, STAGE.PARK_PICKUP]);
+export const STRICT_MATCH_STAGES = new Set([STAGE.TEST, STAGE.PARK_PICKUP, STAGE.REINSPECT]);
 
 /** Does `stage` require the reading to match the previous one (exact, or +TOLERANCE_KM with a note)? */
 export function stageRequiresExactMatch(stage) {
@@ -45,15 +53,30 @@ export function stageRequiresExactMatch(stage) {
 }
 
 // Stages where the reading MUST be strictly higher than the previous one — no tolerance, no override.
-// The car was physically driven to the garage, so the arrival (intake) reading can only go UP; an equal
-// or lower value is a typo or a mis-read, never a real arrival. This mirrors the backend hard block in
-// MaintenanceWorkflowService::markUnderRepair() (receive_odometer > dispatch_odometer). Unlike the soft
-// ±5 km tolerance cases, a violation here BLOCKS submit — the driver must fix the reading, not ack it.
-export const STRICT_INCREASE_STAGES = new Set([STAGE.GARAGE_IN]);
+// The car was GUARANTEED to have moved since the previous checkpoint (driven to the garage), so an equal
+// or lower value is a typo or a mis-read, never a real reading. This mirrors the backend hard block in
+// MaintenanceWorkflowService::assertMustIncrease(). Unlike the soft ±5 km tolerance cases, a violation
+// here BLOCKS submit — the driver must fix the reading, not ack it.
+export const STRICT_INCREASE_STAGES = new Set([STAGE.GARAGE_IN, STAGE.PARK_ARRIVAL]);
 
 /** Does `stage` require the reading to strictly exceed the previous one (hard block, no override)? */
 export function stageRequiresIncrease(stage) {
   return STRICT_INCREASE_STAGES.has(stage);
+}
+
+// Stages where the car MAY have moved since the previous checkpoint but isn't guaranteed to (a garage
+// road test is optional; a final sign-off can land on the exact same reading as the checkpoint right
+// before it, since arriveAtPark captures no odometer of its own; a recovery tow/garage transfer may find
+// the car exactly where it last was recorded; an inspector can diagnose a fault without ever driving the
+// car, so the end-of-test-drive reading can legitimately match the start). Equal is fine; only a
+// DECREASE is physically impossible — an odometer never runs backwards, at any stage — so it's
+// hard-blocked regardless. Mirrors the backend's assertNoDecrease(), now applied everywhere an odometer
+// is captured.
+export const NO_DECREASE_STAGES = new Set([STAGE.GARAGE_OUT, STAGE.RETURN, STAGE.PICKUP, STAGE.TRANSFER, STAGE.TEST_END, STAGE.GARAGE_IN_RECOVERY]);
+
+/** Does `stage` forbid a lower reading than the previous one, while still allowing an equal one? */
+export function stageForbidsDecrease(stage) {
+  return NO_DECREASE_STAGES.has(stage);
 }
 
 // Stages that are an EXPECTED road trip between our site and a garage: the car is deliberately driven, so a
@@ -64,7 +87,7 @@ export function stageRequiresIncrease(stage) {
 // distance is expected and shouldn't demand a written "explain why" (which contradicted the "Verified —
 // lines up" verdict shown for the very same reading).
 // This is the single source of truth mirrored by OdometerContinuityService::stageIgnoresTolerance() (PHP).
-export const GARAGE_TRANSFER_STAGES = new Set([STAGE.GARAGE_IN, STAGE.GARAGE_OUT, STAGE.TRANSFER]);
+export const GARAGE_TRANSFER_STAGES = new Set([STAGE.GARAGE_IN, STAGE.GARAGE_OUT, STAGE.TRANSFER, STAGE.PARK_ARRIVAL]);
 
 /** Is `stage` a site↔garage / garage↔garage move where the tolerance nag is waived? */
 export function stageIgnoresTolerance(stage) {
@@ -72,11 +95,17 @@ export function stageIgnoresTolerance(stage) {
 }
 
 /**
- * Classify a typed reading against the previous one for a stage.
- * @returns {{status:string, previous:?number, reading:number, delta:?number}|null}
+ * Classify a typed reading against the previous one for a stage. The chosen `stage` is echoed back on the
+ * verdict so a consumer (e.g. the hint) can tailor its wording per stage without re-deriving it.
+ * @returns {{status:string, previous:?number, reading:number, delta:?number, stage:string}|null}
  *          null while the reading isn't a usable number yet (nothing to say).
  */
 export function evaluateContinuity(reading, previous, stage) {
+  const res = classifyContinuity(reading, previous, stage);
+  return res ? { ...res, stage } : null;
+}
+
+function classifyContinuity(reading, previous, stage) {
   const r = Number(reading);
   if (!Number.isFinite(r) || r <= 0) return null;
 
@@ -87,18 +116,34 @@ export function evaluateContinuity(reading, previous, stage) {
   const delta = r - p;
 
   // Strict-match stage (internal park spot-check): the car shouldn't have moved since the previous reading.
-  // Exact = clean; a +1..TOLERANCE drift is an authorized deviation that needs a note; anything else
-  // (backward, or beyond the buffer) is a hard block. Takes priority over the generic guards below.
+  // Exact = clean; a +1..TOLERANCE drift is an authorized deviation that needs a note. A BACKWARD reading
+  // is always a hard block (a typo — the car can't be behind where it last was). Takes priority over the
+  // generic guards below.
   if (STRICT_MATCH_STAGES.has(stage)) {
     if (delta === 0) return { status: STATUS.VERIFIED, previous: p, reading: r, delta };
-    if (delta >= 1 && delta <= TOLERANCE_KM) return { status: STATUS.AUTHORIZED, previous: p, reading: r, delta };
+    if (delta > 0) {
+      // Pickup never hard-blocks a forward drift — small in-lot moves beyond TOLERANCE_KM are real and
+      // can't be fixed by re-reading the dial, so ANY forward amount is an authorized deviation: allowed
+      // through with a mandatory confirm + note, never an unresolvable wall.
+      if (stage === STAGE.PARK_PICKUP) return { status: STATUS.AUTHORIZED, previous: p, reading: r, delta };
+      // Other strict-match stages (the inspector's start-of-drive anchor, and the final QA sign-off once
+      // the car is back at our park) keep the tight cap — beyond +TOLERANCE hard-blocks.
+      if (delta <= TOLERANCE_KM) return { status: STATUS.AUTHORIZED, previous: p, reading: r, delta };
+      return { status: STATUS.EXACT_MATCH, previous: p, reading: r, delta };
+    }
     return { status: STATUS.EXACT_MATCH, previous: p, reading: r, delta };
   }
 
-  // Strict-increase stage (garage intake): the car was driven here, so the reading MUST be higher than
-  // the pickup value. Equal or lower is impossible — a hard block, taking priority over the tolerance
-  // buffer below (an equal reading is NOT "close enough" here). Mirrors the backend markUnderRepair guard.
+  // Strict-increase stage (garage intake, park arrival): the car was GUARANTEED to have moved here (driven
+  // to the garage, or driven back from it to our park), so the reading MUST be higher than the previous one.
+  // Equal or lower is impossible — a hard block, taking priority over the tolerance buffer below (an equal
+  // reading is NOT "close enough" here).
   if (stageRequiresIncrease(stage) && delta <= 0) {
+    return { status: STATUS.MUST_INCREASE, previous: p, reading: r, delta };
+  }
+  // No-decrease stage (garage-out, final sign-off): the car MAY not have moved further, so equal is fine
+  // — only an actual decrease is impossible and hard-blocked.
+  if (stageForbidsDecrease(stage) && delta < 0) {
     return { status: STATUS.MUST_INCREASE, previous: p, reading: r, delta };
   }
 
@@ -111,7 +156,7 @@ export function evaluateContinuity(reading, previous, stage) {
   if (stage === STAGE.PICKUP || stage === STAGE.TRANSFER) {
     return { status: delta > PICKUP_WARN_KM ? STATUS.CHECK : STATUS.VERIFIED, previous: p, reading: r, delta };
   }
-  if (stage === STAGE.GARAGE_OUT) {
+  if (stage === STAGE.GARAGE_OUT || stage === STAGE.TEST_END) {
     return { status: STATUS.TEST_DRIVE, previous: p, reading: r, delta };
   }
   return { status: STATUS.VERIFIED, previous: p, reading: r, delta };
@@ -141,6 +186,9 @@ export function needsConfirm(status, ignoreTolerance = false) {
  * false when there's no previous reading to measure against (an anchor can't "deviate").
  */
 export function needsNote(continuity, ignoreTolerance = false) {
+  // A hard-blocked verdict (must-increase / exact-match) can't be explained away with a note — the reading
+  // itself has to be fixed. Asking for a note here would misleadingly imply an override path exists.
+  if (isHardBlocked(continuity)) return false;
   // A strict-match "authorized deviation" (+1..TOLERANCE at a park spot-check) ALWAYS demands a note — that
   // note is exactly what a supervisor audits on the Mileage Discrepancies board. It fires below the generic
   // 10 km threshold, so it's checked first.
@@ -153,9 +201,10 @@ export function needsNote(continuity, ignoreTolerance = false) {
 }
 
 /**
- * Is this verdict a HARD block that cannot be acknowledged away? Only a strict-increase violation
- * (garage intake reading ≤ pickup) qualifies — the operator must correct the reading before submit.
- * Callers OR this into their submit gate alongside the soft ack/note requirements.
+ * Is this verdict a HARD block that cannot be acknowledged away? A strict-increase violation
+ * (must_increase) or a strict-match violation (exact_required) qualifies — the operator must correct
+ * the reading before submit, with no confirm/note override offered. Callers OR this into their submit
+ * gate alongside the soft ack/note requirements.
  */
 export function isHardBlocked(continuity) {
   return continuity?.status === STATUS.MUST_INCREASE || continuity?.status === STATUS.EXACT_MATCH;

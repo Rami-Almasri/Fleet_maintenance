@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import api from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { useToast } from '../components/ui/Toast';
@@ -142,17 +142,12 @@ export function NotificationsProvider({ children }) {
     }
   }, [poll, toast]);
 
-  const value = {
-    unreadCount,
-    latest,
-    ready,
-    refresh: poll,
-    markRead,
-    markAllRead,
-    dismiss,
-    clearAll,
-    sendDemo,
-  };
+  // Memoize so consumers only re-render when the data they read actually changes,
+  // not on every unrelated parent render. (Actions are stable useCallbacks.)
+  const value = useMemo(
+    () => ({ unreadCount, latest, ready, refresh: poll, markRead, markAllRead, dismiss, clearAll, sendDemo }),
+    [unreadCount, latest, ready, poll, markRead, markAllRead, dismiss, clearAll, sendDemo]
+  );
 
   return <NotificationsContext.Provider value={value}>{children}</NotificationsContext.Provider>;
 }

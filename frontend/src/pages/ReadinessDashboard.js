@@ -80,7 +80,7 @@ function HandoverQueue({ title, subtitle, accent, rows, total, critical, loading
         rowKey={(r) => r.contract_id}
         loading={loading}
         onRowClick={onRowClick}
-        empty="Every recent handover is documented. 🎉"
+        empty="Every recent handover is documented."
       />
       {sorted.length > DEFAULT_VISIBLE && (
         <div className="border-t border-slate-100 px-5 py-3 text-center">
@@ -395,7 +395,7 @@ export default function ReadinessDashboard() {
                   rowKey={(r) => r.ticket_id}
                   loading={loading && !data}
                   onRowClick={goToCar}
-                  empty="Nothing waiting for sign-off. 🎉"
+                  empty="Nothing waiting for sign-off."
                   stickyHeader
                 />
               </SectionCard>
@@ -490,7 +490,7 @@ function MissingDataBoard({ rows, total, columns, loading, onRowClick }) {
         rowKey={(r) => r.vehicle_id}
         loading={loading}
         onRowClick={onRowClick}
-        empty="Every car has its Cleaning status on record. 🎉"
+        empty="Every car has its Cleaning status on record."
       />
       {rows.length > DEFAULT_VISIBLE && (
         <div className="border-t border-slate-100 px-5 py-3 text-center">

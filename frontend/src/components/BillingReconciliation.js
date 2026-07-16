@@ -88,7 +88,7 @@ export default function BillingReconciliation({ contract: c }) {
 
   return (
     <Card className="p-6">
-      <button type="button" onClick={() => setOpen((v) => !v)} className="flex w-full items-center justify-between gap-3 text-left">
+      <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="flex w-full items-center justify-between gap-3 text-left">
         <div className="flex items-center gap-3">
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-100 text-indigo-600">
             <Icon.Invoice className="h-5 w-5" />
@@ -100,7 +100,7 @@ export default function BillingReconciliation({ contract: c }) {
         </div>
         <span className="flex items-center gap-2 text-sm font-medium text-indigo-600">
           {open ? 'Hide' : 'Show'}
-          <svg className={`h-4 w-4 transition-transform ${open ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 9l-7 7-7-7" /></svg>
+          <svg aria-hidden="true" className={`h-4 w-4 transition-transform ${open ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 9l-7 7-7-7" /></svg>
         </span>
       </button>
 
@@ -194,11 +194,11 @@ export default function BillingReconciliation({ contract: c }) {
               {/* Discount — a recorded adjustment on the deal, shown as a distinct callout so it
                   is never mistaken for a credit/refund on the customer's balance. */}
               {discount > 0 && (
-                <div className="relative mt-3 overflow-hidden rounded-2xl border border-amber-200/70 bg-gradient-to-br from-amber-50 via-amber-50 to-orange-100/40 p-4">
+                <div className="relative mt-3 overflow-hidden rounded-2xl border border-amber-200/70 bg-amber-50 p-4">
                   <svg aria-hidden className="pointer-events-none absolute -right-4 -top-4 h-24 w-24 text-amber-200/40" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"><path d="M16.5 6v.75m0 3v.75m0 3v.75m0 3V18m-9-5.25h5.25M7.5 15h3M3.375 5.25c-.621 0-1.125.504-1.125 1.125v3.026a3 3 0 0 1 0 5.198v3.026c0 .621.504 1.125 1.125 1.125h17.25c.621 0 1.125-.504 1.125-1.125v-3.026a3 3 0 0 1 0-5.198V6.375c0-.621-.504-1.125-1.125-1.125H3.375Z" /></svg>
                   <div className="relative flex items-center gap-4">
                     <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-600 ring-1 ring-inset ring-amber-200">
-                      <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M16.5 6v.75m0 3v.75m0 3v.75m0 3V18m-9-5.25h5.25M7.5 15h3M3.375 5.25c-.621 0-1.125.504-1.125 1.125v3.026a3 3 0 0 1 0 5.198v3.026c0 .621.504 1.125 1.125 1.125h17.25c.621 0 1.125-.504 1.125-1.125v-3.026a3 3 0 0 1 0-5.198V6.375c0-.621-.504-1.125-1.125-1.125H3.375Z" /></svg>
+                      <svg aria-hidden="true" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M16.5 6v.75m0 3v.75m0 3v.75m0 3V18m-9-5.25h5.25M7.5 15h3M3.375 5.25c-.621 0-1.125.504-1.125 1.125v3.026a3 3 0 0 1 0 5.198v3.026c0 .621.504 1.125 1.125 1.125h17.25c.621 0 1.125-.504 1.125-1.125v-3.026a3 3 0 0 1 0-5.198V6.375c0-.621-.504-1.125-1.125-1.125H3.375Z" /></svg>
                     </span>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-baseline gap-2">
@@ -213,9 +213,9 @@ export default function BillingReconciliation({ contract: c }) {
                     <div className="relative mt-3 flex items-center gap-3 rounded-xl bg-white/60 p-3 ring-1 ring-inset ring-amber-200/70">
                       <span className="text-[11px] font-semibold uppercase tracking-wide text-amber-700/70">Rent / day</span>
                       <span className="text-sm text-amber-900/50 line-through tabular-nums">{aed2(dayPrice)}</span>
-                      <svg className="h-4 w-4 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13 5l7 7-7 7M5 12h15" /></svg>
+                      <svg aria-hidden="true" className="h-4 w-4 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13 5l7 7-7 7M5 12h15" /></svg>
                       <span className="text-base font-bold tabular-nums text-emerald-600">{aed2(dayPriceAfter)}</span>
-                      <span className="ml-auto text-[11px] text-amber-700/60">over {rentDays} {rentDays === 1 ? 'day' : 'days'}</span>
+                      <span className="ms-auto text-[11px] text-amber-700/60">over {rentDays} {rentDays === 1 ? 'day' : 'days'}</span>
                     </div>
                   )}
                 </div>

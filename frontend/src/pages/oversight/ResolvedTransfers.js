@@ -10,6 +10,7 @@ import api from '../../api/client';
 import { useI18n } from '../../i18n/I18nContext';
 import Icon from '../../components/ui/Icon';
 import { Skeleton } from '../../components/ui/Skeleton';
+import { Card, PageHeader, SearchInput, EmptyState, ErrorState } from '../../components/ui/Misc';
 
 const fmtDate = (iso) => (iso ? new Date(iso).toLocaleString(undefined, { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—');
 
@@ -17,13 +18,14 @@ export default function ResolvedTransfers() {
   const { t } = useI18n();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [q, setQ] = useState('');
 
   useEffect(() => {
     let alive = true;
     api.get('/Oversight/resolved-transfers')
       .then((res) => { if (alive) setData(res.data.data); })
-      .catch(() => {})
+      .catch(() => { if (alive) setError(true); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, []);
@@ -38,44 +40,40 @@ export default function ResolvedTransfers() {
   return (
     <div className="py-8">
       <div className="mx-auto max-w-[1200px] space-y-6 px-4 sm:px-6 lg:px-8">
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <Link to="/oversight" className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-400 hover:text-slate-600">
-              <Icon.ArrowRight className="h-3 w-3 rotate-180" /> {t('oversight.hub.title')}
-            </Link>
-            <h1 className="font-display text-2xl font-bold tracking-tight text-slate-900">{t('oversight.resolvedTransfers.title')}</h1>
-            <p className="mt-1 max-w-2xl text-sm text-slate-500">{t('oversight.resolvedTransfers.subtitle')}</p>
-          </div>
-          <div className="rounded-2xl bg-white px-4 py-3 text-center shadow-sm ring-1 ring-slate-200">
-            <p className="text-2xl font-bold tabular-nums text-slate-900">{data?.total ?? 0}</p>
-            <p className="text-[11px] uppercase tracking-wide text-slate-400">{t('oversight.resolvedTransfers.flagged')}</p>
-          </div>
+        <div>
+          <Link to="/oversight" className="mb-2 inline-flex items-center gap-1 text-xs font-medium text-slate-400 transition-colors hover:text-slate-600">
+            <Icon.ArrowRight className="h-3 w-3 rotate-180" /> {t('oversight.hub.title')}
+          </Link>
+          <PageHeader title={t('oversight.resolvedTransfers.title')} subtitle={t('oversight.resolvedTransfers.subtitle')}>
+            <div className="rounded-2xl border border-slate-200/60 bg-white px-4 py-3 text-center shadow-soft">
+              <p className="text-2xl font-bold tabular-nums text-slate-900">{data?.total ?? 0}</p>
+              <p className="text-[11px] uppercase tracking-wide text-slate-400">{t('oversight.resolvedTransfers.flagged')}</p>
+            </div>
+          </PageHeader>
         </div>
 
         <div className="flex items-center">
-          <div className="relative ms-auto">
-            <Icon.Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder={t('common.search')}
-              className="w-56 rounded-lg border border-slate-200 bg-white py-2 ps-9 pe-3 text-sm outline-none focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100"
-            />
-          </div>
+          <SearchInput value={q} onChange={setQ} placeholder={t('common.search')} className="ms-auto w-64" />
         </div>
 
         {loading ? (
-          <Skeleton className="h-64 rounded-2xl" />
-        ) : rows.length === 0 ? (
-          <div className="flex flex-col items-center justify-center rounded-2xl bg-white py-20 text-center shadow-sm ring-1 ring-slate-200">
-            <Icon.Check className="h-10 w-10 text-emerald-500" />
-            <p className="mt-3 text-sm font-medium text-slate-700">{t('oversight.common.empty')}</p>
-            <p className="text-xs text-slate-400">{t('oversight.common.emptyBody')}</p>
-          </div>
-        ) : (
           <div className="space-y-3">
+            {[0, 1, 2].map((i) => <Skeleton key={i} className="h-28 rounded-2xl" />)}
+          </div>
+        ) : error ? (
+          <Card><ErrorState /></Card>
+        ) : rows.length === 0 ? (
+          <Card>
+            <EmptyState
+              icon={<Icon.Check className="h-6 w-6 text-emerald-500" />}
+              title={t('oversight.common.empty')}
+              message={t('oversight.common.emptyBody')}
+            />
+          </Card>
+        ) : (
+          <div className="stagger space-y-3">
             {rows.map((r) => (
-              <div key={r.id} className="flex flex-col gap-4 rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200 sm:flex-row sm:items-start">
+              <div key={r.id} className="flex flex-col gap-4 rounded-2xl border border-slate-200/60 bg-white p-5 shadow-soft sm:flex-row sm:items-start">
                 {/* Vehicle */}
                 <div className="sm:w-44 sm:flex-shrink-0">
                   <Link to={`/maintenance-workflow/${r.ticket_id}`} className="font-mono text-base font-bold text-slate-900 hover:text-indigo-600">{r.plate_no || `#${r.ticket_id}`}</Link>

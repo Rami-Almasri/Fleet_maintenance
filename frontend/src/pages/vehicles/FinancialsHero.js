@@ -181,7 +181,7 @@ export default function FinancialsHero({ vehicle, stats, onDrill }) {
   const segments = SEGMENTS.map((s) => ({ ...s, value: amounts[s.key] }));
 
   return (
-    <section className="overflow-hidden rounded-3xl border border-slate-200/70 bg-white shadow-card">
+    <section className="overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-card">
       <div className="border-b border-slate-100 px-6 py-4">
         <h3 className="text-base font-semibold text-slate-900">Financial Performance</h3>
         <p className="mt-0.5 text-xs text-slate-400">Lifetime revenue vs. every cost this car has incurred.</p>

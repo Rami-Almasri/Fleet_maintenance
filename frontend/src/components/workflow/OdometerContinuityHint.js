@@ -8,7 +8,7 @@
 //
 // Pair it with the gate helper below (odoGateBlocked) so callers don't each re-derive the submit guard.
 
-import { needsConfirm, needsNote, isHardBlocked, NOTE_THRESHOLD_KM, CONTINUITY_TONE, STATUS } from '../../lib/odometerContinuity';
+import { needsConfirm, needsNote, isHardBlocked, NOTE_THRESHOLD_KM, CONTINUITY_TONE, STATUS, STAGE } from '../../lib/odometerContinuity';
 
 // Static Tailwind classes per continuity tone (dynamic `bg-${tone}` classes wouldn't survive purging).
 const CONTINUITY_TONE_CLS = {
@@ -37,6 +37,12 @@ export default function OdometerContinuityHint({ previous, continuity, confirmed
   const status = continuity?.status;
   if (previous == null && !status) return null;
   const tone = status ? CONTINUITY_TONE[status] : null;
+  // The must-increase block reads differently depending on WHY the car had to have moved: the garage→park
+  // return leg spells out that the car travelled from the garage to our parking, rather than the generic
+  // "an odometer can't run backwards" wording.
+  const hintKey = status === STATUS.MUST_INCREASE && continuity?.stage === STAGE.PARK_ARRIVAL
+    ? 'must_increase_return'
+    : status;
   // The acknowledgment checkbox appears for the abnormal continuity cases AND whenever a >10 km gap
   // forces a note (so the writer consciously confirms the reading before explaining it). On a garage
   // transfer the forward-jump cases are waived (ignoreTolerance) — only a backward Discrepancy still asks.
@@ -59,7 +65,7 @@ export default function OdometerContinuityHint({ previous, continuity, confirmed
               </span>
             )}
           </div>
-          <p className="mt-0.5 opacity-90">{t(`workflow.odo.hint.${status}`)}</p>
+          <p className="mt-0.5 opacity-90">{t(`workflow.odo.hint.${hintKey}`)}</p>
           {showConfirm && (
             <label className="mt-2 flex cursor-pointer items-center gap-2 font-medium">
               <input type="checkbox" checked={confirmed} onChange={(e) => onConfirm(e.target.checked)} className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />

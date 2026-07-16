@@ -3,7 +3,7 @@
 // bare spinner so the layout doesn't flicker/jump when data arrives.
 
 export function Skeleton({ className = 'h-4 w-full' }) {
-  return <div className={`shimmer rounded-md bg-slate-100 ${className}`} />;
+  return <div className={`shimmer rounded-lg bg-slate-100 ${className}`} />;
 }
 
 // A stack of text lines; the last line is shorter for a natural look.

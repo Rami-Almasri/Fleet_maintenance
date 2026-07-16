@@ -3,22 +3,32 @@
 @tailwind utilities;
 
 /* =======================================================================
-   FleetView design tokens — "Aurora" command-center system
-   Brand = navy-blue → cyan.  Two themes: light "Platinum" / dark "Cockpit".
+   Faster design tokens — "Aurora" command-center system
+   Brand = enterprise navy-blue (PRIMARY ACTIONS).  Accent = Faster yellow.
+   Two themes: light "Platinum" / dark "Cockpit".
    Brand/accent ramps are theme-independent (so text-white on them stays
    readable); only page surfaces/ink/lines flip between themes.
+
+   Navy drives every actionable surface — buttons, links, active tabs,
+   accent text/icons. The Faster lemon-yellow (--accent-*) is reserved for
+   BRANDING, highlights, active navigation, charts and accents — never the
+   primary button — so the UI reads as a calm enterprise product with a
+   confident yellow signature.
    ======================================================================= */
 :root {
-  /* Brand (navy-blue) — drives indigo/brand/* utilities. R G B triplets. */
+  /* Brand (enterprise navy-blue) — the PRIMARY ACTION color. Drives indigo/brand/*
+     utilities (buttons, links, accent text/icons). Readable both as a white-label
+     fill and as text on white. Yellow is reserved for branding/accents, NOT actions. */
   --brand-50: 239 246 255;  --brand-100: 219 234 254; --brand-200: 191 219 254;
   --brand-300: 147 197 253; --brand-400: 96 165 250;  --brand-500: 59 130 246;
   --brand-600: 37 99 235;   --brand-700: 29 78 216;   --brand-800: 30 64 175;
   --brand-900: 30 58 138;   --brand-950: 17 27 56;
-  /* Secondary accent (cyan/sky) — drives violet/* utilities for gradient sheen. */
-  --accent-50: 236 254 255;  --accent-100: 207 250 254; --accent-200: 165 243 252;
-  --accent-300: 103 232 249; --accent-400: 34 211 238;  --accent-500: 6 182 212;
-  --accent-600: 8 145 178;   --accent-700: 14 116 144;  --accent-800: 21 94 117;
-  --accent-900: 22 78 99;
+  /* Secondary accent (electric lemon-yellow, the logo mark) — drives violet/*
+     utilities for gradient sheen, gauges, highlights & marks. */
+  --accent-50: 254 252 232;  --accent-100: 254 249 195; --accent-200: 254 240 138;
+  --accent-300: 253 224 71;  --accent-400: 250 204 21;  --accent-500: 234 179 8;
+  --accent-600: 202 138 4;   --accent-700: 161 98 7;    --accent-800: 133 77 14;
+  --accent-900: 113 63 18;
 
   /* Semantic surface tokens (consumed by the new command-center components). */
   --bg: 244 246 251;
@@ -59,20 +69,19 @@ body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   color: rgb(var(--ink));
-  /* Soft, premium app backdrop (a faint navy wash on near-white). */
+  /* Calm, flat enterprise backdrop — a single whisper of brand at the top-right
+     corner instead of the old drifting color field. Reads like Stripe/Linear. */
   background-color: rgb(var(--bg));
   background-image:
-    radial-gradient(60rem 60rem at 110% -10%, rgb(var(--brand-500) / 0.07), transparent 60%),
-    radial-gradient(50rem 50rem at -10% 110%, rgb(var(--accent-500) / 0.06), transparent 55%);
+    radial-gradient(50rem 40rem at 115% -15%, rgb(var(--brand-500) / 0.035), transparent 60%);
   background-attachment: fixed;
   transition: background-color 0.4s ease, color 0.3s ease;
 }
 
-/* Cockpit backdrop: deeper, cooler field. */
+/* Cockpit backdrop: a touch deeper, still restrained. */
 [data-theme='dark'] body {
   background-image:
-    radial-gradient(60rem 60rem at 110% -10%, rgb(var(--brand-500) / 0.16), transparent 60%),
-    radial-gradient(55rem 55rem at -10% 110%, rgb(var(--accent-500) / 0.12), transparent 55%);
+    radial-gradient(52rem 42rem at 115% -15%, rgb(var(--brand-500) / 0.08), transparent 60%);
 }
 
 /* Display type for headings — Sora gives the premium, technical identity. */
@@ -84,6 +93,19 @@ h1, h2, h3, .font-display {
 ::selection {
   background: rgb(var(--brand-500) / 0.24);
 }
+
+/* ---- Accessibility: one consistent keyboard-focus ring across the app -------
+   Only shows for keyboard users (:focus-visible), never on mouse click, so it
+   never adds visual noise for pointer users while guaranteeing every interactive
+   element is reachable and clearly indicated for keyboard/AT navigation. */
+:focus-visible {
+  outline: 2px solid rgb(var(--brand-500));
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+/* Elements that manage their own ring (buttons/inputs with ring utilities) opt
+   out of the global outline to avoid a double ring. */
+.focus-ring-self:focus-visible { outline: none; }
 
 /* Slim, modern scrollbars. */
 * {
@@ -148,10 +170,11 @@ h1, h2, h3, .font-display {
 .stagger > *:nth-child(6) { animation-delay: 0.29s; }
 .stagger > *:nth-child(n + 7) { animation-delay: 0.34s; }
 
-/* Lift on hover — for clickable cards/tiles. */
-.hover-lift { transition: transform 0.22s cubic-bezier(0.21, 1.02, 0.73, 1), box-shadow 0.22s ease; }
-.hover-lift:hover { transform: translateY(-3px); box-shadow: 0 18px 40px -18px rgb(15 23 42 / 0.28); }
-[data-theme='dark'] .hover-lift:hover { box-shadow: 0 0 0 1px rgb(var(--brand-500) / 0.35), 0 22px 48px -16px rgb(0 0 0 / 0.65); }
+/* Lift on hover — for clickable cards/tiles. Restrained: a subtle rise + a
+   crisper border, not a dramatic float (enterprise cards stay grounded). */
+.hover-lift { transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease; }
+.hover-lift:hover { transform: translateY(-1px); box-shadow: 0 8px 24px -14px rgb(15 23 42 / 0.22); border-color: rgb(var(--brand-500) / 0.35); }
+[data-theme='dark'] .hover-lift:hover { box-shadow: 0 0 0 1px rgb(var(--brand-500) / 0.28), 0 12px 30px -14px rgb(0 0 0 / 0.6); }
 
 /* Brand gradient text — for hero headings. */
 .text-gradient {
@@ -161,11 +184,10 @@ h1, h2, h3, .font-display {
   color: transparent;
 }
 
-/* Thin animated scroll-progress bar (top of the viewport). */
+/* Thin scroll-progress bar (top of the viewport) — flat brand fill, no glow. */
 .scroll-progress {
-  position: fixed; top: 0; left: 0; z-index: 50; height: 3px;
-  background-image: linear-gradient(90deg, rgb(var(--brand-500)), rgb(var(--accent-500)), rgb(var(--accent-400)));
-  box-shadow: 0 0 10px rgb(var(--accent-500) / 0.6);
+  position: fixed; top: 0; left: 0; z-index: 50; height: 2px;
+  background-color: rgb(var(--brand-500));
   transition: width 0.1s linear;
 }
 

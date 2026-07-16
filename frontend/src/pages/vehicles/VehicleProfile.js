@@ -3,8 +3,7 @@ import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import api from '../../api/client';
 import useFetch from '../../hooks/useFetch';
 import { useToast } from '../../components/ui/Toast';
-import { usePermissions } from '../../hooks/usePermissions';
-import Badge, { VehicleStatusBadge, ContractTypeBadge, ContractStateBadge } from '../../components/ui/Badge';
+import Badge, { ContractTypeBadge, ContractStateBadge } from '../../components/ui/Badge';
 import Button from '../../components/ui/Button';
 import Modal from '../../components/ui/Modal';
 import { Input } from '../../components/ui/Field';
@@ -18,13 +17,15 @@ import Icon from '../../components/ui/Icon';
 import Tabs from '../../components/ui/Tabs';
 import VehicleWorkflowPanel from '../../components/vehicles/VehicleWorkflowPanel';
 import ActivityTimeline, { CATEGORY_META, CATEGORY_KEYS } from '../../components/activity/ActivityTimeline';
-import { aed, aed2, fmtDate, fmtClock, dayBadge, num } from '../../lib/format';
+import { aed2, fmtDate, fmtClock, dayBadge, num } from '../../lib/format';
 import { SHOW_FINANCIALS } from '../../config/features';
 import ReadinessChecklist from './ReadinessChecklist';
 import ServiceHistory from './ServiceHistory';
 import TireDetails from './TireDetails';
 import FinancialsHero from './FinancialsHero';
 import VehicleAnalytics from './VehicleAnalytics';
+import DualState, { PausedRibbon } from '../../components/ops/DualState';
+import { StatGaugeTile } from '../../components/ops';
 
 // Battery is due for change one year after it was last changed.
 const batteryNextChange = (lastChanged) => {
@@ -42,7 +43,7 @@ const serviceStatusText = (s) => {
   return `OK (${num(s.remaining)} km left)`;
 };
 
-const AV_DOT = { available: 'bg-emerald-500', rented: 'bg-blue-500', maintenance: 'bg-amber-500', busy: 'bg-gray-400', out_of_fleet: 'bg-gray-400' };
+const AV_DOT = { available: 'bg-emerald-500', rented: 'bg-blue-500', maintenance: 'bg-amber-500', busy: 'bg-slate-400', out_of_fleet: 'bg-slate-400' };
 // Tone per maintenance-log event status (from the sheet's OUT/IN column).
 const EVENT_TONE = { OUT: 'amber', IN: 'green', 'Follow up': 'blue', 'Select garage': 'violet', 'In garage': 'red', Change: 'indigo', Delay: 'red', Test: 'gray', 'Under Test': 'gray', Delivery: 'green', 'In Our Park': 'green', 'Final QA': 'violet' };
 
@@ -118,7 +119,7 @@ const WF_STATUS_META = {
   inspection_pending:     { label: 'Needs Dispatch',     tone: 'amber',  icon: 'Select garage' },
   on_site_pending:        { label: 'On-Site Service',    tone: 'yellow', icon: 'Follow up' },
   awaiting_dispatch:      { label: 'Awaiting Pickup',    tone: 'orange', icon: 'OUT' },
-  in_transit:             { label: 'Now at Garage',      tone: 'blue',   icon: 'OUT' },
+  in_transit:             { label: 'En Route to Garage', tone: 'blue',   icon: 'OUT' },
   under_repair:           { label: 'In Workshop',        tone: 'red',    icon: 'In garage' },
   repair_review:          { label: 'Video Review',       tone: 'indigo', icon: 'Follow up' },
   ready_for_pickup:       { label: 'Ready for Pickup',   tone: 'cyan',   icon: 'Delivery' },
@@ -143,6 +144,16 @@ function WorkflowLogItem({ m }) {
   const tone = wf?.tone || EVENT_TONE[legacyStage] || 'gray';
   const st = EVENT_STYLE[tone] || EVENT_STYLE.gray;
   const icon = EVENT_ICON[wf?.icon || legacyStage] || DEFAULT_EVENT_ICON;
+
+  // Expandable sections — collapsed by default so a 6-fault ticket stays a one-line card, not a
+  // paragraph. Each only renders its toggle when it actually has something to show.
+  const [showFaults, setShowFaults] = useState(false);
+  const [showPhotos, setShowPhotos] = useState(false);
+  const [showNotes, setShowNotes] = useState(false);
+  const faults = Array.isArray(m.faults) ? m.faults.filter(Boolean) : [];
+  const photos = m.media || [];
+  const notes = String(m.notes || '').trim();
+
   return (
     <li className="relative flex gap-4">
       {/* timeline marker — coloured by the legacy stage, exactly like the sheet rows */}
@@ -159,48 +170,98 @@ function WorkflowLogItem({ m }) {
           </span>
         </div>
 
-        {/* the note: a follow-up comment, odometer reading, or transition detail */}
+        {/* the note: a single fixed-length line — faults/odometer/actor are chips below, never inlined here */}
         {m.description && <p className="mt-2 text-sm leading-relaxed text-slate-600">{m.description}</p>}
 
-        {/* Video Evidence — the garage's repair clip / photo captured at this stage. Signed short-lived
-            URLs, opened in a new tab. */}
-        {m.media?.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-2">
-            {m.media.map((med, i) => (
-              <a
-                key={med.id}
-                href={med.url}
-                target="_blank"
-                rel="noreferrer"
-                className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold ring-1 ring-inset transition ${med.url ? 'bg-indigo-50 text-indigo-700 ring-indigo-600/20 hover:bg-indigo-100' : 'pointer-events-none bg-slate-50 text-slate-400 ring-slate-200'}`}
-                title={med.name || undefined}
-              >
-                <span aria-hidden>{med.kind === 'image' ? '🖼️' : '🎬'}</span>
-                {med.kind === 'image' ? 'View photo' : 'Watch video'}
-                {m.media.length > 1 ? ` ${i + 1}` : ''}
-              </a>
-            ))}
-          </div>
-        )}
-
+        {/* Small info chips: garage, odometer, cost, actor, linked contract */}
         <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
+          {m.garage && (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-600">
+              🏭 {m.garage}
+            </span>
+          )}
           {m.odometer != null && (
             <span className="inline-flex items-center gap-1.5 font-medium text-slate-600">
               <Icon.Gauge className="h-3.5 w-3.5 text-slate-400" /> {num(m.odometer)} km
             </span>
           )}
-          {m.garage && (
-            <span className="inline-flex items-center gap-1.5">
-              <svg className="h-3.5 w-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-6 9 6v11a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z" /></svg>
-              <span className="font-medium text-slate-600">{m.garage}</span>
-            </span>
-          )}
           {SHOW_FINANCIALS && m.cost != null && Number(m.cost) > 0 && <span className="font-semibold text-slate-700">{aed2(m.cost)}</span>}
-          {m.actor && <span className="text-slate-400">· {m.actor}</span>}
+          {m.actor && <span className="text-slate-400">👤 {m.actor}</span>}
           {m.contract_id && (
             <Link to={`/contracts/${m.contract_id}`} className="font-medium text-indigo-600 hover:text-indigo-700">#{m.contract_no || m.contract_id}</Link>
           )}
         </div>
+
+        {/* Actions — expand-in-place instead of spelling everything into the description */}
+        {(faults.length > 0 || photos.length > 0 || notes || m.ticket_id) && (
+          <div className="mt-3 flex flex-wrap gap-2 border-t border-slate-100 pt-3">
+            {notes && (
+              <button
+                type="button"
+                onClick={() => setShowNotes((v) => !v)}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600 ring-1 ring-inset ring-slate-300 hover:bg-slate-200"
+              >
+                {showNotes ? 'Hide Workshop Notes' : 'Show Workshop Notes'}
+              </button>
+            )}
+            {m.ticket_id && (
+              <Link
+                to={`/maintenance-workflow/${m.ticket_id}`}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700 ring-1 ring-inset ring-amber-600/20 hover:bg-amber-100"
+              >
+                <Icon.Wrench className="h-3.5 w-3.5" /> Show Fault
+              </Link>
+            )}
+            {faults.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowFaults((v) => !v)}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-700 ring-1 ring-inset ring-red-600/20 hover:bg-red-100"
+              >
+                {showFaults ? 'Hide Faults' : 'Show Faults'} ({faults.length})
+              </button>
+            )}
+            {photos.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowPhotos((v) => !v)}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700 ring-1 ring-inset ring-indigo-600/20 hover:bg-indigo-100"
+              >
+                {showPhotos ? 'Hide Photos' : 'Show Photos'} ({photos.length})
+              </button>
+            )}
+          </div>
+        )}
+
+        {showNotes && notes && (
+          <div className="mt-2 rounded-xl bg-slate-50/70 p-3 ring-1 ring-inset ring-slate-100">
+            <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">Workshop Notes</p>
+            <NotesList text={notes} />
+          </div>
+        )}
+
+        {showFaults && faults.length > 0 && (
+          <ul className="mt-2 space-y-1 rounded-xl bg-red-50/60 px-3 py-2 text-sm text-red-800">
+            {faults.map((f, i) => <li key={i}>• {f}</li>)}
+          </ul>
+        )}
+
+        {showPhotos && photos.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {photos.map((med, i) => (
+              <a
+                key={med.id}
+                href={med.url}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-600 ring-1 ring-inset ring-slate-200 hover:bg-slate-100"
+                title={med.name || undefined}
+              >
+                {med.kind === 'image' ? 'Photo' : 'Video'} {i + 1}
+              </a>
+            ))}
+          </div>
+        )}
       </div>
     </li>
   );
@@ -311,7 +372,7 @@ function WorkflowJourneys({ journeys }) {
                       </div>
                       <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-400">
                         <span>{fmtDate(stg.entered_at)} · {fmtClock(stg.entered_at)}</span>
-                        {stg.garage && <span className="text-slate-500">🔧 {stg.garage}</span>}
+                        {stg.garage && <span className="text-slate-500">{stg.garage}</span>}
                         {stg.actor && <span>· {stg.actor}</span>}
                       </div>
                       {stg.description && <p className="mt-1 text-sm leading-relaxed text-slate-600">{stg.description}</p>}
@@ -445,11 +506,11 @@ function DataOrigin({ tab }) {
 function Field({ label, value, tip }) {
   return (
     <div className="flex justify-between gap-4 py-1.5 text-sm">
-      <span className="flex items-center gap-1.5 text-gray-500">
+      <span className="flex items-center gap-1.5 text-slate-500">
         {label}
         {tip && <InfoTip content={tip} />}
       </span>
-      <span className="text-right font-medium text-gray-900">{value ?? '—'}</span>
+      <span className="text-right font-medium text-slate-900">{value ?? '—'}</span>
     </div>
   );
 }
@@ -472,21 +533,21 @@ function CoverageRow({ label, date, days }) {
   return (
     <div className="flex items-center justify-between py-2">
       <div>
-        <p className="text-sm font-medium text-gray-700">{label}</p>
-        <p className="text-xs text-gray-400">{fmtDate(date)}</p>
+        <p className="text-sm font-medium text-slate-700">{label}</p>
+        <p className="text-xs text-slate-400">{fmtDate(date)}</p>
       </div>
       <Badge tone={b.tone}>{b.text === '—' ? 'None' : b.text}</Badge>
     </div>
   );
 }
 
-// A frosted "fact" chip for the dark hero header.
+// A quiet "fact" chip for the flat header.
 function SpecPill({ label, value }) {
   if (value === null || value === undefined || value === '') return null;
   return (
-    <div className="rounded-xl bg-white/10 px-3 py-1.5 ring-1 ring-inset ring-white/15 backdrop-blur">
-      <span className="block text-[10px] font-medium uppercase tracking-wide text-white/50">{label}</span>
-      <span className="text-sm font-semibold text-white">{value}</span>
+    <div className="rounded-lg bg-slate-50 px-3 py-1.5 ring-1 ring-inset ring-slate-200">
+      <span className="block text-[10px] font-medium uppercase tracking-wide text-slate-400">{label}</span>
+      <span className="text-sm font-semibold text-slate-800">{value}</span>
     </div>
   );
 }
@@ -500,8 +561,6 @@ export default function VehicleProfile() {
   const { data, loading, error, reload } = useFetch(fetcher, [id]);
   const navigate = useNavigate();
   const toast = useToast();
-  const { can } = usePermissions();
-  const canInspect = can('maintenance.initiate'); // may raise a maintenance ticket from flagged issues
   const [vendors, setVendors] = useState([]);
   const [maintOpen, setMaintOpen] = useState(false);
   const [maintForm, setMaintForm] = useState({ vendor_id: '', expected_return_date: '' });
@@ -514,9 +573,6 @@ export default function VehicleProfile() {
   const [showAllContracts, setShowAllContracts] = useState(false); // collapse the Contract History table by default
   const [contractType, setContractType] = useState('all'); // Contract History type filter: all | C | U | R
   const [bridgeOpen, setBridgeOpen] = useState(false); // "how is Lifetime Net Profit calculated" drill-down
-  const [oilOpen, setOilOpen] = useState(false); // Service & Inspection modal (also opened via ?logOil=1 from the alert)
-  const [oilForm, setOilForm] = useState({ odometer: '', date: '', note: '' });
-  const [oilFindings, setOilFindings] = useState([]); // Inspector's Pad rows: { text, severity } — optional issues to raise a ticket
 
   const VISITS_PREVIEW = 5;    // rows shown before "Show all"
   const LOG_PREVIEW = 4;       // timeline events shown before "Show all"
@@ -599,68 +655,35 @@ export default function VehicleProfile() {
     setConflict(null);
   };
 
-  // ── Log Oil Change ─────────────────────────────────────────────────────────
-  // The closed-loop action: records the change, rolls the next-service point forward,
-  // and (server-side) clears the "Service due" alert on the next scan.
-  const openOilLog = useCallback(() => {
-    const veh = data?.vehicle;
-    setOilForm({
-      odometer: veh?.odometer != null ? String(veh.odometer) : '',
-      date: new Date().toISOString().slice(0, 10),
-      note: '',
-    });
-    setOilFindings([]);
-    setOilOpen(true);
-  }, [data]);
-
-  // Inspector's Pad row helpers (the flagged-issues list inside the modal).
-  const addFinding = (text = '') => setOilFindings((rows) => [...rows, { text, severity: 'routine' }]);
-  const updateFinding = (i, patch) => setOilFindings((rows) => rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
-  const removeFinding = (i) => setOilFindings((rows) => rows.filter((_, idx) => idx !== i));
-
-  const closeOilLog = () => {
-    setOilOpen(false);
-    // Drop the deep-link param so the modal doesn't re-open on refresh/back.
-    if (searchParams.get('logOil')) {
-      setSearchParams((prev) => {
-        const next = new URLSearchParams(prev);
-        next.delete('logOil');
-        return next;
-      }, { replace: true });
-    }
-  };
-
-  const submitOilLog = async () => {
-    if (!oilForm.odometer) { toast.error('Enter the odometer reading'); return; }
-    // Only send flagged issues that actually have text.
-    const findings = oilFindings
-      .map((r) => ({ text: (r.text || '').trim(), severity: r.severity || 'routine' }))
-      .filter((r) => r.text !== '');
+  // Maintenance is logged only through the ticket workflow — the vehicle page never updates the service
+  // record directly. The Service-Due alert deep-links here with ?serviceTicket=<type>; we ORIGINATE (or
+  // reuse) a maintenance ticket pre-filled with that service and jump to it. The car's Service Status /
+  // battery dates / odometer below update only when that ticket is later closed.
+  const openServiceTicket = useCallback(async (serviceType) => {
     setBusy(true);
     try {
-      const { data: res } = await api.post(`/Vehicle/${id}/service-inspection`, {
-        odometer: Number(oilForm.odometer),
-        date: oilForm.date || undefined,
-        note: oilForm.note || undefined,
-        findings: findings.length ? findings : undefined,
-      });
+      const { data: res } = await api.post(`/Vehicle/${id}/service-ticket`, { service_type: serviceType });
       const ticket = res?.data?.ticket;
-      const note = res?.data?.ticket_note;
-      if (ticket) toast.success(`Oil logged — maintenance ticket #${ticket.id} opened for ${ticket.findings_count} issue${ticket.findings_count === 1 ? '' : 's'}`);
-      else if (note) toast.info(note);
-      else toast.success('Oil change logged — service status updated');
-      closeOilLog();
-      reload();
+      toast.success(`Maintenance ticket #${ticket?.id} opened — perform the service on the ticket`);
+      if (ticket?.url) navigate(ticket.url);
     } catch (e) {
-      toast.error(e?.response?.data?.message || 'Could not log service & inspection');
+      toast.error(e?.response?.data?.message || 'Could not open a maintenance ticket');
     } finally {
       setBusy(false);
     }
-  };
+  }, [id, navigate, toast]);
 
-  // Deep-link from the Service-Due notification: ?logOil=1 auto-opens the modal once loaded.
+  // Deep-link from the Service-Due notification: ?serviceTicket=<type> opens/creates the ticket once,
+  // then drops the param (so a refresh/back doesn't re-fire) and routes to the ticket.
   useEffect(() => {
-    if (data && searchParams.get('logOil') === '1' && !oilOpen) openOilLog();
+    const svc = searchParams.get('serviceTicket');
+    if (!data || !svc) return;
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete('serviceTicket');
+      return next;
+    }, { replace: true });
+    openServiceTicket(svc);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, searchParams]);
 
@@ -708,7 +731,7 @@ export default function VehicleProfile() {
       <div className="py-8">
         <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
           {/* hero placeholder */}
-          <Skeleton className="h-44 w-full rounded-3xl" />
+          <Skeleton className="h-44 w-full rounded-2xl" />
           {/* stats placeholder */}
           <MetricGridSkeleton count={4} />
           {/* specs + registration placeholder */}
@@ -758,7 +781,7 @@ export default function VehicleProfile() {
   const stats = data.stats || {};
 
   return (
-    <div className="py-8">
+    <div className="opx py-8">
       <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
         {/* Back */}
         <Link to="/vehicles" className="inline-flex items-center gap-1 text-sm font-medium text-slate-500 transition hover:text-slate-700">
@@ -766,75 +789,81 @@ export default function VehicleProfile() {
           Vehicles
         </Link>
 
-        {/* Hero header */}
-        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 p-6 shadow-card sm:p-8">
-          <div className="pointer-events-none absolute -right-16 -top-20 h-64 w-64 rounded-full bg-indigo-500/20 blur-3xl" />
-          <div className="pointer-events-none absolute -bottom-24 left-1/4 h-64 w-64 rounded-full bg-violet-500/10 blur-3xl" />
-          <div className="relative flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
-            {/* Identity */}
-            <div className="flex items-start gap-4">
-              <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-white/10 ring-1 ring-inset ring-white/15 backdrop-blur">
-                <svg className="h-8 w-8 text-indigo-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M5 13l1.5-4.5A2 2 0 0 1 8.4 7h7.2a2 2 0 0 1 1.9 1.5L19 13m-14 0h14m-14 0a2 2 0 0 0-2 2v3a1 1 0 0 0 1 1h1m14-6a2 2 0 0 1 2 2v3a1 1 0 0 1-1 1h-1m-12 0v1a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-1m2 0h10M7.5 16h.01M16.5 16h.01" />
-                </svg>
+        {/* Hero header — Cockpit+ command panel: vehicle identity + live availability. */}
+        <div className="opx-panel" style={{ overflow: 'visible' }}>
+          <div className="opx-panel-bd" style={{ padding: 0 }}>
+            <div className="flex flex-col gap-6 p-6 lg:flex-row lg:items-start lg:justify-between sm:p-7">
+              {/* Identity */}
+              <div className="flex items-start gap-4">
+                <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl"
+                  style={{ background: 'linear-gradient(150deg,var(--cyan),var(--brand))', color: 'var(--void)', boxShadow: '0 12px 30px -14px var(--cyan)' }}>
+                  <svg className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M5 13l1.5-4.5A2 2 0 0 1 8.4 7h7.2a2 2 0 0 1 1.9 1.5L19 13m-14 0h14m-14 0a2 2 0 0 0-2 2v3a1 1 0 0 0 1 1h1m14-6a2 2 0 0 1 2 2v3a1 1 0 0 1-1 1h-1m-12 0v1a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-1m2 0h10M7.5 16h.01M16.5 16h.01" />
+                  </svg>
+                </div>
+                <div className="min-w-0">
+                  <div className="opx-hint" style={{ letterSpacing: '.16em', textTransform: 'uppercase', marginBottom: 6 }}>Vehicle Dossier</div>
+                  <h1 className="font-display text-2xl font-bold tracking-tight sm:text-3xl" style={{ color: 'var(--ink)', letterSpacing: '-.02em' }}>{[v.make, v.model].filter(Boolean).join(' ') || 'Vehicle'}</h1>
+                  <div className="mt-2.5 flex flex-wrap items-center gap-2.5">
+                    {v.plate_no && <span className="opx-plate" style={{ fontSize: 13, padding: '3px 10px' }}>{v.plate_no}</span>}
+                    {v.vin && <span className="mono" style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>{v.vin}</span>}
+                  </div>
+                  <div className="mt-3.5 flex flex-wrap items-center gap-2">
+                    {/* Canonical dual-state — the same rental + maintenance identity used across the app. */}
+                    <DualState vehicle={{ ...v, av_state: av.state }} size="md" />
+                    {v.for_sale && <Badge tone="amber" dot>For sale</Badge>}
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <SpecPill label="Year" value={v.year} />
+                    <SpecPill label="Odometer" value={v.odometer != null ? `${num(v.odometer)} km` : null} />
+                    <SpecPill label="Category" value={v.category} />
+                    <SpecPill label="Color" value={v.color} />
+                  </div>
+                </div>
               </div>
-              <div className="min-w-0">
-                <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">{[v.make, v.model].filter(Boolean).join(' ') || 'Vehicle'}</h1>
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  {v.plate_no && <span className="rounded-lg bg-white/15 px-2.5 py-1 font-mono text-sm font-bold tracking-wider text-white ring-1 ring-inset ring-white/20">{v.plate_no}</span>}
-                  {v.vin && <span className="font-mono text-xs text-white/45">{v.vin}</span>}
-                </div>
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <VehicleStatusBadge status={v.status} />
-                  {v.for_sale && <Badge tone="amber">🏷️ For sale</Badge>}
-                </div>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <SpecPill label="Year" value={v.year} />
-                  <SpecPill label="Odometer" value={v.odometer != null ? `${num(v.odometer)} km` : null} />
-                  <SpecPill label="Category" value={v.category} />
-                  <SpecPill label="Color" value={v.color} />
-                </div>
-              </div>
-            </div>
 
-            {/* Availability + actions */}
-            <div className="w-full shrink-0 rounded-2xl bg-white/5 p-4 ring-1 ring-inset ring-white/10 backdrop-blur lg:w-80">
-              <div className="flex items-start gap-2.5">
-                <span className="relative mt-1 flex h-2.5 w-2.5">
-                  <span className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-60 ${AV_DOT[av.state] || 'bg-gray-400'}`} />
-                  <span className={`relative inline-flex h-2.5 w-2.5 rounded-full ${AV_DOT[av.state] || 'bg-gray-400'}`} />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="flex items-center gap-2 text-sm font-semibold text-white">
-                    {av.state === 'available' ? 'Available for rent'
-                      : av.state === 'rented' ? `Rented${av.customer ? ` · ${av.customer}` : ''}`
-                      : av.state === 'maintenance' ? 'In maintenance'
-                      : (av.label || '—')}
-                    {av.overdue && <Badge tone="red">Overdue</Badge>}
-                  </p>
-                  <p className="mt-0.5 text-xs text-white/55">
-                    {av.state === 'maintenance'
-                      ? `${av.garage ? `at ${av.garage} · ` : ''}${av.due ? `due back ${fmtDate(av.due)}` : 'no return date set'}`
-                      : av.state === 'rented'
-                        ? `out since ${fmtDate(av.since)}${av.due ? ` · est. return ${fmtDate(av.due)}${av.days ? ` (${av.days}-day rental)` : ''}` : ' · no rental days recorded'}`
-                      : av.state === 'available' ? 'No open contract — ready to rent or service'
-                      : (av.since ? `since ${fmtDate(av.since)}` : '')}
-                  </p>
+              {/* Availability + actions — cockpit telemetry block */}
+              <div className="w-full shrink-0 rounded-2xl p-4 lg:w-80"
+                style={{ background: 'var(--ov)', border: '1px solid var(--line)' }}>
+                <div className="opx-hint" style={{ letterSpacing: '.14em', textTransform: 'uppercase', marginBottom: 10 }}>Live Availability</div>
+                <div className="flex items-start gap-2.5">
+                  <span className={`mt-1.5 inline-flex h-2.5 w-2.5 shrink-0 rounded-full ${AV_DOT[av.state] || 'bg-slate-400'}`} />
+                  <div className="min-w-0 flex-1">
+                    <p className="flex items-center gap-2 text-sm font-semibold" style={{ color: 'var(--ink)' }}>
+                      {av.state === 'available' ? 'Available for rent'
+                        : av.state === 'rented' ? `Rented${av.customer ? ` · ${av.customer}` : ''}`
+                        : av.state === 'maintenance' ? 'In maintenance'
+                        : (av.label || '—')}
+                      {av.overdue && <Badge tone="red" dot>Overdue</Badge>}
+                    </p>
+                    <p className="mt-0.5 text-xs" style={{ color: 'var(--ink-3)' }}>
+                      {av.state === 'maintenance'
+                        ? `${av.garage ? `at ${av.garage} · ` : ''}${av.due ? `due back ${fmtDate(av.due)}` : 'no return date set'}`
+                        : av.state === 'rented'
+                          ? `out since ${fmtDate(av.since)}${av.due ? ` · est. return ${fmtDate(av.due)}${av.days ? ` (${av.days}-day rental)` : ''}` : ' · no rental days recorded'}`
+                        : av.state === 'available' ? 'No open contract — ready to rent or service'
+                        : (av.since ? `since ${fmtDate(av.since)}` : '')}
+                    </p>
+                  </div>
                 </div>
+                {(av.state !== 'maintenance' && av.state !== 'out_of_fleet') || av.open_contract_id ? (
+                  <div className="mt-4 flex flex-col gap-2">
+                    {av.state !== 'maintenance' && av.state !== 'out_of_fleet' && (
+                      <Button variant="secondary" className="w-full justify-center" onClick={() => setMaintOpen(true)} disabled={busy}>Send to Maintenance</Button>
+                    )}
+                    {av.open_contract_id && (
+                      <Button variant="success" className="w-full justify-center" onClick={() => markAvailable(av.open_contract_id)} loading={busy}>Mark Available</Button>
+                    )}
+                  </div>
+                ) : null}
               </div>
-              {(av.state !== 'maintenance' && av.state !== 'out_of_fleet') || av.open_contract_id ? (
-                <div className="mt-4 flex flex-col gap-2">
-                  {av.state !== 'maintenance' && av.state !== 'out_of_fleet' && (
-                    <Button variant="secondary" className="w-full justify-center" onClick={() => setMaintOpen(true)} disabled={busy}>🔧 Send to Maintenance</Button>
-                  )}
-                  {av.open_contract_id && (
-                    <Button variant="success" className="w-full justify-center" onClick={() => markAvailable(av.open_contract_id)} loading={busy}>✓ Mark Available</Button>
-                  )}
-                </div>
-              ) : null}
             </div>
           </div>
         </div>
+
+        {/* Paused — Returned to Service ribbon: the fixed, app-wide amber strip. Renders only when
+            the repair is paused, so a manager instantly reads "working, but unresolved maintenance risk". */}
+        <PausedRibbon vehicle={{ ...v, av_state: av.state }} />
 
         {/* Tab navigation — the persistent hero above stays visible on every tab. Sticks just
             below the app header (h-16) so a manager keeps the tabs in reach while scrolling. */}
@@ -862,46 +891,55 @@ export default function VehicleProfile() {
         <div role="tabpanel" id="panel-overview" aria-labelledby="tab-overview" className="space-y-6">
         {/* Financial Performance hero — lifetime revenue vs. every cost this car has incurred.
             ROI ring + interactive cost-composition donut (drill-through). Leads the Overview. */}
-        {SHOW_FINANCIALS && <FinancialsHero vehicle={v} stats={stats} onDrill={drillFinancial} />}
+        {SHOW_FINANCIALS && (
+          <div className="space-y-2">
+            <FinancialsHero vehicle={v} stats={stats} onDrill={drillFinancial} />
+            {!stats.is_new && (
+              <button
+                type="button"
+                onClick={() => setBridgeOpen(true)}
+                className="text-sm font-medium text-indigo-600 transition hover:text-indigo-700"
+              >
+                View profit breakdown →
+              </button>
+            )}
+          </div>
+        )}
 
-        {/* Stats */}
-        <MetricGrid cols={4}>
-          <MetricCard
-            label="Total Contracts"
-            value={num(stats.contracts_count)}
-            tone="indigo"
-            icon={<Icon.Invoice className="h-5 w-5" />}
-            hint="Lifetime rentals, bookings & maintenance"
-          />
-          <MetricCard
-            label="Open Now"
-            value={num(stats.open_count)}
-            tone={stats.open_count > 0 ? 'blue' : 'slate'}
-            icon={<Icon.Check className="h-5 w-5" />}
-            hint={stats.open_count > 0 ? 'Live contract on this car' : 'No open contract'}
-            onClick={av.open_contract_id ? () => navigate(`/contracts/${av.open_contract_id}`) : undefined}
-          />
-          {SHOW_FINANCIALS && (
-            <MetricCard
-              label="Lifetime Net Profit"
-              value={stats.is_new ? 'New' : aed(stats.lifetime_net_profit)}
-              tone={stats.is_new ? 'slate' : Number(stats.lifetime_net_profit) < 0 ? 'red' : 'emerald'}
-              icon={<Icon.Cash className="h-5 w-5" />}
-              big
-              hint={stats.is_new ? 'Not yet rented' : 'Gross revenue − operating − maintenance · tap for breakdown'}
-              tooltip="Reverse-engineered Net Profit: rent billed − discount + realized usage − operating costs − car-level maintenance. VAT, deposits & damages excluded."
-              onClick={stats.is_new ? undefined : () => setBridgeOpen(true)}
+        {/* KPI strip — Cockpit+ telemetry tiles */}
+        <div className="opx-grid opx-c12">
+          <div className="opx-span-4">
+            <StatGaugeTile
+              label="Total Contracts"
+              value={num(stats.contracts_count)}
+              hint="Lifetime rentals, bookings & maintenance"
+              tone="cyan"
+              icon="calendar"
+              percent={100}
             />
-          )}
-          <MetricCard
-            label="Outstanding Fines"
-            value={num(reg ? reg.fines_count : 0)}
-            tone={reg && reg.fines_count > 0 ? 'red' : 'slate'}
-            icon={<Icon.Alert className="h-5 w-5" />}
-            hint={reg ? aed2(reg.fines_amount) : 'No registration record'}
-            tooltip="Traffic violations / fines from the RTA source, owned by F RTA."
-          />
-        </MetricGrid>
+          </div>
+          <div className="opx-span-4">
+            <StatGaugeTile
+              label="Open Now"
+              value={num(stats.open_count)}
+              hint={stats.open_count > 0 ? 'Live contract on this car' : 'No open contract'}
+              tone={stats.open_count > 0 ? 'rented' : 'avail'}
+              icon="check"
+              percent={stats.open_count > 0 ? 100 : 8}
+              onClick={av.open_contract_id ? () => navigate(`/contracts/${av.open_contract_id}`) : undefined}
+            />
+          </div>
+          <div className="opx-span-4">
+            <StatGaugeTile
+              label="Outstanding Fines"
+              value={num(reg ? reg.fines_count : 0)}
+              hint={reg ? aed2(reg.fines_amount) : 'No registration record'}
+              tone={reg && reg.fines_count > 0 ? 'crit' : 'avail'}
+              icon="alert"
+              percent={reg && reg.fines_count > 0 ? 100 : 4}
+            />
+          </div>
+        </div>
 
         {/* Activity & composition analytics — smooth trend line + contract-mix pie,
             built from contracts + workshop visits already in the payload (money-free). */}
@@ -922,7 +960,7 @@ export default function VehicleProfile() {
         {/* Specs + Registration */}
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           <Card className="p-6 lg:col-span-2">
-            <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-400">Specifications</h3>
+            <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">Specifications</h3>
             <div className="grid grid-cols-1 gap-x-8 sm:grid-cols-2">
               <div>
                 <Field label="VIN / Chassis" value={v.vin} />
@@ -946,18 +984,18 @@ export default function VehicleProfile() {
                 <Field label="Service Interval (Validity)" value={v.service_interval_km != null ? `${num(v.service_interval_km)} km` : '—'} tip="Per-car km service interval from the Oil Change sheet (Validity)." />
                 <Field label="Last Change" value={v.last_service_odometer != null ? `${num(v.last_service_odometer)} km` : '—'} />
                 <Field label="Service Status" value={serviceStatusText(v.service_status)} tip="Strict km-based service-due verdict: odometer vs last-service baseline + interval." />
-                <Button variant="secondary" className="mt-3 w-full justify-center" onClick={openOilLog} disabled={busy}>🛢 Log Oil Change</Button>
+                <p className="mt-3 text-xs text-slate-400">Reflects confirmed maintenance only — updated when a maintenance ticket is closed.</p>
               </div>
             </div>
           </Card>
 
           <Card className="p-6">
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Registration & Insurance</h3>
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Registration & Insurance</h3>
             {reg ? (
               <>
                 <CoverageRow label="Registration (Mulkiya)" date={reg.expiry_date} days={reg.registration_days_left} />
                 <CoverageRow label="Insurance" date={reg.insurance_expiry} days={reg.insurance_days_left} />
-                <div className="mt-3 border-t border-gray-100 pt-3">
+                <div className="mt-3 border-t border-slate-100 pt-3">
                   <Field label="Insurer" value={reg.insurer} />
                   <Field label="Reg. Status" value={reg.status} />
                   <Field label="Mortgaged By" value={reg.mortgaged_by} />
@@ -1035,19 +1073,19 @@ export default function VehicleProfile() {
           actions={<Badge tone="gray">{num(maintenance.length)} {maintenance.length === 1 ? 'visit' : 'visits'}</Badge>}
         >
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-100 text-sm stagger-rows">
-              <thead className="bg-gray-50/60">
-                <tr className="text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                  <th className="px-6 py-3">Visit</th>
-                  <th className="px-6 py-3">Out / In</th>
-                  <th className="px-6 py-3">Priority</th>
-                  <th className="px-6 py-3">Status</th>
-                  <th className="px-6 py-3">Garage</th>
-                  <th className="px-6 py-3">Issues</th>
-                  {SHOW_FINANCIALS && <th className="px-6 py-3 text-right">Total Cost</th>}
+            <table className="min-w-full text-sm stagger-rows">
+              <thead className="bg-slate-50/90">
+                <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  <th className="whitespace-nowrap border-b border-slate-200 px-6 py-3">Visit</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-6 py-3">Out / In</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-6 py-3">Priority</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-6 py-3">Status</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-6 py-3">Garage</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-6 py-3">Issues</th>
+                  {SHOW_FINANCIALS && <th className="whitespace-nowrap border-b border-slate-200 px-6 py-3 text-right">Total Cost</th>}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-50">
+              <tbody>
                 {(showAllVisits ? maintenance : maintenance.slice(0, VISITS_PREVIEW)).map((m) => {
                   const p = PRIO[m.priority] || PRIO.routine;
                   const events = m.events || [];
@@ -1056,35 +1094,35 @@ export default function VehicleProfile() {
                   return (
                     <Fragment key={m.id}>
                       <tr
-                        className={`hover:bg-gray-50/60 ${expandable ? 'cursor-pointer' : ''}`}
+                        className={`transition-colors hover:bg-indigo-50/40 ${expandable ? 'cursor-pointer' : ''}`}
                         onClick={expandable ? () => toggleVisit(m.id) : undefined}
                       >
-                        <td className="px-6 py-3 font-medium">
+                        <td className="border-b border-slate-100 px-6 py-3.5 font-medium">
                           <div className="flex items-center gap-2">
-                            <span className={`text-gray-400 transition-transform ${open ? 'rotate-90' : ''} ${expandable ? '' : 'invisible'}`}>▶</span>
+                            <span className={`text-slate-400 transition-transform ${open ? 'rotate-90' : ''} ${expandable ? '' : 'invisible'}`}>▶</span>
                             <Link to={`/contracts/${m.id}`} onClick={(e) => e.stopPropagation()} className="text-indigo-600 hover:text-indigo-700">#{m.contract_no || m.id}</Link>
                           </div>
                         </td>
-                        <td className="px-6 py-3 text-gray-500">
+                        <td className="border-b border-slate-100 px-6 py-3.5 text-slate-500">
                           {fmtDate(m.date)}
-                          {m.in_date && <span className="text-gray-400"> → {fmtDate(m.in_date)}</span>}
+                          {m.in_date && <span className="text-slate-400"> → {fmtDate(m.in_date)}</span>}
                         </td>
-                        <td className="px-6 py-3">
-                          <Badge tone={p.tone} title={m.reason || ''}>{p.emoji} {p.label}</Badge>
+                        <td className="border-b border-slate-100 px-6 py-3.5">
+                          <Badge tone={p.tone} dot title={m.reason || ''}>{p.label}</Badge>
                         </td>
-                        <td className="px-6 py-3">
-                          {m.stage ? <Badge tone={EVENT_TONE[m.stage] || 'gray'}>{m.stage}</Badge> : <span className="text-xs text-gray-300">—</span>}
-                          {m.event_count > 1 && <span className="ml-1 text-xs text-gray-400">×{m.event_count}</span>}
+                        <td className="border-b border-slate-100 px-6 py-3.5">
+                          {m.stage ? <Badge tone={EVENT_TONE[m.stage] || 'gray'}>{m.stage}</Badge> : <span className="text-xs text-slate-300">—</span>}
+                          {m.event_count > 1 && <span className="ml-1 text-xs text-slate-400">×{m.event_count}</span>}
                         </td>
-                        <td className="px-6 py-3 text-gray-700">{m.garage || '—'}</td>
-                        <td className="px-6 py-3">
+                        <td className="border-b border-slate-100 px-6 py-3.5 text-slate-700">{m.garage || '—'}</td>
+                        <td className="border-b border-slate-100 px-6 py-3.5">
                           <div className="flex flex-wrap gap-1">
                             {(m.tags || []).slice(0, 4).map((t) => <Badge key={t} tone="indigo">{t}</Badge>)}
-                            {(m.tags || []).length > 4 && <span className="text-xs text-gray-400">+{m.tags.length - 4}</span>}
-                            {(!m.tags || m.tags.length === 0) && <span className="text-xs text-gray-300">—</span>}
+                            {(m.tags || []).length > 4 && <span className="text-xs text-slate-400">+{m.tags.length - 4}</span>}
+                            {(!m.tags || m.tags.length === 0) && <span className="text-xs text-slate-300">—</span>}
                           </div>
                         </td>
-                        {SHOW_FINANCIALS && <td className={`px-6 py-3 text-right ${Number(m.total) > 0 ? 'font-semibold text-gray-900' : 'text-gray-300'}`}>{aed2(m.total)}</td>}
+                        {SHOW_FINANCIALS && <td className={`border-b border-slate-100 px-6 py-3.5 text-right tabular-nums ${Number(m.total) > 0 ? 'font-semibold text-slate-900' : 'text-slate-300'}`}>{aed2(m.total)}</td>}
                       </tr>
                       {open && expandable && (
                         <tr className="bg-slate-50/60">
@@ -1094,9 +1132,9 @@ export default function VehicleProfile() {
                               {events.map((e) => (
                                 <div key={e.id} className="flex flex-wrap items-start gap-x-4 gap-y-1 rounded-xl bg-white px-4 py-2.5 text-sm shadow-soft ring-1 ring-inset ring-slate-100">
                                   <Badge tone={EVENT_TONE[e.event] || 'gray'}>{e.event || '—'}</Badge>
-                                  <span className="text-gray-500">
+                                  <span className="text-slate-500">
                                     {e.date ? fmtDate(e.date) : 'No date'}
-                                    {e.actual_in && e.actual_in !== e.date && <span className="text-gray-400"> → returned {fmtDate(e.actual_in)}</span>}
+                                    {e.actual_in && e.actual_in !== e.date && <span className="text-slate-400"> → returned {fmtDate(e.actual_in)}</span>}
                                   </span>
                                   {e.garage && <span className="font-medium text-slate-600">{e.garage}</span>}
                                   {e.type && <span className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{e.type}</span>}
@@ -1113,13 +1151,13 @@ export default function VehicleProfile() {
                   );
                 })}
                 {maintenance.length === 0 && (
-                  <tr><td colSpan={SHOW_FINANCIALS ? 7 : 6} className="px-6 py-8 text-center text-gray-400">No maintenance recorded for this vehicle yet.</td></tr>
+                  <tr><td colSpan={SHOW_FINANCIALS ? 7 : 6} className="px-6 py-12 text-center text-slate-400">No maintenance recorded for this vehicle yet.</td></tr>
                 )}
               </tbody>
             </table>
           </div>
           {maintenance.length > VISITS_PREVIEW && (
-            <div className="border-t border-gray-100 px-6 py-3 text-center">
+            <div className="border-t border-slate-100 px-6 py-3 text-center">
               <button
                 type="button"
                 onClick={() => setShowAllVisits((s) => !s)}
@@ -1183,9 +1221,9 @@ export default function VehicleProfile() {
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div className="flex flex-wrap items-center gap-2">
                             <Badge tone={tone}>{m.event || '—'}</Badge>
-                            {isHit && <Badge tone="red">🚩 Worst-case downtime — investigate</Badge>}
+                            {isHit && <Badge tone="red" dot>Worst-case downtime — investigate</Badge>}
                             {(m.type || m.severity) && (
-                              <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">{m.type || m.severity}</span>
+                              <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">{m.type || m.severity}</span>
                             )}
                           </div>
                           <div className="flex items-center gap-2">
@@ -1333,7 +1371,7 @@ export default function VehicleProfile() {
                       key={f.key}
                       type="button"
                       onClick={() => { setContractType(f.key); setShowAllContracts(false); }}
-                      className={`rounded-md px-2.5 py-1 text-xs font-medium transition ${
+                      className={`rounded-lg px-2.5 py-1 text-xs font-medium transition ${
                         contractType === f.key ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'
                       }`}
                     >
@@ -1418,7 +1456,10 @@ export default function VehicleProfile() {
         <div className="space-y-4">
           {conflict && (
             <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm">
-              <p className="font-medium text-red-700">⚠ This car is reserved</p>
+              <p className="flex items-center gap-1.5 font-medium text-red-700">
+                <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /></svg>
+                This car is reserved
+              </p>
               <p className="mt-1 text-red-600">{conflict.message}</p>
               {conflict.reservations?.length > 0 && (
                 <ul className="mt-2 space-y-1 text-xs text-red-600">
@@ -1427,12 +1468,12 @@ export default function VehicleProfile() {
                   ))}
                 </ul>
               )}
-              <p className="mt-2 text-xs text-gray-500">Set an expected return date before the reservation starts, or press <span className="font-medium">Send anyway</span> to override.</p>
+              <p className="mt-2 text-xs text-slate-500">Set an expected return date before the reservation starts, or press <span className="font-medium">Send anyway</span> to override.</p>
             </div>
           )}
-          <p className="text-sm text-gray-500">This opens a maintenance record — the car immediately shows as "in maintenance". Maintenance can be opened even for a car with an active or upcoming booking; manage the overlap manually.</p>
+          <p className="text-sm text-slate-500">This opens a maintenance record — the car immediately shows as "in maintenance". Maintenance can be opened even for a car with an active or upcoming booking; manage the overlap manually.</p>
           <label className="block">
-            <span className="mb-1 block text-sm font-medium text-gray-700">Garage</span>
+            <span className="mb-1 block text-sm font-medium text-slate-700">Garage</span>
             <SearchSelect
               value={maintForm.vendor_id}
               onChange={(val) => setMaintForm((f) => ({ ...f, vendor_id: val }))}
@@ -1446,113 +1487,6 @@ export default function VehicleProfile() {
             value={maintForm.expected_return_date}
             onChange={(e) => { setMaintForm((f) => ({ ...f, expected_return_date: e.target.value })); setConflict(null); }}
           />
-        </div>
-      </Modal>
-
-      {/* Service & Inspection — log the oil change AND (optionally) flag issues → auto maintenance ticket.
-          Also reached via the Service-Due alert (?logOil=1). */}
-      <Modal
-        open={oilOpen}
-        onClose={() => !busy && closeOilLog()}
-        title="Service & Inspection"
-        subtitle={v.plate_no || v.vin}
-        footer={(
-          <>
-            <Button variant="secondary" onClick={closeOilLog} disabled={busy}>Cancel</Button>
-            <Button onClick={submitOilLog} loading={busy}>
-              {oilFindings.some((r) => (r.text || '').trim()) ? 'Log Oil & Open Ticket' : 'Log Oil Change'}
-            </Button>
-          </>
-        )}
-      >
-        <div className="space-y-5">
-          {/* Oil change — the task that completes on this screen */}
-          <div className="space-y-4">
-            <p className="text-sm text-gray-500">Records the oil change and rolls the next service point forward — updates the car's service status and oil reminder together, and clears the “Service due” alert on the next scan.</p>
-            <Input
-              label="Odometer (km)"
-              type="number"
-              value={oilForm.odometer}
-              onChange={(e) => setOilForm((f) => ({ ...f, odometer: e.target.value }))}
-              placeholder="e.g. 84300"
-            />
-            <Input
-              label="Service Date"
-              type="date"
-              value={oilForm.date}
-              onChange={(e) => setOilForm((f) => ({ ...f, date: e.target.value }))}
-            />
-            <p className="text-xs text-gray-400">
-              Interval: {v.service_interval_km != null ? `${num(v.service_interval_km)} km` : 'not set'}
-              {' · '}Current odometer: {v.odometer != null ? `${num(v.odometer)} km` : '—'}
-            </p>
-          </div>
-
-          {/* Inspector's Pad — flag anything noticed on the test drive; each becomes a finding on a new ticket */}
-          {canInspect && (
-            <div className="space-y-3 rounded-lg border border-amber-200 bg-amber-50/60 p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="text-sm font-semibold text-amber-800">Inspector's Pad</h4>
-                  <p className="text-xs text-amber-700/80">Flag other issues (brakes, noises…) — these open their own maintenance ticket. The oil change still completes on its own.</p>
-                </div>
-              </div>
-
-              {/* Quick-pick common issues */}
-              <div className="flex flex-wrap gap-1.5">
-                {['Brakes', 'Engine noise', 'A/C', 'Tyres', 'Suspension', 'Warning light'].map((q) => (
-                  <button
-                    key={q}
-                    type="button"
-                    onClick={() => addFinding(q)}
-                    className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-amber-700 ring-1 ring-inset ring-amber-300 hover:bg-amber-100"
-                  >
-                    + {q}
-                  </button>
-                ))}
-              </div>
-
-              {oilFindings.map((row, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <div className="flex-1">
-                    <Input
-                      value={row.text}
-                      onChange={(e) => updateFinding(i, { text: e.target.value })}
-                      placeholder="Issue (e.g. grinding brakes)"
-                    />
-                  </div>
-                  <select
-                    value={row.severity}
-                    onChange={(e) => updateFinding(i, { severity: e.target.value })}
-                    className="rounded-lg border border-gray-300 bg-white px-2 py-2 text-sm"
-                  >
-                    <option value="routine">🟢 Clear</option>
-                    <option value="high">🟠 Normal</option>
-                    <option value="moderate">🟡 Moderate</option>
-                    <option value="critical">🔴 Critical</option>
-                  </select>
-                  <button type="button" onClick={() => removeFinding(i)} className="px-1.5 text-gray-400 hover:text-red-500" aria-label="Remove">✕</button>
-                </div>
-              ))}
-
-              <button
-                type="button"
-                onClick={() => addFinding()}
-                className="text-sm font-medium text-amber-700 hover:text-amber-900"
-              >
-                + Add issue
-              </button>
-
-              {oilFindings.some((r) => (r.text || '').trim()) && (
-                <Input
-                  label="Note for the workshop (optional)"
-                  value={oilForm.note}
-                  onChange={(e) => setOilForm((f) => ({ ...f, note: e.target.value }))}
-                  placeholder="Anything the garage should know"
-                />
-              )}
-            </div>
-          )}
         </div>
       </Modal>
 
@@ -1580,7 +1514,7 @@ export default function VehicleProfile() {
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge tone={tone}>{logEvent.event || '—'}</Badge>
                     {(logEvent.type || logEvent.severity) && (
-                      <span className="rounded-md bg-white px-2 py-0.5 text-xs font-medium text-slate-600 ring-1 ring-inset ring-slate-200">{logEvent.type || logEvent.severity}</span>
+                      <span className="rounded-lg bg-white px-2 py-0.5 text-xs font-medium text-slate-600 ring-1 ring-inset ring-slate-200">{logEvent.type || logEvent.severity}</span>
                     )}
                   </div>
                   <p className="mt-1.5 text-sm text-slate-500">
@@ -1617,7 +1551,7 @@ export default function VehicleProfile() {
                 <Field label="Cost" value={logEvent.cost != null ? aed2(logEvent.cost) : '—'} />
                 {logEvent.contract_id && (
                   <div className="flex justify-between gap-4 py-1.5 text-sm">
-                    <span className="text-gray-500">Contract</span>
+                    <span className="text-slate-500">Contract</span>
                     <Link to={`/contracts/${logEvent.contract_id}`} className="font-medium text-indigo-600 hover:text-indigo-700">#{logEvent.contract_no || logEvent.contract_id}</Link>
                   </div>
                 )}
@@ -1708,7 +1642,7 @@ export default function VehicleProfile() {
                       </thead>
                       <tbody className="divide-y divide-slate-50">
                         {pc.map((c) => (
-                          <tr key={c.id} className="hover:bg-slate-50/60">
+                          <tr key={c.id} className="transition-colors hover:bg-indigo-50/40">
                             <td className="px-3 py-2">
                               <Link to={`/contracts/${c.id}`} className="font-medium text-indigo-600 hover:text-indigo-700">#{c.contract_no || c.id}</Link>
                               {c.customer && <div className="text-xs text-slate-400">{c.customer}</div>}

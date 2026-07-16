@@ -36,7 +36,7 @@ export default function RentalReadinessInline({ vehicleId }) {
 
   if (loading) {
     return (
-      <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-5 py-4 text-sm text-slate-500 shadow-sm">
+      <div className="flex items-center gap-2 rounded-2xl border border-slate-200/60 bg-white px-5 py-4 text-sm text-slate-500 shadow-soft">
         <Spinner className="h-4 w-4" /> Checking rental readiness…
       </div>
     );
@@ -59,7 +59,7 @@ export default function RentalReadinessInline({ vehicleId }) {
         title: `Not ready — ${blockers} blocking issue${blockers === 1 ? '' : 's'} to resolve before renting` };
 
   return (
-    <div className={`overflow-hidden rounded-2xl border ${head.border} bg-white shadow-sm`}>
+    <div className={`overflow-hidden rounded-2xl border ${head.border} bg-white shadow-soft`}>
       {/* Verdict header */}
       <div className={`flex items-center gap-3 ${head.bg} px-5 py-3`}>
         <span className={`text-lg ${head.text}`}>{head.glyph}</span>

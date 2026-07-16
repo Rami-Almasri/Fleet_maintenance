@@ -31,10 +31,10 @@ export default class ErrorBoundary extends Component {
             {String(this.state.error?.message || this.state.error)}
           </p>
           <div className="mt-5 flex justify-center gap-3">
-            <button onClick={() => window.location.reload()} className="rounded-xl bg-gradient-to-b from-indigo-500 to-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition active:scale-95">
+            <button onClick={() => window.location.reload()} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 active:translate-y-px">
               Reload page
             </button>
-            <a href="/" className="rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-700 ring-1 ring-inset ring-slate-200 transition hover:bg-slate-50">
+            <a href="/" className="rounded-lg bg-white px-4 py-2 text-sm font-semibold text-slate-700 ring-1 ring-inset ring-slate-200 transition hover:bg-slate-50">
               Go to Dashboard
             </a>
           </div>

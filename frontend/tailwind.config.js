@@ -53,10 +53,13 @@ module.exports = {
         success: { 50: '#ecfdf5', 100: '#d1fae5', 200: '#a7f3d0', 400: '#34d399', 500: '#10b981', 600: '#059669', 700: '#047857', DEFAULT: '#10b981' },
       },
       boxShadow: {
-        soft: '0 1px 2px 0 rgb(15 23 42 / 0.04), 0 4px 16px -2px rgb(15 23 42 / 0.06)',
-        card: '0 1px 3px rgb(15 23 42 / 0.05), 0 12px 32px -14px rgb(15 23 42 / 0.18)',
-        glow: '0 0 0 1px rgb(var(--brand-500) / 0.25), 0 10px 30px -8px rgb(var(--brand-500) / 0.45)',
-        'glow-lg': '0 0 0 1px rgb(var(--brand-500) / 0.3), 0 18px 50px -10px rgb(var(--brand-500) / 0.55)',
+        // Enterprise elevation: border-first, shadow-second. Shadows are a faint
+        // hint of depth, not a dramatic float — the hairline border carries the
+        // card edge (Stripe/Linear style). Keep them subtle in both themes.
+        soft: '0 1px 2px 0 rgb(15 23 42 / 0.04)',
+        card: '0 1px 2px rgb(15 23 42 / 0.04), 0 6px 16px -10px rgb(15 23 42 / 0.12)',
+        glow: '0 0 0 1px rgb(var(--brand-500) / 0.18), 0 4px 14px -6px rgb(var(--brand-500) / 0.28)',
+        'glow-lg': '0 0 0 1px rgb(var(--brand-500) / 0.22), 0 10px 30px -10px rgb(var(--brand-500) / 0.35)',
       },
       keyframes: {
         'fade-in-up': {

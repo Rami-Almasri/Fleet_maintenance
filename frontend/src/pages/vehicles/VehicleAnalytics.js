@@ -6,7 +6,7 @@
 
 import { useMemo, useState } from 'react';
 import { SectionCard } from '../../components/ui/Table';
-import MultiLineChart from '../../components/ui/MultiLineChart';
+import GroupedBarChart from '../../components/ui/GroupedBarChart';
 import PieChart from '../../components/ui/PieChart';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -83,7 +83,7 @@ export default function VehicleAnalytics({ contracts = [], maintenance = [] }) {
         bodyClass="px-4 pb-4 pt-2"
       >
         {hasTrend ? (
-          <MultiLineChart
+          <GroupedBarChart
             data={trend}
             series={[
               { key: 'rentals', label: 'Rentals', color: 'purple' },

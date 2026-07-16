@@ -2,9 +2,8 @@ import { useCallback, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import api from '../../api/client';
 import useFetch from '../../hooks/useFetch';
-import { PageHeader } from '../../components/ui/Misc';
-import { SectionCard } from '../../components/ui/Table';
 import { MetricGridSkeleton } from '../../components/ui/Skeleton';
+import { CommandPanel, StatGaugeTile } from '../../components/ops';
 import Tabs from '../../components/ui/Tabs';
 import Badge from '../../components/ui/Badge';
 import Button from '../../components/ui/Button';
@@ -29,26 +28,6 @@ const VERDICT_META = {
   needs_attention: { tone: 'amber', label: 'Needs attention' },
   blocked:         { tone: 'red',   label: 'Blocked' },
 };
-
-function KpiTile({ label, value, tone = 'slate', Glyph }) {
-  const soft = {
-    slate: 'bg-slate-100 text-slate-600',
-    indigo: 'bg-indigo-100 text-indigo-600',
-    amber: 'bg-amber-100 text-amber-600',
-    red: 'bg-red-100 text-red-600',
-  }[tone];
-  return (
-    <div className="flex items-center gap-3 rounded-2xl border border-slate-200/70 bg-white px-5 py-4 shadow-soft">
-      <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${soft}`}>
-        <Glyph className="h-5 w-5" />
-      </span>
-      <div>
-        <p className="text-2xl font-bold leading-none text-slate-900">{num(value)}</p>
-        <p className="mt-1 text-xs font-medium text-slate-500">{label}</p>
-      </div>
-    </div>
-  );
-}
 
 // Checks that stay openable even when they pass — so the team can revisit the underlying record (the
 // pre-rental inspection, the cleaning before/afters) rather than only reaching them to "fix" a problem.
@@ -90,7 +69,7 @@ function BookingCard({ b }) {
               {b.vehicle.label}
             </Link>
             {b.vehicle.plate_no && (
-              <span className="rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-xs text-slate-600">{b.vehicle.plate_no}</span>
+              <span className="rounded-lg bg-slate-100 px-1.5 py-0.5 font-mono text-xs text-slate-600">{b.vehicle.plate_no}</span>
             )}
             <Badge tone={verdict.tone}>{verdict.label}</Badge>
           </div>
@@ -154,53 +133,56 @@ function Board({ data, loading, error }) {
     <div className="space-y-6">
       {error && <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error}</div>}
 
-      {loading && !bookings.length ? (
-        <MetricGridSkeleton count={4} />
-      ) : (
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          <KpiTile label="Upcoming (7 days)" value={summary.upcoming || 0} tone="indigo" Glyph={Icon.Calendar} />
-          <KpiTile label="Urgent (≤ lead)" value={summary.urgent || 0} tone="red" Glyph={Icon.Clock} />
-          <KpiTile label="Needs attention" value={summary.needs_attention || 0} tone="amber" Glyph={Icon.Alert} />
-          <KpiTile label="Blocked" value={summary.blocked || 0} tone="red" Glyph={Icon.XCircle} />
-        </div>
-      )}
-
-      <SectionCard
-        title="Upcoming bookings"
-        subtitle="Cars reserved for pickup within the look-ahead window, each with its live readiness checklist. Urgent pickups are flagged red."
-        actions={<span className="text-xs text-slate-400">{num(shown.length)}</span>}
-      >
-        <div className="space-y-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="relative flex-1 min-w-[12rem]">
-              <Icon.Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <input
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="Search plate, customer, contract…"
-                className="w-full rounded-full border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm text-slate-700 placeholder:text-slate-400 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
-              />
-            </div>
-            <button
-              type="button"
-              onClick={() => setOnlyAttention((v) => !v)}
-              className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition ${onlyAttention ? 'bg-amber-500 text-white' : 'bg-slate-100 text-slate-500 hover:text-slate-700'}`}
-            >
-              <Icon.Alert className="h-3.5 w-3.5" /> Needs attention only
-            </button>
+      <div className="opx-grid opx-c12">
+        {[
+          { label: 'Upcoming · 7 Days', value: summary.upcoming || 0, tone: 'cyan', icon: 'calendar' },
+          { label: 'Urgent · ≤ Lead', value: summary.urgent || 0, tone: summary.urgent ? 'crit' : 'avail', icon: 'alert' },
+          { label: 'Needs Attention', value: summary.needs_attention || 0, tone: summary.needs_attention ? 'maint' : 'avail', icon: 'check' },
+          { label: 'Blocked', value: summary.blocked || 0, tone: summary.blocked ? 'crit' : 'avail', icon: 'pause' },
+        ].map((k) => (
+          <div className="opx-span-3" key={k.label}>
+            <StatGaugeTile label={k.label} value={loading ? '—' : num(k.value)} tone={k.tone} icon={k.icon}
+              percent={(summary.upcoming || 0) ? (k.value / (summary.upcoming || 1)) * 100 : (k.value ? 100 : 5)} />
           </div>
+        ))}
+      </div>
 
+      <CommandPanel
+        title="Upcoming Bookings"
+        dotColor="#22d3ee"
+        label="pickup prep"
+        meta={`${num(shown.length)} in look-ahead window`}
+        bodyFlush
+      >
+        <div className="opx-toolbar">
+          <input
+            className="opx-input"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search plate, customer, contract…"
+          />
+          <button
+            type="button"
+            onClick={() => setOnlyAttention((v) => !v)}
+            className="opx-ibtn"
+            style={onlyAttention ? { borderColor: 'var(--paused)', color: 'var(--paused)' } : undefined}
+          >
+            ⚠ Needs attention only
+          </button>
+        </div>
+
+        <div style={{ padding: '14px 16px' }}>
           {shown.length ? (
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
               {shown.map((b) => <BookingCard key={b.id} b={b} />)}
             </div>
           ) : (
-            <div className="py-12 text-center text-sm text-slate-400">
+            <div className="opx-empty">
               {bookings.length ? 'No bookings match.' : 'No upcoming bookings in the look-ahead window.'}
             </div>
           )}
         </div>
-      </SectionCard>
+      </CommandPanel>
     </div>
   );
 }
@@ -250,7 +232,8 @@ function SettingsPanel({ settings, onSaved }) {
 
   return (
     <div className="max-w-2xl space-y-6">
-      <SectionCard title="Trigger settings" subtitle="Tune how far ahead the board looks and when a booking becomes urgent. Changes take effect immediately — no redeploy.">
+      <CommandPanel title="Trigger Settings" dotColor="#22d3ee" label="tuning" meta="applies immediately — no redeploy">
+        <p className="opx-hint" style={{ marginBottom: 14, letterSpacing: '.03em' }}>Tune how far ahead the board looks and when a booking becomes urgent.</p>
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
           <Input
             type="number" min="1" max="60" label="Look-ahead (days)"
@@ -273,9 +256,9 @@ function SettingsPanel({ settings, onSaved }) {
           many working days before pickup a booking turns urgent (and fires a notification). <strong>Inspection valid</strong>
           {' '}is how long a pre-rental inspection stays "Satisfied" — a car tested within this window is not asked to be re-tested.
         </p>
-      </SectionCard>
+      </CommandPanel>
 
-      <SectionCard title="Excluded dates (holidays)" subtitle="Days the office is closed. These are skipped when counting the working-days lead, so a booking still gets its full warning even when a holiday falls in between.">
+      <CommandPanel title="Excluded Dates · Holidays" dotColor="#f5a524" label="office closed" meta="skipped in the working-days lead">
         <div className="flex flex-wrap items-end gap-3">
           <div className="flex-1 min-w-[12rem]">
             <Input type="date" label="Add a holiday" value={newDate} onChange={(e) => setNewDate(e.target.value)} />
@@ -298,7 +281,7 @@ function SettingsPanel({ settings, onSaved }) {
         ) : (
           <p className="mt-4 text-xs text-slate-400">No excluded dates. The lead time counts every calendar day.</p>
         )}
-      </SectionCard>
+      </CommandPanel>
 
       <div className="flex justify-end">
         <Button onClick={save} loading={saving} className="gap-1.5">
@@ -336,12 +319,15 @@ export default function BookingReadiness() {
   const setActive = (key) => setSearchParams({ tab: key }, { replace: true });
 
   return (
-    <div className="py-8">
+    <div className="opx py-8">
       <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
-        <PageHeader
-          title="Booking Readiness"
-          subtitle="Prep cars before the customer arrives. Every upcoming booking with its live readiness checklist — a valid recent inspection counts as done, so you only chase what's actually pending."
-        />
+        <div>
+          <div className="opx-hint" style={{ letterSpacing: '.16em', textTransform: 'uppercase', marginBottom: 6 }}>Pickup Prep Control</div>
+          <h1 className="font-display" style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-.02em', color: 'var(--ink)', margin: 0 }}>Booking Readiness</h1>
+          <p style={{ marginTop: 6, maxWidth: 760, fontSize: 13.5, color: 'var(--ink-3)', lineHeight: 1.5 }}>
+            Prep cars before the customer arrives. Every upcoming booking with its live readiness checklist — a valid recent inspection counts as done, so you only chase what's actually pending.
+          </p>
+        </div>
 
         <Tabs tabs={tabs} active={current?.key} onChange={setActive} ariaLabel="Booking readiness sections" />
 

@@ -119,7 +119,7 @@ export default function CreateMoveModal({ open, onClose, onCreated, lockedVehicl
           </div>
         ) : (
           <div>
-            <span className="mb-1 block text-sm font-medium text-gray-700">Vehicle<span className="ms-0.5 text-red-500">*</span></span>
+            <span className="mb-1 block text-sm font-medium text-slate-700">Vehicle<span className="ms-0.5 text-red-500">*</span></span>
             <SearchSelect
               value={vehicleId}
               onChange={setVehicleId}
