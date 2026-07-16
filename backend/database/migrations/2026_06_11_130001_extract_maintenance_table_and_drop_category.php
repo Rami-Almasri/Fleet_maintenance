@@ -31,11 +31,14 @@ return new class extends Migration
             $table->timestamps();
         });
 
-        // Move existing maintenance header data off contracts (only rows that have any).
+        // Move existing maintenance header data off contracts (only rows that have any). The
+        // timestamp is bound as a literal (not NOW()) so this raw SQL stays portable to the
+        // SQLite in-memory connection the test suite runs against.
+        $now = now()->toDateTimeString();
         DB::statement("
             INSERT INTO maintenances
                 (contract_id, vendor_id, maintenance_tags, responsible, approved_by, expected_return_date, maintenance_notes, created_at, updated_at)
-            SELECT id, vendor_id, maintenance_tags, responsible, approved_by, expected_return_date, maintenance_notes, NOW(), NOW()
+            SELECT id, vendor_id, maintenance_tags, responsible, approved_by, expected_return_date, maintenance_notes, '{$now}', '{$now}'
             FROM contracts
             WHERE vendor_id IS NOT NULL
                OR maintenance_tags IS NOT NULL

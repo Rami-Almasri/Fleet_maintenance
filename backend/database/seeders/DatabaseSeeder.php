@@ -6,6 +6,7 @@ use App\Models\User;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
 
 class DatabaseSeeder extends Seeder
 {
@@ -30,15 +31,40 @@ class DatabaseSeeder extends Seeder
         $this->call(GarageRoutingRuleSeeder::class);
 
         // A bootstrap super-admin so there's always one account that can do
-        // everything (and promote others). Idempotent via updateOrCreate.
-        $admin = User::updateOrCreate(
-            ['email' => 'admin@fleet.local'],
-            [
+        // everything (and promote others). Credentials come from the environment,
+        // NOT a hardcoded default, and re-seeding NEVER resets the password of an
+        // account that already exists (so a rotated prod password is preserved).
+        $adminEmail = env('BOOTSTRAP_ADMIN_EMAIL', 'admin@fleet.local');
+        $admin = User::where('email', $adminEmail)->first();
+
+        if (!$admin) {
+            // First-ever create. Use the env password if provided, otherwise mint
+            // a strong random one and print it ONCE so it can be captured.
+            $envPassword = env('BOOTSTRAP_ADMIN_PASSWORD');
+            $plainPassword = $envPassword ?: Str::password(16);
+
+            $admin = User::create([
                 'name' => 'Fleet Admin',
-                'password' => Hash::make('password'),
+                'email' => $adminEmail,
+                'password' => Hash::make($plainPassword),
                 'status' => 'active',
-            ],
-        );
+            ]);
+
+            if (!$envPassword) {
+                $this->command?->warn("=================================================================");
+                $this->command?->warn(" Bootstrap admin created: {$adminEmail}");
+                $this->command?->warn(" Generated password (shown ONCE — store it now): {$plainPassword}");
+                $this->command?->warn(" Set BOOTSTRAP_ADMIN_PASSWORD in .env to control this yourself.");
+                $this->command?->warn("=================================================================");
+            }
+        } else {
+            // Account already exists — do NOT touch its password. Just make sure it
+            // is active. (Re-running the seeder must never re-open a known password.)
+            if ($admin->status !== 'active') {
+                $admin->update(['status' => 'active']);
+            }
+        }
+
         $admin->syncRoles('super-admin');
     }
 }
