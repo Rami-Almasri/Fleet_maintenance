@@ -98,11 +98,20 @@ return [
     |                    reports no due conditions, so the monitor raises nothing.
     |   downtime_days  — a car idle (in-fleet but not rented / in the shop) for at
     |                    least this many days triggers a Post-Downtime Safety Check.
+    |                    That rule only fires once the car has been RENTED again since
+    |                    its last test (it must have gone back into service).
+    |   inactive_days  — the counterpart: a car that has NOT been rented at all since
+    |                    its last test still gets an automatic check-up once this many
+    |                    calendar days pass, so a parked-and-forgotten car is kept
+    |                    road-ready even though the downtime rule holds off. Should be
+    |                    >= downtime_days (a longer grace window before we test an
+    |                    unused car). Defaults to 30.
     |
     */
     'diagnostic_gate' => [
         'enabled'       => env('FEATURE_DIAGNOSTIC_GATE', true),
         'downtime_days' => (int) env('DIAGNOSTIC_GATE_DOWNTIME_DAYS', 15),
+        'inactive_days' => (int) env('DIAGNOSTIC_GATE_INACTIVE_DAYS', 30),
     ],
 
 ];

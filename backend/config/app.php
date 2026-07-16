@@ -54,6 +54,10 @@ return [
 
     'url' => env('APP_URL', 'http://localhost'),
 
+    // SPA origin. Used for notification deep-links (FleetAlert) and as the CORS
+    // allow-list origin (config/cors.php). Falls back to APP_URL when unset.
+    'frontend_url' => env('APP_FRONTEND_URL', env('APP_URL', 'http://localhost')),
+
     /*
     |--------------------------------------------------------------------------
     | Application Timezone

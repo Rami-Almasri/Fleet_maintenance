@@ -20,6 +20,13 @@ return Application::configure(basePath: dirname(__DIR__))
             'permission' => \Spatie\Permission\Middleware\PermissionMiddleware::class,
             'role_or_permission' => \Spatie\Permission\Middleware\RoleOrPermissionMiddleware::class,
         ]);
+
+        // Reject requests from suspended accounts on every API route (even with an
+        // already-issued token). Resolves the user via the sanctum guard itself,
+        // so ordering relative to per-route `auth:sanctum` doesn't matter.
+        $middleware->api(append: [
+            \App\Http\Middleware\EnsureUserActive::class,
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         // Any exception that bubbles uncaught out of an API route is shaped through the SAME unified
