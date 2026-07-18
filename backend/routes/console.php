@@ -26,13 +26,34 @@ Schedule::command('import:maintenance-sheet')
 
 Schedule::command('maintenance:link-reasons')->dailyAt('02:50');
 
-// OfficeManager API is the source of truth. Nightly: --link refreshes every car's STATUS
-// (from the API StatusNo) + car_serial, then contracts/invoices/customers are pulled.
-// Idempotent (updateOrCreate by external_id "OM:{serial}"), so it refreshes + adds new.
-// --skip-backup: this routine delta sync skips the pre-flight dump (manual re-imports back
-// up automatically). Drop --skip-backup here if you want a nightly DB backup before the sync.
-Schedule::command('om:sync --link --contracts --invoices --customers --skip-backup')
+// OfficeManager API is the source of truth. The sync is split by dataset so each refreshes at
+// the cadence it actually changes at (idempotent updateOrCreate by external_id "OM:{serial}",
+// so every run refreshes + adds new). All use --skip-backup: routine delta syncs never dump the
+// DB (that would be far too often for the hourly one — schedule a separate db:backup for that).
+
+// Cars — once a day. --vehicles imports new cars from the API; --link refreshes each car's STATUS
+// (API StatusNo) + car_serial. Cars change rarely, so daily is plenty.
+Schedule::command('om:sync --vehicles --link --skip-backup')
     ->dailyAt('03:00')
+    ->withoutOverlapping()
+    ->runInBackground();
+
+// Contracts — hourly. Keeps fleet availability (Available/Rented/Maintenance) fresh all day,
+// not just after the nightly run. Light: reads open contracts + close-detection.
+Schedule::command('om:sync --contracts --skip-backup')
+    ->hourlyAt(5)
+    ->withoutOverlapping()
+    ->runInBackground();
+
+// Invoices — twice a day (03:20 & 15:20). Rolls invoice debit into contracts.
+Schedule::command('om:sync --invoices --skip-backup')
+    ->twiceDailyAt(3, 15, 20)
+    ->withoutOverlapping()
+    ->runInBackground();
+
+// Customers — twice a day (03:30 & 15:30). Only fills MISSING names/details, so it's light.
+Schedule::command('om:sync --customers --skip-backup')
+    ->twiceDailyAt(3, 15, 30)
     ->withoutOverlapping()
     ->runInBackground();
 
