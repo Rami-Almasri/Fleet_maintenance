@@ -1,0 +1,8 @@
+# Keep shell scripts and container entrypoints LF on every platform, so a
+# Windows clone (git core.autocrlf=true) never injects CRLF that would break
+# the shebang inside Linux Docker images.
+*.sh            text eol=lf
+backend/docker/entrypoint.sh text eol=lf
+*.conf          text eol=lf
+Dockerfile      text eol=lf
+docker-compose.yml text eol=lf

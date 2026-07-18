@@ -74,7 +74,12 @@ RUN mkdir -p \
 
 # Entrypoint: waits for DB, runs migrate/cache (app role only), then execs the
 # container command (php-fpm / scheduler / queue).
-COPY --chmod=0755 docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+# Strip any CR: if the repo is cloned on a host with git core.autocrlf=true the
+# script arrives with Windows CRLF line endings, which breaks the shebang on
+# Alpine ("exec: entrypoint.sh: not found"). Normalise to LF and set the bit.
+COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh \
+    && chmod 0755 /usr/local/bin/entrypoint.sh
 
 USER www-data
 
