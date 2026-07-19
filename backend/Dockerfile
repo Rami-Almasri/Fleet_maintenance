@@ -35,15 +35,23 @@ WORKDIR /var/www/html
 
 # Production PHP config: OPcache tuning + upload limits (large repair videos)
 # + php-fpm pool that keeps env_file variables visible to the app.
-COPY docker/opcache.ini  /usr/local/etc/php/conf.d/zz-opcache.ini
-COPY docker/uploads.ini  /usr/local/etc/php/conf.d/zz-uploads.ini
-COPY docker/www.conf     /usr/local/etc/php-fpm.d/zz-www.conf
+# NOTE: explicit --chmod=0644 (world-readable) because some hosts build under a
+# restrictive umask (0027) that would otherwise land these COPYs as 0640/root —
+# unreadable by the php-fpm worker (www-data). See the chown below for source.
+COPY --chmod=0644 docker/opcache.ini  /usr/local/etc/php/conf.d/zz-opcache.ini
+COPY --chmod=0644 docker/uploads.ini  /usr/local/etc/php/conf.d/zz-uploads.ini
+COPY --chmod=0644 docker/www.conf     /usr/local/etc/php-fpm.d/zz-www.conf
 
 # Composer binary from the official image (no package-manager install).
 COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
 
 # Application source (respects .dockerignore — no .env, vendor, node_modules).
 COPY . /var/www/html
+
+# Own the tree as www-data. Required on hosts whose umask/BuildKit lands COPY'd
+# files as root-owned/0640 — php-fpm (www-data) must be able to read them.
+# --chmod on COPY is ignored by some BuildKit builders, so this is the real fix.
+RUN chown -R www-data:www-data /var/www/html
 
 # Install prod deps, trim unused Google services, and dump the optimized
 # autoloader — ALL in one layer. Doing it here (rather than a separate vendor
