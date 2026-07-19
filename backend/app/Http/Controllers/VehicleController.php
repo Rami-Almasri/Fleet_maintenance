@@ -818,6 +818,17 @@ class VehicleController extends Controller
             ];
         }
 
+        // A car designated Office / Personal use (from the fleet Status sheet overlay) is out of
+        // the rental pool — its status governs even if OfficeManager left a rental contract open,
+        // exactly like the left-fleet short-circuit above.
+        if ($vehicle && $vehicle->status === 'office_use') {
+            return [
+                'state'            => 'office_use',
+                'label'            => Vehicle::STATUS_LABELS['office_use'], // "Office Use"
+                'open_contract_id' => null,
+            ];
+        }
+
         if (! $open) {
             return ['state' => 'available', 'label' => 'Available', 'open_contract_id' => null];
         }

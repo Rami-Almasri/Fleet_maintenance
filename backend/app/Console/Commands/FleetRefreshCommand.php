@@ -10,6 +10,7 @@ use App\Services\OfficeManagerSync;
 use App\Services\OilChangeImporter;
 use App\Services\VehicleImporter;
 use App\Services\VehicleRegistrationImporter;
+use App\Services\VehicleStatusImporter;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Throwable;
@@ -49,7 +50,8 @@ class FleetRefreshCommand extends Command
         VehicleRegistrationImporter $registrations,
         InsuranceImporter $insurance,
         MaintenanceSheetImporter $maintenance,
-        OilChangeImporter $oilChange
+        OilChangeImporter $oilChange,
+        VehicleStatusImporter $vehicleStatus
     ): int {
         $run = $this->resolveRun();
         $result = [];
@@ -132,6 +134,13 @@ class FleetRefreshCommand extends Command
             $this->setPhase($run, 'Oil change (sheet)');
             $result['oil_change'] = $this->guard('oil_change', fn () => $oilChange->import(), $errors);
 
+            // Vehicle status overlay (sheet): the FINAL step. om:sync (step 1) set each car's status
+            // from OfficeManager, which still lists sold/exported cars under our owner number; this
+            // overlays the human-maintained Status sheet on top so Sold/Personal/Office/For-sale cars
+            // are pulled out of the active pool. Active cars are left on their live om:sync status.
+            $this->setPhase($run, 'Vehicle status overlay (sheet)');
+            $result['vehicle_status'] = $this->guard('vehicle_status', fn () => $vehicleStatus->import(), $errors);
+
             // Drop failed phases (null) so the stored result + counts reflect only real work.
             $result = array_filter($result, fn ($v) => $v !== null);
             $dataDone = array_diff_key($result, ['backup' => 1, 'wipe' => 1]);
@@ -202,6 +211,7 @@ class FleetRefreshCommand extends Command
             'maintenance'   => 'Maintenance log (sheet)',
             'customer_cases' => 'Customer cases (sheet)',
             'oil_change'    => 'Oil change (sheet)',
+            'vehicle_status' => 'Vehicle status overlay (sheet)',
         ];
 
         $this->newLine();
@@ -245,6 +255,7 @@ class FleetRefreshCommand extends Command
             'customer_cases' => "+{$c('imported')} new / {$c('updated')} updated" . ($c('unmatched_cars') ? ", {$c('unmatched_cars')} unmatched" : ''),
             'oil_change'    => "{$c('updated')} updated" . ($c('unmatched') ? ", {$c('unmatched')} unmatched" : ''),
             'registrations', 'insurance' => "{$c('updated')} updated",
+            'vehicle_status' => (($x = $r['counts'] ?? []) ? "{$x['changed']} status changed, {$x['flagged']} flagged for-sale" : 'done'),
             default         => 'done',
         };
     }

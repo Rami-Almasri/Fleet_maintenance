@@ -32,16 +32,29 @@ export function isCritical(sev) {
   return ['critical', 'red', 'high'].includes(String(sev || '').toLowerCase());
 }
 
-// Rental dimension → { key, label }
+// Rental dimension → { key, label }. Shows the car's STATUS, plain and simple — whatever the
+// vehicles.status column holds (from the OM sync + the fleet Status sheet overlay). No derived
+// "Blocked"/"Grounded"/condition wording. [key] only picks the chip colour.
 export function rentalDimension(v = {}) {
   const op = String(v.operational_status || v.rental_state || v.av_state || '').toLowerCase();
   const st = String(v.status || '').toLowerCase();
+  // status slug → [chip colour key, label]
+  const STATUS = {
+    ready: ['avail', 'Ready'],
+    rented: ['rented', 'Rented'],
+    office_use: ['blocked', 'Office Use'],
+    sold: ['blocked', 'Sold'],
+    disposed: ['blocked', 'Disposed'],
+    returned: ['blocked', 'Returned'],
+    suspended: ['blocked', 'Suspended'],
+    out_of_order: ['blocked', 'Out of Order'],
+    under_maintenance: ['blocked', 'Under Maintenance'],
+  };
+  if (STATUS[st]) return { key: STATUS[st][0], label: STATUS[st][1] };
+  // Fallback only for payloads with no status column (e.g. a maintenance ticket): derive from movement.
   if (v.rented || op === 'rented' || op === 'on_rent') return { key: 'rented', label: 'Rented' };
   if (v.reserved || op === 'reserved' || op === 'booked') return { key: 'reserved', label: 'Reserved' };
   if (['in_transit', 'transfer', 'transit'].includes(op)) return { key: 'transit', label: 'In Transit' };
-  if (op === 'maintenance' || v.under_maintenance || v.available === false
-    || ['under_maintenance', 'out_of_order', 'suspended', 'disposed', 'sold', 'blocked', 'grounded'].includes(st))
-    return { key: 'blocked', label: 'Blocked' };
   return { key: 'avail', label: 'Available' };
 }
 

@@ -38,6 +38,14 @@ Schedule::command('om:sync --vehicles --link --skip-backup')
     ->withoutOverlapping()
     ->runInBackground();
 
+// Right after the cars sync re-imports each car's status from OfficeManager, overlay the fleet
+// "Status" sheet on top: OM still lists Sold/Exported/Personal cars under our owner number, so this
+// is what actually pulls them out of the active pool. Active cars keep their live om:sync status.
+Schedule::command('import:vehicle-status')
+    ->dailyAt('03:15')
+    ->withoutOverlapping()
+    ->runInBackground();
+
 // Contracts — hourly. Keeps fleet availability (Available/Rented/Maintenance) fresh all day,
 // not just after the nightly run. Light: reads open contracts + close-detection.
 Schedule::command('om:sync --contracts --skip-backup')

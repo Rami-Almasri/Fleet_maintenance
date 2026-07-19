@@ -159,7 +159,8 @@ export default function Vehicles() {
   };
   const condChip = (v) => {
     const g = v.condition_grade;
-    if (g === 'red' || g === 'yellow') return <span className="ds-chip sm ds-crit"><span className="ds-dot" />Grounded</span>;
+    if (g === 'red') return <span className="ds-chip sm ds-crit"><span className="ds-dot" />Critical</span>;
+    if (g === 'yellow') return <span className="ds-chip sm ds-crit"><span className="ds-dot" />Maintenance needed</span>;
     if (g === 'orange') return <span className="ds-chip sm ds-paused"><span className="ds-dot" />Watch</span>;
     return <span className="ds-chip sm ds-none"><span className="ds-dot" />OK</span>;
   };

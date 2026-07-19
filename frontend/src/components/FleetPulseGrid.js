@@ -25,7 +25,7 @@ const PULSE = {
 const CONDITION_FLAG = {
   orange: { wrap: 'bg-orange-50 text-orange-700', dot: 'bg-orange-500', label: 'Cosmetic',   title: 'Minor cosmetic issues' },
   yellow: { wrap: 'bg-yellow-50 text-yellow-800', dot: 'bg-yellow-500', label: 'Maintenance', title: 'Maintenance needed — blocked from renting, route to garage' },
-  red:    { wrap: 'bg-red-50 text-red-700',       dot: 'bg-red-500',    label: 'Grounded',    title: 'Critical — grounded' },
+  red:    { wrap: 'bg-red-50 text-red-700',       dot: 'bg-red-500',    label: 'Critical',    title: 'Critical condition — not rentable' },
 };
 
 // The filter chips, in priority order. `match` maps a row → which bucket it belongs to.
