@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Models\Maintenance;
 use App\Models\Vehicle;
 use App\Services\OperationsService;
+use App\Services\PlateResolver;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 
@@ -52,7 +53,7 @@ class ResetMaintenanceWorkflow extends Command
         if ($v = $this->option('vehicle')) {
             $vehicleId = is_numeric($v)
                 ? (int) $v
-                : Vehicle::where('plate_no', $v)->value('id');
+                : PlateResolver::resolve($v, withTrashed: true)?->id;
             if (! $vehicleId) {
                 $this->error("No vehicle found for '{$v}'.");
                 return self::FAILURE;

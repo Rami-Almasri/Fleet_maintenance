@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Models\Maintenance;
 use App\Models\Vehicle;
 use App\Services\OperationsService;
+use App\Services\PlateResolver;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -81,7 +82,7 @@ class SnapshotMaintenanceTicket extends Command
             return (int) $arg;
         }
 
-        $vehicleId = Vehicle::where('plate_no', $arg)->value('id');
+        $vehicleId = PlateResolver::resolve($arg, withTrashed: true)?->id;
         if (! $vehicleId) {
             $this->error("No vehicle with plate '{$arg}'.");
             return null;

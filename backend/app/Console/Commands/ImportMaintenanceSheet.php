@@ -50,6 +50,7 @@ class ImportMaintenanceSheet extends Command
             [$dry ? 'Would update' : 'Updated', $r['updated']],
             ['Skipped (blank/label)', $r['skipped']],
             ['Unmatched car (no vehicle)', $r['unmatched_cars']],
+            ['Ambiguous plate (reported, not guessed)', $r['ambiguous_cars'] ?? 0],
             ['Garage vendors created', $r['vendors_made']],
         ]);
 
@@ -62,6 +63,12 @@ class ImportMaintenanceSheet extends Command
             $this->newLine();
             $this->line('<comment>Plates that did not match a fleet vehicle (first 25):</comment>');
             $this->line('  ' . implode(' · ', $r['unmatched_samples']));
+        }
+
+        if (! empty($r['ambiguous_samples'])) {
+            $this->newLine();
+            $this->line('<comment>Reused plates too ambiguous to place by date — left unlinked for review (first 25):</comment>');
+            $this->line('  ' . implode(' · ', $r['ambiguous_samples']));
         }
 
         return self::SUCCESS;

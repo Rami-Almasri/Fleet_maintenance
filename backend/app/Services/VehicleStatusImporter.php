@@ -24,7 +24,7 @@ class VehicleStatusImporter
     {
     }
 
-    /** Cache of plate-digits => [vehicle id, ...] for the plate fallback match. */
+    /** Cache of plate-digits => [Vehicle, ...] for the plate fallback match. */
     protected ?array $plateIndex = null;
 
     /**
@@ -203,12 +203,9 @@ class VehicleStatusImporter
             return null;
         }
 
-        $ids = $this->plateIndexMap()[$digits] ?? [];
-        if (count($ids) !== 1) {
-            return null; // no match, or ambiguous (two cars share those plate digits)
-        }
-
-        return Vehicle::withTrashed()->find($ids[0]);
+        // A plate shared by a sold history car and its current replacement resolves to the
+        // current one — see PlateResolver. Never bail on ambiguity or take an arbitrary match.
+        return PlateResolver::pickBest($this->plateIndexMap()[$digits] ?? []);
     }
 
     /** Index our fleet by plate digits so the fallback match is one pass, not a query per row. */
@@ -216,10 +213,10 @@ class VehicleStatusImporter
     {
         if ($this->plateIndex === null) {
             $this->plateIndex = [];
-            foreach (Vehicle::withTrashed()->get(['id', 'plate_no']) as $v) {
+            foreach (Vehicle::withTrashed()->get(['id', 'plate_no', 'make', 'model', 'status', 'car_serial']) as $v) {
                 $digits = $this->plateDigits($v->plate_no);
                 if ($digits !== '') {
-                    $this->plateIndex[$digits][] = $v->id;
+                    $this->plateIndex[$digits][] = $v;
                 }
             }
         }
@@ -230,7 +227,7 @@ class VehicleStatusImporter
     /** A plate's digits with leading zeros stripped, so "K 20756" / "0020756" / "20756" all match. */
     protected function plateDigits($plate): string
     {
-        return ltrim(preg_replace('/\D/', '', (string) $plate), '0');
+        return PlateResolver::plateDigits($plate);
     }
 
     /** Normalize config map keys (lower-cased, whitespace collapsed) so "For Sale" == "for sale". */

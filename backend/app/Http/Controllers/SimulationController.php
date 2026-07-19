@@ -9,6 +9,7 @@ use App\Models\Vehicle;
 use App\Services\MaintenanceWorkflowService;
 use App\Services\NotificationScanner;
 use App\Services\OperationsService;
+use App\Services\PlateResolver;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -319,9 +320,11 @@ class SimulationController extends Controller
     {
         if ($ref !== null && trim($ref) !== '') {
             $ref = trim($ref);
+            // Plate first (via the shared resolver, so a reused plate lands on the current car),
+            // then the internal code as a fallback for non-plate refs.
             $vehicle = is_numeric($ref)
                 ? Vehicle::find((int) $ref)
-                : Vehicle::where('plate_no', $ref)->orWhere('code', $ref)->first();
+                : (PlateResolver::resolve($ref) ?? Vehicle::where('code', $ref)->first());
             abort_unless($vehicle, 404, "No vehicle matches '{$ref}' (try an id, plate, or code).");
             return $vehicle;
         }

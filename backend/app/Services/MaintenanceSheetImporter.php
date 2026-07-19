@@ -19,12 +19,10 @@ use Throwable;
  */
 class MaintenanceSheetImporter
 {
-    /** normalized plate (letters+digits) => vehicle id */
-    protected array $vehicleByPlate = [];
-    /** digits-only plate => vehicle id — ONLY for digit strings that map to exactly one car */
-    protected array $vehicleByDigits = [];
-    /** digits-only plate => [['id'=>, 'make'=>, 'model'=>], ...] for plates shared by >1 car */
-    protected array $digitsCandidates = [];
+    /** normalized plate (letters+digits) => [Vehicle, ...] sharing that plate */
+    protected array $vehiclesByNormPlate = [];
+    /** digits-only plate => [Vehicle, ...] sharing those digits */
+    protected array $vehiclesByDigits = [];
     /** normalized garage name => vendor id */
     protected array $vendorByName = [];
     /** row_hash => true for events the user deleted from the dashboard — never re-imported. */
@@ -87,7 +85,7 @@ class MaintenanceSheetImporter
     }
 
     /**
-     * @return array{imported:int, updated:int, skipped:int, ignored:int, unmatched_cars:int, vendors_made:int, samples:array, unmatched_samples:array}
+     * @return array{imported:int, updated:int, skipped:int, ignored:int, unmatched_cars:int, ambiguous_cars:int, vendors_made:int, samples:array, unmatched_samples:array, ambiguous_samples:array}
      */
     public function import(string $spreadsheetId, int $gid, bool $dryRun = false, ?int $limit = null, string $origin = 'sheet'): array
     {
@@ -104,8 +102,8 @@ class MaintenanceSheetImporter
 
         $this->preloadCaches();
 
-        $imported = 0; $updated = 0; $skipped = 0; $ignored = 0; $unmatched = 0; $vendorsMade = 0;
-        $samples = []; $unmatchedSamples = [];
+        $imported = 0; $updated = 0; $skipped = 0; $ignored = 0; $unmatched = 0; $ambiguous = 0; $vendorsMade = 0;
+        $samples = []; $unmatchedSamples = []; $ambiguousSamples = [];
         $seen = [];   // (plate|event|out_date) => running occurrence count, for a stable identity key
 
         if ($dryRun) {
@@ -155,21 +153,30 @@ class MaintenanceSheetImporter
                 }
 
                 // car -> vehicle: try the full plate first, then fall back to the digits-only
-                // CarNo (the API plate form). When several cars share those digits, use the
-                // make/model in the CAR label to pick the right one. Always keep the raw label.
-                $vehicleId = $this->vehicleByPlate[$this->normPlate($plate)] ?? null;
-                if ($vehicleId === null) {
-                    $digits = preg_replace('/\D/', '', $plate);
-                    if ($digits !== '') {
-                        $vehicleId = $this->vehicleByDigits[$digits]
-                            ?? $this->disambiguateByLabel($this->digitsCandidates[$digits] ?? [], $car);
-                    }
+                // CarNo (the API plate form). A plate reused after a sale maps to several cars,
+                // so this is a HISTORICAL lookup: resolveAsOf() attaches the event to the car
+                // that held the plate on the event's out_date, NOT the current car — the sold
+                // car's repairs stay on the sold car. Genuinely ambiguous rows (a purchase-date
+                // tie, or a date before every candidate) are reported, never guessed.
+                $candidates = $this->vehiclesByNormPlate[$this->normPlate($plate)] ?? [];
+                if (empty($candidates)) {
+                    $digits = PlateResolver::plateDigits($plate);
+                    $candidates = $digits !== '' ? ($this->vehiclesByDigits[$digits] ?? []) : [];
                 }
+                $reason = null;
+                $vehicleId = optional(PlateResolver::resolveAsOf($candidates, $data['out_date'] ?? null, $car, $reason))->id;
                 $data['vehicle_id'] = $vehicleId;
                 if ($vehicleId === null) {
-                    $unmatched++;
-                    if (count($unmatchedSamples) < 25) {
-                        $unmatchedSamples[] = $plate;
+                    if (in_array($reason, ['ambiguous_nodate', 'ambiguous_predate', 'ambiguous_tie'], true)) {
+                        $ambiguous++;
+                        if (count($ambiguousSamples) < 25) {
+                            $ambiguousSamples[] = $plate . ' @ ' . ($data['out_date'] ?? 'no-date') . ' (' . $reason . ')';
+                        }
+                    } else {
+                        $unmatched++;
+                        if (count($unmatchedSamples) < 25) {
+                            $unmatchedSamples[] = $plate;
+                        }
                     }
                 }
 
@@ -237,9 +244,11 @@ class MaintenanceSheetImporter
             'skipped'           => $skipped,
             'ignored'           => $ignored,
             'unmatched_cars'    => $unmatched,
+            'ambiguous_cars'    => $ambiguous,
             'vendors_made'      => $vendorsMade,
             'samples'           => $samples,
             'unmatched_samples' => $unmatchedSamples,
+            'ambiguous_samples' => $ambiguousSamples,
         ];
     }
 
@@ -271,25 +280,14 @@ class MaintenanceSheetImporter
     {
         // Map cars by full plate AND by digits-only. The API stores plate_no as the bare
         // CarNo (digits, no emirate letter), while the sheet writes "K 20773"; the digits
-        // bridge the two. Digit strings shared by >1 car are AMBIGUOUS and dropped, so a
-        // fallback match can never link a maintenance row to the wrong vehicle.
-        $digitsToCars = [];
-        foreach (Vehicle::whereNotNull('plate_no')->where('plate_no', '<>', '')->get(['id', 'plate_no', 'make', 'model']) as $v) {
-            $this->vehicleByPlate[$this->normPlate($v->plate_no)] = $v->id;
-            $digits = preg_replace('/\D/', '', (string) $v->plate_no);
+        // bridge the two. Plates shared by >1 car (reused after a sale) keep ALL candidates —
+        // PlateResolver picks the current one at lookup time, so a maintenance row can never
+        // link to the sold history car.
+        foreach (Vehicle::whereNotNull('plate_no')->where('plate_no', '<>', '')->get(['id', 'plate_no', 'make', 'model', 'status', 'car_serial', 'purchase_date']) as $v) {
+            $this->vehiclesByNormPlate[$this->normPlate($v->plate_no)][] = $v;
+            $digits = PlateResolver::plateDigits($v->plate_no);
             if ($digits !== '') {
-                $digitsToCars[$digits][] = [
-                    'id'    => $v->id,
-                    'make'  => strtoupper(trim((string) $v->make)),
-                    'model' => strtoupper(trim((string) $v->model)),
-                ];
-            }
-        }
-        foreach ($digitsToCars as $digits => $cars) {
-            if (count($cars) === 1) {
-                $this->vehicleByDigits[$digits] = $cars[0]['id'];   // unambiguous
-            } else {
-                $this->digitsCandidates[$digits] = $cars;            // resolve later via the car label
+                $this->vehiclesByDigits[$digits][] = $v;
             }
         }
         foreach (Vendor::whereNotNull('name')->get(['id', 'name']) as $vn) {
@@ -304,39 +302,6 @@ class MaintenanceSheetImporter
             MaintenanceTombstone::pluck('row_hash')->all(),
             true
         );
-    }
-
-    /**
-     * Several cars share this plate's digits — pick the one whose make (then model, as a
-     * tiebreaker) appears in the CAR label, e.g. "NISSAN PATROL - Brown - 2019 - K 20773".
-     * Returns a vehicle id ONLY when exactly one candidate matches, so an ambiguous label
-     * never links to the wrong car.
-     *
-     * @param  array<int,array{id:int,make:string,model:string}>  $candidates
-     */
-    protected function disambiguateByLabel(array $candidates, string $carLabel): ?int
-    {
-        if (count($candidates) < 2) {
-            return null;
-        }
-        $label = strtoupper($carLabel);
-
-        // First narrow by make.
-        $byMake = array_values(array_filter(
-            $candidates,
-            fn ($c) => $c['make'] !== '' && str_contains($label, $c['make'])
-        ));
-        if (count($byMake) === 1) {
-            return $byMake[0]['id'];
-        }
-
-        // Still tied (same make) — narrow the make matches further by model.
-        $pool = $byMake ?: $candidates;
-        $byModel = array_values(array_filter(
-            $pool,
-            fn ($c) => $c['model'] !== '' && str_contains($label, $c['model'])
-        ));
-        return count($byModel) === 1 ? $byModel[0]['id'] : null;
     }
 
     /** Match a garage name to a vendor; create one (type garage) if it's new. */

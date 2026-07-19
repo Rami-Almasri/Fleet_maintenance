@@ -184,19 +184,23 @@ class VehicleImporter
     }
 
     /**
-     * Find the single null-VIN API car whose plate matches this sheet row, so we can backfill
-     * its VIN instead of orphaning the row. Conservative on purpose — only matches when the
-     * plate maps to EXACTLY ONE such car AND the make agrees, so we never guess one car for
-     * another that happens to share plate digits. Consumes the match so two rows can't claim it.
+     * Find the null-VIN API car whose plate matches this sheet row, so we can backfill its VIN
+     * instead of orphaning the row. When a plate is shared (reused after a sale), PlateResolver
+     * picks the current car rather than bailing. The make must still agree (first word), guarding
+     * against two genuinely different cars that share plate digits. Consumes the match so two
+     * rows can't claim it.
      */
     protected function matchNullVinByPlate(string $plateNo, ?string $sheetMake, array &$nullVinByPlate): ?Vehicle
     {
         $digits = $this->plateDigits($plateNo);
-        if ($digits === '' || empty($nullVinByPlate[$digits]) || count($nullVinByPlate[$digits]) !== 1) {
-            return null; // no match, or ambiguous (more than one null-VIN car on that plate)
+        if ($digits === '' || empty($nullVinByPlate[$digits])) {
+            return null;
         }
 
-        $car = $nullVinByPlate[$digits][0];
+        $car = PlateResolver::pickBest($nullVinByPlate[$digits]);
+        if (! $car) {
+            return null;
+        }
 
         // Make must agree (first word) — guards against two different cars sharing plate digits.
         $apiMake = strtok((string) $car->make, ' ');
@@ -211,7 +215,7 @@ class VehicleImporter
     /** A plate's digits with leading zeros stripped, so "K 20756" / "0020756" / "20756" all match. */
     protected function plateDigits($plate): string
     {
-        return ltrim(preg_replace('/\D/', '', (string) $plate), '0');
+        return PlateResolver::plateDigits($plate);
     }
 
     /**
