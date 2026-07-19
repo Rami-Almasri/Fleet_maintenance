@@ -30,6 +30,12 @@ FROM nginx:1.27-alpine AS web
 # Static SPA.
 COPY --from=build /app/build /usr/share/nginx/html
 
+# Make the assets world-readable. Some hosts build under a restrictive umask
+# (0027) that lands these files as 0640/root — unreadable by the unprivileged
+# nginx worker, so every asset (logo, favicon, JS) 404s to the SPA fallback.
+# `a+rX` = read for all + traverse dirs, without making files executable.
+RUN chmod -R a+rX /usr/share/nginx/html
+
 # Server config: SPA fallback + /api,/sanctum,/up → php-fpm + /storage media.
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
