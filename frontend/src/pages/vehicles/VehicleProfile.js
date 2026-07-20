@@ -806,7 +806,7 @@ export default function VehicleProfile() {
                   <div className="opx-hint" style={{ letterSpacing: '.16em', textTransform: 'uppercase', marginBottom: 6 }}>Vehicle Dossier</div>
                   <h1 className="font-display text-2xl font-bold tracking-tight sm:text-3xl" style={{ color: 'var(--ink)', letterSpacing: '-.02em' }}>{[v.make, v.model].filter(Boolean).join(' ') || 'Vehicle'}</h1>
                   <div className="mt-2.5 flex flex-wrap items-center gap-2.5">
-                    {v.plate_no && <span className="opx-plate" style={{ fontSize: 13, padding: '3px 10px' }}>{v.plate_no}</span>}
+                    {(v.plate_display || v.plate_no) && <span className="opx-plate" style={{ fontSize: 13, padding: '3px 10px' }}>{v.plate_display || v.plate_no}</span>}
                     {v.vin && <span className="mono" style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>{v.vin}</span>}
                   </div>
                   <div className="mt-3.5 flex flex-wrap items-center gap-2">

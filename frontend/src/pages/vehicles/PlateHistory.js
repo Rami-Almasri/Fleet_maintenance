@@ -42,7 +42,7 @@ export default function PlateHistory({ vehicleId }) {
     <SectionCard
       title="Plate History"
       subtitle="This plate was reused across more than one vehicle. Each car below is a different physical vehicle and keeps its own records — nothing is merged."
-      actions={data?.plate_no ? <span className="opx-plate" style={{ fontSize: 12, padding: '2px 9px' }}>{data.plate_no}</span> : null}
+      actions={(data?.plate_display || data?.plate_no) ? <span className="opx-plate" style={{ fontSize: 12, padding: '2px 9px' }}>{data.plate_display || data.plate_no}</span> : null}
       bodyClass="p-4 sm:p-5"
     >
       {loading ? (
@@ -78,6 +78,9 @@ export default function PlateHistory({ vehicleId }) {
                   </div>
 
                   <div className="mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                    {(h.plate_display || h.plate_no) && (
+                      <span className="opx-plate" style={{ fontSize: 11, padding: '1px 7px' }}>{h.plate_display || h.plate_no}</span>
+                    )}
                     <span className="text-sm font-semibold text-slate-800">
                       {[h.make, h.model].filter(Boolean).join(' ') || 'Vehicle'}
                     </span>

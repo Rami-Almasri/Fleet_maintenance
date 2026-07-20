@@ -14,6 +14,10 @@ import { CommandPanel, StatGaugeTile } from '../components/ops';
 
 const PAGE_SIZE = 12;
 
+// A plate's identity is CODE + digits — same digits under a different plate code (e.g. "P 76722"
+// vs "U 76722") are different plates. Group by this, never by digits alone.
+const plateId = (v) => (v && v.plate_key ? `${v.plate_code ?? ''}:${v.plate_key}` : null);
+
 export default function Vehicles() {
   const toast = useToast();
   const { can } = usePermissions();
@@ -54,22 +58,22 @@ export default function Vehicles() {
 
   const list = useMemo(() => vehicles || [], [vehicles]);
 
-  // Plate reuse: keys that live on more than one vehicle row (a plate re-issued after a sale).
-  // Used to surface previous/sold holders during a plate search and to badge them.
+  // Plate reuse: plate identities (code+digits) that live on more than one vehicle row (a plate
+  // re-issued after a sale). Used to surface previous/sold holders and to badge them.
   const reusedKeys = useMemo(() => {
     const counts = {};
-    list.forEach((v) => { if (v.plate_key) counts[v.plate_key] = (counts[v.plate_key] || 0) + 1; });
+    list.forEach((v) => { const id = plateId(v); if (id) counts[id] = (counts[id] || 0) + 1; });
     return new Set(Object.keys(counts).filter((k) => counts[k] > 1));
   }, [list]);
 
-  // Order a reused-plate list: reuse groups first, clustered by plate, current holder on top,
-  // then newest — so every shared plate reads "current car, then its previous/sold holders".
+  // Order a reused-plate list: reuse groups first, clustered by plate (code+digits), current
+  // holder on top, then newest — so every shared plate reads "current car, then its history".
   const orderByPlateGroup = (keys) => (a, b) => {
-    const ra = a.plate_key && keys.has(a.plate_key) ? 0 : 1;
-    const rb = b.plate_key && keys.has(b.plate_key) ? 0 : 1;
+    const ida = plateId(a), idb = plateId(b);
+    const ra = ida && keys.has(ida) ? 0 : 1;
+    const rb = idb && keys.has(idb) ? 0 : 1;
     if (ra !== rb) return ra - rb;
-    const ka = a.plate_key || '', kb = b.plate_key || '';
-    if (ka !== kb) return ka < kb ? -1 : 1;
+    if ((ida || '') !== (idb || '')) return (ida || '') < (idb || '') ? -1 : 1;
     if (!!a.is_current_plate_holder !== !!b.is_current_plate_holder)
       return a.is_current_plate_holder ? -1 : 1;
     return (Number(b.car_serial) || 0) - (Number(a.car_serial) || 0);
@@ -85,14 +89,14 @@ export default function Vehicles() {
       (flag === 'rented' && v.rented) ||
       (flag === 'maint' && v.under_maintenance);
     const matchSearch = (v) =>
-      !q || [v.plate_no, v.vin, v.make, v.model].some((f) => (f || '').toLowerCase().includes(q));
+      !q || [v.plate_display, v.plate_no, v.vin, v.make, v.model].some((f) => (f || '').toLowerCase().includes(q));
 
     // "Shared plate only" filter: EVERY vehicle sitting on a reused plate — including the sold /
     // previous holders (we deliberately don't hide them here, that's the whole point) — grouped
     // current-holder-first. Honors the search box, quick flags, and an explicitly chosen status.
     if (sharedOnly) {
       const rows = list
-        .filter((v) => v.plate_key && reusedKeys.has(v.plate_key)
+        .filter((v) => reusedKeys.has(plateId(v))
           && (status ? v.status === status : true) && matchFlag(v) && matchSearch(v))
         .sort(orderByPlateGroup(reusedKeys));
       return { rows, reused: rows.length > 0 };
@@ -108,13 +112,14 @@ export default function Vehicles() {
     // Only when a search actually surfaces a REUSED plate do we change the view: pull the
     // previous/sold holders back in (normally hidden by the status filter) and group each plate
     // current-holder-first, so "search a plate → see the current car first, then its history".
-    const involvesReuse = !!q && base.some((v) => v.plate_key && reusedKeys.has(v.plate_key));
+    const involvesReuse = !!q && base.some((v) => reusedKeys.has(plateId(v)));
     if (!involvesReuse) return { rows: base, reused: false };
 
     const byId = new Map(base.map((v) => [v.id, v]));
-    const keys = new Set(base.map((v) => v.plate_key).filter((k) => k && reusedKeys.has(k)));
+    const keys = new Set(base.map((v) => plateId(v)).filter((k) => k && reusedKeys.has(k)));
     list.forEach((v) => {
-      if (v.plate_key && keys.has(v.plate_key) && !byId.has(v.id)) byId.set(v.id, v);
+      const id = plateId(v);
+      if (id && keys.has(id) && !byId.has(v.id)) byId.set(v.id, v);
     });
     const merged = Array.from(byId.values()).sort(orderByPlateGroup(keys));
     return { rows: merged, reused: true };
@@ -211,7 +216,7 @@ export default function Vehicles() {
   // Plate-reuse badge: which role this vehicle plays for a shared plate. Only rendered for
   // reused plates so the ordinary fleet list stays clean.
   const plateBadge = (v) => {
-    if (!v.plate_key || !reusedKeys.has(v.plate_key)) return null;
+    if (!reusedKeys.has(plateId(v))) return null;
     const base = { display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 3, padding: '1px 7px', borderRadius: 999, fontSize: 10, fontWeight: 700, letterSpacing: '.02em' };
     if (v.is_current_plate_holder) {
       return <span style={{ ...base, background: 'rgba(16,185,129,.14)', color: '#10b981', border: '1px solid rgba(16,185,129,.3)' }}>● Current plate holder</span>;
@@ -332,7 +337,7 @@ export default function Vehicles() {
                 ) : paged.map((v) => (
                   <tr key={v.id} className={rowTone(v)}>
                     <td>
-                      <Link to={`/vehicles/${v.id}`} className="opx-plate2">{v.plate_no || '—'}</Link>
+                      <Link to={`/vehicles/${v.id}`} className="opx-plate2">{v.plate_display || v.plate_no || '—'}</Link>
                       <div className="opx-sub">{[v.make, v.model].filter(Boolean).join(' ') || '—'}</div>
                       {plateBadge(v)}
                     </td>
