@@ -45,6 +45,26 @@ class WorkflowOversightController extends Controller
         'reinspect'  => ['Re-Inspection Sign-off',      'wf_closed_at',             'wf_closed_by'],
     ];
 
+    /**
+     * The full workflow chain in lifecycle order, used to build the per-ticket investigation timeline
+     * shown in the Mileage Investigation drawer. Each entry maps a stage to [label, at column, actor
+     * column, odometer column|null]. Mirrors stageAccountability()'s spec — a stage with no owner AND
+     * no timestamp AND no reading is treated as "not reached" and skipped when building the story.
+     */
+    private const TIMELINE_SPEC = [
+        // key         => [label,                    at column,                  actor column,               odometer column]
+        'requested'  => ['Inspection Requested',   'requested_at',             'requested_by',             null],
+        'test_drive' => ['Inspection Test Drive',  'test_started_at',          'inspected_by',             'test_odometer'],
+        'report'     => ['Diagnosis (Decide)',     'inspected_at',             'inspected_by',             'report_odometer'],
+        'delegated'  => ['Driver Delegated',       'delegated_at',             'delegated_by',             null],
+        'dispatched' => ['Dispatched to Garage',   'dispatched_at',            'dispatched_by',            'dispatch_odometer'],
+        'received'   => ['Garage Arrival',         'repair_started_at',        'repair_started_by',        'receive_odometer'],
+        'ready'      => ['Repair Complete',        'ready_at',                 'ready_by',                 null],
+        'collected'  => ['Collected from Garage',  'picked_up_from_garage_at', 'picked_up_from_garage_by', 'return_odometer'],
+        'park'       => ['Back in Fleet Park',     'park_arrived_at',          'park_arrived_by',          null],
+        'closed'     => ['Re-Inspection / Close',  'wf_closed_at',             'wf_closed_by',             'reinspect_odometer'],
+    ];
+
     /** How far a forward reading may drift from expected before it's worth surfacing (mirrors the UI note gate). */
     private const NOTE_THRESHOLD_KM = 10;
 
@@ -58,22 +78,33 @@ class WorkflowOversightController extends Controller
     public function mileageDiscrepancies(Request $request)
     {
         try {
-            $cols = array_map(fn ($s) => self::STAGE_MAP[$s][1], array_keys(self::STAGE_MAP));
-
+            // Load full ticket rows — we need every stage's *_at / *_by / *_odometer column to assemble the
+            // per-ticket investigation timeline (below), not just the flagged-stage columns.
             $tickets = Maintenance::query()
                 ->whereNotNull('odometer_flags')
-                ->with('vehicle:id,plate_no,make,model,vin')
+                ->with(['vehicle:id,plate_no,make,model,vin', 'vendor:id,name'])
                 ->orderByDesc('updated_at')
                 ->limit(600)
-                ->get(array_merge(
-                    ['id', 'vehicle_id', 'workflow_status', 'odometer_flags', 'trigger_reason', 'maintenance_notes'],
-                    array_values(array_unique(array_merge(
-                        $cols,
-                        array_map(fn ($s) => self::STAGE_MAP[$s][2], array_keys(self::STAGE_MAP)),
-                    ))),
-                ));
+                ->get();
 
-            $names = $this->userNames($tickets, array_map(fn ($s) => self::STAGE_MAP[$s][2], array_keys(self::STAGE_MAP)));
+            // One id → name + role lookup covering every actor referenced across the FULL timeline (not just
+            // the flagged stages), so each stage in the drawer names its owner and each row carries the
+            // entering operator's role for accountability. Block-event actors are folded in below.
+            $timelineByCols = array_map(fn ($s) => self::TIMELINE_SPEC[$s][2], array_keys(self::TIMELINE_SPEC));
+            $blockActorIds  = \App\Models\OdometerBlockEvent::query()->orderByDesc('created_at')->limit(400)->pluck('actor_id');
+            $actorIds = collect($tickets)
+                ->flatMap(fn ($t) => array_map(fn ($c) => $t->{$c} ?? null, $timelineByCols))
+                ->merge($blockActorIds)
+                ->filter()->unique()->values();
+            $users = $actorIds->isEmpty()
+                ? collect()
+                : User::whereIn('id', $actorIds)->with('roles:id,name')->get(['id', 'name']);
+            $names = $users->pluck('name', 'id')->all();
+            $roles = $users->mapWithKeys(fn ($u) => [$u->id => $this->prettyRole($u->roles->first()?->name)])->all();
+
+            // Assemble the full workflow chain for each ticket once, keyed by ticket id — the drawer reads this
+            // as the investigation story (every stage the car reached, who owned it, the reading, the time).
+            $timelines = collect($tickets)->mapWithKeys(fn ($t) => [$t->id => $this->buildTimeline($t, $names, $roles)])->all();
 
             // The odometer photo captured at each stage lives as an 'odometer' InspectionRecord, tagged with
             // the phase string storeOdometerPhoto() used at that transition. Map each flag key to its phase so
@@ -128,6 +159,7 @@ class WorkflowOversightController extends Controller
                         'vehicle_id'      => $t->vehicle_id,
                         'plate_no'        => $t->vehicle?->plate_no,
                         'car'             => trim(($t->vehicle?->make ?? '') . ' ' . ($t->vehicle?->model ?? '')) ?: null,
+                        'garage'          => $t->vendor?->name,           // the garage that held the car at this stage
                         'workflow_status' => $t->workflow_status,
                         'stage_key'       => $key,
                         'stage_label'     => $label,
@@ -136,17 +168,21 @@ class WorkflowOversightController extends Controller
                         'delta'           => $delta,
                         'direction'       => $delta === null ? null : ($delta < 0 ? 'lower' : 'higher'),
                         'kind'            => $kind,                        // discrepancy | jump | test_drive | deviation | note
+                        'status'          => $flag['status'] ?? null,      // raw continuity verdict (drives the reason label)
                         'tolerance_waived'=> (bool) ($flag['tolerance_waived'] ?? false),
                         'note'            => $flag['note'] ?? null,
                         // Whether the operator ticked "I've checked — this reading is correct" on the
                         // continuity nag: true/false when the step asked for it, null when it never did.
                         'confirmed'       => array_key_exists('confirmed', $flag) ? (bool) $flag['confirmed'] : null,
                         'entered_by'      => $names[$t->{$byCol}] ?? null,
+                        'entered_by_role' => $roles[$t->{$byCol}] ?? null,  // the operator's role (accountability)
                         'at'              => optional($t->{$atCol})->toIso8601String(),
                         'outcome'         => 'recorded',                    // the reading was accepted onto the ticket
                         // The odometer photo the operator took at this stage (short-lived signed URL), or null
                         // when the stage captures no photo / none was saved.
                         'photo_url'       => $matchPhoto($t->vehicle_id, $stagePhotoPhase[$key] ?? null, $t->{$atCol}),
+                        // The full workflow chain this reading sits inside — the drawer's investigation story.
+                        'timeline'        => $timelines[$t->id] ?? [],
                     ]);
                 }
             }
@@ -167,6 +203,7 @@ class WorkflowOversightController extends Controller
                     'vehicle_id'      => $b->vehicle_id,
                     'plate_no'        => $b->vehicle?->plate_no,
                     'car'             => trim(($b->vehicle?->make ?? '') . ' ' . ($b->vehicle?->model ?? '')) ?: null,
+                    'garage'          => null,                         // a rejected attempt carries no garage context
                     'workflow_status' => null,
                     'stage_key'       => $b->stage_key,
                     'stage_label'     => self::STAGE_MAP[$b->stage_key][0] ?? ucfirst(str_replace('_', ' ', $b->stage_key)),
@@ -175,13 +212,18 @@ class WorkflowOversightController extends Controller
                     'delta'           => $b->delta,
                     'direction'       => $b->delta === null ? null : ($b->delta < 0 ? 'lower' : 'higher'),
                     'kind'            => 'blocked',
+                    'status'          => $b->status,                   // raw reject reason (exact_required / must_increase …)
                     'tolerance_waived'=> false,
                     'note'            => $b->note,
                     'confirmed'       => null, // a rejected attempt never reached the acknowledgment gate
                     'entered_by'      => $b->actor?->name,
+                    'entered_by_role' => $roles[$b->actor_id] ?? null,
                     'at'              => optional($b->created_at)->toIso8601String(),
                     'outcome'         => 'blocked',                    // the workflow REJECTED this reading
                     'photo_url'       => null,                         // a rejected attempt never saved a photo
+                    // The ticket's workflow chain, when the blocked attempt was tied to a live ticket (a park
+                    // spot-check rejection may have no ticket → empty story, the row's own detail carries it).
+                    'timeline'        => $timelines[$b->maintenance_id] ?? [],
                 ]);
             }
 
@@ -192,12 +234,49 @@ class WorkflowOversightController extends Controller
                     ?: strcmp((string) $b['at'], (string) $a['at']);
             })->values();
 
+            // Investigation KPIs — the "situation at a glance" managers read before the table. All derived
+            // from the same rows (pure read, no extra queries): the biggest forward jump, and the vehicles /
+            // drivers / garages that recur most, plus the average absolute deviation across measurable rows.
+            $withDelta = $sorted->filter(fn ($r) => $r['delta'] !== null);
+            $largest   = $withDelta->sortByDesc(fn ($r) => abs($r['delta']))->first();
+            // Median, not mean — a handful of catastrophic legacy odometer errors (readings entered as a full
+            // dial value, millions of km off) would blow up an arithmetic average into a meaningless figure.
+            // The median reflects the TYPICAL deviation; the extreme outliers are surfaced by 'largest_jump'
+            // and the critical-severity rows instead.
+            $absDeltas = $withDelta->map(fn ($r) => abs($r['delta']))->sort()->values();
+            $avgDev    = $absDeltas->count() ? (int) round($absDeltas->median()) : 0;
+
+            $topBy = function ($rowsIn, $key) {
+                return collect($rowsIn)
+                    ->filter(fn ($r) => ! empty($r[$key]))
+                    ->groupBy($key)
+                    ->map(fn ($g, $label) => ['label' => (string) $label, 'count' => $g->count()])
+                    ->sortByDesc('count')
+                    ->take(5)
+                    ->values()
+                    ->all();
+            };
+
             return ResponseHelper::SuccessResponse([
                 'rows'          => $sorted,
                 'total'         => $sorted->count(),
                 'blocked'       => $sorted->where('kind', 'blocked')->count(),
                 'discrepancies' => $sorted->where('kind', 'discrepancy')->count(),
                 'tolerance_km'  => \App\Services\OdometerContinuityService::TOLERANCE_KM,
+                'kpis'          => [
+                    'flagged'        => $sorted->count(),
+                    'blocked'        => $sorted->where('kind', 'blocked')->count(),
+                    'avg_deviation'  => $avgDev,
+                    'largest_jump'   => $largest ? [
+                        'delta'    => $largest['delta'],
+                        'plate_no' => $largest['plate_no'],
+                        'car'      => $largest['car'],
+                        'ticket_id'=> $largest['ticket_id'],
+                    ] : null,
+                    'top_vehicles'   => $topBy($sorted, 'plate_no'),
+                    'top_drivers'    => $topBy($sorted->where('kind', 'blocked'), 'entered_by'),
+                    'top_garages'    => $topBy($sorted, 'garage'),
+                ],
             ], 'Mileage discrepancies retrieved', 200);
         } catch (\Throwable $e) {
             return ResponseHelper::fromException($e);
@@ -615,6 +694,43 @@ class WorkflowOversightController extends Controller
     }
 
     // ── helpers ─────────────────────────────────────────────────────────────────────────────────
+
+    /**
+     * The full workflow chain for one ticket, oldest→newest — the investigation story the drawer reads.
+     * One entry per stage the car actually reached (a stage with no owner AND no timestamp AND no reading
+     * is skipped as "not reached"). Each entry carries the stage label, who owned it (+ role), the reading
+     * captured there and when. Pure presentation of columns already on the ticket — no state is derived.
+     */
+    private function buildTimeline($t, array $names, array $roles): array
+    {
+        $out = [];
+        foreach (self::TIMELINE_SPEC as $key => [$label, $atCol, $byCol, $odoCol]) {
+            $actorId = $t->{$byCol} ?? null;
+            $at      = $t->{$atCol} ?? null;
+            $odo     = $odoCol ? ($t->{$odoCol} ?? null) : null;
+            if ($actorId === null && $at === null && $odo === null) {
+                continue; // stage not reached
+            }
+            $out[] = [
+                'key'      => $key,
+                'label'    => $label,
+                'owner'    => $actorId ? ($names[$actorId] ?? null) : null,
+                'role'     => $actorId ? ($roles[$actorId] ?? null) : null,
+                'odometer' => $odo !== null ? (int) $odo : null,
+                'at'       => optional($at)->toIso8601String(),
+            ];
+        }
+        return $out;
+    }
+
+    /** Humanise a Spatie role slug (e.g. "workshop-manager" → "Workshop Manager") for display. */
+    private function prettyRole(?string $slug): ?string
+    {
+        if (! $slug) {
+            return null;
+        }
+        return Str::title(str_replace(['-', '_'], ' ', $slug));
+    }
 
     /** id => name lookup for every actor referenced across the given tickets' *_by columns (one query). */
     private function userNames($tickets, array $cols): array
