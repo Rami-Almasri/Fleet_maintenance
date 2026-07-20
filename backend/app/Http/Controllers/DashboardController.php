@@ -119,6 +119,26 @@ class DashboardController extends Controller
     }
 
     /**
+     * The FULL "Most in Maintenance" list behind the homepage column's "All →" link — every in-fleet car
+     * that saw the workshop over a trailing window (?days=N, default 90), with how often (visits) and how
+     * long (total days in the shop). Powers the Maintenance History page.
+     */
+    public function maintenanceHistory(Request $request, DashboardService $dashboard)
+    {
+        try {
+            $days = min(730, max(1, (int) $request->query('days', 90)));
+
+            return ResponseHelper::SuccessResponse(
+                $dashboard->maintenanceHistory($days),
+                "Maintenance history retrieved successfully",
+                200
+            );
+        } catch (\Exception $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
      * The "Fleet Pulse" grid: every active car with a colour-coded live state and a
      * maintenance-completion percentage for the ones in the shop.
      */

@@ -25,6 +25,7 @@ import InspectionPrototype from './pages/InspectionPrototype';
 import ContractForm from './pages/contracts/ContractForm';
 import Vendors from './pages/Vendors';
 import MaintenanceAnalytics from './pages/MaintenanceAnalytics';
+import MaintenanceHistory from './pages/MaintenanceHistory';
 import MaintenanceApprovals from './pages/MaintenanceApprovals';
 import MaintenanceWorkflow from './pages/MaintenanceWorkflow';
 import MaintenanceRecommendations from './pages/MaintenanceRecommendations';
@@ -212,6 +213,7 @@ export default function App() {
                   <Route path="/garages" element={<Garages />} />
                   <Route path="/finding-keywords" element={<FindingKeywords />} />
                   <Route path="/maintenance-analytics" element={<MaintenanceAnalytics />} />
+                  <Route path="/maintenance-history" element={<MaintenanceHistory />} />
                   <Route path="/damage-accidents" element={<DamageAccidents />} />
                 </Route>
 

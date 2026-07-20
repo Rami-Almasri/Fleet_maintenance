@@ -727,6 +727,8 @@ const en = {
         approveRepair: 'Approve repair',
         reject: 'Reject',
         repairApprovedBy: 'Repair approved by {name}',
+        notFoundCannotFix: 'This fault was reviewed as "Not found" — it can’t be marked fixed.',
+        confirmedCannotDispute: 'This fault was confirmed by the workshop — it can’t be marked incorrect.',
       },
       transferCar: 'Transfer car',
       transferTo: 'Transfer to which garage',
@@ -742,7 +744,7 @@ const en = {
       transportChange: 'Change',
       status: {
         pending: 'Pending', in_progress: 'In progress', transferred: 'In Transit',
-        completed: 'Completed', cancelled: 'Cancelled',
+        completed: 'Completed', cancelled: 'Cancelled', not_found: 'Not found',
       },
       confirm: {
         pending_confirmation: 'Pending Confirmation',
@@ -2048,6 +2050,8 @@ const ar = {
         approveRepair: 'الموافقة على الإصلاح',
         reject: 'رفض',
         repairApprovedBy: 'تمت الموافقة على الإصلاح بواسطة {name}',
+        notFoundCannotFix: 'روجع هذا العطل على أنه «غير موجود» — لا يمكن تعليمه كمُصلَح.',
+        confirmedCannotDispute: 'أكّدت الورشة هذا العطل — لا يمكن تعليمه كتشخيص خاطئ.',
       },
       transferCar: 'تحويل السيارة',
       transferTo: 'التحويل إلى أي كراج',
@@ -2061,7 +2065,7 @@ const ar = {
       transportChange: 'تغيير',
       status: {
         pending: 'قيد الانتظار', in_progress: 'قيد التنفيذ', transferred: 'قيد النقل',
-        completed: 'مكتمل', cancelled: 'ملغى',
+        completed: 'مكتمل', cancelled: 'ملغى', not_found: 'غير موجود',
       },
       confirm: {
         pending_confirmation: 'بانتظار التأكيد',

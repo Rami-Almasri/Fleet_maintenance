@@ -796,6 +796,7 @@ Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard
 // Proactive Flags: rentals expiring within ?days=N, concluded rentals with unpaid balance, inspections due
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/proactive-flags', [DashboardController::class, 'proactiveFlags']);
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/most-maintained', [DashboardController::class, 'mostMaintained']);
+Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/maintenance-history', [DashboardController::class, 'maintenanceHistory']);
 
 // Trip Dashboard: aggregated pickup/drop-off trip log (Main Trip Dashboard sheet) for the
 // Delivery Command dashboard + Orders board. Cached read; ?refresh forces a re-read.

@@ -200,7 +200,7 @@ function ProactiveFlags({ data, loading }) {
     }] : []),
     {
       key: 'mostMaintained', title: 'Most in Maintenance', icon: <Icon.Activity className="h-4 w-4" />, tone: 'amber',
-      count: mm.count, viewAll: '/maintenance-analytics', empty: 'No workshop visits in this period',
+      count: mm.count, viewAll: '/maintenance-history', empty: 'No workshop visits in this period',
       loading: mmLoading,
       // A compact date-window picker lives in this column's header (see renderer).
       control: (
@@ -214,10 +214,10 @@ function ProactiveFlags({ data, loading }) {
         </select>
       ),
       rows: (mm.items || []).map((r) => ({
-        to: r.id ? `/vehicles/${r.id}` : '/maintenance-analytics',
+        to: r.id ? `/vehicles/${r.id}` : '/maintenance-history',
         primary: r.plate || r.car || 'Vehicle',
         secondary: [r.car, r.last_visit ? `last ${fmtDate(r.last_visit)}` : null].filter(Boolean).join(' · '),
-        right: `${r.visits}×`,
+        right: `${r.visits} visit${r.visits === 1 ? '' : 's'}`,
         rightTone: r.visits >= 3 ? 'text-red-600' : 'text-slate-600',
       })),
     },
@@ -362,26 +362,19 @@ export default function Dashboard() {
     const emptyFlags = { contract_expiry: { count: 0, items: [] }, in_maintenance: { count: 0, items: [] }, invoice_overdue: { count: 0, items: [] }, inspection_due: { count: 0, items: [] } };
     const emptyBilling = { paid: 0, partial: 0, not_paid: 0, unsynced: 0, pending: 0, total: 0, outstanding_balance: 0 };
     const emptyOversight = { mileage_flags: 0, severity_mismatches: 0, misdiagnoses: 0, awaiting_parts: 0, left_garage: 0, resolved_transfers: 0 };
-    const [kpiRes, expRes, overRentRes, overMaintRes, trendsRes, flagsRes, billingRes, oversightRes] = await Promise.all([
+    const [kpiRes, expRes, trendsRes, flagsRes, billingRes, oversightRes] = await Promise.all([
       api.get('/Dashboard', { params: { expiring_days: 7 } }),
       api.get('/Fleet/expiring', { params: { days: 30 } }).catch(safe([])),
-      api.get('/Dashboard/overdue-rentals').catch(safe([])),
-      api.get('/Dashboard/overdue-maintenance').catch(safe([])),
       api.get('/Dashboard/trends', { params: { months: 12 } }).catch(safe({ cost: [], downtime: [] })),
       api.get('/Dashboard/proactive-flags', { params: { days: 7 } }).catch(safe(emptyFlags)),
       api.get('/Invoice/status-summary').catch(safe(emptyBilling)),
       api.get('/Oversight/overview').catch(safe(emptyOversight)),
     ]);
-    // Merge overdue rentals + maintenance into one "attention needed" list,
-    // most-overdue first. Monitoring only — nothing here auto-closes a contract.
-    const rentals = (overRentRes.data.data || []).map((r) => ({ ...r, kind: 'Rental' }));
-    const maint = (overMaintRes.data.data || []).map((r) => ({ ...r, kind: 'Maintenance' }));
     return {
       // Fold the workflow-oversight roll-up (mileage / severity / mis-diagnosis / waiting-for-parts
       // counts) into the KPI object so the oversight KPI tiles read straight from `kpis[card.key]`.
       kpis: { ...(kpiRes.data.data || {}), ...(oversightRes.data.data || emptyOversight) },
       expiring: (expRes.data.data || []).slice(0, 8),
-      overdue: [...rentals, ...maint].sort((a, b) => (b.days_overdue || 0) - (a.days_overdue || 0)),
       trends: trendsRes.data.data || { cost: [], downtime: [] },
       proactive: flagsRes.data.data || emptyFlags,
       billing: billingRes.data.data || emptyBilling,
@@ -391,22 +384,23 @@ export default function Dashboard() {
 
   const kpis = data?.kpis || {};
   const expiring = data?.expiring || [];
-  const overdue = data?.overdue || [];
   const trends = data?.trends || { cost: [], downtime: [] };
   const proactive = data?.proactive || {};
   const billing = data?.billing || {};
 
   const fleet = kpis.fleet_status || {};
-  const fleetTotal = fleet.total || 0;
   const available = fleet.available || 0;
   const rented = fleet.rented || 0;
   const maint = fleet.maintenance || 0;
-  const utilization = fleetTotal ? Math.round((rented / fleetTotal) * 100) : 0;
+  // Operational fleet = cars the team actually works with (ready + on-rent + in-shop); excludes
+  // sold / disposed / office-use, which inflate fleet.total. All readiness ratios divide by THIS.
+  const activeFleet = available + rented + maint;
+  const availabilityRate = activeFleet ? Math.round((available / activeFleet) * 100) : 0;
+  const utilizationRate = activeFleet ? Math.round((rented / activeFleet) * 100) : 0;
 
   // Headline performance band — derived entirely from the real 12-month trend
   // series already fetched, so the numbers always agree with the charts below.
   const costSeries = trends.cost || [];
-  const downSeries = trends.downtime || [];
   const last = (arr, k) => Number(arr[arr.length - 1]?.[k]) || 0;
   const prev = (arr, k) => Number(arr[arr.length - 2]?.[k]) || 0;
   const spend12mo = costSeries.reduce((s, m) => s + (Number(m.value) || 0), 0);
@@ -423,17 +417,16 @@ export default function Dashboard() {
 
   // Headline percent for the floating page gauge: fleet utilization.
   usePageStat({
-    percent: loading || !fleetTotal ? null : utilization,
+    percent: loading || !activeFleet ? null : utilizationRate,
     label: 'Utilization',
     color: 'indigo',
-    hint: `${rented} of ${fleetTotal} cars currently rented out`,
+    hint: `${rented} of ${activeFleet} operational cars currently rented out`,
   });
 
   // Fleet Status — a live snapshot for the headline donut, limited to the three
   // operational states the team actually works with. The "Unavailable" catch-all
   // (sold/disposed/office-use/other) was dropped because those cars surface in no
   // list, so the donut totals only the active, accounted-for fleet.
-  const activeFleet = available + rented + maint;
   const fleetStatusSegments = [
     { label: 'Available',   value: available, color: 'green'  },
     { label: 'On Rent',     value: rented,    color: 'blue'   },
@@ -449,29 +442,22 @@ export default function Dashboard() {
       value: aed(last(costSeries, 'value')), cur: last(costSeries, 'value'), prev: prev(costSeries, 'value'),
       series: costSeries, goodWhen: 'down',
     }] : []),
-    {
-      icon: <Icon.Wrench className="h-4 w-4" />, tone: 'amber', label: 'Workshop Visits · this month',
-      value: last(costSeries, 'visits').toLocaleString(), cur: last(costSeries, 'visits'), prev: prev(costSeries, 'visits'),
-      series: costSeries.map((m) => m.visits), goodWhen: 'down',
-    },
-    {
-      icon: <Icon.Activity className="h-4 w-4" />, tone: 'emerald', label: 'Avg Downtime · days per visit',
-      value: `${last(downSeries, 'value')}d`, cur: last(downSeries, 'value'), prev: prev(downSeries, 'value'),
-      series: downSeries, goodWhen: 'down',
-    },
     ...(SHOW_FINANCIALS ? [{
       icon: <Icon.Chart className="h-4 w-4" />, tone: 'violet', label: 'Spend · last 12 months',
       value: aed(spend12mo), series: costSeries,
-    }] : [
-      {
-        icon: <Icon.Invoice className="h-4 w-4" />, tone: 'indigo', label: 'Active Contracts',
-        value: Number(kpis.active_contracts || 0).toLocaleString(), to: '/contracts',
-      },
-      {
-        icon: <Icon.Car className="h-4 w-4" />, tone: 'violet', label: 'Cars in Maintenance',
-        value: Number(kpis.cars_in_maintenance || 0).toLocaleString(), to: '/maintenance-workflow',
-      },
-    ]),
+    }] : []),
+    {
+      // Fleet Availability Rate — share of the OPERATIONAL fleet ready to rent right now.
+      icon: <Icon.Check className="h-4 w-4" />, tone: 'emerald',
+      label: `Fleet Availability · ${available}/${activeFleet} ready`,
+      value: `${availabilityRate}%`, to: '/vehicles',
+    },
+    {
+      // Fleet Utilization — share of the OPERATIONAL fleet currently out on rent.
+      icon: <Icon.Gauge className="h-4 w-4" />, tone: 'indigo',
+      label: `Fleet Utilization · ${rented}/${activeFleet} on rent`,
+      value: `${utilizationRate}%`, to: '/fleet-utilization',
+    },
   ];
 
   // KPI tiles — each maps to a semantic tone, a design-system icon, a short hint
@@ -641,18 +627,19 @@ export default function Dashboard() {
             </div>
           </Card>
 
-          {/* Right — Statistics: real MoM KPIs with trailing sparklines. */}
+          {/* Right — Fleet Readiness: live operational rates (availability / utilization), plus
+              12-month spend trends when financials are shown. */}
           <Card className="p-5">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-violet-100 text-violet-600"><Icon.Chart className="h-4 w-4" /></span>
-                <h2 className="text-sm font-semibold text-slate-800">Statistics</h2>
+                <h2 className="text-sm font-semibold text-slate-800">{SHOW_FINANCIALS ? 'Statistics' : 'Fleet Readiness'}</h2>
               </div>
-              <span className="text-[11px] font-medium text-slate-400">Last 12 months</span>
+              <span className="text-[11px] font-medium text-slate-400">{SHOW_FINANCIALS ? 'Last 12 months' : 'Live'}</span>
             </div>
             <div className="mt-1 divide-y divide-slate-100">
               {loading
-                ? Array.from({ length: 4 }).map((_, i) => (
+                ? Array.from({ length: SHOW_FINANCIALS ? 4 : 2 }).map((_, i) => (
                     <div key={i} className="py-3"><Skeleton className="h-9 w-full rounded-xl" /></div>
                   ))
                 : statRows.map((r, i) => <StatRow key={i} {...r} />)}
@@ -841,89 +828,6 @@ export default function Dashboard() {
           )}
         </SectionCard>
 
-        {/* Overdue / Attention Needed — open rentals AND maintenance whose expected
-            return date has passed. Monitoring only: nothing here closes a contract,
-            so extensions and garage delays just surface for the team to action. */}
-        {!loading && overdue.length > 0 && (
-          <SectionCard
-            className="ring-1 ring-red-200"
-            title={
-              <span className="flex items-center gap-2 text-red-700">
-                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-red-100 text-red-600">!</span>
-                Overdue Contracts / Attention Needed
-              </span>
-            }
-            subtitle="Expected return date has passed — contact the customer for an extension or check with the garage."
-            actions={<Badge tone="red">{overdue.length}</Badge>}
-          >
-            <div className="stagger space-y-2.5">
-              {overdue.slice(0, 12).map((r, i) => {
-                const maxLate = overdue[0]?.days_overdue || 1;
-                const latePct = Math.max(6, Math.min(100, Math.round(((r.days_overdue || 0) / maxLate) * 100)));
-                const isMaint = r.kind === 'Maintenance';
-                const rail = isMaint ? '#f59e0b' : '#3b82f6';
-                const hot = (r.days_overdue || 0) >= 7;
-                return (
-                  <div
-                    key={`${r.kind}-${r.id}`}
-                    className="hover-lift relative overflow-hidden rounded-2xl border border-slate-200/60 bg-white pl-4 pr-4 py-3 shadow-soft"
-                  >
-                    {/* coloured urgency rail down the left edge */}
-                    <span className="absolute inset-y-0 left-0 w-1.5" style={{ background: rail }} />
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
-                      {/* icon + car */}
-                      <div className="flex min-w-0 flex-1 items-center gap-3">
-                        <span
-                          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
-                          style={{ background: `${rail}1f`, color: rail }}
-                        >
-                          {isMaint ? <Icon.Wrench className="h-5 w-5" /> : <Icon.Clock className="h-5 w-5" />}
-                        </span>
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <Link to={`/contracts/${r.id}`} className="font-semibold text-slate-900 hover:text-indigo-600">{r.plate || `#${r.contract_no || r.id}`}</Link>
-                            <Badge tone={isMaint ? 'amber' : 'blue'}>{r.kind}</Badge>
-                          </div>
-                          <p className="truncate text-xs text-slate-400">{r.car || '—'}</p>
-                        </div>
-                      </div>
-                      {/* customer / garage */}
-                      <div className="min-w-0 sm:w-44">
-                        <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{isMaint ? 'Garage' : 'Customer'}</p>
-                        <p className="truncate text-sm text-slate-700">
-                          {r.customer_id
-                            ? <Link to={`/customers/${r.customer_id}`} className="hover:text-indigo-600">{r.customer || '—'}</Link>
-                            : (r.customer || r.garage || '—')}
-                        </p>
-                      </div>
-                      {/* out → due window */}
-                      <div className="hidden sm:block sm:w-40">
-                        <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Out → Est. return</p>
-                        <p className="text-sm tabular-nums text-slate-600">{fmtDate(r.out_date || r.since)} → {fmtDate(r.due)}</p>
-                      </div>
-                      {/* balance */}
-                      {SHOW_FINANCIALS && (
-                        <div className="sm:w-24 sm:text-right">
-                          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Balance</p>
-                          <p className="text-sm font-semibold tabular-nums text-slate-900">{r.balance ? aed2(r.balance) : '—'}</p>
-                        </div>
-                      )}
-                      {/* days late — bold, with a ping on the worst offenders */}
-                      <div className="flex shrink-0 items-center gap-2 sm:w-24 sm:justify-end">
-                        {hot && <span className="h-2 w-2 rounded-full bg-red-500" title="7+ days overdue" />}
-                        <span className="font-display text-lg font-bold tabular-nums text-red-600">{r.days_overdue}<span className="ml-0.5 text-xs font-semibold text-red-400">d</span></span>
-                      </div>
-                    </div>
-                    {/* relative-lateness bar */}
-                    <div className="mt-2.5 h-1 overflow-hidden rounded-full bg-slate-100">
-                      <div className="h-full rounded-full bg-red-500" style={{ width: `${latePct}%` }} />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </SectionCard>
-        )}
           </>
         )}
 

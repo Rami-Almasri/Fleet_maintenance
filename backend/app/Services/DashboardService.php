@@ -643,6 +643,74 @@ class DashboardService
         });
     }
 
+    /**
+     * The full "Most in Maintenance" list — EVERY in-fleet car that saw the workshop within the window,
+     * with how OFTEN (distinct visit-days, the same visit definition as mostMaintained/Workshop Visits)
+     * and how LONG (total days in the shop, from the canonical type-U maintenance contracts — the same
+     * out_date→in_date basis as Fleet Utilization; an open stay counts up to today). Unlike mostMaintained
+     * this returns the whole list (no top-N cap) to back the "All →" Maintenance History page.
+     *
+     * @return array{count:int, window_days:int, items:array<int,array<string,mixed>>}
+     */
+    public function maintenanceHistory(int $days = 90): array
+    {
+        return $this->remember("maint_history:{$days}", self::CACHE_TTL, function () use ($days) {
+            $cutoff = Carbon::today()->subDays($days)->toDateString();
+
+            // How OFTEN each in-fleet car was in the shop (workshop log — sheet + manual).
+            $visits = DB::table('maintenances as m')
+                ->join('vehicles as v', 'v.id', '=', 'm.vehicle_id')
+                ->whereNull('v.deleted_at')
+                ->whereNotIn('v.status', PlateResolver::GONE_STATUSES)
+                ->whereIn('m.origin', Maintenance::WORKSHOP_LOG_ORIGINS)
+                ->whereNotNull('m.out_date')
+                ->whereDate('m.out_date', '>=', $cutoff)
+                ->select(
+                    'v.id AS vehicle_id', 'v.plate_no', 'v.make', 'v.model',
+                    DB::raw('COUNT(DISTINCT m.out_date) AS visits'),
+                    DB::raw('MIN(m.out_date) AS first_visit'),
+                    DB::raw('MAX(m.out_date) AS last_visit')
+                )
+                ->groupBy('v.id', 'v.plate_no', 'v.make', 'v.model')
+                ->get();
+
+            // How LONG each car spent in the shop (canonical type-U maintenance contracts). Keyed by
+            // vehicle so we can attach it to the visit rows; an open (in_date IS NULL) stay = still in.
+            $downtime = DB::table('contracts')
+                ->where('contract_type', 'U')
+                ->whereNotNull('out_date')
+                ->whereDate('out_date', '>=', $cutoff)
+                ->select(
+                    'vehicle_id',
+                    DB::raw('SUM(GREATEST(DATEDIFF(COALESCE(in_date, CURDATE()), out_date), 0)) AS down_days'),
+                    DB::raw('SUM(CASE WHEN in_date IS NULL THEN 1 ELSE 0 END) AS open_stays')
+                )
+                ->groupBy('vehicle_id')
+                ->get()
+                ->keyBy('vehicle_id');
+
+            $items = $visits->map(function ($r) use ($downtime) {
+                $d = $downtime[$r->vehicle_id] ?? null;
+                return [
+                    'id'                => (int) $r->vehicle_id,
+                    'plate'             => $r->plate_no,
+                    'car'               => trim(($r->make ?? '') . ' ' . ($r->model ?? '')) ?: null,
+                    'visits'            => (int) $r->visits,
+                    'first_visit'       => $r->first_visit,
+                    'last_visit'        => $r->last_visit,
+                    // Total days in the shop over the window, or null when no type-U contract backs it.
+                    'days_in_shop'      => $d ? (int) $d->down_days : null,
+                    'currently_in_shop' => $d ? ((int) $d->open_stays > 0) : false,
+                ];
+            })
+            ->sortByDesc('visits')
+            ->values()
+            ->all();
+
+            return ['count' => count($items), 'window_days' => $days, 'items' => $items];
+        });
+    }
+
     /** Sum of what customers still owe (positive balances only). */
     public function totalOutstandingBalance(): float
     {

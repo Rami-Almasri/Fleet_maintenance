@@ -47,8 +47,10 @@ const fmtDay = (iso) => {
 };
 
 // Workshop confirmation verdicts — the technician's per-fault review at the In Workshop stage. Only
-// `confirmed` triggers recurring-fault intelligence server-side; the rest simply record the finding.
-const CONFIRM_VERDICTS = ['confirmed', 'not_found', 'different_cause'];
+// `confirmed` triggers recurring-fault intelligence server-side; `not_found` records that the reported
+// fault does not exist (and blocks Mark fixed). `different_cause` is retained in CONFIRM_TONE only so
+// legacy stamps still render, but it's no longer an offered verdict.
+const CONFIRM_VERDICTS = ['confirmed', 'not_found'];
 const CONFIRM_TONE = {
   confirmed:       { icon: '✓', active: 'bg-emerald-600 text-white ring-emerald-600', idle: 'bg-white text-emerald-700 ring-emerald-300 hover:bg-emerald-50' },
   not_found:       { icon: '∅', active: 'bg-slate-600 text-white ring-slate-600', idle: 'bg-white text-slate-600 ring-slate-300 hover:bg-slate-100' },
@@ -154,6 +156,12 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
   const confirmTask = async (task, confirmation_status) => {
     setBusyId(task.id);
     setError(null);
+    // A fault reviewed "Not found" doesn't exist, so it can't be marked fixed — if the fix-evidence
+    // panel was already open for it, close it now so the stale panel can't submit a completion.
+    if (confirmation_status === 'not_found' && fixTask?.id === task.id) closeFix();
+    // Once CONFIRMED to exist, the fault can no longer be overruled as a mis-diagnosis — close any
+    // "Mark incorrect" panel left open for it so the stale panel can't submit an override.
+    if (confirmation_status === 'confirmed' && disputeTask?.id === task.id) closeDispute();
     try {
       apply(await api.post(`/maintenance-tasks/${task.id}/confirm`, { confirmation_status }));
     } catch (e) {
@@ -208,6 +216,13 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
 
   const submitFix = async () => {
     if (!fixTask || !fixValid) return;
+    // Guard against a stale panel: if the verdict has since flipped to "Not found", the fault doesn't
+    // exist and can't be marked fixed. Re-check the LIVE task (fixTask is a snapshot from open time).
+    const liveTask = tasks.find((x) => x.id === fixTask.id) || fixTask;
+    if (liveTask.confirmation_status === 'not_found') {
+      setFixError(t('workflow.task.review.notFoundCannotFix'));
+      return;
+    }
     setFixBusy(true);
     setFixError(null);
     try {
@@ -239,6 +254,13 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
   const closeDispute = () => { setDisputeTask(null); setDisputeReason(''); setDisputeError(null); };
   const submitDispute = async () => {
     if (!disputeTask || disputeReason.trim() === '') return;
+    // Guard against a stale panel: a fault the workshop has since CONFIRMED can't be overruled as a
+    // mis-diagnosis. Re-check the LIVE task (disputeTask is a snapshot from open time).
+    const liveTask = tasks.find((x) => x.id === disputeTask.id) || disputeTask;
+    if (liveTask.confirmation_status === 'confirmed') {
+      setDisputeError(t('workflow.task.review.confirmedCannotDispute'));
+      return;
+    }
     setDisputeBusy(true);
     setDisputeError(null);
     try {
@@ -492,8 +514,10 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
             const isDisputing = disputeTask?.id === task.id;
             // "Mark incorrect" is a delegate's override of the inspector — offered ONLY while the car is
             // actually In Workshop, and only on faults the inspector raised (a garage-found fault isn't
-            // his call to overrule). The whole panel is already delegate-gated (opened via canRoute).
-            const canDispute = wfStatus === 'under_repair' && task.source === 'inspector' && !terminal;
+            // his call to overrule). Once the workshop has CONFIRMED the fault exists, it can no longer be
+            // overruled as a mis-diagnosis. The whole panel is already delegate-gated (opened via canRoute).
+            const canDispute = wfStatus === 'under_repair' && task.source === 'inspector' && !terminal
+              && task.confirmation_status !== 'confirmed';
 
             return (
               <li key={task.id} className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
@@ -562,8 +586,9 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
                       <>
                         {/* "Mark fixed" only appears once the car is actually at the garage — in earlier
                             stages (awaiting dispatch / in transit) there's nothing to mark fixed yet.
-                            Opens the fix-evidence panel (video + note) rather than completing outright. */}
-                        {carAtGarage && task.repair_gate !== 'pending' && (
+                            A fault reviewed "Not found" doesn't exist, so there's nothing to fix — the
+                            button is withheld. Opens the fix-evidence panel rather than completing outright. */}
+                        {carAtGarage && task.repair_gate !== 'pending' && task.confirmation_status !== 'not_found' && (
                           <Button size="sm" variant="success" disabled={busy || rowBusy || fixTask != null || disputeTask != null} onClick={() => openFix(task)}>
                             {t('workflow.task.complete')}
                           </Button>
