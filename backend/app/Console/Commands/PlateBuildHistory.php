@@ -40,7 +40,7 @@ class PlateBuildHistory extends Command
         '13881' => 1916,
         '32967' => 1963,
         '81830' => 1956,
-        // '76722' => pending real-fleet check — intentionally omitted, stays Needs Review.
+        '76722' => 1902,   // confirmed by owner 2026-07-20 (Nissan Patrol; 1915 = previous holder)
     ];
 
     public function handle(): int
