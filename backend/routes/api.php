@@ -86,6 +86,7 @@ Route::middleware('auth:sanctum')->prefix('Vehicle')->controller(VehicleControll
     Route::get('/{vehicle}/status-on', 'statusOn')->middleware('permission:insights.view');   // time machine: car's status on a given day
     Route::get('/{vehicle}/service-history', 'serviceHistory')->middleware('permission:maintenance.view'); // technical service log (parts/services done, searchable)
     Route::get('/{vehicle}/tire-history', 'tireHistory')->middleware('permission:maintenance.view');       // tyre details (brand/DOT/tread/warranty) from maintenance line items
+    Route::get('/{vehicle}/plate-history', 'plateHistory')->middleware('permission:vehicles.view');        // every car that shared this plate (reuse timeline) — history discoverable, never merged
     Route::get('/{vehicle}/profile', 'profile')->middleware('permission:vehicles.view');   // full car profile: registration, insurance, fines, contracts
     Route::get('/{vehicle}', 'show')->middleware('permission:vehicles.view');
     Route::post('/', 'store')->middleware('permission:vehicles.manage');

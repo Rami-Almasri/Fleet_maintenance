@@ -21,6 +21,15 @@ class VehicleResource extends JsonResource
             "engine_no" => $this->engine_no,
             "driver_no" => $this->driver_no,
             "plate_no" => $this->plate_no,
+            // Plate-history feature: the canonical plate key (digits, leading zeros stripped) lets
+            // the client group vehicles that share a reused plate. is_current_plate_holder marks the
+            // plate's live holder (only present when the plate_assignment relation was eager-loaded,
+            // e.g. the fleet list — never triggers a lazy query on single-vehicle reads).
+            "plate_key" => $this->plate_key,
+            "is_current_plate_holder" => $this->when(
+                $this->relationLoaded('plateAssignment'),
+                fn () => (bool) optional($this->plateAssignment)->is_current
+            ),
             "make" => $this->make,
             "model" => $this->model,
             "year" => $this->year,

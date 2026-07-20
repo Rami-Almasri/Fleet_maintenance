@@ -237,6 +237,28 @@ class VehicleController extends Controller
     }
 
     /**
+     * Plate History — every vehicle that has ever carried this car's plate (plates get reused
+     * after a sale in the UAE). Returns the current holder first, then previous holders, each
+     * tagged with its status and how much history lives on it. Read-only over the
+     * plate_assignments timeline: NOTHING is ever merged or moved between vehicles — each car
+     * keeps its own maintenance / inspection / repair history forever. The only link is the
+     * shared plate. The frontend uses this to render the "Plate History" section + Sold /
+     * Current / Previous badges and to navigate between the vehicles.
+     */
+    public function plateHistory(Vehicle $vehicle, \App\Services\PlateHistoryService $plateHistory)
+    {
+        try {
+            return ResponseHelper::SuccessResponse(
+                $plateHistory->forVehicle($vehicle),
+                'Plate history retrieved',
+                200
+            );
+        } catch (\Exception $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
      * "Time machine": what one car was doing — either on a single calendar day (?date=YYYY-MM-DD, or
      * ?from= alone; rented to whom / in the workshop for what / idle / onboarding / not yet owned), OR
      * over a date range (?from=&to=) returning how many days it was rented / in the workshop / available.

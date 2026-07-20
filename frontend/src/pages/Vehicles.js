@@ -52,9 +52,18 @@ export default function Vehicles() {
   };
 
   const list = useMemo(() => vehicles || [], [vehicles]);
-  const filtered = useMemo(() => {
+
+  // Plate reuse: keys that live on more than one vehicle row (a plate re-issued after a sale).
+  // Used to surface previous/sold holders during a plate search and to badge them.
+  const reusedKeys = useMemo(() => {
+    const counts = {};
+    list.forEach((v) => { if (v.plate_key) counts[v.plate_key] = (counts[v.plate_key] || 0) + 1; });
+    return new Set(Object.keys(counts).filter((k) => counts[k] > 1));
+  }, [list]);
+
+  const { rows: filtered, reused: plateReuseInResults } = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return list.filter((v) => {
+    const base = list.filter((v) => {
       // Displayed status is the OfficeManager lifecycle status (status_no). Cars that have
       // left the fleet (sold / disposed) are hidden unless explicitly picked from the dropdown.
       const matchStatus = status ? v.status === status : (v.status !== 'sold' && v.status !== 'disposed');
@@ -70,7 +79,31 @@ export default function Vehicles() {
         [v.plate_no, v.vin, v.make, v.model].some((f) => (f || '').toLowerCase().includes(q));
       return matchStatus && matchFlag && matchSearch;
     });
-  }, [list, search, status, flag]);
+
+    // Only when a search actually surfaces a REUSED plate do we change the view: pull the
+    // previous/sold holders back in (normally hidden by the status filter) and group each plate
+    // current-holder-first, so "search a plate → see the current car first, then its history".
+    const involvesReuse = !!q && base.some((v) => v.plate_key && reusedKeys.has(v.plate_key));
+    if (!involvesReuse) return { rows: base, reused: false };
+
+    const byId = new Map(base.map((v) => [v.id, v]));
+    const keys = new Set(base.map((v) => v.plate_key).filter((k) => k && reusedKeys.has(k)));
+    list.forEach((v) => {
+      if (v.plate_key && keys.has(v.plate_key) && !byId.has(v.id)) byId.set(v.id, v);
+    });
+    const merged = Array.from(byId.values());
+    merged.sort((a, b) => {
+      const ra = a.plate_key && keys.has(a.plate_key) ? 0 : 1;
+      const rb = b.plate_key && keys.has(b.plate_key) ? 0 : 1;
+      if (ra !== rb) return ra - rb;                                    // reuse groups first
+      const ka = a.plate_key || '', kb = b.plate_key || '';
+      if (ka !== kb) return ka < kb ? -1 : 1;                          // cluster by plate
+      if (!!a.is_current_plate_holder !== !!b.is_current_plate_holder) // current holder on top
+        return a.is_current_plate_holder ? -1 : 1;
+      return (Number(b.car_serial) || 0) - (Number(a.car_serial) || 0); // then newest
+    });
+    return { rows: merged, reused: true };
+  }, [list, search, status, flag, reusedKeys]);
 
   // counts shown on the quick-filter buttons — over the active fleet (sold/disposed excluded)
   const active = useMemo(() => list.filter((v) => v.status !== 'sold' && v.status !== 'disposed'), [list]);
@@ -157,6 +190,19 @@ export default function Vehicles() {
     if (v.available) return 'rt-avail';
     return '';
   };
+  // Plate-reuse badge: which role this vehicle plays for a shared plate. Only rendered for
+  // reused plates so the ordinary fleet list stays clean.
+  const plateBadge = (v) => {
+    if (!v.plate_key || !reusedKeys.has(v.plate_key)) return null;
+    const base = { display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 3, padding: '1px 7px', borderRadius: 999, fontSize: 10, fontWeight: 700, letterSpacing: '.02em' };
+    if (v.is_current_plate_holder) {
+      return <span style={{ ...base, background: 'rgba(16,185,129,.14)', color: '#10b981', border: '1px solid rgba(16,185,129,.3)' }}>● Current plate holder</span>;
+    }
+    const gone = ['sold', 'disposed', 'returned'].includes(v.status);
+    return gone
+      ? <span style={{ ...base, background: 'rgba(148,163,184,.14)', color: '#94a3b8', border: '1px solid rgba(148,163,184,.3)' }}>◍ Sold vehicle · history</span>
+      : <span style={{ ...base, background: 'rgba(245,158,11,.14)', color: '#f59e0b', border: '1px solid rgba(245,158,11,.3)' }}>◍ Previous plate holder</span>;
+  };
   const condChip = (v) => {
     const g = v.condition_grade;
     if (g === 'red') return <span className="ds-chip sm ds-crit"><span className="ds-dot" />Critical</span>;
@@ -222,6 +268,13 @@ export default function Vehicles() {
             {flag && <button className="opx-ibtn" onClick={() => toggleFlag(flag)}>✕ Clear filter</button>}
           </div>
 
+          {plateReuseInResults && (
+            <div style={{ margin: '0 0 4px', padding: '9px 14px', borderRadius: 10, border: '1px solid rgba(245,158,11,.3)', background: 'rgba(245,158,11,.08)', color: '#f59e0b', fontSize: 12.5, display: 'flex', gap: 8, alignItems: 'center' }}>
+              <span>⚠️</span>
+              <span>This plate was previously assigned to another vehicle. The <b>current holder</b> is shown first; previous vehicles are kept for history. Each vehicle keeps its own records — nothing is merged.</span>
+            </div>
+          )}
+
           <div className="opx-tblwrap">
             <table className="opx-tbl">
               <thead>
@@ -244,6 +297,7 @@ export default function Vehicles() {
                     <td>
                       <Link to={`/vehicles/${v.id}`} className="opx-plate2">{v.plate_no || '—'}</Link>
                       <div className="opx-sub">{[v.make, v.model].filter(Boolean).join(' ') || '—'}</div>
+                      {plateBadge(v)}
                     </td>
                     <td>
                       <div className="opx-mono2">{v.year || '—'}</div>

@@ -33,7 +33,11 @@ class VehicleService
                 ->openWorkflow()
                 ->whereIn('workflow_status', \App\Models\Maintenance::WF_TICKET_STATES)
                 ->where('deferrable_for_rental', false),
-        ])->get();
+        ])
+        // The car's own plate-history row (one per vehicle) so the list can flag the current
+        // plate holder and let the frontend group reused plates — no per-row query.
+        ->with('plateAssignment')
+        ->get();
     }
     public function store(array $data)
     {

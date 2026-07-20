@@ -95,6 +95,7 @@ class Vehicle extends Model
         'engine_no',
         'driver_no',
         'plate_no',
+        'plate_key',   // canonical plate digits (leading zeros stripped) — the plate-history key
         'make',
         'model',
         'year',
@@ -358,6 +359,23 @@ class Vehicle extends Model
     public function logEvents(): HasMany
     {
         return $this->hasMany(VehicleLogEvent::class)->latest('occurred_at');
+    }
+
+    /**
+     * This car's own row in the plate-history timeline (one per vehicle+plate). Carries whether
+     * this car is the plate's CURRENT holder and the from/to window it held the plate. The full
+     * timeline of OTHER cars that shared the plate is fetched by PlateHistoryService via plate_key
+     * — this relation just exposes the flag/window for the resource without an extra query.
+     */
+    public function plateAssignment(): HasOne
+    {
+        return $this->hasOne(PlateAssignment::class);
+    }
+
+    /** True when this car is the live holder of its plate (per the plate-history timeline). */
+    public function isCurrentPlateHolder(): bool
+    {
+        return (bool) optional($this->plateAssignment)->is_current;
     }
 
     /** The car's registration / insurance record (latest). */

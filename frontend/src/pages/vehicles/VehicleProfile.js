@@ -22,6 +22,7 @@ import { SHOW_FINANCIALS } from '../../config/features';
 import ReadinessChecklist from './ReadinessChecklist';
 import ServiceHistory from './ServiceHistory';
 import TireDetails from './TireDetails';
+import PlateHistory from './PlateHistory';
 import FinancialsHero from './FinancialsHero';
 import VehicleAnalytics from './VehicleAnalytics';
 import DualState, { PausedRibbon } from '../../components/ops/DualState';
@@ -864,6 +865,11 @@ export default function VehicleProfile() {
         {/* Paused — Returned to Service ribbon: the fixed, app-wide amber strip. Renders only when
             the repair is paused, so a manager instantly reads "working, but unresolved maintenance risk". */}
         <PausedRibbon vehicle={{ ...v, av_state: av.state }} />
+
+        {/* Plate History — surfaces only when this car's plate was reused across vehicles (sold →
+            re-issued). Sits above the tabs so the reuse is impossible to miss; self-hides otherwise.
+            History is discoverable, never merged: each holder keeps its own records. */}
+        <PlateHistory vehicleId={id} />
 
         {/* Tab navigation — the persistent hero above stays visible on every tab. Sticks just
             below the app header (h-16) so a manager keeps the tabs in reach while scrolling. */}
