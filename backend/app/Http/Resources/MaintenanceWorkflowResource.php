@@ -59,6 +59,12 @@ class MaintenanceWorkflowResource extends JsonResource
             'vehicle_id'   => $t->vehicle_id,
             'plate'        => $t->plate ?: $t->vehicle?->plate_no,
             'car'          => $t->car_label ?: trim(($t->vehicle?->make ?? '') . ' ' . ($t->vehicle?->model ?? '')) ?: null,
+            // Richer vehicle identity for the review card (present when the vehicle is eager-loaded with
+            // these columns — the Inspection Review Queue). make/model split out so the UI can weight them.
+            'vehicle_make'  => $t->vehicle?->make,
+            'vehicle_model' => $t->vehicle?->model,
+            'vehicle_year'  => $t->vehicle?->year,
+            'vehicle_code'  => $t->vehicle?->code,
             // The car's live movement status (available / rented / maintenance / …) — the "current
             // operational status" the Recommendations queue shows so a supervisor sees whether the car is
             // free before approving. Only present when the vehicle is eager-loaded with the column.
@@ -209,6 +215,29 @@ class MaintenanceWorkflowResource extends JsonResource
             // by, severity, summary}.
             'last_test'             => $t->last_test ?? null,
 
+            // Last maintenance ACTIVITY (mostly sheet-sourced history) — attached by pendingReview() so the
+            // card shows the real "last serviced" date + how long ago. Null if the car has no dated history.
+            'last_maintenance'      => $t->last_maintenance ?? null,
+
+            // Last oil-service anchor, straight off the vehicle (the "Oil Change" sheet baseline): the km at
+            // last service + how far the car has driven since. Null when no anchor is set (or it's a zero
+            // baseline). Present only when the vehicle is eager-loaded with the service columns.
+            'last_service'          => (function () use ($t) {
+                $v = $t->vehicle;
+                if (! $v || $v->last_service_odometer === null || $v->last_service_odometer <= 0) {
+                    return null;
+                }
+                $kmSince = ($v->odometer !== null && $v->odometer >= $v->last_service_odometer)
+                    ? (int) ($v->odometer - $v->last_service_odometer)
+                    : null;
+                return [
+                    'odometer'  => (int) $v->last_service_odometer,
+                    'km_since'  => $kmSince,
+                    'synced_at' => optional($v->service_synced_at)->toIso8601String(),
+                    'due_date'  => optional($v->service_due_date)->toIso8601String(),
+                ];
+            })(),
+
             // Fault Severity — the inspector's mandatory diagnostic grade. Colour + symbol drive the
             // board chip + command view; it's the headline urgency a supervisor reads first.
             'fault_severity'        => $t->fault_severity,
@@ -352,6 +381,16 @@ class MaintenanceWorkflowResource extends JsonResource
             // the query eager-counted media (board/index/show), else null (unknown → the UI just refetches).
             'video_count'          => $t->media_count ?? ($t->relationLoaded('media') ? $t->media->count() : null),
             'has_video'            => isset($t->media_count) ? $t->media_count > 0 : ($t->relationLoaded('media') ? $t->media->isNotEmpty() : null),
+            // Compact media list (id, kind, note, name, view URL) — serialised ONLY when the media relation
+            // is eager-loaded (e.g. the Inspection Review Queue, so the driver's attached photo/video shows
+            // inline). Every other surface still just reads the count above and fetches the full list on demand.
+            'media'                => $this->whenLoaded('media', fn () => $t->media->map(fn ($m) => [
+                'id'            => $m->id,
+                'kind'         => $m->kind,
+                'note'         => $m->note,
+                'original_name' => $m->original_name,
+                'url'          => $m->viewUrl(),
+            ])->values()),
             // Financial Decoupling — cost may be filled in AFTER close. `cost_pending` lets the UI flag
             // a committed ticket still awaiting its invoice cost (without ever blocking the workflow).
             'cost_recorded_at'     => optional($t->cost_recorded_at)->toIso8601String(),

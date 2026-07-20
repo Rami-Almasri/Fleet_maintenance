@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api/client';
 import useFetch from '../hooks/useFetch';
@@ -10,7 +10,6 @@ import { MetricGridSkeleton, Skeleton } from '../components/ui/Skeleton';
 import { InfoTip } from '../components/ui/Tooltip';
 import Icon from '../components/ui/Icon';
 import FleetStatusCard from '../components/ui/FleetStatusCard';
-import { TimelineBar } from '../components/ui/Progress';
 import BarChart from '../components/ui/BarChart';
 import LineChart from '../components/ui/LineChart';
 import Sparkline from '../components/ui/Sparkline';
@@ -142,21 +141,49 @@ function StatRow({ icon, tone = 'indigo', label, value, cur, prev, series, goodW
 // the SAME source lists the notification bell raises rental_expiring / invoice_overdue /
 // inspection_due alerts from — so a card here and its bell alert can never disagree. Every row
 // deep-links to its source record (traceability). The money group is gated by SHOW_FINANCIALS.
+// Date windows offered by the "Most in Maintenance" filter.
+const MM_WINDOWS = [
+  { days: 30, label: '30 days' },
+  { days: 90, label: '90 days' },
+  { days: 180, label: '6 months' },
+  { days: 365, label: '1 year' },
+];
+
 function ProactiveFlags({ data, loading }) {
-  const expiry = data?.contract_expiry || { count: 0, items: [] };
+  const inShop = data?.in_maintenance || { count: 0, items: [] };
   const invoices = data?.invoice_overdue || { count: 0, items: [] };
-  const inspections = data?.inspection_due || { count: 0, items: [] };
+
+  // "Most in Maintenance" has its own date filter, so it fetches independently of the main
+  // proactive-flags payload — changing the window refreshes only this column.
+  const [mmDays, setMmDays] = useState(90);
+  const [mm, setMm] = useState({ count: 0, items: [] });
+  const [mmLoading, setMmLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    setMmLoading(true);
+    api.get('/Dashboard/most-maintained', { params: { days: mmDays } })
+      .then((res) => { if (alive) setMm(res.data.data || { count: 0, items: [] }); })
+      .catch(() => { if (alive) setMm({ count: 0, items: [] }); })
+      .finally(() => { if (alive) setMmLoading(false); });
+    return () => { alive = false; };
+  }, [mmDays]);
+
+  // Colour the stage label by urgency: an active repair / failed QA is hot, a move is in-flight,
+  // everything else is a calm "waiting" amber.
+  const stageTone = (s = '') => (/repair|failed/i.test(s) ? 'text-red-600'
+    : /transit|pickup/i.test(s) ? 'text-blue-600' : 'text-amber-600');
 
   const groups = [
     {
-      key: 'expiry', title: 'Rentals Expiring', icon: <Icon.Clock className="h-4 w-4" />, tone: 'amber',
-      count: expiry.count, viewAll: '/contracts', empty: 'No rentals due in the next 7 days',
-      rows: (expiry.items || []).map((r) => ({
-        to: `/contracts/${r.id}`,
-        primary: r.plate || r.car || `#${r.contract_no || r.id}`,
-        secondary: [r.customer, `due ${fmtDate(r.due)}`].filter(Boolean).join(' · '),
-        right: r.days_left <= 0 ? 'today' : `${r.days_left}d`,
-        rightTone: r.days_left <= 2 ? 'text-amber-600' : 'text-slate-500',
+      key: 'maintenance', title: 'In Maintenance', icon: <Icon.Wrench className="h-4 w-4" />, tone: 'blue',
+      count: inShop.count, viewAll: '/maintenance-workflow', empty: 'No cars in the workshop right now',
+      rows: (inShop.items || []).map((r) => ({
+        to: r.id ? `/vehicles/${r.id}` : '/maintenance-workflow',
+        primary: r.plate || r.car || 'Vehicle',
+        secondary: [r.car, r.garage].filter(Boolean).join(' · '),
+        right: r.stage,
+        rightTone: stageTone(r.stage),
       })),
     },
     ...(SHOW_FINANCIALS ? [{
@@ -172,29 +199,42 @@ function ProactiveFlags({ data, loading }) {
       })),
     }] : []),
     {
-      key: 'inspections', title: 'Inspections Due', icon: <Icon.Alert className="h-4 w-4" />, tone: 'blue',
-      count: inspections.count, viewAll: '/inspections/schedules', empty: 'No inspections due or overdue',
-      rows: (inspections.items || []).map((r) => ({
-        to: r.vehicle_id ? `/vehicles/${r.vehicle_id}` : '/inspections/schedules',
-        primary: r.plate || r.car || r.name || 'Vehicle',
-        secondary: [r.name, r.car].filter(Boolean).join(' · '),
-        right: r.status === 'overdue' ? 'overdue' : 'due soon',
-        rightTone: r.status === 'overdue' ? 'text-red-600' : 'text-amber-600',
+      key: 'mostMaintained', title: 'Most in Maintenance', icon: <Icon.Activity className="h-4 w-4" />, tone: 'amber',
+      count: mm.count, viewAll: '/maintenance-analytics', empty: 'No workshop visits in this period',
+      loading: mmLoading,
+      // A compact date-window picker lives in this column's header (see renderer).
+      control: (
+        <select
+          value={mmDays}
+          onChange={(e) => setMmDays(Number(e.target.value))}
+          className="shrink-0 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+          aria-label="Maintenance window"
+        >
+          {MM_WINDOWS.map((w) => <option key={w.days} value={w.days}>{w.label}</option>)}
+        </select>
+      ),
+      rows: (mm.items || []).map((r) => ({
+        to: r.id ? `/vehicles/${r.id}` : '/maintenance-analytics',
+        primary: r.plate || r.car || 'Vehicle',
+        secondary: [r.car, r.last_visit ? `last ${fmtDate(r.last_visit)}` : null].filter(Boolean).join(' · '),
+        right: `${r.visits}×`,
+        rightTone: r.visits >= 3 ? 'text-red-600' : 'text-slate-600',
       })),
     },
   ];
 
-  const totalCount = groups.reduce((s, g) => s + (g.count || 0), 0);
+  // Header badge counts only the "needs action" groups — the most-maintained list is a ranking, not a queue.
+  const totalCount = groups.reduce((s, g) => s + (g.key === 'mostMaintained' ? 0 : (g.count || 0)), 0);
 
   return (
     <SectionCard
       title={
         <span className="flex items-center gap-1.5">
           Proactive Flags
-          <InfoTip content="Forward-looking conditions to act on before they become problems. Sources — Rentals Expiring: open rental contracts (out date + planned days) due within 7 days; Payments Overdue: returned rentals with an outstanding contract balance; Inspections Due: active inspection schedules past or near their due point. Same sources as the notification bell — click any row to open its record." />
+          <InfoTip content="Conditions to act on. Sources — In Maintenance: cars currently in the workshop, tagged with the lifecycle stage they sit at (pending dispatch → under repair → final QA → ready for pickup); Payments Overdue: returned rentals with an outstanding contract balance; Most in Maintenance: the cars with the most workshop visits over the window you pick (30 days → 1 year). Click any row to open its record." />
         </span>
       }
-      subtitle="Coming due in the next 7 days — act before it slips"
+      subtitle="What needs attention now — cars in the shop, unpaid returns, and your repeat-visit workshop cars"
       actions={<Badge tone={totalCount ? 'amber' : 'gray'}>{totalCount}</Badge>}
     >
       {loading ? (
@@ -212,9 +252,16 @@ function ProactiveFlags({ data, loading }) {
                   <Badge tone={g.count ? g.tone : 'gray'}>{g.count}</Badge>
                   {g.note && <span className="truncate text-xs font-medium text-slate-400">{g.note}</span>}
                 </div>
-                <Link to={g.viewAll} className="shrink-0 text-xs font-medium text-indigo-600 hover:text-indigo-700">All →</Link>
+                <div className="flex shrink-0 items-center gap-2">
+                  {g.control}
+                  <Link to={g.viewAll} className="text-xs font-medium text-indigo-600 hover:text-indigo-700">All →</Link>
+                </div>
               </div>
-              {g.rows.length === 0 ? (
+              {g.loading ? (
+                <ul className="space-y-1">
+                  {Array.from({ length: 3 }).map((_, i) => <li key={i}><Skeleton className="h-10 rounded-xl" /></li>)}
+                </ul>
+              ) : g.rows.length === 0 ? (
                 <p className="py-6 text-center text-xs text-slate-400">{g.empty}</p>
               ) : (
                 <ul className="space-y-1">
@@ -303,15 +350,19 @@ export default function Dashboard() {
   const { user } = useAuth();
   const firstName = user?.name ? String(user.name).trim().split(/\s+/)[0] : '';
   const [view, setView] = useState('metrics'); // 'metrics' | 'pulse'
+  // Workshop Activity date filter — how many trailing months of the 12-month
+  // series to show. Preset ranges keep the control to a single clean tap.
+  const [wsMonths, setWsMonths] = useState(12);
 
   const fetcher = useCallback(async () => {
     // The KPI summary is the one critical call (drives the headline counts + fleet
     // composition). The auxiliary feeds degrade to empty on failure, so a flaky
     // trends/overdue/expiring endpoint can never blank the whole dashboard.
     const safe = (fallback) => () => ({ data: { data: fallback } });
-    const emptyFlags = { contract_expiry: { count: 0, items: [] }, invoice_overdue: { count: 0, items: [] }, inspection_due: { count: 0, items: [] } };
+    const emptyFlags = { contract_expiry: { count: 0, items: [] }, in_maintenance: { count: 0, items: [] }, invoice_overdue: { count: 0, items: [] }, inspection_due: { count: 0, items: [] } };
     const emptyBilling = { paid: 0, partial: 0, not_paid: 0, unsynced: 0, pending: 0, total: 0, outstanding_balance: 0 };
-    const [kpiRes, expRes, overRentRes, overMaintRes, trendsRes, flagsRes, billingRes] = await Promise.all([
+    const emptyOversight = { mileage_flags: 0, severity_mismatches: 0, misdiagnoses: 0, awaiting_parts: 0, left_garage: 0, resolved_transfers: 0 };
+    const [kpiRes, expRes, overRentRes, overMaintRes, trendsRes, flagsRes, billingRes, oversightRes] = await Promise.all([
       api.get('/Dashboard', { params: { expiring_days: 7 } }),
       api.get('/Fleet/expiring', { params: { days: 30 } }).catch(safe([])),
       api.get('/Dashboard/overdue-rentals').catch(safe([])),
@@ -319,13 +370,16 @@ export default function Dashboard() {
       api.get('/Dashboard/trends', { params: { months: 12 } }).catch(safe({ cost: [], downtime: [] })),
       api.get('/Dashboard/proactive-flags', { params: { days: 7 } }).catch(safe(emptyFlags)),
       api.get('/Invoice/status-summary').catch(safe(emptyBilling)),
+      api.get('/Oversight/overview').catch(safe(emptyOversight)),
     ]);
     // Merge overdue rentals + maintenance into one "attention needed" list,
     // most-overdue first. Monitoring only — nothing here auto-closes a contract.
     const rentals = (overRentRes.data.data || []).map((r) => ({ ...r, kind: 'Rental' }));
     const maint = (overMaintRes.data.data || []).map((r) => ({ ...r, kind: 'Maintenance' }));
     return {
-      kpis: kpiRes.data.data || {},
+      // Fold the workflow-oversight roll-up (mileage / severity / mis-diagnosis / waiting-for-parts
+      // counts) into the KPI object so the oversight KPI tiles read straight from `kpis[card.key]`.
+      kpis: { ...(kpiRes.data.data || {}), ...(oversightRes.data.data || emptyOversight) },
       expiring: (expRes.data.data || []).slice(0, 8),
       overdue: [...rentals, ...maint].sort((a, b) => (b.days_overdue || 0) - (a.days_overdue || 0)),
       trends: trendsRes.data.data || { cost: [], downtime: [] },
@@ -347,11 +401,7 @@ export default function Dashboard() {
   const available = fleet.available || 0;
   const rented = fleet.rented || 0;
   const maint = fleet.maintenance || 0;
-  const outOfOrder = fleet.out_of_order || 0;
   const utilization = fleetTotal ? Math.round((rented / fleetTotal) * 100) : 0;
-  // Dead capacity = fleet not earning because it's in the shop / out of order.
-  const deadCount = maint + outOfOrder;
-  const downtimePct = fleetTotal ? Math.round((deadCount / fleetTotal) * 100) : 0;
 
   // Headline performance band — derived entirely from the real 12-month trend
   // series already fetched, so the numbers always agree with the charts below.
@@ -360,7 +410,16 @@ export default function Dashboard() {
   const last = (arr, k) => Number(arr[arr.length - 1]?.[k]) || 0;
   const prev = (arr, k) => Number(arr[arr.length - 2]?.[k]) || 0;
   const spend12mo = costSeries.reduce((s, m) => s + (Number(m.value) || 0), 0);
-  const totalVisits = costSeries.reduce((s, m) => s + (Number(m.visits) || 0), 0);
+  // Workshop Activity slice — the last N months of the trend, per the chosen
+  // preset. The headline visit count, the range caption and the chart all follow.
+  const wsCount = Math.min(wsMonths, costSeries.length);
+  const wsSeries = wsCount > 0 ? costSeries.slice(costSeries.length - wsCount) : costSeries;
+  const wsVisits = wsSeries.reduce((s, m) => s + (Number(m.visits) || 0), 0);
+  const wsRangeLabel = wsSeries.length
+    ? wsSeries.length === 1
+      ? wsSeries[0].label
+      : `${wsSeries[0].label} – ${wsSeries[wsSeries.length - 1].label}`
+    : '';
 
   // Headline percent for the floating page gauge: fleet utilization.
   usePageStat({
@@ -370,16 +429,15 @@ export default function Dashboard() {
     hint: `${rented} of ${fleetTotal} cars currently rented out`,
   });
 
-  // Fleet Status — a four-bucket live snapshot for the headline donut. The three
-  // operational states plus a single "Unavailable" catch-all (out-of-order,
-  // suspended, office-use, returned, sold, disposed, other) so the slices always
-  // sum to the true fleet total with nothing dropped.
-  const unavailable = Math.max(0, fleetTotal - available - rented - maint);
+  // Fleet Status — a live snapshot for the headline donut, limited to the three
+  // operational states the team actually works with. The "Unavailable" catch-all
+  // (sold/disposed/office-use/other) was dropped because those cars surface in no
+  // list, so the donut totals only the active, accounted-for fleet.
+  const activeFleet = available + rented + maint;
   const fleetStatusSegments = [
-    { label: 'Available',   value: available,   color: 'green'  },
-    { label: 'On Rent',     value: rented,      color: 'blue'   },
-    { label: 'Maintenance', value: maint,       color: 'yellow' },
-    { label: 'Unavailable', value: unavailable, color: 'red'    },
+    { label: 'Available',   value: available, color: 'green'  },
+    { label: 'On Rent',     value: rented,    color: 'blue'   },
+    { label: 'Maintenance', value: maint,     color: 'yellow' },
   ];
 
   // The Gatra-style "Statistics" column — real month-over-month KPIs, each backed by
@@ -411,7 +469,7 @@ export default function Dashboard() {
       },
       {
         icon: <Icon.Car className="h-4 w-4" />, tone: 'violet', label: 'Cars in Maintenance',
-        value: Number(kpis.cars_in_maintenance || 0).toLocaleString(), to: '/maintenance',
+        value: Number(kpis.cars_in_maintenance || 0).toLocaleString(), to: '/maintenance-workflow',
       },
     ]),
   ];
@@ -420,24 +478,29 @@ export default function Dashboard() {
   // and a tooltip that defines the metric. The whole tile links via MetricCard's `to`.
   const cards = [
     {
+      label: 'Fixed This Month', key: 'fixed_this_month', tone: 'emerald', icon: <Icon.TrendUp className="h-5 w-5" />,
+      to: '/maintenance-workflow', hint: 'Re-inspected & back in service',
+      tooltip: 'Maintenance tickets completed this calendar month — re-inspected, signed off and returned to service.',
+    },
+    {
       label: 'Pending Approvals', key: 'pending_approvals', tone: 'amber', icon: <Icon.Check className="h-5 w-5" />,
       to: '/maintenance-approvals', hint: 'Awaiting sign-off',
       tooltip: 'Maintenance bills submitted by the garage that still need a manager to approve before they are booked as cost.',
     },
     {
-      label: 'Overdue Rentals', key: 'overdue_rentals', tone: 'red', icon: <Icon.Clock className="h-5 w-5" />,
-      to: '/overdue-rentals', hint: 'Past estimated return date',
-      tooltip: 'Open rental contracts whose expected return date has already passed — contact the customer for an extension.',
+      label: 'Overdue Maintenance', key: 'overdue_maintenance', tone: 'red', icon: <Icon.Clock className="h-5 w-5" />,
+      to: '/maintenance-workflow', hint: 'In the shop past expected return',
+      tooltip: 'Cars whose maintenance is still open past its expected completion date — stalled repairs to chase before they eat more downtime.',
     },
     {
-      label: 'Expiring Documents', key: 'expiring_registrations', tone: 'amber', icon: <Icon.Alert className="h-5 w-5" />,
-      to: '/registrations', hint: 'Registration / insurance ≤ 7 days',
-      tooltip: 'Vehicles whose registration (Mulkiya) or insurance expires within the next 7 days.',
+      label: 'Invoice Due (Left Garage)', key: 'left_garage', tone: 'amber', icon: <Icon.Truck className="h-5 w-5" />,
+      to: '/oversight/left-garage', hint: 'Car back, bill not collected',
+      tooltip: 'Cars that have physically left the garage but whose repair invoice is still outstanding — the garages to chase for a bill so cost is booked accurately.',
     },
     {
-      label: 'Vehicles For Sale', key: 'vehicles_for_sale', tone: 'violet', icon: <Icon.Flag className="h-5 w-5" />,
-      to: '/vehicles', hint: 'Flagged for disposal',
-      tooltip: 'Cars flagged to be sold or disposed and removed from the active rental fleet.',
+      label: 'Resolved Transfers', key: 'resolved_transfers', tone: 'violet', icon: <Icon.ArrowRight className="h-5 w-5" />,
+      to: '/oversight/resolved-transfers', hint: 'Moved with all faults fixed',
+      tooltip: 'Cars a supervisor transferred out even though every fault was already fixed — logged with a required note for accountability.',
     },
     {
       label: 'Negative Yield', key: 'negative_yield', value: (k) => k.negative_yield?.count, tone: 'red', icon: <Icon.TrendDown className="h-5 w-5" />,
@@ -445,9 +508,24 @@ export default function Dashboard() {
       tooltip: 'Cars whose real net profit over the last 12 months is below what was spent repairing them — money-losers to review.',
     },
     {
-      label: 'Repairs Without Cost', key: 'uncosted_repairs', tone: 'indigo', icon: <Icon.Coins className="h-5 w-5" />,
-      to: '/cost-capture', hint: 'Tap to enter repair amounts (12mo)',
-      tooltip: 'Closed repairs in the last 12 months that have no cost recorded yet — fill these in for accurate per-car profit.',
+      label: 'Waiting for Parts', key: 'awaiting_parts', tone: 'amber', icon: <Icon.Wrench className="h-5 w-5" />,
+      to: '/maintenance-recommendations', hint: 'Held until the spare arrives',
+      tooltip: 'Cars approved for maintenance but sitting in the recommendation queue until the ordered spare part arrives.',
+    },
+    {
+      label: 'Severity Review', key: 'severity_mismatches', tone: 'red', icon: <Icon.Alert className="h-5 w-5" />,
+      to: '/oversight/severity', hint: 'Grade looks too low',
+      tooltip: 'Tickets graded Routine or Moderate where a critical-risk keyword, a breakdown or a red-graded car says the fault should be Critical.',
+    },
+    {
+      label: 'Mis-Diagnosis', key: 'misdiagnoses', tone: 'red', icon: <Icon.XCircle className="h-5 w-5" />,
+      to: '/oversight/misdiagnoses', hint: 'Inspector calls a supervisor overruled',
+      tooltip: 'Faults the inspector diagnosed that a supervisor later overruled as wrong (the "mark fault incorrect" override).',
+    },
+    {
+      label: 'Mileage Discrepancies', key: 'mileage_flags', tone: 'indigo', icon: <Icon.Gauge className="h-5 w-5" />,
+      to: '/oversight/mileage', hint: 'Odometer didn\'t match expected',
+      tooltip: 'Workflow stages where the odometer entered ran backwards, jumped, or came from a garage test-drive — with the before/after readings.',
     },
   ];
 
@@ -508,71 +586,60 @@ export default function Dashboard() {
         {/* ── Command band — Available Cars + Workshop Activity on the left, the
             Statistics column on the right. Every widget maps to a real endpoint. ── */}
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          {/* Left column — Available Cars (condition bar) + Workshop Activity (line) */}
-          <div className="space-y-6">
-            {/* Available Cars — the count free to rent, with a live condition split. */}
-            <Card className="p-5">
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex items-center gap-3">
-                  <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-100 text-emerald-600"><Icon.Car className="h-5 w-5" /></span>
-                  <div>
-                    <p className="flex items-center gap-1 text-xs font-medium text-slate-500">
-                      Available Cars
-                      <InfoTip content="Cars free to rent right now (OfficeManager 'available'). The bar below splits the active fleet by condition — Good (ready), Needs Service (in the shop) and Damaged (out of order)." />
-                    </p>
-                    <p className="font-display text-2xl font-bold leading-none tabular-nums text-slate-900">
-                      {loading ? '—' : available.toLocaleString()}
-                    </p>
-                  </div>
+          {/* Left column — Workshop Activity (line). Fills the column height so it
+              sits level with the Statistics card beside it. */}
+          <Card className="flex h-full flex-col p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-100 text-amber-600"><Icon.Wrench className="h-4 w-4" /></span>
+                <div>
+                  <p className="text-xs font-medium text-slate-500">Workshop Activity</p>
+                  <p className="font-display text-xl font-bold leading-none tabular-nums text-slate-900">
+                    {loading ? '—' : `${wsVisits.toLocaleString()} visits`}
+                  </p>
+                  <p className="mt-1 text-[11px] font-medium text-slate-400">
+                    {loading ? '' : `${wsRangeLabel} · repair visits`}
+                  </p>
                 </div>
-                <Link to="/vehicles" className="shrink-0 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-500 transition hover:bg-slate-50 hover:text-slate-700">See All</Link>
               </div>
-              <div className="mt-4">
-                {loading ? (
-                  <Skeleton className="h-3 w-full rounded-full" />
-                ) : (
-                  <TimelineBar
-                    segments={[
-                      { label: 'Good Condition', value: available, tone: 'success' },
-                      { label: 'Needs Service', value: maint, tone: 'amber' },
-                      { label: 'Damaged', value: outOfOrder, tone: 'red' },
-                    ]}
-                  />
-                )}
-              </div>
-            </Card>
-
-            {/* Workshop Activity — real monthly repair-visit trend (replaces the map/bookings widget). */}
-            <Card className="p-5">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-100 text-amber-600"><Icon.Wrench className="h-4 w-4" /></span>
-                  <div>
-                    <p className="text-xs font-medium text-slate-500">Workshop Activity</p>
-                    <p className="font-display text-xl font-bold leading-none tabular-nums text-slate-900">
-                      {loading ? '—' : `${totalVisits.toLocaleString()} visits`}
-                    </p>
-                  </div>
+              {/* Range presets — one-tap trailing windows over the 12-month series. */}
+              {!loading && costSeries.length > 0 && (
+                <div className="inline-flex rounded-lg bg-slate-100 p-0.5">
+                  {[
+                    { m: 3, label: '3M' },
+                    { m: 6, label: '6M' },
+                    { m: 12, label: '12M' },
+                  ].map((opt) => (
+                    <button
+                      key={opt.m}
+                      type="button"
+                      onClick={() => setWsMonths(opt.m)}
+                      className={`rounded-md px-2.5 py-1 text-[11px] font-semibold transition ${
+                        wsMonths === opt.m ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
                 </div>
-                <span className="rounded-lg bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-500">12 mo</span>
-              </div>
-              <div className="mt-2">
-                {loading ? (
-                  <Skeleton className="h-[120px] w-full rounded-xl" />
-                ) : (
-                  <LineChart
-                    data={costSeries.map((m) => ({ label: m.label, value: m.visits }))}
-                    color="amber"
-                    height={120}
-                    yTicks={3}
-                    format={(v) => `${Math.round(v)}`}
-                    tickFormat={(v) => `${Math.round(v)}`}
-                    valueLabel="Visits"
-                  />
-                )}
-              </div>
-            </Card>
-          </div>
+              )}
+            </div>
+            <div className="mt-3 flex-1">
+              {loading ? (
+                <Skeleton className="h-full min-h-[160px] w-full rounded-xl" />
+              ) : (
+                <LineChart
+                  data={wsSeries.map((m) => ({ label: m.label, value: m.visits }))}
+                  color="amber"
+                  height={200}
+                  yTicks={3}
+                  format={(v) => `${Math.round(v)}`}
+                  tickFormat={(v) => `${Math.round(v)}`}
+                  valueLabel="Visits"
+                />
+              )}
+            </div>
+          </Card>
 
           {/* Right — Statistics: real MoM KPIs with trailing sparklines. */}
           <Card className="p-5">
@@ -603,9 +670,9 @@ export default function Dashboard() {
             <FleetStatusCard
               className="lg:col-span-2"
               title="Fleet Status"
-              centerLabel="Total Fleet"
+              centerLabel="Active Fleet"
               unit="cars"
-              total={fleetTotal}
+              total={activeFleet}
               segments={fleetStatusSegments}
               headerRight={
                 <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200">
@@ -616,35 +683,34 @@ export default function Dashboard() {
             />
           )}
 
-          {/* Compact utilization summary — the two headline percentages that the
-              removed Rent Status / Capacity gauges used to show, as plain numbers. */}
-          <Card className="flex flex-col justify-center gap-5 p-6">
-            <div>
-              <p className="flex items-center gap-1 text-xs font-medium text-slate-500">
-                Fleet Utilization
-                <InfoTip content="Share of the fleet earning right now — rented ÷ total." />
-              </p>
-              <p className="mt-1 font-display text-3xl font-bold tabular-nums text-slate-900">
-                {loading ? '—' : `${utilization}%`}
-              </p>
-              <p className="mt-0.5 text-xs text-slate-400">{loading ? '' : `${rented} of ${fleetTotal} cars earning`}</p>
-            </div>
-            <div className="border-t border-slate-100 pt-5">
-              <p className="flex items-center gap-1 text-xs font-medium text-slate-500">
-                Idle Capacity
-                <InfoTip content="Share of the fleet not earning because it's in the shop or out of order." />
-              </p>
-              <p className={`mt-1 font-display text-3xl font-bold tabular-nums ${downtimePct > 0 ? 'text-amber-600' : 'text-slate-900'}`}>
-                {loading ? '—' : `${downtimePct}%`}
-              </p>
-              <p className="mt-0.5 text-xs text-slate-400">{loading ? '' : `${deadCount} cars in shop / out of order`}</p>
+          {/* Fleet split — a compact legend of the active-fleet composition
+              (Available / On Rent / Maintenance), matching the donut beside it. */}
+          <Card className="flex flex-col p-6">
+            <p className="flex items-center gap-1 text-sm font-semibold text-slate-800">
+              Fleet Split
+              <InfoTip content="How the active fleet breaks down right now — cars free to rent, out on rent, and in maintenance." />
+            </p>
+            <div className="mt-5 flex-1 space-y-3.5 border-t border-slate-100 pt-5">
+              {[
+                { label: 'Available',   value: available, dot: '#22C55E' },
+                { label: 'On Rent',     value: rented,    dot: '#2F7EF6' },
+                { label: 'Maintenance', value: maint,     dot: '#F5C518' },
+              ].map((s) => (
+                <div key={s.label} className="flex items-center gap-3">
+                  <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: s.dot }} />
+                  <span className="flex-1 text-sm font-medium text-slate-600">{s.label}</span>
+                  <span className="text-sm font-semibold tabular-nums text-slate-900">
+                    {loading ? '—' : s.value.toLocaleString()}
+                  </span>
+                </div>
+              ))}
             </div>
           </Card>
         </div>
 
         {/* KPI cards */}
         {loading ? (
-          <MetricGridSkeleton count={5} />
+          <MetricGridSkeleton count={9} />
         ) : (
           <MetricGrid cols={4}>
             {cards.filter((card) => SHOW_FINANCIALS || card.key !== 'negative_yield').map((card) => (
@@ -726,47 +792,6 @@ export default function Dashboard() {
             </div>
           </Card>
         </div>
-
-        {/* Maintenance Board — the operational core of the product, front and center.
-            Reuses the live board panel so the Dashboard never drifts from /maintenance. */}
-        <section className="space-y-4">
-          <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <h2 className="text-xl font-bold tracking-tight text-slate-900">Maintenance Board</h2>
-              <p className="mt-1 text-sm text-slate-500">
-                Cars currently in the garage — due dates, issues{SHOW_FINANCIALS ? ', cost' : ''} and live status.
-              </p>
-            </div>
-            <div className="flex items-center gap-4">
-              {SHOW_FINANCIALS && (
-                <Link to="/maintenance-analytics" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">Cost Analytics →</Link>
-              )}
-              <Link to="/maintenance" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">Open full board →</Link>
-            </div>
-          </div>
-          <Card className="flex flex-col items-start justify-between gap-4 p-5 sm:flex-row sm:items-center">
-            <div className="flex items-center gap-4">
-              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-600">
-                <Icon.Wrench className="h-6 w-6" />
-              </span>
-              <div>
-                <p className="font-display text-2xl font-bold leading-none tabular-nums text-slate-900">
-                  {loading ? '—' : maint.toLocaleString()}
-                </p>
-                <p className="mt-1 text-sm text-slate-500">
-                  cars currently in the workshop{outOfOrder ? ` · ${outOfOrder} out of order` : ''}
-                </p>
-              </div>
-            </div>
-            <Link
-              to="/maintenance"
-              className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-indigo-700"
-            >
-              Open board
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
-            </Link>
-          </Card>
-        </section>
 
         {/* Expiring soon — registration / insurance due in the next 30 days,
             shown as glanceable countdown-ring cards instead of a flat table. */}

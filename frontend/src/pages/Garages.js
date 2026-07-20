@@ -37,7 +37,7 @@ export default function Garages() {
     <div className="py-8">
       <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
         <PageHeader title="Garages" subtitle="Track every garage's workload, delays and reliability — and act on cars stuck too long.">
-          <Link to="/maintenance" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">Maintenance board →</Link>
+          <Link to="/maintenance-workflow" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">Maintenance board →</Link>
         </PageHeader>
 
         {error && <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error}</div>}

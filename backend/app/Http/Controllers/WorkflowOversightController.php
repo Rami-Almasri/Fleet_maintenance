@@ -6,6 +6,7 @@ use App\Helpers\ResponseHelper;
 use App\Models\FindingKeyword;
 use App\Models\Maintenance;
 use App\Models\User;
+use App\Models\Vehicle;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 
@@ -678,6 +679,13 @@ class WorkflowOversightController extends Controller
             $misdiag  = $this->misdiagnoses($request)->getData(true)['data'] ?? [];
             $resolved = $this->resolvedTransfers($request)->getData(true)['data'] ?? [];
 
+            // Cars approved for maintenance but held in the recommendation queue waiting on a spare
+            // part (same count the /maintenance-recommendations board shows as "waiting for parts").
+            $awaitingParts = Maintenance::recommendationQueue()
+                ->where('workflow_status', Maintenance::WF_AWAITING_PARTS)
+                ->whereHas('vehicle', fn ($q) => $q->whereIn('status', Vehicle::ACTIVE_STATUSES))
+                ->count();
+
             return ResponseHelper::SuccessResponse([
                 'mileage_flags'        => $mileage['total'] ?? 0,
                 'mileage_discrepancies'=> $mileage['discrepancies'] ?? 0,
@@ -687,6 +695,7 @@ class WorkflowOversightController extends Controller
                 'severity_critical'    => $severity['critical'] ?? 0,
                 'misdiagnoses'         => $misdiag['total'] ?? 0,
                 'resolved_transfers'   => $resolved['total'] ?? 0,
+                'awaiting_parts'       => $awaitingParts,
             ], 'Workflow oversight overview retrieved', 200);
         } catch (\Throwable $e) {
             return ResponseHelper::fromException($e);

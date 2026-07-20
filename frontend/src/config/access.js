@@ -22,7 +22,6 @@ export const ROLE_BLOCKED_PATHS = {
     '/ops-dashboard',                // Delivery Command
     '/orders-board',                 // Orders Board
     '/overdue-rentals',              // Overdue Rentals
-    '/analytics',                    // Analytics
     '/vendors',                      // Vendors
     '/garages',                      // Garages
     '/finding-keywords',             // Keyword Risk
@@ -35,7 +34,6 @@ export const ROLE_BLOCKED_PATHS = {
   // boards; walled off from the fleet-wide command dashboards.
   supervisor: [
     '/',                   // Dashboard
-    '/analytics',          // Analytics
   ],
 };
 

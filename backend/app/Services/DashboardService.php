@@ -99,6 +99,7 @@ class DashboardService
             'negative_yield'            => $this->negativeYield(),
             'uncosted_repairs'          => $this->uncostedRepairs(),
             'pending_approvals'         => $this->pendingApprovals(),
+            'fixed_this_month'          => $this->fixedThisMonth(),
             'fleet_status'              => $this->fleetStatus(),
         ]);
     }
@@ -140,6 +141,21 @@ class DashboardService
             ->get();
 
         return $visits->count();
+    }
+
+    /**
+     * Workflow tickets FIXED this calendar month — re-inspected, signed off and returned to service
+     * (workflow_status = closed, wf_closed_at in the current month). The "throughput / good news"
+     * counter next to the outstanding-work tiles.
+     */
+    public function fixedThisMonth(): int
+    {
+        return Maintenance::where('workflow_status', Maintenance::WF_CLOSED)
+            ->whereBetween('wf_closed_at', [
+                Carbon::now()->startOfMonth(),
+                Carbon::now()->endOfMonth(),
+            ])
+            ->count();
     }
 
     /** Maintenance jobs over the threshold awaiting manual approval. */
@@ -520,14 +536,110 @@ class DashboardService
             $invSummary  = $this->overdueInvoicesSummary();
             $invItems    = $this->overdueInvoicesList(5);
             $inspections = $this->inspectionsDueList();
+            $inShop      = $this->inMaintenanceList();
 
             return [
                 'window_days'     => $days,
                 'contract_expiry' => ['count' => count($rentals),      'items' => array_slice($rentals, 0, 5)],
+                // Cars physically in the workshop right now, tagged with the lifecycle stage they sit at.
+                'in_maintenance'  => ['count' => count($inShop),        'items' => array_slice($inShop, 0, 5)],
                 // count/total are the TRUE totals of the whole set; items is just the top-5 shown.
                 'invoice_overdue' => ['count' => $invSummary['count'], 'total' => $invSummary['total'], 'items' => $invItems],
                 'inspection_due'  => ['count' => count($inspections),  'items' => array_slice($inspections, 0, 5)],
             ];
+        });
+    }
+
+    /**
+     * Cars physically in the workshop right now — every active maintenance TICKET (PAUSABLE_STATES:
+     * pending dispatch → under repair → final QA → ready for pickup), each tagged with the human
+     * lifecycle stage it currently sits at and its garage. Newest movement first. Powers the
+     * "In Maintenance" proactive-flags column so the team sees which cars are in and at what stage.
+     *
+     * @return array<int,array{id:?int, plate:?string, car:?string, stage:string, garage:?string}>
+     */
+    public function inMaintenanceList(int $limit = 25): array
+    {
+        // workflow_status → short human stage label (mirrors the board / live-position wording).
+        $stages = [
+            Maintenance::WF_INSPECTION_PENDING  => 'Pending dispatch',
+            Maintenance::WF_AWAITING_DISPATCH   => 'Awaiting pickup',
+            Maintenance::WF_IN_TRANSIT          => 'In transit',
+            Maintenance::WF_UNDER_REPAIR        => 'Under repair',
+            Maintenance::WF_REPAIR_REVIEW       => 'Repair review',
+            Maintenance::WF_READY_REINSPECTION  => 'Final QA',
+            Maintenance::WF_REINSPECTION_FAILED => 'QA failed',
+            Maintenance::WF_READY_FOR_PICKUP    => 'Ready · pickup',
+        ];
+
+        return Maintenance::query()
+            ->whereIn('workflow_status', Maintenance::PAUSABLE_STATES)
+            ->with(['vehicle:id,plate_no,make,model', 'vendor:id,name'])
+            ->orderByDesc('last_state_change_at')
+            ->orderByDesc('id')
+            ->limit($limit)
+            ->get(['id', 'vehicle_id', 'vendor_id', 'garage', 'workflow_status', 'plate', 'car_label', 'last_state_change_at'])
+            ->map(fn ($t) => [
+                'id'     => $t->vehicle_id,
+                'plate'  => $t->plate ?: $t->vehicle?->plate_no,
+                'car'    => $t->car_label ?: trim(($t->vehicle?->make ?? '') . ' ' . ($t->vehicle?->model ?? '')) ?: null,
+                'stage'  => $stages[$t->workflow_status] ?? $t->workflow_status,
+                'garage' => $t->vendor?->name ?: ($t->garage ?: null),
+            ])
+            ->all();
+    }
+
+    /**
+     * The cars that have been in the workshop the MOST over a trailing window — ranked by number of
+     * distinct workshop visits (vehicle|out_date, the same visit definition Workshop Visits / trends /
+     * uncostedRepairs use). Powers the "Most in Maintenance" proactive-flags column, whose date filter
+     * drives $days. Returns the fleet-wide car count for the window plus the top-N repeat offenders.
+     *
+     * @return array{count:int, window_days:int, items:array<int,array{id:int, plate:?string, car:?string, visits:int, last_visit:?string}>}
+     */
+    public function mostMaintained(int $days = 90, int $limit = 5): array
+    {
+        return $this->remember("most_maintained:{$days}:{$limit}", self::CACHE_TTL, function () use ($days, $limit) {
+            $cutoff = Carbon::today()->subDays($days)->toDateString();
+
+            // A "visit" is one (vehicle, out_date) group of the live workshop log (sheet + manual) with a
+            // non-null out_date — the IDENTICAL definition maintenanceTrends() and uncostedRepairs() use,
+            // so a car's count here always reconciles with the Workshop Visits metric. The INNER join to
+            // vehicles (+ soft-delete guard + GONE_STATUSES exclusion) means a sold / disposed / returned
+            // or soft-deleted car — and any orphaned maintenance row — can never rank.
+            $base = fn () => DB::table('maintenances as m')
+                ->join('vehicles as v', 'v.id', '=', 'm.vehicle_id')
+                ->whereNull('v.deleted_at')
+                ->whereNotIn('v.status', PlateResolver::GONE_STATUSES)
+                ->whereIn('m.origin', Maintenance::WORKSHOP_LOG_ORIGINS)
+                ->whereNotNull('m.out_date')
+                ->whereDate('m.out_date', '>=', $cutoff);
+
+            // How many distinct (in-fleet) cars saw the shop in the window (the badge total).
+            $carCount = (int) $base()->distinct()->count('m.vehicle_id');
+
+            // The top repeat-visitors: most distinct visit-days first, then most-recently-in as a tiebreak.
+            $rows = $base()
+                ->select(
+                    'v.id AS vehicle_id', 'v.plate_no', 'v.make', 'v.model',
+                    DB::raw('COUNT(DISTINCT m.out_date) AS visits'),
+                    DB::raw('MAX(m.out_date) AS last_visit')
+                )
+                ->groupBy('v.id', 'v.plate_no', 'v.make', 'v.model')
+                ->orderByDesc('visits')
+                ->orderByDesc(DB::raw('MAX(m.out_date)'))
+                ->limit($limit)
+                ->get();
+
+            $items = $rows->map(fn ($r) => [
+                'id'         => (int) $r->vehicle_id,
+                'plate'      => $r->plate_no,
+                'car'        => trim(($r->make ?? '') . ' ' . ($r->model ?? '')) ?: null,
+                'visits'     => (int) $r->visits,
+                'last_visit' => $r->last_visit,
+            ])->all();
+
+            return ['count' => $carCount, 'window_days' => $days, 'items' => $items];
         });
     }
 

@@ -21,6 +21,25 @@ import ComplaintIntakeModal from '../components/workflow/ComplaintIntakeModal';
 const REASON_LABEL = { test_drive: 'Test drive', customer_reported: 'Customer complaint', periodic: 'Routine (system)' };
 const REASON_TONE = { test_drive: 'violet', customer_reported: 'amber', periodic: 'blue' };
 
+// The car's live operational status → a small context pill on the card, so the reviewer knows at a
+// glance whether the car is free to inspect before deciding.
+const STATUS_META = {
+  available:   { label: 'Available',      cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
+  ready:       { label: 'Available',      cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
+  rented:      { label: 'On rent',        cls: 'bg-amber-50 text-amber-700 ring-amber-200' },
+  maintenance: { label: 'In Workshop',    cls: 'bg-rose-50 text-rose-700 ring-rose-200' },
+  in_transit:  { label: 'In transit',     cls: 'bg-blue-50 text-blue-700 ring-blue-200' },
+};
+
+function StatusPill({ status }) {
+  const meta = STATUS_META[status] || { label: String(status).replace(/_/g, ' '), cls: 'bg-slate-100 text-slate-600 ring-slate-200' };
+  return (
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ring-1 ring-inset ${meta.cls}`}>
+      {meta.label}
+    </span>
+  );
+}
+
 // Rule severity → the colour of the dot next to each system-detected rule.
 const SEV_DOT = { critical: 'bg-red-500', moderate: 'bg-amber-500', routine: 'bg-emerald-500' };
 
@@ -110,99 +129,229 @@ function SystemDetail({ detail, suggested }) {
   );
 }
 
+// Exact, human timestamp — shown as the tooltip on relative times and as a secondary line.
+function fmtDateTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+// Fault severity → priority chip. Only meaningful once the inspector has graded the fault; a fresh
+// driver request has none yet (it's set at the Decide step).
+const SEV_META = {
+  critical: { label: 'Critical', emoji: '🔴', cls: 'bg-rose-50 text-rose-700 ring-rose-200' },
+  high:     { label: 'High',     emoji: '🟠', cls: 'bg-orange-50 text-orange-700 ring-orange-200' },
+  moderate: { label: 'Moderate', emoji: '🟡', cls: 'bg-amber-50 text-amber-700 ring-amber-200' },
+  routine:  { label: 'Routine',  emoji: '🟢', cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
+};
+
+// Vehicle avatar — the fleet has no photo column, so we render a branded make-initials glyph tile
+// (a car silhouette watermark behind the make's first letters) as a consistent stand-in.
+function VehicleAvatar({ make }) {
+  const initials = (make || '?').trim().slice(0, 2).toUpperCase();
+  return (
+    <div className="relative flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-gradient-to-br from-indigo-500 to-indigo-700 text-white ring-1 ring-inset ring-white/20">
+      <Icon.Car className="absolute h-9 w-9 opacity-20" />
+      <span className="relative text-sm font-bold tracking-wide">{initials}</span>
+    </div>
+  );
+}
+
+// One compact info tile: icon + label on top, value (+ optional sub) below. The grid of these is the
+// card's "at a glance" data block.
+function MetaTile({ icon, label, value, sub, muted }) {
+  return (
+    <div className="rounded-lg bg-slate-50 px-2.5 py-2 ring-1 ring-inset ring-slate-100">
+      <p className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+        {icon}{label}
+      </p>
+      <p className={`mt-0.5 truncate text-xs font-semibold ${muted ? 'text-slate-400' : 'text-slate-700'}`} title={typeof value === 'string' ? value : undefined}>
+        {value ?? '—'}
+      </p>
+      {sub && <p className="truncate text-[10px] text-slate-400">{sub}</p>}
+    </div>
+  );
+}
+
 function RequestCard({ tk, onApprove, onReject, onAcknowledge, ackBusy }) {
+  const [expanded, setExpanded] = useState(false);
   const reasonTone = REASON_TONE[tk.trigger_reason] || 'slate';
   const reasonLabel = REASON_LABEL[tk.trigger_reason] || tk.trigger_reason;
   const requested = tk.handoffs?.requested;
   // System-generated when there's no human requester on the request handoff (the mileage scanner raises
   // it with requested_by = null). trigger_detail carries the "why" snapshot for these.
   const isSystem = !requested?.user_id;
-  // Raised by the Proactive Diagnostic Monitor before the review gate existed — already sitting in the
-  // Inspector's actual queue (workflow_status = inspection_requested), never reviewed. Approve/Reject
-  // don't apply (there's no stage left to send it to or pull it back from); Acknowledge just closes the
-  // accountability gap. See MaintenanceWorkflowService::pendingReview().
   const isLegacy = !!tk.is_legacy_unreviewed;
   // The car is out on hire — it can't be sent for inspection until it's physically back, so approval is
   // held (the downtime clock still counts against it; see the 15-day test-based rule).
   const awaitingReturn = tk.operational_status === 'rented';
 
+  const sev = tk.fault_severity ? SEV_META[tk.fault_severity] : null;
+  const complaint = (tk.customer_complaint || '').trim();
+  const isLong = complaint.length > 140;
+  const identityBits = [tk.vehicle_year, tk.vehicle_code && `#${tk.vehicle_code}`].filter(Boolean);
+
+  // Km driven since the last oil service (server computes it from the vehicle's service anchor).
+  const kmSince = tk.last_service?.km_since;
+
+  // Last-ready anchor — the SAME record the Post-Downtime check counts from. When its source is
+  // 'onboarding' the car has never actually been serviced, and the clock runs from its onboarding date
+  // (that's the "N days since last maintenance" the system flag shows).
+  const lm = tk.last_maintenance;
+  const lmOnboard = !!lm && (lm.reason === 'onboarding' || lm.source === 'onboarding');
+
   return (
-    <div className={`rounded-xl border bg-white p-4 shadow-soft ${isSystem ? 'border-indigo-200' : 'border-slate-200'}`}>
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <Link to={`/vehicles/${tk.vehicle_id}`} className="font-mono text-sm font-bold text-indigo-600 hover:text-indigo-700">
-            {tk.plate || `#${tk.id}`}
-          </Link>
-          <p className="truncate text-xs text-slate-400">{tk.car || 'Vehicle'}</p>
-        </div>
-        <div className="flex shrink-0 flex-col items-end gap-1">
-          {isSystem && (
-            <Badge tone="indigo"><span aria-hidden>🤖</span> System Auto-Check</Badge>
-          )}
-          <Badge tone={reasonTone}>{reasonLabel}</Badge>
+    <div className={`overflow-hidden rounded-2xl border bg-white shadow-soft transition hover:shadow-md ${isSystem ? 'border-indigo-200' : 'border-slate-200'}`}>
+      {/* ── Header: vehicle identity (primary) + classification badges ───────────────── */}
+      <div className="flex items-start gap-3 border-b border-slate-100 p-4">
+        <VehicleAvatar make={tk.vehicle_make} />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <Link to={`/vehicles/${tk.vehicle_id}`} className="truncate font-mono text-xl font-extrabold leading-tight text-slate-900 hover:text-indigo-600">
+              {tk.plate || `#${tk.id}`}
+            </Link>
+            <div className="flex shrink-0 flex-col items-end gap-1">
+              {isSystem
+                ? <Badge tone="indigo"><span aria-hidden>🤖</span> System</Badge>
+                : <Badge tone={reasonTone}>{reasonLabel}</Badge>}
+              {sev && (
+                <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ring-1 ring-inset ${sev.cls}`}>
+                  <span aria-hidden>{sev.emoji}</span> {sev.label}
+                </span>
+              )}
+            </div>
+          </div>
+          <p className="truncate text-sm font-semibold text-slate-600">{tk.car || 'Vehicle'}</p>
+          <div className="mt-1.5 flex flex-wrap items-center gap-2">
+            {tk.operational_status && <StatusPill status={tk.operational_status} />}
+            {tk.vehicle_odometer != null && (
+              <span className="inline-flex items-center gap-1 font-mono text-[11px] text-slate-500">
+                <Icon.Gauge className="h-3.5 w-3.5 text-slate-400" />{Number(tk.vehicle_odometer).toLocaleString()} km
+              </span>
+            )}
+            {identityBits.length > 0 && (
+              <span className="text-[11px] text-slate-400">{identityBits.join(' · ')}</span>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Human-raised requests carry the requester's free-text complaint; a system request shows its
-          agenda line here too, with the full rule breakdown in the panel below. */}
-      {tk.customer_complaint && (
-        <p className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">“{tk.customer_complaint}”</p>
-      )}
-
-      {isSystem && (tk.trigger_detail || (tk.suggested_findings || []).length > 0) && (
-        <SystemDetail detail={tk.trigger_detail} suggested={tk.suggested_findings} />
-      )}
-
-      {isLegacy && (
-        <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 ring-1 ring-inset ring-amber-200">
-          Raised before this review queue existed — already in Abu Maroof's queue and actionable there.
-          Acknowledge to close the sign-off gap; nothing else changes.
-        </p>
-      )}
-
-      {/* Last real inspection this car had before this request — context for the reviewer. */}
-      <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2">
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Last test</p>
-        {tk.last_test ? (
-          <div className="mt-0.5">
-            <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-slate-700">
-              {tk.last_test.severity && (
-                <span className={`h-1.5 w-1.5 rounded-full ${SEV_DOT[tk.last_test.severity] || 'bg-slate-400'}`} title={tk.last_test.severity} />
-              )}
-              <span className="font-medium">{dueDate(tk.last_test.at) || '—'}</span>
-              <span className="text-slate-400">· {tk.last_test.ago_days}d ago</span>
-              {tk.last_test.by && <span className="text-slate-400">· by {tk.last_test.by}</span>}
-            </div>
-            {tk.last_test.summary && <p className="mt-0.5 text-[11px] text-slate-500">{tk.last_test.summary}</p>}
+      <div className="space-y-3 p-4">
+        {/* ── Driver's report (expandable when long) ───────────────────────────────── */}
+        {complaint && (
+          <div className="rounded-lg bg-slate-50 px-3 py-2 ring-1 ring-inset ring-slate-100">
+            <p className="mb-0.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+              <Icon.Flag className="h-3 w-3" /> {isSystem ? 'Flagged reason' : 'What the driver reported'}
+            </p>
+            <p className={`text-xs italic text-slate-600 ${isLong && !expanded ? 'line-clamp-2' : ''}`}>“{complaint}”</p>
+            {isLong && (
+              <button type="button" onClick={() => setExpanded((v) => !v)} className="mt-0.5 text-[11px] font-semibold text-indigo-600 hover:text-indigo-700">
+                {expanded ? 'Show less' : 'Show more'}
+              </button>
+            )}
           </div>
-        ) : (
-          <p className="mt-0.5 text-xs text-slate-400">Never inspected before</p>
+        )}
+
+        {/* ── Attachments — the driver's photos/videos as previews ─────────────────── */}
+        {Array.isArray(tk.media) && tk.media.length > 0 && (
+          <div>
+            <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+              <Icon.Camera className="h-3 w-3" /> Attachments
+              <span className="rounded-full bg-slate-100 px-1.5 text-[10px] font-bold text-slate-500">{tk.media.length}</span>
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {tk.media.map((m) => (
+                <a
+                  key={m.id}
+                  href={m.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  title={m.note || m.original_name || (m.kind === 'image' ? 'Photo' : 'Video')}
+                  className="relative block h-16 w-16 shrink-0 overflow-hidden rounded-lg ring-1 ring-slate-200 transition hover:ring-2 hover:ring-indigo-400"
+                >
+                  {m.kind === 'image' && m.url ? (
+                    <img src={m.url} alt={m.original_name || 'Driver photo'} className="h-full w-full object-cover" />
+                  ) : (
+                    <span className="flex h-full w-full items-center justify-center bg-slate-800 text-white">
+                      <Icon.Video className="h-5 w-5" />
+                    </span>
+                  )}
+                </a>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {isSystem && (tk.trigger_detail || (tk.suggested_findings || []).length > 0) && (
+          <SystemDetail detail={tk.trigger_detail} suggested={tk.suggested_findings} />
+        )}
+
+        {/* ── At-a-glance data grid ────────────────────────────────────────────────── */}
+        <div className="grid grid-cols-2 gap-2">
+          <MetaTile
+            icon={<Icon.Users className="h-3 w-3" />}
+            label="Requested by"
+            value={isSystem ? 'System' : (requested?.name || 'Driver')}
+            sub={requested?.at ? ago(requested.at) : null}
+          />
+          <MetaTile
+            icon={<Icon.Clock className="h-3 w-3" />}
+            label="Requested"
+            value={requested?.at ? fmtDateTime(requested.at) : '—'}
+          />
+          <MetaTile
+            icon={<Icon.Wrench className="h-3 w-3" />}
+            label="Last maintenance"
+            value={!lm ? 'No record' : (lmOnboard ? 'None yet' : (dueDate(lm.at) || '—'))}
+            sub={!lm
+              ? null
+              : (lmOnboard
+                ? (lm.days_ago != null ? `${lm.days_ago}d since onboarding` : 'since onboarding')
+                : `${lm.days_ago != null ? `${lm.days_ago}d ago` : ''}${lm.reason === 'test' ? ' · inspection' : ''}`.trim())}
+            muted={!lm || lmOnboard}
+          />
+          <MetaTile
+            icon={<Icon.Gauge className="h-3 w-3" />}
+            label="Since oil service"
+            value={tk.last_service
+              ? (kmSince != null ? `${Number(kmSince).toLocaleString()} km` : `${Number(tk.last_service.odometer).toLocaleString()} km`)
+              : 'No record'}
+            sub={tk.last_service
+              ? (kmSince != null ? `since ${Number(tk.last_service.odometer).toLocaleString()} km` : 'at last service')
+              : null}
+            muted={!tk.last_service}
+          />
+        </div>
+
+        {isLegacy && (
+          <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 ring-1 ring-inset ring-amber-200">
+            Raised before this review queue existed — already in Abu Maroof's queue and actionable there.
+            Acknowledge to close the sign-off gap; nothing else changes.
+          </p>
+        )}
+
+        {!isLegacy && awaitingReturn && (
+          <p className="flex items-center gap-1.5 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 ring-1 ring-inset ring-amber-200">
+            <Icon.Clock className="h-3.5 w-3.5 shrink-0" />
+            Waiting for return — the car is with a customer. Review it once it's back and available to inspect.
+          </p>
         )}
       </div>
 
-      <div className="mt-3 flex items-center justify-between text-xs text-slate-400">
-        <span>Requested by {isSystem ? 'the system' : (requested?.name || 'a driver')} · {ago(requested?.at)}</span>
-      </div>
-
-      {!isLegacy && awaitingReturn && (
-        <p className="mt-3 flex items-center gap-1.5 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 ring-1 ring-inset ring-amber-200">
-          <Icon.Clock className="h-3.5 w-3.5 shrink-0" />
-          Waiting for return — the car is with a customer. Review it once it's back and available to inspect.
-        </p>
-      )}
-
-      <div className="mt-3 flex items-center justify-end gap-2 border-t border-slate-100 pt-3">
+      {/* ── Actions ──────────────────────────────────────────────────────────────── */}
+      <div className="flex items-center justify-end gap-2 border-t border-slate-100 bg-slate-50/50 px-4 py-3">
         {isLegacy ? (
-          <Button size="sm" variant="secondary" loading={ackBusy} onClick={() => onAcknowledge(tk)}>
-            <Icon.Check className="h-3.5 w-3.5" /> Acknowledge
+          <Button variant="secondary" loading={ackBusy} onClick={() => onAcknowledge(tk)}>
+            <Icon.Check className="h-4 w-4" /> Acknowledge
           </Button>
         ) : (
           <>
-            <Button size="sm" variant="danger" disabled={awaitingReturn} onClick={() => onReject(tk)}>
-              <Icon.XCircle className="h-3.5 w-3.5" /> Reject
+            <Button variant="danger" disabled={awaitingReturn} onClick={() => onReject(tk)}>
+              <Icon.XCircle className="h-4 w-4" /> Reject
             </Button>
-            <Button size="sm" variant="success" disabled={awaitingReturn} onClick={() => onApprove(tk)}>
-              <Icon.Check className="h-3.5 w-3.5" /> Approve
+            <Button variant="success" disabled={awaitingReturn} onClick={() => onApprove(tk)}>
+              <Icon.Check className="h-4 w-4" /> Approve &amp; send
             </Button>
           </>
         )}

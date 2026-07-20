@@ -13,7 +13,6 @@ import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import OpsDashboard from './pages/command/OpsDashboard';
 import OrdersBoard from './pages/command/OrdersBoard';
-import Analytics from './pages/Analytics';
 import Vehicles from './pages/Vehicles';
 import VehicleProfile from './pages/vehicles/VehicleProfile';
 import OdometerApprovals from './pages/vehicles/OdometerApprovals';
@@ -27,7 +26,6 @@ import ContractForm from './pages/contracts/ContractForm';
 import Vendors from './pages/Vendors';
 import MaintenanceAnalytics from './pages/MaintenanceAnalytics';
 import MaintenanceApprovals from './pages/MaintenanceApprovals';
-import MaintenanceBoard from './pages/MaintenanceBoard';
 import MaintenanceWorkflow from './pages/MaintenanceWorkflow';
 import MaintenanceRecommendations from './pages/MaintenanceRecommendations';
 import MyMaintenanceQueue from './pages/MyMaintenanceQueue';
@@ -61,6 +59,7 @@ import Users from './pages/Users';
 import NotFound from './pages/NotFound';
 import GarageInvoicePortal from './pages/GarageInvoicePortal';
 import PendingInvoices from './pages/PendingInvoices';
+import CompletedRepairs from './pages/CompletedRepairs';
 import WorkflowMovements from './pages/workflow/WorkflowMovements';
 import WorkflowOversight from './pages/oversight/WorkflowOversight';
 import MileageDiscrepancies from './pages/oversight/MileageDiscrepancies';
@@ -127,7 +126,6 @@ export default function App() {
                 <Route element={<RequirePermission permission="dashboard.view" />}>
                   <Route path="/ops-dashboard" element={<OpsDashboard />} />
                   <Route path="/orders-board" element={<OrdersBoard />} />
-                  <Route path="/analytics" element={<Analytics />} />
                   <Route path="/overdue-rentals" element={<OverdueRentals />} />
                 </Route>
 
@@ -195,7 +193,8 @@ export default function App() {
                 </Route>
 
                 <Route element={<RequirePermission permission="maintenance.view" />}>
-                  <Route path="/maintenance" element={<MaintenanceBoard />} />
+                  {/* Old Maintenance Board retired — the Workflow board is now the single maintenance hub. */}
+                  <Route path="/maintenance" element={<Navigate to="/maintenance-workflow" replace />} />
                   {/* Old Workflow Hub — folded into the plain Workflow Movements feed. */}
                   <Route path="/maintenance-hub" element={<Navigate to="/inspections/history" replace />} />
                   {/* "Booked in Shop" now lives inside the Fleet Health hub — redirect the old path. */}
@@ -207,6 +206,8 @@ export default function App() {
                   <Route path="/maintenance-recommendations" element={<MaintenanceRecommendations />} />
                   <Route path="/my-maintenance-queue" element={<MyMaintenanceQueue />} />
                   <Route path="/invoices/pending-submission" element={<PendingInvoices />} />
+                  {/* Fixed & Completed Repairs ledger — every closed ticket with its full story */}
+                  <Route path="/completed-repairs" element={<CompletedRepairs />} />
                   <Route path="/maintenance-foresight" element={<MaintenanceForesight />} />
                   <Route path="/garages" element={<Garages />} />
                   <Route path="/finding-keywords" element={<FindingKeywords />} />

@@ -207,6 +207,48 @@ class MaintenanceWorkflowController extends Controller
         }
     }
 
+    /**
+     * Fixed & Completed Repairs — every workflow ticket whose repair is DONE and signed off (closed).
+     * The "what happened to this car" ledger: who requested it, who drove it, where it was fixed, what
+     * was found + repaired, and what it cost. Newest-closed first. Filter with ?search= (plate / car /
+     * garage) and ?vehicle_id=. Backs the /completed-repairs page.
+     */
+    public function completed(Request $request)
+    {
+        try {
+            $q = trim((string) $request->query('search', ''));
+
+            $tickets = Maintenance::workflowTickets()
+                ->where('workflow_status', Maintenance::WF_CLOSED)
+                ->with(self::EAGER)->withCount('media')
+                ->when($request->filled('vehicle_id'), fn ($qq) => $qq->where('vehicle_id', $request->integer('vehicle_id')))
+                ->when($q !== '', function ($qq) use ($q) {
+                    $qq->where(function ($w) use ($q) {
+                        $w->where('plate', 'like', "%{$q}%")
+                          ->orWhere('car_label', 'like', "%{$q}%")
+                          ->orWhere('garage', 'like', "%{$q}%")
+                          ->orWhereHas('vehicle', fn ($v) => $v->where('plate_no', 'like', "%{$q}%"))
+                          ->orWhereHas('vendor', fn ($v) => $v->where('name', 'like', "%{$q}%"));
+                    });
+                })
+                ->orderByDesc('wf_closed_at')
+                ->orderByDesc('id')
+                ->limit(500)
+                ->get();
+
+            return ResponseHelper::SuccessResponse(
+                [
+                    'tickets' => MaintenanceWorkflowResource::collection($tickets),
+                    'total'   => $tickets->count(),
+                ],
+                'Completed repairs retrieved successfully',
+                200
+            );
+        } catch (\Throwable $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
     /** The live pipeline: open tickets bucketed into the four dashboard columns, with counts. */
     public function board()
     {
@@ -850,11 +892,22 @@ class MaintenanceWorkflowController extends Controller
                 'vehicle_id'         => ['required', 'integer', Rule::exists('vehicles', 'id')],
                 'trigger_reason'     => ['required', Rule::in(Maintenance::TRIGGER_REASONS)],
                 'customer_complaint' => ['nullable', 'string', 'max:2000'],
+                // Optional evidence — a still PHOTO or a VIDEO of what the driver saw/heard, attached to the
+                // new ticket so the inspector can review it before the test drive. Capped at 256 MB to match
+                // the storeVideo ingest (see docker/uploads.ini).
+                'media'              => ['nullable', 'file', 'mimetypes:video/mp4,video/quicktime,video/x-msvideo,video/webm,video/3gpp,image/jpeg,image/png,image/webp,image/heic,image/heif', 'max:262144'],
                 // maintenance_type is intentionally absent: the Driver has no diagnostic authority.
                 // The Inspector sets the classification when filing the report (submitReport).
             ]);
 
             $ticket = $this->workflow->requestInspection($data, $request->user());
+
+            // Store the driver's optional photo/video on the fresh ticket as evidence (best-effort — the
+            // request itself already succeeded, so a storage hiccup must not fail the inspection request).
+            if ($request->hasFile('media')) {
+                $this->storeTicketMedia($ticket, $request->file('media'), $request->user());
+            }
+
             return ResponseHelper::SuccessResponse(MaintenanceWorkflowResource::make($ticket), 'Inspection requested — awaiting Controller review', 201);
         });
     }
@@ -1877,6 +1930,37 @@ class MaintenanceWorkflowController extends Controller
     // ── Video Evidence — the garage's repair videos (the permanent repair record) ────
 
     /**
+     * Store one uploaded photo/video file against a ticket as a MaintenanceMedia row. Shared by the
+     * garage repair-video ingest (storeVideo) and the driver's inspection-request evidence. Bytes land
+     * on the local `public` disk; `kind` is derived from the mime. Returns the created row, or null if
+     * the file could not be written (callers decide whether that's fatal).
+     */
+    private function storeTicketMedia(Maintenance $ticket, \Illuminate\Http\UploadedFile $file, ?\App\Models\User $user, ?string $note = null, ?int $taskId = null): ?\App\Models\MaintenanceMedia
+    {
+        $disk = 'public';
+        $mime = (string) $file->getClientMimeType();
+        $kind = str_starts_with($mime, 'image/') ? 'image' : 'video';
+        $ext  = strtolower($file->getClientOriginalExtension() ?: ($file->guessExtension() ?: 'mp4'));
+        $key  = $file->storeAs("maintenance-videos/ticket-{$ticket->id}", (string) Str::uuid() . '.' . $ext, $disk);
+        if (! $key) {
+            return null;
+        }
+
+        return $ticket->media()->create([
+            'kind'                => $kind,
+            'maintenance_task_id' => $taskId,
+            'disk'                => $disk,
+            's3_key'              => $key,
+            'content_type'        => $mime,
+            'original_name'       => $file->getClientOriginalName(),
+            'file_size'           => $file->getSize(),
+            'note'                => $note,
+            'uploaded_by'         => $user?->id,
+            'uploaded_by_name'    => $user?->name,
+        ]);
+    }
+
+    /**
      * Persist one repair video (or still photo) against the ticket. The client posts the raw `file`
      * multipart; it is stored on the local `public` disk. Supervisor authority (maintenance.delegate).
      */
@@ -1903,27 +1987,10 @@ class MaintenanceWorkflowController extends Controller
             $taskId = $data['maintenance_task_id'] ?? null;
 
             if ($request->hasFile('file')) {
-                $file = $request->file('file');
-                $disk = 'public';
-                $mime = (string) $file->getClientMimeType();
-                $kind = str_starts_with($mime, 'image/') ? 'image' : 'video';
-                $ext  = strtolower($file->getClientOriginalExtension() ?: ($file->guessExtension() ?: 'mp4'));
-                $key  = $file->storeAs("maintenance-videos/ticket-{$ticket->id}", (string) Str::uuid() . '.' . $ext, $disk);
-                if (! $key) {
+                $media = $this->storeTicketMedia($ticket, $request->file('file'), $user, $data['note'] ?? null, $taskId);
+                if (! $media) {
                     return ResponseHelper::FailureResponse(null, 'The file could not be stored.', 500);
                 }
-                $media = $ticket->media()->create([
-                    'kind'                => $kind,
-                    'maintenance_task_id' => $taskId,
-                    'disk'                => $disk,
-                    's3_key'              => $key,
-                    'content_type'        => $mime,
-                    'original_name'       => $file->getClientOriginalName(),
-                    'file_size'           => $file->getSize(),
-                    'note'                => $data['note'] ?? null,
-                    'uploaded_by'         => $user?->id,
-                    'uploaded_by_name'    => $user?->name,
-                ]);
             } elseif (! empty($data['s3_key'])) {
                 $mime = (string) ($data['content_type'] ?? '');
                 $media = $ticket->media()->create([

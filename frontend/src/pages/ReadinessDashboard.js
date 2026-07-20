@@ -132,17 +132,16 @@ export default function ReadinessDashboard() {
   const missingData = data?.missing_data || [];
   const counts = data?.counts || {};
 
-  // Fleet Status — a four-bucket live snapshot for the headline donut. The three operational states
-  // plus a single "Unavailable" catch-all (out-of-order / suspended / office-use / returned / sold /
-  // disposed / other) so the slices always sum to the true fleet total with nothing dropped.
+  // Fleet Status — a live snapshot for the headline donut, limited to the three operational
+  // states the team works with. The "Unavailable" catch-all (out-of-order / suspended / office-use
+  // / sold / disposed / other) is dropped because those cars surface in no list; the donut totals
+  // only the active, accounted-for fleet.
   const fleet = data?.fleet_status || {};
-  const fleetTotal = fleet.total || 0;
-  const unavailable = Math.max(0, fleetTotal - (fleet.available || 0) - (fleet.rented || 0) - (fleet.maintenance || 0));
+  const activeFleet = (fleet.available || 0) + (fleet.rented || 0) + (fleet.maintenance || 0);
   const fleetSegments = [
     { label: 'Available', value: fleet.available || 0, color: 'green' },
     { label: 'Rented', value: fleet.rented || 0, color: 'blue' },
     { label: 'Maintenance', value: fleet.maintenance || 0, color: 'yellow' },
-    { label: 'Unavailable', value: unavailable, color: 'red' },
   ];
 
   const setReady = async (row) => {
@@ -328,10 +327,10 @@ export default function ReadinessDashboard() {
                 <FleetStatusCard
                   className="lg:col-span-1"
                   title="Fleet Status"
-                  centerLabel="Total Fleet"
+                  centerLabel="Active Fleet"
                   unit="cars"
                   segments={fleetSegments}
-                  total={fleetTotal}
+                  total={activeFleet}
                   periods={[]}
                   headerRight={liveBadge}
                 />

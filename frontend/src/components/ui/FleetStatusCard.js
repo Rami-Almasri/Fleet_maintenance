@@ -14,7 +14,6 @@
 //       { label: 'Available',   value: 6,  color: 'green' },
 //       { label: 'On Rent',     value: 22, color: 'blue' },
 //       { label: 'Maintenance', value: 4,  color: 'yellow' },
-//       { label: 'Unavailable', value: 2,  color: 'red' },
 //     ]}
 //     periods={['Week', 'Month', 'Quarter', 'Year']}
 //     period={period}

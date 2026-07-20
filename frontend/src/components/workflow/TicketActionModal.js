@@ -562,6 +562,11 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   }, [locationLocked, deferrableForRental]);
   const [photo, setPhoto] = useState(null);       // dispatch odometer: compressed { blob, url, width, height, compressedSize }
   const [compressing, setCompressing] = useState(false);
+  // 'request': the driver's optional photo/video of what they saw — attached to the new ticket as
+  // evidence so the inspector sees it before the test drive. Holds { file, url, kind } (raw File, not
+  // compressed: a video can't be, and the still is small enough for the inspector's glance).
+  const [requestMedia, setRequestMedia] = useState(null);
+  const requestMediaRef = useRef(null);
   const [findingTags, setFindingTags] = useState([]); // 'finding': selected garage-finding tags
   const [findingSeverity, setFindingSeverity] = useState('');
   // 'lineitems': the structured Parts + Labor breakdown (auto-sums into the ticket cost).
@@ -993,6 +998,15 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
         resp = await api.patch(r.url, r.body);
       } else if (r.method === 'put') {
         resp = await api.put(r.url, r.body);
+      } else if (action === 'request' && requestMedia?.file) {
+        // Driver's inspection request WITH an attached photo/video — go multipart so the evidence rides
+        // along and is stored on the new ticket (see requestInspection server-side). No odometer here.
+        const fd = new FormData();
+        fd.append('vehicle_id', String(Number(vehicleId)));
+        fd.append('trigger_reason', reason);
+        if (complaint) fd.append('customer_complaint', complaint);
+        fd.append('media', requestMedia.file, requestMedia.file.name || 'evidence');
+        resp = await api.post(r.url, fd);
       } else if ((action === 'dispatch' && photo?.blob) || (action === 'recovery' && photo?.blob) || (action === 'receive' && photo?.blob) || action === 'ready' || (isTestStart && photo?.blob) || (action === 'collectFromGarage' && photo?.blob) || (action === 'arriveAtPark' && photo?.blob) || (action === 'decide' && photo?.blob) || ((action === 'pause' || action === 'resume') && photo?.blob)) {
         const fd = new FormData();
         if (action === 'dispatch') {
@@ -2113,7 +2127,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
               <VehicleStatusSelect value={vehicleId} onChange={setVehicleId} vehicles={vehicles} placeholder={t('workflow.ph.searchVehicle')} />
             </div>
             <div>
-              <span className="mb-1.5 block text-sm font-medium text-slate-700">{t('workflow.reason.labelShort')}</span>
+              <span className="mb-1.5 block text-sm font-medium text-slate-700">{t('workflow.reason.driverLabel')}</span>
               <div className="grid gap-2">
                 {TRIGGER_REASON_VALUES.map((rv) => {
                   const active = reason === rv;
@@ -2128,8 +2142,8 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                         {active && <span className="h-2 w-2 rounded-full bg-indigo-600" />}
                       </span>
                       <span className="min-w-0">
-                        <span className="block text-sm font-semibold text-slate-800">{t(`workflow.reason.${rv}.label`)}</span>
-                        <span className="block text-xs text-slate-500">{t(`workflow.reason.${rv}.sub`)}</span>
+                        <span className="block text-sm font-semibold text-slate-800">{t(`workflow.reason.driver.${rv}.label`)}</span>
+                        <span className="block text-xs text-slate-500">{t(`workflow.reason.driver.${rv}.sub`)}</span>
                       </span>
                     </button>
                   );
@@ -2137,6 +2151,54 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
               </div>
             </div>
             <Textarea label={t('workflow.field.notesForInspector')} value={complaint} onChange={(e) => setComplaint(e.target.value)} placeholder={t('workflow.ph.customerPullLeft')} />
+
+            {/* Optional photo/video — a still or clip of what the driver saw/heard, attached to the new
+                ticket as evidence the inspector reviews before the test drive. */}
+            <div>
+              <span className="mb-1 block text-sm font-medium text-slate-700">{t('workflow.field.attachEvidence')}</span>
+              {requestMedia ? (
+                <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+                  {requestMedia.kind === 'image' ? (
+                    <img src={requestMedia.url} alt={t('workflow.field.attachEvidence')} className="h-14 w-14 shrink-0 rounded-lg object-cover ring-1 ring-slate-200" />
+                  ) : (
+                    <span aria-hidden className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-slate-200 text-2xl">🎬</span>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-slate-700">{requestMedia.file.name}</p>
+                    <p className="text-[11px] text-slate-400">{formatBytes(requestMedia.file.size)}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => { if (requestMedia?.url) URL.revokeObjectURL(requestMedia.url); setRequestMedia(null); }}
+                    className="shrink-0 rounded-lg px-2 py-1 text-xs font-medium text-red-500 hover:bg-red-50"
+                  >
+                    {t('workflow.field.attachRemove')}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => requestMediaRef.current?.click()}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 bg-white px-3 py-3 text-sm font-semibold text-slate-500 transition hover:border-indigo-400 hover:text-indigo-600"
+                >
+                  <Icon.Plus className="h-4 w-4" /> {t('workflow.field.attachAdd')}
+                </button>
+              )}
+              <input
+                ref={requestMediaRef}
+                type="file"
+                accept="video/*,image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (requestMediaRef.current) requestMediaRef.current.value = ''; // allow re-picking the same file
+                  if (!file) return;
+                  if (requestMedia?.url) URL.revokeObjectURL(requestMedia.url);
+                  setRequestMedia({ file, url: URL.createObjectURL(file), kind: file.type.startsWith('image/') ? 'image' : 'video' });
+                }}
+              />
+              <p className="mt-1 text-xs text-slate-400">{t('workflow.field.attachHint')}</p>
+            </div>
           </>
         )}
 

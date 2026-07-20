@@ -42,7 +42,7 @@ export default function MaintenanceApprovals() {
     <div className="py-8">
       <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
         <PageHeader title="Maintenance Approvals" subtitle={`Jobs over AED ${num(threshold)} need your sign-off before they're treated as final.`}>
-          <Link to="/maintenance" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">Maintenance board →</Link>
+          <Link to="/maintenance-workflow" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">Maintenance board →</Link>
         </PageHeader>
 
         {error && (

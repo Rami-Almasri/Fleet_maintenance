@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Helpers\ResponseHelper;
 use App\Http\Resources\UserResource;
 use App\Models\User;
+use App\Services\UserActivityService;
 use Exception;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Http\Request;
@@ -13,6 +14,8 @@ use Illuminate\Support\Facades\Hash;
 
 class AuthController extends Controller
 {
+    public function __construct(private readonly UserActivityService $activity) {}
+
     /** Every user account (admin-only) — name, email, status and roles/permissions. */
     public function index()
     {
@@ -67,6 +70,8 @@ class AuthController extends Controller
                 'email' => $request->email,
                 'password' => Hash::make($request->password),
                 'status' => $request->status ?? 'active',
+                // Audit trail: who minted this account (null for bootstrap accounts).
+                'created_by' => $request->user()?->id,
             ]);
 
             // An admin created this account and may hand it a role directly;
@@ -152,13 +157,20 @@ class AuthController extends Controller
             $user->status = $request->status ?? $user->status;
             if ($request->filled('password')) {
                 $user->password = Hash::make($request->password);
+                // Audit: stamp the password rotation for the security surface.
+                $user->last_password_change_at = now();
             }
             $user->save();
 
             // A single role per account (this app assigns one). syncRoles replaces
             // whatever was there. Only touch roles when the caller sent one.
             if ($requestedRole !== null) {
+                $roleChanged = ! $user->hasRole($requestedRole) || $user->getRoleNames()->count() !== 1;
                 $user->syncRoles([$requestedRole]);
+                // Audit: record genuine role changes (not idempotent re-saves).
+                if ($roleChanged) {
+                    $user->forceFill(['last_role_change_at' => now()])->saveQuietly();
+                }
             }
 
             return response()->json([
@@ -233,6 +245,10 @@ class AuthController extends Controller
         $user = User::where('email', $request->email)->first();
 
         if (!$user || !Hash::check($request->password, $user->password)) {
+            // Security audit: track failed attempts against the account (when it exists).
+            if ($user) {
+                $this->activity->stampFailedLogin($user);
+            }
             return response()->json([
                 "success" => false,
                 "msg" => 'Invalid credentials',
@@ -252,6 +268,9 @@ class AuthController extends Controller
 
         $token = $user->createToken("login")->plainTextToken;
 
+        // Workforce activity: stamp the login + reset the failed-attempt counter.
+        $this->activity->stampLogin($user, $request);
+
         return response()->json([
             "success" => true,
             "msg" => 'Logged in successfully',
@@ -261,6 +280,9 @@ class AuthController extends Controller
 
     public function logout(Request $request)
     {
+        // Workforce activity: stamp the logout before the token is revoked.
+        $this->activity->stampLogout($request->user(), $request);
+
         // Null-safe: logging out with an already-missing/expired token is a no-op success,
         // not a 500. ($request->user() is null when no valid token is presented.)
         $request->user()?->currentAccessToken()?->delete();

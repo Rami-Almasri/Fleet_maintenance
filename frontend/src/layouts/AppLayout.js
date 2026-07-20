@@ -3,6 +3,7 @@ import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { usePermissions } from '../hooks/usePermissions';
+import useActivityTracker from '../hooks/useActivityTracker';
 import CommandPalette from '../components/CommandPalette';
 import ShortcutsHelp from '../components/ShortcutsHelp';
 import ErrorBoundary from '../components/ErrorBoundary';
@@ -71,7 +72,6 @@ const NAV_SECTIONS = [
     title: 'Overview',
     items: [
       { name: 'Dashboard', to: '/', icon: 'M3 12l9-9 9 9M5 10v10a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V10', desc: 'Fleet-wide overview: how many cars are available, rented, or in maintenance, plus key totals. Availability and composition come from the OfficeManager lifecycle status.' },
-      { name: 'Analytics', to: '/analytics', icon: 'M4 20V10m6 10V4m6 16v-7M4 20h16', desc: 'A clean, glanceable analytics view — fleet activity, live status composition, utilization, maintenance visits, downtime trend and readiness — all real fleet data in a card grid.' },
       { name: 'Notifications', to: '/notifications', icon: 'M15 17h5l-1.4-1.4A2 2 0 0 1 18 14.2V11a6 6 0 0 0-4-5.7V5a2 2 0 1 0-4 0v.3A6 6 0 0 0 6 11v3.2a2 2 0 0 1-.6 1.4L4 17h5m6 0v1a3 3 0 1 1-6 0v-1m6 0H9', desc: 'Live fleet alerts — overdue rentals, maintenance overruns, expiring documents, service-due cars and approvals. The bell in the top bar updates in real time.' },
     ],
   },
@@ -110,6 +110,7 @@ const NAV_SECTIONS = [
       { name: 'Inspection Intelligence', to: '/inspection-intelligence', icon: 'M12 3v1m0 16v1m9-9h-1M4 12H3m15.36 6.36-.7-.7M6.34 6.34l-.7-.7m12.72 0-.7.7M6.34 17.66l-.7.7M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z', desc: 'Mission Control for the AUTOMATIC inspection engine (the daily Proactive Diagnostic Monitor): why the system requests inspections, which rule fired, which cars qualify now, and which were skipped and why. Read-only monitoring & debugging.' },
       { name: 'Approvals', to: '/maintenance-approvals', icon: 'M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Maintenance items waiting for sign-off before work proceeds.' },
       { name: 'Pending Invoices', to: '/invoices/pending-submission', icon: 'M9 12h6m-6 4h4m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2zM14 3v5h5M12 8v.01', desc: 'Repairs that are done and the car is back in service, but the garage invoice hasn’t arrived yet. Anything past the 3-day window is flagged red; mark an invoice received to close the ticket.' },
+      { name: 'Completed Repairs', to: '/completed-repairs', icon: 'M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'The ledger of every car whose repair is done and signed off — who requested it, who drove it, where it was fixed, what was found and repaired, and what it cost. Expand any row for the full custody chain, the resolved faults and the odometer readings.' },
       { name: 'Foresight', to: '/maintenance-foresight', icon: 'M9.66 17h4.68M12 3v1m6.36 1.64-.7.7M21 12h-1M4 12H3m3.34-5.66-.7-.7M7 17a5 5 0 1 1 10 0', desc: 'Predictive maintenance: cars showing early mechanical warning signs (service overdue, chronic faults, aging battery) caught before they fail — with the downtime, parts-wait risk and lost rental revenue estimated from the fleet’s own repair history.' },
       { name: 'Cost Capture', to: '/cost-capture', icon: 'M12 8c-1.7 0-3 .9-3 2s1.3 2 3 2 3 .9 3 2-1.3 2-3 2m0-8V6m0 12v-2m9-4a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Quick Cost Input: recent repairs with no cost recorded. Enter the amount in one tap to fix each vehicle’s repair spend and re-check its Negative-Yield flag — the tool for closing the understated-spend gap.' },
       { name: 'Damage & Accidents', to: '/damage-accidents', icon: 'M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z', desc: 'Damage and accident records shown as-is per vehicle. Fault is colored red/green based on the liable party and insurance.' },
@@ -161,6 +162,15 @@ const NAV_SECTIONS = [
 const ALL_ITEMS = NAV_SECTIONS.flatMap((s) => s.items);
 const SEARCH_ITEMS = NAV_SECTIONS.flatMap((s) => s.items.map((i) => ({ ...i, section: s.title })));
 
+// Friendly module name for a route — powers the activity tracker's "last page"
+// so the Workforce Operations Center reads "Workflow", not "/maintenance-workflow".
+const PATH_LABELS = Object.fromEntries(ALL_ITEMS.map((i) => [i.to, i.name]));
+const resolveModuleLabel = (path) => {
+  if (PATH_LABELS[path]) return PATH_LABELS[path];
+  const seg = (path || '/').split('/')[1];
+  return seg ? seg.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) : 'Dashboard';
+};
+
 // Permission required to see each nav destination. A `null`/missing entry means
 // "always visible to any authenticated user". These mirror the route guards in
 // App.js and the `permission:` middleware on the backend — keep the three in sync.
@@ -168,11 +178,11 @@ const NAV_PERMISSIONS = {
   '/': 'dashboard.view',
   '/ops-dashboard': 'dashboard.view',
   '/orders-board': 'dashboard.view',
-  '/analytics': 'dashboard.view',
   '/notifications': null,
   '/settings': null,
   '/team-presence': 'logistics.view',
   '/invoices/pending-submission': 'maintenance.view',
+  '/completed-repairs': 'maintenance.view',
   '/finding-keywords': 'maintenance.view',
   '/parts': 'parts.view',
   '/part-investigations': 'parts.investigate',
@@ -372,6 +382,9 @@ export default function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
 
+  // Report presence + module usage to the backend (Workforce Operations Center).
+  useActivityTracker(resolveModuleLabel);
+
   // Hide nav items the user can't open, and drop sections left empty. While
   // SHOW_FINANCIALS is off (Financial Decoupling), the money-rollup destinations
   // (Cost Analytics, Profitability, Financial Conflicts, Reconciliation, Net
@@ -391,6 +404,7 @@ export default function AppLayout() {
   // for the sections the user can actually see. Contact "overdue" = open + past due.
   const canInspections = can('inspections.view');
   const canReminders = can('reminders.view');
+  const canReview = can('maintenance.manage'); // gates the Inspection Review row + its badge
   const [attention, setAttention] = useState({});
   useEffect(() => {
     let alive = true;
@@ -404,6 +418,12 @@ export default function AppLayout() {
         jobs.push(['/reminders/service',
           api.get('/ServiceReminders', { params: { status: 'overdue' } }).then((r) => (r.data?.data || []).length)]);
       }
+      if (canReview) {
+        // How many requests are sitting in the Inspection Review queue right now — a live
+        // notification-style count on the sidebar row, so Lin/Marwa see the backlog at a glance.
+        jobs.push(['/inspection-review',
+          api.get('/maintenance-tickets/pending-review').then((r) => (r.data?.data || r.data || []).length)]);
+      }
       if (!jobs.length) return;
       const results = await Promise.all(jobs.map(([, p]) => p.catch(() => 0)));
       if (!alive) return;
@@ -414,7 +434,7 @@ export default function AppLayout() {
     load();
     const id = setInterval(() => { if (document.visibilityState === 'visible') load(); }, 60000);
     return () => { alive = false; clearInterval(id); };
-  }, [canInspections, canReminders]);
+  }, [canInspections, canReminders, canReview]);
 
   const [open, setOpen] = useState(false);
   const [cmdOpen, setCmdOpen] = useState(false);
@@ -466,7 +486,7 @@ export default function AppLayout() {
       const now = Date.now();
       if (e.key === 'g' || e.key === 'G') { lastG.current = now; return; }
       if (now - lastG.current < 800) {
-        const map = { d: '/', v: '/vehicles', c: '/contracts', m: '/maintenance' };
+        const map = { d: '/', v: '/vehicles', c: '/contracts', m: '/maintenance-workflow' };
         const dest = map[e.key.toLowerCase()];
         if (dest) { e.preventDefault(); navigate(dest); lastG.current = 0; }
       }

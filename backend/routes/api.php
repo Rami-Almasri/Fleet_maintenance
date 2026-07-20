@@ -76,6 +76,15 @@ Route::prefix('auth')->controller(AuthController::class)->group(function () {
     Route::post('login', 'login')->middleware('throttle:10,1');
     Route::post('logout', 'logout');
 });
+
+// Workforce Operations Center — real user-activity surfaces layered on the
+// existing account directory. Reads reuse the `users.manage` gate; the heartbeat
+// is open to any authenticated user (each reports only their own presence).
+Route::prefix('auth')->controller(\App\Http\Controllers\WorkforceController::class)->group(function () {
+    Route::post('activity', 'heartbeat')->middleware('auth:sanctum');
+    Route::get('workforce', 'overview')->middleware(['auth:sanctum', 'permission:users.manage']);
+    Route::get('users/{user}/activity', 'userActivity')->middleware(['auth:sanctum', 'permission:users.manage']);
+});
 Route::middleware('auth:sanctum')->prefix('Vehicle')->controller(VehicleController::class)->group(function () {
 
     Route::get('/', 'index')->middleware('permission:vehicles.view');
@@ -323,6 +332,8 @@ Route::middleware('auth:sanctum')->prefix('maintenance-tickets')->controller(Mai
     // Repair Quality Tracking — fleet-wide per-garage success rate + Possible Part Failure signals.
     // STATIC — must precede /{ticket}.
     Route::get('/repair-quality', 'repairQuality')->middleware('permission:maintenance.view');
+    // Fixed & Completed Repairs ledger — closed tickets, newest-closed first (STATIC — must precede /{ticket}).
+    Route::get('/completed', 'completed')->middleware('permission:maintenance.view');
     Route::get('/{ticket}', 'show')->middleware('permission:maintenance.view');
     // The car's real current mileage + the full log of manual mileage corrections on this vehicle.
     Route::get('/{ticket}/mileage', 'mileage')->middleware('permission:maintenance.view');
@@ -784,6 +795,7 @@ Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/fleet-pulse', [DashboardController::class, 'fleetPulse']);
 // Proactive Flags: rentals expiring within ?days=N, concluded rentals with unpaid balance, inspections due
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/proactive-flags', [DashboardController::class, 'proactiveFlags']);
+Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/most-maintained', [DashboardController::class, 'mostMaintained']);
 
 // Trip Dashboard: aggregated pickup/drop-off trip log (Main Trip Dashboard sheet) for the
 // Delivery Command dashboard + Orders board. Cached read; ?refresh forces a re-read.

@@ -931,19 +931,33 @@ class MaintenanceWorkflowService
                         ->whereNull('reviewed_by');
                 });
         })
-            ->with($this->eager())
+            // Load the driver's attached evidence (photo/video) too, so the reviewer sees what the driver
+            // saw right on the queue card — not just the count. Only this queue needs it inline.
+            ->with(array_merge($this->eager(), ['media']))
             ->orderByDesc('requested_at')
             ->get();
 
         // Attach each car's last REAL inspection/test-drive (before this request) so the reviewer can see
         // when it was last looked at — and what was found — before approving yet another inspection.
-        $lastTests = $this->lastInspectionsForVehicles(
-            $tickets->pluck('vehicle_id')->filter()->unique()->all()
-        );
+        $vehicleIds  = $tickets->pluck('vehicle_id')->filter()->unique()->all();
+        $lastTests   = $this->lastInspectionsForVehicles($vehicleIds);
+        // Last-ready anchor per vehicle, computed ONCE per car (deduped) via the SAME engine the Post-
+        // Downtime safety check uses — so the card's "last maintenance" can never contradict the system's
+        // own "N days since last maintenance completion" flag.
+        $anchorByVehicle = [];
+        foreach ($tickets as $t) {
+            if ($t->vehicle_id && $t->vehicle && ! array_key_exists($t->vehicle_id, $anchorByVehicle)) {
+                $anchorByVehicle[$t->vehicle_id] = $this->gate->readyAnchor($t->vehicle);
+            }
+        }
         foreach ($tickets as $t) {
             $prior = $lastTests[$t->vehicle_id] ?? null;
             // Never surface the request's own row as its "last test".
             $t->last_test = ($prior && $prior['id'] !== $t->id) ? $prior : null;
+            // The detector's own anchor: {at, days_ago, reason (maintenance|test|onboarding), source, …}.
+            $t->last_maintenance = $anchorByVehicle[$t->vehicle_id] ?? null;
+            // NOTE: the "last oil service" anchor (km + km-since) is computed straight off the eager-loaded
+            // vehicle columns in the resource — no extra query needed here.
         }
 
         return $tickets;
@@ -6172,6 +6186,6 @@ class MaintenanceWorkflowService
     /** Relations every transition returns hydrated for the API. */
     private function eager(): array
     {
-        return ['vendor', 'reason', 'vehicle:id,plate_no,make,model,operational_status,odometer', 'inspector:id,name', 'requester:id,name', 'linkedContract:id,contract_no', 'assignedDriver:id,name', 'delegatedBy:id,name', 'pickedUpFromGarageBy:id,name', 'watchers:id,name', 'lineItems', 'activeTemporaryRelease', 'temporaryReleases'];
+        return ['vendor', 'reason', 'vehicle:id,plate_no,make,model,year,code,operational_status,odometer,last_service_odometer,service_synced_at,service_due_date,purchase_date,created_at', 'inspector:id,name', 'requester:id,name', 'linkedContract:id,contract_no', 'assignedDriver:id,name', 'delegatedBy:id,name', 'pickedUpFromGarageBy:id,name', 'watchers:id,name', 'lineItems', 'activeTemporaryRelease', 'temporaryReleases'];
     }
 }

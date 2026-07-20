@@ -99,6 +99,26 @@ class DashboardController extends Controller
     }
 
     /**
+     * "Most in Maintenance" — the cars with the most workshop visits over a trailing window
+     * (?days=N, default 90). Drives the homepage column whose date filter lets the user widen or
+     * narrow the window without reloading the rest of the dashboard.
+     */
+    public function mostMaintained(Request $request, DashboardService $dashboard)
+    {
+        try {
+            $days = min(730, max(1, (int) $request->query('days', 90)));
+
+            return ResponseHelper::SuccessResponse(
+                $dashboard->mostMaintained($days),
+                "Most-maintained cars retrieved successfully",
+                200
+            );
+        } catch (\Exception $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
      * The "Fleet Pulse" grid: every active car with a colour-coded live state and a
      * maintenance-completion percentage for the ones in the shop.
      */

@@ -135,6 +135,29 @@ class DiagnosticGateService
         ];
     }
 
+    /**
+     * Public accessor for the car's "last ready" anchor — the SAME record the Post-Downtime safety check
+     * counts its days from (most recent completed maintenance / cleared test / legacy IN close, else the
+     * onboarding-purchase fallback when the car has no history at all). Surfaces like the Inspection Review
+     * card use this so their "last maintenance" figure never contradicts the system's own flag.
+     *
+     * @return array{at:?string,days_ago:?int,reason:string,source:string,source_id:?int,odometer:?int}
+     */
+    public function readyAnchor(Vehicle $vehicle): array
+    {
+        $a   = $this->lastReadyAnchor($vehicle);
+        $at  = $a['at'] ?? null;
+
+        return [
+            'at'        => $at ? $at->toIso8601String() : null,
+            'days_ago'  => $at ? (int) $at->copy()->startOfDay()->diffInDays(Carbon::now()->startOfDay()) : null,
+            'reason'    => $a['reason'] ?? 'onboarding',
+            'source'    => $a['source'] ?? 'onboarding',
+            'source_id' => $a['source_id'] ?? null,
+            'odometer'  => $a['odometer'] ?? null,
+        ];
+    }
+
     /** The car's last recorded check — its most recent CLOSED maintenance visit (linkable), else its last oil service. */
     private function lastCheck(Vehicle $vehicle): ?array
     {
