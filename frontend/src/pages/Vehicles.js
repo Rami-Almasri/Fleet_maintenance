@@ -26,6 +26,7 @@ export default function Vehicles() {
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
   const [flag, setFlag] = useState(''); // '' | 'available' | 'reserved' | 'rented' | 'maint'
+  const [sharedOnly, setSharedOnly] = useState(false); // show only vehicles on a reused (shared) plate
   const [page, setPage] = useState(1);
 
   // create / edit modal
@@ -61,23 +62,47 @@ export default function Vehicles() {
     return new Set(Object.keys(counts).filter((k) => counts[k] > 1));
   }, [list]);
 
+  // Order a reused-plate list: reuse groups first, clustered by plate, current holder on top,
+  // then newest — so every shared plate reads "current car, then its previous/sold holders".
+  const orderByPlateGroup = (keys) => (a, b) => {
+    const ra = a.plate_key && keys.has(a.plate_key) ? 0 : 1;
+    const rb = b.plate_key && keys.has(b.plate_key) ? 0 : 1;
+    if (ra !== rb) return ra - rb;
+    const ka = a.plate_key || '', kb = b.plate_key || '';
+    if (ka !== kb) return ka < kb ? -1 : 1;
+    if (!!a.is_current_plate_holder !== !!b.is_current_plate_holder)
+      return a.is_current_plate_holder ? -1 : 1;
+    return (Number(b.car_serial) || 0) - (Number(a.car_serial) || 0);
+  };
+
   const { rows: filtered, reused: plateReuseInResults } = useMemo(() => {
     const q = search.trim().toLowerCase();
+    // Quick filters use the car's live (contract-derived) movement.
+    const matchFlag = (v) =>
+      !flag ||
+      (flag === 'available' && v.available) ||
+      (flag === 'reserved' && v.reserved) ||
+      (flag === 'rented' && v.rented) ||
+      (flag === 'maint' && v.under_maintenance);
+    const matchSearch = (v) =>
+      !q || [v.plate_no, v.vin, v.make, v.model].some((f) => (f || '').toLowerCase().includes(q));
+
+    // "Shared plate only" filter: EVERY vehicle sitting on a reused plate — including the sold /
+    // previous holders (we deliberately don't hide them here, that's the whole point) — grouped
+    // current-holder-first. Honors the search box, quick flags, and an explicitly chosen status.
+    if (sharedOnly) {
+      const rows = list
+        .filter((v) => v.plate_key && reusedKeys.has(v.plate_key)
+          && (status ? v.status === status : true) && matchFlag(v) && matchSearch(v))
+        .sort(orderByPlateGroup(reusedKeys));
+      return { rows, reused: rows.length > 0 };
+    }
+
     const base = list.filter((v) => {
       // Displayed status is the OfficeManager lifecycle status (status_no). Cars that have
       // left the fleet (sold / disposed) are hidden unless explicitly picked from the dropdown.
       const matchStatus = status ? v.status === status : (v.status !== 'sold' && v.status !== 'disposed');
-      // Quick filters use the car's live (contract-derived) movement.
-      const matchFlag =
-        !flag ||
-        (flag === 'available' && v.available) ||
-        (flag === 'reserved' && v.reserved) ||
-        (flag === 'rented' && v.rented) ||
-        (flag === 'maint' && v.under_maintenance);
-      const matchSearch =
-        !q ||
-        [v.plate_no, v.vin, v.make, v.model].some((f) => (f || '').toLowerCase().includes(q));
-      return matchStatus && matchFlag && matchSearch;
+      return matchStatus && matchFlag(v) && matchSearch(v);
     });
 
     // Only when a search actually surfaces a REUSED plate do we change the view: pull the
@@ -91,19 +116,12 @@ export default function Vehicles() {
     list.forEach((v) => {
       if (v.plate_key && keys.has(v.plate_key) && !byId.has(v.id)) byId.set(v.id, v);
     });
-    const merged = Array.from(byId.values());
-    merged.sort((a, b) => {
-      const ra = a.plate_key && keys.has(a.plate_key) ? 0 : 1;
-      const rb = b.plate_key && keys.has(b.plate_key) ? 0 : 1;
-      if (ra !== rb) return ra - rb;                                    // reuse groups first
-      const ka = a.plate_key || '', kb = b.plate_key || '';
-      if (ka !== kb) return ka < kb ? -1 : 1;                          // cluster by plate
-      if (!!a.is_current_plate_holder !== !!b.is_current_plate_holder) // current holder on top
-        return a.is_current_plate_holder ? -1 : 1;
-      return (Number(b.car_serial) || 0) - (Number(a.car_serial) || 0); // then newest
-    });
+    const merged = Array.from(byId.values()).sort(orderByPlateGroup(keys));
     return { rows: merged, reused: true };
-  }, [list, search, status, flag, reusedKeys]);
+  }, [list, search, status, flag, sharedOnly, reusedKeys]);
+
+  // How many distinct plates are shared, for the checkbox label.
+  const sharedPlateCount = reusedKeys.size;
 
   // counts shown on the quick-filter buttons — over the active fleet (sold/disposed excluded)
   const active = useMemo(() => list.filter((v) => v.status !== 'sold' && v.status !== 'disposed'), [list]);
@@ -265,13 +283,32 @@ export default function Vehicles() {
               <option value="">All statuses</option>
               {VEHICLE_STATUSES.map((s) => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
             </select>
+            {/* Shared-plate filter: show every car sitting on a reused plate (incl. sold holders). */}
+            <label
+              title="Show only vehicles whose plate was reused across more than one car (includes sold / previous holders)"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 7, cursor: 'pointer', fontSize: 12.5,
+                padding: '0 10px', borderRadius: 8, border: '1px solid var(--line)',
+                background: sharedOnly ? 'rgba(245,158,11,.12)' : 'transparent',
+                color: sharedOnly ? '#f59e0b' : 'var(--ink-2)' }}
+            >
+              <input
+                type="checkbox"
+                checked={sharedOnly}
+                onChange={(e) => resetFilters(() => setSharedOnly(e.target.checked))}
+                style={{ accentColor: '#f59e0b', cursor: 'pointer' }}
+              />
+              Shared plates only{sharedPlateCount ? ` (${sharedPlateCount})` : ''}
+            </label>
             {flag && <button className="opx-ibtn" onClick={() => toggleFlag(flag)}>✕ Clear filter</button>}
           </div>
 
           {plateReuseInResults && (
             <div style={{ margin: '0 0 4px', padding: '9px 14px', borderRadius: 10, border: '1px solid rgba(245,158,11,.3)', background: 'rgba(245,158,11,.08)', color: '#f59e0b', fontSize: 12.5, display: 'flex', gap: 8, alignItems: 'center' }}>
               <span>⚠️</span>
-              <span>This plate was previously assigned to another vehicle. The <b>current holder</b> is shown first; previous vehicles are kept for history. Each vehicle keeps its own records — nothing is merged.</span>
+              <span>{sharedOnly
+                ? <>Showing vehicles that share a <b>reused plate</b>. Each plate’s <b>current holder</b> is listed first, followed by its previous / sold holders. Every vehicle keeps its own records — nothing is merged.</>
+                : <>This plate was previously assigned to another vehicle. The <b>current holder</b> is shown first; previous vehicles are kept for history. Each vehicle keeps its own records — nothing is merged.</>}
+              </span>
             </div>
           )}
 
