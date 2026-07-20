@@ -21,6 +21,7 @@ class PlateAssignment extends Model
     protected $fillable = [
         'vehicle_id',
         'plate_key',
+        'plate_code',
         'plate_raw',
         'from_date',
         'to_date',

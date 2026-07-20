@@ -45,10 +45,18 @@ class PlateHistoryService
             ];
         }
 
-        // Every timeline row for this plate, with its vehicle. withTrashed() so a soft-deleted
-        // previous holder still appears in the history (the point of the feature).
+        // The plate is code + digits: two cars with the same digits under different codes are
+        // DIFFERENT plates. Scope the history to the code of the plate we're viewing, taken from
+        // this car's own timeline row (which carries the OM code, or an inferred one for a
+        // VIN-less legacy car), falling back to the vehicle's OM plate_code.
+        $selfCode = PlateAssignment::query()->where('vehicle_id', $vehicle->id)->where('plate_key', $key)->value('plate_code')
+            ?? $vehicle->plate_code;
+
+        // Every timeline row for THIS plate (same digits AND same code), with its vehicle.
+        // withTrashed() so a soft-deleted previous holder still appears (the point of the feature).
         $assignments = PlateAssignment::query()
             ->where('plate_key', $key)
+            ->where(fn ($q) => $selfCode === null ? $q->whereNull('plate_code') : $q->where('plate_code', $selfCode))
             ->with(['vehicle' => fn ($q) => $q->withTrashed()])
             ->get();
 
@@ -60,22 +68,26 @@ class PlateHistoryService
 
         $vehicleIds = $assignments->pluck('vehicle_id')->filter()->unique()->values()->all();
         $counts     = $this->historyCounts($vehicleIds);
+        $letter     = $selfCode !== null ? \App\Models\PlateCode::query()->where('em_no', $selfCode)->value('letter_en') : null;
 
         $holders = $assignments
             ->filter(fn ($a) => $a->vehicle !== null)
-            ->map(fn ($a) => $this->holder($a->vehicle, $a, $vehicle->id, $counts[$a->vehicle_id] ?? []))
+            ->map(fn ($a) => $this->holder($a->vehicle, $a, $vehicle->id, $counts[$a->vehicle_id] ?? [], null, $letter))
             ->sort($this->holderOrder())
             ->values();
 
         $current = $holders->firstWhere('is_current', true);
+        $plateNo = $vehicle->plate_no ?: optional($current)['plate_no'];
 
         return [
-            'plate_key'    => $key,
-            'plate_no'     => $vehicle->plate_no ?: optional($current)['plate_no'],
-            'is_reused'    => $holders->count() > 1,
-            'holder_count' => $holders->count(),
-            'current'      => $current,
-            'holders'      => $holders->all(),
+            'plate_key'     => $key,
+            'plate_code'    => $selfCode,
+            'plate_no'      => $plateNo,
+            'plate_display' => $letter ? trim($letter . ' ' . $plateNo) : $plateNo,   // "P 76722"
+            'is_reused'     => $holders->count() > 1,
+            'holder_count'  => $holders->count(),
+            'current'       => $current,
+            'holders'       => $holders->all(),
         ];
     }
 
@@ -85,10 +97,13 @@ class PlateHistoryService
      */
     private function fromVehiclesOnly(string $key, Vehicle $self): array
     {
+        // Same plate = same digits AND same code. Scope to the viewed car's code.
+        $selfCode = $self->plate_code;
         $matches = Vehicle::withTrashed()
             ->whereNotNull('plate_no')->where('plate_no', '<>', '')
-            ->get(['id', 'plate_no', 'plate_key', 'make', 'model', 'year', 'color', 'status', 'status_no', 'car_serial', 'purchase_date', 'deleted_at'])
-            ->filter(fn ($v) => ($v->plate_key ?: PlateResolver::plateDigits($v->plate_no)) === $key)
+            ->get(['id', 'plate_no', 'plate_key', 'plate_code', 'make', 'model', 'year', 'color', 'status', 'status_no', 'car_serial', 'purchase_date', 'deleted_at'])
+            ->filter(fn ($v) => ($v->plate_key ?: PlateResolver::plateDigits($v->plate_no)) === $key
+                && (string) $v->plate_code === (string) $selfCode)
             ->values();
 
         if ($matches->isEmpty()) {
@@ -97,27 +112,31 @@ class PlateHistoryService
 
         $currentId = optional(PlateResolver::pickBest($matches))->id;
         $counts    = $this->historyCounts($matches->pluck('id')->all());
+        $letter    = $selfCode !== null ? \App\Models\PlateCode::query()->where('em_no', $selfCode)->value('letter_en') : null;
 
         $holders = $matches
-            ->map(fn ($v) => $this->holder($v, null, $self->id, $counts[$v->id] ?? [], $v->id === $currentId))
+            ->map(fn ($v) => $this->holder($v, null, $self->id, $counts[$v->id] ?? [], $v->id === $currentId, $letter))
             ->sort($this->holderOrder())
             ->values();
 
         return [
-            'plate_key'    => $key,
-            'plate_no'     => $self->plate_no,
-            'is_reused'    => $holders->count() > 1,
-            'holder_count' => $holders->count(),
-            'current'      => $holders->firstWhere('is_current', true),
-            'holders'      => $holders->all(),
+            'plate_key'     => $key,
+            'plate_code'    => $selfCode,
+            'plate_no'      => $self->plate_no,
+            'plate_display' => $letter ? trim($letter . ' ' . $self->plate_no) : $self->plate_no,
+            'is_reused'     => $holders->count() > 1,
+            'holder_count'  => $holders->count(),
+            'current'       => $holders->firstWhere('is_current', true),
+            'holders'       => $holders->all(),
         ];
     }
 
     /** Shape one holder row (a vehicle + its optional timeline assignment). */
-    private function holder(Vehicle $v, ?PlateAssignment $a, int $selfId, array $counts, ?bool $isCurrentOverride = null): array
+    private function holder(Vehicle $v, ?PlateAssignment $a, int $selfId, array $counts, ?bool $isCurrentOverride = null, ?string $letter = null): array
     {
         $gone = in_array($v->status, PlateResolver::GONE_STATUSES, true);
         $isCurrent = $isCurrentOverride ?? (bool) ($a?->is_current);
+        $code = $a?->plate_code ?? $v->plate_code;
 
         return [
             'vehicle_id'  => $v->id,
@@ -125,6 +144,8 @@ class PlateHistoryService
             'is_current'  => $isCurrent,                  // the plate's live holder
             'is_gone'     => $gone,                       // sold / disposed / returned
             'plate_no'    => $v->plate_no,
+            'plate_code'  => $code,
+            'plate_display' => $letter ? trim($letter . ' ' . $v->plate_no) : $v->plate_no,  // "P 76722"
             'make'        => $v->make,
             'model'       => $v->model,
             'year'        => $v->year,

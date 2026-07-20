@@ -7,6 +7,24 @@ use Illuminate\Http\Resources\Json\JsonResource;
 
 class VehicleResource extends JsonResource
 {
+    /** Memoized code→letter map so a collection render is one query, not one per row. */
+    private static ?array $letterMap = null;
+
+    /** Render a plate as "<letter> <digits>" via the dictionary; digits alone if no code/letter. */
+    private static function plateDisplay($code, $digits): string
+    {
+        $digits = (string) $digits;
+        if ($code === null || $code === '') {
+            return $digits;
+        }
+        if (self::$letterMap === null) {
+            self::$letterMap = \App\Models\PlateCode::letterMap();
+        }
+        $letter = self::$letterMap[$code] ?? self::$letterMap[(int) $code] ?? null;
+
+        return $letter ? trim($letter . ' ' . $digits) : $digits;
+    }
+
     /**
      * Transform the resource into an array.
      *
@@ -26,6 +44,11 @@ class VehicleResource extends JsonResource
             // plate's live holder (only present when the plate_assignment relation was eager-loaded,
             // e.g. the fleet list — never triggers a lazy query on single-vehicle reads).
             "plate_key" => $this->plate_key,
+            // The plate CODE (OM PlateColorNo) + a ready-made display that maps it to the plate
+            // letter via the dictionary — "P 76722", never the raw code. Same digits under a
+            // different code are a different plate.
+            "plate_code" => $this->plate_code,
+            "plate_display" => self::plateDisplay($this->plate_code, $this->plate_no),
             "is_current_plate_holder" => $this->when(
                 $this->relationLoaded('plateAssignment'),
                 fn () => (bool) optional($this->plateAssignment)->is_current
