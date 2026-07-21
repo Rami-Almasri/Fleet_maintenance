@@ -102,6 +102,7 @@ const NAV_SECTIONS = [
   {
     title: 'Maintenance',
     items: [
+      { name: 'Car Status', to: '/car-status', icon: 'M5 17h14M5 17a2 2 0 0 1-2-2v-3l2-5a2 2 0 0 1 2-1.4h8A2 2 0 0 1 19 7l2 5v3a2 2 0 0 1-2 2M7 17v1a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-1m14 0v1a1 1 0 0 1-1 1h0a1 1 0 0 1-1-1v-1M9 12l2 2 4-4', desc: 'The workshop command center — every vehicle inside the maintenance workflow right now in one live table (stage, who holds it, garage, priority, faults, parts, deadline), with KPI cards and manager sections for repeat repairs, overdue cars, waiting-for-parts, waiting-for-approval and recently finished. Click any car for its full Maintenance Intelligence Center.' },
       { name: 'Workflow Journey', to: '/inspections/history', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-5 7h4m-4 4h4', desc: 'A stage-by-stage timeline of every step each car takes through the workflow — inspection, dispatch, garage arrival, repair, movement and readiness — each row headlined by the workflow stage it reached (absorbs the old Activity Feed, Vehicle Status, Vehicle Life-Stream & Workflow Hub). Click any car to follow just its own journey.' },
       { name: 'Workflow', to: '/maintenance-workflow', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-3 7-3 3 3 3m6-6 3 3-3 3', desc: 'The live maintenance ticket pipeline (Inspector → Supervisor → Driver → Garage → Re-inspection). Open a ticket and advance it through the stages; the board updates in real time.' },
       { name: 'Recommendations', to: '/maintenance-recommendations', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-3 8h.01M9 11h6m-6 3h4', desc: 'Inspection recommendations awaiting a supervisor’s review, before any maintenance starts. Approve to begin work, order parts first, schedule for later, or dismiss — a recommendation-only car never clutters the active board.' },
@@ -111,6 +112,7 @@ const NAV_SECTIONS = [
       { name: 'Approvals', to: '/maintenance-approvals', icon: 'M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Maintenance items waiting for sign-off before work proceeds.' },
       { name: 'Pending Invoices', to: '/invoices/pending-submission', icon: 'M9 12h6m-6 4h4m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2zM14 3v5h5M12 8v.01', desc: 'Repairs that are done and the car is back in service, but the garage invoice hasn’t arrived yet. Anything past the 3-day window is flagged red; mark an invoice received to close the ticket.' },
       { name: 'Completed Repairs', to: '/completed-repairs', icon: 'M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'The ledger of every car whose repair is done and signed off — who requested it, who drove it, where it was fixed, what was found and repaired, and what it cost. Expand any row for the full custody chain, the resolved faults and the odometer readings.' },
+      { name: 'Maintenance History', to: '/maintenance-history', icon: 'M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Every car that saw the workshop over the chosen window — how often it went in (visits) and how long it spent there (total days in the shop), sortable and searchable. Open a car\'s visit list to see each individual trip: date, garage, what was done and the cost.' },
       { name: 'Foresight', to: '/maintenance-foresight', icon: 'M9.66 17h4.68M12 3v1m6.36 1.64-.7.7M21 12h-1M4 12H3m3.34-5.66-.7-.7M7 17a5 5 0 1 1 10 0', desc: 'Predictive maintenance: cars showing early mechanical warning signs (service overdue, chronic faults, aging battery) caught before they fail — with the downtime, parts-wait risk and lost rental revenue estimated from the fleet’s own repair history.' },
       { name: 'Cost Capture', to: '/cost-capture', icon: 'M12 8c-1.7 0-3 .9-3 2s1.3 2 3 2 3 .9 3 2-1.3 2-3 2m0-8V6m0 12v-2m9-4a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Quick Cost Input: recent repairs with no cost recorded. Enter the amount in one tap to fix each vehicle’s repair spend and re-check its Negative-Yield flag — the tool for closing the understated-spend gap.' },
       { name: 'Damage & Accidents', to: '/damage-accidents', icon: 'M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z', desc: 'Damage and accident records shown as-is per vehicle. Fault is colored red/green based on the liable party and insurance.' },
@@ -183,6 +185,7 @@ const NAV_PERMISSIONS = {
   '/team-presence': 'logistics.view',
   '/invoices/pending-submission': 'maintenance.view',
   '/completed-repairs': 'maintenance.view',
+  '/maintenance-history': 'dashboard.view',
   '/finding-keywords': 'maintenance.view',
   '/parts': 'parts.view',
   '/part-investigations': 'parts.investigate',
@@ -203,6 +206,7 @@ const NAV_PERMISSIONS = {
   '/maintenance': 'maintenance.view',
   '/inspections/history': 'insights.view',
   '/maintenance-hub': 'maintenance.view',
+  '/car-status': 'maintenance.view',
   '/maintenance-workflow': 'maintenance.view',
   '/maintenance-recommendations': 'maintenance.view',
   '/my-maintenance-queue': 'maintenance.view',

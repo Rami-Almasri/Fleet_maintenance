@@ -53,6 +53,7 @@ class DashboardService
     public function __construct(
         private RealProfitService $realProfit,
         private OperationsService $operations,
+        private FleetUtilizationService $fleetUtilization,
     ) {
     }
 
@@ -542,7 +543,9 @@ class DashboardService
                 'window_days'     => $days,
                 'contract_expiry' => ['count' => count($rentals),      'items' => array_slice($rentals, 0, 5)],
                 // Cars physically in the workshop right now, tagged with the lifecycle stage they sit at.
-                'in_maintenance'  => ['count' => count($inShop),        'items' => array_slice($inShop, 0, 5)],
+                // The panel is the primary Proactive-Flags column, so it shows the FULL in-shop list
+                // (inMaintenanceList already caps at 25), not a top-5 teaser.
+                'in_maintenance'  => ['count' => count($inShop),        'items' => $inShop],
                 // count/total are the TRUE totals of the whole set; items is just the top-5 shown.
                 'invoice_overdue' => ['count' => $invSummary['count'], 'total' => $invSummary['total'], 'items' => $invItems],
                 'inspection_due'  => ['count' => count($inspections),  'items' => array_slice($inspections, 0, 5)],
@@ -551,41 +554,43 @@ class DashboardService
     }
 
     /**
-     * Cars physically in the workshop right now — every active maintenance TICKET (PAUSABLE_STATES:
-     * pending dispatch → under repair → final QA → ready for pickup), each tagged with the human
-     * lifecycle stage it currently sits at and its garage. Newest movement first. Powers the
-     * "In Maintenance" proactive-flags column so the team sees which cars are in and at what stage.
+     * Cars physically in the workshop right now — sourced from the REAL maintenance data we hold
+     * today: OPEN type-U maintenance CONTRACTS (OM / sheet-synced), one row per in-shop car. The
+     * app-side workflow tickets are still being adopted, so the contract is the source of truth for
+     * "is this car in the garage" for now. Each row carries its garage and a repair-ETA gauge
+     * computed from the contract's in-shop start (out_date) vs the promised ready-by date
+     * (maintenance.expected_return_date), falling back to the fleet-default target when none is set.
+     * Longest-overdue first so the cars blowing their window sit at the top.
      *
-     * @return array<int,array{id:?int, plate:?string, car:?string, stage:string, garage:?string}>
+     * @return array<int,array{id:?int, plate:?string, car:?string, stage:string, garage:?string, eta:array}>
      */
     public function inMaintenanceList(int $limit = 25): array
     {
-        // workflow_status → short human stage label (mirrors the board / live-position wording).
-        $stages = [
-            Maintenance::WF_INSPECTION_PENDING  => 'Pending dispatch',
-            Maintenance::WF_AWAITING_DISPATCH   => 'Awaiting pickup',
-            Maintenance::WF_IN_TRANSIT          => 'In transit',
-            Maintenance::WF_UNDER_REPAIR        => 'Under repair',
-            Maintenance::WF_REPAIR_REVIEW       => 'Repair review',
-            Maintenance::WF_READY_REINSPECTION  => 'Final QA',
-            Maintenance::WF_REINSPECTION_FAILED => 'QA failed',
-            Maintenance::WF_READY_FOR_PICKUP    => 'Ready · pickup',
-        ];
-
-        return Maintenance::query()
-            ->whereIn('workflow_status', Maintenance::PAUSABLE_STATES)
-            ->with(['vehicle:id,plate_no,make,model', 'vendor:id,name'])
-            ->orderByDesc('last_state_change_at')
-            ->orderByDesc('id')
+        return Contract::query()
+            ->where('contract_type', 'U')
+            ->currentlyOpen()
+            ->whereNotNull('vehicle_id')
+            ->with(['vehicle:id,plate_no,make,model', 'maintenance:id,contract_id,garage,vendor_id,expected_return_date', 'maintenance.vendor:id,name'])
             ->limit($limit)
-            ->get(['id', 'vehicle_id', 'vendor_id', 'garage', 'workflow_status', 'plate', 'car_label', 'last_state_change_at'])
-            ->map(fn ($t) => [
-                'id'     => $t->vehicle_id,
-                'plate'  => $t->plate ?: $t->vehicle?->plate_no,
-                'car'    => $t->car_label ?: trim(($t->vehicle?->make ?? '') . ' ' . ($t->vehicle?->model ?? '')) ?: null,
-                'stage'  => $stages[$t->workflow_status] ?? $t->workflow_status,
-                'garage' => $t->vendor?->name ?: ($t->garage ?: null),
-            ])
+            ->get(['id', 'vehicle_id', 'out_date'])
+            ->map(function ($c) {
+                $m = $c->maintenance;
+                // In-shop clock anchored to when the car went in (contract out_date); target is the
+                // garage's promised ready-by date when set, else the fleet-default window.
+                $eta = Maintenance::etaFromDates($c->out_date, $m?->expected_return_date);
+
+                return [
+                    'id'     => (int) $c->vehicle_id,
+                    'plate'  => $c->vehicle?->plate_no,
+                    'car'    => $c->vehicle ? (trim(($c->vehicle->make ?? '') . ' ' . ($c->vehicle->model ?? '')) ?: null) : null,
+                    'stage'  => 'In workshop',
+                    'garage' => $m?->vendor?->name ?: ($m?->garage ?: null),
+                    'eta'    => $eta,
+                ];
+            })
+            // Worst-overdue first, then closest-to-due; keeps the urgent cars at the top of the panel.
+            ->sortByDesc(fn ($r) => ($r['eta']['days_over'] ?? 0) * 1000 - ($r['eta']['days_left'] ?? 0))
+            ->values()
             ->all();
     }
 
@@ -644,63 +649,91 @@ class DashboardService
     }
 
     /**
+     * "Most Maintained Models" — which car TYPES (make + model) go to the workshop most, by ALL-TIME
+     * ticket volume. A "ticket" is one maintenance row carrying a workflow lifecycle state (the app-driven
+     * Fleet Maintenance Workflow — Maintenance::scopeWorkflowTickets), NOT a raw sheet/manual log row, so
+     * this counts real tickets the team opened. Grouped by (make, model) and ranked by ticket count. The
+     * INNER join to vehicles (+ soft-delete guard + GONE_STATUSES exclusion) keeps sold / disposed /
+     * soft-deleted cars and orphan rows out of the ranking.
+     *
+     * @return array{count:int, items:array<int,array{model:string, tickets:int, cars:int}>}
+     */
+    public function mostMaintainedModels(int $limit = 8): array
+    {
+        return $this->remember("most_maintained_models:{$limit}", self::CACHE_TTL, function () use ($limit) {
+            $rows = DB::table('maintenances as m')
+                ->join('vehicles as v', 'v.id', '=', 'm.vehicle_id')
+                ->whereNull('v.deleted_at')
+                ->whereNotIn('v.status', PlateResolver::GONE_STATUSES)
+                ->whereNotNull('m.workflow_status')
+                ->select(
+                    'v.make', 'v.model',
+                    DB::raw('COUNT(*) AS tickets'),
+                    DB::raw('COUNT(DISTINCT m.vehicle_id) AS cars')
+                )
+                ->groupBy('v.make', 'v.model')
+                ->orderByDesc('tickets')
+                ->orderByDesc(DB::raw('COUNT(DISTINCT m.vehicle_id)'))
+                ->limit($limit)
+                ->get();
+
+            $items = $rows->map(fn ($r) => [
+                'model'   => trim(($r->make ?? '') . ' ' . ($r->model ?? '')) ?: 'Unknown',
+                'tickets' => (int) $r->tickets,
+                'cars'    => (int) $r->cars,
+            ])->all();
+
+            return ['count' => count($items), 'items' => $items];
+        });
+    }
+
+    /**
      * The full "Most in Maintenance" list — EVERY in-fleet car that saw the workshop within the window,
-     * with how OFTEN (distinct visit-days, the same visit definition as mostMaintained/Workshop Visits)
-     * and how LONG (total days in the shop, from the canonical type-U maintenance contracts — the same
-     * out_date→in_date basis as Fleet Utilization; an open stay counts up to today). Unlike mostMaintained
-     * this returns the whole list (no top-N cap) to back the "All →" Maintenance History page.
+     * with how OFTEN (visits) and how LONG (days in shop). BOTH figures come from the ONE canonical
+     * source — FleetUtilizationService via canonicalMaintenanceDays() — so every row is byte-identical
+     * to what Fleet Utilization and the Most Maintained leaderboard show for the same window: visits =
+     * type-U maintenance visits (Rental is King, in-service), days = true off-road shop days. Unlike
+     * mostMaintained this returns the whole list (no top-N cap) to back the "All →" Maintenance History
+     * page. first/last-visit DATES are the only thing read from the workshop log — pure timeline
+     * metadata, not a count.
+     *
+     * $days = 0 means all-time (no trailing window) — every day the car has ever spent in the shop.
      *
      * @return array{count:int, window_days:int, items:array<int,array<string,mixed>>}
      */
     public function maintenanceHistory(int $days = 90): array
     {
         return $this->remember("maint_history:{$days}", self::CACHE_TTL, function () use ($days) {
-            $cutoff = Carbon::today()->subDays($days)->toDateString();
+            // days=0 → all-time (no trailing window); the whereDate cutoff below is skipped.
+            $allTime = $days <= 0;
+            $cutoff  = Carbon::today()->subDays($days)->toDateString();
 
-            // How OFTEN each in-fleet car was in the shop (workshop log — sheet + manual).
-            $visits = DB::table('maintenances as m')
-                ->join('vehicles as v', 'v.id', '=', 'm.vehicle_id')
-                ->whereNull('v.deleted_at')
-                ->whereNotIn('v.status', PlateResolver::GONE_STATUSES)
+            // SINGLE SOURCE OF TRUTH for BOTH the visit count and the day count — the same Rental-is-King
+            // calculation Fleet Utilization uses, over the same window (null = all-time). Keyed by car.
+            $canonical = $this->canonicalMaintenanceDays($allTime ? null : $cutoff);
+
+            // First/last workshop DATES (sheet + manual log) — timeline metadata only, attached per car.
+            $dates = DB::table('maintenances as m')
                 ->whereIn('m.origin', Maintenance::WORKSHOP_LOG_ORIGINS)
                 ->whereNotNull('m.out_date')
-                ->whereDate('m.out_date', '>=', $cutoff)
-                ->select(
-                    'v.id AS vehicle_id', 'v.plate_no', 'v.make', 'v.model',
-                    DB::raw('COUNT(DISTINCT m.out_date) AS visits'),
-                    DB::raw('MIN(m.out_date) AS first_visit'),
-                    DB::raw('MAX(m.out_date) AS last_visit')
-                )
-                ->groupBy('v.id', 'v.plate_no', 'v.make', 'v.model')
-                ->get();
-
-            // How LONG each car spent in the shop (canonical type-U maintenance contracts). Keyed by
-            // vehicle so we can attach it to the visit rows; an open (in_date IS NULL) stay = still in.
-            $downtime = DB::table('contracts')
-                ->where('contract_type', 'U')
-                ->whereNotNull('out_date')
-                ->whereDate('out_date', '>=', $cutoff)
-                ->select(
-                    'vehicle_id',
-                    DB::raw('SUM(GREATEST(DATEDIFF(COALESCE(in_date, CURDATE()), out_date), 0)) AS down_days'),
-                    DB::raw('SUM(CASE WHEN in_date IS NULL THEN 1 ELSE 0 END) AS open_stays')
-                )
-                ->groupBy('vehicle_id')
+                ->when(! $allTime, fn ($q) => $q->whereDate('m.out_date', '>=', $cutoff))
+                ->whereIn('m.vehicle_id', array_keys($canonical) ?: [0])
+                ->select('m.vehicle_id', DB::raw('MIN(m.out_date) AS first_visit'), DB::raw('MAX(m.out_date) AS last_visit'))
+                ->groupBy('m.vehicle_id')
                 ->get()
                 ->keyBy('vehicle_id');
 
-            $items = $visits->map(function ($r) use ($downtime) {
-                $d = $downtime[$r->vehicle_id] ?? null;
+            $items = collect($canonical)->map(function ($c) use ($dates) {
+                $d = $dates[$c['id']] ?? null;
                 return [
-                    'id'                => (int) $r->vehicle_id,
-                    'plate'             => $r->plate_no,
-                    'car'               => trim(($r->make ?? '') . ' ' . ($r->model ?? '')) ?: null,
-                    'visits'            => (int) $r->visits,
-                    'first_visit'       => $r->first_visit,
-                    'last_visit'        => $r->last_visit,
-                    // Total days in the shop over the window, or null when no type-U contract backs it.
-                    'days_in_shop'      => $d ? (int) $d->down_days : null,
-                    'currently_in_shop' => $d ? ((int) $d->open_stays > 0) : false,
+                    'id'                => $c['id'],
+                    'plate'             => $c['plate'],
+                    'car'               => $c['car'],
+                    'visits'            => $c['periods'],          // type-U maintenance visits — matches Fleet Utilization
+                    'first_visit'       => $d->first_visit ?? null,
+                    'last_visit'        => $d->last_visit ?? null,
+                    'days_in_shop'      => $c['days_in_shop'],      // true off-road shop days — matches Fleet Utilization
+                    'currently_in_shop' => $c['currently_in_shop'],
                 ];
             })
             ->sortByDesc('visits')
@@ -709,6 +742,101 @@ class DashboardService
 
             return ['count' => count($items), 'window_days' => $days, 'items' => $items];
         });
+    }
+
+    /**
+     * SINGLE SOURCE OF TRUTH for per-vehicle maintenance days — delegates to FleetUtilizationService,
+     * the exact same "Rental is King" calculation the Fleet Utilization page uses (overlaps merged,
+     * rental-overlap days credited to rental not the shop, onboarding excluded, open stays run to
+     * today). Both "Most Maintained Cars" (lifetimeMaintenanceDays) and the "All cars →" Maintenance
+     * History list build on this so there is ONE definition of a maintenance day anywhere in FleetView.
+     *
+     * `$from`/`$to` are passed straight through to the report window (null,null = all-time / lifetime).
+     * Returns one row per in-fleet car that actually saw the shop in the window, keyed by vehicle_id:
+     *   days_in_shop      — TRUE off-road shop days (days_maintenance from the report)
+     *   periods           — in-service workshop visits (maintenance_visits — matches the page's "N visits")
+     *   currently_in_shop — an open type-U maintenance contract exists right now
+     *
+     * Sold / disposed / returned cars are dropped (GONE_STATUSES) to match the leaderboard's fleet scope.
+     *
+     * @return array<int,array{id:int, plate:?string, car:?string, days_in_shop:int, periods:int, currently_in_shop:bool}>
+     */
+    private function canonicalMaintenanceDays(?string $from = null, ?string $to = null, ?array $statuses = null): array
+    {
+        // $statuses limits the fleet at the DB level (e.g. ['ready','rented'] = active cars only). When
+        // null we take the whole fleet and just drop GONE (sold/disposed) cars below.
+        $report = $this->fleetUtilization->report($from, $to, $statuses);
+
+        $rows = [];
+        foreach ($report['cars'] as $c) {
+            if ($statuses === null && in_array($c['status'], PlateResolver::GONE_STATUSES, true)) {
+                continue;   // no sold / disposed / returned cars
+            }
+            $days    = (int) ($c['days_maintenance'] ?? 0);
+            $periods = (int) ($c['maintenance_visits'] ?? 0);
+            if ($days <= 0 && $periods <= 0) {
+                continue;   // never saw the shop in this window
+            }
+            $rows[(int) $c['vehicle_id']] = [
+                'id'                => (int) $c['vehicle_id'],
+                'plate'             => $c['plate'],
+                'car'               => $c['car'],
+                'days_in_shop'      => $days,
+                'periods'           => $periods,
+                'currently_in_shop' => (bool) ($c['currently_in_shop'] ?? false),
+                // Full day split (same Rental-is-King numbers Fleet Utilization shows) so the widget can
+                // show the whole picture per car — rented, in-service total, idle — not just shop days.
+                'days_rented'       => (int) ($c['days_rented'] ?? 0),
+                'days_in_service'   => (int) ($c['days_in_service'] ?? 0),
+                'days_idle'         => (int) ($c['days_idle'] ?? 0),
+                'utilization_pct'   => $c['utilization_pct'] ?? null,
+                'downtime_pct'      => $c['downtime_pct'] ?? null,
+            ];
+        }
+
+        return $rows;
+    }
+
+    /**
+     * "Most Maintained Cars" — the top-N vehicles ranked by TRUE LIFETIME DOWNTIME (or by number of
+     * maintenance periods). The maintenance-day figure is NOT computed here: it is the identical
+     * "Rental is King" number Fleet Utilization shows over its All-Time window, via
+     * canonicalMaintenanceDays(). So a car reading 155 days in Fleet Utilization (All Time) reads
+     * exactly 155 here — one definition, no drift.
+     *
+     * @return array{count:int, items:array<int,array{id:int, plate:?string, car:?string, days_in_shop:int, periods:int, currently_in_shop:bool}>}
+     */
+    public function lifetimeMaintenanceDays(int $limit = 8, string $sort = 'downtime'): array
+    {
+        $sort = $sort === 'periods' ? 'periods' : 'downtime';
+
+        return $this->remember("lifetime_downtime_days:{$sort}:{$limit}", self::CACHE_TTL, function () use ($limit, $sort) {
+            // Active fleet only — cars that can be rented right now (status ready or rented).
+            $items = array_values($this->canonicalMaintenanceDays(null, null, ['ready', 'rented']));
+
+            // Rank biggest-first by the chosen metric (true downtime days, or number of maintenance
+            // periods), with the other metric as the tiebreak, and cap to the top N.
+            usort($items, $sort === 'periods'
+                ? fn ($a, $b) => ($b['periods'] <=> $a['periods']) ?: ($b['days_in_shop'] <=> $a['days_in_shop'])
+                : fn ($a, $b) => ($b['days_in_shop'] <=> $a['days_in_shop']) ?: ($b['periods'] <=> $a['periods']));
+            $items = array_slice($items, 0, $limit);
+
+            return ['count' => count($items), 'items' => $items];
+        });
+    }
+
+    /**
+     * The individual maintenance visits behind one car's row on the Maintenance History page — the
+     * "see N visits" drill-down. Delegates to FleetUtilizationService::maintenanceVisits() so the list
+     * is the SAME type-U visit set the row's visit count comes from (list length == the "N visits"
+     * badge), each trip enriched with garage / issue / cost from the workshop log. Newest first.
+     */
+    public function maintenanceHistoryVisits(int $vehicleId, int $days = 90): array
+    {
+        $from = $days > 0 ? Carbon::today()->subDays($days)->toDateString() : null;
+        $out  = $this->fleetUtilization->maintenanceVisits($vehicleId, $from);
+
+        return ['vehicle_id' => $vehicleId, 'window_days' => $days, 'count' => $out['count'], 'items' => $out['items']];
     }
 
     /** Sum of what customers still owe (positive balances only). */

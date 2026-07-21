@@ -119,6 +119,25 @@ class DashboardController extends Controller
     }
 
     /**
+     * "Most Maintained Models" — which car types (make + model) go to the workshop most, by all-time
+     * ticket volume. Powers the homepage ranking card. Read-only; no date window (all-time by design).
+     */
+    public function mostMaintainedModels(Request $request, DashboardService $dashboard)
+    {
+        try {
+            $limit = min(20, max(1, (int) $request->query('limit', 8)));
+
+            return ResponseHelper::SuccessResponse(
+                $dashboard->mostMaintainedModels($limit),
+                "Most-maintained models retrieved successfully",
+                200
+            );
+        } catch (\Exception $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
      * The FULL "Most in Maintenance" list behind the homepage column's "All →" link — every in-fleet car
      * that saw the workshop over a trailing window (?days=N, default 90), with how often (visits) and how
      * long (total days in the shop). Powers the Maintenance History page.
@@ -126,11 +145,52 @@ class DashboardController extends Controller
     public function maintenanceHistory(Request $request, DashboardService $dashboard)
     {
         try {
-            $days = min(730, max(1, (int) $request->query('days', 90)));
+            // days=0 → all-time (no trailing window); otherwise a trailing window capped at 2 years.
+            $days = min(730, max(0, (int) $request->query('days', 90)));
 
             return ResponseHelper::SuccessResponse(
                 $dashboard->maintenanceHistory($days),
                 "Maintenance history retrieved successfully",
+                200
+            );
+        } catch (\Exception $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
+     * "Most Maintained Cars" — the vehicles ranked by TOTAL LIFETIME days in maintenance (all-time,
+     * no window): the sum of every maintenance period the car has ever had. Powers the homepage widget.
+     */
+    public function mostMaintainedCars(Request $request, DashboardService $dashboard)
+    {
+        try {
+            $limit = min(50, max(1, (int) $request->query('limit', 8)));
+            $sort = $request->query('sort', 'downtime'); // 'downtime' (days) | 'periods'
+
+            return ResponseHelper::SuccessResponse(
+                $dashboard->lifetimeMaintenanceDays($limit, $sort),
+                "Most-maintained cars retrieved successfully",
+                200
+            );
+        } catch (\Exception $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
+     * The individual workshop visits for ONE car — the "see N visits" drill-down on the
+     * Maintenance History page. Same trailing window (?days=N, default 90) as the summary list.
+     */
+    public function maintenanceHistoryVisits(Request $request, int $vehicle, DashboardService $dashboard)
+    {
+        try {
+            // days=0 → all-time (matches the summary list's window).
+            $days = min(730, max(0, (int) $request->query('days', 90)));
+
+            return ResponseHelper::SuccessResponse(
+                $dashboard->maintenanceHistoryVisits($vehicle, $days),
+                "Vehicle maintenance visits retrieved successfully",
                 200
             );
         } catch (\Exception $e) {

@@ -459,6 +459,25 @@ class VehicleController extends Controller
                 ->where('cost', '>', 0)
                 ->count();
 
+            // Revenue architecture — the billed-revenue lines this car's rental (type-C) contracts
+            // generated, classified into management buckets straight off the OfficeManager debit
+            // columns (accrued basis, matches the Financial Performance hero's gross figure). Feeds
+            // the "Revenue architecture" donut on the Overview dashboard.
+            $rentalContracts = $contracts->where('contract_type', 'C');
+            $sumCols = fn (array $keys) => round(
+                $rentalContracts->sum(fn ($c) => array_sum(array_map(fn ($k) => (float) ($c->$k ?? 0), $keys))),
+                2
+            );
+            $revenueBreakdown = [
+                'rents'            => $sumCols(['rents_debit']),
+                'breaches_damages' => $sumCols(['breachs_debit', 'damages_debit']),
+                'operational'      => $sumCols([
+                    'salik_debit', 'km_debit', 'fuel_debit', 'gps_debit',
+                    'cdw_debit', 'extra_driver_debit', 'extra_charges_debit', 'co_driver_debit',
+                ]),
+                'deposits'         => $sumCols(['deposit_debit']),
+            ];
+
             // Current availability = the car's single open contract (if any).
             $open = $vehicle->openContract()->with(['customer', 'maintenance.vendor'])->first();
             $availability = $this->availabilityFor($open, $vehicle);
@@ -817,6 +836,9 @@ class VehicleController extends Controller
                     'maintenance_count' => $maintenance->count(),
                     'maintenance_total' => round($maintenance->sum('total'), 2),
                     'maintenance_events' => $maintenanceLog->count(),
+                    // Billed-revenue lines classified into management buckets (Rents / Breaches &
+                    // Damages / Operational / Deposits) for the Overview "Revenue architecture" donut.
+                    'revenue_breakdown' => $revenueBreakdown,
                 ],
             ];
 

@@ -4,6 +4,12 @@ namespace App\Services;
 
 use Google\Client;
 use Google\Service\Sheets;
+use Google\Service\Sheets\AddSheetRequest;
+use Google\Service\Sheets\BatchUpdateSpreadsheetRequest;
+use Google\Service\Sheets\ClearValuesRequest;
+use Google\Service\Sheets\Request as SheetsRequest;
+use Google\Service\Sheets\SheetProperties;
+use Google\Service\Sheets\ValueRange;
 use RuntimeException;
 
 class GoogleSheetsService
@@ -17,7 +23,10 @@ class GoogleSheetsService
         $client = new Client();
         $client->setApplicationName('Fleet Sheets Sync');
         $client->setAuthConfig($path);
-        $client->setScopes([Sheets::SPREADSHEETS_READONLY]);
+        // Full read/write: this service both PULLS source sheets (importers) and PUSHES the
+        // vehicle-timeline export. SPREADSHEETS is a superset of the old READONLY scope, so every
+        // existing reader keeps working unchanged.
+        $client->setScopes([Sheets::SPREADSHEETS]);
 
         $this->service = new Sheets($client);
     }
@@ -110,5 +119,75 @@ class GoogleSheetsService
             : "'{$title}'";
 
         return $this->readRange($spreadsheetId, $range);
+    }
+
+    // ── Write side (used by the vehicle-timeline export) ─────────────────────────────
+
+    /** Create a tab if it doesn't already exist (no-op when it does). */
+    public function ensureTab(string $spreadsheetId, string $title): void
+    {
+        foreach ($this->listTabs($spreadsheetId) as $tab) {
+            if ($tab['title'] === $title) {
+                return;
+            }
+        }
+
+        $request = new SheetsRequest([
+            'addSheet' => new AddSheetRequest([
+                'properties' => new SheetProperties(['title' => $title]),
+            ]),
+        ]);
+
+        $this->service->spreadsheets->batchUpdate(
+            $spreadsheetId,
+            new BatchUpdateSpreadsheetRequest(['requests' => [$request]])
+        );
+    }
+
+    /**
+     * Append rows to the bottom of a tab (INSERT_ROWS — never overwrites existing data).
+     *
+     * @param array<int, array<int, mixed>> $rows
+     * @return int number of rows appended
+     */
+    public function appendRows(string $spreadsheetId, string $tabTitle, array $rows): int
+    {
+        if (empty($rows)) {
+            return 0;
+        }
+
+        $this->service->spreadsheets_values->append(
+            $spreadsheetId,
+            "'{$tabTitle}'!A1",
+            new ValueRange(['values' => $rows]),
+            ['valueInputOption' => 'RAW', 'insertDataOption' => 'INSERT_ROWS']
+        );
+
+        return count($rows);
+    }
+
+    /**
+     * Overwrite a range starting at A1 notation (used to (re)write the header row).
+     *
+     * @param array<int, array<int, mixed>> $rows
+     */
+    public function writeRows(string $spreadsheetId, string $range, array $rows): void
+    {
+        $this->service->spreadsheets_values->update(
+            $spreadsheetId,
+            $range,
+            new ValueRange(['values' => $rows]),
+            ['valueInputOption' => 'RAW']
+        );
+    }
+
+    /** Wipe every value in a tab (keeps the tab + formatting). Used by a --fresh rebuild. */
+    public function clearTab(string $spreadsheetId, string $tabTitle): void
+    {
+        $this->service->spreadsheets_values->clear(
+            $spreadsheetId,
+            "'{$tabTitle}'",
+            new ClearValuesRequest()
+        );
     }
 }

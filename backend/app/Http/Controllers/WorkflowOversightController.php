@@ -143,6 +143,7 @@ class WorkflowOversightController extends Controller
             };
 
             $rows = collect();
+            $readingsTotal = 0; // every odometer reading captured across all stages (clean + flagged) — the KPI denominator
             foreach ($tickets as $t) {
                 $flags = $t->odometer_flags ?? [];
                 foreach (self::STAGE_MAP as $key => [$label, $atCol, $byCol]) {
@@ -150,6 +151,7 @@ class WorkflowOversightController extends Controller
                     if (! is_array($flag)) {
                         continue;
                     }
+                    $readingsTotal++;
                     $kind = $this->classifyFlag($flag);
                     if ($kind === null) {
                         continue; // a clean, in-tolerance reading — nothing to review
@@ -258,11 +260,17 @@ class WorkflowOversightController extends Controller
                     ->all();
             };
 
+            // Rejected attempts are readings too — fold them into the denominator so accuracy reflects
+            // every entry the workflow ever evaluated, clean or not.
+            $readingsTotal += $blocks->count();
+
             return ResponseHelper::SuccessResponse([
                 'rows'          => $sorted,
                 'total'         => $sorted->count(),
                 'blocked'       => $sorted->where('kind', 'blocked')->count(),
                 'discrepancies' => $sorted->where('kind', 'discrepancy')->count(),
+                // Every reading captured across all stages (clean + flagged + blocked) — the accuracy denominator.
+                'readings_total'=> $readingsTotal,
                 'tolerance_km'  => \App\Services\OdometerContinuityService::TOLERANCE_KM,
                 'kpis'          => [
                     'flagged'        => $sorted->count(),
@@ -554,9 +562,12 @@ class WorkflowOversightController extends Controller
             $sorted = $rows->sortByDesc('gap')->values();
 
             return ResponseHelper::SuccessResponse([
-                'rows'      => $sorted,
-                'total'     => $sorted->count(),
-                'critical'  => $sorted->where('expected', 'critical')->count(),
+                'rows'         => $sorted,
+                'total'        => $sorted->count(),
+                'critical'     => $sorted->where('expected', 'critical')->count(),
+                // Every ticket the inspector actually graded — the denominator for a grading-accuracy KPI
+                // (graded_total − total mismatches = the ones scored appropriately).
+                'graded_total' => $tickets->count(),
             ], 'Severity grade review retrieved', 200);
         } catch (\Throwable $e) {
             return ResponseHelper::fromException($e);
@@ -624,6 +635,9 @@ class WorkflowOversightController extends Controller
                 'rows'          => $rows,
                 'total'         => $rows->count(),
                 'by_inspector'  => $byInspector,
+                // Every fault ever diagnosed (one maintenance_task = one called fault) — the denominator for a
+                // diagnosis-accuracy KPI (diagnosed_total − overruled = the calls that stood).
+                'diagnosed_total' => \App\Models\MaintenanceTask::count(),
             ], 'Mis-diagnosis review retrieved', 200);
         } catch (\Throwable $e) {
             return ResponseHelper::fromException($e);
@@ -689,11 +703,14 @@ class WorkflowOversightController extends Controller
             return ResponseHelper::SuccessResponse([
                 'mileage_flags'        => $mileage['total'] ?? 0,
                 'mileage_discrepancies'=> $mileage['discrepancies'] ?? 0,
+                'mileage_readings_total'=> $mileage['readings_total'] ?? 0,
                 'left_garage'          => $garage['total'] ?? 0,
                 'needs_invoice'        => $garage['needs_request'] ?? 0,
                 'severity_mismatches'  => $severity['total'] ?? 0,
                 'severity_critical'    => $severity['critical'] ?? 0,
+                'severity_graded_total'=> $severity['graded_total'] ?? 0,
                 'misdiagnoses'         => $misdiag['total'] ?? 0,
+                'diagnosed_total'      => $misdiag['diagnosed_total'] ?? 0,
                 'resolved_transfers'   => $resolved['total'] ?? 0,
                 'awaiting_parts'       => $awaitingParts,
             ], 'Workflow oversight overview retrieved', 200);

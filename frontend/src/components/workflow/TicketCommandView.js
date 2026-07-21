@@ -235,7 +235,7 @@ function CountUp({ value }) {
   return <>{Math.round(v).toLocaleString()}</>;
 }
 
-export default function TicketCommandView({ ticketId, can, userId, onAct, reloadKey = 0 }) {
+export default function TicketCommandView({ ticketId, can, userId, onAct, reloadKey = 0, hideBack = false }) {
   const { t } = useI18n();
   const toast = useToast();
   const [tk, setTk] = useState(null);
@@ -379,7 +379,9 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
     );
   };
 
-  const backLink = (
+  // When embedded inside another page (e.g. the Car Status vehicle page) the host already provides a back
+  // link, so hideBack suppresses this one to avoid a duplicate. Standalone route keeps it (default).
+  const backLink = hideBack ? null : (
     <Link to="/maintenance-workflow" className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 transition hover:text-slate-800">
       <Icon.ArrowRight className="h-4 w-4 rotate-180" />
       {t('workflow.board.title')}

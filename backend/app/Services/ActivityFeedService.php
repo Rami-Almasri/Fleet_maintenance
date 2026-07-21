@@ -98,6 +98,44 @@ class ActivityFeedService
         VehicleLogEvent::EVENT_TASK_RESOLVED        => 'Fault resolved',
         VehicleLogEvent::EVENT_TASK_REINSPECTION_FAILED => 'Fault failed re-inspection',
         VehicleLogEvent::EVENT_TASK_MARKED_INCORRECT => 'Fault marked incorrect',
+        VehicleLogEvent::EVENT_SERVICE_LOGGED       => 'Routine service performed',
+        VehicleLogEvent::EVENT_REVIEW_APPROVED      => 'Inspection review approved',
+        VehicleLogEvent::EVENT_REVIEW_REJECTED      => 'Inspection review rejected',
+        VehicleLogEvent::EVENT_RECOMMENDATION_APPROVED  => 'Recommendation approved',
+        VehicleLogEvent::EVENT_RECOMMENDATION_DISMISSED => 'Recommendation dismissed',
+        VehicleLogEvent::EVENT_RECOMMENDATION_SCHEDULED => 'Recommendation scheduled',
+        VehicleLogEvent::EVENT_PARTS_ORDERED        => 'Parts ordered',
+        VehicleLogEvent::EVENT_PARTS_READY          => 'Parts ready',
+        VehicleLogEvent::EVENT_PART_REQUESTED       => 'Part requested',
+        VehicleLogEvent::EVENT_PART_APPROVED        => 'Part approved',
+        VehicleLogEvent::EVENT_PART_REJECTED        => 'Part rejected',
+        VehicleLogEvent::EVENT_PART_PURCHASED       => 'Part purchased',
+        VehicleLogEvent::EVENT_PART_INSTALLED       => 'Part installed',
+        VehicleLogEvent::EVENT_PART_COMPLETED       => 'Part request completed',
+        VehicleLogEvent::EVENT_PART_DUPLICATE_FLAGGED  => 'Duplicate part flagged',
+        VehicleLogEvent::EVENT_PART_RECURRENCE_FLAGGED => 'Recurring fault flagged',
+        VehicleLogEvent::EVENT_RETURNED_TO_SERVICE  => 'Released back to service',
+        VehicleLogEvent::EVENT_RESUMED              => 'Maintenance resumed',
+        VehicleLogEvent::EVENT_VEHICLE_RETURNED     => 'Vehicle returned',
+        VehicleLogEvent::EVENT_HANDOVER_INCIDENT    => 'Handover incident flagged',
+        VehicleLogEvent::EVENT_INCIDENT_ACKNOWLEDGED => 'Incident acknowledged',
+        VehicleLogEvent::EVENT_TEMP_RELEASED        => 'Temporarily released',
+        VehicleLogEvent::EVENT_TEMP_RETURNED        => 'Returned from release',
+        VehicleLogEvent::EVENT_ODOMETER_CORRECTED   => 'Odometer corrected',
+    ];
+
+    /**
+     * event_type → the party that OWNS the action, so the Vehicle Timeline can offer Inspector / Driver /
+     * Garage facet filters without a schema change. Reuses VehicleLogEvent::SOURCE_BY_EVENT (inspector /
+     * garage) and overlays a 'driver' bucket for the movement-side events a driver performs. Anything
+     * unlisted falls through to the SOURCE_BY_EVENT bucket, then to 'system'.
+     */
+    private const DRIVER_EVENTS = [
+        VehicleLogEvent::EVENT_DISPATCHED,
+        VehicleLogEvent::EVENT_DELEGATED,
+        VehicleLogEvent::EVENT_REASSIGNED,
+        VehicleLogEvent::EVENT_STATUS_UPDATE,
+        VehicleLogEvent::EVENT_TRANSPORT_ASSIGNED,
     ];
 
     private const LOGISTICS_LABELS = [
@@ -297,7 +335,7 @@ class ActivityFeedService
     private function fromVehicleLog(callable $scope, int $limit): array
     {
         $q = VehicleLogEvent::query()
-            ->with(['vehicle:id,plate_no,make,model', 'actor:id,name', 'linkedContract:id,contract_no']);
+            ->with(['vehicle:id,plate_no,make,model', 'actor:id,name', 'linkedContract:id,contract_no', 'task:id,severity']);
         $scope($q);
         $rows = $q->orderByDesc('occurred_at')->limit($limit)->get();
 
@@ -345,11 +383,18 @@ class ActivityFeedService
                     : null,
                 'primary'     => in_array($stage, self::PRIMARY_STAGES, true),
                 'actor_name'  => $e->actor?->name ?? 'System',
+                'actor_role'  => $this->actorRole($e->event_type),
                 'occurred_at' => optional($e->occurred_at)->toIso8601String(),
                 'vehicle'     => $e->vehicle,
                 'description' => $e->description,
                 'odometer'    => $meta['odometer'] ?? $meta['arrival_odometer'] ?? $meta['reading'] ?? null,
                 'details'     => $meta,
+                // Already-stored fields surfaced first-class so the Vehicle Timeline can facet on them
+                // (no new columns — workflow_status is a column, severity comes off the linked task, the
+                // garage is stamped in meta). All null-safe.
+                'workflow_status' => $e->workflow_status,
+                'severity'    => $e->task?->severity ?? ($meta['severity'] ?? null),
+                'garage'      => $meta['garage'] ?? $meta['vendor'] ?? null,
                 'contract_id' => $e->linked_contract_id,
                 'contract_no' => $e->linkedContract?->contract_no,
                 'source_tag'  => $e->source_tag,
@@ -460,6 +505,7 @@ class ActivityFeedService
                 'transition'  => $this->transitionLabel($stage !== null, $e->from_status, $e->to_status),
                 'primary'     => in_array($stage, self::PRIMARY_STAGES, true),
                 'actor_name'  => $e->actor_name ?: ($e->actor?->name ?? 'System'),
+                'actor_role'  => 'driver',
                 'occurred_at' => optional($e->occurred_at)->toIso8601String(),
                 'vehicle'     => $e->vehicle,
                 'description' => $desc,
@@ -507,6 +553,8 @@ class ActivityFeedService
                 'stage'       => $isPre ? 'Pre-rental Check' : 'Return Check',
                 'primary'     => false,
                 'actor_name'  => $r->inspector_name ?: 'System',
+                'actor_role'  => 'inspector',
+                'severity'    => $r->severity,
                 'occurred_at' => optional($r->captured_at ?? $r->created_at)->toIso8601String(),
                 'vehicle'     => $r->vehicle,
                 'description' => $desc,
@@ -547,6 +595,10 @@ class ActivityFeedService
             'from_stage'  => null,
             'to_stage'    => null,
             'transition'  => null,
+            'workflow_status' => null,
+            'severity'    => null,
+            'garage'      => null,
+            'actor_role'  => null,
         ], $e, [
             'vehicle_id' => $vehicle?->id ?? ($e['vehicle_id'] ?? null),
             'plate'      => $vehicle?->plate_no,
@@ -571,6 +623,19 @@ class ActivityFeedService
         }
 
         return array_keys(array_filter(self::LOG_CATEGORY, fn ($c) => $c === $category));
+    }
+
+    /**
+     * The party a vehicle_log event belongs to (inspector / driver / garage / system) — powers the
+     * Vehicle Timeline's Inspector / Driver facet filters. Driver-side movement events win; otherwise
+     * the SOURCE_BY_EVENT audit bucket (inspector / garage) stands; anything else is 'system'.
+     */
+    private function actorRole(string $eventType): string
+    {
+        if (in_array($eventType, self::DRIVER_EVENTS, true)) {
+            return 'driver';
+        }
+        return VehicleLogEvent::SOURCE_BY_EVENT[$eventType] ?? 'system';
     }
 
     /** Human "In Transit → Under Repair" label for a transition, or null when there's no clean prior. */

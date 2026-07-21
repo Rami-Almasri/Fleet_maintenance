@@ -9,42 +9,24 @@ import Modal from '../../components/ui/Modal';
 import { Input } from '../../components/ui/Field';
 import SearchSelect from '../../components/ui/SearchSelect';
 import { Card } from '../../components/ui/Misc';
-import MetricCard, { MetricGrid } from '../../components/ui/MetricCard';
 import DataTable, { SectionCard } from '../../components/ui/Table';
 import { Skeleton, MetricGridSkeleton } from '../../components/ui/Skeleton';
 import { InfoTip } from '../../components/ui/Tooltip';
 import Icon from '../../components/ui/Icon';
 import Tabs from '../../components/ui/Tabs';
 import VehicleWorkflowPanel from '../../components/vehicles/VehicleWorkflowPanel';
-import ActivityTimeline, { CATEGORY_META, CATEGORY_KEYS } from '../../components/activity/ActivityTimeline';
-import { aed2, fmtDate, fmtClock, dayBadge, num } from '../../lib/format';
+import VehicleInvestigationTimeline from '../../components/vehicles/VehicleInvestigationTimeline';
+import { aed2, fmtDate, fmtClock, num } from '../../lib/format';
+import CompositionDonut from '../../components/ui/CompositionDonut';
+import { faultTagSegments } from '../../lib/faultCategories';
+import { openVehicleProfileReport } from '../../lib/vehicleProfileReport';
 import { SHOW_FINANCIALS } from '../../config/features';
 import ReadinessChecklist from './ReadinessChecklist';
-import ServiceHistory from './ServiceHistory';
-import TireDetails from './TireDetails';
 import PlateHistory from './PlateHistory';
 import FinancialsHero from './FinancialsHero';
-import VehicleAnalytics from './VehicleAnalytics';
+import VehicleOverviewDashboard from './VehicleOverviewDashboard';
 import DualState, { PausedRibbon } from '../../components/ops/DualState';
-import { StatGaugeTile } from '../../components/ops';
 
-// Battery is due for change one year after it was last changed.
-const batteryNextChange = (lastChanged) => {
-  if (!lastChanged) return null;
-  const d = new Date(lastChanged);
-  if (isNaN(d)) return null;
-  d.setFullYear(d.getFullYear() + 1);
-  return d;
-};
-
-// Human text for the strict km-based service-due verdict (Vehicle::serviceStatus on the API).
-const serviceStatusText = (s) => {
-  if (!s || s.status === 'no_data') return 'No Data';
-  if (s.status === 'service_due') return `Service Due (${num(s.overdue_km)} km overdue)`;
-  return `OK (${num(s.remaining)} km left)`;
-};
-
-const AV_DOT = { available: 'bg-emerald-500', rented: 'bg-blue-500', maintenance: 'bg-amber-500', busy: 'bg-slate-400', out_of_fleet: 'bg-slate-400' };
 // Tone per maintenance-log event status (from the sheet's OUT/IN column).
 const EVENT_TONE = { OUT: 'amber', IN: 'green', 'Follow up': 'blue', 'Select garage': 'violet', 'In garage': 'red', Change: 'indigo', Delay: 'red', Test: 'gray', 'Under Test': 'gray', Delivery: 'green', 'In Our Park': 'green', 'Final QA': 'violet' };
 
@@ -295,6 +277,12 @@ function stageMeta(stg) {
   return { label, tone, style: EVENT_STYLE[tone] || EVENT_STYLE.gray };
 }
 
+// Workflow states where the car is physically AT the workshop — the "in maintenance" window used to
+// split a ticket's real shop time out of its full open-to-close lifespan. Mirrors the backend's
+// Maintenance::WF_AT_GARAGE (under_repair · repair_review · ready_for_pickup), minus the terminal
+// `closed` (a finished ticket contributes no ongoing shop time).
+const SHOP_STATES = new Set(['under_repair', 'repair_review', 'ready_for_pickup']);
+
 // One car's Workflow Journeys — a bar-meter PER maintenance ticket showing every stage the car
 // passed through and how long it sat in each. Reads the profile's `workflow_journeys` payload
 // (reshaped from the same VehicleLogEvent trail the Timeline tab shows as a flat feed). The point is
@@ -312,6 +300,14 @@ function WorkflowJourneys({ journeys }) {
     <div className="space-y-5">
       {journeys.map((j) => {
         const total = j.total_seconds || 0;
+        // "Days in maintenance" = time the car was actually at the workshop (under repair, in the
+        // post-repair video review, or done-but-waiting-for-pickup) — a subset of the ticket's total
+        // lifespan, which also counts intake, dispatch, transit, QA and idle waiting. Splitting the two
+        // shows how much of a long ticket was real shop time vs. time the car sat waiting.
+        const shopSeconds = (j.stages || []).reduce(
+          (a, s) => a + (SHOP_STATES.has(s.workflow_status) ? (s.seconds || 0) : 0),
+          0,
+        );
         return (
           <Card key={j.ticket_id} className="overflow-hidden">
             {/* Header — which ticket, when it opened, and the total time it has taken so far */}
@@ -327,10 +323,13 @@ function WorkflowJourneys({ journeys }) {
                   </p>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {/* All days — the whole ticket lifespan (open → close / now). */}
                 {j.is_open
                   ? <Badge tone="blue">Live · {fmtDuration(total) || '0s'}</Badge>
                   : <Badge tone="green">Closed · {fmtDuration(total) || '0s'} total</Badge>}
+                {/* Days in maintenance — only the time actually spent at the workshop. */}
+                <Badge tone="amber">In maintenance · {fmtDuration(shopSeconds) || '0s'}</Badge>
               </div>
             </div>
 
@@ -389,65 +388,6 @@ function WorkflowJourneys({ journeys }) {
   );
 }
 
-// The car's full Activity Audit Trail (every source: inspection / cleaning / readiness / condition /
-// maintenance / movement), fetched lazily when the Activity tab opens. A local category filter lets a
-// manager isolate one kind of action ("just the cleaning flips") without leaving the car.
-function VehicleActivityPanel({ vehicleId }) {
-  const [cat, setCat] = useState('all');
-  const fetcher = useCallback(async () => {
-    const { data } = await api.get(`/Vehicle/${vehicleId}/activity`, { params: { limit: 300 } });
-    return data.data;
-  }, [vehicleId]);
-  const { data, loading, error } = useFetch(fetcher, [vehicleId], { refreshInterval: 60000 });
-
-  const events = data?.events || [];
-  const counts = events.reduce((acc, e) => { acc[e.category] = (acc[e.category] || 0) + 1; return acc; }, {});
-  const shown = cat === 'all' ? events : events.filter((e) => e.category === cat);
-  const chips = ['all', ...CATEGORY_KEYS.filter((k) => counts[k])];
-
-  return (
-    <Card id="maintenance-log" className="scroll-mt-28">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-6 py-4">
-        <div>
-          <h3 className="text-base font-semibold text-slate-900">Activity Timeline</h3>
-          <p className="mt-0.5 text-xs text-slate-400">Every action taken on this car — who did it and when — newest first. No action is recorded silently.</p>
-        </div>
-        <Badge tone="gray">{num(events.length)} {events.length === 1 ? 'event' : 'events'}</Badge>
-      </div>
-
-      <div className="px-6 py-5">
-        {error && <div className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error}</div>}
-
-        {chips.length > 1 && (
-          <div className="mb-5 flex flex-wrap gap-2">
-            {chips.map((k) => {
-              const on = cat === k;
-              const label = k === 'all' ? 'All' : (CATEGORY_META[k]?.label || k);
-              const count = k === 'all' ? events.length : counts[k];
-              return (
-                <button
-                  key={k}
-                  type="button"
-                  onClick={() => setCat(k)}
-                  className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition ${on ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-500 hover:text-slate-700'}`}
-                >
-                  {label}<span className={`rounded-full px-1.5 text-[10px] ${on ? 'bg-white/20' : 'bg-white'}`}>{num(count)}</span>
-                </button>
-              );
-            })}
-          </div>
-        )}
-
-        {loading && !events.length ? (
-          <div className="flex justify-center py-16"><Icon.Refresh className="h-6 w-6 animate-spin text-slate-300" /></div>
-        ) : (
-          <ActivityTimeline events={shown} group emptyMessage="No activity recorded for this car yet." />
-        )}
-      </div>
-    </Card>
-  );
-}
-
 // Multi-line workshop notes -> a tidy bulleted list; lines made only of -, *, = … become dividers.
 function NotesList({ text }) {
   const lines = String(text || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
@@ -477,18 +417,17 @@ const PRIO = {
 };
 
 // Top-level tabs for the profile. Keys are also the ?tab= URL value (deep-linkable / shareable).
-const TAB_KEYS = ['overview', 'specs', 'maintenance', 'visits', 'timeline', 'journey', 'activity', 'financials', 'media'];
+const TAB_KEYS = ['overview', 'plate', 'visits', 'timeline', 'journey', 'activity', 'financials', 'media'];
 
 // Per-tab "Data Origin" line — the standing traceability rule: every surface names where its
 // numbers come from, so a manager on any tab still sees the source (no black boxes).
 const TAB_ORIGIN = {
   overview: 'Live figures derived from OfficeManager contracts via RealProfitService. Outstanding fines from the F RTA source. Cost of Ownership adds the purchase price from the FASTER Asset sheet.',
-  specs: 'Specs & odometer from the API car card + the self-healing global mileage baseline. Purchase price/date from the FASTER Asset sheet. Registration & insurance owned by F Insurance and F RTA.',
   maintenance: 'Health, findings & workflow tickets from the in-app maintenance workflow. Service log & tyre brand/DOT/tread/warranty from the ticket line items.',
   visits: 'Each maintenance visit is an OfficeManager type-U contract, enriched with its workshop events from the N-Maintenance sheet log (garage, issues, priority, cost).',
   timeline: 'The N-Maintenance sheet workshop log interleaved with the manual maintenance-workflow audit trail (transitions & follow-ups) logged in-app, newest first.',
   journey: 'The same in-app maintenance-workflow audit trail (vehicle event log), reshaped per ticket: each workflow_status transition marks a stage, timed to the next transition — so you see every stage the car went through and how long it sat in each.',
-  activity: 'The full Activity Audit Trail for this car — one unified read over three append-only sources: the vehicle event log (inspections, cleaning, readiness, condition & maintenance transitions), the logistics movement log, and inspection records. Every row carries who acted and when; nothing is editable.',
+  activity: 'The car’s whole history as an investigation tool — search, filters, KPIs, grouping and sorting over every source unified: the N-Maintenance sheet workshop visits, the maintenance-workflow audit trail (inspections, dispatch, repair, re-inspection, parts, approvals & follow-ups), the logistics movement log, and inspection records. Every row carries who acted and when; nothing is editable, and the exact filtered view is captured in the URL to share.',
   financials: 'Reverse-engineered from OfficeManager billing via RealProfitService: rent − discount + realized usage − operating − car-level maintenance.',
   media: 'Pre/post condition & odometer photos captured during the maintenance workflow (inspection & garage steps).',
 };
@@ -529,19 +468,6 @@ function BridgeLine({ label, hint, value, labelClass = 'text-slate-600', valueCl
   );
 }
 
-function CoverageRow({ label, date, days }) {
-  const b = dayBadge(days);
-  return (
-    <div className="flex items-center justify-between py-2">
-      <div>
-        <p className="text-sm font-medium text-slate-700">{label}</p>
-        <p className="text-xs text-slate-400">{fmtDate(date)}</p>
-      </div>
-      <Badge tone={b.tone}>{b.text === '—' ? 'None' : b.text}</Badge>
-    </div>
-  );
-}
-
 // A quiet "fact" chip for the flat header.
 function SpecPill({ label, value }) {
   if (value === null || value === undefined || value === '') return null;
@@ -560,6 +486,12 @@ export default function VehicleProfile() {
     return data.data;
   }, [id]);
   const { data, loading, error, reload } = useFetch(fetcher, [id]);
+  // Plate history is fetched here at the parent so we can decide whether to surface the dedicated
+  // "Plate History" tab (it only exists for a plate that was re-issued across vehicles). The panel
+  // itself is presentational and consumes this payload.
+  const plateFetcher = useCallback(async () => (await api.get(`/Vehicle/${id}/plate-history`)).data.data, [id]);
+  const { data: plateData, loading: plateLoading } = useFetch(plateFetcher, [id]);
+  const plateReused = !!plateData?.is_reused;
   const navigate = useNavigate();
   const toast = useToast();
   const [vendors, setVendors] = useState([]);
@@ -608,11 +540,11 @@ export default function VehicleProfile() {
   };
 
   // Traceability: clicking a Financial Performance donut segment jumps to the raw records behind
-  // that cost — acquisition → Specs (purchase details), maintenance → Visits (the visit ledger),
-  // operating → the Rent tab's Contract History table (switch tab first, then scroll once mounted).
+  // that cost — acquisition → Overview (purchase details on the Snapshot card), maintenance → Visits
+  // (the visit ledger), operating → the Rent tab's Contract History table (switch tab, then scroll).
   const drillFinancial = (key) => {
     if (key === 'maintenance') changeTab('visits');
-    else if (key === 'acquisition') changeTab('specs');
+    else if (key === 'acquisition') changeTab('overview');
     else {
       changeTab('financials');
       setTimeout(() => document.getElementById('contract-history')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 300);
@@ -714,19 +646,6 @@ export default function VehicleProfile() {
     }
   };
 
-  const markAvailable = async (openContractId) => {
-    setBusy(true);
-    try {
-      await api.post(`/Contract/${openContractId}/close`, {});
-      toast.success('Car marked available');
-      reload();
-    } catch (e) {
-      toast.error(e.response?.data?.message || 'Could not update status');
-    } finally {
-      setBusy(false);
-    }
-  };
-
   if (loading) {
     return (
       <div className="py-8">
@@ -773,6 +692,9 @@ export default function VehicleProfile() {
   ].filter((f) => f.key === 'all' || f.count > 0);
   const filteredContracts = contractType === 'all' ? sortedContracts : sortedContracts.filter((c) => c.contract_type === contractType);
   const maintenance = data.maintenance || [];
+  // Per-fault distribution for the hero telemetry card — each individual fault by its share of every
+  // fault ever logged on this car (slices sum to 100%). Same source/shape as the Overview donut.
+  const faultSegments = faultTagSegments(maintenance, { top: 8 });
   const maintenanceLog = data.maintenance_log || [];
   // One unified history: legacy sheet workshop events + the manual workflow audit trail + follow-ups.
   const timeline = data.timeline || maintenanceLog;
@@ -823,40 +745,31 @@ export default function VehicleProfile() {
                 </div>
               </div>
 
-              {/* Availability + actions — cockpit telemetry block */}
-              <div className="w-full shrink-0 rounded-2xl p-4 lg:w-80"
+              {/* Fault distribution — cockpit telemetry block */}
+              <div className="w-full shrink-0 rounded-2xl p-5 lg:w-96"
                 style={{ background: 'var(--ov)', border: '1px solid var(--line)' }}>
-                <div className="opx-hint" style={{ letterSpacing: '.14em', textTransform: 'uppercase', marginBottom: 10 }}>Live Availability</div>
-                <div className="flex items-start gap-2.5">
-                  <span className={`mt-1.5 inline-flex h-2.5 w-2.5 shrink-0 rounded-full ${AV_DOT[av.state] || 'bg-slate-400'}`} />
-                  <div className="min-w-0 flex-1">
-                    <p className="flex items-center gap-2 text-sm font-semibold" style={{ color: 'var(--ink)' }}>
-                      {av.state === 'available' ? 'Available for rent'
-                        : av.state === 'rented' ? `Rented${av.customer ? ` · ${av.customer}` : ''}`
-                        : av.state === 'maintenance' ? 'In maintenance'
-                        : (av.label || '—')}
-                      {av.overdue && <Badge tone="red" dot>Overdue</Badge>}
-                    </p>
-                    <p className="mt-0.5 text-xs" style={{ color: 'var(--ink-3)' }}>
-                      {av.state === 'maintenance'
-                        ? `${av.garage ? `at ${av.garage} · ` : ''}${av.due ? `due back ${fmtDate(av.due)}` : 'no return date set'}`
-                        : av.state === 'rented'
-                          ? `out since ${fmtDate(av.since)}${av.due ? ` · est. return ${fmtDate(av.due)}${av.days ? ` (${av.days}-day rental)` : ''}` : ' · no rental days recorded'}`
-                        : av.state === 'available' ? 'No open contract — ready to rent or service'
-                        : (av.since ? `since ${fmtDate(av.since)}` : '')}
-                    </p>
+                <div className="opx-hint" style={{ letterSpacing: '.14em', textTransform: 'uppercase', marginBottom: 4 }}>Fault Distribution</div>
+                <p className="mb-4 text-xs" style={{ color: 'var(--ink-3)' }}>Each fault by share of all faults recorded</p>
+                {faultSegments.length ? (
+                  <CompositionDonut
+                    className="!flex-col !gap-5"
+                    segments={faultSegments}
+                    centerLabel="Faults"
+                    size={168}
+                    stroke={24}
+                    format={(n) => Math.round(n).toLocaleString()}
+                  />
+                ) : (
+                  <div className="flex h-[168px] items-center justify-center text-xs" style={{ color: 'var(--ink-3)' }}>
+                    No fault history recorded yet.
                   </div>
+                )}
+                {/* Always-available: generate the printable Vehicle Report (Save-as-PDF) from this dossier. */}
+                <div className="mt-5">
+                  <Button variant="secondary" className="w-full justify-center" onClick={() => openVehicleProfileReport(data)}>
+                    <Icon.Download className="h-4 w-4" /> Vehicle Report
+                  </Button>
                 </div>
-                {(av.state !== 'maintenance' && av.state !== 'out_of_fleet') || av.open_contract_id ? (
-                  <div className="mt-4 flex flex-col gap-2">
-                    {av.state !== 'maintenance' && av.state !== 'out_of_fleet' && (
-                      <Button variant="secondary" className="w-full justify-center" onClick={() => setMaintOpen(true)} disabled={busy}>Send to Maintenance</Button>
-                    )}
-                    {av.open_contract_id && (
-                      <Button variant="success" className="w-full justify-center" onClick={() => markAvailable(av.open_contract_id)} loading={busy}>Mark Available</Button>
-                    )}
-                  </div>
-                ) : null}
               </div>
             </div>
           </div>
@@ -865,11 +778,6 @@ export default function VehicleProfile() {
         {/* Paused — Returned to Service ribbon: the fixed, app-wide amber strip. Renders only when
             the repair is paused, so a manager instantly reads "working, but unresolved maintenance risk". */}
         <PausedRibbon vehicle={{ ...v, av_state: av.state }} />
-
-        {/* Plate History — surfaces only when this car's plate was reused across vehicles (sold →
-            re-issued). Sits above the tabs so the reuse is impossible to miss; self-hides otherwise.
-            History is discoverable, never merged: each holder keeps its own records. */}
-        <PlateHistory vehicleId={id} />
 
         {/* Tab navigation — the persistent hero above stays visible on every tab. Sticks just
             below the app header (h-16) so a manager keeps the tabs in reach while scrolling. */}
@@ -880,13 +788,14 @@ export default function VehicleProfile() {
             ariaLabel="Vehicle profile sections"
             tabs={[
               { key: 'overview', label: 'Overview' },
-              { key: 'specs', label: 'Specs' },
-              { key: 'maintenance', label: 'Maintenance' },
+              // Plate History is a first-class tab, but only when this plate was actually re-issued
+              // across more than one physical vehicle (self-hides for a single-holder plate).
+              ...(plateReused ? [{ key: 'plate', label: 'Plate History' }] : []),
               { key: 'financials', label: 'Rent', badge: num(contracts.length) },
               { key: 'visits', label: 'Visits', badge: num(maintenance.length) },
-              { key: 'timeline', label: 'Timeline', badge: num(timeline.length) },
+              { key: 'activity', label: 'Timeline' },
+              { key: 'timeline', label: 'Maintenance Log', badge: num(timeline.length) },
               { key: 'journey', label: 'Journey', badge: num(journeys.length) },
-              { key: 'activity', label: 'Activity' },
               { key: 'media', label: 'Media' },
             ]}
           />
@@ -895,8 +804,22 @@ export default function VehicleProfile() {
         {/* ── OVERVIEW ─────────────────────────────────────────────── core KPIs at a glance */}
         {activeTab === 'overview' && (
         <div role="tabpanel" id="panel-overview" aria-labelledby="tab-overview" className="space-y-6">
-        {/* Financial Performance hero — lifetime revenue vs. every cost this car has incurred.
-            ROI ring + interactive cost-composition donut (drill-through). Leads the Overview. */}
+        {/* Executive overview dashboard — Quick KPIs, vehicle health, revenue/expense
+            architecture, repair trends & fault distribution, all off the loaded payload.
+            Money surfaces are gated by SHOW_FINANCIALS inside the component. */}
+        <VehicleOverviewDashboard
+          v={v}
+          stats={stats}
+          reg={reg}
+          av={av}
+          contracts={contracts}
+          maintenance={maintenance}
+          showFinancials={SHOW_FINANCIALS}
+          onNavigate={changeTab}
+        />
+
+        {/* Financial Performance deep-dive — lifetime revenue vs. every cost this car has
+            incurred: ROI ring + interactive cost-composition donut (drill-through). */}
         {SHOW_FINANCIALS && (
           <div className="space-y-2">
             <FinancialsHero vehicle={v} stats={stats} onDrill={drillFinancial} />
@@ -912,45 +835,6 @@ export default function VehicleProfile() {
           </div>
         )}
 
-        {/* KPI strip — Cockpit+ telemetry tiles */}
-        <div className="opx-grid opx-c12">
-          <div className="opx-span-4">
-            <StatGaugeTile
-              label="Total Contracts"
-              value={num(stats.contracts_count)}
-              hint="Lifetime rentals, bookings & maintenance"
-              tone="cyan"
-              icon="calendar"
-              percent={100}
-            />
-          </div>
-          <div className="opx-span-4">
-            <StatGaugeTile
-              label="Open Now"
-              value={num(stats.open_count)}
-              hint={stats.open_count > 0 ? 'Live contract on this car' : 'No open contract'}
-              tone={stats.open_count > 0 ? 'rented' : 'avail'}
-              icon="check"
-              percent={stats.open_count > 0 ? 100 : 8}
-              onClick={av.open_contract_id ? () => navigate(`/contracts/${av.open_contract_id}`) : undefined}
-            />
-          </div>
-          <div className="opx-span-4">
-            <StatGaugeTile
-              label="Outstanding Fines"
-              value={num(reg ? reg.fines_count : 0)}
-              hint={reg ? aed2(reg.fines_amount) : 'No registration record'}
-              tone={reg && reg.fines_count > 0 ? 'crit' : 'avail'}
-              icon="alert"
-              percent={reg && reg.fines_count > 0 ? 100 : 4}
-            />
-          </div>
-        </div>
-
-        {/* Activity & composition analytics — smooth trend line + contract-mix pie,
-            built from contracts + workshop visits already in the payload (money-free). */}
-        <VehicleAnalytics contracts={contracts} maintenance={maintenance} />
-
         {/* Rental Readiness — the same VehicleReadinessService verdict that gates "Set to Ready",
             rendered as a live checklist so a manager sees at a glance what's blocking a handover.
             Failing rows deep-link to the tab where the underlying data can be fixed. */}
@@ -960,112 +844,11 @@ export default function VehicleProfile() {
         </div>
         )}
 
-        {/* ── SPECS ──────────────────────────── vehicle details + registration / insurance */}
-        {activeTab === 'specs' && (
-        <div role="tabpanel" id="panel-specs" aria-labelledby="tab-specs" className="space-y-6">
-        {/* Specs + Registration */}
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-          <Card className="p-6 lg:col-span-2">
-            <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">Specifications</h3>
-            <div className="grid grid-cols-1 gap-x-8 sm:grid-cols-2">
-              <div>
-                <Field label="VIN / Chassis" value={v.vin} />
-                <Field label="Plate No." value={v.plate_no} />
-                <Field label="Year" value={v.year} />
-                <Field label="Color" value={v.color} />
-                <Field label="Category" value={v.category} />
-                <Field label="Odometer" value={v.odometer != null ? `${num(v.odometer)} km` : '—'} tip="Self-healing global mileage baseline — anchored to the earliest contract reading, never rolls back." />
-              </div>
-              <div>
-                <Field label="Source" value={v.source} />
-                <Field label="Purchase Price" value={v.purchase_price ? aed2(v.purchase_price) : '—'} tip="From the FASTER Asset sheet (single source of truth for purchase price/date)." />
-                <Field label="Purchase Date" value={fmtDate(v.purchase_date)} tip="When the car was acquired (owned_since) — metadata, not the in-service / first-rental anchor." />
-                <Field label="Replacement Due" value={fmtDate(v.replacement_due_date)} />
-                <Field label="Warranty End" value={fmtDate(v.warranty_end_date)} />
-                {/* API car card: battery last-replacement date (only battery field OM exposes). */}
-                <Field label="Battery Last Changed" value={fmtDate(v.battery_last_changed)} />
-                {/* Battery is due one year after the last change. */}
-                <Field label="Next Battery Change" value={fmtDate(batteryNextChange(v.battery_last_changed))} tip="Due one year after the last battery change." />
-                {/* Oil Change sheet: per-car interval (Validity) + last-service baseline. */}
-                <Field label="Service Interval (Validity)" value={v.service_interval_km != null ? `${num(v.service_interval_km)} km` : '—'} tip="Per-car km service interval from the Oil Change sheet (Validity)." />
-                <Field label="Last Change" value={v.last_service_odometer != null ? `${num(v.last_service_odometer)} km` : '—'} />
-                <Field label="Service Status" value={serviceStatusText(v.service_status)} tip="Strict km-based service-due verdict: odometer vs last-service baseline + interval." />
-                <p className="mt-3 text-xs text-slate-400">Reflects confirmed maintenance only — updated when a maintenance ticket is closed.</p>
-              </div>
-            </div>
-          </Card>
 
-          <Card className="p-6">
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Registration & Insurance</h3>
-            {reg ? (
-              <>
-                <CoverageRow label="Registration (Mulkiya)" date={reg.expiry_date} days={reg.registration_days_left} />
-                <CoverageRow label="Insurance" date={reg.insurance_expiry} days={reg.insurance_days_left} />
-                <div className="mt-3 border-t border-slate-100 pt-3">
-                  <Field label="Insurer" value={reg.insurer} />
-                  <Field label="Reg. Status" value={reg.status} />
-                  <Field label="Mortgaged By" value={reg.mortgaged_by} />
-                  <Field label="Violations / Fines" value={`${num(reg.fines_count)} · ${aed2(reg.fines_amount)}`} />
-                </div>
-              </>
-            ) : (
-              <div className="rounded-lg bg-amber-50 px-3 py-3 text-sm text-amber-700 ring-1 ring-inset ring-amber-600/20">
-                No registration record — this car has no Mulkiya or insurance on file.
-              </div>
-            )}
-          </Card>
-        </div>
-
-        <DataOrigin tab="specs" />
-        </div>
-        )}
-
-        {/* ── MAINTENANCE ────────── service history + workflow tickets + timeline (+ tyres) */}
-        {activeTab === 'maintenance' && (
-        <div role="tabpanel" id="panel-maintenance" aria-labelledby="tab-maintenance" className="space-y-6">
-        {/* Maintenance cadence — at-a-glance. Cost cards (Spent / Avg) are financials-only. */}
-        <MetricGrid cols={SHOW_FINANCIALS ? 4 : 2}>
-          {SHOW_FINANCIALS && (
-            <MetricCard
-              label="Maintenance Spent · all-time"
-              value={aed2(stats.maintenance_total)}
-              tone="amber"
-              icon={<Icon.Wrench className="h-5 w-5" />}
-              hint="Total workshop cost on this car"
-            />
-          )}
-          <MetricCard
-            label="Visits"
-            value={num(stats.maintenance_count)}
-            tone="slate"
-            icon={<Icon.Activity className="h-5 w-5" />}
-          />
-          {SHOW_FINANCIALS && (
-            <MetricCard
-              label="Avg / visit"
-              value={aed2(Number(stats.maintenance_count) > 0 ? Number(stats.maintenance_total) / Number(stats.maintenance_count) : 0)}
-              tone="slate"
-              icon={<Icon.Chart className="h-5 w-5" />}
-            />
-          )}
-          <MetricCard
-            label="Last visit"
-            value={maintenance[0]?.date ? fmtDate(maintenance[0].date) : '—'}
-            tone="slate"
-            icon={<Icon.Clock className="h-5 w-5" />}
-          />
-        </MetricGrid>
-
-        {/* Maintenance Workflow lifecycle — the audit trail. Condition photos live on the Media tab. */}
-        <VehicleWorkflowPanel vehicleId={id} sections={['health', 'findings', 'workflow']} />
-
-        {/* Technical Service Log — searchable per-vehicle parts/services history (money-free) */}
-        <ServiceHistory vehicleId={id} />
-
-        {/* Tire Details — brand / DOT age / tread / warranty from the maintenance line items */}
-        <TireDetails vehicleId={id} />
-
-        <DataOrigin tab="maintenance" />
+        {/* ── PLATE HISTORY ────────── every physical vehicle that carried this plate (reuse only) */}
+        {activeTab === 'plate' && plateReused && (
+        <div role="tabpanel" id="panel-plate" aria-labelledby="tab-plate" className="space-y-6">
+          <PlateHistory data={plateData} loading={plateLoading} />
         </div>
         )}
 
@@ -1303,10 +1086,10 @@ export default function VehicleProfile() {
         </div>
         )}
 
-        {/* ── ACTIVITY ─────────── the car's full audit trail across every source (unified feed) */}
+        {/* ── TIMELINE ─────────── the car's full audit trail as an investigation tool (search / filter / KPI / group) */}
         {activeTab === 'activity' && (
         <div role="tabpanel" id="panel-activity" aria-labelledby="tab-activity" className="space-y-6">
-          <VehicleActivityPanel vehicleId={id} />
+          <VehicleInvestigationTimeline vehicleId={id} legacyTimeline={timeline} />
           <DataOrigin tab="activity" />
         </div>
         )}

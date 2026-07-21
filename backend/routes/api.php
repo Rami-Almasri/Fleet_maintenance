@@ -736,6 +736,15 @@ Route::middleware(['auth:sanctum', 'permission:insights.view'])->prefix('Oversig
     Route::get('/resolved-transfers', 'resolvedTransfers'); // car moved to another garage with all faults already fixed
 });
 
+// Car Status — the enterprise "what is happening in my workshop right now?" command center: a KPI strip,
+// one live row per vehicle inside the maintenance workflow, the six manager sections (repeat repairs,
+// overdue, waiting-for-parts, waiting-for-approval, high-severity, recently-finished), and a per-vehicle
+// Maintenance Intelligence Center. Pure reads over existing data → maintenance.view.
+Route::middleware(['auth:sanctum', 'permission:maintenance.view'])->prefix('car-status')->controller(\App\Http\Controllers\CarStatusController::class)->group(function () {
+    Route::get('/', 'dashboard');
+    Route::get('/vehicle/{vehicle}', 'vehicle');
+});
+
 // Data health: incomplete/broken records (cars without VIN/mileage, contracts without a car, …)
 Route::middleware(['auth:sanctum', 'permission:insights.view'])->get('DataHealth', [DataHealthController::class, 'index']);
 
@@ -796,7 +805,10 @@ Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard
 // Proactive Flags: rentals expiring within ?days=N, concluded rentals with unpaid balance, inspections due
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/proactive-flags', [DashboardController::class, 'proactiveFlags']);
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/most-maintained', [DashboardController::class, 'mostMaintained']);
+Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/most-maintained-models', [DashboardController::class, 'mostMaintainedModels']);
+Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/most-maintained-cars', [DashboardController::class, 'mostMaintainedCars']);
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/maintenance-history', [DashboardController::class, 'maintenanceHistory']);
+Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/maintenance-history/{vehicle}/visits', [DashboardController::class, 'maintenanceHistoryVisits']);
 
 // Trip Dashboard: aggregated pickup/drop-off trip log (Main Trip Dashboard sheet) for the
 // Delivery Command dashboard + Orders board. Cached read; ?refresh forces a re-read.

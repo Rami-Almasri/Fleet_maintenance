@@ -4,7 +4,6 @@ import api from '../api/client';
 import useFetch from '../hooks/useFetch';
 import Badge from '../components/ui/Badge';
 import { Card } from '../components/ui/Misc';
-import MetricCard, { MetricGrid } from '../components/ui/MetricCard';
 import { SectionCard } from '../components/ui/Table';
 import { MetricGridSkeleton, Skeleton } from '../components/ui/Skeleton';
 import { InfoTip } from '../components/ui/Tooltip';
@@ -12,7 +11,6 @@ import Icon from '../components/ui/Icon';
 import FleetStatusCard from '../components/ui/FleetStatusCard';
 import BarChart from '../components/ui/BarChart';
 import LineChart from '../components/ui/LineChart';
-import Sparkline from '../components/ui/Sparkline';
 import FleetPulseGrid from '../components/FleetPulseGrid';
 import { usePageStat } from '../components/PageStat';
 import { aed, aed2, fmtDate } from '../lib/format';
@@ -34,157 +32,137 @@ const aedK = (n) => {
   return Math.round(v).toString();
 };
 
-// A small "plate" chip that reads like a real number plate.
-function PlateChip({ plate }) {
-  if (!plate) return <span className="text-slate-300">—</span>;
-  return (
-    <span className="inline-flex items-center rounded-lg border border-slate-300 bg-slate-50 px-2 py-0.5 font-mono text-xs font-semibold tracking-wider text-slate-700">
-      {plate}
-    </span>
-  );
-}
-
-// Map a "days until expiry" number to an urgency colour. Red = expired,
-// amber = this week, blue = this month, emerald = comfortably ahead.
-function urgency(days) {
-  if (days === null || days === undefined) return { ring: '#94a3b8', text: 'text-slate-400' };
-  if (days < 0)  return { ring: '#ef4444', text: 'text-red-600' };
-  if (days <= 7) return { ring: '#f59e0b', text: 'text-amber-600' };
-  if (days <= 30) return { ring: '#3b82f6', text: 'text-blue-600' };
-  return { ring: '#10b981', text: 'text-emerald-600' };
-}
-
-// A calm, static expiry readout — "days left" as a plain coloured number (or
-// "expired"), replacing the animated countdown ring. The colour still encodes
-// urgency (red = expired, amber = this week, blue = this month, green = ahead).
-function ExpiryStat({ days, label }) {
-  const u = urgency(days);
-  const text = days == null ? '—' : days < 0 ? 'expired' : `${days}d`;
-  return (
-    <div className="text-center">
-      <p className={`font-display text-base font-bold tabular-nums ${u.text}`}>{text}</p>
-      <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{label}</span>
-    </div>
-  );
-}
-
-// Percent change vs. a prior value. Returns null when there's no basis to compare
-// against (a zero previous month), so we never print a misleading "+100%".
-function pctChange(cur, prev) {
-  if (!prev) return null;
-  return ((cur - prev) / Math.abs(prev)) * 100;
-}
-
-// Delta-pill tones. Arrow always shows the real DIRECTION of change; colour shows
-// the SENTIMENT (is this movement good or bad for the business?).
-const DELTA = {
-  good: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20',
-  bad:  'bg-red-50 text-red-600 ring-red-600/20',
-  flat: 'bg-slate-100 text-slate-500 ring-slate-500/20',
-};
-const TILE_TONE = {
-  indigo:  'bg-indigo-100 text-indigo-600',
-  emerald: 'bg-emerald-100 text-emerald-600',
-  amber:   'bg-amber-100 text-amber-600',
-  violet:  'bg-violet-100 text-violet-600',
-};
 const TILE_TONE_SOFT = {
   amber: 'bg-amber-100 text-amber-600',
   red:   'bg-red-100 text-red-600',
   blue:  'bg-blue-100 text-blue-600',
 };
 
-// A compact statistics row for the Gatra-style "Statistics" column: an icon,
-// label + value + month-over-month delta pill on the left, and a real trailing
-// sparkline on the right. `goodWhen` ('down'|'up'|null) decides whether a rise is
-// celebrated (green) or flagged (red). The whole row can deep-link via `to`.
-function StatRow({ icon, tone = 'indigo', label, value, cur, prev, series, goodWhen = null, to }) {
-  const pct = pctChange(cur, prev);
-  const dir = cur > prev ? 'up' : cur < prev ? 'down' : 'flat';
-  const sentiment = goodWhen == null || dir === 'flat' ? 'flat' : dir === goodWhen ? 'good' : 'bad';
-  const arrow = dir === 'up' ? 'M5 15l7-7 7 7' : dir === 'down' ? 'M19 9l-7 7-7-7' : 'M5 12h14';
-  const sparkColor = sentiment === 'good' ? 'emerald' : sentiment === 'bad' ? 'red' : tone;
-  const Wrap = to ? Link : 'div';
-  const wrapProps = to ? { to } : {};
+// Proactive Flags — the live "act on this now" panel. The lead column is every car in the workshop
+// right now (with its repair-ETA KPI); an optional Payments-Overdue column (returned rentals with an
+// unpaid balance) is gated by SHOW_FINANCIALS. Reads /Dashboard/proactive-flags, the SAME source the
+// notification bell raises its alerts from — so a card here and its bell alert can never disagree.
+// Every row deep-links to its source record (traceability).
 
+// Threshold palette for the repair-progress bar. Green under 75% of target, orange 75–100%, red
+// once the target is exceeded — matched track / fill / badge / percent tints so a card reads as one.
+const PROGRESS_TONE = {
+  green:  { bar: 'bg-emerald-500', track: 'bg-emerald-100', badge: 'bg-emerald-50 text-emerald-700 ring-emerald-200', pct: 'text-emerald-600', dot: 'bg-emerald-500' },
+  orange: { bar: 'bg-amber-500',   track: 'bg-amber-100',   badge: 'bg-amber-50 text-amber-700 ring-amber-200',       pct: 'text-amber-600',   dot: 'bg-amber-500' },
+  red:    { bar: 'bg-red-500',     track: 'bg-red-100',     badge: 'bg-red-50 text-red-700 ring-red-200',             pct: 'text-red-600',     dot: 'bg-red-500' },
+};
+
+// One labelled figure in a card's KPI grid.
+function KpiCell({ label, value, tone = 'text-slate-800' }) {
   return (
-    <Wrap
-      {...wrapProps}
-      className={`flex items-center gap-3 py-3 ${to ? '-mx-2 rounded-xl px-2 transition hover:bg-slate-50' : ''}`}
-    >
-      <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${TILE_TONE[tone] || TILE_TONE.indigo}`}>
-        {icon}
-      </span>
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-xs font-medium text-slate-500">{label}</p>
-        <div className="mt-0.5 flex items-center gap-1.5">
-          <p className="font-display text-base font-bold leading-none tabular-nums text-slate-900">{value}</p>
-          {pct != null && (
-            <span className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ring-1 ring-inset ${DELTA[sentiment]}`}>
-              <svg className="h-2.5 w-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d={arrow} />
-              </svg>
-              {Math.abs(pct) < 0.5 ? '0%' : `${pct > 0 ? '+' : ''}${pct.toFixed(0)}%`}
-            </span>
-          )}
-        </div>
-      </div>
-      {series && series.length > 1 && (
-        <div className="w-20 shrink-0"><Sparkline data={series} color={sparkColor} height={32} /></div>
-      )}
-    </Wrap>
+    <div className="min-w-0">
+      <dt className="truncate text-[10px] font-medium uppercase tracking-wide text-slate-400">{label}</dt>
+      <dd className={`truncate text-xs font-semibold tabular-nums ${tone}`}>{value}</dd>
+    </div>
   );
 }
 
-// Proactive Flags — three forward-looking groups (rentals expiring within 7 days, returned
-// rentals with an unpaid balance, inspections due/overdue). Reads /Dashboard/proactive-flags,
-// the SAME source lists the notification bell raises rental_expiring / invoice_overdue /
-// inspection_due alerts from — so a card here and its bell alert can never disagree. Every row
-// deep-links to its source record (traceability). The money group is gated by SHOW_FINANCIALS.
-// Date windows offered by the "Most in Maintenance" filter.
-const MM_WINDOWS = [
-  { days: 30, label: '30 days' },
-  { days: 90, label: '90 days' },
-  { days: 180, label: '6 months' },
-  { days: 365, label: '1 year' },
-];
+// pluralised "N day(s)".
+const days = (n) => `${n} day${Math.abs(n) === 1 ? '' : 's'}`;
+
+// Repair-Progress KPI card for one car in the workshop. A visual horizontal progress bar (elapsed
+// days-in-shop / planned target days) with threshold colours — green < 75%, orange 75–100%, red once
+// the target is exceeded (bar stays pinned at 100% when overdue) — a status badge ("N days remaining"
+// / "Due today" / "+N days overdue"), and a compact grid of the underlying figures. All data comes
+// from the open type-U maintenance contract's eta (out_date = start, expected_return_date = target;
+// a null target falls back to the default window and the card is flagged "Estimated"). Deep-links to
+// the vehicle. The whole card is the KPI the user asked for — no plain text ETA.
+function RepairProgressCard({ item }) {
+  const { id, plate, car, garage, eta } = item || {};
+  const e = eta || {};
+  const to = id ? `/vehicles/${id}` : '/maintenance-workflow';
+
+  const el = e.days_elapsed ?? 0;     // total days in the workshop
+  const al = e.days_allotted ?? 0;    // planned repair duration (target)
+  const over = e.days_over ?? 0;
+  const left = e.days_left ?? 0;
+  const est = !!e.is_estimated;
+  const status = e.status || 'on_track';
+
+  // Fill ratio = elapsed / target; bar caps at 100% (keeps filling to full when overdue).
+  const ratio = al > 0 ? el / al : (status === 'overdue' ? 1.2 : 1);
+  const pct = Math.min(100, Math.round(ratio * 100));
+  const colorKey = ratio > 1 ? 'red' : ratio >= 0.75 ? 'orange' : 'green';
+  const c = PROGRESS_TONE[colorKey];
+
+  const badge = status === 'overdue' ? `+${days(over)} overdue`
+    : status === 'due_today' ? 'Due today'
+      : `${days(left)} remaining`;
+  const remainTone = status === 'overdue' ? 'text-red-600' : status === 'due_today' ? 'text-amber-600' : 'text-emerald-600';
+
+  return (
+    <Link
+      to={to}
+      className="block rounded-2xl border border-slate-200/70 bg-white p-3.5 shadow-soft transition hover:border-slate-300 hover:shadow-md"
+    >
+      {/* Vehicle header */}
+      <div className="mb-3 flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-bold text-slate-900">{plate || car || 'Vehicle'}</p>
+          <p className="truncate text-xs text-slate-400">{[car, garage].filter(Boolean).join(' · ') || '—'}</p>
+        </div>
+        {est && (
+          <span
+            className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500"
+            title="No ready-by date on the maintenance contract — measured against the default repair window"
+          >
+            Estimated
+          </span>
+        )}
+      </div>
+
+      {/* Progress bar */}
+      <div className="mb-1 flex items-center justify-between">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Repair Progress</span>
+        <span className={`text-xs font-bold tabular-nums ${c.pct}`}>{pct}%</span>
+      </div>
+      <div className="flex items-baseline justify-between text-xs font-semibold text-slate-700">
+        <span>Day {el}</span>
+        <span className="text-slate-400">Target {days(al)}</span>
+      </div>
+      <div className={`mt-1.5 h-2.5 w-full overflow-hidden rounded-full ${c.track}`}>
+        <div className={`h-full rounded-full ${c.bar} transition-all`} style={{ width: `${Math.max(3, pct)}%` }} />
+      </div>
+      <div className="mt-2">
+        <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ${c.badge}`}>
+          <span className={`h-1.5 w-1.5 rounded-full ${c.dot}`} />
+          {badge}
+        </span>
+      </div>
+
+      {/* Underlying figures */}
+      <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 border-t border-slate-100 pt-3">
+        <KpiCell label="In workshop" value={days(el)} />
+        <KpiCell label="Planned" value={`${days(al)}${est ? ' · est.' : ''}`} />
+        <KpiCell
+          label={status === 'overdue' ? 'Overdue' : 'Remaining'}
+          value={status === 'overdue' ? days(over) : status === 'due_today' ? 'Due today' : days(left)}
+          tone={remainTone}
+        />
+        <KpiCell label="Expected" value={fmtDate(e.expected_on) || '—'} />
+        <KpiCell label="Started" value={fmtDate(e.started_on) || '—'} />
+      </dl>
+    </Link>
+  );
+}
 
 function ProactiveFlags({ data, loading }) {
   const inShop = data?.in_maintenance || { count: 0, items: [] };
   const invoices = data?.invoice_overdue || { count: 0, items: [] };
 
-  // "Most in Maintenance" has its own date filter, so it fetches independently of the main
-  // proactive-flags payload — changing the window refreshes only this column.
-  const [mmDays, setMmDays] = useState(90);
-  const [mm, setMm] = useState({ count: 0, items: [] });
-  const [mmLoading, setMmLoading] = useState(true);
-
-  useEffect(() => {
-    let alive = true;
-    setMmLoading(true);
-    api.get('/Dashboard/most-maintained', { params: { days: mmDays } })
-      .then((res) => { if (alive) setMm(res.data.data || { count: 0, items: [] }); })
-      .catch(() => { if (alive) setMm({ count: 0, items: [] }); })
-      .finally(() => { if (alive) setMmLoading(false); });
-    return () => { alive = false; };
-  }, [mmDays]);
-
-  // Colour the stage label by urgency: an active repair / failed QA is hot, a move is in-flight,
-  // everything else is a calm "waiting" amber.
-  const stageTone = (s = '') => (/repair|failed/i.test(s) ? 'text-red-600'
-    : /transit|pickup/i.test(s) ? 'text-blue-600' : 'text-amber-600');
-
   const groups = [
     {
-      key: 'maintenance', title: 'In Maintenance', icon: <Icon.Wrench className="h-4 w-4" />, tone: 'blue',
+      // The primary column — every car in the shop right now rendered as a visual Repair-Progress KPI
+      // card (progress bar + figures), not a text row. `wide` spans the extra width; `cardItems`
+      // switches the renderer from the row list to the card grid.
+      key: 'maintenance', title: 'In Maintenance', icon: <Icon.Wrench className="h-4 w-4" />, tone: 'blue', wide: true,
       count: inShop.count, viewAll: '/maintenance-workflow', empty: 'No cars in the workshop right now',
-      rows: (inShop.items || []).map((r) => ({
-        to: r.id ? `/vehicles/${r.id}` : '/maintenance-workflow',
-        primary: r.plate || r.car || 'Vehicle',
-        secondary: [r.car, r.garage].filter(Boolean).join(' · '),
-        right: r.stage,
-        rightTone: stageTone(r.stage),
-      })),
+      cardItems: inShop.items || [],
     },
     ...(SHOW_FINANCIALS ? [{
       key: 'invoices', title: 'Payments Overdue', icon: <Icon.Coins className="h-4 w-4" />, tone: 'red',
@@ -198,53 +176,32 @@ function ProactiveFlags({ data, loading }) {
         rightTone: 'text-red-600',
       })),
     }] : []),
-    {
-      key: 'mostMaintained', title: 'Most in Maintenance', icon: <Icon.Activity className="h-4 w-4" />, tone: 'amber',
-      count: mm.count, viewAll: '/maintenance-history', empty: 'No workshop visits in this period',
-      loading: mmLoading,
-      // A compact date-window picker lives in this column's header (see renderer).
-      control: (
-        <select
-          value={mmDays}
-          onChange={(e) => setMmDays(Number(e.target.value))}
-          className="shrink-0 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-          aria-label="Maintenance window"
-        >
-          {MM_WINDOWS.map((w) => <option key={w.days} value={w.days}>{w.label}</option>)}
-        </select>
-      ),
-      rows: (mm.items || []).map((r) => ({
-        to: r.id ? `/vehicles/${r.id}` : '/maintenance-history',
-        primary: r.plate || r.car || 'Vehicle',
-        secondary: [r.car, r.last_visit ? `last ${fmtDate(r.last_visit)}` : null].filter(Boolean).join(' · '),
-        right: `${r.visits} visit${r.visits === 1 ? '' : 's'}`,
-        rightTone: r.visits >= 3 ? 'text-red-600' : 'text-slate-600',
-      })),
-    },
   ];
 
-  // Header badge counts only the "needs action" groups — the most-maintained list is a ranking, not a queue.
-  const totalCount = groups.reduce((s, g) => s + (g.key === 'mostMaintained' ? 0 : (g.count || 0)), 0);
+  const totalCount = groups.reduce((s, g) => s + (g.count || 0), 0);
 
   return (
     <SectionCard
       title={
         <span className="flex items-center gap-1.5">
           Proactive Flags
-          <InfoTip content="Conditions to act on. Sources — In Maintenance: cars currently in the workshop, tagged with the lifecycle stage they sit at (pending dispatch → under repair → final QA → ready for pickup); Payments Overdue: returned rentals with an outstanding contract balance; Most in Maintenance: the cars with the most workshop visits over the window you pick (30 days → 1 year). Click any row to open its record." />
+          <InfoTip content="Conditions to act on. Sources — In Maintenance: every car with an open maintenance contract (in the workshop right now), shown as a Repair-Progress card — a bar filling elapsed days-in-shop against the planned target (green under 75%, orange 75–100%, red once exceeded), a badge (N days remaining / Due today / +N days overdue), and the figures behind it (in-shop total, planned duration, remaining/overdue, expected completion, repair start). Repair start = the contract's out-date; target = its ready-by date, or a default window (card flagged 'Estimated') when none is set. Payments Overdue: returned rentals with an outstanding contract balance. Click a card to open its vehicle." />
         </span>
       }
-      subtitle="What needs attention now — cars in the shop, unpaid returns, and your repeat-visit workshop cars"
+      subtitle="What needs attention now — every car in the shop and how it's tracking against its repair ETA"
       actions={<Badge tone={totalCount ? 'amber' : 'gray'}>{totalCount}</Badge>}
     >
       {loading ? (
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-          {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-40 rounded-2xl" />)}
+        <div className={`grid grid-cols-1 gap-4 ${SHOW_FINANCIALS ? 'lg:grid-cols-3' : ''}`}>
+          {Array.from({ length: SHOW_FINANCIALS ? 2 : 1 }).map((_, i) => <Skeleton key={i} className="h-40 rounded-2xl" />)}
         </div>
       ) : (
-        <div className={`grid grid-cols-1 gap-4 ${SHOW_FINANCIALS ? 'lg:grid-cols-3' : 'sm:grid-cols-2'}`}>
+        <div className={`grid grid-cols-1 gap-4 ${SHOW_FINANCIALS ? 'lg:grid-cols-3' : ''}`}>
           {groups.map((g) => (
-            <div key={g.key} className="rounded-2xl border border-slate-200/60 bg-white p-4 shadow-soft">
+            <div
+              key={g.key}
+              className={`rounded-2xl border border-slate-200/60 bg-white p-4 shadow-soft ${g.wide && SHOW_FINANCIALS ? 'lg:col-span-2' : ''}`}
+            >
               <div className="mb-3 flex items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2">
                   <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${TILE_TONE_SOFT[g.tone]}`}>{g.icon}</span>
@@ -252,15 +209,17 @@ function ProactiveFlags({ data, loading }) {
                   <Badge tone={g.count ? g.tone : 'gray'}>{g.count}</Badge>
                   {g.note && <span className="truncate text-xs font-medium text-slate-400">{g.note}</span>}
                 </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  {g.control}
-                  <Link to={g.viewAll} className="text-xs font-medium text-indigo-600 hover:text-indigo-700">All →</Link>
-                </div>
+                <Link to={g.viewAll} className="shrink-0 text-xs font-medium text-indigo-600 hover:text-indigo-700">All →</Link>
               </div>
-              {g.loading ? (
-                <ul className="space-y-1">
-                  {Array.from({ length: 3 }).map((_, i) => <li key={i}><Skeleton className="h-10 rounded-xl" /></li>)}
-                </ul>
+              {g.cardItems ? (
+                // In Maintenance — a responsive grid of visual Repair-Progress KPI cards, one per car.
+                g.cardItems.length === 0 ? (
+                  <p className="py-6 text-center text-xs text-slate-400">{g.empty}</p>
+                ) : (
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
+                    {g.cardItems.map((it, i) => <RepairProgressCard key={i} item={it} />)}
+                  </div>
+                )
               ) : g.rows.length === 0 ? (
                 <p className="py-6 text-center text-xs text-slate-400">{g.empty}</p>
               ) : (
@@ -272,7 +231,14 @@ function ProactiveFlags({ data, loading }) {
                           <p className="truncate text-sm font-semibold text-slate-800">{row.primary}</p>
                           <p className="truncate text-xs text-slate-400">{row.secondary || '—'}</p>
                         </div>
-                        <span className={`shrink-0 text-sm font-bold tabular-nums ${row.rightTone}`}>{row.right}</span>
+                        <div className="flex shrink-0 flex-col items-end">
+                          {row.rightNode || (
+                            <>
+                              <span className={`text-sm font-bold tabular-nums ${row.rightTone}`}>{row.right}</span>
+                              {row.rightSub}
+                            </>
+                          )}
+                        </div>
                       </Link>
                     </li>
                   ))}
@@ -281,6 +247,185 @@ function ProactiveFlags({ data, loading }) {
             </div>
           ))}
         </div>
+      )}
+    </SectionCard>
+  );
+}
+
+// Inspection Accuracy — a single oversight signal scored as right-vs-wrong. `total` is everything the
+// inspector handled (grades given / faults called / readings taken), `wrong` is the subset that was
+// flagged. We show the accuracy rate as the headline, the raw right/wrong split below, and a two-tone
+// bar so a card with a handful of misses on a big volume reads green (strong) at a glance.
+function AccuracyCard({ title, icon, to, total, wrong, rightLabel, wrongLabel, tooltip, loading }) {
+  const t = Math.max(0, Number(total) || 0);
+  const w = Math.min(t, Math.max(0, Number(wrong) || 0));
+  const right = t - w;
+  const rate = t > 0 ? Math.round((right / t) * 100) : 100;
+  // Tone by how clean the record is: strong (green) ≥90%, watch (amber) ≥75%, poor (red) below.
+  const tone = rate >= 90 ? 'emerald' : rate >= 75 ? 'amber' : 'red';
+  const toneText = { emerald: 'text-emerald-600', amber: 'text-amber-600', red: 'text-red-600' }[tone];
+  const toneBar  = { emerald: 'bg-emerald-500', amber: 'bg-amber-500', red: 'bg-red-500' }[tone];
+  const toneChip = { emerald: 'bg-emerald-50 text-emerald-600', amber: 'bg-amber-50 text-amber-600', red: 'bg-red-50 text-red-600' }[tone];
+  const toneStroke = { emerald: 'stroke-emerald-500', amber: 'stroke-amber-500', red: 'stroke-red-500' }[tone];
+  // Circular gauge geometry — a single ring whose filled arc = the accuracy rate.
+  const R = 42;
+  const CIRC = 2 * Math.PI * R;
+  const dashOffset = loading ? CIRC : CIRC * (1 - rate / 100);
+
+  return (
+    <Link
+      to={to}
+      className="group flex flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-soft transition hover:-translate-y-0.5 hover:shadow-md"
+    >
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className={`flex h-8 w-8 items-center justify-center rounded-xl ${toneChip}`}>{icon}</span>
+          <p className="flex items-center gap-1 text-sm font-semibold text-slate-800">
+            {title}
+            <InfoTip content={tooltip} />
+          </p>
+        </div>
+        <Icon.ArrowRight className="h-4 w-4 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-slate-400" />
+      </div>
+
+      <div className="mt-4 flex items-center gap-5">
+        {/* Circular accuracy gauge — filled arc = right share, red track = wrong remainder. */}
+        <div className="relative h-24 w-24 shrink-0">
+          <svg viewBox="0 0 100 100" className="h-full w-full -rotate-90">
+            <circle cx="50" cy="50" r={R} fill="none" strokeWidth="9" className="stroke-red-100" />
+            <circle
+              cx="50" cy="50" r={R} fill="none" strokeWidth="9" strokeLinecap="round"
+              className={toneStroke}
+              strokeDasharray={CIRC}
+              strokeDashoffset={dashOffset}
+              style={{ transition: 'stroke-dashoffset 0.6s ease' }}
+            />
+          </svg>
+          <div className="absolute inset-0 flex flex-col items-center justify-center">
+            <span className={`font-display text-2xl font-bold leading-none tabular-nums ${toneText}`}>
+              {loading ? '—' : `${rate}%`}
+            </span>
+            <span className="mt-0.5 text-[10px] font-medium text-slate-400">accuracy</span>
+          </div>
+        </div>
+
+        <div className="min-w-0 flex-1 space-y-2">
+          <span className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums ${toneChip}`}>
+            {loading ? '—' : `${w.toLocaleString()} of ${t.toLocaleString()}`}
+          </span>
+          <div className="space-y-1.5 text-xs">
+            <span className="flex items-center gap-1.5 font-medium text-slate-600">
+              <span className={`h-2 w-2 rounded-full ${toneBar}`} />
+              <span className="tabular-nums font-semibold text-slate-900">{loading ? '—' : right.toLocaleString()}</span> {rightLabel}
+            </span>
+            <span className="flex items-center gap-1.5 font-medium text-slate-600">
+              <span className="h-2 w-2 rounded-full bg-red-500" />
+              <span className="tabular-nums font-semibold text-slate-900">{loading ? '—' : w.toLocaleString()}</span> {wrongLabel}
+            </span>
+          </div>
+        </div>
+      </div>
+    </Link>
+  );
+}
+
+// Most Maintained Cars — the individual VEHICLES ranked by TOTAL LIFETIME days in maintenance: the
+// sum of every maintenance period the car has ever had (type-U maintenance contracts, out→in; an
+// open stay counts to today), all-time, no window, rental time ignored. Reads the purpose-built
+// /Dashboard/most-maintained-cars, which already ranks + caps server-side.
+function MostMaintainedCars() {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    // Ranked by true downtime days (Rental is King) — same numbers as Fleet Utilization (All Time).
+    api.get('/Dashboard/most-maintained-cars', { params: { limit: 8, sort: 'downtime' } })
+      .then((res) => { if (alive) setRows(res.data.data?.items || []); })
+      .catch(() => { if (alive) setRows([]); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, []);
+
+  return (
+    <SectionCard
+      title={
+        <span className="flex items-center gap-1.5">
+          Most Maintained Cars
+          <InfoTip content="The exact same lifetime numbers as Fleet Utilization (All Time). Each car's in-service days split into rented (green) and true off-road shop days (red). Rental is King: a day the car is both on rent and in the shop counts as rental, never shop time; overlapping maintenance periods are merged so no day is double-counted. Ranked by true off-road shop days." />
+        </span>
+      }
+      subtitle="True downtime — distinct calendar days unavailable for maintenance · lifetime"
+      actions={
+        <Link to="/maintenance-history" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">All cars →</Link>
+      }
+    >
+      {loading ? (
+        <ul className="space-y-2">
+          {Array.from({ length: 6 }).map((_, i) => <li key={i}><Skeleton className="h-10 rounded-xl" /></li>)}
+        </ul>
+      ) : rows.length === 0 ? (
+        <p className="py-8 text-center text-sm text-slate-400">No workshop days recorded yet.</p>
+      ) : (
+        <ol className="space-y-1.5">
+          {rows.map((r, i) => {
+            // rented / shop / idle split of in-service days — same Rental-is-King numbers as Fleet
+            // Utilization. Denominator is the segment sum so the bar always fills exactly.
+            const splitTotal = (r.days_rented + r.days_in_shop + r.days_idle) || 1;
+            const segW = (v) => `${((v / splitTotal) * 100).toFixed(1)}%`;
+            return (
+              <li key={r.id} className="flex items-center gap-3 rounded-xl px-2 py-2 hover:bg-slate-50">
+                <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-xs font-bold tabular-nums ${
+                  i === 0 ? 'bg-amber-100 text-amber-700' : i < 3 ? 'bg-indigo-50 text-indigo-600' : 'bg-slate-100 text-slate-500'
+                }`}>
+                  {i + 1}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <div className="min-w-0">
+                      <Link to={`/vehicles/${r.id}`} className="block truncate text-sm font-semibold text-slate-800 hover:text-indigo-600">
+                        {r.plate || `#${r.id}`}
+                      </Link>
+                      {r.car && <p className="truncate text-[11px] text-slate-400">{r.car}</p>}
+                    </div>
+                    <span className="shrink-0 text-sm font-bold tabular-nums text-slate-900">
+                      {Number(r.days_in_shop).toLocaleString()}<span className="ms-0.5 text-[11px] font-medium text-slate-400">d</span>
+                    </span>
+                  </div>
+
+                  {/* Full day split — rented + util%, shop, and total in-service days (matches Fleet Utilization). */}
+                  <p className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px] tabular-nums text-slate-500">
+                    <span className="inline-flex items-center gap-1" title="Days on a paid rental">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />{Number(r.days_rented).toLocaleString()}d rented
+                    </span>
+                    {r.utilization_pct != null && (
+                      <span className="font-semibold text-emerald-600" title="Utilization — rented ÷ in-service days">{r.utilization_pct}%</span>
+                    )}
+                    <span className="inline-flex items-center gap-1" title="True off-road shop days (no active rental)">
+                      <span className="h-1.5 w-1.5 rounded-full bg-red-500" />{Number(r.days_in_shop).toLocaleString()}d shop
+                    </span>
+                    <span className="inline-flex items-center gap-1" title="Idle — available but not earning (not rented, not in the shop)">
+                      <span className="h-1.5 w-1.5 rounded-full bg-slate-300" />{Number(r.days_idle).toLocaleString()}d idle
+                    </span>
+                    <span className="text-slate-400">· {Number(r.days_in_service).toLocaleString()}d total</span>
+                  </p>
+
+                  <div className="mt-1.5 flex h-1.5 w-full overflow-hidden rounded-full bg-slate-100" title={`${Number(r.days_rented).toLocaleString()}d rented · ${Number(r.days_in_shop).toLocaleString()}d shop · ${Number(r.days_idle).toLocaleString()}d idle`}>
+                    {r.days_rented > 0 && <div className="bg-emerald-500" style={{ width: segW(r.days_rented) }} />}
+                    {r.days_in_shop > 0 && <div className="bg-red-500" style={{ width: segW(r.days_in_shop) }} />}
+                    {r.days_idle > 0 && <div className="bg-slate-300" style={{ width: segW(r.days_idle) }} />}
+                  </div>
+                </div>
+                {r.currently_in_shop && (
+                  <span className="hidden shrink-0 items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700 sm:inline-flex">
+                    <span className="h-1.5 w-1.5 rounded-full bg-amber-500" /> In shop
+                  </span>
+                )}
+              </li>
+            );
+          })}
+        </ol>
       )}
     </SectionCard>
   );
@@ -350,9 +495,6 @@ export default function Dashboard() {
   const { user } = useAuth();
   const firstName = user?.name ? String(user.name).trim().split(/\s+/)[0] : '';
   const [view, setView] = useState('metrics'); // 'metrics' | 'pulse'
-  // Workshop Activity date filter — how many trailing months of the 12-month
-  // series to show. Preset ranges keep the control to a single clean tap.
-  const [wsMonths, setWsMonths] = useState(12);
 
   const fetcher = useCallback(async () => {
     // The KPI summary is the one critical call (drives the headline counts + fleet
@@ -361,10 +503,9 @@ export default function Dashboard() {
     const safe = (fallback) => () => ({ data: { data: fallback } });
     const emptyFlags = { contract_expiry: { count: 0, items: [] }, in_maintenance: { count: 0, items: [] }, invoice_overdue: { count: 0, items: [] }, inspection_due: { count: 0, items: [] } };
     const emptyBilling = { paid: 0, partial: 0, not_paid: 0, unsynced: 0, pending: 0, total: 0, outstanding_balance: 0 };
-    const emptyOversight = { mileage_flags: 0, severity_mismatches: 0, misdiagnoses: 0, awaiting_parts: 0, left_garage: 0, resolved_transfers: 0 };
-    const [kpiRes, expRes, trendsRes, flagsRes, billingRes, oversightRes] = await Promise.all([
+    const emptyOversight = { mileage_flags: 0, mileage_readings_total: 0, severity_mismatches: 0, severity_graded_total: 0, misdiagnoses: 0, diagnosed_total: 0, awaiting_parts: 0, left_garage: 0, resolved_transfers: 0 };
+    const [kpiRes, trendsRes, flagsRes, billingRes, oversightRes] = await Promise.all([
       api.get('/Dashboard', { params: { expiring_days: 7 } }),
-      api.get('/Fleet/expiring', { params: { days: 30 } }).catch(safe([])),
       api.get('/Dashboard/trends', { params: { months: 12 } }).catch(safe({ cost: [], downtime: [] })),
       api.get('/Dashboard/proactive-flags', { params: { days: 7 } }).catch(safe(emptyFlags)),
       api.get('/Invoice/status-summary').catch(safe(emptyBilling)),
@@ -374,7 +515,6 @@ export default function Dashboard() {
       // Fold the workflow-oversight roll-up (mileage / severity / mis-diagnosis / waiting-for-parts
       // counts) into the KPI object so the oversight KPI tiles read straight from `kpis[card.key]`.
       kpis: { ...(kpiRes.data.data || {}), ...(oversightRes.data.data || emptyOversight) },
-      expiring: (expRes.data.data || []).slice(0, 8),
       trends: trendsRes.data.data || { cost: [], downtime: [] },
       proactive: flagsRes.data.data || emptyFlags,
       billing: billingRes.data.data || emptyBilling,
@@ -383,7 +523,6 @@ export default function Dashboard() {
   const { data, loading, error } = useFetch(fetcher);
 
   const kpis = data?.kpis || {};
-  const expiring = data?.expiring || [];
   const trends = data?.trends || { cost: [], downtime: [] };
   const proactive = data?.proactive || {};
   const billing = data?.billing || {};
@@ -395,25 +534,7 @@ export default function Dashboard() {
   // Operational fleet = cars the team actually works with (ready + on-rent + in-shop); excludes
   // sold / disposed / office-use, which inflate fleet.total. All readiness ratios divide by THIS.
   const activeFleet = available + rented + maint;
-  const availabilityRate = activeFleet ? Math.round((available / activeFleet) * 100) : 0;
   const utilizationRate = activeFleet ? Math.round((rented / activeFleet) * 100) : 0;
-
-  // Headline performance band — derived entirely from the real 12-month trend
-  // series already fetched, so the numbers always agree with the charts below.
-  const costSeries = trends.cost || [];
-  const last = (arr, k) => Number(arr[arr.length - 1]?.[k]) || 0;
-  const prev = (arr, k) => Number(arr[arr.length - 2]?.[k]) || 0;
-  const spend12mo = costSeries.reduce((s, m) => s + (Number(m.value) || 0), 0);
-  // Workshop Activity slice — the last N months of the trend, per the chosen
-  // preset. The headline visit count, the range caption and the chart all follow.
-  const wsCount = Math.min(wsMonths, costSeries.length);
-  const wsSeries = wsCount > 0 ? costSeries.slice(costSeries.length - wsCount) : costSeries;
-  const wsVisits = wsSeries.reduce((s, m) => s + (Number(m.visits) || 0), 0);
-  const wsRangeLabel = wsSeries.length
-    ? wsSeries.length === 1
-      ? wsSeries[0].label
-      : `${wsSeries[0].label} – ${wsSeries[wsSeries.length - 1].label}`
-    : '';
 
   // Headline percent for the floating page gauge: fleet utilization.
   usePageStat({
@@ -433,85 +554,27 @@ export default function Dashboard() {
     { label: 'Maintenance', value: maint,     color: 'yellow' },
   ];
 
-  // The Gatra-style "Statistics" column — real month-over-month KPIs, each backed by
-  // a trailing sparkline where a real series exists. Money rows are gated behind
-  // SHOW_FINANCIALS; when hidden we swap in two operational rows so the panel stays full.
-  const statRows = [
-    ...(SHOW_FINANCIALS ? [{
-      icon: <Icon.Coins className="h-4 w-4" />, tone: 'indigo', label: 'Maintenance Spend · this month',
-      value: aed(last(costSeries, 'value')), cur: last(costSeries, 'value'), prev: prev(costSeries, 'value'),
-      series: costSeries, goodWhen: 'down',
-    }] : []),
-    ...(SHOW_FINANCIALS ? [{
-      icon: <Icon.Chart className="h-4 w-4" />, tone: 'violet', label: 'Spend · last 12 months',
-      value: aed(spend12mo), series: costSeries,
-    }] : []),
+  // Inspection Accuracy — the three oversight signals reframed as a right-vs-wrong scorecard: instead of
+  // just "how many were wrong", each card scores the inspector against everything he handled, so a low
+  // flag count on a huge volume reads as the strong performance it is (and vice-versa).
+  const accuracy = [
     {
-      // Fleet Availability Rate — share of the OPERATIONAL fleet ready to rent right now.
-      icon: <Icon.Check className="h-4 w-4" />, tone: 'emerald',
-      label: `Fleet Availability · ${available}/${activeFleet} ready`,
-      value: `${availabilityRate}%`, to: '/vehicles',
+      key: 'severity', title: 'Severity Grading', icon: <Icon.Alert className="h-4 w-4" />, to: '/oversight/severity',
+      total: kpis.severity_graded_total || 0, wrong: kpis.severity_mismatches || 0,
+      rightLabel: 'graded right', wrongLabel: 'under-graded',
+      tooltip: 'How often the inspector\'s fault-severity grade held up. Wrong = a critical-risk keyword, a breakdown, or a red-graded car said the grade was too low.',
     },
     {
-      // Fleet Utilization — share of the OPERATIONAL fleet currently out on rent.
-      icon: <Icon.Gauge className="h-4 w-4" />, tone: 'indigo',
-      label: `Fleet Utilization · ${rented}/${activeFleet} on rent`,
-      value: `${utilizationRate}%`, to: '/fleet-utilization',
-    },
-  ];
-
-  // KPI tiles — each maps to a semantic tone, a design-system icon, a short hint
-  // and a tooltip that defines the metric. The whole tile links via MetricCard's `to`.
-  const cards = [
-    {
-      label: 'Fixed This Month', key: 'fixed_this_month', tone: 'emerald', icon: <Icon.TrendUp className="h-5 w-5" />,
-      to: '/maintenance-workflow', hint: 'Re-inspected & back in service',
-      tooltip: 'Maintenance tickets completed this calendar month — re-inspected, signed off and returned to service.',
+      key: 'diagnosis', title: 'Diagnosis Accuracy', icon: <Icon.XCircle className="h-4 w-4" />, to: '/oversight/misdiagnoses',
+      total: kpis.diagnosed_total || 0, wrong: kpis.misdiagnoses || 0,
+      rightLabel: 'calls held', wrongLabel: 'overruled',
+      tooltip: 'Of every fault the inspector diagnosed, how many stood. Wrong = a supervisor later overruled the call as a mis-diagnosis ("mark fault incorrect").',
     },
     {
-      label: 'Pending Approvals', key: 'pending_approvals', tone: 'amber', icon: <Icon.Check className="h-5 w-5" />,
-      to: '/maintenance-approvals', hint: 'Awaiting sign-off',
-      tooltip: 'Maintenance bills submitted by the garage that still need a manager to approve before they are booked as cost.',
-    },
-    {
-      label: 'Overdue Maintenance', key: 'overdue_maintenance', tone: 'red', icon: <Icon.Clock className="h-5 w-5" />,
-      to: '/maintenance-workflow', hint: 'In the shop past expected return',
-      tooltip: 'Cars whose maintenance is still open past its expected completion date — stalled repairs to chase before they eat more downtime.',
-    },
-    {
-      label: 'Invoice Due (Left Garage)', key: 'left_garage', tone: 'amber', icon: <Icon.Truck className="h-5 w-5" />,
-      to: '/oversight/left-garage', hint: 'Car back, bill not collected',
-      tooltip: 'Cars that have physically left the garage but whose repair invoice is still outstanding — the garages to chase for a bill so cost is booked accurately.',
-    },
-    {
-      label: 'Resolved Transfers', key: 'resolved_transfers', tone: 'violet', icon: <Icon.ArrowRight className="h-5 w-5" />,
-      to: '/oversight/resolved-transfers', hint: 'Moved with all faults fixed',
-      tooltip: 'Cars a supervisor transferred out even though every fault was already fixed — logged with a required note for accountability.',
-    },
-    {
-      label: 'Negative Yield', key: 'negative_yield', value: (k) => k.negative_yield?.count, tone: 'red', icon: <Icon.TrendDown className="h-5 w-5" />,
-      to: '/maintenance-foresight', hint: 'Real net profit below repair cost (12mo)',
-      tooltip: 'Cars whose real net profit over the last 12 months is below what was spent repairing them — money-losers to review.',
-    },
-    {
-      label: 'Waiting for Parts', key: 'awaiting_parts', tone: 'amber', icon: <Icon.Wrench className="h-5 w-5" />,
-      to: '/maintenance-recommendations', hint: 'Held until the spare arrives',
-      tooltip: 'Cars approved for maintenance but sitting in the recommendation queue until the ordered spare part arrives.',
-    },
-    {
-      label: 'Severity Review', key: 'severity_mismatches', tone: 'red', icon: <Icon.Alert className="h-5 w-5" />,
-      to: '/oversight/severity', hint: 'Grade looks too low',
-      tooltip: 'Tickets graded Routine or Moderate where a critical-risk keyword, a breakdown or a red-graded car says the fault should be Critical.',
-    },
-    {
-      label: 'Mis-Diagnosis', key: 'misdiagnoses', tone: 'red', icon: <Icon.XCircle className="h-5 w-5" />,
-      to: '/oversight/misdiagnoses', hint: 'Inspector calls a supervisor overruled',
-      tooltip: 'Faults the inspector diagnosed that a supervisor later overruled as wrong (the "mark fault incorrect" override).',
-    },
-    {
-      label: 'Mileage Discrepancies', key: 'mileage_flags', tone: 'indigo', icon: <Icon.Gauge className="h-5 w-5" />,
-      to: '/oversight/mileage', hint: 'Odometer didn\'t match expected',
-      tooltip: 'Workflow stages where the odometer entered ran backwards, jumped, or came from a garage test-drive — with the before/after readings.',
+      key: 'odometer', title: 'Odometer Accuracy', icon: <Icon.Gauge className="h-4 w-4" />, to: '/oversight/mileage',
+      total: kpis.mileage_readings_total || 0, wrong: kpis.mileage_flags || 0,
+      rightLabel: 'clean readings', wrongLabel: 'flagged',
+      tooltip: 'Of every odometer reading captured across the workflow, how many were clean. Wrong = ran backwards, jumped, came from a test-drive, or was rejected outright.',
     },
   ];
 
@@ -569,84 +632,6 @@ export default function Dashboard() {
 
         {view === 'metrics' && (
           <>
-        {/* ── Command band — Available Cars + Workshop Activity on the left, the
-            Statistics column on the right. Every widget maps to a real endpoint. ── */}
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          {/* Left column — Workshop Activity (line). Fills the column height so it
-              sits level with the Statistics card beside it. */}
-          <Card className="flex h-full flex-col p-5">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="flex items-center gap-2.5">
-                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-100 text-amber-600"><Icon.Wrench className="h-4 w-4" /></span>
-                <div>
-                  <p className="text-xs font-medium text-slate-500">Workshop Activity</p>
-                  <p className="font-display text-xl font-bold leading-none tabular-nums text-slate-900">
-                    {loading ? '—' : `${wsVisits.toLocaleString()} visits`}
-                  </p>
-                  <p className="mt-1 text-[11px] font-medium text-slate-400">
-                    {loading ? '' : `${wsRangeLabel} · repair visits`}
-                  </p>
-                </div>
-              </div>
-              {/* Range presets — one-tap trailing windows over the 12-month series. */}
-              {!loading && costSeries.length > 0 && (
-                <div className="inline-flex rounded-lg bg-slate-100 p-0.5">
-                  {[
-                    { m: 3, label: '3M' },
-                    { m: 6, label: '6M' },
-                    { m: 12, label: '12M' },
-                  ].map((opt) => (
-                    <button
-                      key={opt.m}
-                      type="button"
-                      onClick={() => setWsMonths(opt.m)}
-                      className={`rounded-md px-2.5 py-1 text-[11px] font-semibold transition ${
-                        wsMonths === opt.m ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-                      }`}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="mt-3 flex-1">
-              {loading ? (
-                <Skeleton className="h-full min-h-[160px] w-full rounded-xl" />
-              ) : (
-                <LineChart
-                  data={wsSeries.map((m) => ({ label: m.label, value: m.visits }))}
-                  color="amber"
-                  height={200}
-                  yTicks={3}
-                  format={(v) => `${Math.round(v)}`}
-                  tickFormat={(v) => `${Math.round(v)}`}
-                  valueLabel="Visits"
-                />
-              )}
-            </div>
-          </Card>
-
-          {/* Right — Fleet Readiness: live operational rates (availability / utilization), plus
-              12-month spend trends when financials are shown. */}
-          <Card className="p-5">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-violet-100 text-violet-600"><Icon.Chart className="h-4 w-4" /></span>
-                <h2 className="text-sm font-semibold text-slate-800">{SHOW_FINANCIALS ? 'Statistics' : 'Fleet Readiness'}</h2>
-              </div>
-              <span className="text-[11px] font-medium text-slate-400">{SHOW_FINANCIALS ? 'Last 12 months' : 'Live'}</span>
-            </div>
-            <div className="mt-1 divide-y divide-slate-100">
-              {loading
-                ? Array.from({ length: SHOW_FINANCIALS ? 4 : 2 }).map((_, i) => (
-                    <div key={i} className="py-3"><Skeleton className="h-9 w-full rounded-xl" /></div>
-                  ))
-                : statRows.map((r, i) => <StatRow key={i} {...r} />)}
-            </div>
-          </Card>
-        </div>
-
         {/* Fleet composition — the status donut beside a compact utilization summary. */}
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           {loading ? (
@@ -695,34 +680,13 @@ export default function Dashboard() {
           </Card>
         </div>
 
-        {/* KPI cards */}
-        {loading ? (
-          <MetricGridSkeleton count={9} />
-        ) : (
-          <MetricGrid cols={4}>
-            {cards.filter((card) => SHOW_FINANCIALS || card.key !== 'negative_yield').map((card) => (
-              <MetricCard
-                key={card.label}
-                label={card.label}
-                value={Number((card.value ? card.value(kpis) : kpis[card.key]) || 0).toLocaleString()}
-                tone={card.tone}
-                icon={card.icon}
-                hint={card.hint}
-                tooltip={card.tooltip}
-                to={card.to}
-              />
-            ))}
-          </MetricGrid>
-        )}
-
-        {/* Rental Billing — live invoice settlement (Track A): Paid / Partial / Not Paid counts
-            for OM-synced rental invoices, derived on sync (replaces the manual bills sheet). */}
-        {SHOW_FINANCIALS && <RentalBillingSummary billing={billing} loading={loading} />}
-
         {/* Proactive Flags — forward-looking conditions (rentals expiring, payments overdue,
             inspections due) surfaced before they become problems. Same source lists as the
             notification bell; every row deep-links to its record. */}
         <ProactiveFlags data={proactive} loading={loading} />
+
+        {/* Most Maintained Cars — the individual vehicles with the most total days in the shop, all-time. */}
+        <MostMaintainedCars />
 
         {/* Data visualization — maintenance spend per month (bar) and the downtime
             trend (line). Both are bespoke SVG, so they match the gauges and donut. */}
@@ -780,53 +744,27 @@ export default function Dashboard() {
           </Card>
         </div>
 
-        {/* Expiring soon — registration / insurance due in the next 30 days,
-            shown as glanceable countdown-ring cards instead of a flat table. */}
+        {/* Inspection Accuracy — the oversight signals scored as right-vs-wrong instead of raw problem
+            counts, so a few misses on a large volume reads as the strong record it is. */}
         <SectionCard
-          title="Expiring Soon"
-          subtitle="Registration & insurance due in the next 30 days"
-          actions={
-            <>
-              <Badge tone="gray">next 30 days</Badge>
-              <Link to="/registrations" className="hidden text-xs font-medium text-indigo-600 hover:text-indigo-700 sm:inline">View all →</Link>
-            </>
+          title={
+            <span className="flex items-center gap-1.5">
+              Inspection Accuracy
+              <InfoTip content="How the inspector is performing across the three oversight checks — his grades, diagnoses and odometer readings — each scored as a share that held up, not just the count that didn't." />
+            </span>
           }
+          subtitle="How the inspector's grades, diagnoses & readings held up · lifetime"
         >
-          {loading ? (
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-[92px] rounded-2xl" />)}
-            </div>
-          ) : expiring.length === 0 ? (
-            <p className="py-8 text-center text-sm text-slate-400">Nothing expiring soon.</p>
-          ) : (
-            <div className="stagger grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {expiring.map((r, i) => {
-                const overdue = (r.registration_days_left != null && r.registration_days_left < 0) || (r.insurance_days_left != null && r.insurance_days_left < 0);
-                return (
-                  <Link
-                    key={`${r.plate_no || r.vehicle || 'exp'}-${i}`}
-                    to="/registrations"
-                    className={`hover-lift flex items-center justify-between gap-3 rounded-2xl border bg-white p-4 shadow-soft ${overdue ? 'border-red-200 ring-1 ring-red-100' : 'border-slate-200/60'}`}
-                  >
-                    <div className="flex min-w-0 items-center gap-3">
-                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-500">
-                        <Icon.Car className="h-4 w-4" />
-                      </span>
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold text-slate-900">{r.vehicle || '—'}</p>
-                        <span className="mt-1 inline-block"><PlateChip plate={r.plate_no} /></span>
-                      </div>
-                    </div>
-                    <div className="flex shrink-0 gap-4">
-                      <ExpiryStat days={r.registration_days_left} label="Mulkiya" />
-                      <ExpiryStat days={r.insurance_days_left} label="Insurance" />
-                    </div>
-                  </Link>
-                );
-              })}
-            </div>
-          )}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {accuracy.map((a) => (
+              <AccuracyCard key={a.key} {...a} loading={loading} />
+            ))}
+          </div>
         </SectionCard>
+
+        {/* Rental Billing — live invoice settlement (Track A): Paid / Partial / Not Paid counts
+            for OM-synced rental invoices, derived on sync (replaces the manual bills sheet). */}
+        {SHOW_FINANCIALS && <RentalBillingSummary billing={billing} loading={loading} />}
 
           </>
         )}

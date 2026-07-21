@@ -203,6 +203,14 @@ class Maintenance extends Model
     /** How many days a ticket may sit in awaiting_invoice before it is flagged overdue (SLA). */
     public const INVOICE_SLA_DAYS = 3;
 
+    /**
+     * Fleet-default repair target (days) used by the repair-ETA gauge when a ticket has no explicit
+     * `expected_return_date` promise — so a car in the shop always shows a live "day N of M" counter
+     * instead of a dead "No ETA". A real ready-by date, once set at dispatch, overrides this. Tunable
+     * via config('maintenance.default_repair_days'); the const is the fallback if that key is absent.
+     */
+    public const DEFAULT_REPAIR_DAYS = 4;
+
     // ── Accounting-bridge (reconciliation) flag ─────────────────────────────────────────────────
     /** An itemised garage invoice has been recorded and is waiting for the finance engine to reconcile
      *  it against the accounting API ("Financial-Pending-Reconciliation"). Set by syncLineItems. */
@@ -964,6 +972,76 @@ class Maintenance extends Model
         return $this->workflow_status === self::WF_AWAITING_INVOICE
             && $this->awaiting_invoice_since
             && $this->awaiting_invoice_since->lt(now()->subDays(self::INVOICE_SLA_DAYS));
+    }
+
+    /**
+     * Repair-ETA gauge — "the car needs N days; are we still inside that window?".
+     * The target is `expected_return_date` (the ready-by date the supervisor/garage sets at dispatch
+     * or check-in) when set; otherwise a fleet-default N-day target (DEFAULT_REPAIR_DAYS) measured
+     * from the in-shop start, so a car in the shop always shows a live "day N of M" counter instead
+     * of a dead "No ETA". `is_estimated` flags which of the two is in play. The in-shop clock is
+     * anchored to the best available start stamp (garage arrival → dispatch out-date → pickup →
+     * ticket creation). All maths is at DAY granularity so it reads like the shop floor talks
+     * ("day 5 of 4"), never fractional hours.
+     *
+     * status: 'unknown' (no start stamp at all — never happens for a real ticket) ·
+     *         'on_track' (before the target day) · 'due_today' (target day is today) ·
+     *         'overdue' (past the target day).
+     *
+     * @return array{has_eta:bool, is_estimated:bool, status:string, expected_on:?string,
+     *               started_on:?string, days_allotted:?int, days_elapsed:?int, days_left:int, days_over:int}
+     */
+    public function repairEta(): array
+    {
+        return self::etaFromDates(
+            $this->repair_started_at ?? $this->out_date ?? $this->dispatched_at ?? $this->created_at,
+            $this->expected_return_date,
+        );
+    }
+
+    /**
+     * The pure day-math behind the repair-ETA gauge, shared by BOTH the workflow ticket
+     * (repairEta) and the contract-derived dashboard list (which reads its start/promise off the
+     * open type-U maintenance contract). `$start` = when the car went into the shop; `$expected` =
+     * the promised ready-by date, or null to fall back to the fleet-default N-day target. Single
+     * source of truth so every surface reddens on the same day.
+     *
+     * @return array{has_eta:bool, is_estimated:bool, status:string, expected_on:?string,
+     *               started_on:?string, days_allotted:?int, days_elapsed:?int, days_left:int, days_over:int}
+     */
+    public static function etaFromDates(?\Carbon\Carbon $start, ?\Carbon\Carbon $expected): array
+    {
+        $start = $start?->copy()->startOfDay();
+
+        // No anchor to measure from at all — can't say anything.
+        if (! $start) {
+            return [
+                'has_eta' => false, 'is_estimated' => false, 'status' => 'unknown', 'expected_on' => null,
+                'started_on' => null, 'days_allotted' => null, 'days_elapsed' => null, 'days_left' => 0, 'days_over' => 0,
+            ];
+        }
+
+        $today       = today();
+        $hasPromise  = (bool) $expected;
+        $defaultDays = (int) config('maintenance.default_repair_days', self::DEFAULT_REPAIR_DAYS);
+        // The ready-by date: the real promise if one was set, else start + the fleet-default target.
+        $expected = $hasPromise ? $expected->copy()->startOfDay() : $start->copy()->addDays($defaultDays);
+
+        // Signed day delta: >0 means today is PAST the target date (overdue).
+        $daysOver = (int) round($expected->diffInDays($today, false));
+        $status   = $daysOver > 0 ? 'overdue' : ($daysOver === 0 ? 'due_today' : 'on_track');
+
+        return [
+            'has_eta'       => true,
+            'is_estimated'  => ! $hasPromise,     // target is the default, not an explicitly set promise
+            'status'        => $status,
+            'expected_on'   => $expected->toDateString(),
+            'started_on'    => $start->toDateString(),
+            'days_allotted' => max(0, (int) round($start->diffInDays($expected, false))),
+            'days_elapsed'  => max(0, (int) round($start->diffInDays($today, false))),
+            'days_left'     => $daysOver < 0 ? abs($daysOver) : 0,
+            'days_over'     => $daysOver > 0 ? $daysOver : 0,
+        ];
     }
 
     /** The inspector who opened this ticket (snapshot survives a user deletion via nullOnDelete). */

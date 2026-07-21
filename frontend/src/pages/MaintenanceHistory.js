@@ -3,13 +3,14 @@
 // with how OFTEN it went in (visits) and how LONG it spent there (total days in the shop, from the
 // canonical type-U maintenance contracts). Sortable + searchable. Backed by GET /Dashboard/maintenance-history.
 
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api/client';
 import Icon from '../components/ui/Icon';
 import { Skeleton } from '../components/ui/Skeleton';
 
 const WINDOWS = [
+  { days: 0, label: 'All time' },
   { days: 30, label: '30 days' },
   { days: 90, label: '90 days' },
   { days: 180, label: '6 months' },
@@ -20,21 +21,37 @@ const fmtDate = (iso) => (iso ? new Date(iso).toLocaleDateString(undefined, { da
 const plural = (n, w) => `${Number(n).toLocaleString()} ${w}${n === 1 ? '' : 's'}`;
 
 export default function MaintenanceHistory() {
-  const [days, setDays] = useState(90);
+  const [days, setDays] = useState(0); // default: all-time — total days each car has ever spent in the shop
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState('');
-  const [sort, setSort] = useState({ key: 'visits', dir: 'desc' });
+  const [sort, setSort] = useState({ key: 'days_in_shop', dir: 'desc' }); // rank by most days in the shop
+  // Per-car "see N visits" drill-down: which row is open + its fetched visit list (cached by id).
+  const [openId, setOpenId] = useState(null);
+  const [visits, setVisits] = useState({}); // { [vehicleId]: { loading, items, error } }
 
   useEffect(() => {
     let alive = true;
     setLoading(true);
+    setOpenId(null);
+    setVisits({}); // window changed → drop any cached drill-downs (they're window-scoped)
     api.get('/Dashboard/maintenance-history', { params: { days } })
       .then((res) => { if (alive) setData(res.data.data || { count: 0, items: [] }); })
       .catch(() => { if (alive) setData({ count: 0, items: [] }); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [days]);
+
+  const toggleVisits = (id) => {
+    setOpenId((cur) => (cur === id ? null : id));
+    // Fetch once per car (per window); cached in state afterwards.
+    if (!visits[id]) {
+      setVisits((v) => ({ ...v, [id]: { loading: true, items: [], error: false } }));
+      api.get(`/Dashboard/maintenance-history/${id}/visits`, { params: { days } })
+        .then((res) => setVisits((v) => ({ ...v, [id]: { loading: false, items: res.data.data?.items || [], error: false } })))
+        .catch(() => setVisits((v) => ({ ...v, [id]: { loading: false, items: [], error: true } })));
+    }
+  };
 
   const items = useMemo(() => data?.items || [], [data]);
 
@@ -89,7 +106,7 @@ export default function MaintenanceHistory() {
             className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-200"
             aria-label="Time window"
           >
-            {WINDOWS.map((w) => <option key={w.days} value={w.days}>Last {w.label}</option>)}
+            {WINDOWS.map((w) => <option key={w.days} value={w.days}>{w.days === 0 ? w.label : `Last ${w.label}`}</option>)}
           </select>
         </div>
 
@@ -134,8 +151,12 @@ export default function MaintenanceHistory() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r, i) => (
-                  <tr key={r.id} className={`transition-colors hover:bg-indigo-50/40 ${i % 2 ? 'bg-slate-50/40' : 'bg-white'}`}>
+                {rows.map((r, i) => {
+                  const isOpen = openId === r.id;
+                  const vd = visits[r.id];
+                  return (
+                  <Fragment key={r.id}>
+                  <tr className={`transition-colors hover:bg-indigo-50/40 ${isOpen ? 'bg-indigo-50/40' : i % 2 ? 'bg-slate-50/40' : 'bg-white'}`}>
                     <td className="border-b border-slate-100 px-5 py-3.5">
                       <Link to={`/vehicles/${r.id}`} className="font-mono font-semibold text-slate-900 hover:text-indigo-600">{r.plate || `#${r.id}`}</Link>
                       {r.car && <p className="text-xs text-slate-400">{r.car}</p>}
@@ -151,17 +172,77 @@ export default function MaintenanceHistory() {
                     <td className="border-b border-slate-100 px-5 py-3.5 text-slate-500">{fmtDate(r.first_visit)}</td>
                     <td className="border-b border-slate-100 px-5 py-3.5 text-slate-500">{fmtDate(r.last_visit)}</td>
                     <td className="border-b border-slate-100 px-5 py-3.5">
-                      {r.currently_in_shop
-                        ? <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700"><span className="h-1.5 w-1.5 rounded-full bg-amber-500" /> In shop</span>
-                        : <span className="text-xs text-slate-400">Returned</span>}
+                      <div className="flex items-center gap-3">
+                        {r.currently_in_shop
+                          ? <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700"><span className="h-1.5 w-1.5 rounded-full bg-amber-500" /> In shop</span>
+                          : <span className="text-xs text-slate-400">Returned</span>}
+                        <button
+                          onClick={() => toggleVisits(r.id)}
+                          className={`ms-auto inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-semibold transition ${isOpen ? 'border-indigo-300 bg-indigo-50 text-indigo-700' : 'border-slate-200 bg-white text-slate-600 hover:border-indigo-200 hover:text-indigo-600'}`}
+                          aria-expanded={isOpen}
+                        >
+                          See {plural(r.visits, 'visit')}
+                          <Icon.ChevronDown className={`h-3 w-3 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
-                ))}
+                  {isOpen && (
+                    <tr>
+                      <td colSpan={6} className="border-b border-slate-200 bg-slate-50/60 px-5 py-4">
+                        <VisitList detail={vd} />
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// The "see N visits" drill-down: each individual workshop trip for one car within the window.
+function VisitList({ detail }) {
+  if (!detail || detail.loading) {
+    return <div className="space-y-2">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-9 rounded-lg" />)}</div>;
+  }
+  if (detail.error) {
+    return <p className="text-sm text-rose-600">Couldn’t load this car’s visits. Please try again.</p>;
+  }
+  if (!detail.items.length) {
+    return <p className="text-sm text-slate-400">No individual visits recorded in this window.</p>;
+  }
+  return (
+    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+            <th className="px-4 py-2">Went in</th>
+            <th className="px-4 py-2">Came back</th>
+            <th className="px-4 py-2 text-right">Days</th>
+            <th className="px-4 py-2">Garage</th>
+            <th className="px-4 py-2">What was done</th>
+          </tr>
+        </thead>
+        <tbody>
+          {detail.items.map((v, i) => (
+            <tr key={`${v.out_date}-${i}`} className="border-t border-slate-100">
+              <td className="whitespace-nowrap px-4 py-2 font-medium text-slate-700">{fmtDate(v.out_date)}</td>
+              <td className="whitespace-nowrap px-4 py-2 text-slate-500">
+                {v.returned ? fmtDate(v.in_date) : <span className="inline-flex items-center gap-1 text-amber-600"><span className="h-1.5 w-1.5 rounded-full bg-amber-500" /> Still in</span>}
+              </td>
+              <td className="whitespace-nowrap px-4 py-2 text-right tabular-nums text-slate-600">{v.days == null ? '—' : plural(v.days, 'day')}</td>
+              <td className="px-4 py-2 text-slate-600">{v.garage || <span className="text-slate-300">—</span>}</td>
+              <td className="px-4 py-2 text-slate-600">{v.issue || v.notes || <span className="text-slate-300">—</span>}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

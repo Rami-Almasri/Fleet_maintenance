@@ -107,6 +107,15 @@ class FleetUtilizationService
             $inServiceDate = $inServiceMap[$v->id] ?? null;
             $inServiceNum  = $inServiceDate ? $this->dayNum(Carbon::parse($inServiceDate)) : null;
 
+            // Currently in the shop = an OPEN type-'U' maintenance contract (no in_date) exists right now.
+            $currentlyInShop = false;
+            foreach ($maintByVeh[$v->id] ?? [] as [$ms, $me]) {
+                if ($me === null) {
+                    $currentlyInShop = true;
+                    break;
+                }
+            }
+
             // Pending Service / Onboarding — purchased but never rented. No performance % (would be
             // skewed / empty); just the label + owned-since so the onboarding cost stays visible.
             if ($inServiceNum === null) {
@@ -123,6 +132,7 @@ class FleetUtilizationService
                     'downtime_pct'             => null,
                     'idle_pct'                 => null,
                     'revenue_lost_downtime'    => null,
+                    'currently_in_shop'        => $currentlyInShop,
                     'pending_service'          => true,
                 ];
                 continue;
@@ -163,6 +173,7 @@ class FleetUtilizationService
                 'idle_pct'                 => $serviceDays ? round($idle / $serviceDays * 100, 1) : null,
                 // Rent lost while the car sat in the workshop (pure downtime × its daily rate).
                 'revenue_lost_downtime'    => $rate > 0 ? round($maint * $rate, 2) : null,
+                'currently_in_shop'        => $currentlyInShop,
                 'pending_service'          => false,
             ];
         }
@@ -401,6 +412,106 @@ class FleetUtilizationService
             'rentals'            => $rentals,
             'maintenance'        => $maintList,
         ];
+    }
+
+    /**
+     * The individual maintenance VISITS behind one car — the same set report() counts as
+     * `maintenance_visits` (type-'U' maintenance contracts within the car's in-service window, so the
+     * list length equals the visit count shown on Fleet Utilization / the Maintenance History row). The
+     * 'U' contract carries only clean out→in dates, so each visit is ENRICHED with the garage / issue /
+     * notes / cost from the nearest Google-Sheet workshop event (matched by OUT-date proximity, ±3 days,
+     * the same bridge maintenanceOverlaps() uses). Newest first.
+     *
+     * `$from`/`$to` bound the window (null,null = lifetime); a visit is included on the identical
+     * in-service test countVisits() applies, so this drill-down and the summary count never disagree.
+     *
+     * @return array{vehicle_id:int, count:int, items:array<int,array<string,mixed>>}
+     */
+    public function maintenanceVisits(int $vehicleId, ?string $from = null, ?string $to = null): array
+    {
+        $today    = Carbon::today();
+        $todayNum = $this->dayNum($today);
+        $winEnd   = $to ? Carbon::parse($to)->startOfDay() : $today->copy();
+        if ($winEnd->gt($today)) {
+            $winEnd = $today->copy();
+        }
+        $winStart = $from ? Carbon::parse($from)->startOfDay() : null;
+        $hi       = $this->dayNum($winEnd);
+        $loBase   = $winStart ? $this->dayNum($winStart) : null;
+
+        // In-service anchor — pre-first-rental (onboarding) visits are excluded, exactly like the
+        // maintenance_visits count. A car never rented has no in-service visits.
+        $inService = $this->serviceWindow->inServiceDates([$vehicleId])[$vehicleId] ?? null;
+        if ($inService === null) {
+            return ['vehicle_id' => $vehicleId, 'count' => 0, 'items' => []];
+        }
+        $lo = $this->maxNullable($loBase, $this->dayNum(Carbon::parse($inService)));
+        if ($lo === null) {
+            return ['vehicle_id' => $vehicleId, 'count' => 0, 'items' => []];
+        }
+
+        // Type-'U' maintenance contracts intersecting the window — the SAME set report() counts as
+        // visits (deleted_at is intentionally NOT filtered, mirroring maintenanceIntervals()).
+        $contracts = DB::table('contracts')
+            ->where('contract_type', 'U')
+            ->where('vehicle_id', $vehicleId)
+            ->whereNotNull('out_date')
+            ->whereDate('out_date', '<=', $winEnd->toDateString())
+            ->when($winStart, fn ($q) => $q->where(fn ($w) => $w
+                ->whereNull('in_date')->orWhereDate('in_date', '>=', $winStart->toDateString())))
+            ->orderByDesc('out_date')
+            ->get(['contract_no', 'out_date', 'in_date']);
+
+        // Sheet workshop rows for this car — the reason / garage / cost detail the 'U' contract lacks.
+        $sheet = DB::table('maintenances')
+            ->where('vehicle_id', $vehicleId)
+            ->whereIn('origin', Maintenance::WORKSHOP_LOG_ORIGINS)
+            ->whereNotNull('out_date')
+            ->get(['out_date', 'garage', 'service_main', 'maintenance_type', 'damage_location', 'maintenance_notes', 'cost'])
+            ->map(fn ($s) => [
+                'num'    => $this->dayNum(Carbon::parse($s->out_date)),
+                'garage' => trim((string) ($s->garage ?? '')) ?: null,
+                'issue'  => trim((string) ($s->service_main ?: $s->maintenance_type ?: $s->damage_location ?: '')) ?: null,
+                'notes'  => trim((string) ($s->maintenance_notes ?? '')) ?: null,
+                'cost'   => $s->cost !== null ? (float) $s->cost : null,
+            ]);
+
+        $items = [];
+        foreach ($contracts as $c) {
+            $a = $this->dayNum(Carbon::parse($c->out_date));
+            $b = $c->in_date ? $this->dayNum(Carbon::parse($c->in_date)) : $todayNum;
+            if ($b < $a) {
+                continue;   // malformed (return before out)
+            }
+            // Identical in-service inclusion test to countVisits() so count == maintenance_visits.
+            if (! (($b > $lo || $a >= $lo) && $a <= $hi)) {
+                continue;
+            }
+
+            // Nearest sheet row within ±3 days of the OUT date → garage / issue / notes / cost for this trip.
+            $best = null;
+            $bestD = PHP_INT_MAX;
+            foreach ($sheet as $se) {
+                $d = abs($se['num'] - $a);
+                if ($d <= 3 && $d < $bestD) {
+                    $bestD = $d;
+                    $best = $se;
+                }
+            }
+
+            $items[] = [
+                'out_date' => substr((string) $c->out_date, 0, 10),
+                'in_date'  => $c->in_date ? substr((string) $c->in_date, 0, 10) : null,
+                'days'     => $c->in_date ? max(0, $b - $a) : null,   // gross trip length; open stay = unknown
+                'garage'   => $best['garage'] ?? null,
+                'issue'    => $best['issue'] ?? null,
+                'notes'    => $best['notes'] ?? null,
+                'cost'     => $best['cost'] ?? null,
+                'returned' => $c->in_date !== null,
+            ];
+        }
+
+        return ['vehicle_id' => $vehicleId, 'count' => count($items), 'items' => $items];
     }
 
     /**

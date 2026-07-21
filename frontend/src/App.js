@@ -28,6 +28,8 @@ import MaintenanceAnalytics from './pages/MaintenanceAnalytics';
 import MaintenanceHistory from './pages/MaintenanceHistory';
 import MaintenanceApprovals from './pages/MaintenanceApprovals';
 import MaintenanceWorkflow from './pages/MaintenanceWorkflow';
+import CarStatus from './pages/CarStatus';
+import CarStatusVehicle from './pages/CarStatusVehicle';
 import MaintenanceRecommendations from './pages/MaintenanceRecommendations';
 import MyMaintenanceQueue from './pages/MyMaintenanceQueue';
 import InspectionReviewQueue from './pages/InspectionReviewQueue';
@@ -194,6 +196,10 @@ export default function App() {
                 </Route>
 
                 <Route element={<RequirePermission permission="maintenance.view" />}>
+                  {/* Car Status — the operations control center (KPIs + live table + widgets), and the
+                      per-vehicle operational profile it opens into (hosts the live Maintenance Workflow). */}
+                  <Route path="/car-status" element={<CarStatus />} />
+                  <Route path="/car-status/:vehicleId" element={<CarStatusVehicle />} />
                   {/* Old Maintenance Board retired — the Workflow board is now the single maintenance hub. */}
                   <Route path="/maintenance" element={<Navigate to="/maintenance-workflow" replace />} />
                   {/* Old Workflow Hub — folded into the plain Workflow Movements feed. */}

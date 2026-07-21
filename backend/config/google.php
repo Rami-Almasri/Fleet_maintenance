@@ -83,6 +83,14 @@ return [
             'gid' => env('GOOGLE_SHEETS_INSURANCE_GID'),
         ],
 
+        // Vehicle Timeline EXPORT (write target, not a source). The whole fleet's
+        // maintenance-workflow audit trail (vehicle_log_events) is pushed here, one row per event,
+        // by `php artisan events:sync-sheet`. `tab` is created on first run if missing.
+        'events_export' => [
+            'id'  => env('GOOGLE_SHEETS_EVENTS_ID', '1SD7KP0S6p0sjIH0ptIuMAcwh2c4z2MQ71oFTYJh2Ru8'),
+            'tab' => env('GOOGLE_SHEETS_EVENTS_TAB', 'Vehicle Timeline'),
+        ],
+
         // "Main Trip Dashboard" tab — the live pickup/drop-off trip log that powers
         // the Delivery Command dashboard + Orders board. Banner rows 1-2, header row 3,
         // data from row 4. Defaults point at the shared trips workbook.

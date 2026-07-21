@@ -114,3 +114,12 @@ Schedule::command('service:sync-reminders')
 Schedule::command('inspections:generate-tasks')
     ->dailyAt('07:30')
     ->withoutOverlapping();
+
+// Every 10 min: push newly-logged vehicle timeline events (the maintenance-workflow audit trail)
+// to the "Vehicle Timeline" Google Sheet. Incremental via a high-water mark, so each run appends
+// only what's new — cheap and idempotent. Runs in the background so the Google write never blocks
+// the scheduler; withoutOverlapping guards a slow write from stacking with the next tick.
+Schedule::command('events:sync-sheet')
+    ->everyTenMinutes()
+    ->withoutOverlapping()
+    ->runInBackground();

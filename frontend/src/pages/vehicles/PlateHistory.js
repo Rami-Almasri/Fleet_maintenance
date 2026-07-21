@@ -1,7 +1,5 @@
-import { useCallback, useMemo } from 'react';
+import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import api from '../../api/client';
-import useFetch from '../../hooks/useFetch';
 import { SectionCard } from '../../components/ui/Table';
 import Badge from '../../components/ui/Badge';
 import Icon from '../../components/ui/Icon';
@@ -17,15 +15,10 @@ import { fmtDate } from '../../lib/format';
  * here is the timeline of who held the plate when, current holder first, with links to navigate
  * between the vehicles. It renders nothing for a plate that was never reused.
  *
- * Fed by GET /Vehicle/{id}/plate-history (the plate_assignments timeline).
+ * Presentational: the parent (VehicleProfile) owns the fetch of GET /Vehicle/{id}/plate-history
+ * (so it can decide whether to surface the dedicated "Plate History" tab) and passes the payload in.
  */
-export default function PlateHistory({ vehicleId }) {
-  const fetcher = useCallback(
-    async () => (await api.get(`/Vehicle/${vehicleId}/plate-history`)).data.data,
-    [vehicleId],
-  );
-  const { data, loading } = useFetch(fetcher, [vehicleId]);
-
+export default function PlateHistory({ data = null, loading = false }) {
   const holders = useMemo(() => data?.holders || [], [data]);
   const isReused = !!data?.is_reused;
 
