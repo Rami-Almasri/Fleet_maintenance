@@ -32,3 +32,12 @@ export const SHOW_VIDEO_REVIEW = false;
 // backend independently refuses every simulation action unless FEATURE_DEMO_MODE=true is also set
 // (config/features.php → demo_mode), so a stray page open can never touch data on its own.
 export const DEMO_MODE = false;
+
+// SHOW_FLEET_INTELLIGENCE — the Phase-1 Fleet Intelligence layer (added 2026-07-21).
+// Gates the NEW intelligence surfaces (economic profit on Profitability, and — as they land —
+// the Cost Intelligence and Service-Due boards). Kept OFF so each PR ships DARK: the code is in
+// production but nothing new is visible until we flip this one flag. This is deliberately
+// SEPARATE from SHOW_FINANCIALS so the intelligence layer can be revealed WITHOUT un-parking the
+// customer-balance widgets (a different reconciliation concern). Money numbers inside these
+// surfaces still honour SHOW_FINANCIALS via the usual nav `financial: true` gating.
+export const SHOW_FLEET_INTELLIGENCE = false;

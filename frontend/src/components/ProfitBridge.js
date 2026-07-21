@@ -14,14 +14,23 @@ import Icon from './ui/Icon';
  * @param {(n:number)=>string} [fmt]   money formatter (defaults to 2-dp AED)
  * @param {string} [title]             optional heading shown above the rows
  * @param {string} [netLabel]         label for the final line (default "Lifetime Net Profit")
+ * @param {number} [depreciation]     when provided (not null), extends the bridge with a
+ *                                    − Depreciation → = Economic Profit tail (Phase-1 economic layer)
+ * @param {string} [economicLabel]    label for the economic-profit line (default "Economic Profit")
  */
-export default function ProfitBridge({ bridge, fmt = aed2, title, netLabel = 'Lifetime Net Profit', className = '' }) {
+export default function ProfitBridge({ bridge, fmt = aed2, title, netLabel = 'Lifetime Net Profit', depreciation, economicLabel = 'Economic Profit', className = '' }) {
   const b = bridge || {};
   const gross = Number(b.gross_revenue || 0);
   const maintenance = Number(b.maintenance || 0);
   const operating = Number(b.operating_cost || 0);
   const net = b.net_profit != null ? Number(b.net_profit) : gross - maintenance - operating;
   const netPositive = net >= 0;
+
+  // Economic tail — only when a depreciation figure is supplied (car profile omits it → renders as before).
+  const showEcon = depreciation != null;
+  const dep = Number(depreciation || 0);
+  const economic = net - dep;
+  const econPositive = economic >= 0;
 
   return (
     <div className={`rounded-2xl border border-slate-200/60 bg-white px-5 py-4 shadow-soft ${className}`}>
@@ -46,6 +55,19 @@ export default function ProfitBridge({ bridge, fmt = aed2, title, netLabel = 'Li
             valueClass={`text-base font-bold tabular-nums ${netPositive ? 'text-emerald-600' : 'text-red-600'}`}
           />
         </div>
+        {showEcon && (
+          <>
+            <Row label="− Asset Depreciation" value={fmt(dep)} hint="Lifetime value lost (straight-line)" valueClass="text-slate-500" />
+            <div className="!mt-3 border-t border-dashed border-slate-200 pt-3">
+              <Row
+                label={`= ${economicLabel}`}
+                value={fmt(economic)}
+                labelClass="font-semibold text-slate-900"
+                valueClass={`text-base font-bold tabular-nums ${econPositive ? 'text-emerald-600' : 'text-red-600'}`}
+              />
+            </div>
+          </>
+        )}
       </dl>
     </div>
   );

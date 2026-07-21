@@ -10,6 +10,7 @@ import { MetricGridSkeleton, Skeleton } from '../components/ui/Skeleton';
 import Icon from '../components/ui/Icon';
 import ProfitBridge from '../components/ProfitBridge';
 import { aed2, num } from '../lib/format';
+import { SHOW_FLEET_INTELLIGENCE } from '../config/features';
 
 // Status badge tone per OfficeManager lifecycle status.
 const STATUS_TONE = { ready: 'green', rented: 'blue', maintenance: 'amber', sold: 'gray', disposed: 'gray' };
@@ -138,6 +139,23 @@ export default function Profitability() {
           </span>
         ),
     },
+    // Economic Profit (Phase-1 intelligence layer) — net after the asset value lost to
+    // depreciation. Only when SHOW_FLEET_INTELLIGENCE is on; "—" when purchase data is unknown.
+    ...(SHOW_FLEET_INTELLIGENCE
+      ? [{
+          key: 'economic_profit', align: 'right',
+          tooltip: 'Economic profit = net profit − accumulated straight-line depreciation. The truer "did this car create value" figure. "—" when the car has no purchase price/date on file.',
+          header: <SortHeader label="Economic Profit" col="economic_profit" sort={sort} setSort={setSort} align="right" />,
+          render: (r) =>
+            r.economic_profit == null ? (
+              <span className="text-slate-300" title="No purchase price / date on file — depreciation unknown">—</span>
+            ) : (
+              <span className={`tabular-nums font-semibold ${r.economic_profit > 0 ? 'text-emerald-600' : r.economic_profit < 0 ? 'text-red-600' : 'text-slate-400'}`}>
+                {r.economic_profit > 0 ? '+' : r.economic_profit < 0 ? '−' : ''}{aed2(Math.abs(r.economic_profit))}
+              </span>
+            ),
+        }]
+      : []),
   ];
 
   return (
@@ -186,6 +204,8 @@ export default function Profitability() {
                   operating_cost: s.total_operating,
                   net_profit: s.total_net,
                 }}
+                depreciation={SHOW_FLEET_INTELLIGENCE ? s.total_depreciation : undefined}
+                economicLabel="Fleet Economic Profit"
               />
               <MetricGrid cols={2} className="lg:grid-cols-1">
                 <MetricCard
@@ -196,6 +216,16 @@ export default function Profitability() {
                   hint="Fleet-wide, all assets"
                   tooltip="Sum of every car's lifetime net profit: gross revenue minus operating costs and maintenance."
                 />
+                {SHOW_FLEET_INTELLIGENCE && (
+                  <MetricCard
+                    label="Economic Profit"
+                    value={s.total_economic != null ? aed2(s.total_economic) : '—'}
+                    tone={Number(s.total_economic) >= 0 ? 'emerald' : 'red'}
+                    icon={Number(s.total_economic) >= 0 ? <Icon.TrendUp className="h-5 w-5" /> : <Icon.TrendDown className="h-5 w-5" />}
+                    hint={`After depreciation · ${num(s.depreciation_known)} of ${num(s.vehicles)} cars valued`}
+                    tooltip="Fleet net profit minus the asset value lost to straight-line depreciation. Only cars with a known purchase price/date are included."
+                  />
+                )}
                 <MetricCard
                   label="Profitable / Loss"
                   value={`${num(s.profitable)} / ${num(s.loss_making)}`}
