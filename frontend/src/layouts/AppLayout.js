@@ -13,7 +13,7 @@ import LanguageToggle from '../components/LanguageToggle';
 import Brand from '../components/Brand';
 import { useNotifications } from '../hooks/useNotifications';
 import { PageStatProvider, PageStatGauge } from '../components/PageStat';
-import { SHOW_FINANCIALS, DEMO_MODE } from '../config/features';
+import { SHOW_FINANCIALS, DEMO_MODE, SHOW_FLEET_INTELLIGENCE } from '../config/features';
 import { pathBlockedForRoles } from '../config/access';
 
 // Thin gradient bar at the very top that fills as you scroll the page.
@@ -137,6 +137,14 @@ const NAV_SECTIONS = [
     ],
   },
   {
+    // Phase-1 Fleet Intelligence layer — gated by SHOW_FLEET_INTELLIGENCE (items marked `intel`),
+    // so the whole section ships dark until the flag is flipped, independently of SHOW_FINANCIALS.
+    title: 'Fleet Intelligence',
+    items: [
+      { name: 'Cost Intelligence', to: '/cost-intelligence', intel: true, icon: 'M3 12h4l2-7 4 14 2-7h4', desc: 'Maintenance cost per kilometre, per day and per rental for every car — the true running cost of each asset. Numerator is the same logged repair spend as the Profit Bridge; denominators are validated distance, in-service days and rental count. Cars with no measured distance show “—”, never a misleading zero.' },
+    ],
+  },
+  {
     title: 'Analytics & Admin',
     items: [
       { name: 'Profitability', to: '/profitability', financial: true, icon: 'M12 8c-1.7 0-3 .9-3 2s1.3 2 3 2 3 .9 3 2-1.3 2-3 2m0-8V6m0 12v-2m9-4a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Operational profit per car across the whole fleet — rental income (type-R, ex-VAT) minus logged maintenance cost. Sorted best-to-worst to spot top assets and liabilities.' },
@@ -220,6 +228,7 @@ const NAV_PERMISSIONS = {
   '/maintenance-analytics': 'maintenance.view',
   '/damage-accidents': 'maintenance.view',
   '/profitability': 'insights.view',
+  '/cost-intelligence': 'insights.view',
   '/mileage': 'insights.view',
   '/fleet-utilization': 'insights.view',
   '/maintenance-swap': 'insights.view',
@@ -397,6 +406,7 @@ export default function AppLayout() {
     can(NAV_PERMISSIONS[i.to]) &&
     !pathBlockedForRoles(i.to, roles) &&
     (SHOW_FINANCIALS || !i.financial) &&
+    (SHOW_FLEET_INTELLIGENCE || !i.intel) &&
     (!i.demoOnly || DEMO_MODE);
   const visibleSections = NAV_SECTIONS
     .map((s) => ({ ...s, items: s.items.filter(navVisible) }))
