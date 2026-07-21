@@ -142,13 +142,17 @@ const NAV_SECTIONS = [
     title: 'Fleet Intelligence',
     items: [
       { name: 'Cost Intelligence', to: '/cost-intelligence', intel: true, icon: 'M3 12h4l2-7 4 14 2-7h4', desc: 'Maintenance cost per kilometre, per day and per rental for every car — the true running cost of each asset. Numerator is the same logged repair spend as the Profit Bridge; denominators are validated distance, in-service days and rental count. Cars with no measured distance show “—”, never a misleading zero.' },
+      { name: 'Service Due', to: '/service-due', intel: true, icon: 'M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Cars overdue for service or approaching it — by odometer interval and projected from each car’s own usage rate. Overdue first, then soonest. Built on the same km service rule the whole platform uses; cars with no interval or reading are never guessed.' },
+      // Reuses the existing utilization board (/fleet-utilization) — no rebuild. When the intelligence
+      // layer is on it lives here; when off it stays in Analytics & Admin (see hideWhenIntel below).
+      { name: 'Fleet Utilization', to: '/fleet-utilization', intel: true, icon: 'M3 3v18h18M7 15l3-3 3 3 5-5M8 21V9m4 12V5m4 16v-7', desc: 'Per-car split of owned time into rented, in-maintenance, and idle days — utilization and downtime % against how long you have owned each car, with rent lost to downtime.' },
     ],
   },
   {
     title: 'Analytics & Admin',
     items: [
       { name: 'Profitability', to: '/profitability', financial: true, icon: 'M12 8c-1.7 0-3 .9-3 2s1.3 2 3 2 3 .9 3 2-1.3 2-3 2m0-8V6m0 12v-2m9-4a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Operational profit per car across the whole fleet — rental income (type-R, ex-VAT) minus logged maintenance cost. Sorted best-to-worst to spot top assets and liabilities.' },
-      { name: 'Fleet Utilization', to: '/fleet-utilization', icon: 'M3 3v18h18M7 15l3-3 3 3 5-5M8 21V9m4 12V5m4 16v-7', desc: 'Per-car split of owned time into rented, in-maintenance, and idle days — utilization and downtime % against how long you have owned each car, with rent lost to downtime. Filter by period (e.g. last month) and sort to find the cars stuck in the workshop.' },
+      { name: 'Fleet Utilization', to: '/fleet-utilization', hideWhenIntel: true, icon: 'M3 3v18h18M7 15l3-3 3 3 5-5M8 21V9m4 12V5m4 16v-7', desc: 'Per-car split of owned time into rented, in-maintenance, and idle days — utilization and downtime % against how long you have owned each car, with rent lost to downtime. Filter by period (e.g. last month) and sort to find the cars stuck in the workshop.' },
       { name: 'Fuel & Mileage', to: '/mileage', icon: 'M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'One home for every odometer/fuel tool, in three tabs: Fuel & Mileage (real travel vs. contract km, off-contract leakage, fuel debits), Reconciliation (stored odometer vs. the scanner baseline, adopt with one click) and Chain Audit (contract-to-contract odometer handoffs with a non-destructive Quick Fix).' },
       { name: 'Maintenance Swap', to: '/maintenance-swap', icon: 'M4 5h16M4 12h16M4 19h16M9 5v14', desc: 'Live triage of the fleet in three columns — Action Required / In Workshop / Available Pool — with a Swap & Renew engine that keeps a customer on the road while their car is repaired.' },
       { name: 'Net Profit', to: '/net-profit', financial: true, icon: 'M3 3v18h18M7 14l3-3 3 3 5-6', desc: 'Fleet-wide cash-basis Net Profit for a month: total net cash collected on rentals returned in the month, minus the cost of maintenance contracts closed in the month. Step through months to compare. Built from synced figures for speed — use Reconcile on a single contract to verify its real cash live.' },
@@ -229,6 +233,7 @@ const NAV_PERMISSIONS = {
   '/damage-accidents': 'maintenance.view',
   '/profitability': 'insights.view',
   '/cost-intelligence': 'insights.view',
+  '/service-due': 'insights.view',
   '/mileage': 'insights.view',
   '/fleet-utilization': 'insights.view',
   '/maintenance-swap': 'insights.view',
@@ -407,6 +412,7 @@ export default function AppLayout() {
     !pathBlockedForRoles(i.to, roles) &&
     (SHOW_FINANCIALS || !i.financial) &&
     (SHOW_FLEET_INTELLIGENCE || !i.intel) &&
+    (!i.hideWhenIntel || !SHOW_FLEET_INTELLIGENCE) &&
     (!i.demoOnly || DEMO_MODE);
   const visibleSections = NAV_SECTIONS
     .map((s) => ({ ...s, items: s.items.filter(navVisible) }))
