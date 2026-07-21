@@ -49,6 +49,7 @@ import DamageAccidents from './pages/DamageAccidents';
 import OverdueRentals from './pages/OverdueRentals';
 import Profitability from './pages/Profitability';
 import CostIntelligence from './pages/CostIntelligence';
+import ServiceDueBoard from './pages/ServiceDueBoard';
 import MileageCenter from './pages/MileageCenter';
 import DataHealth from './pages/DataHealth';
 import FinancialConflicts from './pages/FinancialConflicts';
@@ -258,6 +259,7 @@ export default function App() {
                   <Route path="/vehicle-status" element={<Navigate to="/inspections/history" replace />} />
                   <Route path="/profitability" element={<Profitability />} />
                   <Route path="/cost-intelligence" element={<CostIntelligence />} />
+                  <Route path="/service-due" element={<ServiceDueBoard />} />
                   {/* Fuel & Mileage, Reconciliation and Chain Audit are unified into one tabbed page. */}
                   <Route path="/mileage" element={<MileageCenter />} />
                   <Route path="/fuel-mileage" element={<Navigate to="/mileage" replace />} />
