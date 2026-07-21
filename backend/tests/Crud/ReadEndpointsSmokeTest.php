@@ -47,7 +47,7 @@ class ReadEndpointsSmokeTest extends CrudTestCase
             '/api/maintenance-tickets/board', '/api/maintenance-tickets/findings-catalog',
             '/api/maintenance-tickets/my-queue', '/api/maintenance-tickets/pending-invoices',
             '/api/MileageChain/audit', '/api/Profitability', '/api/readiness',
-            '/api/intelligence/cost',
+            '/api/intelligence/cost', '/api/intelligence/service-due',
             '/api/Reconciliation', '/api/Reconciliation/fleet',
             '/api/Registration', '/api/Registration/coverage',
             '/api/simulation/status', '/api/StatusMismatch',

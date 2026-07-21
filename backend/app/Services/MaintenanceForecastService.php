@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Contract;
 use App\Models\Vehicle;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 
 /**
  * Preventive-maintenance forecasting — "this car will need service SOON".
@@ -130,6 +131,99 @@ class MaintenanceForecastService
             'projected_date' => optional($projected)->toDateString(),
             'due_soon'       => $dueSoon,
             'overdue'        => $overdue,
+        ];
+    }
+
+    /** Board cache — the fleet scan is moderately heavy; refresh at most every few minutes. */
+    private const BOARD_CACHE_TTL = 300;
+
+    /** Only cars within this many km of the interval pay for the (per-car) usage query. */
+    private const DUE_SOON_PREGATE_KM = 3000;
+
+    /**
+     * Fleet Service-Due board — the ACTIONABLE list (overdue + due-soon cars) plus fleet status counts.
+     *
+     * Reuses forecast() unchanged; efficiency comes from paying for the per-car usage query ONLY where
+     * the cheap serviceStatus() pre-gate says a car is plausibly close to service (the same gate
+     * dueSoonCount() uses). Clearly-ok / no-data cars are counted from serviceStatus() alone. Active
+     * fleet only (ready / rented).
+     *
+     * @return array{vehicles: array<int,array<string,mixed>>, summary: array<string,int>, thresholds: array<string,int>}
+     */
+    public function board(): array
+    {
+        return Cache::remember('intelligence:service_due:v1', self::BOARD_CACHE_TTL, fn () => $this->buildBoard());
+    }
+
+    private function buildBoard(): array
+    {
+        $counts = ['overdue' => 0, 'due_soon' => 0, 'ok' => 0, 'no_data' => 0];
+        $rows   = [];
+
+        Vehicle::whereIn('status', Vehicle::ACTIVE_STATUSES)
+            ->orderBy('id')
+            ->chunkById(500, function ($vehicles) use (&$counts, &$rows) {
+                foreach ($vehicles as $v) {
+                    $s = $v->serviceStatus();
+
+                    if ($s['status'] === 'no_data') {
+                        $counts['no_data']++;
+                        continue;
+                    }
+
+                    if ($s['status'] === 'service_due') {                 // already overdue
+                        $counts['overdue']++;
+                        $rows[] = $this->boardRow($v, $this->forecast($v));
+                        continue;
+                    }
+
+                    // status ok — only cars plausibly within reach pay for the usage query.
+                    $remaining = $s['remaining'];
+                    if ($remaining !== null && $remaining <= self::DUE_SOON_PREGATE_KM) {
+                        $f = $this->forecast($v);
+                        if ($f['status'] === 'due_soon') {
+                            $counts['due_soon']++;
+                            $rows[] = $this->boardRow($v, $f);
+                        } else {
+                            $counts['ok']++;
+                        }
+                    } else {
+                        $counts['ok']++;
+                    }
+                }
+            });
+
+        // Overdue first, then soonest — remaining_km ascending (overdue = negative/smallest).
+        usort($rows, fn ($a, $b) => ($a['remaining_km'] ?? PHP_INT_MAX) <=> ($b['remaining_km'] ?? PHP_INT_MAX));
+
+        return [
+            'vehicles'   => $rows,
+            'summary'    => $counts + [
+                'total'      => array_sum($counts),
+                'actionable' => $counts['overdue'] + $counts['due_soon'],
+            ],
+            'thresholds' => [
+                'near_due_km'   => self::NEAR_DUE_KM,
+                'near_due_days' => self::NEAR_DUE_DAYS,
+            ],
+        ];
+    }
+
+    private function boardRow(Vehicle $v, array $f): array
+    {
+        return [
+            'vehicle_id'     => $v->id,
+            'plate'          => $v->plate_no,
+            'car'            => trim((string) ($v->make . ' ' . $v->model)) ?: null,
+            'status'         => $v->status,
+            'service_status' => $f['status'],       // overdue | due_soon
+            'current'        => $f['current'],
+            'interval'       => $f['interval'],
+            'remaining_km'   => $f['remaining_km'],
+            'overdue_km'     => $f['overdue_km'],
+            'usage_rate'     => $f['usage_rate'],
+            'days_to_due'    => $f['days_to_due'],
+            'projected_date' => $f['projected_date'],
         ];
     }
 }

@@ -754,7 +754,8 @@ Route::middleware(['auth:sanctum', 'permission:insights.view'])->get('Profitabil
 // Fleet Intelligence (Phase 1) — read-only analytics surfaces. Pure reads → insights.view.
 // Static prefix, no wildcards. Frontend visibility is gated by SHOW_FLEET_INTELLIGENCE.
 Route::middleware(['auth:sanctum', 'permission:insights.view'])->prefix('intelligence')->controller(\App\Http\Controllers\IntelligenceController::class)->group(function () {
-    Route::get('/cost', 'cost');   // maintenance cost per km / day / rental, per vehicle + fleet
+    Route::get('/cost', 'cost');                 // maintenance cost per km / day / rental, per vehicle + fleet
+    Route::get('/service-due', 'serviceDue');    // overdue + due-soon service board (reuses forecast engine)
 });
 
 // Fuel & Mileage Reconciliation (live "fuel_data_plate_summary"): per car, actual odometer travel vs.
