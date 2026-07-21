@@ -751,6 +751,12 @@ Route::middleware(['auth:sanctum', 'permission:insights.view'])->get('DataHealth
 // Fleet-wide operational profitability per car: rental income (type-R, ex-VAT) − maintenance cost
 Route::middleware(['auth:sanctum', 'permission:insights.view'])->get('Profitability', [ProfitabilityController::class, 'index']);
 
+// Fleet Intelligence (Phase 1) — read-only analytics surfaces. Pure reads → insights.view.
+// Static prefix, no wildcards. Frontend visibility is gated by SHOW_FLEET_INTELLIGENCE.
+Route::middleware(['auth:sanctum', 'permission:insights.view'])->prefix('intelligence')->controller(\App\Http\Controllers\IntelligenceController::class)->group(function () {
+    Route::get('/cost', 'cost');   // maintenance cost per km / day / rental, per vehicle + fleet
+});
+
 // Fuel & Mileage Reconciliation (live "fuel_data_plate_summary"): per car, actual odometer travel vs.
 // km explained by contracts → out-of-contract (unlogged) km leakage, total fuel debit, odometer-rollback
 // flags. FuelMileage/{vehicle} drills into the per-contract ledger with the off-contract gap per leg.
