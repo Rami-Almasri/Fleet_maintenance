@@ -13,7 +13,7 @@
 //
 // To restore all financial widgets after the demo / once the backend is aligned,
 // flip this single flag back to `true`.
-export const SHOW_FINANCIALS = false;
+export const SHOW_FINANCIALS = true;
 
 // SHOW_VIDEO_REVIEW — "Supervisor Video-Review" gate (parked 2026-07-04, pre-launch).
 // While this is `false`, every UI element for the video-review stage is hidden: the
@@ -40,4 +40,4 @@ export const DEMO_MODE = false;
 // SEPARATE from SHOW_FINANCIALS so the intelligence layer can be revealed WITHOUT un-parking the
 // customer-balance widgets (a different reconciliation concern). Money numbers inside these
 // surfaces still honour SHOW_FINANCIALS via the usual nav `financial: true` gating.
-export const SHOW_FLEET_INTELLIGENCE = false;
+export const SHOW_FLEET_INTELLIGENCE = true;

@@ -22,7 +22,7 @@ import {
 } from '../components/workflow/meta';
 import { SHOW_VIDEO_REVIEW } from '../config/features';
 import {
-  KpiTile, CommandPanel, ScoreRing, OpsClock,
+  KpiTile, CommandPanel, OpsClock,
 } from '../components/ops';
 import '../components/ops/ops.css';
 import './maintenance-workflow.css';
@@ -69,8 +69,6 @@ const SEV_FILTERS = [
   { value: 'moderate', label: '🟡 Moderate' },
   { value: 'routine', label: '🟢 Routine' },
 ];
-
-const payload = (r) => (r && r.data && 'data' in r.data ? r.data.data : r?.data);
 
 // One dark board card — the Cockpit restyle of the classic ticket card. It keeps EVERY operator
 // affordance (severity, complaint/breakdown flags, live position, single-garage fault routing,
@@ -295,8 +293,8 @@ export default function MaintenanceWorkflow() {
   const [sevFilter, setSevFilter] = useState('');
   const [query, setQuery] = useState('');
   const [view, setView] = useState('board');        // board | list
+  const [stageTab, setStageTab] = useState('all');   // 'all' | a lane key
   const [expandedLanes, setExpandedLanes] = useState({});
-  const [fleet, setFleet] = useState(null);         // /Dashboard fleet_status
 
   // Real-time board (silent revalidation every 6s), paused while a modal/drawer is open.
   const fetcher = useCallback(async () => (await api.get('/maintenance-tickets/board')).data.data, []);
@@ -326,17 +324,6 @@ export default function MaintenanceWorkflow() {
       })
       .catch(() => { /* pickers fall back to empty */ });
     return () => { alive = false; };
-  }, []);
-
-  // Fleet-status donut for the bottom command row (existing endpoint only).
-  useEffect(() => {
-    let alive = true;
-    const load = () => {
-      api.get('/Dashboard', { params: { expiring_days: 7 } }).then((r) => { if (alive) setFleet(payload(r)?.fleet_status || null); }).catch(() => {});
-    };
-    load();
-    const iv = setInterval(() => { if (document.visibilityState === 'visible') load(); }, 30000);
-    return () => { alive = false; clearInterval(iv); };
   }, []);
 
   useEffect(() => {
@@ -386,6 +373,28 @@ export default function MaintenanceWorkflow() {
   const allLanes = useMemo(() => [...primaryLanes, ...exceptionLanes], [primaryLanes, exceptionLanes]);
   const allTickets = useMemo(() => allLanes.flatMap((l) => l.tickets), [allLanes]);
 
+  // Stage tabs: an "All" tab (the full board) + one tab per stage. Every primary stage always gets a
+  // tab; exception stages only appear as a tab while they actually hold tickets, matching the board's
+  // "no empty exception lanes cluttering the view" philosophy.
+  const stageTabs = useMemo(() => {
+    const tabs = [{ key: 'all', name: 'All', tone: 'var(--brand, #6366f1)', count: allTickets.length }];
+    for (const l of primaryLanes) tabs.push({ key: l.key, name: l.name, tone: l.tone, count: l.tickets.length });
+    for (const l of exceptionLanes) if (l.tickets.length) tabs.push({ key: l.key, name: l.name, tone: l.tone, count: l.tickets.length });
+    return tabs;
+  }, [primaryLanes, exceptionLanes, allTickets]);
+
+  // If the active stage tab no longer exists (e.g. an exception lane emptied out), fall back to All.
+  useEffect(() => {
+    if (stageTab !== 'all' && !stageTabs.some((tab) => tab.key === stageTab)) setStageTab('all');
+  }, [stageTabs, stageTab]);
+
+  // Lanes actually rendered: every lane on the "All" tab, otherwise just the selected stage.
+  const displayLanes = useMemo(
+    () => (stageTab === 'all' ? allLanes : allLanes.filter((l) => l.key === stageTab)),
+    [allLanes, stageTab],
+  );
+  const visibleTickets = useMemo(() => displayLanes.flatMap((l) => l.tickets), [displayLanes]);
+
   // ---- Today's Workshop Control — action-oriented, not reporting ----
   // A true workshop snapshot: computed over ALL open tickets (independent of the search/severity
   // filter above), so the strip always answers "what needs action now" for the whole shop.
@@ -426,9 +435,16 @@ export default function MaintenanceWorkflow() {
   }, [allOpen]);
   const oldestAge = oldestOpen ? fmtDuration(Math.max(0, Math.floor((Date.now() - new Date(oldestOpen.created_at).getTime()) / 1000))) : '—';
 
-  const fs = fleet || {};
-  const fleetTotal = (fs.available ?? 0) + (fs.rented ?? 0) + (fs.maintenance ?? 0);
-  const availPct = fleetTotal ? Math.round(((fs.available ?? 0) / fleetTotal) * 100) : 0;
+  // Workflow-stage distribution for the bottom command row. Computed over ALL open tickets (the raw
+  // board columns, independent of the search/severity filter) so it always shows the true shop load
+  // across every stage. Only stages that currently hold tickets are shown.
+  const stageDist = useMemo(() => {
+    const rows = [...PRIMARY_LANES, ...EXCEPTION_LANES]
+      .map((l) => ({ key: l.key, name: l.name, tone: l.tone, count: (columns[l.key] || []).length }))
+      .filter((r) => r.count > 0);
+    const total = rows.reduce((s, r) => s + r.count, 0);
+    return { rows, total };
+  }, [columns]);
 
   // Clicking a ticket opens the full detail drawer directly (it seeds from the board summary, then
   // lazy-loads the full ticket) — no intermediate "select → View Details" step.
@@ -511,18 +527,37 @@ export default function MaintenanceWorkflow() {
           {(query || sevFilter) && (
             <button className="opx-btn" onClick={() => { setQuery(''); setSevFilter(''); }}>Clear</button>
           )}
-          <span className="mwf-toolbar-meta">{allTickets.length} shown</span>
+          <span className="mwf-toolbar-meta">{visibleTickets.length} shown</span>
+        </div>
+
+        {/* Stage tabs — click a stage to focus just its tickets, or "All" for the full board. */}
+        <div className="mwf-tabs" role="tablist" aria-label="Maintenance stages">
+          {stageTabs.map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              role="tab"
+              aria-selected={stageTab === tab.key}
+              className={`mwf-tab ${stageTab === tab.key ? 'on' : ''}`}
+              style={stageTab === tab.key ? { '--tab-tone': tab.tone } : undefined}
+              onClick={() => setStageTab(tab.key)}
+            >
+              <span className="dot" style={{ background: tab.tone }} />
+              <span className="nm">{tab.name}</span>
+              <span className="ct">{tab.count}</span>
+            </button>
+          ))}
         </div>
 
         {/* BOARD */}
         {view === 'board' && (
-          <div className="mwf-board">
-            {allLanes.map((lane) => (
+          <div className={`mwf-board ${stageTab !== 'all' ? 'single' : ''}`}>
+            {displayLanes.map((lane) => (
               <Lane
                 key={lane.key}
                 lane={lane}
                 loading={loading}
-                expanded={!!expandedLanes[lane.key]}
+                expanded={stageTab !== 'all' || !!expandedLanes[lane.key]}
                 onToggle={() => setExpandedLanes((p) => ({ ...p, [lane.key]: !p[lane.key] }))}
                 cardProps={cardProps}
               />
@@ -532,14 +567,14 @@ export default function MaintenanceWorkflow() {
 
         {/* LIST */}
         {view === 'list' && (
-          <CommandPanel title="All open tickets" label={`${allTickets.length}`} bodyFlush>
+          <CommandPanel title="All open tickets" label={`${visibleTickets.length}`} bodyFlush>
             <div className="opx-tblwrap">
               <table className="opx-tbl">
                 <thead>
                   <tr><th>Vehicle</th><th>Stage</th><th>Severity</th><th>Garage</th><th>Faults</th><th>In stage</th><th className="r">Action</th></tr>
                 </thead>
                 <tbody>
-                  {allTickets.map((tk) => {
+                  {visibleTickets.map((tk) => {
                     const a = stageAge(tk, t);
                     const laneName = [...PRIMARY_LANES, ...EXCEPTION_LANES].find((l) => l.key === tk.workflow_status)?.name || tk.status_label || tk.workflow_status;
                     return (
@@ -554,26 +589,69 @@ export default function MaintenanceWorkflow() {
                       </tr>
                     );
                   })}
-                  {allTickets.length === 0 && !loading && <tr><td colSpan={7}><div className="opx-empty">No open tickets match the filters</div></td></tr>}
+                  {visibleTickets.length === 0 && !loading && <tr><td colSpan={7}><div className="opx-empty">No open tickets match the filters</div></td></tr>}
                 </tbody>
               </table>
             </div>
           </CommandPanel>
         )}
 
-        {/* BOTTOM COMMAND ROW — fleet status only. (Per-ticket detail lives in the click-to-open drawer;
-            the Recent Activity feed was removed at the operator's request.) */}
+        {/* BOTTOM COMMAND ROW — workflow-stage distribution across the whole shop. (Per-ticket detail
+            lives in the click-to-open drawer; the Recent Activity feed was removed at the operator's request.) */}
         <div className="opx-grid opx-c12 mwf-bottom">
           <div className="opx-span-12">
-            <CommandPanel title="Fleet Status" label="live">
-              {!fleet ? <div className="opx-skel" style={{ height: 170 }} /> : (
-                <div className="mwf-fleet">
-                  <ScoreRing value={availPct} label="Available" size={116} />
-                  <div className="mwf-fleet-legend">
-                    <div><span className="d" style={{ background: '#34d399' }} />Available<b>{fs.available ?? 0}</b></div>
-                    <div><span className="d" style={{ background: '#60a5fa' }} />Rented<b>{fs.rented ?? 0}</b></div>
-                    <div><span className="d" style={{ background: '#fb7185' }} />Maintenance<b>{fs.maintenance ?? 0}</b></div>
-                    <div className="tot"><span>Total fleet</span><b>{fleetTotal}</b></div>
+            <CommandPanel title="Workflow Stages" label={`${stageDist.total} open`}>
+              {loading && stageDist.total === 0 ? <div className="opx-skel" style={{ height: 120 }} /> : stageDist.total === 0 ? (
+                <div className="opx-empty" style={{ padding: 24 }}>No tickets in the workflow</div>
+              ) : (
+                <div className="mwf-stages">
+                  {/* Donut — each arc sized by its stage's share of open tickets. */}
+                  <div className="mwf-donut">
+                    <svg viewBox="0 0 120 120" width="150" height="150" role="img" aria-label="Workflow stage distribution">
+                      {(() => {
+                        const R = 52;
+                        const C = 2 * Math.PI * R;
+                        let acc = 0;
+                        return stageDist.rows.map((r) => {
+                          const len = (r.count / stageDist.total) * C;
+                          const seg = (
+                            <circle
+                              key={r.key}
+                              cx="60" cy="60" r={R} fill="none"
+                              stroke={r.tone} strokeWidth="15"
+                              strokeDasharray={`${len} ${C - len}`}
+                              strokeDashoffset={-acc}
+                              transform="rotate(-90 60 60)"
+                              className="mwf-donut-seg"
+                            >
+                              <title>{`${r.name}: ${r.count}`}</title>
+                            </circle>
+                          );
+                          acc += len;
+                          return seg;
+                        });
+                      })()}
+                    </svg>
+                    <div className="mwf-donut-center">
+                      <b>{stageDist.total}</b>
+                      <span>open</span>
+                    </div>
+                  </div>
+                  {/* Legend — every active stage with its count; click to focus that stage on the board. */}
+                  <div className="mwf-stages-legend">
+                    {stageDist.rows.map((r) => (
+                      <button
+                        key={r.key}
+                        type="button"
+                        className={`mwf-stages-item ${stageTab === r.key ? 'on' : ''}`}
+                        onClick={() => { setStageTab(r.key); setView('board'); }}
+                        title={`Focus ${r.name}`}
+                      >
+                        <span className="d" style={{ background: r.tone }} />
+                        <span className="nm">{r.name}</span>
+                        <b>{r.count}</b>
+                      </button>
+                    ))}
                   </div>
                 </div>
               )}

@@ -3,13 +3,13 @@
 namespace Tests\Crud;
 
 use App\Models\Contract;
-use App\Models\Maintenance;
+use App\Models\VehicleExpense;
 
 /**
  * PR4 — /api/intelligence/cost.
  *
  * Verifies the endpoint envelope + that the service wires the reused sources correctly:
- * maintenance spend (numerator) ÷ validated distance / rentals (denominators), with the
+ * expense (numerator, from the sheet) ÷ validated distance / rentals (denominators), with the
  * ratio identity holding for every row and NULL denominators never producing a value.
  */
 class IntelligenceCostTest extends CrudTestCase
@@ -18,12 +18,12 @@ class IntelligenceCostTest extends CrudTestCase
     {
         $vid = $this->makeVehicle();
 
-        // Numerator: a manual workshop-log maintenance row (origin ∈ WORKSHOP_LOG_ORIGINS) with cost.
-        Maintenance::create([
-            'vehicle_id' => $vid,
-            'origin'     => 'manual',
-            'cost'       => 500,
-            'out_date'   => now()->subDays(30)->toDateString(),
+        // Numerator: an expense line from the sheet (the sole source of expense).
+        VehicleExpense::create([
+            'car_serial' => 900000 + $vid, 'vehicle_id' => $vid,
+            'entry_date' => now()->subDays(30)->toDateString(), 'account_type' => 'Expence',
+            'remarks' => 'CHANGE OIL', 'debit' => 500, 'credit' => 0, 'amount' => 500,
+            'source' => 'excel', 'imported_at' => now(),
         ]);
 
         // Denominators: a closed rental (type-C) with odometer OUT/IN → 5,000 km validated travel.

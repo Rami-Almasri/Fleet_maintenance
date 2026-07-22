@@ -11,7 +11,6 @@ use Laravel\Sanctum\Sanctum;
  * Deep coverage of the in-app notification centre (the bell):
  *   - the user-scoped CRUD (index / poll / mark-read / mark-all / dismiss / clear)
  *   - the demo self-alert pipeline
- *   - the admin Notification Test Console (every trigger, real + forced)
  *   - per-user isolation (you never see another user's notifications)
  *   - the notifications:scan detector command runs clean
  */
@@ -90,54 +89,6 @@ class NotificationTest extends CrudTestCase
 
         $this->getJson('/api/notifications')->assertSuccessful()
             ->assertJsonPath('data.total', 0);
-    }
-
-    // ── Admin Test Console: forced fire of every trigger ─────────────────────
-    public static function triggerProvider(): array
-    {
-        return [
-            ['overdue_service'],
-            ['rental_expiry'],
-            ['invoice_overdue'],
-            ['inspection_due'],
-        ];
-    }
-
-    #[\PHPUnit\Framework\Attributes\DataProvider('triggerProvider')]
-    public function test_admin_console_forced_fire(string $trigger): void
-    {
-        $res = $this->postJson('/api/admin/notifications/test', ['trigger' => $trigger, 'force' => true]);
-        $res->assertSuccessful()
-            ->assertJsonPath('data.trigger', $trigger)
-            ->assertJsonPath('data.mode', 'forced');
-
-        // It really landed on the bell.
-        $this->getJson('/api/notifications/poll')->assertJsonPath('data.unread_count', 1);
-    }
-
-    // ── Admin Test Console: REAL mode refuses to fabricate on a clean fleet ──
-    public function test_admin_console_real_mode_refuses_without_live_condition(): void
-    {
-        // Clean test DB → no overdue reminder exists → REAL mode must 422 with a hint.
-        $this->postJson('/api/admin/notifications/test', ['trigger' => 'overdue_service', 'force' => false])
-            ->assertStatus(422);
-    }
-
-    public function test_admin_console_rejects_unknown_trigger(): void
-    {
-        $this->postJson('/api/admin/notifications/test', ['trigger' => 'bogus', 'force' => true])
-            ->assertStatus(422);
-    }
-
-    // ── Admin console broadcast fan-out counts recipients ────────────────────
-    public function test_admin_console_broadcast_delivers_to_holders(): void
-    {
-        $res = $this->postJson('/api/admin/notifications/test', [
-            'trigger' => 'rental_expiry', 'force' => true, 'broadcast' => true,
-        ]);
-        $res->assertSuccessful();
-        // At least the acting super-admin holds contracts.view, so >=1 recipient.
-        $this->assertGreaterThanOrEqual(1, $res->json('data.delivered_to'));
     }
 
     // ── The scheduled detector sweep runs clean ──────────────────────────────

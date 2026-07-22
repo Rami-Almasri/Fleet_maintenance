@@ -140,7 +140,7 @@ function buildHtml(data) {
       <div class="sec">
         <div class="stat"><span class="n">${num(stats.contracts_count || 0)}</span><span class="l"> contracts</span></div>
         <div class="stat"><span class="n">${num(stats.maintenance_count || 0)}</span><span class="l"> maintenance visits</span></div>
-        ${SHOW_FINANCIALS ? `<div class="stat"><span class="n">${aed(stats.maintenance_total || 0)}</span><span class="l"> maintenance spend</span></div>` : ''}
+        ${SHOW_FINANCIALS ? `<div class="stat"><span class="n">${aed(stats.profit_bridge?.maintenance || 0)}</span><span class="l"> maintenance spend</span></div>` : ''}
         <div class="stat"><span class="n">${km(v.odometer)}</span><span class="l"> odometer</span></div>
       </div>
 

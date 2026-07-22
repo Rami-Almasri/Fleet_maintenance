@@ -63,6 +63,15 @@ class FleetUtilizationService
         $loBase = $winStart ? $this->dayNum($winStart) : null;
         $todayNum = $this->dayNum($today);
 
+        // Timestamp horizon for the SECONDS-based duration engine (real elapsed time, not calendar days).
+        // "Now" windows (the leaderboard / All-Time default) run to the current instant so an ongoing shop
+        // stay accrues its real hours; an explicit past window runs to the END of its last day.
+        $now   = Carbon::now();
+        $nowTs = $now->timestamp;
+        $hiTs  = $winEnd->toDateString() === $today->toDateString()
+            ? $nowTs
+            : $winEnd->copy()->endOfDay()->timestamp;
+
         $vq = DB::table('vehicles')
             ->select('id', 'code', 'plate_no', 'make', 'model', 'year', 'status', 'purchase_date', 'day_rent_value', 'operational_status');
         if (! empty($statuses)) {
@@ -139,40 +148,50 @@ class FleetUtilizationService
             }
 
             // Performance anchor = later of (window start, In-Service Date) — replaces purchase_date.
-            $lo = $this->maxNullable($loBase, $inServiceNum);
-            $serviceDays = $lo !== null ? max(0, $hi - $lo) : 0;
+            $lo   = $this->maxNullable($loBase, $inServiceNum);
+            $loTs = $lo !== null ? $lo * 86400 : null;            // start-of-day of the anchor, as a unix stamp
+            $serviceSec  = $loTs !== null ? max(0, $hiTs - $loTs) : 0;
+            $serviceDays = (int) round($serviceSec / 86400);
 
-            // Rental is King (base_on is ignored — it is full of staff names):
-            //   • Every day under a 'C' rental is RENTAL time, full stop.
-            //   • Shop days = maintenance days MINUS rental days: a 'U' day that overlaps a rental is
-            //     rental time, never shop time. Only days physically in the garage AND not with a
-            //     customer count as TRUE off-road shop days.
-            //   • Accident / unknown shop time with no 'U' contract simply stays Rented via the 'C' dates.
+            // Rental is King, measured as ACTUAL ELAPSED TIME from the contract out/in TIMESTAMPS
+            // (out_date+out_time → in_date+in_time), NOT whole calendar days. A 2-hour shop visit is
+            // ~0.08 of a day, not 1; a Jan-1 08:00 → Jan-11 08:00 stay is exactly 10 days, not 11.
+            //   • Every SECOND under a 'C' rental is RENTAL time, full stop.
+            //   • Shop time = maintenance seconds MINUS the seconds that overlap a rental: a 'U' second
+            //     during a rental is rental time, never shop time. Only time physically in the garage AND
+            //     not with a customer counts as TRUE off-road shop time.
+            //   • Overlapping periods are merged so no second is double-counted; open stays run to now.
             $maintIntervals = $maintByVeh[$v->id] ?? [];
             $rentIntervals  = $rentByVeh[$v->id] ?? [];
 
-            $rented = $this->mergeDays($rentIntervals, $lo, $hi, $todayNum);   // every rental day (King)
-            $union  = $this->mergeDays(array_merge($rentIntervals, $maintIntervals), $lo, $hi, $todayNum);
-            $maint  = max(0, $union - $rented);   // TRUE off-road shop days = maintenance − rental
-            $idle   = max(0, $serviceDays - $union);
+            $rentedSec = $loTs !== null ? $this->mergeSeconds($rentIntervals, $loTs, $hiTs, $nowTs) : 0;
+            $unionSec  = $loTs !== null ? $this->mergeSeconds(array_merge($rentIntervals, $maintIntervals), $loTs, $hiTs, $nowTs) : 0;
+            $maintSec  = max(0, $unionSec - $rentedSec);   // TRUE off-road shop seconds = maintenance − rental
+            $idleSec   = max(0, $serviceSec - $unionSec);
 
             $cars[] = $base + [
                 'in_service_date'          => $inServiceDate,
                 'days_in_service'          => $serviceDays,     // performance denominator: in-service → now (clipped to window)
-                'days_rented'              => $rented,
-                'days_maintenance'         => $maint,           // TRUE off-road shop days (maintenance − rental)
-                'days_idle'                => $idle,
+                'days_rented'              => (int) round($rentedSec / 86400),
+                'days_maintenance'         => (int) round($maintSec / 86400),   // TRUE off-road shop days (rounded from real elapsed time)
+                'days_idle'                => (int) round($idleSec / 86400),
+                // Precise elapsed SECONDS behind each figure — the accurate basis for ranking and for the
+                // sub-day "N h" display. The days_* above are these rounded to whole days for the headline.
+                'maintenance_seconds'      => $maintSec,
+                'rented_seconds'           => $rentedSec,
+                'idle_seconds'             => $idleSec,
+                'service_seconds'          => $serviceSec,
                 'rental_count'             => count($rentByVeh[$v->id] ?? []),
                 // Visits counted only within the in-service window — pre-service NEW-CAR prep excluded.
                 'maintenance_visits'       => $this->countVisits($maintByVeh[$v->id] ?? [], $lo, $hi, $todayNum),
                 // Onboarding visits (before first rental) — so in-service + onboarding reconciles to
                 // the car profile's lifetime visit total.
                 'onboarding_visits'        => $this->countOnboardingVisits($maintByVeh[$v->id] ?? [], $inServiceNum, $todayNum),
-                'utilization_pct'          => $serviceDays ? round($rented / $serviceDays * 100, 1) : null,
-                'downtime_pct'             => $serviceDays ? round($maint / $serviceDays * 100, 1) : null,
-                'idle_pct'                 => $serviceDays ? round($idle / $serviceDays * 100, 1) : null,
+                'utilization_pct'          => $serviceSec ? round($rentedSec / $serviceSec * 100, 1) : null,
+                'downtime_pct'             => $serviceSec ? round($maintSec / $serviceSec * 100, 1) : null,
+                'idle_pct'                 => $serviceSec ? round($idleSec / $serviceSec * 100, 1) : null,
                 // Rent lost while the car sat in the workshop (pure downtime × its daily rate).
-                'revenue_lost_downtime'    => $rate > 0 ? round($maint * $rate, 2) : null,
+                'revenue_lost_downtime'    => $rate > 0 ? round($maintSec / 86400 * $rate, 2) : null,
                 'currently_in_shop'        => $currentlyInShop,
                 'pending_service'          => false,
             ];
@@ -867,11 +886,14 @@ class FleetUtilizationService
             ->when($winStart, fn ($q) => $q->where(function ($w) use ($winStart) {
                 $w->whereNull('in_date')->orWhereDate('in_date', '>=', $winStart->toDateString());
             }))
-            ->get(['vehicle_id', 'out_date', 'in_date']);
+            ->get(['vehicle_id', 'out_date', 'out_time', 'in_date', 'in_time']);
 
         $out = [];
         foreach ($rows as $r) {
-            $out[(int) $r->vehicle_id][] = [substr((string) $r->out_date, 0, 10), $r->in_date ? substr((string) $r->in_date, 0, 10) : null];
+            $out[(int) $r->vehicle_id][] = [
+                $this->stamp($r->out_date, $r->out_time),
+                $r->in_date ? $this->stamp($r->in_date, $r->in_time) : null,
+            ];
         }
 
         return $out;
@@ -901,13 +923,13 @@ class FleetUtilizationService
             ->when($winStart, fn ($q) => $q->where(function ($w) use ($winStart) {
                 $w->whereNull('in_date')->orWhereDate('in_date', '>=', $winStart->toDateString());
             }))
-            ->get(['vehicle_id', 'out_date', 'in_date']);
+            ->get(['vehicle_id', 'out_date', 'out_time', 'in_date', 'in_time']);
 
         $out = [];
         foreach ($rows as $r) {
             $out[(int) $r->vehicle_id][] = [
-                substr((string) $r->out_date, 0, 10),
-                $r->in_date ? substr((string) $r->in_date, 0, 10) : null,
+                $this->stamp($r->out_date, $r->out_time),
+                $r->in_date ? $this->stamp($r->in_date, $r->in_time) : null,
             ];
         }
 
@@ -915,8 +937,71 @@ class FleetUtilizationService
     }
 
     /**
+     * Combine a DATE column with its "HH:MM[:SS]" time string into one "Y-m-d H:i:s" stamp Carbon can
+     * parse. OfficeManager keeps the clock time in a separate out_time/in_time column; a blank/absent
+     * time falls back to midnight so a timeless row still yields a valid stamp.
+     */
+    private function stamp($date, $time): string
+    {
+        $d = substr((string) $date, 0, 10);
+        $t = trim((string) ($time ?? ''));
+
+        return $d . ' ' . ($t !== '' ? $t : '00:00:00');
+    }
+
+    /**
+     * Total ELAPSED SECONDS covered by a set of [start, end|null] datetime intervals, clipped to the
+     * [$loTs, $hiTs] unix-timestamp window, overlaps merged. end = null (open stay) → $nowTs. This is the
+     * timestamp-precise twin of mergeDays(): real duration, so a 2-hour visit is 7 200s (not a whole day)
+     * and a 10-day stay is exactly 864 000s (not 11 calendar days).
+     *
+     * @param  array<int,array{0:string,1:?string}>  $intervals
+     */
+    private function mergeSeconds(array $intervals, int $loTs, int $hiTs, int $nowTs): int
+    {
+        if ($hiTs <= $loTs || empty($intervals)) {
+            return 0;
+        }
+
+        $segs = [];
+        foreach ($intervals as [$s, $e]) {
+            $a = Carbon::parse($s)->timestamp;
+            $b = $e !== null ? Carbon::parse($e)->timestamp : $nowTs;
+            if ($b < $a) {
+                continue;   // malformed (return before out) — skip rather than count negative
+            }
+            $a = max($a, $loTs);
+            $b = min($b, $hiTs);
+            if ($b <= $a) {
+                continue;
+            }
+            $segs[] = [$a, $b];
+        }
+        if (empty($segs)) {
+            return 0;
+        }
+
+        usort($segs, fn ($x, $y) => $x[0] <=> $y[0]);
+        $total = 0;
+        [$cs, $ce] = $segs[0];
+        $n = count($segs);
+        for ($i = 1; $i < $n; $i++) {
+            [$s, $e] = $segs[$i];
+            if ($s <= $ce) {
+                $ce = max($ce, $e);
+            } else {
+                $total += $ce - $cs;
+                [$cs, $ce] = [$s, $e];
+            }
+        }
+
+        return $total + ($ce - $cs);
+    }
+
+    /**
      * Total distinct days covered by a set of [start, end|null] intervals, clipped to [lo, hi]
-     * (day numbers), overlaps merged. end = null → today.
+     * (day numbers), overlaps merged. end = null → today. Still used by the single-day / custom-range
+     * "time machine" drill-downs where a whole-calendar-day verdict is what's wanted.
      *
      * @param  array<int,array{0:string,1:?string}>  $intervals
      */

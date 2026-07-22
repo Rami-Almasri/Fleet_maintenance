@@ -9,14 +9,20 @@ import DataTable, { SectionCard } from '../components/ui/Table';
 import { MetricGridSkeleton, Skeleton } from '../components/ui/Skeleton';
 import Icon from '../components/ui/Icon';
 import ProfitBridge from '../components/ProfitBridge';
+import FinancialBreakdownDrawer from '../components/FinancialBreakdownDrawer';
 import { aed2, num } from '../lib/format';
 import { SHOW_FLEET_INTELLIGENCE } from '../config/features';
 
 // Status badge tone per OfficeManager lifecycle status.
 const STATUS_TONE = { ready: 'green', rented: 'blue', maintenance: 'amber', sold: 'gray', disposed: 'gray' };
 
-// Out-of-fleet cars (no longer earning) — hidden by default to keep the active fleet in focus.
+// Out-of-fleet cars (no longer earning) — used for the "pending service" heuristic below.
 const OUT_OF_FLEET = ['sold', 'disposed'];
+
+// Active fleet statuses kept when "Hide out-of-fleet cars" is on: only rented & ready earn/are
+// available. Everything else (sold, disposed, maintenance, …) is hidden to keep focus on the
+// active earning fleet.
+const ACTIVE_FLEET = ['rented', 'ready'];
 
 // Purchased but never rented — still in the fleet, in onboarding. Show "Pending service" (matching
 // Fleet Utilization), not a misleading AED 0 net. `pending_service` comes from the shared In-Service
@@ -56,10 +62,11 @@ export default function Profitability() {
   const [sort, setSort] = useState({ col: 'net', dir: 'desc' });
   const [hideIdle, setHideIdle] = useState(false); // hide cars with no income AND no maintenance
   const [hideOutOfFleet, setHideOutOfFleet] = useState(true); // hide sold / disposed cars by default
+  const [drill, setDrill] = useState(null); // { vehicleId, metric } — open the traceability drawer
 
   const rows = useMemo(() => {
     let list = data?.vehicles || [];
-    if (hideOutOfFleet) list = list.filter((r) => !OUT_OF_FLEET.includes(r.status));
+    if (hideOutOfFleet) list = list.filter((r) => ACTIVE_FLEET.includes(r.status));
     if (hideIdle) list = list.filter((r) => r.gross_revenue !== 0 || r.maintenance !== 0);
     const needle = q.trim().toLowerCase();
     if (needle) {
@@ -79,6 +86,20 @@ export default function Profitability() {
 
   const s = data?.summary || {};
   const netPositive = Number(s.total_net) >= 0;
+
+  // Financial traceability: when the intelligence layer is on, every money cell becomes a button that
+  // opens the drill-down drawer at the matching section. Off → plain text (unchanged behavior).
+  const drillNum = (metric, node, id) =>
+    SHOW_FLEET_INTELLIGENCE ? (
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); setDrill({ vehicleId: id, metric }); }}
+        className="cursor-pointer decoration-dotted underline-offset-2 hover:text-indigo-700 hover:underline"
+        title="Show where this number comes from"
+      >
+        {node}
+      </button>
+    ) : node;
 
   const columns = [
     {
@@ -110,19 +131,19 @@ export default function Profitability() {
       key: 'gross_revenue', align: 'right', cellClass: 'tabular-nums text-emerald-600',
       tooltip: 'Rent − discount + collected usage, summed over the asset lifetime.',
       header: <SortHeader label="Gross Revenue" col="gross_revenue" sort={sort} setSort={setSort} align="right" />,
-      render: (r) => (r.gross_revenue ? aed2(r.gross_revenue) : <span className="text-slate-300">—</span>),
+      render: (r) => drillNum('revenue', r.gross_revenue ? aed2(r.gross_revenue) : <span className="text-slate-300">—</span>, r.vehicle_id),
     },
     {
       key: 'operating_cost', align: 'right', cellClass: 'tabular-nums text-slate-500',
       tooltip: 'Commissions + co-driver fees.',
       header: <SortHeader label="Operating" col="operating_cost" sort={sort} setSort={setSort} align="right" />,
-      render: (r) => (r.operating_cost ? aed2(r.operating_cost) : <span className="text-slate-300">—</span>),
+      render: (r) => drillNum('operating', r.operating_cost ? aed2(r.operating_cost) : <span className="text-slate-300">—</span>, r.vehicle_id),
     },
     {
       key: 'maintenance', align: 'right', cellClass: 'tabular-nums text-amber-600',
       tooltip: 'Sum of all recorded repairs for this car.',
       header: <SortHeader label="Maintenance" col="maintenance" sort={sort} setSort={setSort} align="right" />,
-      render: (r) => (r.maintenance ? aed2(r.maintenance) : <span className="text-slate-300">—</span>),
+      render: (r) => drillNum('maintenance', r.maintenance ? aed2(r.maintenance) : <span className="text-slate-300">—</span>, r.vehicle_id),
     },
     {
       key: 'net', align: 'right',
@@ -134,9 +155,11 @@ export default function Profitability() {
             <Badge tone="amber">Pending service</Badge>
           </span>
         ) : (
-          <span className={`tabular-nums font-semibold ${r.net > 0 ? 'text-emerald-600' : r.net < 0 ? 'text-red-600' : 'text-slate-400'}`}>
-            {r.net > 0 ? '+' : r.net < 0 ? '−' : ''}{aed2(Math.abs(r.net))}
-          </span>
+          drillNum('net', (
+            <span className={`tabular-nums font-semibold ${r.net > 0 ? 'text-emerald-600' : r.net < 0 ? 'text-red-600' : 'text-slate-400'}`}>
+              {r.net > 0 ? '+' : r.net < 0 ? '−' : ''}{aed2(Math.abs(r.net))}
+            </span>
+          ), r.vehicle_id)
         ),
     },
     // Economic Profit (Phase-1 intelligence layer) — net after the asset value lost to
@@ -146,14 +169,15 @@ export default function Profitability() {
           key: 'economic_profit', align: 'right',
           tooltip: 'Economic profit = net profit − accumulated straight-line depreciation. The truer "did this car create value" figure. "—" when the car has no purchase price/date on file.',
           header: <SortHeader label="Economic Profit" col="economic_profit" sort={sort} setSort={setSort} align="right" />,
-          render: (r) =>
+          render: (r) => drillNum('economic', (
             r.economic_profit == null ? (
               <span className="text-slate-300" title="No purchase price / date on file — depreciation unknown">—</span>
             ) : (
               <span className={`tabular-nums font-semibold ${r.economic_profit > 0 ? 'text-emerald-600' : r.economic_profit < 0 ? 'text-red-600' : 'text-slate-400'}`}>
                 {r.economic_profit > 0 ? '+' : r.economic_profit < 0 ? '−' : ''}{aed2(Math.abs(r.economic_profit))}
               </span>
-            ),
+            )
+          ), r.vehicle_id),
         }]
       : []),
   ];
@@ -163,7 +187,7 @@ export default function Profitability() {
       <div className="mx-auto max-w-[1500px] space-y-6 px-4 sm:px-6 lg:px-8">
         <PageHeader
           title="Fleet Profitability"
-          subtitle="Lifetime Net Profit per car — what each asset actually pocketed: gross rental revenue minus operating costs and logged maintenance. Best assets at the top."
+          subtitle="Lifetime profit per car — gross rental revenue minus operating cost and expense."
         />
 
         {error && (
@@ -242,7 +266,7 @@ export default function Profitability() {
               <SearchInput value={q} onChange={setQ} placeholder="Search plate or make / model…" className="w-full max-w-xs" />
               <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-slate-600">
                 <input type="checkbox" checked={hideOutOfFleet} onChange={(e) => setHideOutOfFleet(e.target.checked)} className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
-                Hide sold & disposed cars
+                Show only rented &amp; ready cars
               </label>
               <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-slate-600">
                 <input type="checkbox" checked={hideIdle} onChange={(e) => setHideIdle(e.target.checked)} className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
@@ -266,6 +290,13 @@ export default function Profitability() {
             </SectionCard>
           </>
         )}
+
+        {/* Financial traceability drill-down — opens from any money cell (intelligence layer). */}
+        <FinancialBreakdownDrawer
+          vehicleId={drill?.vehicleId}
+          metric={drill?.metric}
+          onClose={() => setDrill(null)}
+        />
       </div>
     </div>
   );

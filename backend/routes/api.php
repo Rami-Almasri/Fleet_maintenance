@@ -24,7 +24,6 @@ use App\Http\Controllers\RentalOperationsController;
 use App\Http\Controllers\FinancialConflictController;
 use App\Http\Controllers\ReconciliationController;
 use App\Http\Controllers\NotificationController;
-use App\Http\Controllers\NotificationTestController;
 use App\Http\Controllers\SimulationController;
 use App\Http\Controllers\LogisticsDispatchController;
 use App\Http\Controllers\TeamPresenceController;
@@ -585,13 +584,6 @@ Route::middleware('auth:sanctum')->prefix('notifications')->controller(Notificat
     Route::delete('/{id}', 'destroy');         // dismiss one
 });
 
-// Notification Test Console (ADMIN-ONLY) — fire a realistic FleetAlert of a chosen type on demand
-// (overdue_service | rental_expiry | invoice_overdue | inspection_due), optionally forced when the
-// live condition isn't met, to stress-test the whole raise → DB → bell pipeline. See
-// NotificationTestController. Gated by users.manage (admin/super-admin) so it stays hidden from staff.
-Route::middleware(['auth:sanctum', 'permission:users.manage'])
-    ->post('admin/notifications/test', [NotificationTestController::class, 'fire']);
-
 // Demo / Simulation Panel (ADMIN-ONLY) — force a real live scenario on a real car so the team can
 // watch the system react end-to-end: `oil-alert` forces a Service-Due oil condition + runs the real
 // scanner; `fault-discovery` files a real complaint ticket. `status` is read-only; the mutating
@@ -756,6 +748,13 @@ Route::middleware(['auth:sanctum', 'permission:insights.view'])->get('Profitabil
 Route::middleware(['auth:sanctum', 'permission:insights.view'])->prefix('intelligence')->controller(\App\Http\Controllers\IntelligenceController::class)->group(function () {
     Route::get('/cost', 'cost');                 // maintenance cost per km / day / rental, per vehicle + fleet
     Route::get('/service-due', 'serviceDue');    // overdue + due-soon service board (reuses forecast engine)
+    // Financial drill-down for one car — every Profitability number traced to its source rows.
+    Route::get('/vehicle/{vehicle}/financial-breakdown', 'financialBreakdown');
+    // Recursive explanation tree — every figure drillable to the original record (formula + reconciliation).
+    Route::get('/vehicle/{vehicle}/financial-explain', 'financialExplain');
+    // Explainability platform — full multi-module DAG (finance + service): formula, dependencies,
+    // reverse dependencies, business rules, evidence, confidence, audit, snapshot (?as_of=&modules=).
+    Route::get('/vehicle/{vehicle}/explain', 'explain');
 });
 
 // Fuel & Mileage Reconciliation (live "fuel_data_plate_summary"): per car, actual odometer travel vs.
@@ -814,6 +813,7 @@ Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/most-maintained', [DashboardController::class, 'mostMaintained']);
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/most-maintained-models', [DashboardController::class, 'mostMaintainedModels']);
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/most-maintained-cars', [DashboardController::class, 'mostMaintainedCars']);
+Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/top-faults', [DashboardController::class, 'topFaults']);
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/maintenance-history', [DashboardController::class, 'maintenanceHistory']);
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/maintenance-history/{vehicle}/visits', [DashboardController::class, 'maintenanceHistoryVisits']);
 

@@ -2,10 +2,12 @@
 
 namespace App\Services;
 
+use App\Contracts\VehicleExpenseProvider;
 use App\Models\Contract;
 use App\Models\Customer;
 use App\Models\InspectionSchedule;
 use App\Models\Maintenance;
+use App\Models\MaintenanceTask;
 use App\Models\Vehicle;
 use App\Models\VehicleRegistration;
 use Carbon\Carbon;
@@ -54,6 +56,7 @@ class DashboardService
         private RealProfitService $realProfit,
         private OperationsService $operations,
         private FleetUtilizationService $fleetUtilization,
+        private VehicleExpenseProvider $expenses,
     ) {
     }
 
@@ -688,6 +691,152 @@ class DashboardService
     }
 
     /**
+     * Canonical fault taxonomy for the Fault Leaderboard — the ONE shared vocabulary both fault sources
+     * (the workshop SHEET's reason categories and OUR SYSTEM's task symptoms) are folded into, so the two
+     * can be counted together fairly instead of sitting side-by-side in two different languages ("Braking
+     * Problems" from the sheet + "Brake Failure" from a ticket both land in Brakes). First regex to match
+     * the lower-cased fault text wins, so ORDER MATTERS — more specific buckets come before broader ones
+     * (Safety before Body so "seatbelt" beats "seat"; Cooling before Oil so "oil and coolant" reads as a
+     * cooling fault). Unmatched text falls through to "Other".
+     *
+     * @var array<int,array{0:string,1:string}>  [label, regex]
+     */
+    private const FAULT_CATEGORIES = [
+        ['Brakes',                '/brak|pedal/'],
+        ['Cooling & Overheating', '/overheat|coolant|cooling|radiator/'],
+        ['Engine',                '/engine|mechanical|misfire|idle|stall|timing|piston|exhaust smoke/'],
+        ['Electrical',            '/electric|ignition|battery|alternator|wiring|starter|check engine/'],
+        ['Suspension & Steering', '/suspension|steering|alignment|knock|bump|shock|strut|vibration/'],
+        ['Transmission',          '/transmission|gearbox|clutch/'],
+        ['Safety',                '/airbag|seatbelt|seat belt/'],
+        ['AC & Climate',          '/\bac\b|air.?con|climate/'],
+        ['Tires & Wheels',        '/tire|tyre|wheel/'],
+        ['Exhaust & Emissions',   '/exhaust|emission/'],
+        ['Fuel System',           '/fuel|injector/'],
+        ['Body & Interior',       '/body|interior|chair|seat|accessor|paint|dent|scratch|door|glass|window/'],
+        ['Oil & Fluids',          '/oil|fluid|leak|filter/'],
+    ];
+
+    /** Map any raw fault text to its canonical category label (first-match-wins, else "Other"). */
+    private static function faultCategory(?string $text): string
+    {
+        $t = strtolower(trim((string) $text));
+        foreach (self::FAULT_CATEGORIES as [$label, $re]) {
+            if ($t !== '' && preg_match($re, $t)) {
+                return $label;
+            }
+        }
+        return 'Other';
+    }
+
+    /** Unify the sheet's `level` (minor/critical/routine) and a ticket's `severity` onto one 0–4 rank. */
+    private static function severityRank(?string $sev): int
+    {
+        return [
+            'critical' => 4,
+            'high'     => 3,
+            'moderate' => 2,
+            'minor'    => 2,   // the sheet's "minor" ≈ moderate on the ticket scale
+            'routine'  => 1,
+        ][strtolower((string) $sev)] ?? 0;
+    }
+
+    /** The canonical severity string for a rank (what the UI colours the bar by). */
+    private static function severityForRank(int $rank): ?string
+    {
+        return [4 => 'critical', 3 => 'high', 2 => 'moderate', 1 => 'routine'][$rank] ?? null;
+    }
+
+    /**
+     * "Most Frequent Faults" — the Fault Leaderboard KPI, built from BOTH fault sources at once:
+     *
+     *   • OUR SYSTEM — every fault logged in the app's maintenance workflow (`maintenance_tasks.symptom`,
+     *     graded with `severity`). Cancelled / not-found tasks are dropped: a fault the workshop checked
+     *     and could not reproduce never really "happened".
+     *   • THE SHEET  — the historical N-Maintenance / manual workshop log (`maintenances` rows whose origin
+     *     is a workshop-log origin) classified to a reason (`maintenance_reasons.reason_en` + `level`).
+     *
+     * Both are normalised into ONE shared taxonomy (self::FAULT_CATEGORIES) so "Braking Problems" (sheet)
+     * and "Brake Failure" (ticket) count together as Brakes. Each category carries the combined count, the
+     * per-source split (so you can see how much came from the sheet vs the system), its WORST severity
+     * across both sources (bar colour), and the distinct cars it hit. The INNER join to vehicles (+ soft-
+     * delete guard + GONE_STATUSES exclusion) keeps sold / disposed / orphan cars out of both feeds.
+     *
+     * @return array{count:int, total:int, sheet_total:int, system_total:int,
+     *               items:array<int,array{fault:string, count:int, sheet:int, system:int, cars:int, severity:?string}>}
+     */
+    public function topFaults(int $limit = 6): array
+    {
+        return $this->remember("top_faults:v2:{$limit}", self::CACHE_TTL, function () use ($limit) {
+            // key => running tally for one canonical category.
+            $cats = [];
+            $bump = function (string $label, int $count, int $sevRank, string $source, array $vehicleIds) use (&$cats) {
+                $c = $cats[$label] ?? ['fault' => $label, 'count' => 0, 'sheet' => 0, 'system' => 0, 'sevRank' => 0, 'cars' => []];
+                $c['count']  += $count;
+                $c[$source]  += $count;
+                $c['sevRank'] = max($c['sevRank'], $sevRank);
+                foreach ($vehicleIds as $vid) {
+                    $c['cars'][$vid] = true;   // set → distinct cars across BOTH sources
+                }
+                $cats[$label] = $c;
+            };
+
+            // ── Source A: OUR SYSTEM (maintenance workflow tasks) ───────────────────────────────────────
+            $sysRows = DB::table('maintenance_tasks as t')
+                ->join('vehicles as v', 'v.id', '=', 't.vehicle_id')
+                ->whereNull('v.deleted_at')
+                ->whereNotIn('v.status', PlateResolver::GONE_STATUSES)
+                ->whereNotIn('t.status', MaintenanceTask::NON_REPAIR_TERMINAL)
+                ->whereNotNull('t.symptom')->where('t.symptom', '<>', '')
+                ->select('t.symptom', 't.severity', 't.vehicle_id', DB::raw('COUNT(*) AS c'))
+                ->groupBy('t.symptom', 't.severity', 't.vehicle_id')
+                ->get();
+            foreach ($sysRows as $r) {
+                $bump(self::faultCategory($r->symptom), (int) $r->c, self::severityRank($r->severity), 'system', [(int) $r->vehicle_id]);
+            }
+
+            // ── Source B: THE SHEET + manual workshop log (classified by reason) ────────────────────────
+            $sheetRows = DB::table('maintenances as m')
+                ->join('vehicles as v', 'v.id', '=', 'm.vehicle_id')
+                ->join('maintenance_reasons as r', 'r.id', '=', 'm.maintenance_reason_id')
+                ->whereNull('v.deleted_at')
+                ->whereNotIn('v.status', PlateResolver::GONE_STATUSES)
+                ->whereIn('m.origin', Maintenance::WORKSHOP_LOG_ORIGINS)
+                ->select('r.reason_en', 'r.level', 'm.vehicle_id', DB::raw('COUNT(*) AS c'))
+                ->groupBy('r.reason_en', 'r.level', 'm.vehicle_id')
+                ->get();
+            foreach ($sheetRows as $r) {
+                $bump(self::faultCategory($r->reason_en), (int) $r->c, self::severityRank($r->level), 'sheet', [(int) $r->vehicle_id]);
+            }
+
+            // Rank categories by combined frequency; break ties by severity then name.
+            $ranked = collect($cats)->sort(function ($a, $b) {
+                return [$b['count'], $b['sevRank'], $a['fault']] <=> [$a['count'], $a['sevRank'], $b['fault']];
+            })->values();
+
+            $sheetTotal  = (int) $ranked->sum('sheet');
+            $systemTotal = (int) $ranked->sum('system');
+
+            $items = $ranked->take($limit)->map(fn ($c) => [
+                'fault'    => $c['fault'],
+                'count'    => (int) $c['count'],
+                'sheet'    => (int) $c['sheet'],
+                'system'   => (int) $c['system'],
+                'cars'     => count($c['cars']),
+                'severity' => self::severityForRank((int) $c['sevRank']),
+            ])->all();
+
+            return [
+                'count'        => count($items),
+                'total'        => $sheetTotal + $systemTotal,
+                'sheet_total'  => $sheetTotal,
+                'system_total' => $systemTotal,
+                'items'        => $items,
+            ];
+        });
+    }
+
+    /**
      * The full "Most in Maintenance" list — EVERY in-fleet car that saw the workshop within the window,
      * with how OFTEN (visits) and how LONG (days in shop). BOTH figures come from the ONE canonical
      * source — FleetUtilizationService via canonicalMaintenanceDays() — so every row is byte-identical
@@ -772,25 +921,31 @@ class DashboardService
             if ($statuses === null && in_array($c['status'], PlateResolver::GONE_STATUSES, true)) {
                 continue;   // no sold / disposed / returned cars
             }
-            $days    = (int) ($c['days_maintenance'] ?? 0);
-            $periods = (int) ($c['maintenance_visits'] ?? 0);
-            if ($days <= 0 && $periods <= 0) {
-                continue;   // never saw the shop in this window
+            $days     = (int) ($c['days_maintenance'] ?? 0);
+            $periods  = (int) ($c['maintenance_visits'] ?? 0);
+            $maintSec = (int) ($c['maintenance_seconds'] ?? 0);
+            if ($maintSec <= 0 && $periods <= 0) {
+                continue;   // never saw the shop in this window (a sub-day visit rounds days→0 but has real seconds)
             }
             $rows[(int) $c['vehicle_id']] = [
-                'id'                => (int) $c['vehicle_id'],
-                'plate'             => $c['plate'],
-                'car'               => $c['car'],
-                'days_in_shop'      => $days,
-                'periods'           => $periods,
-                'currently_in_shop' => (bool) ($c['currently_in_shop'] ?? false),
+                'id'                  => (int) $c['vehicle_id'],
+                'plate'               => $c['plate'],
+                'car'                 => $c['car'],
+                'days_in_shop'        => $days,
+                // Precise elapsed time behind the shop figure — the RANKING key (a rounded day int would
+                // tie every sub-day car at 0) and the basis for the frontend's sub-day "N h" display.
+                'maintenance_seconds' => $maintSec,
+                'periods'             => $periods,
+                'currently_in_shop'   => (bool) ($c['currently_in_shop'] ?? false),
                 // Full day split (same Rental-is-King numbers Fleet Utilization shows) so the widget can
                 // show the whole picture per car — rented, in-service total, idle — not just shop days.
-                'days_rented'       => (int) ($c['days_rented'] ?? 0),
-                'days_in_service'   => (int) ($c['days_in_service'] ?? 0),
-                'days_idle'         => (int) ($c['days_idle'] ?? 0),
-                'utilization_pct'   => $c['utilization_pct'] ?? null,
-                'downtime_pct'      => $c['downtime_pct'] ?? null,
+                'days_rented'         => (int) ($c['days_rented'] ?? 0),
+                'days_in_service'     => (int) ($c['days_in_service'] ?? 0),
+                'days_idle'           => (int) ($c['days_idle'] ?? 0),
+                'rented_seconds'      => (int) ($c['rented_seconds'] ?? 0),
+                'idle_seconds'        => (int) ($c['idle_seconds'] ?? 0),
+                'utilization_pct'     => $c['utilization_pct'] ?? null,
+                'downtime_pct'        => $c['downtime_pct'] ?? null,
             ];
         }
 
@@ -816,9 +971,11 @@ class DashboardService
 
             // Rank biggest-first by the chosen metric (true downtime days, or number of maintenance
             // periods), with the other metric as the tiebreak, and cap to the top N.
+            // Rank by PRECISE shop seconds (not the rounded day int), so cars that differ only by hours
+            // still order correctly and sub-day downtime is never flattened to a tie at 0.
             usort($items, $sort === 'periods'
-                ? fn ($a, $b) => ($b['periods'] <=> $a['periods']) ?: ($b['days_in_shop'] <=> $a['days_in_shop'])
-                : fn ($a, $b) => ($b['days_in_shop'] <=> $a['days_in_shop']) ?: ($b['periods'] <=> $a['periods']));
+                ? fn ($a, $b) => ($b['periods'] <=> $a['periods']) ?: ($b['maintenance_seconds'] <=> $a['maintenance_seconds'])
+                : fn ($a, $b) => ($b['maintenance_seconds'] <=> $a['maintenance_seconds']) ?: ($b['periods'] <=> $a['periods']));
             $items = array_slice($items, 0, $limit);
 
             return ['count' => count($items), 'items' => $items];
@@ -911,27 +1068,16 @@ class DashboardService
             ];
         }
 
-        // COST (the spend bars): summed from the workshop log — the canonical maintenance-cost
-        // source the rest of the app (RealProfitService / Profitability / the board) also uses.
-        // A "visit" is one (vehicle, out_date) group, so multiple event rows count once.
-        $costRows = DB::select(
-            "SELECT ym, ROUND(SUM(cost), 2) AS cost, COUNT(*) AS visits
-             FROM (
-                 SELECT DATE_FORMAT(out_date, '%Y-%m') AS ym, vehicle_id, out_date,
-                        COALESCE(SUM(cost), 0) AS cost
-                 FROM maintenances
-                 WHERE origin IN ('sheet', 'manual')
-                   AND out_date IS NOT NULL
-                   AND out_date >= ?
-                 GROUP BY vehicle_id, out_date
-             ) v
-             GROUP BY ym",
-            [$start->toDateString()]
-        );
-        foreach ($costRows as $r) {
-            if (isset($skeleton[$r->ym])) {
-                $skeleton[$r->ym]['cost']        = round((float) $r->cost, 2);
-                $skeleton[$r->ym]['cost_visits'] = (int) $r->visits;
+        // COST (the spend bars): read from the VehicleExpenseProvider — the SOLE source of vehicle
+        // expense (imported Expenses sheet today, Odoo later). Totalled per month by entry_date, so the
+        // bars match the expense figures on Profitability / Cost Intelligence. `cost_visits` carries the
+        // number of expense lines behind each month's bar (surfaced in the tooltip). The retired
+        // sheet/manual maintenance log is deliberately NOT used here — it holds no real spend.
+        $costByMonth = $this->expenses->totalsByMonth($start->toDateString(), null);
+        foreach ($costByMonth as $ym => $agg) {
+            if (isset($skeleton[$ym])) {
+                $skeleton[$ym]['cost']        = round((float) $agg['total'], 2);
+                $skeleton[$ym]['cost_visits'] = (int) $agg['lines'];
             }
         }
 

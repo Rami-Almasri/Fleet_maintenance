@@ -33,7 +33,7 @@ rolled-back transaction.
 |------|------|-----------|
 | Harness | `HarnessSmokeTest` | auth wall (401), super-admin bypass |
 | Core CRUD | `CoreCrudTest` | Vendors, Drivers, Customers, Vehicles, Contracts, Invoices, Payments — full create→read→update→delete + validation guards |
-| **Notifications** | `NotificationTest` | bell CRUD (list/poll/read/read-all/dismiss/clear), demo pipeline, admin Test Console (all 4 triggers, real + forced), broadcast fan-out, per-user isolation, `notifications:scan` |
+| **Notifications** | `NotificationTest` | bell CRUD (list/poll/read/read-all/dismiss/clear), demo pipeline, per-user isolation, `notifications:scan` |
 | Reminders | `RemindersAndSchedulesTest` | service reminders (+complete/notify), contact reminders, inspection schedules (+complete) |
 | Read sweep | `ReadEndpointsSmokeTest` | every param-less GET endpoint (~70) asserted to never 5xx |
 | Lifecycles | `OperationsWorkflowTest` | start/close a movement, logistics one-way + garage round trip (odometer + photo gate), complaint → maintenance ticket |

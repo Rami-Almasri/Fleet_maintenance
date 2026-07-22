@@ -172,7 +172,9 @@ export default function FinancialsHero({ vehicle, stats, onDrill }) {
 
   const amounts = {
     acquisition: Number(v.purchase_price || 0),
-    maintenance: Number(stats?.maintenance_total || 0),
+    // Expense comes ONLY from the expense provider (Excel today), surfaced via the Profit Bridge —
+    // the SAME figure as Profitability / Cost Intelligence, never the maintenance-records total.
+    maintenance: Number(bridge.maintenance || 0),
     operating: Number(bridge.operating_cost || 0),
   };
   const tco = amounts.acquisition + amounts.maintenance + amounts.operating;

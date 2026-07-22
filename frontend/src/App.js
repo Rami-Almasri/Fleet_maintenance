@@ -54,11 +54,9 @@ import MileageCenter from './pages/MileageCenter';
 import DataHealth from './pages/DataHealth';
 import FinancialConflicts from './pages/FinancialConflicts';
 import FinancialReconciliation from './pages/FinancialReconciliation';
-import FleetNetProfit from './pages/FleetNetProfit';
 import SyncAudit from './pages/SyncAudit';
 import Notifications from './pages/Notifications';
 import Settings from './pages/Settings';
-import NotificationTestConsole from './pages/NotificationTestConsole';
 import SimulationPanel from './pages/SimulationPanel';
 import Users from './pages/Users';
 import NotFound from './pages/NotFound';
@@ -116,9 +114,7 @@ export default function App() {
                 {/* Vehicle Readiness board retired — send the old path to the Fleet Health hub. */}
                 <Route path="/readiness" element={<Navigate to="/inspections/schedules" replace />} />
 
-                {/* Admin-only Notification Test Console — fire test alerts to verify the bell pipeline. */}
                 <Route element={<RequirePermission permission="users.manage" />}>
-                  <Route path="/notification-test" element={<NotificationTestConsole />} />
                   {/* Admin-only Simulation Panel — force a live demo scenario, gated again server-side by demo_mode. */}
                   <Route path="/simulation" element={<SimulationPanel />} />
                   {/* Admin-only account directory — every user, their status and role(s). */}
@@ -272,7 +268,6 @@ export default function App() {
                   <Route path="/status-mismatch" element={<Navigate to="/data-health?tab=status" replace />} />
                   <Route path="/financial-conflicts" element={<FinancialConflicts />} />
                   <Route path="/financial-reconciliation" element={<FinancialReconciliation />} />
-                  <Route path="/net-profit" element={<FleetNetProfit />} />
                   {/* Workflow Oversight — accountability & data-integrity suite over the maintenance workflow. */}
                   <Route path="/oversight" element={<WorkflowOversight />} />
                   <Route path="/oversight/mileage" element={<MileageDiscrepancies />} />

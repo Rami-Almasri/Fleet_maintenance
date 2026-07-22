@@ -19,6 +19,20 @@
 .mwf-search .opx-input{min-width:280px}
 .mwf-toolbar-meta{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--ink-3);letter-spacing:.04em}
 
+/* ---- stage tabs — click a stage to focus its tickets, "All" for the full board ---- */
+.mwf-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+.mwf-tab{display:inline-flex;align-items:center;gap:8px;padding:7px 12px;border-radius:11px;
+  background:var(--panel);border:1px solid var(--line);color:var(--ink-2);font-size:12px;font-weight:600;
+  cursor:pointer;transition:border-color .15s,background .15s,color .15s}
+.mwf-tab:hover{border-color:var(--ink-3);color:var(--ink-1)}
+.mwf-tab .dot{width:8px;height:8px;border-radius:50%;flex:none}
+.mwf-tab .nm{white-space:nowrap;text-transform:uppercase;letter-spacing:.03em;font-size:11px}
+.mwf-tab .ct{font-family:var(--mono);font-size:11px;font-weight:800;color:var(--ink-3);
+  background:var(--ov2);border-radius:7px;padding:0 7px}
+.mwf-tab.on{background:color-mix(in srgb,var(--tab-tone) 16%,var(--panel));
+  border-color:var(--tab-tone);color:var(--ink-1)}
+.mwf-tab.on .ct{color:var(--ink-1)}
+
 /* ---- board — responsive dashboard grid: 4 lanes per row, wrapping ---- */
 /* Lanes size to content; in-lane paging (show first LANE_PAGE_SIZE cards + "+N more") keeps the
    collapsed board compact and roughly even without any internal scroll. */
@@ -27,6 +41,13 @@
 @media(max-width:1360px){.mwf-board{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:1000px){.mwf-board{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:620px){.mwf-board{grid-template-columns:1fr}}
+
+/* Single focused stage: the lane spans full width and its cards flow into a responsive grid
+   instead of one narrow column, so a busy stage reads comfortably. */
+.mwf-board.single{grid-template-columns:1fr}
+.mwf-board.single .mwf-lane-bd{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
+.mwf-board.single .mwf-empty{grid-column:1/-1}
+.mwf-board.single .opx-lane-more{grid-column:1/-1}
 
 .mwf-lane{position:relative;display:flex;flex-direction:column;background:linear-gradient(180deg,var(--panel),var(--deep));
   border:1px solid var(--line);border-radius:15px;overflow:hidden;min-height:240px}
@@ -123,12 +144,22 @@
 .mwf-detail-faults .mwf-task{padding:4px 0}
 .mwf-detail-actions{display:flex;gap:8px;flex-wrap:wrap}
 
-.mwf-fleet{display:flex;align-items:center;gap:18px}
-.mwf-fleet-legend{flex:1;display:flex;flex-direction:column;gap:8px;min-width:0}
-.mwf-fleet-legend>div{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-2)}
-.mwf-fleet-legend .d{width:9px;height:9px;border-radius:3px;flex:none}
-.mwf-fleet-legend b{margin-left:auto;font-family:var(--mono);font-weight:700;color:var(--ink)}
-.mwf-fleet-legend .tot{margin-top:4px;padding-top:9px;border-top:1px solid var(--line);color:var(--ink-3)}
-.mwf-fleet-legend .tot span{font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.06em}
-
-@media(max-width:760px){.mwf-fleet{flex-direction:column;gap:12px}}
+/* ---- workflow-stage distribution (bottom command row) — donut + legend ---- */
+.mwf-stages{display:flex;align-items:center;gap:26px}
+.mwf-donut{position:relative;flex:none;width:150px;height:150px;display:grid;place-items:center}
+.mwf-donut svg{transform:none}
+.mwf-donut-seg{transition:stroke-dasharray .4s ease,stroke-dashoffset .4s ease}
+.mwf-donut-seg:hover{stroke-width:18;filter:brightness(1.12)}
+.mwf-donut-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none}
+.mwf-donut-center b{font-size:30px;font-weight:800;color:var(--ink);line-height:1}
+.mwf-donut-center span{font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-3);margin-top:3px}
+.mwf-stages-legend{flex:1;display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:6px;min-width:0}
+.mwf-stages-item{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:9px;
+  background:var(--panel);border:1px solid var(--line);color:var(--ink-2);font-size:12px;
+  cursor:pointer;text-align:left;transition:border-color .15s,background .15s}
+.mwf-stages-item:hover{border-color:var(--ink-3);color:var(--ink-1)}
+.mwf-stages-item.on{border-color:var(--ink-3);background:var(--ov2);color:var(--ink-1)}
+.mwf-stages-item .d{width:9px;height:9px;border-radius:3px;flex:none}
+.mwf-stages-item .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mwf-stages-item b{margin-left:auto;font-family:var(--mono);font-weight:700;color:var(--ink)}
+@media(max-width:640px){.mwf-stages{flex-direction:column;gap:16px}.mwf-stages-legend{width:100%}}

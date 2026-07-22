@@ -14,6 +14,13 @@ return [
     'retries'        => (int) env('OFFICEMANAGER_RETRIES', 3),
     'retry_sleep_ms' => (int) env('OFFICEMANAGER_RETRY_SLEEP_MS', 30000), // ≥30s between attempts
 
+    // INTERACTIVE profile — used for live web requests (a user is waiting), e.g. the Financial-Layer
+    // endpoints. Short timeout + single attempt so a slow/absent OM endpoint fails fast instead of
+    // hanging the single-threaded `artisan serve` past PHP's 60s max_execution_time (which froze the
+    // whole app whenever Profitability / Cost Intelligence loaded).
+    'interactive_timeout'         => (int) env('OFFICEMANAGER_INTERACTIVE_TIMEOUT', 8),  // seconds for the response body
+    'interactive_connect_timeout' => (int) env('OFFICEMANAGER_INTERACTIVE_CONNECT_TIMEOUT', 4), // seconds to connect
+
     // The /contracts endpoint IGNORES page/page_size (it returns the whole filtered set),
     // so we slice it by OutDate month-by-month instead. This is the earliest month a manual
     // back-fill (--from/--to) would reach; the normal sync no longer scans this far back.

@@ -11,6 +11,7 @@ import Icon from '../components/ui/Icon';
 import FleetStatusCard from '../components/ui/FleetStatusCard';
 import BarChart from '../components/ui/BarChart';
 import LineChart from '../components/ui/LineChart';
+import CountUp from '../components/ui/CountUp';
 import FleetPulseGrid from '../components/FleetPulseGrid';
 import { usePageStat } from '../components/PageStat';
 import { aed, aed2, fmtDate } from '../lib/format';
@@ -329,10 +330,196 @@ function AccuracyCard({ title, icon, to, total, wrong, rightLabel, wrongLabel, t
   );
 }
 
+// Most Frequent Faults — a ranked "Fault Leaderboard". Each fault is one maintenance task (inspector
+// test-drive or garage finding); cancelled / not-found faults are excluded server-side so the board
+// only counts issues that really happened. Bar LENGTH = how OFTEN it happens, bar COLOUR = how BAD it
+// is (worst severity ever graded). Reads /Dashboard/top-faults (ranked + capped server-side). Honest
+// magnitude comparison (bars, shared scale) with severity as a second, labelled encoding — never
+// colour alone.
+
+// Severity → colour (status palette) + gradient + human label. Always shown beside the chip text.
+const SEVERITY_META = {
+  critical: { label: 'Critical', from: '#f43f5e', to: '#e11d48', text: 'text-rose-700',    soft: 'bg-rose-50 text-rose-700 ring-rose-200',       dot: 'bg-rose-500' },
+  high:     { label: 'High',     from: '#fb923c', to: '#ea580c', text: 'text-orange-700',  soft: 'bg-orange-50 text-orange-700 ring-orange-200', dot: 'bg-orange-500' },
+  moderate: { label: 'Moderate', from: '#fbbf24', to: '#d97706', text: 'text-amber-700',   soft: 'bg-amber-50 text-amber-700 ring-amber-200',    dot: 'bg-amber-500' },
+  routine:  { label: 'Routine',  from: '#34d399', to: '#059669', text: 'text-emerald-700', soft: 'bg-emerald-50 text-emerald-700 ring-emerald-200', dot: 'bg-emerald-500' },
+  unknown:  { label: 'Ungraded', from: '#94a3b8', to: '#64748b', text: 'text-slate-600',   soft: 'bg-slate-100 text-slate-600 ring-slate-200',   dot: 'bg-slate-400' },
+};
+const sevMeta = (s) => SEVERITY_META[s] || SEVERITY_META.unknown;
+
+// A little life: an emoji per fault family, matched on the category label. Purely decorative.
+function faultGlyph(fault = '') {
+  const f = fault.toLowerCase();
+  if (/brake|pedal/.test(f)) return '🛑';
+  if (/cooling|overheat|coolant|temp/.test(f)) return '🌡️';
+  if (/ac|climate|air/.test(f)) return '❄️';
+  if (/electric|batter|ignition|alternator|start/.test(f)) return '🔋';
+  if (/suspension|steering|tyre|tire|wheel|align|bump/.test(f)) return '🛞';
+  if (/transmission|gearbox|clutch/.test(f)) return '⚙️';
+  if (/exhaust|emission/.test(f)) return '💨';
+  if (/fuel|injector/.test(f)) return '⛽';
+  if (/safety|airbag|seatbelt/.test(f)) return '🛡️';
+  if (/body|interior|chair|door|glass/.test(f)) return '🚗';
+  if (/oil|fluid|filter|leak/.test(f)) return '🛢️';
+  if (/engine|mechanical|misfire|idle|power/.test(f)) return '🔧';
+  return '⚠️';
+}
+
+function MostFrequentFaults() {
+  const [data, setData] = useState({ items: [], total: 0 });
+  const [loading, setLoading] = useState(true);
+  const [grown, setGrown] = useState(false);   // flips true after mount → bars animate their width in
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    api.get('/Dashboard/top-faults', { params: { limit: 6 } })
+      .then((res) => { if (alive) setData(res.data.data || { items: [], total: 0 }); })
+      .catch(() => { if (alive) setData({ items: [], total: 0 }); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, []);
+
+  // Kick the grow-in one frame after the rows render.
+  useEffect(() => {
+    if (loading || !data.items?.length) return undefined;
+    const id = requestAnimationFrame(() => setGrown(true));
+    return () => cancelAnimationFrame(id);
+  }, [loading, data.items]);
+
+  const items = data.items || [];
+  const max = items.reduce((m, it) => Math.max(m, it.count), 0) || 1;
+  const worst = items[0];
+
+  return (
+    <SectionCard
+      title={
+        <span className="flex items-center gap-1.5">
+          Fault Leaderboard
+          <InfoTip content="The fleet's most-reported faults, combining BOTH sources: the historical workshop sheet (classified by reason) and our maintenance system (ticket symptoms). Both are folded into one shared category taxonomy so they count together. Bar length is how OFTEN it happens; bar colour is how BAD it is (worst severity across both sources). Sold/disposed cars and cancelled/not-found tickets are excluded." />
+        </span>
+      }
+      subtitle="Sheet history + our system, combined · coloured by severity"
+      actions={<Link to="/maintenance-history" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">History →</Link>}
+    >
+      {loading ? (
+        <ul className="space-y-3">
+          {Array.from({ length: 6 }).map((_, i) => <li key={i}><Skeleton className="h-11 rounded-xl" /></li>)}
+        </ul>
+      ) : items.length === 0 ? (
+        <p className="py-8 text-center text-sm text-slate-400">No faults recorded yet.</p>
+      ) : (
+        <div>
+          {/* Headline: total faults on record + the current worst offender. */}
+          <div className="mb-4 flex items-end justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Faults on record</p>
+              <p className="text-3xl font-extrabold tabular-nums text-slate-900">
+                <CountUp value={data.total} format={(n) => Math.round(n).toLocaleString()} />
+              </p>
+              {/* Where the total comes from — the two sources, combined. */}
+              <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] font-medium tabular-nums text-slate-400">
+                <span className="inline-flex items-center gap-1" title="From the historical workshop sheet">
+                  <span aria-hidden>🗒️</span>{Number(data.sheet_total || 0).toLocaleString()} sheet
+                </span>
+                <span className="inline-flex items-center gap-1" title="From our maintenance system">
+                  <span aria-hidden>⚙️</span>{Number(data.system_total || 0).toLocaleString()} system
+                </span>
+              </p>
+            </div>
+            {worst && (
+              <div className="text-right">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Top offender</p>
+                <p className="flex items-center justify-end gap-1.5 text-sm font-bold text-slate-800">
+                  <span aria-hidden>{faultGlyph(worst.fault)}</span>{worst.fault}
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Ranked bars — length = frequency, colour = severity. */}
+          <ol className="space-y-2.5">
+            {items.map((it, i) => {
+              const m = sevMeta(it.severity);
+              const pct = Math.max(6, Math.round((it.count / max) * 100));   // floor so tiny bars still read
+              const isTop = i === 0;
+              return (
+                <li key={it.fault} className="group flex items-center gap-2.5">
+                  {/* rank */}
+                  <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-xs font-extrabold tabular-nums ${
+                    isTop ? 'bg-amber-100 text-amber-700 ring-1 ring-amber-300' : 'bg-slate-100 text-slate-500'
+                  }`}>
+                    {i + 1}
+                  </span>
+
+                  {/* label + bar */}
+                  <div className="min-w-0 flex-1">
+                    <div className="mb-1 flex items-baseline justify-between gap-2">
+                      <span className="flex min-w-0 items-center gap-1.5 text-[13px] font-semibold text-slate-800">
+                        <span aria-hidden className="shrink-0">{faultGlyph(it.fault)}</span>
+                        <span className="truncate">{it.fault}</span>
+                      </span>
+                      <span className="flex shrink-0 items-baseline gap-1 tabular-nums">
+                        <span className="text-sm font-extrabold text-slate-900">{it.count}</span>
+                        <span className="text-[11px] font-medium text-slate-400">
+                          {it.count === 1 ? 'time' : 'times'}
+                        </span>
+                      </span>
+                    </div>
+
+                    <div className="relative h-3 w-full overflow-hidden rounded-full bg-slate-100">
+                      <div
+                        className="h-full rounded-full transition-[width] duration-[900ms] ease-out"
+                        style={{
+                          width: grown ? `${pct}%` : '0%',
+                          transitionDelay: `${i * 80}ms`,
+                          background: `linear-gradient(90deg, ${m.from}, ${m.to})`,
+                        }}
+                      />
+                    </div>
+
+                    {/* severity + source split + spread — the labelled second encoding (never colour-alone). */}
+                    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px]">
+                      <span className={`inline-flex items-center gap-1 rounded-full px-1.5 py-px font-semibold ring-1 ${m.soft}`}>
+                        <span className={`h-1.5 w-1.5 rounded-full ${m.dot}`} />{m.label}
+                      </span>
+                      <span className="tabular-nums text-slate-400" title="How this count splits between the workshop sheet and our system">
+                        🗒️ {Number(it.sheet).toLocaleString()} · ⚙️ {Number(it.system).toLocaleString()}
+                      </span>
+                      <span className="text-slate-300">·</span>
+                      <span className="tabular-nums text-slate-400">
+                        {it.cars} car{it.cars === 1 ? '' : 's'}
+                      </span>
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
+        </div>
+      )}
+    </SectionCard>
+  );
+}
+
 // Most Maintained Cars — the individual VEHICLES ranked by TOTAL LIFETIME days in maintenance: the
 // sum of every maintenance period the car has ever had (type-U maintenance contracts, out→in; an
 // open stay counts to today), all-time, no window, rental time ignored. Reads the purpose-built
 // /Dashboard/most-maintained-cars, which already ranks + caps server-side.
+// Real elapsed downtime → a compact { n, u } label: whole days for ≥ 1 day, hours for anything less
+// (a short same-day shop visit now reads as e.g. "9h", not a rounded-up whole day). Falls back to the
+// rounded-day int when no second-precision figure is present.
+const durParts = (seconds, fallbackDays = 0) => {
+  const s = Number(seconds);
+  if (!Number.isFinite(s) || s <= 0) return { n: Math.round(fallbackDays) || 0, u: 'd' };
+  if (s < 86400) return { n: Math.max(1, Math.round(s / 3600)), u: 'h' };
+  return { n: Math.round(s / 86400), u: 'd' };
+};
+const durLabel = (seconds, fallbackDays = 0) => {
+  const { n, u } = durParts(seconds, fallbackDays);
+  return `${n.toLocaleString()}${u}`;
+};
+
 function MostMaintainedCars() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -353,10 +540,10 @@ function MostMaintainedCars() {
       title={
         <span className="flex items-center gap-1.5">
           Most Maintained Cars
-          <InfoTip content="The exact same lifetime numbers as Fleet Utilization (All Time). Each car's in-service days split into rented (green) and true off-road shop days (red). Rental is King: a day the car is both on rent and in the shop counts as rental, never shop time; overlapping maintenance periods are merged so no day is double-counted. Ranked by true off-road shop days." />
+          <InfoTip content="The exact same lifetime numbers as Fleet Utilization (All Time). Downtime is the ACTUAL elapsed time each car spent off-road, measured from the maintenance contract out/in timestamps (real hours, not whole calendar days) — a 2-hour visit counts as ~2h, not a full day. Rental is King: time the car is both on rent and in the shop counts as rental, never shop time; overlapping periods are merged so nothing is double-counted. Ranked by true off-road shop time." />
         </span>
       }
-      subtitle="True downtime — distinct calendar days unavailable for maintenance · lifetime"
+      subtitle="True downtime — actual elapsed off-road time (hours-precise), Rental is King · lifetime"
       actions={
         <Link to="/maintenance-history" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">All cars →</Link>
       }
@@ -370,9 +557,13 @@ function MostMaintainedCars() {
       ) : (
         <ol className="space-y-1.5">
           {rows.map((r, i) => {
-            // rented / shop / idle split of in-service days — same Rental-is-King numbers as Fleet
-            // Utilization. Denominator is the segment sum so the bar always fills exactly.
-            const splitTotal = (r.days_rented + r.days_in_shop + r.days_idle) || 1;
+            // rented / shop / idle split of in-service time — same Rental-is-King numbers as Fleet
+            // Utilization, driven off the PRECISE seconds so sub-day slices still show. Denominator is
+            // the segment sum so the bar always fills exactly.
+            const rentSec = Number(r.rented_seconds ?? r.days_rented * 86400);
+            const shopSec = Number(r.maintenance_seconds ?? r.days_in_shop * 86400);
+            const idleSec = Number(r.idle_seconds ?? r.days_idle * 86400);
+            const splitTotal = (rentSec + shopSec + idleSec) || 1;
             const segW = (v) => `${((v / splitTotal) * 100).toFixed(1)}%`;
             return (
               <li key={r.id} className="flex items-center gap-3 rounded-xl px-2 py-2 hover:bg-slate-50">
@@ -389,32 +580,33 @@ function MostMaintainedCars() {
                       </Link>
                       {r.car && <p className="truncate text-[11px] text-slate-400">{r.car}</p>}
                     </div>
-                    <span className="shrink-0 text-sm font-bold tabular-nums text-slate-900">
-                      {Number(r.days_in_shop).toLocaleString()}<span className="ms-0.5 text-[11px] font-medium text-slate-400">d</span>
+                    <span className="shrink-0 text-sm font-bold tabular-nums text-slate-900" title="True off-road shop time — actual elapsed hours, not calendar days">
+                      {durParts(r.maintenance_seconds, r.days_in_shop).n.toLocaleString()}
+                      <span className="ms-0.5 text-[11px] font-medium text-slate-400">{durParts(r.maintenance_seconds, r.days_in_shop).u}</span>
                     </span>
                   </div>
 
-                  {/* Full day split — rented + util%, shop, and total in-service days (matches Fleet Utilization). */}
+                  {/* Full split — rented + util%, shop, and total in-service time (matches Fleet Utilization). */}
                   <p className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px] tabular-nums text-slate-500">
-                    <span className="inline-flex items-center gap-1" title="Days on a paid rental">
-                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />{Number(r.days_rented).toLocaleString()}d rented
+                    <span className="inline-flex items-center gap-1" title="Time on a paid rental">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />{durLabel(r.rented_seconds, r.days_rented)} rented
                     </span>
                     {r.utilization_pct != null && (
-                      <span className="font-semibold text-emerald-600" title="Utilization — rented ÷ in-service days">{r.utilization_pct}%</span>
+                      <span className="font-semibold text-emerald-600" title="Utilization — rented ÷ in-service time">{r.utilization_pct}%</span>
                     )}
-                    <span className="inline-flex items-center gap-1" title="True off-road shop days (no active rental)">
-                      <span className="h-1.5 w-1.5 rounded-full bg-red-500" />{Number(r.days_in_shop).toLocaleString()}d shop
+                    <span className="inline-flex items-center gap-1" title="True off-road shop time (no active rental)">
+                      <span className="h-1.5 w-1.5 rounded-full bg-red-500" />{durLabel(r.maintenance_seconds, r.days_in_shop)} shop
                     </span>
                     <span className="inline-flex items-center gap-1" title="Idle — available but not earning (not rented, not in the shop)">
-                      <span className="h-1.5 w-1.5 rounded-full bg-slate-300" />{Number(r.days_idle).toLocaleString()}d idle
+                      <span className="h-1.5 w-1.5 rounded-full bg-slate-300" />{durLabel(r.idle_seconds, r.days_idle)} idle
                     </span>
                     <span className="text-slate-400">· {Number(r.days_in_service).toLocaleString()}d total</span>
                   </p>
 
-                  <div className="mt-1.5 flex h-1.5 w-full overflow-hidden rounded-full bg-slate-100" title={`${Number(r.days_rented).toLocaleString()}d rented · ${Number(r.days_in_shop).toLocaleString()}d shop · ${Number(r.days_idle).toLocaleString()}d idle`}>
-                    {r.days_rented > 0 && <div className="bg-emerald-500" style={{ width: segW(r.days_rented) }} />}
-                    {r.days_in_shop > 0 && <div className="bg-red-500" style={{ width: segW(r.days_in_shop) }} />}
-                    {r.days_idle > 0 && <div className="bg-slate-300" style={{ width: segW(r.days_idle) }} />}
+                  <div className="mt-1.5 flex h-1.5 w-full overflow-hidden rounded-full bg-slate-100" title={`${durLabel(r.rented_seconds, r.days_rented)} rented · ${durLabel(r.maintenance_seconds, r.days_in_shop)} shop · ${durLabel(r.idle_seconds, r.days_idle)} idle`}>
+                    {rentSec > 0 && <div className="bg-emerald-500" style={{ width: segW(rentSec) }} />}
+                    {shopSec > 0 && <div className="bg-red-500" style={{ width: segW(shopSec) }} />}
+                    {idleSec > 0 && <div className="bg-slate-300" style={{ width: segW(idleSec) }} />}
                   </div>
                 </div>
                 {r.currently_in_shop && (
@@ -685,8 +877,11 @@ export default function Dashboard() {
             notification bell; every row deep-links to its record. */}
         <ProactiveFlags data={proactive} loading={loading} />
 
-        {/* Most Maintained Cars — the individual vehicles with the most total days in the shop, all-time. */}
-        <MostMaintainedCars />
+        {/* Most Maintained Cars (by downtime) beside the Most Frequent Faults donut KPI. */}
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <MostMaintainedCars />
+          <MostFrequentFaults />
+        </div>
 
         {/* Data visualization — maintenance spend per month (bar) and the downtime
             trend (line). Both are bespoke SVG, so they match the gauges and donut. */}
@@ -695,10 +890,10 @@ export default function Dashboard() {
           <Card>
             <div className="border-b border-slate-100 px-6 py-4">
               <h2 className="flex items-center gap-1.5 text-base font-semibold text-slate-900">
-                Maintenance Cost
-                <InfoTip content="Total workshop spend per month over the last 12 months, from the live garage log (imported + hand-entered events). Hover a bar for the visit count." />
+                Expenses
+                <InfoTip content="Total vehicle expense per month over the last 12 months, from the imported Expenses sheet (the single source of vehicle cost). Hover a bar for the number of expense lines behind it." />
               </h2>
-              <p className="mt-0.5 text-xs text-slate-500">Monthly repair spend · last 12 months</p>
+              <p className="mt-0.5 text-xs text-slate-500">Monthly expense · last 12 months</p>
             </div>
             <div className="px-3 py-5 sm:px-5">
               {loading ? (
@@ -711,7 +906,7 @@ export default function Dashboard() {
                   format={aed}
                   tickFormat={aedK}
                   valueLabel="Spend"
-                  tooltip={(d) => `${d.visits} visit${d.visits === 1 ? '' : 's'}`}
+                  tooltip={(d) => `${d.visits} expense line${d.visits === 1 ? '' : 's'}`}
                 />
               )}
             </div>

@@ -26,19 +26,30 @@ class OfficeManagerClient
         }
     }
 
-    protected function req(): PendingRequest
+    /**
+     * @param bool $interactive  Live web request (a user is waiting). Uses a SHORT timeout and NO
+     *   long retry storm so a slow/absent OM endpoint fails fast instead of hanging the single-threaded
+     *   `artisan serve` past PHP's max_execution_time. The default (patient) profile — long timeout +
+     *   30s-spaced retries — stays for BATCH sync commands, where a fragile server is worth waiting on.
+     */
+    protected function req(bool $interactive = false): PendingRequest
     {
+        $connect = $interactive
+            ? (int) config('officemanager.interactive_connect_timeout', 4)
+            : (int) config('officemanager.connect_timeout', 30);
+        $timeout = $interactive
+            ? (int) config('officemanager.interactive_timeout', 8)
+            : (int) config('officemanager.timeout', 300);
+        $retries = $interactive ? 1 : (int) config('officemanager.retries', 3);
+        $sleepMs = $interactive ? 0 : (int) config('officemanager.retry_sleep_ms', 30000);
+
         return Http::withHeaders(['X-API-Key' => (string) config('officemanager.api_key')])
             ->acceptJson()
-            ->connectTimeout((int) config('officemanager.connect_timeout', 30))
-            ->timeout((int) config('officemanager.timeout', 300))
-            // The server is fragile under load. Wait a long time between attempts (≥30s by
-            // default) so a retry storm never looks like an attack — stability over speed.
-            ->retry(
-                (int) config('officemanager.retries', 3),
-                (int) config('officemanager.retry_sleep_ms', 30000),
-                throw: false
-            );
+            ->connectTimeout($connect)
+            ->timeout($timeout)
+            // Batch profile: the server is fragile under load, so wait a long time between attempts
+            // (≥30s) — a retry storm never looks like an attack. Interactive profile: fail fast.
+            ->retry($retries, $sleepMs, throw: false);
     }
 
     /** Raw status / health helpers. */
@@ -85,9 +96,9 @@ class OfficeManagerClient
      *
      * @return array{items: array<int,array<string,mixed>>, total: int}
      */
-    public function fetchOnce(string $path, array $query = []): array
+    public function fetchOnce(string $path, array $query = [], bool $interactive = false): array
     {
-        $resp = $this->req()->get("{$this->base}/api/v1/{$path}", $query);
+        $resp = $this->req($interactive)->get("{$this->base}/api/v1/{$path}", $query);
 
         if (! $resp->ok()) {
             throw new RuntimeException("OfficeManager {$path} failed: HTTP {$resp->status()}");
@@ -156,4 +167,17 @@ class OfficeManagerClient
     {
         return $this->fetchOnce('reports/balance', array_merge(['only_with_card' => 'false'], $filters));
     }
+
+    /** Raw GET of an /api/v1 path returning the decoded JSON (for object endpoints that aren't lists). */
+    public function get(string $path, array $query = [], bool $interactive = false): array
+    {
+        $resp = $this->req($interactive)->get("{$this->base}/api/v1/{$path}", $query);
+
+        if (! $resp->ok()) {
+            throw new RuntimeException("OfficeManager {$path} failed: HTTP {$resp->status()}");
+        }
+
+        return $resp->json() ?? [];
+    }
+
 }

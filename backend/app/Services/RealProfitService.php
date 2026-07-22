@@ -2,7 +2,7 @@
 
 namespace App\Services;
 
-use App\Models\Maintenance;
+use App\Contracts\VehicleExpenseProvider;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -26,19 +26,30 @@ use Illuminate\Support\Facades\DB;
  */
 class RealProfitService
 {
-    /** Usage / surcharge lines — counted only when COLLECTED (credit side). */
-    private const USAGE_CREDIT = [
+    /**
+     * Usage / surcharge lines — counted only when COLLECTED (credit side).
+     * Public so the traceability/drill-down layer can reconcile against the EXACT same field list
+     * (single source of truth — the explanation layer never hard-codes its own copy).
+     */
+    public const USAGE_CREDIT = [
         'km_credit', 'fuel_credit', 'cardoo_credit', 'extra_driver_credit',
         'cdw_credit', 'gps_credit', 'co_driver_credit',
     ];
 
-    /** Per-contract direct operating costs (subtracted from profit). */
-    private const OPERATING_COST = [
+    /** Per-contract direct operating costs (subtracted from profit). Public for the same reason. */
+    public const OPERATING_COST = [
         'salesman_commission_value1', 'salesman_commission_value2', 'co_driver_cost',
     ];
 
     /** Trailing window (months) for vehicle-level yield. */
     public const YIELD_MONTHS = 12;
+
+    /**
+     * Vehicle EXPENSE is read exclusively through this pluggable provider (Excel today, Odoo later) —
+     * never from the maintenance tables, OfficeManager, vouchers or GL accounts. The rest of this engine
+     * (revenue from contracts, operating cost from contracts) is unchanged.
+     */
+    public function __construct(private VehicleExpenseProvider $expenses) {}
 
     /**
      * Per-contract Real Net Profit breakdown. Accepts a contract model or a raw DB row.
@@ -103,18 +114,12 @@ class RealProfitService
             ->get()
             ->keyBy('vehicle_id');
 
-        // --- Maintenance spend per vehicle within the same window (workshop log only) --------
-        $spend = DB::table('maintenances')
-            ->whereIn('origin', Maintenance::WORKSHOP_LOG_ORIGINS)
-            ->whereNotNull('vehicle_id')
-            ->when($cutoff, fn ($q) => $q->whereDate('out_date', '>=', $cutoff))
-            ->when($vehicleIds, fn ($q) => $q->whereIn('vehicle_id', $vehicleIds))
-            ->groupBy('vehicle_id')
-            ->select('vehicle_id', DB::raw('SUM(COALESCE(cost,0)) as spend'))
-            ->get()
-            ->keyBy('vehicle_id');
+        // --- Expense per vehicle within the same window — from the pluggable expense provider (Excel
+        //     today, Odoo later), the SOLE source of vehicle expense. It carries the `maintenance` slot
+        //     of the Profit Bridge verbatim; no maintenance table / OM / voucher data is read here. ---
+        $expense = $this->expenses->totalsByVehicle($vehicleIds, $cutoff, null);
 
-        $ids = array_unique(array_merge($rentals->keys()->all(), $spend->keys()->all()));
+        $ids = array_unique(array_merge($rentals->keys()->all(), array_keys($expense)));
 
         $out = [];
         foreach ($ids as $vid) {
@@ -130,7 +135,7 @@ class RealProfitService
                 'realized_usage' => $realizedUsage,
                 'gross_revenue'  => round($rentBilled - $discount + $realizedUsage, 2),
                 'operating_cost' => $operatingCost,
-                'maintenance'    => round((float) ($spend[$vid]->spend ?? 0), 2),
+                'maintenance'    => round((float) ($expense[(int) $vid] ?? 0), 2),
                 'contracts'      => (int) ($r->contracts ?? 0),
             ];
         }

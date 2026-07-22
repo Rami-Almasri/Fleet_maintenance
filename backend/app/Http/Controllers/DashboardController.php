@@ -138,6 +138,25 @@ class DashboardController extends Controller
     }
 
     /**
+     * "Most Frequent Faults" — the fleet's most-reported symptoms, ranked by occurrence. Powers the
+     * homepage circular (donut) KPI. Read-only; all-time by design.
+     */
+    public function topFaults(Request $request, DashboardService $dashboard)
+    {
+        try {
+            $limit = min(12, max(1, (int) $request->query('limit', 6)));
+
+            return ResponseHelper::SuccessResponse(
+                $dashboard->topFaults($limit),
+                "Top faults retrieved successfully",
+                200
+            );
+        } catch (\Exception $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
      * The FULL "Most in Maintenance" list behind the homepage column's "All →" link — every in-fleet car
      * that saw the workshop over a trailing window (?days=N, default 90), with how often (visits) and how
      * long (total days in the shop). Powers the Maintenance History page.

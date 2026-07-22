@@ -8,6 +8,7 @@ import MetricCard, { MetricGrid } from '../components/ui/MetricCard';
 import DataTable, { SectionCard } from '../components/ui/Table';
 import { MetricGridSkeleton } from '../components/ui/Skeleton';
 import Icon from '../components/ui/Icon';
+import FinancialBreakdownDrawer from '../components/FinancialBreakdownDrawer';
 import { aed2, num } from '../lib/format';
 
 const STATUS_TONE = { ready: 'green', rented: 'blue', maintenance: 'amber', sold: 'gray', disposed: 'gray' };
@@ -32,6 +33,20 @@ export default function CostIntelligence() {
 
   const [q, setQ] = useState('');
   const [hideOutOfFleet, setHideOutOfFleet] = useState(true);
+  const [drill, setDrill] = useState(null); // { vehicleId, metric } — open the traceability drawer
+
+  // Every number becomes a button that opens the drill-down drawer at the matching section, so a
+  // clicked figure shows exactly how it was calculated (numerator ÷ denominator, itemised tickets).
+  const drillNum = (metric, node, id) => (
+    <button
+      type="button"
+      onClick={(e) => { e.stopPropagation(); setDrill({ vehicleId: id, metric }); }}
+      className="cursor-pointer decoration-dotted underline-offset-2 hover:text-indigo-700 hover:underline"
+      title="Show how this number is calculated"
+    >
+      {node}
+    </button>
+  );
 
   const rows = useMemo(() => {
     let list = data?.vehicles || [];
@@ -65,31 +80,31 @@ export default function CostIntelligence() {
     {
       key: 'maintenance_cost', align: 'right', header: 'Maintenance', cellClass: 'tabular-nums text-amber-600',
       tooltip: 'Sum of all recorded repairs for this car (same source as the Profit Bridge).',
-      render: (r) => (r.maintenance_cost ? aed2(r.maintenance_cost) : <span className="text-slate-300">—</span>),
+      render: (r) => drillNum('maintenance', r.maintenance_cost ? aed2(r.maintenance_cost) : <span className="text-slate-300">—</span>, r.vehicle_id),
     },
     {
       key: 'distance_km', align: 'right', header: 'Distance (km)', cellClass: 'tabular-nums text-slate-500',
       tooltip: 'Validated lifetime travel (last odometer IN − first OUT). "—" when no reliable reading exists.',
-      render: (r) => count(r.distance_km),
+      render: (r) => drillNum('distance', count(r.distance_km), r.vehicle_id),
     },
     {
       key: 'cost_per_km', align: 'right', header: 'Cost / km', cellClass: 'tabular-nums font-semibold text-slate-800',
       tooltip: 'Maintenance cost ÷ validated distance.',
-      render: (r) => money(r.cost_per_km),
+      render: (r) => drillNum('cost_per_km', money(r.cost_per_km), r.vehicle_id),
     },
     {
       key: 'cost_per_day', align: 'right', header: 'Cost / day', cellClass: 'tabular-nums text-slate-600',
       tooltip: 'Maintenance cost ÷ in-service days.',
-      render: (r) => money(r.cost_per_day),
+      render: (r) => drillNum('cost_per_day', money(r.cost_per_day), r.vehicle_id),
     },
     {
       key: 'cost_per_rental', align: 'right', header: 'Cost / rental', cellClass: 'tabular-nums text-slate-600',
       tooltip: 'Maintenance cost ÷ number of rentals.',
-      render: (r) => money(r.cost_per_rental),
+      render: (r) => drillNum('cost_per_rental', money(r.cost_per_rental), r.vehicle_id),
     },
     {
       key: 'rentals', align: 'right', header: 'Rentals', cellClass: 'tabular-nums text-slate-500',
-      render: (r) => r.rentals || <span className="text-slate-300">—</span>,
+      render: (r) => drillNum('rentals', r.rentals || <span className="text-slate-300">—</span>, r.vehicle_id),
     },
   ];
 
@@ -98,7 +113,7 @@ export default function CostIntelligence() {
       <div className="mx-auto max-w-[1500px] space-y-6 px-4 sm:px-6 lg:px-8">
         <PageHeader
           title="Cost Intelligence"
-          subtitle="Maintenance cost per kilometre, per day and per rental for every car — the true running cost of each asset. Cars with no measured distance show “—”, never a misleading zero."
+          subtitle="Running cost per car — expense per km, per day and per rental across the fleet."
         />
 
         {error && (
@@ -164,6 +179,13 @@ export default function CostIntelligence() {
             empty={q ? 'No cars match your search.' : 'No vehicles found.'}
           />
         </SectionCard>
+
+        {/* Calculation drill-down — opens from any number and shows exactly how it was derived. */}
+        <FinancialBreakdownDrawer
+          vehicleId={drill?.vehicleId}
+          metric={drill?.metric}
+          onClose={() => setDrill(null)}
+        />
       </div>
     </div>
   );

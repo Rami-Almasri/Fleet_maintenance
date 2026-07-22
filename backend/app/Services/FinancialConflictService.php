@@ -59,13 +59,20 @@ class FinancialConflictService
     /**
      * Invoices whose figures don't add up — DISCOUNT-AWARE. OfficeManager computes the total
      * as (Value − Discount) + VAT, with VAT on the post-discount base, so reconciling against
-     * Value + VAT alone falsely flags every discounted invoice "off by the discount". We
-     * reconcile WITH the discount; only a genuine leftover gap is a real error. (Invoices not
-     * yet re-synced have discount = NULL → COALESCE 0 → they still surface until backfilled.)
+     * Value + VAT alone falsely flags every discounted invoice "off by the discount".
+     *
+     * We reconcile against the POST-DISCOUNT BASE + VAT. The authoritative base is
+     * `total_after_discount` (populated on ~96% of invoices, straight from OM's TotalAfterDiscount);
+     * the standalone `discount` column is unreliable — legacy invoices carry a real discount baked
+     * into total_after_discount while `discount` still reads 0.00, which falsely flagged them as
+     * "off by the discount". We therefore prefer total_after_discount and fall back to
+     * (Value − Discount) only when it is absent. Only a genuine leftover gap is a real error.
      */
     private function vatMath(): array
     {
-        $expr = 'ABS(COALESCE(total_value,0) - COALESCE(discount,0) + COALESCE(vat_value,0) - COALESCE(total_after_vat,0))';
+        // Post-discount base: trust total_after_discount, else derive from Value − Discount.
+        $baseExpr = 'COALESCE(total_after_discount, COALESCE(total_value,0) - COALESCE(discount,0))';
+        $expr = "ABS($baseExpr + COALESCE(vat_value,0) - COALESCE(total_after_vat,0))";
         $base = Invoice::whereRaw("$expr > ?", [self::EPS]);
 
         $count = (clone $base)->count();
@@ -74,12 +81,16 @@ class FinancialConflictService
             ->orderByRaw("$expr DESC")
             ->limit(self::CAP)->get()
             ->map(function (Invoice $i) {
-                $net   = (float) $i->total_value - (float) $i->discount + (float) $i->vat_value;
+                // Same precedence as the SQL: prefer total_after_discount as the post-discount base.
+                $hasTad   = $i->total_after_discount !== null;
+                $afterDisc = $hasTad ? (float) $i->total_after_discount : (float) $i->total_value - (float) $i->discount;
+                $discount  = $hasTad ? (float) $i->total_value - (float) $i->total_after_discount : (float) $i->discount;
+                $net   = $afterDisc + (float) $i->vat_value;
                 $delta = $net - (float) $i->total_after_vat;
                 $detail = sprintf(
                     'Value %s − Discount %s + VAT %s = %s, but total is %s (off by %s)',
                     number_format((float) $i->total_value, 2),
-                    number_format((float) $i->discount, 2),
+                    number_format($discount, 2),
                     number_format((float) $i->vat_value, 2),
                     number_format($net, 2),
                     number_format((float) $i->total_after_vat, 2),
@@ -90,7 +101,7 @@ class FinancialConflictService
             })->all();
 
         return $this->group('vat_math', 'VAT math errors', 'warning',
-            'Invoices where Value − Discount + VAT does not add up to the stated Total. The check is discount-aware — OfficeManager applies VAT on the post-discount base, so legitimate business discounts are NOT flagged; only genuinely inconsistent figures remain. (Invoices synced before the discount field was captured still appear until the next invoice sync backfills them.)',
+            'Invoices where the post-discount base + VAT does not add up to the stated Total. The check is discount-aware — it reconciles against OfficeManager\'s TotalAfterDiscount (the real post-discount base), so legitimate business discounts are NOT flagged; only genuinely inconsistent figures remain.',
             $count, $items);
     }
 
