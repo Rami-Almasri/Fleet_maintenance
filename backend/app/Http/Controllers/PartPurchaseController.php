@@ -180,6 +180,23 @@ class PartPurchaseController extends Controller
                 'warranty_months'    => ['nullable', 'integer', 'min:0', 'max:120'],
                 'result'             => ['nullable', Rule::in(PartPurchase::RESULTS)],
                 'notes'              => ['nullable', 'string', 'max:2000'],
+
+                // ── Asset Layer (optional; read only when features.asset_layer ≠ off) ──
+                // component: the physical identity of what is being fitted.
+                'component'                       => ['nullable', 'array'],
+                'component.component_catalog_id'  => ['nullable', 'integer', 'exists:component_catalog,id'],
+                'component.serial_no'             => ['nullable', 'string', 'max:80'],
+                'component.brand'                 => ['nullable', 'string', 'max:80'],
+                'component.model'                 => ['nullable', 'string', 'max:120'],
+                'component.position'              => ['nullable', 'string', 'max:20'],
+                'component.technician_name'       => ['nullable', 'string', 'max:120'],
+                // predecessor: the removal decision for the part currently in the slot —
+                // "what happened to the old one?" (mandatory in enforced mode when a slot is occupied).
+                'predecessor'                     => ['nullable', 'array'],
+                'predecessor.removal_reason'      => ['nullable', Rule::in(\App\Models\VehicleComponent::REMOVAL_REASONS)],
+                'predecessor.disposition'         => ['nullable', Rule::in(\App\Models\VehicleComponent::DISPOSITIONS)],
+                'predecessor.removed_odometer'    => ['nullable', 'integer', 'min:0'],
+                'predecessor.removal_note'        => ['nullable', 'string', 'max:2000'],
             ]);
 
             return ResponseHelper::SuccessResponse(

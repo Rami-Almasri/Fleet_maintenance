@@ -26,6 +26,7 @@ class PartWorkflowService
         private PartIntelligenceService $intel,
         private VehicleLogService $log,
         private NotificationScanner $notifier,
+        private ComponentService $components,
     ) {}
 
     // ───────────────────────────── request lifecycle ─────────────────────────────
@@ -351,6 +352,22 @@ class PartWorkflowService
             if ($req = $purchase->request) {
                 if (! in_array($req->status, PartRequest::TERMINAL, true)) {
                     $req->forceFill(['status' => PartRequest::STATUS_INSTALLED])->save();
+                }
+            }
+
+            // ── Asset Layer (flag contract, docs/Asset-Layer-Phase2-Workflow-Design.md §7) ──
+            //   off      → byte-identical behavior, zero asset writes.
+            //   shadow   → best-effort component write; ANY failure is reported and swallowed so it
+            //              can never block or roll back the billing write (measuring, not gating).
+            //   enforced → same transaction: a component failure rolls back the whole install.
+            $assetMode = config('features.asset_layer', 'off');
+            if ($assetMode === 'enforced') {
+                $this->components->installFromPurchase($purchase->fresh(), $data, $actor);
+            } elseif ($assetMode === 'shadow') {
+                try {
+                    $this->components->installFromPurchase($purchase->fresh(), $data, $actor);
+                } catch (\Throwable $e) {
+                    report($e);
                 }
             }
 
