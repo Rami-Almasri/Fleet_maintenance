@@ -586,6 +586,9 @@ class WorkflowOversightController extends Controller
         try {
             $tasks = \App\Models\MaintenanceTask::query()
                 ->whereNotNull('marked_incorrect_at')
+                // Inspector accountability only: the Incorrect action now covers faults from any source, but
+                // this report is specifically "the inspector got it wrong", so limit it to inspector-raised.
+                ->where('source', Maintenance::FINDING_INSPECTOR)
                 ->with([
                     'vehicle:id,plate_no,make,model',
                     'maintenance:id,inspected_by,workflow_status',

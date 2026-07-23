@@ -5,7 +5,7 @@ import useFetch from '../hooks/useFetch';
 import Badge from '../components/ui/Badge';
 import { Card } from '../components/ui/Misc';
 import { SectionCard } from '../components/ui/Table';
-import { MetricGridSkeleton, Skeleton } from '../components/ui/Skeleton';
+import { Skeleton } from '../components/ui/Skeleton';
 import { InfoTip } from '../components/ui/Tooltip';
 import Icon from '../components/ui/Icon';
 import FleetStatusCard from '../components/ui/FleetStatusCard';
@@ -48,9 +48,9 @@ const TILE_TONE_SOFT = {
 // Threshold palette for the repair-progress bar. Green under 75% of target, orange 75–100%, red
 // once the target is exceeded — matched track / fill / badge / percent tints so a card reads as one.
 const PROGRESS_TONE = {
-  green:  { bar: 'bg-emerald-500', track: 'bg-emerald-100', badge: 'bg-emerald-50 text-emerald-700 ring-emerald-200', pct: 'text-emerald-600', dot: 'bg-emerald-500' },
-  orange: { bar: 'bg-amber-500',   track: 'bg-amber-100',   badge: 'bg-amber-50 text-amber-700 ring-amber-200',       pct: 'text-amber-600',   dot: 'bg-amber-500' },
-  red:    { bar: 'bg-red-500',     track: 'bg-red-100',     badge: 'bg-red-50 text-red-700 ring-red-200',             pct: 'text-red-600',     dot: 'bg-red-500' },
+  green:  { bar: 'bg-emerald-500', track: 'bg-emerald-100', badge: 'bg-emerald-50 text-emerald-700 ring-emerald-200', pct: 'text-emerald-600', dot: 'bg-emerald-500', from: '#34d399', to: '#059669', accent: 'from-emerald-400 to-emerald-500', glow: 'bg-emerald-400/20' },
+  orange: { bar: 'bg-amber-500',   track: 'bg-amber-100',   badge: 'bg-amber-50 text-amber-700 ring-amber-200',       pct: 'text-amber-600',   dot: 'bg-amber-500', from: '#fbbf24', to: '#d97706', accent: 'from-amber-400 to-amber-500',   glow: 'bg-amber-400/20' },
+  red:    { bar: 'bg-rose-500',    track: 'bg-rose-100',    badge: 'bg-rose-50 text-rose-700 ring-rose-200',          pct: 'text-rose-600',    dot: 'bg-rose-500',  from: '#fb7185', to: '#e11d48', accent: 'from-rose-400 to-rose-500',     glow: 'bg-rose-400/20' },
 };
 
 // One labelled figure in a card's KPI grid.
@@ -99,10 +99,14 @@ function RepairProgressCard({ item }) {
   return (
     <Link
       to={to}
-      className="block rounded-2xl border border-slate-200/70 bg-white p-3.5 shadow-soft transition hover:border-slate-300 hover:shadow-md"
+      className="group relative block overflow-hidden rounded-2xl border border-slate-200/70 bg-white p-3.5 pt-4 shadow-soft transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
     >
+      {/* Tone accent strip + ambient wash — instant read of health before the eye reaches the bar. */}
+      <div className={`absolute inset-x-0 top-0 h-1 bg-gradient-to-r ${c.accent}`} />
+      <div className={`pointer-events-none absolute -right-8 -top-10 h-24 w-24 rounded-full ${c.glow} blur-2xl`} />
+
       {/* Vehicle header */}
-      <div className="mb-3 flex items-start justify-between gap-2">
+      <div className="relative mb-3 flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="truncate text-sm font-bold text-slate-900">{plate || car || 'Vehicle'}</p>
           <p className="truncate text-xs text-slate-400">{[car, garage].filter(Boolean).join(' · ') || '—'}</p>
@@ -118,26 +122,35 @@ function RepairProgressCard({ item }) {
       </div>
 
       {/* Progress bar */}
-      <div className="mb-1 flex items-center justify-between">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Repair Progress</span>
-        <span className={`text-xs font-bold tabular-nums ${c.pct}`}>{pct}%</span>
-      </div>
-      <div className="flex items-baseline justify-between text-xs font-semibold text-slate-700">
-        <span>Day {el}</span>
-        <span className="text-slate-400">Target {days(al)}</span>
-      </div>
-      <div className={`mt-1.5 h-2.5 w-full overflow-hidden rounded-full ${c.track}`}>
-        <div className={`h-full rounded-full ${c.bar} transition-all`} style={{ width: `${Math.max(3, pct)}%` }} />
-      </div>
-      <div className="mt-2">
-        <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ${c.badge}`}>
-          <span className={`h-1.5 w-1.5 rounded-full ${c.dot}`} />
-          {badge}
-        </span>
+      <div className="relative">
+        <div className="mb-1.5 flex items-baseline justify-between gap-2">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Repair Progress</span>
+          <span className="flex items-baseline gap-1 tabular-nums">
+            <span className={`text-lg font-extrabold leading-none ${c.pct}`}>{pct}%</span>
+          </span>
+        </div>
+        <div className="mb-1.5 flex items-baseline justify-between text-xs font-semibold text-slate-700">
+          <span>Day <span className="tabular-nums">{el}</span></span>
+          <span className="text-slate-400">Target {days(al)}</span>
+        </div>
+        <div className={`h-2.5 w-full overflow-hidden rounded-full ring-1 ring-inset ring-slate-200/50 ${c.track}`}>
+          <div
+            className="relative h-full rounded-full transition-[width] duration-[900ms] ease-out"
+            style={{ width: `${Math.max(3, pct)}%`, background: `linear-gradient(90deg, ${c.from}, ${c.to})` }}
+          >
+            <span className="absolute inset-x-0 top-0 h-1/2 rounded-full bg-white/25" />
+          </div>
+        </div>
+        <div className="mt-2">
+          <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ${c.badge}`}>
+            <span className={`h-1.5 w-1.5 rounded-full ${c.dot} ${status === 'overdue' ? 'animate-pulse' : ''}`} />
+            {badge}
+          </span>
+        </div>
       </div>
 
       {/* Underlying figures */}
-      <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 border-t border-slate-100 pt-3">
+      <dl className="relative mt-3 grid grid-cols-2 gap-x-3 gap-y-2 border-t border-slate-100 pt-3">
         <KpiCell label="In workshop" value={days(el)} />
         <KpiCell label="Planned" value={`${days(al)}${est ? ' · est.' : ''}`} />
         <KpiCell
@@ -257,17 +270,22 @@ function ProactiveFlags({ data, loading }) {
 // inspector handled (grades given / faults called / readings taken), `wrong` is the subset that was
 // flagged. We show the accuracy rate as the headline, the raw right/wrong split below, and a two-tone
 // bar so a card with a handful of misses on a big volume reads green (strong) at a glance.
+// Tone ramp for the accuracy gauge — strong (green) ≥90%, watch (amber) ≥75%, poor (red) below —
+// with a matching gauge gradient, verdict word, and soft ambient glow so each card reads as one piece.
+const ACCURACY_TONE = {
+  emerald: { text: 'text-emerald-600', bar: 'bg-emerald-500', chip: 'bg-emerald-50 text-emerald-700 ring-emerald-200', from: '#34d399', to: '#059669', glow: 'bg-emerald-400/20', verdict: 'Strong' },
+  amber:   { text: 'text-amber-600',   bar: 'bg-amber-500',   chip: 'bg-amber-50 text-amber-700 ring-amber-200',       from: '#fbbf24', to: '#d97706', glow: 'bg-amber-400/20',   verdict: 'On watch' },
+  red:     { text: 'text-rose-600',    bar: 'bg-rose-500',    chip: 'bg-rose-50 text-rose-700 ring-rose-200',          from: '#fb7185', to: '#e11d48', glow: 'bg-rose-400/20',     verdict: 'Needs review' },
+};
+
 function AccuracyCard({ title, icon, to, total, wrong, rightLabel, wrongLabel, tooltip, loading }) {
   const t = Math.max(0, Number(total) || 0);
   const w = Math.min(t, Math.max(0, Number(wrong) || 0));
   const right = t - w;
   const rate = t > 0 ? Math.round((right / t) * 100) : 100;
-  // Tone by how clean the record is: strong (green) ≥90%, watch (amber) ≥75%, poor (red) below.
   const tone = rate >= 90 ? 'emerald' : rate >= 75 ? 'amber' : 'red';
-  const toneText = { emerald: 'text-emerald-600', amber: 'text-amber-600', red: 'text-red-600' }[tone];
-  const toneBar  = { emerald: 'bg-emerald-500', amber: 'bg-amber-500', red: 'bg-red-500' }[tone];
-  const toneChip = { emerald: 'bg-emerald-50 text-emerald-600', amber: 'bg-amber-50 text-amber-600', red: 'bg-red-50 text-red-600' }[tone];
-  const toneStroke = { emerald: 'stroke-emerald-500', amber: 'stroke-amber-500', red: 'stroke-red-500' }[tone];
+  const c = ACCURACY_TONE[tone];
+  const gid = `acc-${String(title).replace(/\W+/g, '-').toLowerCase()}`;   // unique gradient id per card
   // Circular gauge geometry — a single ring whose filled arc = the accuracy rate.
   const R = 42;
   const CIRC = 2 * Math.PI * R;
@@ -276,11 +294,14 @@ function AccuracyCard({ title, icon, to, total, wrong, rightLabel, wrongLabel, t
   return (
     <Link
       to={to}
-      className="group flex flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-soft transition hover:-translate-y-0.5 hover:shadow-md"
+      className="group relative flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-soft transition hover:-translate-y-0.5 hover:shadow-md"
     >
-      <div className="flex items-center justify-between">
+      {/* ambient tone wash in the corner — subtle, matches the verdict */}
+      <div className={`pointer-events-none absolute -right-8 -top-10 h-28 w-28 rounded-full ${c.glow} blur-2xl`} />
+
+      <div className="relative flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className={`flex h-8 w-8 items-center justify-center rounded-xl ${toneChip}`}>{icon}</span>
+          <span className={`flex h-8 w-8 items-center justify-center rounded-xl ring-1 ${c.chip}`}>{icon}</span>
           <p className="flex items-center gap-1 text-sm font-semibold text-slate-800">
             {title}
             <InfoTip content={tooltip} />
@@ -289,39 +310,46 @@ function AccuracyCard({ title, icon, to, total, wrong, rightLabel, wrongLabel, t
         <Icon.ArrowRight className="h-4 w-4 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-slate-400" />
       </div>
 
-      <div className="mt-4 flex items-center gap-5">
-        {/* Circular accuracy gauge — filled arc = right share, red track = wrong remainder. */}
+      <div className="relative mt-4 flex items-center gap-5">
+        {/* Circular accuracy gauge — filled arc = right share, soft track = wrong remainder. */}
         <div className="relative h-24 w-24 shrink-0">
           <svg viewBox="0 0 100 100" className="h-full w-full -rotate-90">
-            <circle cx="50" cy="50" r={R} fill="none" strokeWidth="9" className="stroke-red-100" />
+            <defs>
+              <linearGradient id={gid} x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor={c.from} />
+                <stop offset="100%" stopColor={c.to} />
+              </linearGradient>
+            </defs>
+            <circle cx="50" cy="50" r={R} fill="none" strokeWidth="9" className="stroke-slate-100" />
             <circle
               cx="50" cy="50" r={R} fill="none" strokeWidth="9" strokeLinecap="round"
-              className={toneStroke}
+              stroke={`url(#${gid})`}
               strokeDasharray={CIRC}
               strokeDashoffset={dashOffset}
-              style={{ transition: 'stroke-dashoffset 0.6s ease' }}
+              style={{ transition: 'stroke-dashoffset 0.9s cubic-bezier(0.22,1,0.36,1)' }}
             />
           </svg>
           <div className="absolute inset-0 flex flex-col items-center justify-center">
-            <span className={`font-display text-2xl font-bold leading-none tabular-nums ${toneText}`}>
+            <span className={`font-display text-2xl font-bold leading-none tabular-nums ${c.text}`}>
               {loading ? '—' : `${rate}%`}
             </span>
-            <span className="mt-0.5 text-[10px] font-medium text-slate-400">accuracy</span>
+            <span className="mt-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-400">accuracy</span>
           </div>
         </div>
 
-        <div className="min-w-0 flex-1 space-y-2">
-          <span className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums ${toneChip}`}>
-            {loading ? '—' : `${w.toLocaleString()} of ${t.toLocaleString()}`}
+        <div className="min-w-0 flex-1 space-y-2.5">
+          {/* Verdict — a plain-language read of the rate, instead of the raw miss count. */}
+          <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ${c.chip}`}>
+            <span className={`h-1.5 w-1.5 rounded-full ${c.bar}`} />{loading ? '—' : c.verdict}
           </span>
           <div className="space-y-1.5 text-xs">
-            <span className="flex items-center gap-1.5 font-medium text-slate-600">
-              <span className={`h-2 w-2 rounded-full ${toneBar}`} />
-              <span className="tabular-nums font-semibold text-slate-900">{loading ? '—' : right.toLocaleString()}</span> {rightLabel}
+            <span className="flex items-baseline gap-1.5 font-medium text-slate-500">
+              <span className={`h-2 w-2 shrink-0 self-center rounded-full ${c.bar}`} />
+              <span className="tabular-nums text-base font-extrabold text-slate-900">{loading ? '—' : right.toLocaleString()}</span> {rightLabel}
             </span>
-            <span className="flex items-center gap-1.5 font-medium text-slate-600">
-              <span className="h-2 w-2 rounded-full bg-red-500" />
-              <span className="tabular-nums font-semibold text-slate-900">{loading ? '—' : w.toLocaleString()}</span> {wrongLabel}
+            <span className="flex items-baseline gap-1.5 font-medium text-slate-500">
+              <span className="h-2 w-2 shrink-0 self-center rounded-full bg-slate-300" />
+              <span className="tabular-nums text-base font-extrabold text-slate-900">{loading ? '—' : w.toLocaleString()}</span> {wrongLabel}
             </span>
           </div>
         </div>
@@ -338,14 +366,22 @@ function AccuracyCard({ title, icon, to, total, wrong, rightLabel, wrongLabel, t
 // colour alone.
 
 // Severity → colour (status palette) + gradient + human label. Always shown beside the chip text.
+// `glyph` tints the leading emoji disc, `halo` is a soft ambient wash behind the featured #1 offender.
 const SEVERITY_META = {
-  critical: { label: 'Critical', from: '#f43f5e', to: '#e11d48', text: 'text-rose-700',    soft: 'bg-rose-50 text-rose-700 ring-rose-200',       dot: 'bg-rose-500' },
-  high:     { label: 'High',     from: '#fb923c', to: '#ea580c', text: 'text-orange-700',  soft: 'bg-orange-50 text-orange-700 ring-orange-200', dot: 'bg-orange-500' },
-  moderate: { label: 'Moderate', from: '#fbbf24', to: '#d97706', text: 'text-amber-700',   soft: 'bg-amber-50 text-amber-700 ring-amber-200',    dot: 'bg-amber-500' },
-  routine:  { label: 'Routine',  from: '#34d399', to: '#059669', text: 'text-emerald-700', soft: 'bg-emerald-50 text-emerald-700 ring-emerald-200', dot: 'bg-emerald-500' },
-  unknown:  { label: 'Ungraded', from: '#94a3b8', to: '#64748b', text: 'text-slate-600',   soft: 'bg-slate-100 text-slate-600 ring-slate-200',   dot: 'bg-slate-400' },
+  critical: { label: 'Critical', from: '#fb7185', to: '#e11d48', text: 'text-rose-700',    soft: 'bg-rose-50 text-rose-700 ring-rose-200',       dot: 'bg-rose-500',   glyph: 'bg-rose-100 text-rose-700 ring-rose-200',       halo: 'from-rose-500/15' },
+  high:     { label: 'High',     from: '#fdba74', to: '#ea580c', text: 'text-orange-700',  soft: 'bg-orange-50 text-orange-700 ring-orange-200', dot: 'bg-orange-500', glyph: 'bg-orange-100 text-orange-700 ring-orange-200', halo: 'from-orange-500/15' },
+  moderate: { label: 'Moderate', from: '#fcd34d', to: '#d97706', text: 'text-amber-700',   soft: 'bg-amber-50 text-amber-700 ring-amber-200',    dot: 'bg-amber-500',  glyph: 'bg-amber-100 text-amber-700 ring-amber-200',    halo: 'from-amber-400/15' },
+  routine:  { label: 'Routine',  from: '#6ee7b7', to: '#059669', text: 'text-emerald-700', soft: 'bg-emerald-50 text-emerald-700 ring-emerald-200', dot: 'bg-emerald-500', glyph: 'bg-emerald-100 text-emerald-700 ring-emerald-200', halo: 'from-emerald-400/15' },
+  unknown:  { label: 'Ungraded', from: '#cbd5e1', to: '#64748b', text: 'text-slate-600',   soft: 'bg-slate-100 text-slate-600 ring-slate-200',   dot: 'bg-slate-400',  glyph: 'bg-slate-100 text-slate-500 ring-slate-200',    halo: 'from-slate-400/10' },
 };
 const sevMeta = (s) => SEVERITY_META[s] || SEVERITY_META.unknown;
+
+// Podium styling for the top three ranks — gold / silver / bronze medals. Everything else is a plain chip.
+const RANK_MEDAL = {
+  0: 'bg-gradient-to-br from-amber-300 to-amber-500 text-white shadow-sm ring-1 ring-amber-300/60',
+  1: 'bg-gradient-to-br from-slate-200 to-slate-400 text-white shadow-sm ring-1 ring-slate-300/60',
+  2: 'bg-gradient-to-br from-orange-300 to-orange-500 text-white shadow-sm ring-1 ring-orange-300/60',
+};
 
 // A little life: an emoji per fault family, matched on the category label. Purely decorative.
 function faultGlyph(fault = '') {
@@ -410,44 +446,70 @@ function MostFrequentFaults() {
         <p className="py-8 text-center text-sm text-slate-400">No faults recorded yet.</p>
       ) : (
         <div>
-          {/* Headline: total faults on record + the current worst offender. */}
-          <div className="mb-4 flex items-end justify-between gap-3">
-            <div>
+          {/* Headline: total faults on record + the current worst offender, side by side. */}
+          <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {/* Total faults — the running tally, with its two sources broken out as pills. */}
+            <div className="rounded-2xl bg-gradient-to-br from-slate-50 to-white p-4 ring-1 ring-slate-200/70">
               <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Faults on record</p>
-              <p className="text-3xl font-extrabold tabular-nums text-slate-900">
+              <p className="mt-0.5 text-[2rem] font-extrabold leading-none tabular-nums text-slate-900">
                 <CountUp value={data.total} format={(n) => Math.round(n).toLocaleString()} />
               </p>
-              {/* Where the total comes from — the two sources, combined. */}
-              <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] font-medium tabular-nums text-slate-400">
-                <span className="inline-flex items-center gap-1" title="From the historical workshop sheet">
-                  <span aria-hidden>🗒️</span>{Number(data.sheet_total || 0).toLocaleString()} sheet
+              <div className="mt-2.5 flex flex-wrap items-center gap-1.5 text-[11px] font-semibold tabular-nums">
+                <span className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-0.5 text-slate-600 ring-1 ring-slate-200" title="From the historical workshop sheet">
+                  <span aria-hidden>🗒️</span>{Number(data.sheet_total || 0).toLocaleString()}
+                  <span className="font-medium text-slate-400">sheet</span>
                 </span>
-                <span className="inline-flex items-center gap-1" title="From our maintenance system">
-                  <span aria-hidden>⚙️</span>{Number(data.system_total || 0).toLocaleString()} system
+                <span className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-0.5 text-slate-600 ring-1 ring-slate-200" title="From our maintenance system">
+                  <span aria-hidden>⚙️</span>{Number(data.system_total || 0).toLocaleString()}
+                  <span className="font-medium text-slate-400">system</span>
                 </span>
-              </p>
-            </div>
-            {worst && (
-              <div className="text-right">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Top offender</p>
-                <p className="flex items-center justify-end gap-1.5 text-sm font-bold text-slate-800">
-                  <span aria-hidden>{faultGlyph(worst.fault)}</span>{worst.fault}
-                </p>
               </div>
-            )}
+            </div>
+
+            {/* Featured worst offender — the #1 fault, blown up as a hero tile with an ambient severity wash. */}
+            {worst && (() => {
+              const wm = sevMeta(worst.severity);
+              const wshare = data.total ? Math.round((worst.count / data.total) * 100) : 0;
+              return (
+                <div className={`relative overflow-hidden rounded-2xl bg-white p-4 ring-1 ring-slate-200/70`}>
+                  <div className={`pointer-events-none absolute -right-6 -top-8 h-28 w-28 rounded-full bg-gradient-to-br ${wm.halo} to-transparent blur-xl`} />
+                  <div className="relative flex items-center justify-between">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Top offender</p>
+                    <span className={`inline-flex items-center gap-1 rounded-full px-1.5 py-px text-[11px] font-semibold ring-1 ${wm.soft}`}>
+                      <span className={`h-1.5 w-1.5 rounded-full ${wm.dot}`} />{wm.label}
+                    </span>
+                  </div>
+                  <div className="relative mt-2 flex items-center gap-2.5">
+                    <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-2xl ring-1 ${wm.glyph}`} aria-hidden>
+                      {faultGlyph(worst.fault)}
+                    </span>
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-bold text-slate-900">{worst.fault}</p>
+                      <p className="text-[11px] font-medium tabular-nums text-slate-500">
+                        <span className="font-extrabold text-slate-800">{worst.count.toLocaleString()}</span> reports · {wshare}% of all faults
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
 
-          {/* Ranked bars — length = frequency, colour = severity. */}
-          <ol className="space-y-2.5">
+          {/* Ranked bars — length = frequency, colour = severity, medals for the podium. */}
+          <ol className="space-y-1">
             {items.map((it, i) => {
               const m = sevMeta(it.severity);
               const pct = Math.max(6, Math.round((it.count / max) * 100));   // floor so tiny bars still read
-              const isTop = i === 0;
+              const share = data.total ? Math.round((it.count / data.total) * 100) : 0;
+              const medal = RANK_MEDAL[i];
               return (
-                <li key={it.fault} className="group flex items-center gap-2.5">
-                  {/* rank */}
-                  <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-xs font-extrabold tabular-nums ${
-                    isTop ? 'bg-amber-100 text-amber-700 ring-1 ring-amber-300' : 'bg-slate-100 text-slate-500'
+                <li
+                  key={it.fault}
+                  className="group flex items-center gap-3 rounded-xl px-2 py-2 transition-colors hover:bg-slate-50"
+                >
+                  {/* rank — medal for the top three, plain chip below */}
+                  <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-xs font-extrabold tabular-nums ${
+                    medal || 'bg-slate-100 text-slate-500'
                   }`}>
                     {i + 1}
                   </span>
@@ -460,26 +522,29 @@ function MostFrequentFaults() {
                         <span className="truncate">{it.fault}</span>
                       </span>
                       <span className="flex shrink-0 items-baseline gap-1 tabular-nums">
-                        <span className="text-sm font-extrabold text-slate-900">{it.count}</span>
+                        <span className="text-base font-extrabold text-slate-900">{it.count.toLocaleString()}</span>
                         <span className="text-[11px] font-medium text-slate-400">
                           {it.count === 1 ? 'time' : 'times'}
                         </span>
                       </span>
                     </div>
 
-                    <div className="relative h-3 w-full overflow-hidden rounded-full bg-slate-100">
+                    <div className="relative h-3 w-full overflow-hidden rounded-full bg-slate-100 ring-1 ring-inset ring-slate-200/60">
                       <div
-                        className="h-full rounded-full transition-[width] duration-[900ms] ease-out"
+                        className="relative h-full rounded-full transition-[width] duration-[900ms] ease-out"
                         style={{
                           width: grown ? `${pct}%` : '0%',
                           transitionDelay: `${i * 80}ms`,
                           background: `linear-gradient(90deg, ${m.from}, ${m.to})`,
                         }}
-                      />
+                      >
+                        {/* glossy top highlight so the fill reads as a solid, lit pill */}
+                        <span className="absolute inset-x-0 top-0 h-1/2 rounded-full bg-white/25" />
+                      </div>
                     </div>
 
                     {/* severity + source split + spread — the labelled second encoding (never colour-alone). */}
-                    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px]">
+                    <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px]">
                       <span className={`inline-flex items-center gap-1 rounded-full px-1.5 py-px font-semibold ring-1 ${m.soft}`}>
                         <span className={`h-1.5 w-1.5 rounded-full ${m.dot}`} />{m.label}
                       </span>
@@ -490,6 +555,8 @@ function MostFrequentFaults() {
                       <span className="tabular-nums text-slate-400">
                         {it.cars} car{it.cars === 1 ? '' : 's'}
                       </span>
+                      <span className="text-slate-300">·</span>
+                      <span className="tabular-nums font-medium text-slate-400">{share}% of total</span>
                     </div>
                   </div>
                 </li>
@@ -555,7 +622,7 @@ function MostMaintainedCars() {
       ) : rows.length === 0 ? (
         <p className="py-8 text-center text-sm text-slate-400">No workshop days recorded yet.</p>
       ) : (
-        <ol className="space-y-1.5">
+        <ol className="space-y-1">
           {rows.map((r, i) => {
             // rented / shop / idle split of in-service time — same Rental-is-King numbers as Fleet
             // Utilization, driven off the PRECISE seconds so sub-day slices still show. Denominator is
@@ -565,29 +632,43 @@ function MostMaintainedCars() {
             const idleSec = Number(r.idle_seconds ?? r.days_idle * 86400);
             const splitTotal = (rentSec + shopSec + idleSec) || 1;
             const segW = (v) => `${((v / splitTotal) * 100).toFixed(1)}%`;
+            const shop = durParts(r.maintenance_seconds, r.days_in_shop);
+            const medal = RANK_MEDAL[i];
             return (
-              <li key={r.id} className="flex items-center gap-3 rounded-xl px-2 py-2 hover:bg-slate-50">
-                <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-xs font-bold tabular-nums ${
-                  i === 0 ? 'bg-amber-100 text-amber-700' : i < 3 ? 'bg-indigo-50 text-indigo-600' : 'bg-slate-100 text-slate-500'
+              <li key={r.id} className="group flex items-center gap-3 rounded-xl px-2 py-2 transition-colors hover:bg-slate-50">
+                <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-xs font-extrabold tabular-nums ${
+                  medal || 'bg-slate-100 text-slate-500'
                 }`}>
                   {i + 1}
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-baseline justify-between gap-2">
                     <div className="min-w-0">
-                      <Link to={`/vehicles/${r.id}`} className="block truncate text-sm font-semibold text-slate-800 hover:text-indigo-600">
-                        {r.plate || `#${r.id}`}
+                      <Link to={`/vehicles/${r.id}`} className="flex items-center gap-1.5 truncate text-sm font-semibold text-slate-800 hover:text-indigo-600">
+                        <span className="truncate">{r.plate || `#${r.id}`}</span>
+                        {r.currently_in_shop && (
+                          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-100 px-1.5 py-px text-[10px] font-semibold text-amber-700" title="This car is in the workshop right now">
+                            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />In shop
+                          </span>
+                        )}
                       </Link>
                       {r.car && <p className="truncate text-[11px] text-slate-400">{r.car}</p>}
                     </div>
-                    <span className="shrink-0 text-sm font-bold tabular-nums text-slate-900" title="True off-road shop time — actual elapsed hours, not calendar days">
-                      {durParts(r.maintenance_seconds, r.days_in_shop).n.toLocaleString()}
-                      <span className="ms-0.5 text-[11px] font-medium text-slate-400">{durParts(r.maintenance_seconds, r.days_in_shop).u}</span>
+                    {/* The ranking metric — true off-road shop time — featured in a rose tint. */}
+                    <span className="flex shrink-0 items-baseline gap-0.5 rounded-lg bg-rose-50 px-2 py-0.5 tabular-nums ring-1 ring-rose-100" title="True off-road shop time — actual elapsed hours, not calendar days">
+                      <span className="text-base font-extrabold text-rose-700">{shop.n.toLocaleString()}</span>
+                      <span className="text-[11px] font-semibold text-rose-400">{shop.u}</span>
                     </span>
                   </div>
 
-                  {/* Full split — rented + util%, shop, and total in-service time (matches Fleet Utilization). */}
-                  <p className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px] tabular-nums text-slate-500">
+                  <div className="mt-1.5 flex h-2 w-full overflow-hidden rounded-full bg-slate-100 ring-1 ring-inset ring-slate-200/60" title={`${durLabel(r.rented_seconds, r.days_rented)} rented · ${durLabel(r.maintenance_seconds, r.days_in_shop)} shop · ${durLabel(r.idle_seconds, r.days_idle)} idle`}>
+                    {rentSec > 0 && <div className="relative bg-gradient-to-b from-emerald-400 to-emerald-500" style={{ width: segW(rentSec) }}><span className="absolute inset-x-0 top-0 h-1/2 bg-white/25" /></div>}
+                    {shopSec > 0 && <div className="relative bg-gradient-to-b from-rose-400 to-rose-500" style={{ width: segW(shopSec) }}><span className="absolute inset-x-0 top-0 h-1/2 bg-white/25" /></div>}
+                    {idleSec > 0 && <div className="relative bg-slate-300" style={{ width: segW(idleSec) }} />}
+                  </div>
+
+                  {/* Full split — rented + util%, shop, idle, and total in-service time (matches Fleet Utilization). */}
+                  <p className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px] tabular-nums text-slate-500">
                     <span className="inline-flex items-center gap-1" title="Time on a paid rental">
                       <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />{durLabel(r.rented_seconds, r.days_rented)} rented
                     </span>
@@ -595,25 +676,14 @@ function MostMaintainedCars() {
                       <span className="font-semibold text-emerald-600" title="Utilization — rented ÷ in-service time">{r.utilization_pct}%</span>
                     )}
                     <span className="inline-flex items-center gap-1" title="True off-road shop time (no active rental)">
-                      <span className="h-1.5 w-1.5 rounded-full bg-red-500" />{durLabel(r.maintenance_seconds, r.days_in_shop)} shop
+                      <span className="h-1.5 w-1.5 rounded-full bg-rose-500" />{durLabel(r.maintenance_seconds, r.days_in_shop)} shop
                     </span>
                     <span className="inline-flex items-center gap-1" title="Idle — available but not earning (not rented, not in the shop)">
                       <span className="h-1.5 w-1.5 rounded-full bg-slate-300" />{durLabel(r.idle_seconds, r.days_idle)} idle
                     </span>
                     <span className="text-slate-400">· {Number(r.days_in_service).toLocaleString()}d total</span>
                   </p>
-
-                  <div className="mt-1.5 flex h-1.5 w-full overflow-hidden rounded-full bg-slate-100" title={`${durLabel(r.rented_seconds, r.days_rented)} rented · ${durLabel(r.maintenance_seconds, r.days_in_shop)} shop · ${durLabel(r.idle_seconds, r.days_idle)} idle`}>
-                    {rentSec > 0 && <div className="bg-emerald-500" style={{ width: segW(rentSec) }} />}
-                    {shopSec > 0 && <div className="bg-red-500" style={{ width: segW(shopSec) }} />}
-                    {idleSec > 0 && <div className="bg-slate-300" style={{ width: segW(idleSec) }} />}
-                  </div>
                 </div>
-                {r.currently_in_shop && (
-                  <span className="hidden shrink-0 items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700 sm:inline-flex">
-                    <span className="h-1.5 w-1.5 rounded-full bg-amber-500" /> In shop
-                  </span>
-                )}
               </li>
             );
           })}
@@ -623,65 +693,6 @@ function MostMaintainedCars() {
   );
 }
 
-// Rental Billing — live invoice settlement (Track A). Paid / Partial / Not Paid counts for the
-// OM-synced rental invoices, derived from each invoice's balance on sync (no manual sheet).
-// Deep-links to the full Financial Reconciliation page. Money widget → gated by SHOW_FINANCIALS.
-const BILL_TILES = [
-  { key: 'paid',     label: 'Paid',     ring: 'border-emerald-200 bg-emerald-50', num: 'text-emerald-700', dot: 'bg-emerald-500' },
-  { key: 'partial',  label: 'Partial',  ring: 'border-amber-200 bg-amber-50',     num: 'text-amber-700',   dot: 'bg-amber-500' },
-  { key: 'not_paid', label: 'Not Paid', ring: 'border-red-200 bg-red-50',         num: 'text-red-600',     dot: 'bg-red-500' },
-];
-function RentalBillingSummary({ billing, loading }) {
-  const b = billing || {};
-  const total = b.total || 0;
-  return (
-    <SectionCard
-      title={
-        <span className="flex items-center gap-1.5">
-          Rental Billing
-          <InfoTip content="Live settlement status of rental invoices synced from OfficeManager — Paid, Partial, or Not Paid is derived from each invoice's outstanding balance on every sync. Replaces the manual bills sheet." />
-        </span>
-      }
-      subtitle="Invoice settlement · synced from OfficeManager"
-      actions={<Link to="/financial-reconciliation" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">Financial Reconciliation →</Link>}
-      bodyClass="px-5 py-4 sm:px-6"
-    >
-      {loading ? (
-        <MetricGridSkeleton count={3} />
-      ) : (
-        <div className="space-y-4">
-          <div className="grid grid-cols-3 gap-3">
-            {BILL_TILES.map((t) => (
-              <Link
-                key={t.key}
-                to={`/financial-reconciliation?payment_status=${t.key}`}
-                className={`rounded-2xl border ${t.ring} px-4 py-3 transition hover:shadow-sm`}
-              >
-                <div className="flex items-center gap-1.5">
-                  <span className={`h-2 w-2 rounded-full ${t.dot}`} />
-                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t.label}</span>
-                </div>
-                <div className={`mt-1 font-display text-3xl font-bold tabular-nums ${t.num}`}>
-                  {Number(b[t.key] || 0).toLocaleString()}
-                </div>
-              </Link>
-            ))}
-          </div>
-          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-sm">
-            <span className="text-slate-500">
-              {Number(total).toLocaleString()} rental invoice{total === 1 ? '' : 's'} with live status
-              {b.unsynced ? ` · ${Number(b.unsynced).toLocaleString()} awaiting status sync` : ''}
-            </span>
-            <span className="font-medium text-slate-700">
-              {Number(b.pending || 0).toLocaleString()} pending ·{' '}
-              <span className="tabular-nums">{aed(b.outstanding_balance || 0)}</span> outstanding
-            </span>
-          </div>
-        </div>
-      )}
-    </SectionCard>
-  );
-}
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -717,7 +728,6 @@ export default function Dashboard() {
   const kpis = data?.kpis || {};
   const trends = data?.trends || { cost: [], downtime: [] };
   const proactive = data?.proactive || {};
-  const billing = data?.billing || {};
 
   const fleet = kpis.fleet_status || {};
   const available = fleet.available || 0;
@@ -956,10 +966,6 @@ export default function Dashboard() {
             ))}
           </div>
         </SectionCard>
-
-        {/* Rental Billing — live invoice settlement (Track A): Paid / Partial / Not Paid counts
-            for OM-synced rental invoices, derived on sync (replaces the manual bills sheet). */}
-        {SHOW_FINANCIALS && <RentalBillingSummary billing={billing} loading={loading} />}
 
           </>
         )}

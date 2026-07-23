@@ -60,12 +60,14 @@ function LiveClock({ name }) {
   );
 }
 
-// Navigation grouped into role-based hubs for a calmer, scannable sidebar.
-// Three primary work-hubs mirror the three people who use the app:
-//   • Operations  — the "Fleet Manager": live rentals, movements, check-in/out.
-//   • Maintenance — the "Shop Foreman": the whole repair pipeline + service.
-//   • Analytics & Admin — the analyst/admin: finance, insights, data quality, sync.
-// Overview / Records / Settings are thin utility rails around those hubs.
+// Navigation for a maintenance-first fleet management system: Maintenance is
+// the first major operational block, directly after the Dashboard:
+//   Overview → MAINTENANCE (Operations · Control · Intelligence ·
+//   Parts & Suppliers · Damage) → Fleet Operations → Records →
+//   Rentals & Delivery → Fleet Intelligence → Analytics & Finance → Administration.
+// The maintenance sub-areas are contiguous sections ("Maintenance · X") so they
+// read as one block in daily-workflow order:
+//   Inspection → Diagnosis → Approval → Repair → Invoice → History → Intelligence.
 // `desc` powers the per-page info circle (bottom-right "?" button).
 const NAV_SECTIONS = [
   {
@@ -75,18 +77,77 @@ const NAV_SECTIONS = [
       { name: 'Notifications', to: '/notifications', icon: 'M15 17h5l-1.4-1.4A2 2 0 0 1 18 14.2V11a6 6 0 0 0-4-5.7V5a2 2 0 1 0-4 0v.3A6 6 0 0 0 6 11v3.2a2 2 0 0 1-.6 1.4L4 17h5m6 0v1a3 3 0 1 1-6 0v-1m6 0H9', desc: 'Live fleet alerts — overdue rentals, maintenance overruns, expiring documents, service-due cars and approvals. The bell in the top bar updates in real time.' },
     ],
   },
+  // ── MAINTENANCE — the core operational block. Contiguous sections, in
+  // daily-workflow order: run the pipeline → control/sign-off → intelligence →
+  // parts & suppliers → damage. Keep these together; don't scatter maintenance
+  // pages into other sections.
+  {
+    title: 'Maintenance · Operations',
+    items: [
+      { name: 'Workflow Journey', to: '/inspections/history', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-5 7h4m-4 4h4', desc: 'A stage-by-stage timeline of every step each car takes through the workflow — inspection, dispatch, garage arrival, repair, movement and readiness — each row headlined by the workflow stage it reached (absorbs the old Activity Feed, Vehicle Status, Vehicle Life-Stream & Workflow Hub). Click any car to follow just its own journey.' },
+      { name: 'Workflow', to: '/maintenance-workflow', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-3 7-3 3 3 3m6-6 3 3-3 3', desc: 'The live maintenance ticket pipeline (Inspector → Supervisor → Driver → Garage → Re-inspection). Open a ticket and advance it through the stages; the board updates in real time.' },
+      { name: 'My Queue', to: '/my-maintenance-queue', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-3 9 2 2 4-4', desc: 'Your role-scoped maintenance work in one place: Abu Maroof (Inspector) sees pending inspections and final re-inspections; a Supervisor (Dispatcher) sees tickets awaiting a garage + driver assignment; a Driver sees active trips/dispatches and cars waiting on a follow-up.' },
+      { name: 'Inspection Review', to: '/inspection-review', icon: 'M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Controllers (Lin & Marwa) review inspection requests before they reach Abu Maroof — approve to send it on, or reject with a reason.' },
+      { name: 'Inspection Intelligence', to: '/inspection-intelligence', icon: 'M12 3v1m0 16v1m9-9h-1M4 12H3m15.36 6.36-.7-.7M6.34 6.34l-.7-.7m12.72 0-.7.7M6.34 17.66l-.7.7M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z', desc: 'Mission Control for the AUTOMATIC inspection engine (the daily Proactive Diagnostic Monitor): why the system requests inspections, which rule fired, which cars qualify now, and which were skipped and why. Read-only monitoring & debugging.' },
+      { name: 'Recommendations', to: '/maintenance-recommendations', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-3 8h.01M9 11h6m-6 3h4', desc: 'Inspection recommendations awaiting a supervisor’s review, before any maintenance starts. Approve to begin work, order parts first, schedule for later, or dismiss — a recommendation-only car never clutters the active board.' },
+    ],
+  },
+  {
+    title: 'Maintenance · Control',
+    items: [
+      { name: 'Approvals', to: '/maintenance-approvals', icon: 'M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Maintenance items waiting for sign-off before work proceeds.' },
+      { name: 'Pending Invoices', to: '/invoices/pending-submission', icon: 'M9 12h6m-6 4h4m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2zM14 3v5h5M12 8v.01', desc: 'Repairs that are done and the car is back in service, but the garage invoice hasn’t arrived yet. Anything past the 3-day window is flagged red; mark an invoice received to close the ticket.' },
+      { name: 'Completed Repairs', to: '/completed-repairs', icon: 'M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'The ledger of every car whose repair is done and signed off — who requested it, who drove it, where it was fixed, what was found and repaired, and what it cost. Expand any row for the full custody chain, the resolved faults and the odometer readings.' },
+      { name: 'Maintenance History', to: '/maintenance-history', icon: 'M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Every car that saw the workshop over the chosen window — how often it went in (visits) and how long it spent there (total days in the shop), sortable and searchable. Open a car\'s visit list to see each individual trip: date, garage, what was done and the cost.' },
+      { name: 'Oversight', to: '/oversight', icon: 'M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z', desc: 'The maintenance-workflow accountability & data-integrity hub — one landing page linking the four audit surfaces below with their live counts.' },
+    ],
+  },
+  {
+    title: 'Maintenance · Intelligence',
+    items: [
+      { name: 'Foresight', to: '/maintenance-foresight', icon: 'M9.66 17h4.68M12 3v1m6.36 1.64-.7.7M21 12h-1M4 12H3m3.34-5.66-.7-.7M7 17a5 5 0 1 1 10 0', desc: 'Predictive maintenance: cars showing early mechanical warning signs (service overdue, chronic faults, aging battery) caught before they fail — with the downtime, parts-wait risk and lost rental revenue estimated from the fleet’s own repair history.' },
+      { name: 'Cost Capture', to: '/cost-capture', icon: 'M12 8c-1.7 0-3 .9-3 2s1.3 2 3 2 3 .9 3 2-1.3 2-3 2m0-8V6m0 12v-2m9-4a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Quick Cost Input: recent repairs with no cost recorded. Enter the amount in one tap to fix each vehicle’s repair spend and re-check its Negative-Yield flag — the tool for closing the understated-spend gap.' },
+      { name: 'Cost Analytics', to: '/maintenance-analytics', financial: true, icon: 'M3 3v18h18M7 15l3-3 3 3 5-5', desc: 'Maintenance cost trends and breakdowns across the fleet — spend by car, garage, and over time.' },
+      { name: 'Keyword Risk', to: '/finding-keywords', icon: 'M20.59 13.41 13.42 20.6a2 2 0 0 1-2.83 0l-7-7A2 2 0 0 1 3 12V5a2 2 0 0 1 2-2h7a2 2 0 0 1 1.42.59l7.17 7.17a2 2 0 0 1 0 2.83zM7.5 7.5h.01', desc: 'The fault-keyword library the inspection picker offers, each graded by risk (🔴 critical / 🟡 moderate / 🟢 routine). Add, edit or retire keywords and set how serious each fault type is.' },
+      { name: 'Recurring Fault Reviews', to: '/recurring-fault-reviews', icon: 'M3 2v6h6M3 8a9 9 0 1 0 2.6-4.36L3 8', desc: 'Cars that came back with the SAME confirmed fault after a completed repair. Each case shows the previous ticket, garage, parts used, days and distance since the repair, and how many times it recurred — so management can decide whether the earlier repair failed, it is a new failure, workshop responsibility, customer misuse, or needs investigation.' },
+    ],
+  },
+  {
+    title: 'Parts & Suppliers',
+    items: [
+      { name: 'Parts Purchase', to: '/parts', icon: 'M20 7h-9M14 17H5M17 20a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM7 10a3 3 0 1 0 0-6 3 3 0 0 0 0 6z', desc: 'The Parts Purchase + Repair Intelligence board: request a part (customer or garage), approve, buy (garage or supplier) and install it — with duplicate-purchase detection and repair history.' },
+      { name: 'Part Investigations', to: '/part-investigations', icon: 'M12 9v4m0 4h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z', desc: 'Admin inbox for duplicate-purchase and fault-recurrence alerts: review why the same part or fault repeated, capture the reason, and approve or reject the exception.' },
+      { name: 'Garages', to: '/garages', icon: 'M3 9l9-6 9 6v11a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z', desc: 'Garages where fleet cars are serviced, with the work routed to each.' },
+      { name: 'Vendors', to: '/vendors', icon: 'M3 9l1-5h16l1 5M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M3 9h18M9 20v-6h6v6', desc: 'Suppliers and service vendors referenced by maintenance and contracts.' },
+    ],
+  },
+  {
+    title: 'Damage Management',
+    items: [
+      { name: 'Damage & Accidents', to: '/damage-accidents', icon: 'M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z', desc: 'Damage and accident records shown as-is per vehicle. Fault is colored red/green based on the liable party and insurance.' },
+    ],
+  },
+  {
+    title: 'Fleet Operations',
+    items: [
+      { name: 'Driver Dispatch', to: '/driver-dispatch', icon: 'M3 7h11v8H3zM14 10h3.5L21 13v2h-7M6.5 18.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM17.5 18.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z', desc: 'Driver Dispatch: send a vehicle between locations (to Deals on Wheels, the garage, …) and track which driver has it and where. Dispatching a car flips it to “In Transit to …” on the grid and drops an Action Required task into the assignee’s My Queue.' },
+      { name: "Who's Where", to: '/team-presence', icon: 'M17 20h5v-2a4 4 0 0 0-3-3.87M9 20H4v-2a4 4 0 0 1 3-3.87m10-5.13a4 4 0 1 0-4-4 4 4 0 0 0 4 4zM9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6z', desc: 'Live team availability — everyone on the team and whether they’re free or busy right now, and if busy, exactly why (driving a move, on a maintenance pickup, or inspecting a car), which car and for how long.' },
+      { name: 'Fleet Health', to: '/inspections/schedules', icon: 'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM9 15l2 2 4-4', desc: 'The fleet\'s neural center — a unified hub with tabs for Service Due (odometer-based) and Registration & Insurance expiry, consolidating the live per-car health surfaces in one place.' },
+      { name: 'Car Status', to: '/car-status', icon: 'M5 17h14M5 17a2 2 0 0 1-2-2v-3l2-5a2 2 0 0 1 2-1.4h8A2 2 0 0 1 19 7l2 5v3a2 2 0 0 1-2 2M7 17v1a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-1m14 0v1a1 1 0 0 1-1 1h0a1 1 0 0 1-1-1v-1M9 12l2 2 4-4', desc: 'The workshop command center — every vehicle inside the maintenance workflow right now in one live table (stage, who holds it, garage, priority, faults, parts, deadline), with KPI cards and manager sections for repeat repairs, overdue cars, waiting-for-parts, waiting-for-approval and recently finished. Click any car for its full Maintenance Intelligence Center.' },
+    ],
+  },
   {
     title: 'Records',
     items: [
       { name: 'Vehicles', to: '/vehicles', icon: 'M5 17h14M5 17a2 2 0 0 1-2-2v-3l2-5a2 2 0 0 1 2-1.4h8A2 2 0 0 1 19 7l2 5v3a2 2 0 0 1-2 2M7 17v1a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-1m14 0v1a1 1 0 0 1-1 1h0a1 1 0 0 1-1-1v-1M7 12h10', desc: 'Every car in the fleet. The OfficeManager API is the sole source of which cars exist; the sheet only enriches matched cars. Click a row to open its full profile.' },
-      { name: 'Odometer Approvals', to: '/odometer-approvals', icon: 'M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Review queue for significant manual odometer edits (more than 10 km from the car\'s current reading) — each carries the editor\'s reason note and the car\'s workflow stage at the time. Approve to apply the new reading, or reject to leave it untouched.' },
       { name: 'Customers', to: '/customers', icon: 'M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0zM3 21v-1a6 6 0 0 1 6-6h6a6 6 0 0 1 6 6v1', desc: 'All customers with their contact details and available wallet (carried-forward credit). Open a customer to see their contracts and balance history.' },
       { name: 'Contracts', to: '/contracts', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z', desc: 'Rental contracts synced from OfficeManager — all open contracts plus the last 3 months of closed ones. Open or closed status is detected on each sync.' },
       { name: 'Drivers', to: '/drivers', icon: 'M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM6 21v-1a6 6 0 0 1 6-6 6 6 0 0 1 6 6v1M3 9l2 2 3-3', desc: 'Fleet drivers with their licence number, expiry and status. Add, edit or suspend drivers; expiring licences are flagged.' },
+      { name: 'Odometer Approvals', to: '/odometer-approvals', icon: 'M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Review queue for significant manual odometer edits (more than 10 km from the car\'s current reading) — each carries the editor\'s reason note and the car\'s workflow stage at the time. Approve to apply the new reading, or reject to leave it untouched.' },
     ],
   },
   {
-    title: 'Operations',
+    title: 'Rentals & Delivery',
     items: [
       { name: 'Delivery Command', to: '/ops-dashboard', icon: 'M3 7h11v8H3zM14 10h3.5L21 13v2h-7M6.5 18.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM17.5 18.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z', desc: 'Delivery/dispatch command dashboard built from the live Main Trip Dashboard sheet — on-time rate, total trips, vehicles in rotation, completion rate, a recent-days activity chart, a live trips table and top drivers, in a high-contrast control-room view.' },
       { name: 'Orders Board', to: '/orders-board', icon: 'M4 5h6v6H4zM14 5h6v6h-6zM4 15h6v4H4zM14 15h6v4h-6z', desc: 'Three-lane trips Kanban (Scheduled → Completed → Cancelled) from the Main Trip Dashboard sheet, each card a real pickup/drop-off trip with its vehicle, assignee, destination and date.' },
@@ -94,46 +155,6 @@ const NAV_SECTIONS = [
       { name: 'Booking Readiness', to: '/booking-readiness', icon: 'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z', desc: 'Pickup-prep board: every booking due for pickup in the next few days with its car\'s live readiness checklist. Cars with a valid recent pre-rental inspection read as done, so you only chase what\'s actually pending. Urgent pickups (within the alert lead) are flagged red; the Settings tab tunes the look-ahead, alert lead, inspection validity and holiday exclusions.' },
       { name: 'Overdue Rentals', to: '/overdue-rentals', icon: 'M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Open contracts that are past their expected return date — the cars that should be back but are not.' },
       { name: 'Check-in / Check-out', to: '/inspection-prototype', icon: 'M3 9a2 2 0 0 1 2-2h1.6l1-1.6A2 2 0 0 1 10.3 4h3.4a2 2 0 0 1 1.7 1.4l1 1.6H18a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM12 16a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4z', desc: 'Rental check-in / check-out condition capture: tap a zone on the interactive car diagram to record the required condition checks and photos, then compare pre-rental vs post-return with the before/after slider. Prototype — not yet wired to live contracts.' },
-      { name: 'Driver Dispatch', to: '/driver-dispatch', icon: 'M3 7h11v8H3zM14 10h3.5L21 13v2h-7M6.5 18.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM17.5 18.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z', desc: 'Driver Dispatch: send a vehicle between locations (to Deals on Wheels, the garage, …) and track which driver has it and where. Dispatching a car flips it to “In Transit to …” on the grid and drops an Action Required task into the assignee’s My Queue.' },
-      { name: "Who's Where", to: '/team-presence', icon: 'M17 20h5v-2a4 4 0 0 0-3-3.87M9 20H4v-2a4 4 0 0 1 3-3.87m10-5.13a4 4 0 1 0-4-4 4 4 0 0 0 4 4zM9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6z', desc: 'Live team availability — everyone on the team and whether they’re free or busy right now, and if busy, exactly why (driving a move, on a maintenance pickup, or inspecting a car), which car and for how long.' },
-      { name: 'Fleet Health', to: '/inspections/schedules', icon: 'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM9 15l2 2 4-4', desc: 'The fleet\'s neural center — a unified hub with tabs for Service Due (odometer-based) and Registration & Insurance expiry, consolidating the live per-car health surfaces in one place.' },
-    ],
-  },
-  {
-    title: 'Maintenance',
-    items: [
-      { name: 'Car Status', to: '/car-status', icon: 'M5 17h14M5 17a2 2 0 0 1-2-2v-3l2-5a2 2 0 0 1 2-1.4h8A2 2 0 0 1 19 7l2 5v3a2 2 0 0 1-2 2M7 17v1a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-1m14 0v1a1 1 0 0 1-1 1h0a1 1 0 0 1-1-1v-1M9 12l2 2 4-4', desc: 'The workshop command center — every vehicle inside the maintenance workflow right now in one live table (stage, who holds it, garage, priority, faults, parts, deadline), with KPI cards and manager sections for repeat repairs, overdue cars, waiting-for-parts, waiting-for-approval and recently finished. Click any car for its full Maintenance Intelligence Center.' },
-      { name: 'Workflow Journey', to: '/inspections/history', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-5 7h4m-4 4h4', desc: 'A stage-by-stage timeline of every step each car takes through the workflow — inspection, dispatch, garage arrival, repair, movement and readiness — each row headlined by the workflow stage it reached (absorbs the old Activity Feed, Vehicle Status, Vehicle Life-Stream & Workflow Hub). Click any car to follow just its own journey.' },
-      { name: 'Workflow', to: '/maintenance-workflow', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-3 7-3 3 3 3m6-6 3 3-3 3', desc: 'The live maintenance ticket pipeline (Inspector → Supervisor → Driver → Garage → Re-inspection). Open a ticket and advance it through the stages; the board updates in real time.' },
-      { name: 'Recommendations', to: '/maintenance-recommendations', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-3 8h.01M9 11h6m-6 3h4', desc: 'Inspection recommendations awaiting a supervisor’s review, before any maintenance starts. Approve to begin work, order parts first, schedule for later, or dismiss — a recommendation-only car never clutters the active board.' },
-      { name: 'My Queue', to: '/my-maintenance-queue', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-3 9 2 2 4-4', desc: 'Your role-scoped maintenance work in one place: Abu Maroof (Inspector) sees pending inspections and final re-inspections; a Supervisor (Dispatcher) sees tickets awaiting a garage + driver assignment; a Driver sees active trips/dispatches and cars waiting on a follow-up.' },
-      { name: 'Inspection Review', to: '/inspection-review', icon: 'M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Controllers (Lin & Marwa) review inspection requests before they reach Abu Maroof — approve to send it on, or reject with a reason.' },
-      { name: 'Inspection Intelligence', to: '/inspection-intelligence', icon: 'M12 3v1m0 16v1m9-9h-1M4 12H3m15.36 6.36-.7-.7M6.34 6.34l-.7-.7m12.72 0-.7.7M6.34 17.66l-.7.7M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z', desc: 'Mission Control for the AUTOMATIC inspection engine (the daily Proactive Diagnostic Monitor): why the system requests inspections, which rule fired, which cars qualify now, and which were skipped and why. Read-only monitoring & debugging.' },
-      { name: 'Approvals', to: '/maintenance-approvals', icon: 'M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Maintenance items waiting for sign-off before work proceeds.' },
-      { name: 'Pending Invoices', to: '/invoices/pending-submission', icon: 'M9 12h6m-6 4h4m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2zM14 3v5h5M12 8v.01', desc: 'Repairs that are done and the car is back in service, but the garage invoice hasn’t arrived yet. Anything past the 3-day window is flagged red; mark an invoice received to close the ticket.' },
-      { name: 'Completed Repairs', to: '/completed-repairs', icon: 'M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'The ledger of every car whose repair is done and signed off — who requested it, who drove it, where it was fixed, what was found and repaired, and what it cost. Expand any row for the full custody chain, the resolved faults and the odometer readings.' },
-      { name: 'Maintenance History', to: '/maintenance-history', icon: 'M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Every car that saw the workshop over the chosen window — how often it went in (visits) and how long it spent there (total days in the shop), sortable and searchable. Open a car\'s visit list to see each individual trip: date, garage, what was done and the cost.' },
-      { name: 'Foresight', to: '/maintenance-foresight', icon: 'M9.66 17h4.68M12 3v1m6.36 1.64-.7.7M21 12h-1M4 12H3m3.34-5.66-.7-.7M7 17a5 5 0 1 1 10 0', desc: 'Predictive maintenance: cars showing early mechanical warning signs (service overdue, chronic faults, aging battery) caught before they fail — with the downtime, parts-wait risk and lost rental revenue estimated from the fleet’s own repair history.' },
-      { name: 'Cost Capture', to: '/cost-capture', icon: 'M12 8c-1.7 0-3 .9-3 2s1.3 2 3 2 3 .9 3 2-1.3 2-3 2m0-8V6m0 12v-2m9-4a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Quick Cost Input: recent repairs with no cost recorded. Enter the amount in one tap to fix each vehicle’s repair spend and re-check its Negative-Yield flag — the tool for closing the understated-spend gap.' },
-      { name: 'Damage & Accidents', to: '/damage-accidents', icon: 'M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z', desc: 'Damage and accident records shown as-is per vehicle. Fault is colored red/green based on the liable party and insurance.' },
-      { name: 'Garages', to: '/garages', icon: 'M3 9l9-6 9 6v11a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z', desc: 'Garages where fleet cars are serviced, with the work routed to each.' },
-      { name: 'Vendors', to: '/vendors', icon: 'M3 9l1-5h16l1 5M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M3 9h18M9 20v-6h6v6', desc: 'Suppliers and service vendors referenced by maintenance and contracts.' },
-      { name: 'Keyword Risk', to: '/finding-keywords', icon: 'M20.59 13.41 13.42 20.6a2 2 0 0 1-2.83 0l-7-7A2 2 0 0 1 3 12V5a2 2 0 0 1 2-2h7a2 2 0 0 1 1.42.59l7.17 7.17a2 2 0 0 1 0 2.83zM7.5 7.5h.01', desc: 'The fault-keyword library the inspection picker offers, each graded by risk (🔴 critical / 🟡 moderate / 🟢 routine). Add, edit or retire keywords and set how serious each fault type is.' },
-      { name: 'Parts Purchase', to: '/parts', icon: 'M20 7h-9M14 17H5M17 20a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM7 10a3 3 0 1 0 0-6 3 3 0 0 0 0 6z', desc: 'The Parts Purchase + Repair Intelligence board: request a part (customer or garage), approve, buy (garage or supplier) and install it — with duplicate-purchase detection and repair history.' },
-      { name: 'Part Investigations', to: '/part-investigations', icon: 'M12 9v4m0 4h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z', desc: 'Admin inbox for duplicate-purchase and fault-recurrence alerts: review why the same part or fault repeated, capture the reason, and approve or reject the exception.' },
-      { name: 'Recurring Fault Reviews', to: '/recurring-fault-reviews', icon: 'M3 2v6h6M3 8a9 9 0 1 0 2.6-4.36L3 8', desc: 'Cars that came back with the SAME confirmed fault after a completed repair. Each case shows the previous ticket, garage, parts used, days and distance since the repair, and how many times it recurred — so management can decide whether the earlier repair failed, it is a new failure, workshop responsibility, customer misuse, or needs investigation.' },
-      { name: 'Cost Analytics', to: '/maintenance-analytics', financial: true, icon: 'M3 3v18h18M7 15l3-3 3 3 5-5', desc: 'Maintenance cost trends and breakdowns across the fleet — spend by car, garage, and over time.' },
-    ],
-  },
-  {
-    title: 'Workflow Oversight',
-    items: [
-      { name: 'Oversight', to: '/oversight', icon: 'M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z', desc: 'The maintenance-workflow accountability & data-integrity hub — one landing page linking the four audit surfaces below with their live counts.' },
-      { name: 'Mileage Discrepancies', to: '/oversight/mileage', icon: 'M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Every workflow stage where the odometer entered didn\'t match what was expected — a reading that ran backwards (a real data error), a big jump, or a garage test-drive — with the before/after figures, the note left and who entered it.' },
-      { name: 'Stage Accountability', to: '/oversight/stages', icon: 'M4 7h16M4 12h16M4 17h16M7 4v16', desc: 'Per ticket, the whole workflow chain laid out stage by stage: who owned each stage and the mileage they recorded there.' },
-      { name: 'Garage Invoices Due', to: '/oversight/left-garage', icon: 'M3 7h11v8H3zM14 10h3.5L21 13v2h-7M6.5 18.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM17.5 18.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z', desc: 'Cars that have physically left the garage but still owe an invoice — the actionable list of which garages to chase, each deep-linking to the ticket to request / record the bill.' },
-      { name: 'Severity Review', to: '/oversight/severity', icon: 'M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z', desc: 'Tickets whose fault-severity grade looks too low for the situation — graded Routine / Moderate where a critical-risk keyword, a breakdown or a red-graded car says it should be Critical.' },
-      { name: 'Mis-Diagnosis', to: '/oversight/misdiagnoses', icon: 'M18.36 6.64A9 9 0 1 1 5.64 6.64m6.36-3.14v6', desc: 'Every fault the inspector diagnosed that a supervisor later overruled as wrong (the "mark fault incorrect" override) — the symptom he called, who overruled it and why, with a per-inspector tally so a recurring mis-caller stands out.' },
     ],
   },
   {
@@ -149,7 +170,7 @@ const NAV_SECTIONS = [
     ],
   },
   {
-    title: 'Analytics & Admin',
+    title: 'Analytics & Finance',
     items: [
       { name: 'Profitability', to: '/profitability', financial: true, icon: 'M12 8c-1.7 0-3 .9-3 2s1.3 2 3 2 3 .9 3 2-1.3 2-3 2m0-8V6m0 12v-2m9-4a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Operational profit per car across the whole fleet — rental income (type-R, ex-VAT) minus logged maintenance cost. Sorted best-to-worst to spot top assets and liabilities.' },
       { name: 'Fleet Utilization', to: '/fleet-utilization', hideWhenIntel: true, icon: 'M3 3v18h18M7 15l3-3 3 3 5-5M8 21V9m4 12V5m4 16v-7', desc: 'Per-car split of owned time into rented, in-maintenance, and idle days — utilization and downtime % against how long you have owned each car, with rent lost to downtime. Filter by period (e.g. last month) and sort to find the cars stuck in the workshop.' },
@@ -160,12 +181,12 @@ const NAV_SECTIONS = [
       { name: 'Data Health', to: '/data-health', icon: 'M3 12h4l2 5 4-12 2 7h6', desc: 'Overall data quality in two tabs: Data Quality (incomplete/broken records — missing VINs, mileage, unlinked contracts) and Status Mismatches (cars whose status disagrees with their contracts).' },
       { name: 'Sync Audit', to: '/sync-audit', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-6 9 2 2 4-4', desc: 'Read-only history of CMD sync runs: how many contracts each execution scanned, updated, and auto-corrected (e.g. stale dates cleared).' },
       { name: 'Simulation', to: '/simulation', demoOnly: true, icon: 'M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z', desc: 'Admin-only demo console (only shown in Demo Mode): force a real "Service Due" oil alert or a fault-discovery ticket on a real car, watch the system react end-to-end, then roll it all back with one click.' },
-      { name: 'Users', to: '/users', icon: 'M16 5.5a3 3 0 0 1 0 5.8M3 20a6 6 0 0 1 12 0M9 8.2a3.2 3.2 0 1 1 0-6.4 3.2 3.2 0 0 1 0 6.4zM21 20a6 6 0 0 0-4-5.6', desc: 'Every account, its status and Spatie role(s) — admin-only.' },
     ],
   },
   {
-    title: 'Settings',
+    title: 'Administration',
     items: [
+      { name: 'Users', to: '/users', icon: 'M16 5.5a3 3 0 0 1 0 5.8M3 20a6 6 0 0 1 12 0M9 8.2a3.2 3.2 0 1 1 0-6.4 3.2 3.2 0 0 1 0 6.4zM21 20a6 6 0 0 0-4-5.6', desc: 'Every account, its status and Spatie role(s) — admin-only.' },
       { name: 'Settings', to: '/settings', icon: 'M10.3 4.3a1 1 0 0 1 .95-.7h1.5a1 1 0 0 1 .95.7l.35 1.1a7 7 0 0 1 1.5.87l1.1-.4a1 1 0 0 1 1.2.45l.75 1.3a1 1 0 0 1-.25 1.25l-.9.74a7 7 0 0 1 0 1.74l.9.74a1 1 0 0 1 .25 1.25l-.75 1.3a1 1 0 0 1-1.2.45l-1.1-.4a7 7 0 0 1-1.5.87l-.35 1.1a1 1 0 0 1-.95.7h-1.5a1 1 0 0 1-.95-.7l-.35-1.1a7 7 0 0 1-1.5-.87l-1.1.4a1 1 0 0 1-1.2-.45l-.75-1.3a1 1 0 0 1 .25-1.25l.9-.74a7 7 0 0 1 0-1.74l-.9-.74a1 1 0 0 1-.25-1.25l.75-1.3a1 1 0 0 1 1.2-.45l1.1.4a7 7 0 0 1 1.5-.87zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z', desc: 'Your account & preferences in one place: appearance (theme / language), the roles and permissions granted to you, keyboard shortcuts, and sign-out.' },
     ],
   },

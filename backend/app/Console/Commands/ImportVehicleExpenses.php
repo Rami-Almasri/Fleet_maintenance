@@ -53,6 +53,19 @@ class ImportVehicleExpenses extends Command
             return self::FAILURE;
         }
 
+        // A file can exist (stat OK) yet be unreadable by the current process — the common cause of a
+        // spurious "not a valid zip". `docker compose cp` preserves the host's umask-0027 perms, so the
+        // file lands as 0640 owned by the copying user while artisan runs as www-data → open() denied.
+        if (! is_readable($path)) {
+            $perms  = @fileperms($path);
+            $octal  = $perms !== false ? substr(sprintf('%o', $perms), -4) : '????';
+            $this->error("File exists but is not readable by the current user: {$path} (mode {$octal}).");
+            $this->line('  Fix on the server: chmod 644 the file (or run the import as its owner). Inside Docker:');
+            $this->line("  docker compose exec -u root backend chmod 644 {$path}");
+
+            return self::FAILURE;
+        }
+
         $this->info(($dryRun ? '[DRY RUN] ' : '') . "Reading {$path} …");
 
         // vehicles.car_serial → id, so each line is joined to a FleetView vehicle.
@@ -183,8 +196,17 @@ class ImportVehicleExpenses extends Command
     private function readRows(string $path): \Generator
     {
         $zip = new ZipArchive();
-        if ($zip->open($path) !== true) {
-            throw new RuntimeException("Cannot open .xlsx (not a valid zip): {$path}");
+        $code = $zip->open($path);
+        if ($code !== true) {
+            // $code is a ZipArchive::ER_* constant. Surface the real reason instead of always
+            // blaming the file — e.g. ER_OPEN/ER_READ mean a permission problem, not corruption.
+            throw new RuntimeException(sprintf(
+                'ZipArchive could not open %s — %s (code %d). %s',
+                $path,
+                $this->zipErrorMeaning((int) $code),
+                (int) $code,
+                is_readable($path) ? '' : 'The file is not readable by the current user — chmod 644 it.'
+            ));
         }
 
         $shared = $this->readSharedStrings($zip);
@@ -221,6 +243,24 @@ class ImportVehicleExpenses extends Command
             yield $rowIndex => $cells;
         }
         $reader->close();
+    }
+
+    /**
+     * Human-readable meaning for a ZipArchive::open() error code, so a failure names the real cause
+     * (permission vs. missing vs. genuinely-not-a-zip) instead of always reading as corruption.
+     */
+    private function zipErrorMeaning(int $code): string
+    {
+        return match ($code) {
+            ZipArchive::ER_NOENT => 'file does not exist',
+            ZipArchive::ER_OPEN  => 'cannot open file (permission denied?)',
+            ZipArchive::ER_READ  => 'read error (permission denied?)',
+            ZipArchive::ER_SEEK  => 'seek error',
+            ZipArchive::ER_NOZIP => 'not a valid zip archive (file may be corrupt or not a real .xlsx)',
+            ZipArchive::ER_INCONS => 'zip archive inconsistent / corrupt',
+            ZipArchive::ER_MEMORY => 'out of memory',
+            default => 'unknown error',
+        };
     }
 
     /**

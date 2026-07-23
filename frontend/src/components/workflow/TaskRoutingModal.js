@@ -46,11 +46,11 @@ const fmtDay = (iso) => {
   }
 };
 
-// Workshop confirmation verdicts — the technician's per-fault review at the In Workshop stage. Only
-// `confirmed` triggers recurring-fault intelligence server-side; `not_found` records that the reported
-// fault does not exist (and blocks Mark fixed). `different_cause` is retained in CONFIRM_TONE only so
-// legacy stamps still render, but it's no longer an offered verdict.
-const CONFIRM_VERDICTS = ['confirmed', 'not_found'];
+// Workshop confirmation verdict — the technician's per-fault review at the In Workshop stage. `confirmed`
+// is the only offered verdict; it triggers recurring-fault intelligence server-side. The "not a real fault"
+// outcome is the separate Incorrect action (openDispute → /incorrect). `not_found` / `different_cause` are
+// retained in CONFIRM_TONE only so legacy stamps still render; they can no longer be selected.
+const CONFIRM_VERDICTS = ['confirmed'];
 const CONFIRM_TONE = {
   confirmed:       { icon: '✓', active: 'bg-emerald-600 text-white ring-emerald-600', idle: 'bg-white text-emerald-700 ring-emerald-300 hover:bg-emerald-50' },
   not_found:       { icon: '∅', active: 'bg-slate-600 text-white ring-slate-600', idle: 'bg-white text-slate-600 ring-slate-300 hover:bg-slate-100' },
@@ -87,8 +87,8 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
   const [fixBusy, setFixBusy] = useState(false);
   const [fixError, setFixError] = useState(null);
 
-  // "Mark incorrect" — a delegate overrules the inspector, ruling an inspector-flagged fault a
-  // mis-diagnosis. Offered only In Workshop (under_repair) on inspector-source faults. Reason is required.
+  // "Incorrect" — the single "not a real fault" outcome (replaces the old Not-found verdict + Mark-incorrect
+  // override). Offered only In Workshop (under_repair), on a fault from any source. Reason is required.
   const [disputeTask, setDisputeTask] = useState(null);
   const [disputeReason, setDisputeReason] = useState('');
   const [disputeBusy, setDisputeBusy] = useState(false);
@@ -156,11 +156,8 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
   const confirmTask = async (task, confirmation_status) => {
     setBusyId(task.id);
     setError(null);
-    // A fault reviewed "Not found" doesn't exist, so it can't be marked fixed — if the fix-evidence
-    // panel was already open for it, close it now so the stale panel can't submit a completion.
-    if (confirmation_status === 'not_found' && fixTask?.id === task.id) closeFix();
-    // Once CONFIRMED to exist, the fault can no longer be overruled as a mis-diagnosis — close any
-    // "Mark incorrect" panel left open for it so the stale panel can't submit an override.
+    // Once CONFIRMED to exist, the fault can no longer be ruled Incorrect — close any Incorrect panel
+    // left open for it so the stale panel can't submit an override.
     if (confirmation_status === 'confirmed' && disputeTask?.id === task.id) closeDispute();
     try {
       apply(await api.post(`/maintenance-tasks/${task.id}/confirm`, { confirmation_status }));
@@ -216,10 +213,10 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
 
   const submitFix = async () => {
     if (!fixTask || !fixValid) return;
-    // Guard against a stale panel: if the verdict has since flipped to "Not found", the fault doesn't
-    // exist and can't be marked fixed. Re-check the LIVE task (fixTask is a snapshot from open time).
+    // Guard against a stale panel: if the fault was ruled Incorrect since this panel opened, it's no longer
+    // a real fault and can't be marked fixed. Re-check the LIVE task (fixTask is a snapshot from open time).
     const liveTask = tasks.find((x) => x.id === fixTask.id) || fixTask;
-    if (liveTask.confirmation_status === 'not_found') {
+    if (liveTask.is_incorrect || liveTask.status === 'cancelled') {
       setFixError(t('workflow.task.review.notFoundCannotFix'));
       return;
     }
@@ -249,13 +246,13 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
     }
   };
 
-  // ── "Mark incorrect" — delegate disputes an inspector fault (In Workshop only) ───────────────────
+  // ── "Incorrect" — rule a fault a non-issue (In Workshop only, any source) ────────────────────────
   const openDispute = (task) => { setDisputeTask(task); setDisputeReason(''); setDisputeError(null); };
   const closeDispute = () => { setDisputeTask(null); setDisputeReason(''); setDisputeError(null); };
   const submitDispute = async () => {
     if (!disputeTask || disputeReason.trim() === '') return;
-    // Guard against a stale panel: a fault the workshop has since CONFIRMED can't be overruled as a
-    // mis-diagnosis. Re-check the LIVE task (disputeTask is a snapshot from open time).
+    // Guard against a stale panel: a fault the workshop has since CONFIRMED can't be ruled Incorrect.
+    // Re-check the LIVE task (disputeTask is a snapshot from open time).
     const liveTask = tasks.find((x) => x.id === disputeTask.id) || disputeTask;
     if (liveTask.confirmation_status === 'confirmed') {
       setDisputeError(t('workflow.task.review.confirmedCannotDispute'));
@@ -512,11 +509,11 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
 
             const isFixing = fixTask?.id === task.id;
             const isDisputing = disputeTask?.id === task.id;
-            // "Mark incorrect" is a delegate's override of the inspector — offered ONLY while the car is
-            // actually In Workshop, and only on faults the inspector raised (a garage-found fault isn't
-            // his call to overrule). Once the workshop has CONFIRMED the fault exists, it can no longer be
-            // overruled as a mis-diagnosis. The whole panel is already delegate-gated (opened via canRoute).
-            const canDispute = wfStatus === 'under_repair' && task.source === 'inspector' && !terminal
+            // "Incorrect" — the single "not a real fault" outcome — offered ONLY while the car is actually
+            // In Workshop, on a fault from ANY source (it replaces the old Not-found verdict too). Once the
+            // workshop has CONFIRMED the fault exists, it can no longer be ruled incorrect. The whole panel
+            // is already delegate-gated (opened via canRoute).
+            const canDispute = wfStatus === 'under_repair' && !terminal
               && task.confirmation_status !== 'confirmed';
 
             return (
@@ -556,8 +553,8 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
                           </span>
                         </Tooltip>
                       )}
-                      {/* Delegate overruled the inspector — a mis-diagnosis, distinct from a plain cancel.
-                          Hover/focus the badge to read WHY it was rejected (the delegate's reason). */}
+                      {/* Fault ruled Incorrect — not a real fault, distinct from a plain cancel.
+                          Hover/focus the badge to read WHY it was rejected (the required reason). */}
                       {task.is_incorrect && (
                         <Tooltip content={task.incorrect_reason}>
                           <span className="inline-flex cursor-help items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 font-medium text-red-700 ring-1 ring-inset ring-red-200">
@@ -586,14 +583,13 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
                       <>
                         {/* "Mark fixed" only appears once the car is actually at the garage — in earlier
                             stages (awaiting dispatch / in transit) there's nothing to mark fixed yet.
-                            A fault reviewed "Not found" doesn't exist, so there's nothing to fix — the
-                            button is withheld. Opens the fix-evidence panel rather than completing outright. */}
-                        {carAtGarage && task.repair_gate !== 'pending' && task.confirmation_status !== 'not_found' && (
+                            Opens the fix-evidence panel rather than completing outright. */}
+                        {carAtGarage && task.repair_gate !== 'pending' && (
                           <Button size="sm" variant="success" disabled={busy || rowBusy || fixTask != null || disputeTask != null} onClick={() => openFix(task)}>
                             {t('workflow.task.complete')}
                           </Button>
                         )}
-                        {/* Delegate overrules the inspector — In Workshop only, on his own faults. */}
+                        {/* Incorrect — the single "not a real fault" outcome, In Workshop, any source. */}
                         {canDispute && (
                           <Button size="sm" variant="ghost" disabled={busy || rowBusy || fixTask != null || disputeTask != null} onClick={() => openDispute(task)}>
                             {t('workflow.task.markIncorrect')}
@@ -749,7 +745,7 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
                   </div>
                 )}
 
-                {/* Mark incorrect — the delegate's reason for overruling the inspector (mandatory). */}
+                {/* Incorrect — the required reason this is not a real fault. */}
                 {isDisputing && (
                   <div className="mt-3 space-y-2 rounded-lg bg-red-50/60 p-3 ring-1 ring-inset ring-red-200">
                     <p className="text-[11px] font-semibold uppercase tracking-wide text-red-700">{t('workflow.task.markIncorrect')}</p>

@@ -319,7 +319,8 @@ class MaintenanceTaskService
             'confirmed_at'        => Carbon::now(),
         ])->save();
 
-        // Only a CONFIRMED fault is allowed to open a recurring-fault review case.
+        // Only a CONFIRMED fault is allowed to open a recurring-fault review case. (Confirmed is now the
+        // only accepted verdict — the "not a real fault" outcome is the separate Incorrect path.)
         if ($status === MaintenanceTask::CONFIRM_CONFIRMED) {
             $review = $this->recurring->onFaultConfirmed($task, $actor);
 
@@ -330,84 +331,7 @@ class MaintenanceTaskService
             }
         }
 
-        // NOT FOUND → the reported fault does not exist. Close it as "not found" (never repaired, never
-        // fixed) if it isn't already terminal. The real issue, if any, is captured via addDifferentFault().
-        if ($status === MaintenanceTask::CONFIRM_NOT_FOUND && ! $task->isTerminal()) {
-            $this->setStatus($task, MaintenanceTask::STATUS_NOT_FOUND, $actor, $note);
-        }
-
         return $task->fresh(['confirmedBy', 'currentVendor', 'repairGateBy', 'recurrencePreviousTask.currentVendor']);
-    }
-
-    /**
-     * "Different fault" — the reviewed fault was Not found, but the technician believes the real issue is a
-     * DIFFERENT fault. Raise a new fault on the SAME ticket, linked back to the original (derived_from) for
-     * history, and (single-garage) attach it to the car's current garage. The original stays Not found —
-     * it is NEVER marked fixed. Returns the new fault.
-     *
-     * @param array{symptom:string, category_key?:?string, severity?:?string, root_cause?:?string, notes?:?string} $data
-     */
-    public function addDifferentFault(MaintenanceTask $original, User $actor, array $data): MaintenanceTask
-    {
-        $symptom = trim((string) ($data['symptom'] ?? ''));
-        if ($symptom === '') {
-            throw new WorkflowTransitionException('Describe the different fault before adding it.', ['field' => 'symptom']);
-        }
-        if ($original->confirmation_status !== MaintenanceTask::CONFIRM_NOT_FOUND) {
-            throw new WorkflowTransitionException('A different fault can only be raised from a fault reviewed as Not found.', ['field' => 'confirmation_status']);
-        }
-
-        $ticket = $original->maintenance;
-
-        $new = new MaintenanceTask([
-            'maintenance_id'       => $original->maintenance_id,
-            'vehicle_id'           => $original->vehicle_id,
-            'symptom'              => $symptom,
-            'category_key'         => $data['category_key'] ?? null,
-            'source'               => Maintenance::FINDING_GARAGE, // discovered in the workshop
-            'severity'             => $this->normSeverity($data['severity'] ?? null) ?? $original->severity,
-            'root_cause'           => $data['root_cause'] ?? null,
-            'notes'                => $data['notes'] ?? null,
-            'status'               => MaintenanceTask::STATUS_PENDING,
-            'identified_by'        => $actor->id,
-            'identified_at'        => Carbon::now(),
-            'derived_from_task_id' => $original->id,
-        ]);
-        $new->save();
-
-        // Record it in the ticket's findings JSON too, so it is a first-class garage finding (line-item
-        // linking, history surfaces) — mirroring addGarageFindings, with the "turned out to be" provenance.
-        if ($ticket) {
-            $findings = is_array($ticket->findings) ? $ticket->findings : [];
-            $findings[] = [
-                'text'         => $symptom,
-                'source'       => Maintenance::FINDING_GARAGE,
-                'severity'     => $new->severity,
-                'root_cause'   => $new->root_cause,
-                'by'           => $actor->name,
-                'garage'       => $ticket->garage,
-                'at'           => Carbon::now()->toIso8601String(),
-                'derived_from' => $original->symptom,
-            ];
-            $ticket->findings = $findings;
-            $ticket->saveQuietly();
-        }
-
-        $this->log->recordTask($new, VehicleLogEvent::EVENT_TASK_IDENTIFIED, $actor, [
-            'description' => 'Different fault raised: "' . $symptom . '" (from Not-found "' . $original->symptom . '")',
-            'source_tag'  => $new->source,
-        ]);
-
-        // Single-garage invariant: if the car is already at a garage, the new fault joins its active stint.
-        if ($ticket && $ticket->vendor_id && in_array($ticket->workflow_status, self::GARAGE_PHASES, true)
-            && ! $new->openAssignment()->exists()) {
-            $this->assign($new, (int) $ticket->vendor_id, $actor);
-        }
-
-        // A brand-new reported fault → run the report-time recurrence background check on it too.
-        $this->recurring->flagPossibleRecurrence($new);
-
-        return $new->fresh(['currentVendor', 'derivedFrom']);
     }
 
     /**
@@ -606,10 +530,12 @@ class MaintenanceTaskService
     }
 
     /**
-     * Delegate DISPUTE — a supervisor (Waleed / Abdullah) overrules the inspector (Abo Marouf), ruling
-     * that a fault he flagged at inspection was NOT a real fault. This is only offered while the car is
-     * actually In Workshop (under_repair), where the garage has eyes on the car, and only on faults the
-     * inspector raised (source = inspector) — a garage-discovered fault isn't the inspector's call.
+     * INCORRECT — the single "this is not a real fault" outcome (merges the former "Not found" verdict and
+     * the delegate "mark incorrect" override into one path). A supervisor (Waleed / Abdullah) rules, while
+     * the car is In Workshop (under_repair) with the garage's eyes on it, that a reported fault does not
+     * exist. Applies to a fault from ANY source; when the fault was inspector-raised it doubles as an
+     * override of the inspector's diagnosis (surfaced on the mis-diagnosis oversight report, which filters
+     * to inspector-source faults). Reason is mandatory and the who/why is always stamped for the audit.
      *
      * FAULT-LEVEL ONLY — this cancels exactly ONE task and closes only THAT task's own garage stint
      * (maintenance_task_assignments is scoped per task). Every OTHER fault at the same garage keeps its
@@ -633,13 +559,6 @@ class MaintenanceTaskService
             throw new WorkflowTransitionException(
                 'A fault can only be marked incorrect while the car is In Workshop.',
                 ['field' => 'status', 'from' => $task->maintenance?->workflow_status],
-            );
-        }
-
-        if ($task->source !== Maintenance::FINDING_INSPECTOR) {
-            throw new WorkflowTransitionException(
-                'Only a fault raised by the inspector can be marked incorrect.',
-                ['field' => 'source', 'source' => $task->source],
             );
         }
 

@@ -44,14 +44,17 @@ class MaintenanceTask extends Model
 
     // ── Workshop confirmation verdict ───────────────────────────────────────────────────────────────
     // Recorded by the technician at the "In Workshop" (under_repair) stage: a reported fault is only a
-    // claim until the workshop physically checks it. ONLY `confirmed` may trigger recurring-fault
-    // intelligence — this is the gate that stops false duplicate alerts on unconfirmed reports.
+    // claim until the workshop physically checks it. The verdict is now binary — the workshop either
+    // CONFIRMS the fault (the only verdict that may trigger recurring-fault intelligence, the gate against
+    // false duplicate alerts) or rules it INCORRECT via markIncorrect() (→ cancelled, single not-a-real-
+    // fault path; see markIncorrect). `confirmed` is therefore the ONLY verdict accepted as new input.
     public const CONFIRM_CONFIRMED       = 'confirmed';       // the fault genuinely exists
-    public const CONFIRM_NOT_FOUND       = 'not_found';       // no fault found
-    public const CONFIRM_DIFFERENT_CAUSE = 'different_cause'; // a fault exists but the cause differs
+    // Legacy verdicts — no longer selectable; retained ONLY so historical rows still render/label. The
+    // "not a real fault" outcome is now the single Incorrect path (markIncorrect → cancelled), not a verdict.
+    public const CONFIRM_NOT_FOUND       = 'not_found';       // legacy: workshop found no fault
+    public const CONFIRM_DIFFERENT_CAUSE = 'different_cause'; // legacy: a fault existed but the cause differed
     public const CONFIRMATION_STATUSES = [
-        self::CONFIRM_CONFIRMED, self::CONFIRM_NOT_FOUND,
-        self::CONFIRM_DIFFERENT_CAUSE,
+        self::CONFIRM_CONFIRMED,
     ];
 
     // ── Recurring-fault REPAIR GATE ─────────────────────────────────────────────────────────────────

@@ -499,13 +499,11 @@ Route::middleware('auth:sanctum')->prefix('inspector-pad')->controller(Inspector
 // (with every task) so the board card refreshes whole. The Supervisor's dispatch authority.
 Route::middleware(['auth:sanctum', 'permission:maintenance.delegate'])->prefix('maintenance-tasks')->controller(MaintenanceWorkflowController::class)->group(function () {
     Route::post('/{task}/status', 'setTaskStatus');  // pending / in_progress / completed / cancelled
-    // In-Workshop only: the delegate overrules the inspector — this fault is a mis-diagnosis (see markIncorrect).
+    // In-Workshop only: the single "not a real fault" outcome — cancels the fault + stamps who/why (see markIncorrect).
     Route::post('/{task}/incorrect', 'markTaskIncorrect');
-    // In-Workshop confirmation verdict (confirmed / not_found / different_cause / needs_diagnosis). Only a
-    // `confirmed` fault opens a recurring-fault review — the gate against false duplicate alerts.
+    // In-Workshop confirmation — `confirmed` is the only verdict; it opens a recurring-fault review
+    // (the gate against false duplicate alerts). "Not a real fault" is the /incorrect path above.
     Route::post('/{task}/confirm', 'confirmTask');
-    // Raise a DIFFERENT fault from a Not-found one (linked for history; original stays Not found).
-    Route::post('/{task}/different-fault', 'addDifferentFault');
 });
 
 // Recurring-fault REPAIR GATE approval — a manager clears (or rejects) the repair of a fault that recurred

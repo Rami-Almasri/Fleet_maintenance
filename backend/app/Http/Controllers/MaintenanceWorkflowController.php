@@ -2767,9 +2767,10 @@ class MaintenanceWorkflowController extends Controller
     }
 
     /**
-     * WORKSHOP CONFIRMATION — the technician records a verdict on a reported fault while the car is In
-     * Workshop: confirmed / not_found / different_cause / needs_diagnosis. Only `confirmed` opens a
-     * recurring-fault review (RecurringFaultService). Non-blocking, independent of the repair status.
+     * WORKSHOP CONFIRMATION — the technician confirms a reported fault is real while the car is In Workshop.
+     * `confirmed` is the only accepted verdict; it opens a recurring-fault review (RecurringFaultService).
+     * The "not a real fault" outcome is the separate Incorrect path (markTaskIncorrect). Non-blocking,
+     * independent of the repair status.
      */
     public function confirmTask(Request $request, \App\Models\MaintenanceTask $task)
     {
@@ -2781,27 +2782,6 @@ class MaintenanceWorkflowController extends Controller
 
             $this->tasks->confirmFault($task, $data['confirmation_status'], $request->user(), $data['note'] ?? null);
             return $this->ticketFor($task, 'Fault review recorded');
-        });
-    }
-
-    /**
-     * Raise a DIFFERENT fault from one reviewed as Not found — the reported symptom wasn't there, but the
-     * real issue is this. Creates a new fault on the same ticket, linked to the original for history; the
-     * original stays Not found (never marked fixed).
-     */
-    public function addDifferentFault(Request $request, \App\Models\MaintenanceTask $task)
-    {
-        return $this->run(function () use ($request, $task) {
-            $data = $request->validate([
-                'symptom'      => ['required', 'string', 'max:255'],
-                'category_key' => ['nullable', 'string', 'max:40'],
-                'severity'     => ['nullable', 'string', 'max:20'],
-                'root_cause'   => ['nullable', 'string', 'max:255'],
-                'notes'        => ['nullable', 'string', 'max:2000'],
-            ]);
-
-            $this->tasks->addDifferentFault($task, $request->user(), $data);
-            return $this->ticketFor($task, 'Different fault added');
         });
     }
 
@@ -2824,9 +2804,10 @@ class MaintenanceWorkflowController extends Controller
     }
 
     /**
-     * Delegate DISPUTE — a supervisor (Waleed / Abdullah) rules an inspector-flagged fault a mis-diagnosis
-     * while the car is In Workshop. Drops it out of the must-fix set (→ cancelled) but stamps who/why so
-     * the override of the inspector's call stays auditable. Reason is mandatory.
+     * INCORRECT — a supervisor (Waleed / Abdullah) rules a reported fault (any source) is not a real fault
+     * while the car is In Workshop. The single "not a real fault" outcome: drops it out of the must-fix set
+     * (→ cancelled) and stamps who/why so it stays auditable (and, for inspector-raised faults, surfaces on
+     * the mis-diagnosis report). Reason is mandatory.
      */
     public function markTaskIncorrect(Request $request, \App\Models\MaintenanceTask $task)
     {
