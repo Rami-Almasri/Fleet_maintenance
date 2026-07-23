@@ -9,11 +9,11 @@ class SyncInsurance extends Command
 {
     protected $signature = 'sync:insurance';
 
-    protected $description = 'Import insurance expiry dates from the "F Insurance" tab into vehicle_registrations.';
+    protected $description = 'Import insurer + insurance/Mulkiya expiry from the "F Insurance" tab into vehicle_registrations.';
 
     public function handle(InsuranceImporter $importer): int
     {
-        $this->info('Reading the "F Insurance" tab and updating insurance expiry...');
+        $this->info('Reading the "F Insurance" tab and updating insurer + insurance/Mulkiya expiry...');
 
         $result = $importer->import();
 

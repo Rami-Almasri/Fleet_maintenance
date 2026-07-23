@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Vehicle;
 use App\Models\VehicleRegistration;
+use App\Models\Vendor;
 use Carbon\Carbon;
 use Throwable;
 
@@ -11,16 +12,20 @@ class InsuranceImporter
 {
     protected array $vehicleCache = [];
 
+    protected array $insurerCache = [];
+
     public function __construct(protected GoogleSheetsService $sheets)
     {
     }
 
     /**
      * Sync vehicle_registrations from the "F Insurance" tab — the source of truth for the
-     * Mulkiya (registration) expiry + mortgaged-by. INSURANCE (insurer, policy, expiry) now
-     * comes from the OfficeManager API (see OfficeManagerSync::upsertInsurance), so this no
-     * longer writes the insurance_* columns and can't blank them. Matched to a registration
-     * row by VIN (chasis_no); creates one if missing.
+     * Mulkiya (registration) expiry + mortgaged-by AND the car's INSURANCE (insurer + expiry).
+     * The OfficeManager API no longer owns insurance; this tab does. The tab carries an
+     * "Insurance Co." name (resolved to a vendor of type=insurance) and an "INSURANCE EXPIRY
+     * DATE"; it does NOT carry the policy number / issue date / type / deductible, so those
+     * insurance_* columns are simply left as-is (never blanked). Matched to a registration row
+     * by VIN (chasis_no); creates one if missing.
      *
      * @return array<string, mixed>
      */
@@ -61,8 +66,6 @@ class InsuranceImporter
             }
 
             try {
-                // NOTE: insurance_expiry / insurance_company are intentionally NOT written here
-                // anymore — the API owns insurance now. This tab only feeds Mulkiya + mortgaged-by.
                 $data = [
                     'vehicle_id'           => $this->resolveVehicle($vin),
                     'mortgaged_by'         => $this->strOrNull($this->cell($row, $map['mortgagedby'] ?? null)),
@@ -79,6 +82,18 @@ class InsuranceImporter
                     $data['expiry_date'] = $this->dateOrNull($this->cell($row, $map['mulkiyaexpirydate']), true);
                 }
 
+                // This tab is now the source of truth for the car's INSURANCE too.
+                // "Insurance Co." -> the insurer vendor (insurance_company_id, shown in the UI).
+                // "INSURANCE EXPIRY DATE" -> insurance_expiry (d/m/Y, e.g. 03/07/2026 = 3 Jul).
+                // Each is only written when its column is present, so a structural change can
+                // never wipe every car's insurer/expiry.
+                if (isset($map['insuranceco'])) {
+                    $data['insurance_company_id'] = $this->resolveInsurer($this->cell($row, $map['insuranceco']));
+                }
+                if (isset($map['insuranceexpirydate'])) {
+                    $data['insurance_expiry'] = $this->dateOrNull($this->cell($row, $map['insuranceexpirydate']), false);
+                }
+
                 $reg = VehicleRegistration::withTrashed()->updateOrCreate(['chasis_no' => $vin], $data);
                 $reg->wasRecentlyCreated ? $created++ : $updated++;
             } catch (Throwable $e) {
@@ -87,6 +102,27 @@ class InsuranceImporter
         }
 
         return compact('created', 'updated', 'skipped', 'protected', 'problems');
+    }
+
+    /**
+     * Resolve the sheet's "Insurance Co." name to a vendor of type=insurance, creating one
+     * on first sight (mirrors VendorInsuranceImporter). Returns null for a blank cell so an
+     * empty name never links a bogus vendor.
+     */
+    protected function resolveInsurer($rawName): ?int
+    {
+        $name = trim((string) $rawName);
+        if ($name === '') {
+            return null;
+        }
+        if (array_key_exists($name, $this->insurerCache)) {
+            return $this->insurerCache[$name];
+        }
+        $vendor = Vendor::firstOrCreate(
+            ['name' => $name, 'type' => 'insurance'],
+            ['active' => true, 'origin' => 'sheet']
+        );
+        return $this->insurerCache[$name] = $vendor->id;
     }
 
     protected function resolveVehicle($rawVin): ?int

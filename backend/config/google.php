@@ -77,7 +77,8 @@ return [
             'gid' => env('GOOGLE_SHEETS_REGISTRATIONS_GID'),
         ],
 
-        // Insurance expiry source ("F Insurance" tab). Header row 1.
+        // Insurance source ("F Insurance" tab): insurer ("Insurance Co."), insurance expiry,
+        // Mulkiya expiry + mortgaged-by. Owns insurance now (the API no longer does). Header row 1.
         'insurance' => [
             'id'  => env('GOOGLE_SHEETS_INSURANCE_ID'),
             'gid' => env('GOOGLE_SHEETS_INSURANCE_GID'),

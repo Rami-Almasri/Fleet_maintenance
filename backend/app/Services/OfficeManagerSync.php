@@ -216,10 +216,10 @@ class OfficeManagerSync
                 $created++;
             }
 
-            // Insurance is now sourced from the API (the F Insurance sheet keeps only the
-            // Mulkiya/registration expiry). Writes ONLY the insurance_* columns of the car's
-            // registration row, never the sheet-owned ones.
-            $this->upsertInsurance($vehicle, $row);
+            // Insurance (insurer + expiry) is now sourced from the "F Insurance" sheet, NOT the
+            // API (see InsuranceImporter). The API only carries the mortgage flag onto the car's
+            // registration row here; it never touches the sheet-owned insurance columns.
+            $this->upsertMortgage($vehicle, $row);
 
             if ($progress && $seen % 50 === 0) {
                 $progress($seen, $total);
@@ -236,7 +236,7 @@ class OfficeManagerSync
     /**
      * Map an OM API vehicle row to OUR vehicle columns — identity, operational data, specs
      * and the car card's rental defaults. Deliberately omits make/model/color: those belong
-     * to the sheet enrichment. (Insurance is handled separately by upsertInsurance().)
+     * to the sheet enrichment. (The mortgage flag is handled separately by upsertMortgage().)
      *
      * @return array<string,mixed>
      */
@@ -307,37 +307,28 @@ class OfficeManagerSync
     }
 
     /**
-     * Store the car's INSURANCE straight from the API onto its registration row. The API is
-     * now the source of truth for insurance (insurer, policy, issue/expiry, deductible,
-     * mortgage flag); the F Insurance sheet keeps only the Mulkiya/registration expiry +
-     * mortgaged-by name. So this writes ONLY the insurance_* columns and never touches the
-     * sheet-owned ones (expiry_date / status / fines / mortgaged_by).
+     * Store the car's MORTGAGE flag from the API onto its registration row. Insurance (insurer,
+     * policy, issue/expiry, type, deductible) is no longer sourced from the API — the "F Insurance"
+     * sheet owns it now (see InsuranceImporter). This writes ONLY is_mortgaged and never touches
+     * the sheet-owned columns (expiry_date / status / fines / mortgaged_by / insurance_*).
      *
      * Matched to a registration by vehicle_id, falling back to VIN (how the sheet keys its
      * rows) so the API and the sheet converge on one registration per car. A registration a
      * user entered by hand on the website (origin 'web') is left untouched.
      */
-    protected function upsertInsurance(Vehicle $vehicle, array $row): void
+    protected function upsertMortgage(Vehicle $vehicle, array $row): void
     {
-        $insurance = array_filter([
-            'insurance_company_no'  => $this->idStr($row['InsuranceCompanyNo'] ?? null),
-            'insurance_no'          => $this->strOrNull($row['InsuranceNo'] ?? null),
-            'insurance_issue_date'  => $this->date($row['InsuranceIssueDate'] ?? null),
-            'insurance_expiry'      => $this->date($row['InsuranceExpiaryDate'] ?? null),
-            'insurance_type'        => $this->strOrNull($row['InsurenceType'] ?? null),
-            'insurance_bear_amount' => $this->num($row['InsuranceBearAmount'] ?? null) ?: null,
-        ], fn ($v) => $v !== null);
-
         $mortgaged = $this->boolOrNull($row['IsMortgaged'] ?? null);
 
-        // Nothing useful to store and no mortgage flag — leave the row alone.
-        if (! $insurance && $mortgaged === null) {
+        // No mortgage flag from the API — nothing to store, leave the row alone.
+        if ($mortgaged === null) {
             return;
         }
-        if ($mortgaged !== null) {
-            $insurance['is_mortgaged'] = $mortgaged;
-        }
-        $insurance['synced_at'] = now();
+
+        $data = [
+            'is_mortgaged' => $mortgaged,
+            'synced_at'    => now(),
+        ];
 
         $vin = $vehicle->vin ? strtoupper(trim($vehicle->vin)) : null;
 
@@ -350,10 +341,10 @@ class OfficeManagerSync
             if ($reg->origin === 'web') {
                 return; // never clobber a manually-entered registration
             }
-            $insurance['vehicle_id'] = $vehicle->id; // link the row if the sheet left it unmatched
-            $reg->fill($insurance)->save();
+            $data['vehicle_id'] = $vehicle->id; // link the row if the sheet left it unmatched
+            $reg->fill($data)->save();
         } else {
-            VehicleRegistration::create($insurance + [
+            VehicleRegistration::create($data + [
                 'vehicle_id'  => $vehicle->id,
                 'chasis_no'   => $vin,
                 'external_id' => $vin ?: ('OMCAR:' . ($vehicle->car_serial ?? $vehicle->id)),
