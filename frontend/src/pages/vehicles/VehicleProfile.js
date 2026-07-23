@@ -26,6 +26,8 @@ import PlateHistory from './PlateHistory';
 import FinancialsHero from './FinancialsHero';
 import VehicleOverviewDashboard from './VehicleOverviewDashboard';
 import DualState, { PausedRibbon } from '../../components/ops/DualState';
+import { useCountUp } from '../../components/ui/Gauge';
+import './vehicle-hero.css';
 
 // Tone per maintenance-log event status (from the sheet's OUT/IN column).
 const EVENT_TONE = { OUT: 'amber', IN: 'green', 'Follow up': 'blue', 'Select garage': 'violet', 'In garage': 'red', Change: 'indigo', Delay: 'red', Test: 'gray', 'Under Test': 'gray', Delivery: 'green', 'In Our Park': 'green', 'Final QA': 'violet' };
@@ -469,13 +471,27 @@ function BridgeLine({ label, hint, value, labelClass = 'text-slate-600', valueCl
 }
 
 // A quiet "fact" chip for the flat header.
-function SpecPill({ label, value }) {
-  if (value === null || value === undefined || value === '') return null;
+// Count-up telemetry tile on the dossier command deck.
+function HeroStat({ label, value, unit }) {
+  const n = useCountUp(Number(value) || 0, 1400);
   return (
-    <div className="rounded-lg bg-slate-50 px-3 py-1.5 ring-1 ring-inset ring-slate-200">
-      <span className="block text-[10px] font-medium uppercase tracking-wide text-slate-400">{label}</span>
-      <span className="text-sm font-semibold text-slate-800">{value}</span>
+    <div className="vhero-stat">
+      <div className="lbl">{label}</div>
+      <div className="num">
+        {Math.round(n).toLocaleString()}
+        {unit && <span className="unit">{unit}</span>}
+      </div>
     </div>
+  );
+}
+
+// One glowing health LED (Registration / Insurance / Service) with a short caption.
+function HeroLed({ label, status, detail }) {
+  return (
+    <span className="vhero-led">
+      <span className={`led ${status}`} aria-hidden />
+      <span><b>{label}</b>{detail ? ` · ${detail}` : ''}</span>
+    </span>
   );
 }
 
@@ -703,6 +719,32 @@ export default function VehicleProfile() {
   const analytics = data.maintenance_analytics || [];
   const stats = data.stats || {};
 
+  // ── Command-deck telemetry ── everything below is derived from the payload already loaded.
+  const totalFaults = faultSegments.reduce((a, s) => a + (s.value || 0), 0);
+  // Health LEDs — same thresholds as the Overview health card (30-day amber window).
+  const ledFromDays = (label, d) => ({
+    label,
+    status: d == null ? 'unknown' : d < 0 ? 'bad' : d < 30 ? 'warn' : 'good',
+    detail: d == null ? 'no record' : d < 0 ? `expired ${num(Math.abs(d))}d ago` : `${num(d)}d left`,
+  });
+  const svcStatus = v.service_status;
+  const heroLeds = [
+    ledFromDays('Registration', reg ? reg.registration_days_left : null),
+    ledFromDays('Insurance', reg ? reg.insurance_days_left : null),
+    {
+      label: 'Service',
+      status: !svcStatus || svcStatus.status === 'no_data' ? 'unknown' : svcStatus.status === 'service_due' ? 'bad' : 'good',
+      detail: !svcStatus || svcStatus.status === 'no_data' ? 'no data'
+        : svcStatus.status === 'service_due' ? `${num(svcStatus.overdue_km)} km overdue` : `${num(svcStatus.remaining)} km left`,
+    },
+  ];
+  // Latest-activity ticker — newest unified-timeline entry, named with the same stage vocabulary.
+  const lastEvent = timeline[0] || null;
+  const lastEventLabel = !lastEvent ? null
+    : lastEvent.kind === 'workflow'
+      ? (WF_STATUS_META[lastEvent.workflow_status]?.label || wfStage(lastEvent.event_type))
+      : (lastEvent.event || 'Workshop event');
+
   return (
     <div className="opx py-8">
       <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
@@ -712,64 +754,95 @@ export default function VehicleProfile() {
           Vehicles
         </Link>
 
-        {/* Hero header — Cockpit+ command panel: vehicle identity + live availability. */}
-        <div className="opx-panel" style={{ overflow: 'visible' }}>
-          <div className="opx-panel-bd" style={{ padding: 0 }}>
-            <div className="flex flex-col gap-6 p-6 lg:flex-row lg:items-start lg:justify-between sm:p-7">
-              {/* Identity */}
+        {/* Hero header — the "command deck": a living dark cockpit panel. Drifting aurora glows,
+            blueprint grid + scanline behind; count-up telemetry tiles, glowing health LEDs and a
+            latest-activity ticker fill the identity column; the fault donut sits on frosted glass
+            so its light-theme chart colours stay legible in both themes. */}
+        <div className="vhero">
+          <span aria-hidden className="vhero-aurora a" />
+          <span aria-hidden className="vhero-aurora b" />
+          <div className="relative flex flex-col gap-6 p-6 sm:p-7 lg:flex-row lg:items-stretch lg:justify-between">
+            {/* Identity + live telemetry */}
+            <div className="vhero-in min-w-0 flex-1">
               <div className="flex items-start gap-4">
-                <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl"
-                  style={{ background: 'linear-gradient(150deg,var(--cyan),var(--brand))', color: 'var(--void)', boxShadow: '0 12px 30px -14px var(--cyan)' }}>
+                <div className="vhero-badge">
                   <svg className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M5 13l1.5-4.5A2 2 0 0 1 8.4 7h7.2a2 2 0 0 1 1.9 1.5L19 13m-14 0h14m-14 0a2 2 0 0 0-2 2v3a1 1 0 0 0 1 1h1m14-6a2 2 0 0 1 2 2v3a1 1 0 0 1-1 1h-1m-12 0v1a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-1m2 0h10M7.5 16h.01M16.5 16h.01" />
                   </svg>
                 </div>
                 <div className="min-w-0">
-                  <div className="opx-hint" style={{ letterSpacing: '.16em', textTransform: 'uppercase', marginBottom: 6 }}>Vehicle Dossier</div>
-                  <h1 className="font-display text-2xl font-bold tracking-tight sm:text-3xl" style={{ color: 'var(--ink)', letterSpacing: '-.02em' }}>{[v.make, v.model].filter(Boolean).join(' ') || 'Vehicle'}</h1>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '.2em', textTransform: 'uppercase', color: '#7f92b8' }}>Vehicle Dossier</span>
+                    <span className="vhero-live"><span className="dot" />LIVE</span>
+                  </div>
+                  <h1 className="mt-1.5 font-display text-2xl font-bold tracking-tight text-white sm:text-3xl" style={{ letterSpacing: '-.02em', textShadow: '0 2px 24px rgba(34,211,238,.25)' }}>
+                    {[v.make, v.model].filter(Boolean).join(' ') || 'Vehicle'}
+                  </h1>
                   <div className="mt-2.5 flex flex-wrap items-center gap-2.5">
                     {(v.plate_display || v.plate_no) && <span className="opx-plate" style={{ fontSize: 13, padding: '3px 10px' }}>{v.plate_display || v.plate_no}</span>}
-                    {v.vin && <span className="mono" style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>{v.vin}</span>}
+                    {v.vin && <span className="mono" style={{ fontSize: 11.5, color: '#7f92b8' }}>{v.vin}</span>}
+                    {/* compact spec line — year / category / colour (odometer graduated to a live tile below) */}
+                    {[v.year, v.category, v.color].some(Boolean) && (
+                      <span style={{ fontSize: 12, color: '#93a7cd' }}>{[v.year, v.category, v.color].filter(Boolean).join(' · ')}</span>
+                    )}
                   </div>
                   <div className="mt-3.5 flex flex-wrap items-center gap-2">
                     {/* Canonical dual-state — the same rental + maintenance identity used across the app. */}
                     <DualState vehicle={{ ...v, av_state: av.state }} size="md" />
                     {v.for_sale && <Badge tone="amber" dot>For sale</Badge>}
                   </div>
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    <SpecPill label="Year" value={v.year} />
-                    <SpecPill label="Odometer" value={v.odometer != null ? `${num(v.odometer)} km` : null} />
-                    <SpecPill label="Category" value={v.category} />
-                    <SpecPill label="Color" value={v.color} />
-                  </div>
                 </div>
               </div>
 
-              {/* Fault distribution — cockpit telemetry block */}
-              <div className="w-full shrink-0 rounded-2xl p-5 lg:w-96"
-                style={{ background: 'var(--ov)', border: '1px solid var(--line)' }}>
-                <div className="opx-hint" style={{ letterSpacing: '.14em', textTransform: 'uppercase', marginBottom: 4 }}>Fault Distribution</div>
-                <p className="mb-4 text-xs" style={{ color: 'var(--ink-3)' }}>Each fault by share of all faults recorded</p>
-                {faultSegments.length ? (
-                  <CompositionDonut
-                    className="!flex-col !gap-5"
-                    segments={faultSegments}
-                    centerLabel="Faults"
-                    size={168}
-                    stroke={24}
-                    format={(n) => Math.round(n).toLocaleString()}
-                  />
-                ) : (
-                  <div className="flex h-[168px] items-center justify-center text-xs" style={{ color: 'var(--ink-3)' }}>
-                    No fault history recorded yet.
-                  </div>
-                )}
-                {/* Always-available: generate the printable Vehicle Report (Save-as-PDF) from this dossier. */}
-                <div className="mt-5">
-                  <Button variant="secondary" className="w-full justify-center" onClick={() => openVehicleProfileReport(data)}>
-                    <Icon.Download className="h-4 w-4" /> Vehicle Report
-                  </Button>
+              {/* Telemetry tiles — the numbers count up on load */}
+              <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <HeroStat label="Odometer" value={v.odometer} unit="km" />
+                <HeroStat label="Rentals" value={contractTypeCounts.C || 0} />
+                <HeroStat label="Workshop Visits" value={maintenance.length} />
+                <HeroStat label="Faults Logged" value={totalFaults} />
+              </div>
+
+              {/* Health LEDs — registration / insurance / service, glowing by urgency */}
+              <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-2">
+                {heroLeds.map((l) => <HeroLed key={l.label} {...l} />)}
+              </div>
+
+              {/* Latest activity ticker */}
+              {lastEvent && (
+                <div className="vhero-ticker">
+                  <span className="vhero-live"><span className="dot" /></span>
+                  <span className="min-w-0 truncate">
+                    Latest activity — <span className="what">{lastEventLabel}</span>
+                    {lastEvent.garage ? <> at <span className="what">{lastEvent.garage}</span></> : null}
+                    {lastEvent.date ? <span style={{ color: '#7f92b8' }}> · {fmtDate(lastEvent.date)}</span> : null}
+                  </span>
                 </div>
+              )}
+            </div>
+
+            {/* Fault distribution — frosted glass telemetry card */}
+            <div className="vhero-glass w-full shrink-0 p-5 lg:w-96">
+              <div className="text-[10px] font-semibold uppercase text-slate-400" style={{ letterSpacing: '.14em', marginBottom: 4 }}>Fault Distribution</div>
+              <p className="mb-4 text-xs text-slate-500">Each fault by share of all faults recorded</p>
+              {faultSegments.length ? (
+                <CompositionDonut
+                  className="!flex-col !gap-5"
+                  segments={faultSegments}
+                  centerLabel="Faults"
+                  size={168}
+                  stroke={24}
+                  format={(n) => Math.round(n).toLocaleString()}
+                />
+              ) : (
+                <div className="flex h-[168px] items-center justify-center text-xs text-slate-400">
+                  No fault history recorded yet.
+                </div>
+              )}
+              {/* Always-available: generate the printable Vehicle Report (Save-as-PDF) from this dossier. */}
+              <div className="mt-5">
+                <Button variant="secondary" className="w-full justify-center" onClick={() => openVehicleProfileReport(data)}>
+                  <Icon.Download className="h-4 w-4" /> Vehicle Report
+                </Button>
               </div>
             </div>
           </div>

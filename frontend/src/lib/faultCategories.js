@@ -42,8 +42,17 @@ export function classifyVisit(visit) {
   return OTHER;
 }
 
-// Chart-palette keys cycled across individual fault slices (faultTagSegments).
-const FAULT_PALETTE = ['blue', 'violet', 'amber', 'red', 'teal', 'purple', 'orange', 'cyan', 'emerald', 'slate'];
+// Fixed hex palette for the individual fault slices. NOT the shared chartUtils keys — after the
+// brand repaint, violet/indigo resolve to yellows there, which put three near-identical
+// yellow slices side by side on this donut. This order is CVD-validated (worst adjacent
+// ΔE 24.2 on the light card surface): assign in order, never reshuffle; overflow past the
+// palette folds into "Other" rather than inventing new hues.
+const FAULT_PALETTE = ['#2a78d6', '#1baf7a', '#eda100', '#008300', '#4a3aa7', '#e34948', '#e87ba4', '#eb6834'];
+// The non-categories: "Unspecified" (visits with no fault recorded) must read as missing data —
+// muted, never the loudest hue even when it's the biggest slice. "Other" (folded long tail) is a
+// darker gray so the two stay distinct where the ring wraps.
+const UNSPECIFIED_COLOR = '#94a3b8';
+const OTHER_COLOR = '#64748b';
 
 // Per-FAULT distribution — instead of bucketing each visit into one broad mechanical category,
 // this tallies the INDIVIDUAL fault tags recorded across all visits, so a car's donut shows each
@@ -67,16 +76,24 @@ export function faultTagSegments(visits = [], { top = 10 } = {}) {
     .map((label) => ({ key: label, label, value: totals[label] }))
     .sort((a, b) => b.value - a.value);
 
-  const withColor = (s, i) => ({ ...s, color: FAULT_PALETTE[i % FAULT_PALETTE.length] });
-  if (sorted.length <= top) return sorted.map(withColor);
+  // Never show more distinct slices than the palette has hues — the excess folds into "Other".
+  const limit = Math.min(top, FAULT_PALETTE.length);
 
-  const head = sorted.slice(0, top - 1).map(withColor);
-  const tail = sorted.slice(top - 1);
+  // Hues go to REAL faults in fixed palette order; "Unspecified" stays gray and consumes no slot.
+  let slot = 0;
+  const withColor = (s) => ({
+    ...s,
+    color: s.label === 'Unspecified' ? UNSPECIFIED_COLOR : FAULT_PALETTE[slot++],
+  });
+  if (sorted.length <= limit) return sorted.map(withColor);
+
+  const head = sorted.slice(0, limit - 1).map(withColor);
+  const tail = sorted.slice(limit - 1);
   head.push({
     key: '__other',
     label: `Other (${tail.length} types)`,
     value: tail.reduce((a, s) => a + s.value, 0),
-    color: 'slate',
+    color: OTHER_COLOR,
     // The folded long-tail, so the legend's "Other" row can expand to reveal each type's share.
     children: tail.map((s) => ({ key: s.key, label: s.label, value: s.value })),
   });

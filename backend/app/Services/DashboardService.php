@@ -837,6 +837,110 @@ class DashboardService
     }
 
     /**
+     * Drill-down for ONE fault category on the Fault Leaderboard: "which cars fixed this fault the most".
+     *
+     * Given a canonical category label (e.g. "Brakes"), returns the vehicles ranked by how many times
+     * that fault was recorded against them, combining the SAME two sources topFaults() folds together —
+     * our maintenance system (`maintenance_tasks.symptom`) and the historical workshop sheet
+     * (`maintenances` → `maintenance_reasons.reason_en`). Each car carries its combined count, the
+     * per-source split, its worst severity for this fault, and when it was first/last seen. Sold /
+     * disposed / orphan cars are excluded exactly as on the leaderboard, so the drill-down reconciles
+     * with the parent bar's `cars` figure.
+     *
+     * @return array{fault:string, total:int, cars:int, items:array<int,array<string,mixed>>}
+     */
+    public function faultCars(string $fault, int $limit = 12): array
+    {
+        // Normalise the requested label so "brakes" / "Brakes" both resolve; unknown labels → empty.
+        $target = null;
+        foreach (array_merge(array_column(self::FAULT_CATEGORIES, 0), ['Other']) as $label) {
+            if (strcasecmp($label, trim($fault)) === 0) {
+                $target = $label;
+                break;
+            }
+        }
+        if ($target === null) {
+            return ['fault' => trim($fault), 'total' => 0, 'cars' => 0, 'items' => []];
+        }
+
+        return $this->remember("fault_cars:v1:{$target}:{$limit}", self::CACHE_TTL, function () use ($target, $limit) {
+            // vehicle_id => running tally for the requested category only.
+            $cars = [];
+            $bump = function (int $vid, ?string $plate, ?string $make, ?string $model, int $count, int $sevRank, string $source, ?string $when) use (&$cars) {
+                $c = $cars[$vid] ?? [
+                    'id' => $vid, 'plate' => $plate, 'make' => $make, 'model' => $model,
+                    'count' => 0, 'sheet' => 0, 'system' => 0, 'sevRank' => 0, 'first' => null, 'last' => null,
+                ];
+                $c['count']   += $count;
+                $c[$source]   += $count;
+                $c['sevRank']  = max($c['sevRank'], $sevRank);
+                if ($when) {
+                    $c['first'] = $c['first'] === null ? $when : min($c['first'], $when);
+                    $c['last']  = $c['last'] === null ? $when : max($c['last'], $when);
+                }
+                $cars[$vid] = $c;
+            };
+
+            // ── Source A: OUR SYSTEM (maintenance workflow tasks) ───────────────────────────────────
+            DB::table('maintenance_tasks as t')
+                ->join('vehicles as v', 'v.id', '=', 't.vehicle_id')
+                ->whereNull('v.deleted_at')
+                ->whereNotIn('v.status', PlateResolver::GONE_STATUSES)
+                ->whereNotIn('t.status', MaintenanceTask::NON_REPAIR_TERMINAL)
+                ->whereNotNull('t.symptom')->where('t.symptom', '<>', '')
+                ->select('t.symptom', 't.severity', 't.vehicle_id', 'v.plate_no', 'v.make', 'v.model', DB::raw('MAX(t.created_at) AS last_at'), DB::raw('COUNT(*) AS c'))
+                ->groupBy('t.symptom', 't.severity', 't.vehicle_id', 'v.plate_no', 'v.make', 'v.model')
+                ->get()
+                ->each(function ($r) use ($target, $bump) {
+                    if (self::faultCategory($r->symptom) !== $target) {
+                        return;
+                    }
+                    $bump((int) $r->vehicle_id, $r->plate_no, $r->make, $r->model, (int) $r->c, self::severityRank($r->severity), 'system', $r->last_at ? (string) $r->last_at : null);
+                });
+
+            // ── Source B: THE SHEET + manual workshop log (classified by reason) ─────────────────────
+            DB::table('maintenances as m')
+                ->join('vehicles as v', 'v.id', '=', 'm.vehicle_id')
+                ->join('maintenance_reasons as r', 'r.id', '=', 'm.maintenance_reason_id')
+                ->whereNull('v.deleted_at')
+                ->whereNotIn('v.status', PlateResolver::GONE_STATUSES)
+                ->whereIn('m.origin', Maintenance::WORKSHOP_LOG_ORIGINS)
+                ->select('r.reason_en', 'r.level', 'm.vehicle_id', 'v.plate_no', 'v.make', 'v.model', DB::raw('MAX(m.out_date) AS last_at'), DB::raw('COUNT(*) AS c'))
+                ->groupBy('r.reason_en', 'r.level', 'm.vehicle_id', 'v.plate_no', 'v.make', 'v.model')
+                ->get()
+                ->each(function ($r) use ($target, $bump) {
+                    if (self::faultCategory($r->reason_en) !== $target) {
+                        return;
+                    }
+                    $bump((int) $r->vehicle_id, $r->plate_no, $r->make, $r->model, (int) $r->c, self::severityRank($r->level), 'sheet', $r->last_at ? (string) $r->last_at : null);
+                });
+
+            $ranked = collect($cars)->sort(function ($a, $b) {
+                return [$b['count'], $b['sevRank'], $a['id']] <=> [$a['count'], $a['sevRank'], $b['id']];
+            })->values();
+
+            $items = $ranked->take($limit)->map(fn ($c) => [
+                'id'       => (int) $c['id'],
+                'plate'    => $c['plate'],
+                'car'      => trim(($c['make'] ?? '') . ' ' . ($c['model'] ?? '')) ?: null,
+                'count'    => (int) $c['count'],
+                'sheet'    => (int) $c['sheet'],
+                'system'   => (int) $c['system'],
+                'severity' => self::severityForRank((int) $c['sevRank']),
+                'first'    => $c['first'] ? substr((string) $c['first'], 0, 10) : null,
+                'last'     => $c['last'] ? substr((string) $c['last'], 0, 10) : null,
+            ])->all();
+
+            return [
+                'fault' => $target,
+                'total' => (int) $ranked->sum('count'),
+                'cars'  => $ranked->count(),
+                'items' => $items,
+            ];
+        });
+    }
+
+    /**
      * The full "Most in Maintenance" list — EVERY in-fleet car that saw the workshop within the window,
      * with how OFTEN (visits) and how LONG (days in shop). BOTH figures come from the ONE canonical
      * source — FleetUtilizationService via canonicalMaintenanceDays() — so every row is byte-identical
@@ -850,22 +954,29 @@ class DashboardService
      *
      * @return array{count:int, window_days:int, items:array<int,array<string,mixed>>}
      */
-    public function maintenanceHistory(int $days = 90): array
+    public function maintenanceHistory(int $days = 90, ?string $from = null, ?string $to = null): array
     {
-        return $this->remember("maint_history:{$days}", self::CACHE_TTL, function () use ($days) {
-            // days=0 → all-time (no trailing window); the whereDate cutoff below is skipped.
-            $allTime = $days <= 0;
-            $cutoff  = Carbon::today()->subDays($days)->toDateString();
+        // An explicit from/to date range (either bound) overrides the trailing `days` window.
+        $explicit = $from !== null || $to !== null;
+
+        return $this->remember("maint_history:{$days}:" . ($from ?? '') . ':' . ($to ?? ''), self::CACHE_TTL, function () use ($days, $from, $to, $explicit) {
+            // No explicit range and days=0 → all-time (no window); otherwise trailing `days` from today.
+            $allTime = ! $explicit && $days <= 0;
+
+            // Resolve the effective [winFrom, winTo] window. Explicit bounds win; else trailing window.
+            $winFrom = $explicit ? $from : ($allTime ? null : Carbon::today()->subDays($days)->toDateString());
+            $winTo   = $explicit ? $to   : null;
 
             // SINGLE SOURCE OF TRUTH for BOTH the visit count and the day count — the same Rental-is-King
-            // calculation Fleet Utilization uses, over the same window (null = all-time). Keyed by car.
-            $canonical = $this->canonicalMaintenanceDays($allTime ? null : $cutoff);
+            // calculation Fleet Utilization uses, over the same window (null,null = all-time). Keyed by car.
+            $canonical = $this->canonicalMaintenanceDays($winFrom, $winTo);
 
             // First/last workshop DATES (sheet + manual log) — timeline metadata only, attached per car.
             $dates = DB::table('maintenances as m')
                 ->whereIn('m.origin', Maintenance::WORKSHOP_LOG_ORIGINS)
                 ->whereNotNull('m.out_date')
-                ->when(! $allTime, fn ($q) => $q->whereDate('m.out_date', '>=', $cutoff))
+                ->when($winFrom !== null, fn ($q) => $q->whereDate('m.out_date', '>=', $winFrom))
+                ->when($winTo !== null, fn ($q) => $q->whereDate('m.out_date', '<=', $winTo))
                 ->whereIn('m.vehicle_id', array_keys($canonical) ?: [0])
                 ->select('m.vehicle_id', DB::raw('MIN(m.out_date) AS first_visit'), DB::raw('MAX(m.out_date) AS last_visit'))
                 ->groupBy('m.vehicle_id')
@@ -889,7 +1000,7 @@ class DashboardService
             ->values()
             ->all();
 
-            return ['count' => count($items), 'window_days' => $days, 'items' => $items];
+            return ['count' => count($items), 'window_days' => $days, 'from' => $winFrom, 'to' => $winTo, 'items' => $items];
         });
     }
 
@@ -988,12 +1099,15 @@ class DashboardService
      * is the SAME type-U visit set the row's visit count comes from (list length == the "N visits"
      * badge), each trip enriched with garage / issue / cost from the workshop log. Newest first.
      */
-    public function maintenanceHistoryVisits(int $vehicleId, int $days = 90): array
+    public function maintenanceHistoryVisits(int $vehicleId, int $days = 90, ?string $from = null, ?string $to = null): array
     {
-        $from = $days > 0 ? Carbon::today()->subDays($days)->toDateString() : null;
-        $out  = $this->fleetUtilization->maintenanceVisits($vehicleId, $from);
+        // Explicit from/to (either bound) overrides the trailing `days` window — must match maintenanceHistory().
+        $explicit = $from !== null || $to !== null;
+        $winFrom  = $explicit ? $from : ($days > 0 ? Carbon::today()->subDays($days)->toDateString() : null);
+        $winTo    = $explicit ? $to : null;
+        $out      = $this->fleetUtilization->maintenanceVisits($vehicleId, $winFrom, $winTo);
 
-        return ['vehicle_id' => $vehicleId, 'window_days' => $days, 'count' => $out['count'], 'items' => $out['items']];
+        return ['vehicle_id' => $vehicleId, 'window_days' => $days, 'from' => $winFrom, 'to' => $winTo, 'count' => $out['count'], 'items' => $out['items']];
     }
 
     /** Sum of what customers still owe (positive balances only). */

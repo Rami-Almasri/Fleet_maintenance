@@ -405,6 +405,9 @@ function MostFrequentFaults() {
   const [data, setData] = useState({ items: [], total: 0 });
   const [loading, setLoading] = useState(true);
   const [grown, setGrown] = useState(false);   // flips true after mount → bars animate their width in
+  // Per-fault "who fixes this most" drill-down: which fault row is open + its fetched car list (cached).
+  const [openFault, setOpenFault] = useState(null);
+  const [cars, setCars] = useState({}); // { [fault]: { loading, items, total, cars, error } }
 
   useEffect(() => {
     let alive = true;
@@ -415,6 +418,20 @@ function MostFrequentFaults() {
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, []);
+
+  // Toggle a fault open; fetch its top cars once (cached in state afterwards).
+  const toggleFault = (fault) => {
+    setOpenFault((cur) => (cur === fault ? null : fault));
+    if (!cars[fault]) {
+      setCars((c) => ({ ...c, [fault]: { loading: true, items: [], error: false } }));
+      api.get('/Dashboard/fault-cars', { params: { fault, limit: 8 } })
+        .then((res) => {
+          const d = res.data.data || {};
+          setCars((c) => ({ ...c, [fault]: { loading: false, items: d.items || [], total: d.total || 0, cars: d.cars || 0, error: false } }));
+        })
+        .catch(() => setCars((c) => ({ ...c, [fault]: { loading: false, items: [], error: true } })));
+    }
+  };
 
   // Kick the grow-in one frame after the rows render.
   useEffect(() => {
@@ -495,70 +512,84 @@ function MostFrequentFaults() {
             })()}
           </div>
 
-          {/* Ranked bars — length = frequency, colour = severity, medals for the podium. */}
+          {/* Ranked bars — length = frequency, colour = severity, medals for the podium.
+              Click a row to reveal the cars that racked up this fault the most. */}
           <ol className="space-y-1">
             {items.map((it, i) => {
               const m = sevMeta(it.severity);
               const pct = Math.max(6, Math.round((it.count / max) * 100));   // floor so tiny bars still read
               const share = data.total ? Math.round((it.count / data.total) * 100) : 0;
               const medal = RANK_MEDAL[i];
+              const isOpen = openFault === it.fault;
+              const cd = cars[it.fault];
               return (
-                <li
-                  key={it.fault}
-                  className="group flex items-center gap-3 rounded-xl px-2 py-2 transition-colors hover:bg-slate-50"
-                >
-                  {/* rank — medal for the top three, plain chip below */}
-                  <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-xs font-extrabold tabular-nums ${
-                    medal || 'bg-slate-100 text-slate-500'
-                  }`}>
-                    {i + 1}
-                  </span>
+                <li key={it.fault} className={`rounded-xl transition-colors ${isOpen ? 'bg-slate-50 ring-1 ring-slate-200/70' : ''}`}>
+                  <button
+                    type="button"
+                    onClick={() => toggleFault(it.fault)}
+                    aria-expanded={isOpen}
+                    className="group flex w-full items-center gap-3 rounded-xl px-2 py-2 text-left transition-colors hover:bg-slate-50"
+                  >
+                    {/* rank — medal for the top three, plain chip below */}
+                    <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-xs font-extrabold tabular-nums ${
+                      medal || 'bg-slate-100 text-slate-500'
+                    }`}>
+                      {i + 1}
+                    </span>
 
-                  {/* label + bar */}
-                  <div className="min-w-0 flex-1">
-                    <div className="mb-1 flex items-baseline justify-between gap-2">
-                      <span className="flex min-w-0 items-center gap-1.5 text-[13px] font-semibold text-slate-800">
-                        <span aria-hidden className="shrink-0">{faultGlyph(it.fault)}</span>
-                        <span className="truncate">{it.fault}</span>
-                      </span>
-                      <span className="flex shrink-0 items-baseline gap-1 tabular-nums">
-                        <span className="text-base font-extrabold text-slate-900">{it.count.toLocaleString()}</span>
-                        <span className="text-[11px] font-medium text-slate-400">
-                          {it.count === 1 ? 'time' : 'times'}
+                    {/* label + bar */}
+                    <div className="min-w-0 flex-1">
+                      <div className="mb-1 flex items-baseline justify-between gap-2">
+                        <span className="flex min-w-0 items-center gap-1.5 text-[13px] font-semibold text-slate-800">
+                          <span aria-hidden className="shrink-0">{faultGlyph(it.fault)}</span>
+                          <span className="truncate">{it.fault}</span>
+                          <Icon.ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-300 transition-transform group-hover:text-indigo-500 ${isOpen ? 'rotate-180 text-indigo-500' : ''}`} />
                         </span>
-                      </span>
-                    </div>
+                        <span className="flex shrink-0 items-baseline gap-1 tabular-nums">
+                          <span className="text-base font-extrabold text-slate-900">{it.count.toLocaleString()}</span>
+                          <span className="text-[11px] font-medium text-slate-400">
+                            {it.count === 1 ? 'time' : 'times'}
+                          </span>
+                        </span>
+                      </div>
 
-                    <div className="relative h-3 w-full overflow-hidden rounded-full bg-slate-100 ring-1 ring-inset ring-slate-200/60">
-                      <div
-                        className="relative h-full rounded-full transition-[width] duration-[900ms] ease-out"
-                        style={{
-                          width: grown ? `${pct}%` : '0%',
-                          transitionDelay: `${i * 80}ms`,
-                          background: `linear-gradient(90deg, ${m.from}, ${m.to})`,
-                        }}
-                      >
-                        {/* glossy top highlight so the fill reads as a solid, lit pill */}
-                        <span className="absolute inset-x-0 top-0 h-1/2 rounded-full bg-white/25" />
+                      <div className="relative h-3 w-full overflow-hidden rounded-full bg-slate-100 ring-1 ring-inset ring-slate-200/60">
+                        <div
+                          className="relative h-full rounded-full transition-[width] duration-[900ms] ease-out"
+                          style={{
+                            width: grown ? `${pct}%` : '0%',
+                            transitionDelay: `${i * 80}ms`,
+                            background: `linear-gradient(90deg, ${m.from}, ${m.to})`,
+                          }}
+                        >
+                          {/* glossy top highlight so the fill reads as a solid, lit pill */}
+                          <span className="absolute inset-x-0 top-0 h-1/2 rounded-full bg-white/25" />
+                        </div>
+                      </div>
+
+                      {/* severity + source split + spread — the labelled second encoding (never colour-alone). */}
+                      <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px]">
+                        <span className={`inline-flex items-center gap-1 rounded-full px-1.5 py-px font-semibold ring-1 ${m.soft}`}>
+                          <span className={`h-1.5 w-1.5 rounded-full ${m.dot}`} />{m.label}
+                        </span>
+                        <span className="tabular-nums text-slate-400" title="How this count splits between the workshop sheet and our system">
+                          🗒️ {Number(it.sheet).toLocaleString()} · ⚙️ {Number(it.system).toLocaleString()}
+                        </span>
+                        <span className="text-slate-300">·</span>
+                        <span className={`tabular-nums font-medium ${isOpen ? 'text-indigo-600' : 'text-slate-400 group-hover:text-indigo-500'}`}>
+                          {it.cars} car{it.cars === 1 ? '' : 's'} →
+                        </span>
+                        <span className="text-slate-300">·</span>
+                        <span className="tabular-nums font-medium text-slate-400">{share}% of total</span>
                       </div>
                     </div>
+                  </button>
 
-                    {/* severity + source split + spread — the labelled second encoding (never colour-alone). */}
-                    <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px]">
-                      <span className={`inline-flex items-center gap-1 rounded-full px-1.5 py-px font-semibold ring-1 ${m.soft}`}>
-                        <span className={`h-1.5 w-1.5 rounded-full ${m.dot}`} />{m.label}
-                      </span>
-                      <span className="tabular-nums text-slate-400" title="How this count splits between the workshop sheet and our system">
-                        🗒️ {Number(it.sheet).toLocaleString()} · ⚙️ {Number(it.system).toLocaleString()}
-                      </span>
-                      <span className="text-slate-300">·</span>
-                      <span className="tabular-nums text-slate-400">
-                        {it.cars} car{it.cars === 1 ? '' : 's'}
-                      </span>
-                      <span className="text-slate-300">·</span>
-                      <span className="tabular-nums font-medium text-slate-400">{share}% of total</span>
+                  {isOpen && (
+                    <div className="px-2 pb-3 pt-0.5">
+                      <FaultCarBreakdown detail={cd} fault={it.fault} sevMeta={m} />
                     </div>
-                  </div>
+                  )}
                 </li>
               );
             })}
@@ -566,6 +597,111 @@ function MostFrequentFaults() {
         </div>
       )}
     </SectionCard>
+  );
+}
+
+// The per-fault drill-down: "which cars fixed this fault the most". Given one fault category, ranks the
+// vehicles that racked it up — medal for the podium, a mini-bar scaled to the top offender, plate/model
+// linking to the profile, and the sheet-vs-system split. Reads /Dashboard/fault-cars?fault=… (lazy).
+function FaultCarBreakdown({ detail, fault, sevMeta: m }) {
+  if (!detail || detail.loading) {
+    return (
+      <div className="space-y-1.5 rounded-xl bg-white p-2 ring-1 ring-slate-200/70">
+        {[0, 1, 2].map((i) => <Skeleton key={i} className="h-9 rounded-lg" />)}
+      </div>
+    );
+  }
+  if (detail.error) {
+    return <p className="rounded-xl bg-white px-3 py-3 text-xs text-rose-600 ring-1 ring-slate-200/70">Couldn’t load the cars for this fault. Please try again.</p>;
+  }
+  if (!detail.items.length) {
+    return <p className="rounded-xl bg-white px-3 py-3 text-xs text-slate-400 ring-1 ring-slate-200/70">No cars recorded for this fault.</p>;
+  }
+
+  const topCount = detail.items[0]?.count || 1;
+  const leader = detail.items[0];
+
+  return (
+    <div className="overflow-hidden rounded-xl bg-white ring-1 ring-slate-200/70">
+      {/* Header strip — who's the repeat offender for THIS fault. */}
+      <div className="flex items-center justify-between gap-2 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white px-3 py-2">
+        <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+          <Icon.Car className="h-3.5 w-3.5 text-slate-400" />
+          Cars hit most by {fault}
+        </p>
+        <span className="text-[11px] font-medium tabular-nums text-slate-400">
+          {detail.cars} car{detail.cars === 1 ? '' : 's'} · {Number(detail.total).toLocaleString()} total
+        </span>
+      </div>
+
+      <ol className="divide-y divide-slate-50">
+        {detail.items.map((c, i) => {
+          const pct = Math.max(8, Math.round((c.count / topCount) * 100));
+          const medal = RANK_MEDAL[i];
+          const isLeader = i === 0;
+          return (
+            <li key={c.id}>
+              <Link
+                to={`/vehicles/${c.id}`}
+                className="group/car flex items-center gap-2.5 px-3 py-2 transition-colors hover:bg-indigo-50/50"
+              >
+                {/* rank medal / chip */}
+                <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[11px] font-extrabold tabular-nums ${
+                  medal || 'bg-slate-100 text-slate-500'
+                }`}>
+                  {i + 1}
+                </span>
+
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="flex min-w-0 items-baseline gap-1.5">
+                      <span className="truncate font-mono text-[13px] font-semibold text-slate-900 group-hover/car:text-indigo-600">
+                        {c.plate || `#${c.id}`}
+                      </span>
+                      {c.car && <span className="truncate text-[11px] text-slate-400">{c.car}</span>}
+                      {isLeader && (
+                        <span className="hidden shrink-0 rounded-full bg-rose-50 px-1.5 py-px text-[10px] font-semibold text-rose-600 ring-1 ring-rose-200 sm:inline">
+                          Repeat offender
+                        </span>
+                      )}
+                    </span>
+                    <span className="flex shrink-0 items-baseline gap-1 tabular-nums">
+                      <span className="text-sm font-extrabold text-slate-900">{c.count.toLocaleString()}</span>
+                      <span className="text-[10px] font-medium text-slate-400">×</span>
+                    </span>
+                  </div>
+
+                  {/* mini bar scaled to this fault's top offender, tinted by the fault's severity */}
+                  <div className="mt-1 flex items-center gap-2">
+                    <div className="relative h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100">
+                      <div
+                        className="h-full rounded-full"
+                        style={{ width: `${pct}%`, background: `linear-gradient(90deg, ${m.from}, ${m.to})` }}
+                      />
+                    </div>
+                    <span className="shrink-0 text-[10px] tabular-nums text-slate-400" title="Split between the workshop sheet and our system">
+                      🗒️{Number(c.sheet).toLocaleString()} · ⚙️{Number(c.system).toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+
+                <Icon.ArrowRight className="h-3.5 w-3.5 shrink-0 text-slate-300 transition group-hover/car:translate-x-0.5 group-hover/car:text-indigo-500" />
+              </Link>
+            </li>
+          );
+        })}
+      </ol>
+
+      {leader && (
+        <div className="border-t border-slate-100 bg-slate-50/60 px-3 py-2 text-[11px] text-slate-500">
+          <span className="font-mono font-semibold text-slate-700">{leader.plate || `#${leader.id}`}</span>{' '}
+          leads with <span className="font-semibold text-slate-700">{leader.count.toLocaleString()}</span> {fault.toLowerCase()} fix{leader.count === 1 ? '' : 'es'}
+          {detail.total > leader.count && (
+            <> — <span className="font-semibold text-slate-700">{Math.round((leader.count / detail.total) * 100)}%</span> of all {detail.total.toLocaleString()} across the fleet</>
+          )}.
+        </div>
+      )}
+    </div>
   );
 }
 

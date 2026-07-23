@@ -39,7 +39,8 @@ export default function GroupedBarChart({
 
   const allVals = data.flatMap((d) => series.map((s) => d[s.key] || 0));
   const { max, ticks } = niceScale(Math.max(1, ...allVals), 4, integer);
-  const labelEvery = n > 8 ? 2 : 1;
+  // Thin the x-labels so at most ~12 print, whatever the range (24 months → every 2nd, 36 → every 3rd).
+  const labelEvery = Math.max(1, Math.ceil(n / 12));
 
   const band = n ? innerW / n : innerW;
   // Bars share ~64% of the band, split across the series with a small gap between.

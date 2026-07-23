@@ -82,7 +82,7 @@ const NAV_SECTIONS = [
   // parts & suppliers → damage. Keep these together; don't scatter maintenance
   // pages into other sections.
   {
-    title: 'Maintenance · Operations',
+    title: 'Maintenance Operations',
     items: [
       { name: 'Workflow Journey', to: '/inspections/history', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-5 7h4m-4 4h4', desc: 'A stage-by-stage timeline of every step each car takes through the workflow — inspection, dispatch, garage arrival, repair, movement and readiness — each row headlined by the workflow stage it reached (absorbs the old Activity Feed, Vehicle Status, Vehicle Life-Stream & Workflow Hub). Click any car to follow just its own journey.' },
       { name: 'Workflow', to: '/maintenance-workflow', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-3 7-3 3 3 3m6-6 3 3-3 3', desc: 'The live maintenance ticket pipeline (Inspector → Supervisor → Driver → Garage → Re-inspection). Open a ticket and advance it through the stages; the board updates in real time.' },
@@ -93,7 +93,7 @@ const NAV_SECTIONS = [
     ],
   },
   {
-    title: 'Maintenance · Control',
+    title: 'Maintenance Control',
     items: [
       { name: 'Approvals', to: '/maintenance-approvals', icon: 'M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Maintenance items waiting for sign-off before work proceeds.' },
       { name: 'Pending Invoices', to: '/invoices/pending-submission', icon: 'M9 12h6m-6 4h4m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2zM14 3v5h5M12 8v.01', desc: 'Repairs that are done and the car is back in service, but the garage invoice hasn’t arrived yet. Anything past the 3-day window is flagged red; mark an invoice received to close the ticket.' },
@@ -103,7 +103,7 @@ const NAV_SECTIONS = [
     ],
   },
   {
-    title: 'Maintenance · Intelligence',
+    title: 'Maintenance Intelligence',
     items: [
       { name: 'Foresight', to: '/maintenance-foresight', icon: 'M9.66 17h4.68M12 3v1m6.36 1.64-.7.7M21 12h-1M4 12H3m3.34-5.66-.7-.7M7 17a5 5 0 1 1 10 0', desc: 'Predictive maintenance: cars showing early mechanical warning signs (service overdue, chronic faults, aging battery) caught before they fail — with the downtime, parts-wait risk and lost rental revenue estimated from the fleet’s own repair history.' },
       { name: 'Cost Capture', to: '/cost-capture', icon: 'M12 8c-1.7 0-3 .9-3 2s1.3 2 3 2 3 .9 3 2-1.3 2-3 2m0-8V6m0 12v-2m9-4a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Quick Cost Input: recent repairs with no cost recorded. Enter the amount in one tap to fix each vehicle’s repair spend and re-check its Negative-Yield flag — the tool for closing the understated-spend gap.' },
@@ -380,7 +380,7 @@ function NavSection({ section, collapsed, open, onToggle, onNavigate, badges = {
       {collapsed ? (
         <>
           {/* below lg the drawer is full-width, so the label still shows */}
-          <p className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-steel-500 lg:hidden">
+          <p className="px-3 pb-1.5 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-steel-500 lg:hidden">
             {section.title}
           </p>
           <div className="mx-auto mb-1.5 hidden h-px w-6 bg-white/10 lg:block" />
@@ -391,7 +391,7 @@ function NavSection({ section, collapsed, open, onToggle, onNavigate, badges = {
           onClick={onToggle}
           className="group/sec mb-0.5 flex w-full items-center justify-between rounded-lg px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-steel-500 transition hover:text-steel-300"
         >
-          <span>{section.title}</span>
+          <span className="text-left">{section.title}</span>
           <svg
             className={`h-3.5 w-3.5 text-steel-500 transition-transform duration-200 group-hover/sec:text-steel-300 ${open ? '' : '-rotate-90'}`}
             fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
