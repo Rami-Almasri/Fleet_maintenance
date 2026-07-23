@@ -47,6 +47,9 @@ class RolesAndPermissionsSeeder extends Seeder
         'parts.request',                     // create a part request (customer walk-in or garage diagnosis)
         'parts.purchase',                    // record a purchase (garage or supplier) + install the part
         'parts.investigate',                 // admin: review duplicate/recurrence alerts + approve exceptions
+        'components.view',                   // Asset Layer: see a car's installed components / history / warehouse inventory
+        'components.manage',                 // Asset Layer: install / remove / transfer / dispose components + curate the catalog
+        'components.backfill',               // Asset Layer: run the legacy-data backfill (super-admin/admin only)
         'registration.view', 'registration.manage',
         'insights.view',                     // anomalies, data-health, status-mismatch
         'dashboard.view',                    // dashboard KPIs + fleet expiring
@@ -77,6 +80,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'maintenance.initiate', 'maintenance.logistics', 'maintenance.delegate',
             'maintenance.recurring.view', 'maintenance.recurring.manage',
             'parts.view', 'parts.request', 'parts.purchase', 'parts.investigate',
+            'components.view', 'components.manage', // Asset Layer: full operational control includes asset custody
             'registration.view', 'registration.manage',
             'insights.view', 'dashboard.view', 'sync.run',
         ],
@@ -93,6 +97,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'logistics.view', 'logistics.dispatch', 'logistics.claim',
             'registration.view', 'maintenance.view', 'dashboard.view',
             'parts.view', 'parts.request', 'parts.purchase',
+            'components.view', // Asset Layer: read-only (desk role — no asset custody)
         ],
         // Garage / workshop coordination and bill approvals.
         'maintenance' => [
@@ -103,6 +108,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'maintenance.initiate', 'maintenance.logistics', 'maintenance.delegate',
             'maintenance.recurring.view', 'maintenance.recurring.manage',
             'parts.view', 'parts.request', 'parts.purchase', 'parts.investigate',
+            'components.view', 'components.manage', // Asset Layer: the workshop-manager role owns install/remove/transfer
             'logistics.view',
             'registration.view', 'insights.view', 'dashboard.view',
         ],
@@ -117,6 +123,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'maintenance.view', 'maintenance.delegate', 'maintenance.logistics',
             'maintenance.recurring.view',
             'parts.view', 'parts.request',
+            'components.view', 'components.manage', // Asset Layer: authorized maintenance delegates hold asset custody
             'logistics.view', 'logistics.dispatch',
             'dashboard.view',
         ],
@@ -126,6 +133,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'inspections.view', 'inspections.manage',
             'maintenance.view', 'maintenance.initiate',
             'parts.view', 'parts.request',
+            'components.view', // Asset Layer: read-only — technician-tier gets manage only by explicit per-user grant
             'logistics.view',
             'dashboard.view',
         ],
@@ -136,6 +144,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'vehicles.view', 'vendors.view',
             'maintenance.view', 'maintenance.logistics',
             'parts.view', 'parts.request',
+            'components.view', // Asset Layer: read-only — technician-tier gets manage only by explicit per-user grant
             'logistics.view', 'logistics.dispatch', 'logistics.claim',
             'dashboard.view',
         ],
@@ -145,6 +154,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'contracts.view', 'booking_readiness.view', 'inspections.view', 'billing.view', 'billing.manage',
             'reminders.view', 'reminders.manage',
             'parts.view',
+            'components.view', // Asset Layer: read-only (asset cost visibility)
             'insights.view', 'dashboard.view',
         ],
         // Read-only across the board.
@@ -152,7 +162,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'vehicles.view', 'drivers.view', 'vendors.view',
             'customers.view', 'contracts.view', 'booking_readiness.view', 'inspections.view', 'billing.view', 'registration.view',
             'reminders.view',
-            'maintenance.view', 'logistics.view', 'parts.view', 'insights.view', 'dashboard.view',
+            'maintenance.view', 'logistics.view', 'parts.view', 'components.view', 'insights.view', 'dashboard.view',
         ],
     ];
 

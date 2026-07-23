@@ -114,4 +114,26 @@ return [
         'inactive_days' => (int) env('DIAGNOSTIC_GATE_INACTIVE_DAYS', 30),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Asset Layer (Vehicle Component Inventory)
+    |--------------------------------------------------------------------------
+    |
+    | Governs every workflow-coupled write of the Asset Layer (vehicle_components /
+    | component_events / service_records). Three modes:
+    |
+    |   'off'      — Phase 1 default. The tables/models/permissions exist but NO
+    |                integration call site touches them; the maintenance workflow
+    |                behaves byte-identically to before the layer existed.
+    |   'shadow'   — Phase 2 dark-launch: installPurchase / confirmRoutineServices
+    |                also write asset rows, but failures only log (never roll back
+    |                or block the billing/workflow write). Reads stay dark.
+    |   'enforced' — asset writes are atomic with the workflow writes; disposition
+    |                prompts and serial validation become blocking; UI reads live.
+    |
+    | Rollback at any point = set ASSET_LAYER_MODE=off (config flip, no deploy).
+    |
+    */
+    'asset_layer' => env('ASSET_LAYER_MODE', 'off'),
+
 ];

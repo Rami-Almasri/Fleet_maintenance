@@ -93,4 +93,10 @@ class PartPurchase extends Model
     {
         return $this->belongsTo(User::class, 'purchased_by');
     }
+
+    /** Asset Layer: the physical component this purchase became (set by ComponentService, Phase 2). */
+    public function component(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(VehicleComponent::class, 'source_part_purchase_id');
+    }
 }

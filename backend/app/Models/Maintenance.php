@@ -1338,6 +1338,18 @@ class Maintenance extends Model
         return $this->hasMany(MaintenanceTask::class, 'maintenance_id');
     }
 
+    /** Asset Layer (read-only convenience): component installs/removals this ticket caused. */
+    public function componentEvents(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(ComponentEvent::class, 'maintenance_id');
+    }
+
+    /** Asset Layer (read-only convenience): service records born from this ticket. */
+    public function serviceRecordEntries(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(ServiceRecord::class, 'maintenance_id');
+    }
+
     /**
      * Post-Repair Inspection verdicts recorded against this ticket at the final QC gate — the durable
      * "did the fix hold?" record (fixed / still_exists / new_issue) that layers on top of the close /

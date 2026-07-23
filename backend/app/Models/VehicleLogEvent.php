@@ -91,6 +91,13 @@ class VehicleLogEvent extends Model
     public const EVENT_PART_DUPLICATE_FLAGGED = 'part_duplicate_flagged';  // duplicate-purchase detected → investigation opened
     public const EVENT_PART_RECURRENCE_FLAGGED = 'part_recurrence_flagged'; // a previously-fixed fault came back → warning/investigation
 
+    // ── Asset Layer — display mirror of component_events (that table stays the source of truth;
+    //    these rows make asset movements visible on the Vehicle Timeline with no new joins) ─────
+    public const EVENT_COMPONENT_INSTALLED   = 'component_installed';   // a physical component was fitted to this car
+    public const EVENT_COMPONENT_REMOVED     = 'component_removed';     // a component came off (reason + disposition in meta)
+    public const EVENT_COMPONENT_TRANSFERRED = 'component_transferred'; // a component moved between this car and another
+    public const EVENT_COMPONENT_DISPOSED    = 'component_disposed';    // a component's story ended (scrapped/returned/sold)
+
     /**
      * Audit bucket per event. Reuses Maintenance::FINDING_SOURCES vocabulary so the workflow
      * log and the finding source on the visit speak the same language:

@@ -361,6 +361,24 @@ class Vehicle extends Model
         return $this->hasMany(VehicleLogEvent::class)->latest('occurred_at');
     }
 
+    /** Asset Layer: every component row currently or last associated with this car. */
+    public function components(): HasMany
+    {
+        return $this->hasMany(VehicleComponent::class);
+    }
+
+    /** Asset Layer: the physical truth — what is installed on this car RIGHT NOW. */
+    public function activeComponents(): HasMany
+    {
+        return $this->hasMany(VehicleComponent::class)->where('status', VehicleComponent::STATUS_ACTIVE);
+    }
+
+    /** Asset Layer: performed actions (oil changes, inspections, repair labor), newest first. */
+    public function serviceRecords(): HasMany
+    {
+        return $this->hasMany(ServiceRecord::class)->latest('performed_at');
+    }
+
     /**
      * This car's own row in the plate-history timeline (one per vehicle+plate). Carries whether
      * this car is the plate's CURRENT holder and the from/to window it held the plate. The full

@@ -21,6 +21,7 @@ class MaintenanceMedia extends Model
     protected $fillable = [
         'maintenance_id', 'maintenance_task_id', 'kind', 'disk', 's3_key', 'content_type',
         'original_name', 'file_size', 'note', 'uploaded_by', 'uploaded_by_name',
+        'vehicle_component_id', 'component_event_id',
     ];
 
     protected $casts = [
@@ -37,6 +38,18 @@ class MaintenanceMedia extends Model
     public function task(): BelongsTo
     {
         return $this->belongsTo(MaintenanceTask::class, 'maintenance_task_id');
+    }
+
+    /** Asset Layer: the physical component this media documents (nullable — portrait/evidence shots). */
+    public function component(): BelongsTo
+    {
+        return $this->belongsTo(VehicleComponent::class, 'vehicle_component_id');
+    }
+
+    /** Asset Layer: the specific install/removal event this media evidences (warranty/liability proof). */
+    public function componentEvent(): BelongsTo
+    {
+        return $this->belongsTo(ComponentEvent::class, 'component_event_id');
     }
 
     /**

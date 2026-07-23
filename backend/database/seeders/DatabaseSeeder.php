@@ -30,6 +30,9 @@ class DatabaseSeeder extends Seeder
         // (safe no-op until config('garage_routing.default_rules') names real garages).
         $this->call(GarageRoutingRuleSeeder::class);
 
+        // Asset Layer — component TYPE dictionary, seeded from config. Idempotent, additive-only.
+        $this->call(ComponentCatalogSeeder::class);
+
         // A bootstrap super-admin so there's always one account that can do
         // everything (and promote others). Credentials come from the environment,
         // NOT a hardcoded default, and re-seeding NEVER resets the password of an
