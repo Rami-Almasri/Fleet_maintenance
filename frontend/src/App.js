@@ -11,8 +11,6 @@ import { pathBlockedForRoles, homePathForRoles } from './config/access';
 import AppLayout from './layouts/AppLayout';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
-import OpsDashboard from './pages/command/OpsDashboard';
-import OrdersBoard from './pages/command/OrdersBoard';
 import Vehicles from './pages/Vehicles';
 import VehicleProfile from './pages/vehicles/VehicleProfile';
 import OdometerApprovals from './pages/vehicles/OdometerApprovals';
@@ -21,12 +19,10 @@ import CustomerProfile from './pages/customers/CustomerProfile';
 import Drivers from './pages/Drivers';
 import Contracts from './pages/Contracts';
 import ContractDetail from './pages/contracts/ContractDetail';
-import InspectionPrototype from './pages/InspectionPrototype';
 import ContractForm from './pages/contracts/ContractForm';
 import Vendors from './pages/Vendors';
 import MaintenanceAnalytics from './pages/MaintenanceAnalytics';
 import MaintenanceHistory from './pages/MaintenanceHistory';
-import MaintenanceApprovals from './pages/MaintenanceApprovals';
 import MaintenanceWorkflow from './pages/MaintenanceWorkflow';
 import CarStatus from './pages/CarStatus';
 import CarStatusVehicle from './pages/CarStatusVehicle';
@@ -46,7 +42,6 @@ import Parts from './pages/Parts';
 import PartInvestigations from './pages/PartInvestigations';
 import RecurringFaultReviews from './pages/RecurringFaultReviews';
 import DamageAccidents from './pages/DamageAccidents';
-import OverdueRentals from './pages/OverdueRentals';
 import Profitability from './pages/Profitability';
 import CostIntelligence from './pages/CostIntelligence';
 import ServiceDueBoard from './pages/ServiceDueBoard';
@@ -61,9 +56,7 @@ import SimulationPanel from './pages/SimulationPanel';
 import Users from './pages/Users';
 import NotFound from './pages/NotFound';
 import GarageInvoicePortal from './pages/GarageInvoicePortal';
-import PendingInvoices from './pages/PendingInvoices';
 import CompletedRepairs from './pages/CompletedRepairs';
-import WorkflowMovements from './pages/workflow/WorkflowMovements';
 import WorkflowOversight from './pages/oversight/WorkflowOversight';
 import MileageDiscrepancies from './pages/oversight/MileageDiscrepancies';
 import StageAccountability from './pages/oversight/StageAccountability';
@@ -71,8 +64,6 @@ import GarageInvoiceQueue from './pages/oversight/GarageInvoiceQueue';
 import SeverityReview from './pages/oversight/SeverityReview';
 import Misdiagnoses from './pages/oversight/Misdiagnoses';
 import ResolvedTransfers from './pages/oversight/ResolvedTransfers';
-import RentalOperationsHub from './pages/rentals/RentalOperationsHub';
-import BookingReadiness from './pages/booking/BookingReadiness';
 import CleaningCapture from './pages/cleaning/CleaningCapture';
 import FleetHealth from './pages/inspections/FleetHealth';
 
@@ -124,12 +115,6 @@ export default function App() {
                 {/* Index route handles its own gating (redirects roles blocked from the Dashboard). */}
                 <Route path="/" element={<HomeGate />} />
 
-                <Route element={<RequirePermission permission="dashboard.view" />}>
-                  <Route path="/ops-dashboard" element={<OpsDashboard />} />
-                  <Route path="/orders-board" element={<OrdersBoard />} />
-                  <Route path="/overdue-rentals" element={<OverdueRentals />} />
-                </Route>
-
                 <Route element={<RequirePermission permission="vehicles.view" />}>
                   <Route path="/vehicles" element={<Vehicles />} />
                   <Route path="/vehicles/:id" element={<VehicleProfile />} />
@@ -157,15 +142,11 @@ export default function App() {
                 </Route>
 
                 <Route element={<RequirePermission permission="booking_readiness.view" />}>
-                  {/* Booking Readiness — pickup-prep board: upcoming bookings + per-car readiness + triggers. */}
-                  <Route path="/booking-readiness" element={<BookingReadiness />} />
                   {/* Cleaning — before/after photo capture behind the readiness Cleaning "Fix" link. */}
                   <Route path="/cleaning" element={<CleaningCapture />} />
                 </Route>
 
                 <Route element={<RequirePermission permission="contracts.view" />}>
-                  {/* Rental Operations Hub — check-in/out board: active + upcoming rentals with live readiness. */}
-                  <Route path="/rental-contracts" element={<RentalOperationsHub />} />
                   <Route path="/contracts" element={<Contracts />} />
                   <Route path="/contracts/new" element={<ContractForm />} />
                   <Route path="/contracts/:id/edit" element={<ContractForm />} />
@@ -173,7 +154,6 @@ export default function App() {
                 </Route>
 
                 <Route element={<RequirePermission permission="inspections.view" />}>
-                  <Route path="/inspection-prototype" element={<InspectionPrototype />} />
                   {/* Unified "Fleet Health" hub — tabs for Readiness / Service Due / Registrations. */}
                   <Route path="/inspections/schedules" element={<FleetHealth />} />
                 </Route>
@@ -200,8 +180,8 @@ export default function App() {
                   <Route path="/car-status/:vehicleId" element={<CarStatusVehicle />} />
                   {/* Old Maintenance Board retired — the Workflow board is now the single maintenance hub. */}
                   <Route path="/maintenance" element={<Navigate to="/maintenance-workflow" replace />} />
-                  {/* Old Workflow Hub — folded into the plain Workflow Movements feed. */}
-                  <Route path="/maintenance-hub" element={<Navigate to="/inspections/history" replace />} />
+                  {/* Old Workflow Hub — retired; point at the live Workflow board. */}
+                  <Route path="/maintenance-hub" element={<Navigate to="/maintenance-workflow" replace />} />
                   {/* "Booked in Shop" now lives inside the Fleet Health hub — redirect the old path. */}
                   <Route path="/maintenance-bookings" element={<Navigate to="/inspections/schedules?tab=bookings" replace />} />
                   <Route path="/maintenance-workflow" element={<MaintenanceWorkflow />} />
@@ -210,7 +190,6 @@ export default function App() {
                   {/* Pre-maintenance Recommendation queue — Supervisor triage before the active board */}
                   <Route path="/maintenance-recommendations" element={<MaintenanceRecommendations />} />
                   <Route path="/my-maintenance-queue" element={<MyMaintenanceQueue />} />
-                  <Route path="/invoices/pending-submission" element={<PendingInvoices />} />
                   {/* Fixed & Completed Repairs ledger — every closed ticket with its full story */}
                   <Route path="/completed-repairs" element={<CompletedRepairs />} />
                   <Route path="/maintenance-foresight" element={<MaintenanceForesight />} />
@@ -241,18 +220,11 @@ export default function App() {
                   <Route path="/inspection-intelligence" element={<InspectionIntelligenceCenter />} />
                 </Route>
 
-                <Route element={<RequirePermission permission="maintenance.approve" />}>
-                  <Route path="/maintenance-approvals" element={<MaintenanceApprovals />} />
-                </Route>
-
                 <Route element={<RequirePermission permission="insights.view" />}>
-                  {/* Workflow Movements — one plain feed of every workflow step (inspections, tickets,
-                      dispatch, repairs, movements, readiness), click a car to follow its record. This is
-                      the single page that replaced the old Vehicle Life-Stream / Workflow Hub. */}
-                  <Route path="/inspections/history" element={<WorkflowMovements />} />
-                  {/* Activity Feed and Vehicle Status were absorbed into it — keep old paths alive. */}
-                  <Route path="/activity" element={<Navigate to="/inspections/history" replace />} />
-                  <Route path="/vehicle-status" element={<Navigate to="/inspections/history" replace />} />
+                  {/* Workflow Movements page retired — old aliases now point at the live Workflow board. */}
+                  <Route path="/inspections/history" element={<Navigate to="/maintenance-workflow" replace />} />
+                  <Route path="/activity" element={<Navigate to="/maintenance-workflow" replace />} />
+                  <Route path="/vehicle-status" element={<Navigate to="/maintenance-workflow" replace />} />
                   <Route path="/profitability" element={<Profitability />} />
                   <Route path="/cost-intelligence" element={<CostIntelligence />} />
                   <Route path="/service-due" element={<ServiceDueBoard />} />

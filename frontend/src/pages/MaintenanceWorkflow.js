@@ -498,7 +498,6 @@ export default function MaintenanceWorkflow() {
           <button className={view === 'list' ? 'on' : ''} onClick={() => setView('list')}>List</button>
         </div>
         <div className="mwf-head-actions">
-          {canManage && <button className="opx-btn primary" onClick={() => setModal({ action: 'test' })}><Icon.Plus className="h-4 w-4" /> {t('workflow.testIntake.newTest')}</button>}
           {canManage && <button className="opx-btn" onClick={() => setModal({ action: 'complaint' })}>📣 {t('workflow.board.newComplaint')}</button>}
           {canLogistics && <button className="opx-btn" onClick={() => setModal({ action: 'request' })}><Icon.Plus className="h-4 w-4" /> {t('workflow.board.requestInspection')}</button>}
         </div>

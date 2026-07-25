@@ -1532,11 +1532,10 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                 <span className="ms-auto text-[11px] text-slate-400">{t('workflow.hint.garageBySupervisor')}</span>
               </div>
             </div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Input label={t('workflow.field.dateLeft')} type="date" value={outDate} onChange={(e) => setOutDate(e.target.value)} />
-              <Input label={t('workflow.field.expectedReturn')} type="date" value={returnDate} onChange={(e) => setReturnDate(e.target.value)} />
-            </div>
-            <p className="text-xs text-slate-400">{t('workflow.hint.blankDateToday')}</p>
+            {/* Dates are handled automatically: the car-left date defaults to today (server-side)
+                and the driver no longer picks an expected-return date at pickup — the supervisor
+                owns that at the garage-receive step. Both fields stay in state (blank) so the
+                dispatch POST still sends out_date/expected_return as null → today. */}
           </>
         )}
 
@@ -1640,7 +1639,9 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
               {photoTile}
             </div>
             <Textarea label={t('workflow.field.garageFeedback')} value={feedback} onChange={(e) => setFeedback(e.target.value)} placeholder={t('workflow.ph.garageIntake')} />
-            <Input label={t('workflow.field.expectedReturn')} type="date" value={returnDate} onChange={(e) => setReturnDate(e.target.value)} />
+            {/* Expected return can't be in the past — the car is being checked in now, so the earliest
+                meaningful return is today. `min` (local YYYY-MM-DD) blocks earlier dates in the picker. */}
+            <Input label={t('workflow.field.expectedReturn')} type="date" min={new Date().toLocaleDateString('en-CA')} value={returnDate} onChange={(e) => setReturnDate(e.target.value)} />
           </>
         )}
 
@@ -2124,7 +2125,15 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
             </div>
             <div>
               <span className="mb-1 block text-sm font-medium text-slate-700">{t('workflow.field.vehicle')}<Req /></span>
-              <VehicleStatusSelect value={vehicleId} onChange={setVehicleId} vehicles={vehicles} placeholder={t('workflow.ph.searchVehicle')} />
+              {/* A car already in maintenance is being handled — hide it from the picker so a driver
+                  can't open a duplicate diagnostic entry for it. Rented cars stay selectable. */}
+              <VehicleStatusSelect
+                value={vehicleId}
+                onChange={setVehicleId}
+                vehicles={vehicles.filter((v) => !(v.under_maintenance || v.operational_status === 'maintenance'))}
+                placeholder={t('workflow.ph.searchVehicle')}
+              />
+              <p className="mt-1 text-xs text-slate-400">{t('workflow.hint.requestHideMaintenance')}</p>
             </div>
             <div>
               <span className="mb-1.5 block text-sm font-medium text-slate-700">{t('workflow.reason.driverLabel')}</span>

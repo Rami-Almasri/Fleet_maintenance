@@ -19,13 +19,9 @@ export const ROLE_BLOCKED_PATHS = {
   // but is walled off from the fleet dashboards, analytics and maintenance admin.
   logistics: [
     '/',                             // Dashboard
-    '/ops-dashboard',                // Delivery Command
-    '/orders-board',                 // Orders Board
-    '/overdue-rentals',              // Overdue Rentals
     '/vendors',                      // Vendors
     '/garages',                      // Garages
     '/finding-keywords',             // Keyword Risk
-    '/invoices/pending-submission',  // Pending Invoices
     '/maintenance-foresight',        // Foresight
     '/damage-accidents',             // Damage & Accidents
     '/maintenance-recommendations',  // Recommendations

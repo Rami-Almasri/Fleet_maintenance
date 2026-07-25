@@ -84,7 +84,6 @@ const NAV_SECTIONS = [
   {
     title: 'Maintenance Operations',
     items: [
-      { name: 'Workflow Journey', to: '/inspections/history', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-5 7h4m-4 4h4', desc: 'A stage-by-stage timeline of every step each car takes through the workflow — inspection, dispatch, garage arrival, repair, movement and readiness — each row headlined by the workflow stage it reached (absorbs the old Activity Feed, Vehicle Status, Vehicle Life-Stream & Workflow Hub). Click any car to follow just its own journey.' },
       { name: 'Workflow', to: '/maintenance-workflow', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-3 7-3 3 3 3m6-6 3 3-3 3', desc: 'The live maintenance ticket pipeline (Inspector → Supervisor → Driver → Garage → Re-inspection). Open a ticket and advance it through the stages; the board updates in real time.' },
       { name: 'My Queue', to: '/my-maintenance-queue', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-3 9 2 2 4-4', desc: 'Your role-scoped maintenance work in one place: Abu Maroof (Inspector) sees pending inspections and final re-inspections; a Supervisor (Dispatcher) sees tickets awaiting a garage + driver assignment; a Driver sees active trips/dispatches and cars waiting on a follow-up.' },
       { name: 'Inspection Review', to: '/inspection-review', icon: 'M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Controllers (Lin & Marwa) review inspection requests before they reach Abu Maroof — approve to send it on, or reject with a reason.' },
@@ -95,8 +94,6 @@ const NAV_SECTIONS = [
   {
     title: 'Maintenance Control',
     items: [
-      { name: 'Approvals', to: '/maintenance-approvals', icon: 'M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Maintenance items waiting for sign-off before work proceeds.' },
-      { name: 'Pending Invoices', to: '/invoices/pending-submission', icon: 'M9 12h6m-6 4h4m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2zM14 3v5h5M12 8v.01', desc: 'Repairs that are done and the car is back in service, but the garage invoice hasn’t arrived yet. Anything past the 3-day window is flagged red; mark an invoice received to close the ticket.' },
       { name: 'Completed Repairs', to: '/completed-repairs', icon: 'M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'The ledger of every car whose repair is done and signed off — who requested it, who drove it, where it was fixed, what was found and repaired, and what it cost. Expand any row for the full custody chain, the resolved faults and the odometer readings.' },
       { name: 'Maintenance History', to: '/maintenance-history', icon: 'M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Every car that saw the workshop over the chosen window — how often it went in (visits) and how long it spent there (total days in the shop), sortable and searchable. Open a car\'s visit list to see each individual trip: date, garage, what was done and the cost.' },
       { name: 'Oversight', to: '/oversight', icon: 'M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z', desc: 'The maintenance-workflow accountability & data-integrity hub — one landing page linking the four audit surfaces below with their live counts.' },
@@ -144,17 +141,6 @@ const NAV_SECTIONS = [
       { name: 'Contracts', to: '/contracts', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z', desc: 'Rental contracts synced from OfficeManager — all open contracts plus the last 3 months of closed ones. Open or closed status is detected on each sync.' },
       { name: 'Drivers', to: '/drivers', icon: 'M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM6 21v-1a6 6 0 0 1 6-6 6 6 0 0 1 6 6v1M3 9l2 2 3-3', desc: 'Fleet drivers with their licence number, expiry and status. Add, edit or suspend drivers; expiring licences are flagged.' },
       { name: 'Odometer Approvals', to: '/odometer-approvals', icon: 'M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Review queue for significant manual odometer edits (more than 10 km from the car\'s current reading) — each carries the editor\'s reason note and the car\'s workflow stage at the time. Approve to apply the new reading, or reject to leave it untouched.' },
-    ],
-  },
-  {
-    title: 'Rentals & Delivery',
-    items: [
-      { name: 'Delivery Command', to: '/ops-dashboard', icon: 'M3 7h11v8H3zM14 10h3.5L21 13v2h-7M6.5 18.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM17.5 18.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z', desc: 'Delivery/dispatch command dashboard built from the live Main Trip Dashboard sheet — on-time rate, total trips, vehicles in rotation, completion rate, a recent-days activity chart, a live trips table and top drivers, in a high-contrast control-room view.' },
-      { name: 'Orders Board', to: '/orders-board', icon: 'M4 5h6v6H4zM14 5h6v6h-6zM4 15h6v4H4zM14 15h6v4h-6z', desc: 'Three-lane trips Kanban (Scheduled → Completed → Cancelled) from the Main Trip Dashboard sheet, each card a real pickup/drop-off trip with its vehicle, assignee, destination and date.' },
-      { name: 'Rental Operations', to: '/rental-contracts', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-6 9 2 2 4-4', desc: 'The Rental Manager\'s check-in / check-out board: every active rental and upcoming booking with its car\'s live 9-point readiness verdict. Open a contract to see the full condition checklist before handing over the keys.' },
-      { name: 'Booking Readiness', to: '/booking-readiness', icon: 'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z', desc: 'Pickup-prep board: every booking due for pickup in the next few days with its car\'s live readiness checklist. Cars with a valid recent pre-rental inspection read as done, so you only chase what\'s actually pending. Urgent pickups (within the alert lead) are flagged red; the Settings tab tunes the look-ahead, alert lead, inspection validity and holiday exclusions.' },
-      { name: 'Overdue Rentals', to: '/overdue-rentals', icon: 'M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Open contracts that are past their expected return date — the cars that should be back but are not.' },
-      { name: 'Check-in / Check-out', to: '/inspection-prototype', icon: 'M3 9a2 2 0 0 1 2-2h1.6l1-1.6A2 2 0 0 1 10.3 4h3.4a2 2 0 0 1 1.7 1.4l1 1.6H18a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM12 16a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4z', desc: 'Rental check-in / check-out condition capture: tap a zone on the interactive car diagram to record the required condition checks and photos, then compare pre-rental vs post-return with the before/after slider. Prototype — not yet wired to live contracts.' },
     ],
   },
   {
@@ -209,12 +195,9 @@ const resolveModuleLabel = (path) => {
 // App.js and the `permission:` middleware on the backend — keep the three in sync.
 const NAV_PERMISSIONS = {
   '/': 'dashboard.view',
-  '/ops-dashboard': 'dashboard.view',
-  '/orders-board': 'dashboard.view',
   '/notifications': null,
   '/settings': null,
   '/team-presence': 'logistics.view',
-  '/invoices/pending-submission': 'maintenance.view',
   '/completed-repairs': 'maintenance.view',
   '/maintenance-history': 'dashboard.view',
   '/finding-keywords': 'maintenance.view',
@@ -227,15 +210,10 @@ const NAV_PERMISSIONS = {
   '/customers': 'customers.view',
   '/drivers': 'drivers.view',
   '/contracts': 'contracts.view',
-  '/rental-contracts': 'contracts.view',
-  '/booking-readiness': 'booking_readiness.view',
-  '/inspection-prototype': 'inspections.view',
   '/inspections/schedules': 'inspections.view',
   '/reminders/service': 'reminders.view',
   '/registrations': 'registration.view',
-  '/overdue-rentals': 'dashboard.view',
   '/maintenance': 'maintenance.view',
-  '/inspections/history': 'insights.view',
   '/maintenance-hub': 'maintenance.view',
   '/car-status': 'maintenance.view',
   '/maintenance-workflow': 'maintenance.view',
@@ -245,7 +223,6 @@ const NAV_PERMISSIONS = {
   '/cost-capture': 'maintenance.manage',
   '/inspection-review': 'maintenance.manage',
   '/inspection-intelligence': 'maintenance.view',
-  '/maintenance-approvals': 'maintenance.approve',
   '/garages': 'maintenance.view',
   '/vendors': 'vendors.view',
   '/maintenance-analytics': 'maintenance.view',

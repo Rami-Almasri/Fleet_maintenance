@@ -458,6 +458,7 @@ const en = {
       collectFromGarage: 'Confirm you’ve picked the car up from the garage. A photo is required — this does not change the ticket’s stage, it just logs the handoff before the drive back.',
       arriveAtPark: 'Confirm the car is back at base. A photo is required. Minor repairs close automatically and the car goes straight back into the fleet; major repairs (critical/moderate) route to the Inspector for a final QA check first.',
       requestBanner: 'Flag a car you think needs a look — the inspector is notified to test-drive it and decide.',
+      requestHideMaintenance: 'Cars already in maintenance are hidden — they’re being handled, so you can’t flag them again here.',
       startBanner: 'Start the test drive for this car. You’ll file your report and decide next.',
       testOdometer: 'Capture the reading before the drive — it anchors the mileage chain (test → dispatch → return), measures the test-drive distance, and updates the car’s current mileage.',
       reportOdometer: 'Optional — the reading when you finished the test drive. It records the test-drive distance and updates the car’s current mileage.',

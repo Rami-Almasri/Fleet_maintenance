@@ -14,7 +14,7 @@ import LineChart from '../components/ui/LineChart';
 import CountUp from '../components/ui/CountUp';
 import FleetPulseGrid from '../components/FleetPulseGrid';
 import { usePageStat } from '../components/PageStat';
-import { aed, aed2, fmtDate } from '../lib/format';
+import { aed, fmtDate } from '../lib/format';
 import { SHOW_FINANCIALS } from '../config/features';
 import { useAuth } from '../auth/AuthContext';
 
@@ -167,29 +167,15 @@ function RepairProgressCard({ item }) {
 
 function ProactiveFlags({ data, loading }) {
   const inShop = data?.in_maintenance || { count: 0, items: [] };
-  const invoices = data?.invoice_overdue || { count: 0, items: [] };
 
   const groups = [
     {
-      // The primary column — every car in the shop right now rendered as a visual Repair-Progress KPI
-      // card (progress bar + figures), not a text row. `wide` spans the extra width; `cardItems`
-      // switches the renderer from the row list to the card grid.
-      key: 'maintenance', title: 'In Maintenance', icon: <Icon.Wrench className="h-4 w-4" />, tone: 'blue', wide: true,
+      // Every car in the shop right now rendered as a visual Repair-Progress KPI card (progress bar +
+      // figures), not a text row. `cardItems` switches the renderer from the row list to the card grid.
+      key: 'maintenance', title: 'In Maintenance', icon: <Icon.Wrench className="h-4 w-4" />, tone: 'blue',
       count: inShop.count, viewAll: '/maintenance-workflow', empty: 'No cars in the workshop right now',
       cardItems: inShop.items || [],
     },
-    ...(SHOW_FINANCIALS ? [{
-      key: 'invoices', title: 'Payments Overdue', icon: <Icon.Coins className="h-4 w-4" />, tone: 'red',
-      count: invoices.count, note: invoices.total ? aed(invoices.total) : null,
-      viewAll: '/contracts', empty: 'No unpaid balances on returned rentals',
-      rows: (invoices.items || []).map((r) => ({
-        to: `/contracts/${r.id}`,
-        primary: r.customer || `#${r.contract_no || r.id}`,
-        secondary: [r.plate, `returned ${fmtDate(r.returned_on)}`].filter(Boolean).join(' · '),
-        right: aed2(r.balance),
-        rightTone: 'text-red-600',
-      })),
-    }] : []),
   ];
 
   const totalCount = groups.reduce((s, g) => s + (g.count || 0), 0);
@@ -206,15 +192,15 @@ function ProactiveFlags({ data, loading }) {
       actions={<Badge tone={totalCount ? 'amber' : 'gray'}>{totalCount}</Badge>}
     >
       {loading ? (
-        <div className={`grid grid-cols-1 gap-4 ${SHOW_FINANCIALS ? 'lg:grid-cols-3' : ''}`}>
-          {Array.from({ length: SHOW_FINANCIALS ? 2 : 1 }).map((_, i) => <Skeleton key={i} className="h-40 rounded-2xl" />)}
+        <div className="grid grid-cols-1 gap-4">
+          <Skeleton className="h-40 rounded-2xl" />
         </div>
       ) : (
-        <div className={`grid grid-cols-1 gap-4 ${SHOW_FINANCIALS ? 'lg:grid-cols-3' : ''}`}>
+        <div className="grid grid-cols-1 gap-4">
           {groups.map((g) => (
             <div
               key={g.key}
-              className={`rounded-2xl border border-slate-200/60 bg-white p-4 shadow-soft ${g.wide && SHOW_FINANCIALS ? 'lg:col-span-2' : ''}`}
+              className="rounded-2xl border border-slate-200/60 bg-white p-4 shadow-soft"
             >
               <div className="mb-3 flex items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2">
