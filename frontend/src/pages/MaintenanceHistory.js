@@ -8,20 +8,15 @@ import { Link } from 'react-router-dom';
 import api from '../api/client';
 import Icon from '../components/ui/Icon';
 import { Skeleton } from '../components/ui/Skeleton';
-
-const WINDOWS = [
-  { days: 0, label: 'All time' },
-  { days: 30, label: '30 days' },
-  { days: 90, label: '90 days' },
-  { days: 180, label: '6 months' },
-  { days: 365, label: '1 year' },
-];
+import DateRangePicker from '../components/ui/DateRangePicker';
 
 const fmtDate = (iso) => (iso ? new Date(iso).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
 const plural = (n, w) => `${Number(n).toLocaleString()} ${w}${n === 1 ? '' : 's'}`;
 
 export default function MaintenanceHistory() {
   const [days, setDays] = useState(0); // default: all-time — total days each car has ever spent in the shop
+  const [from, setFrom] = useState(''); // explicit date range (YYYY-MM-DD); either bound overrides `days`
+  const [to, setTo] = useState('');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState('');
@@ -30,24 +25,29 @@ export default function MaintenanceHistory() {
   const [openId, setOpenId] = useState(null);
   const [visits, setVisits] = useState({}); // { [vehicleId]: { loading, items, error } }
 
+  // A date range (either bound) takes precedence over the preset trailing window.
+  const usingRange = Boolean(from || to);
+  // The exact params both the list and drill-down requests send, so they always share one window.
+  const params = useMemo(() => (usingRange ? { from: from || undefined, to: to || undefined } : { days }), [usingRange, from, to, days]);
+
   useEffect(() => {
     let alive = true;
     setLoading(true);
     setOpenId(null);
     setVisits({}); // window changed → drop any cached drill-downs (they're window-scoped)
-    api.get('/Dashboard/maintenance-history', { params: { days } })
+    api.get('/Dashboard/maintenance-history', { params })
       .then((res) => { if (alive) setData(res.data.data || { count: 0, items: [] }); })
       .catch(() => { if (alive) setData({ count: 0, items: [] }); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [days]);
+  }, [params]);
 
   const toggleVisits = (id) => {
     setOpenId((cur) => (cur === id ? null : id));
     // Fetch once per car (per window); cached in state afterwards.
     if (!visits[id]) {
       setVisits((v) => ({ ...v, [id]: { loading: true, items: [], error: false } }));
-      api.get(`/Dashboard/maintenance-history/${id}/visits`, { params: { days } })
+      api.get(`/Dashboard/maintenance-history/${id}/visits`, { params })
         .then((res) => setVisits((v) => ({ ...v, [id]: { loading: false, items: res.data.data?.items || [], error: false } })))
         .catch(() => setVisits((v) => ({ ...v, [id]: { loading: false, items: [], error: true } })));
     }
@@ -100,14 +100,12 @@ export default function MaintenanceHistory() {
             <h1 className="font-display text-2xl font-bold tracking-tight text-slate-900">Maintenance History</h1>
             <p className="mt-1 max-w-2xl text-sm text-slate-500">Every car that went to the workshop — how often it went in, and how long it spent there.</p>
           </div>
-          <select
-            value={days}
-            onChange={(e) => setDays(Number(e.target.value))}
-            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-            aria-label="Time window"
-          >
-            {WINDOWS.map((w) => <option key={w.days} value={w.days}>{w.days === 0 ? w.label : `Last ${w.label}`}</option>)}
-          </select>
+          <DateRangePicker
+            days={days}
+            from={from}
+            to={to}
+            onChange={({ days: d, from: f, to: t }) => { setDays(d); setFrom(f); setTo(t); }}
+          />
         </div>
 
         {/* Summary KPIs */}

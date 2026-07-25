@@ -157,6 +157,27 @@ class DashboardController extends Controller
     }
 
     /**
+     * Fault Leaderboard drill-down — "which cars fixed this fault the most". For one canonical fault
+     * category (?fault=Brakes) returns the vehicles ranked by how many times that fault hit them,
+     * combining our system + the historical workshop sheet exactly as the leaderboard bar does.
+     */
+    public function faultCars(Request $request, DashboardService $dashboard)
+    {
+        try {
+            $fault = trim((string) $request->query('fault', ''));
+            $limit = min(25, max(1, (int) $request->query('limit', 12)));
+
+            return ResponseHelper::SuccessResponse(
+                $dashboard->faultCars($fault, $limit),
+                "Fault cars retrieved successfully",
+                200
+            );
+        } catch (\Exception $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
      * The FULL "Most in Maintenance" list behind the homepage column's "All →" link — every in-fleet car
      * that saw the workshop over a trailing window (?days=N, default 90), with how often (visits) and how
      * long (total days in the shop). Powers the Maintenance History page.
@@ -166,9 +187,10 @@ class DashboardController extends Controller
         try {
             // days=0 → all-time (no trailing window); otherwise a trailing window capped at 2 years.
             $days = min(730, max(0, (int) $request->query('days', 90)));
+            [$from, $to] = $this->parseDateRange($request);
 
             return ResponseHelper::SuccessResponse(
-                $dashboard->maintenanceHistory($days),
+                $dashboard->maintenanceHistory($days, $from, $to),
                 "Maintenance history retrieved successfully",
                 200
             );
@@ -206,15 +228,47 @@ class DashboardController extends Controller
         try {
             // days=0 → all-time (matches the summary list's window).
             $days = min(730, max(0, (int) $request->query('days', 90)));
+            [$from, $to] = $this->parseDateRange($request);
 
             return ResponseHelper::SuccessResponse(
-                $dashboard->maintenanceHistoryVisits($vehicle, $days),
+                $dashboard->maintenanceHistoryVisits($vehicle, $days, $from, $to),
                 "Vehicle maintenance visits retrieved successfully",
                 200
             );
         } catch (\Exception $e) {
             return ResponseHelper::fromException($e);
         }
+    }
+
+    /**
+     * Parse an optional explicit `from`/`to` date-range filter (YYYY-MM-DD) from the request.
+     * Invalid dates are dropped; if both are present and reversed they're swapped so from <= to.
+     * Either bound (or both) present means the caller wants an explicit range over the trailing window.
+     *
+     * @return array{0: ?string, 1: ?string} [from, to]
+     */
+    private function parseDateRange(Request $request): array
+    {
+        $norm = function ($v) {
+            $v = is_string($v) ? trim($v) : '';
+            if ($v === '') {
+                return null;
+            }
+            try {
+                return \Carbon\Carbon::parse($v)->toDateString();
+            } catch (\Exception $e) {
+                return null;
+            }
+        };
+
+        $from = $norm($request->query('from'));
+        $to   = $norm($request->query('to'));
+
+        if ($from !== null && $to !== null && $from > $to) {
+            [$from, $to] = [$to, $from];
+        }
+
+        return [$from, $to];
     }
 
     /**

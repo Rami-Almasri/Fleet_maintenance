@@ -8,7 +8,7 @@
 // Sections: Quick KPIs · Vehicle health + Snapshot · Revenue/Expense architecture ·
 // Repair trends + Fault distribution · Maintenance summary.
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { SectionCard } from '../../components/ui/Table';
 import { RadialGauge } from '../../components/ui/Gauge';
 import CompositionDonut from '../../components/ui/CompositionDonut';
@@ -276,15 +276,35 @@ export default function VehicleOverviewDashboard({
 
   // ── Repair & service trend — DAYS on rent vs. DAYS in the workshop, per month ──
   // Each period's total days are attributed to the month it began (out_date / visit date).
+  // trendRange = months shown; 0 = All (back to the first recorded activity, capped at 5 years).
+  const [trendRange, setTrendRange] = useState(12);
   const trend = useMemo(() => {
     const now = new Date();
+    let months = trendRange;
+    if (!months) {
+      // "All" — span back to the earliest contract / visit date this car has.
+      let earliest = now;
+      const consider = (str) => {
+        if (!str) return;
+        const d = new Date(str);
+        if (!isNaN(d.getTime()) && d < earliest) earliest = d;
+      };
+      (contracts || []).forEach((c) => { if (c.contract_type !== 'U') consider(c.out_date || c.in_date); });
+      (maintenance || []).forEach((m) => consider(m.date || m.in_date));
+      months = (now.getFullYear() - earliest.getFullYear()) * 12 + (now.getMonth() - earliest.getMonth()) + 1;
+      months = Math.min(60, Math.max(12, months));
+    }
     const buckets = [];
     const index = {};
-    for (let i = 11; i >= 0; i--) {
+    for (let i = months - 1; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const key = `${d.getFullYear()}-${d.getMonth()}`;
       index[key] = buckets.length;
-      buckets.push({ label: MONTHS[d.getMonth()], rentals: 0, service: 0 });
+      buckets.push({
+        // Past 12 months the bare month name is ambiguous — stamp the year ("Jan ’25").
+        label: months > 12 ? `${MONTHS[d.getMonth()]} ’${String(d.getFullYear()).slice(2)}` : MONTHS[d.getMonth()],
+        rentals: 0, service: 0,
+      });
     }
     (contracts || []).forEach((c) => {
       if (c.contract_type === 'U') return;
@@ -296,8 +316,15 @@ export default function VehicleOverviewDashboard({
       if (k != null) buckets[k].service += spanDays(m.date, m.in_date || m.actual_in);
     });
     return buckets;
-  }, [contracts, maintenance]);
+  }, [contracts, maintenance, trendRange]);
   const hasTrend = trend.some((b) => b.rentals || b.service);
+  const TREND_RANGES = [
+    { months: 3, label: '3M' },
+    { months: 6, label: '6M' },
+    { months: 12, label: '12M' },
+    { months: 24, label: '24M' },
+    { months: 0, label: 'All' },
+  ];
 
   // Last confirmed workshop visit — the "Last service" date on the Snapshot card.
   const lastVisit = (maintenance || [])
@@ -310,7 +337,25 @@ export default function VehicleOverviewDashboard({
       {/* ── 1 · Repair trends (full width; Fault distribution now lives on the profile hero) ── */}
       <SectionCard
         title="Repair & service trends"
-        subtitle="Days on rent vs. days in the workshop — last 12 months"
+        subtitle={`Days on rent vs. days in the workshop — ${trendRange ? `last ${trendRange} months` : 'full history'}`}
+        actions={
+          <div className="flex items-center gap-1 rounded-lg bg-slate-100 p-1" role="group" aria-label="Trend time range">
+            {TREND_RANGES.map((r) => (
+              <button
+                key={r.label}
+                type="button"
+                onClick={() => setTrendRange(r.months)}
+                className={`rounded-md px-2.5 py-1 text-xs font-semibold transition ${
+                  trendRange === r.months
+                    ? 'bg-white text-slate-800 shadow-sm ring-1 ring-slate-200'
+                    : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                {r.label}
+              </button>
+            ))}
+          </div>
+        }
         bodyClass="px-4 pb-4 pt-2"
       >
         {hasTrend ? (
@@ -326,7 +371,7 @@ export default function VehicleOverviewDashboard({
           />
         ) : (
           <div className="flex h-[320px] items-center justify-center text-sm text-slate-400">
-            No rental or workshop activity in the last 12 months.
+            No rental or workshop activity in {trendRange ? `the last ${trendRange} months` : 'this car’s history'}.
           </div>
         )}
       </SectionCard>

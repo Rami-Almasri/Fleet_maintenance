@@ -12,7 +12,7 @@ import FinancialBreakdownDrawer from '../components/FinancialBreakdownDrawer';
 import { aed2, num } from '../lib/format';
 
 const STATUS_TONE = { ready: 'green', rented: 'blue', maintenance: 'amber', sold: 'gray', disposed: 'gray' };
-const OUT_OF_FLEET = ['sold', 'disposed'];
+const ACTIVE_FLEET = ['rented', 'ready'];
 
 // A null ratio/denominator = unknown (unmeasured car), shown as a muted dash — never a fake 0.
 const money = (v) => (v == null ? <span className="text-slate-300">—</span> : aed2(v));
@@ -32,7 +32,7 @@ export default function CostIntelligence() {
   const navigate = useNavigate();
 
   const [q, setQ] = useState('');
-  const [hideOutOfFleet, setHideOutOfFleet] = useState(true);
+  const [activeOnly, setActiveOnly] = useState(true);
   const [drill, setDrill] = useState(null); // { vehicleId, metric } — open the traceability drawer
 
   // Every number becomes a button that opens the drill-down drawer at the matching section, so a
@@ -50,7 +50,7 @@ export default function CostIntelligence() {
 
   const rows = useMemo(() => {
     let list = data?.vehicles || [];
-    if (hideOutOfFleet) list = list.filter((r) => !OUT_OF_FLEET.includes(r.status));
+    if (activeOnly) list = list.filter((r) => ACTIVE_FLEET.includes(r.status));
     const needle = q.trim().toLowerCase();
     if (needle) {
       list = list.filter(
@@ -58,7 +58,7 @@ export default function CostIntelligence() {
       );
     }
     return list;
-  }, [data, q, hideOutOfFleet]);
+  }, [data, q, activeOnly]);
 
   const s = data?.summary || {};
 
@@ -160,8 +160,8 @@ export default function CostIntelligence() {
         <div className="flex flex-wrap items-center gap-3">
           <SearchInput value={q} onChange={setQ} placeholder="Search plate or make / model…" className="w-full max-w-xs" />
           <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-slate-600">
-            <input type="checkbox" checked={hideOutOfFleet} onChange={(e) => setHideOutOfFleet(e.target.checked)} className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
-            Hide sold & disposed cars
+            <input type="checkbox" checked={activeOnly} onChange={(e) => setActiveOnly(e.target.checked)} className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
+            Only rented &amp; ready cars
           </label>
           <span className="ml-auto text-xs text-slate-400">{num(rows.length)} of {num(s.vehicles)} cars</span>
         </div>
