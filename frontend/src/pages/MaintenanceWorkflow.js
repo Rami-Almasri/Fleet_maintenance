@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, useLocation, Link } from 'react-router-dom';
 import api from '../api/client';
 import useFetch from '../hooks/useFetch';
 import { usePermissions } from '../hooks/usePermissions';
@@ -18,11 +18,11 @@ import TestIntakeModal from '../components/workflow/TestIntakeModal';
 import CreateMoveModal from './logistics/CreateMoveModal';
 import {
   resolveAction, allows, ctaLabel, TASK_STATUS, stageAge, stageSeconds,
-  isAtGarage, custodyBlocked, custodyHolderName, fmtDuration,
+  isAtGarage, custodyBlocked, custodyHolderName,
 } from '../components/workflow/meta';
 import { SHOW_VIDEO_REVIEW } from '../config/features';
 import {
-  KpiTile, CommandPanel, OpsClock,
+  CommandPanel,
 } from '../components/ops';
 import '../components/ops/ops.css';
 import './maintenance-workflow.css';
@@ -52,10 +52,6 @@ const EXCEPTION_LANES = [
 // Cards shown per lane before the "+N more" toggle. Keeps every collapsed column short and roughly
 // even (no scroll); expanding a lane reveals all its cards on demand.
 const LANE_PAGE_SIZE = 3;
-
-// Board column keys whose tickets are "waiting on us" for the next step — feeds the Workshop-Control
-// "Waiting action" tile. Module-scoped so it's a stable useMemo dependency.
-const WAITING_STAGES = ['requested', 'pending', 'awaiting_pickup', 'ready_for_pickup', 'qa_reinspection', 'returned_waiting_resume'];
 
 // Fault-severity tone (resource's fault_severity_tone) → dark opx chip class.
 const SEV_OPX = { red: 'crit', orange: 'paused', amber: 'paused', green: 'avail' };
@@ -279,6 +275,7 @@ export default function MaintenanceWorkflow() {
   const { user } = useAuth();
   const { id } = useParams();
   const focusId = id ? Number(id) : null;
+  const location = useLocation();
 
   const [modal, setModal] = useState(null);
   const [detail, setDetail] = useState(null);
@@ -293,7 +290,9 @@ export default function MaintenanceWorkflow() {
   const [sevFilter, setSevFilter] = useState('');
   const [query, setQuery] = useState('');
   const [view, setView] = useState('board');        // board | list
-  const [stageTab, setStageTab] = useState('all');   // 'all' | a lane key
+  // Focused stage — 'all' or a lane key. Seeded from the URL (?stage=…) so the "Maintenance Cycle"
+  // nav dropdown can deep-link straight to a stage; kept in sync when that query param changes.
+  const [stageTab, setStageTab] = useState(() => new URLSearchParams(window.location.search).get('stage') || 'all');
   const [expandedLanes, setExpandedLanes] = useState({});
 
   // Real-time board (silent revalidation every 6s), paused while a modal/drawer is open.
@@ -373,20 +372,18 @@ export default function MaintenanceWorkflow() {
   const allLanes = useMemo(() => [...primaryLanes, ...exceptionLanes], [primaryLanes, exceptionLanes]);
   const allTickets = useMemo(() => allLanes.flatMap((l) => l.tickets), [allLanes]);
 
-  // Stage tabs: an "All" tab (the full board) + one tab per stage. Every primary stage always gets a
-  // tab; exception stages only appear as a tab while they actually hold tickets, matching the board's
-  // "no empty exception lanes cluttering the view" philosophy.
-  const stageTabs = useMemo(() => {
-    const tabs = [{ key: 'all', name: 'All', tone: 'var(--brand, #6366f1)', count: allTickets.length }];
-    for (const l of primaryLanes) tabs.push({ key: l.key, name: l.name, tone: l.tone, count: l.tickets.length });
-    for (const l of exceptionLanes) if (l.tickets.length) tabs.push({ key: l.key, name: l.name, tone: l.tone, count: l.tickets.length });
-    return tabs;
-  }, [primaryLanes, exceptionLanes, allTickets]);
-
-  // If the active stage tab no longer exists (e.g. an exception lane emptied out), fall back to All.
+  // Guard: if the focused stage isn't a real lane key (e.g. a stale/bad ?stage= value), fall back to
+  // the full board. Empty stages are fine — they render their own "No tickets" state.
   useEffect(() => {
-    if (stageTab !== 'all' && !stageTabs.some((tab) => tab.key === stageTab)) setStageTab('all');
-  }, [stageTabs, stageTab]);
+    const known = [...PRIMARY_LANES, ...EXCEPTION_LANES].some((l) => l.key === stageTab);
+    if (stageTab !== 'all' && !known) setStageTab('all');
+  }, [stageTab]);
+
+  // Deep-link sync — follow ?stage=… as it changes (e.g. picking a stage from the nav dropdown while
+  // already on the board). No param → back to the full board.
+  useEffect(() => {
+    setStageTab(new URLSearchParams(location.search).get('stage') || 'all');
+  }, [location.search]);
 
   // Lanes actually rendered: every lane on the "All" tab, otherwise just the selected stage.
   const displayLanes = useMemo(
@@ -395,56 +392,8 @@ export default function MaintenanceWorkflow() {
   );
   const visibleTickets = useMemo(() => displayLanes.flatMap((l) => l.tickets), [displayLanes]);
 
-  // ---- Today's Workshop Control — action-oriented, not reporting ----
-  // A true workshop snapshot: computed over ALL open tickets (independent of the search/severity
-  // filter above), so the strip always answers "what needs action now" for the whole shop.
+  // Total open tickets across the whole shop — drives the "no open tickets" empty state below.
   const openTotal = counts.open_total ?? allTickets.length;
-  const allOpen = useMemo(
-    () => [...PRIMARY_LANES, ...EXCEPTION_LANES].flatMap((l) => columns[l.key] || []),
-    [columns],
-  );
-  // "Stale" = SLA breached in the current stage, or parked > 3 days — the same rule the board reddens by.
-  const isStale = useCallback((tk) => {
-    const a = stageAge(tk, t); const s = stageSeconds(tk);
-    return (a && a.over) || (s != null && s > 3 * 86400);
-  }, [t]);
-  // 🔴 Needs attention — blocked (came back QA-failed) or overdue; a human is needed now. Deduped by id.
-  const attentionIds = useMemo(() => {
-    const ids = new Set((columns.reinspection_failed || []).map((x) => x.id));
-    for (const tk of allOpen) if (isStale(tk)) ids.add(tk.id);
-    return ids;
-  }, [columns, allOpen, isStale]);
-  const needsAttention = attentionIds.size;
-  // 🟠 Waiting action — sitting in a "waiting on us" stage (inspection / dispatch-approval / collection),
-  // and not already flagged red above.
-  const waitingAction = useMemo(() => {
-    let n = 0;
-    for (const key of WAITING_STAGES) for (const tk of (columns[key] || [])) if (!attentionIds.has(tk.id)) n += 1;
-    return n;
-  }, [columns, attentionIds]);
-  // 🟢 Completed today — closed since midnight (from the board count; back in the fleet).
-  const completedToday = counts.completed_today ?? 0;
-  // ⏱ Oldest open ticket — the single job that's been open the longest.
-  const oldestOpen = useMemo(() => {
-    let best = null;
-    for (const tk of allOpen) {
-      if (!tk.created_at) continue;
-      if (!best || tk.created_at < best.created_at) best = tk;
-    }
-    return best;
-  }, [allOpen]);
-  const oldestAge = oldestOpen ? fmtDuration(Math.max(0, Math.floor((Date.now() - new Date(oldestOpen.created_at).getTime()) / 1000))) : '—';
-
-  // Workflow-stage distribution for the bottom command row. Computed over ALL open tickets (the raw
-  // board columns, independent of the search/severity filter) so it always shows the true shop load
-  // across every stage. Only stages that currently hold tickets are shown.
-  const stageDist = useMemo(() => {
-    const rows = [...PRIMARY_LANES, ...EXCEPTION_LANES]
-      .map((l) => ({ key: l.key, name: l.name, tone: l.tone, count: (columns[l.key] || []).length }))
-      .filter((r) => r.count > 0);
-    const total = rows.reduce((s, r) => s + r.count, 0);
-    return { rows, total };
-  }, [columns]);
 
   // Clicking a ticket opens the full detail drawer directly (it seeds from the board summary, then
   // lazy-loads the full ticket) — no intermediate "select → View Details" step.
@@ -486,35 +435,10 @@ export default function MaintenanceWorkflow() {
 
   return (
     <div className="opx mwf">
-      {/* Command header */}
-      <header className="opx-head">
-        <h1>
-          Maintenance Cycle
-          <span className="live"><span className="d" />{t('workflow.board.live')}</span>
-        </h1>
-        <OpsClock />
-        <div className="seg" style={{ marginLeft: 12 }}>
-          <button className={view === 'board' ? 'on' : ''} onClick={() => setView('board')}>Board</button>
-          <button className={view === 'list' ? 'on' : ''} onClick={() => setView('list')}>List</button>
-        </div>
-        <div className="mwf-head-actions">
-          {canManage && <button className="opx-btn" onClick={() => setModal({ action: 'complaint' })}>📣 {t('workflow.board.newComplaint')}</button>}
-          {canLogistics && <button className="opx-btn" onClick={() => setModal({ action: 'request' })}><Icon.Plus className="h-4 w-4" /> {t('workflow.board.requestInspection')}</button>}
-        </div>
-      </header>
-
       <div className="opx-body">
-        {/* TODAY'S WORKSHOP CONTROL — action-oriented: what needs a decision right now, not reporting. */}
-        <div className="opx-grid opx-c12 mwf-kpis">
-          <div className="opx-span-3"><KpiTile tone={needsAttention > 0 ? 'hot' : ''} label="🔴 Needs<br>Attention" value={loading ? '—' : needsAttention} foot="blocked or overdue" footTone={needsAttention > 0 ? 'down' : 'flat'} /></div>
-          <div className="opx-span-3"><KpiTile tone="warm" label="🟠 Waiting<br>Action" value={loading ? '—' : waitingAction} foot="inspection · approval · pickup" /></div>
-          <div className="opx-span-3"><KpiTile tone="good" label="🟢 Completed<br>Today" value={loading ? '—' : completedToday} foot="back in fleet" /></div>
-          <div className="opx-span-3"><KpiTile label="⏱ Oldest<br>Open" value={loading ? '—' : oldestAge} foot={oldestOpen ? (oldestOpen.plate || `#${oldestOpen.id}`) : 'no open tickets'} /></div>
-        </div>
-
         {error && <div className="mwf-error">{error}</div>}
 
-        {/* Toolbar */}
+        {/* One control strip — search + filters on the left, view toggle + primary actions on the right. */}
         <div className="mwf-toolbar">
           <div className="mwf-search">
             <Icon.Search className="h-4 w-4" />
@@ -526,26 +450,16 @@ export default function MaintenanceWorkflow() {
           {(query || sevFilter) && (
             <button className="opx-btn" onClick={() => { setQuery(''); setSevFilter(''); }}>Clear</button>
           )}
-          <span className="mwf-toolbar-meta">{visibleTickets.length} shown</span>
-        </div>
 
-        {/* Stage tabs — click a stage to focus just its tickets, or "All" for the full board. */}
-        <div className="mwf-tabs" role="tablist" aria-label="Maintenance stages">
-          {stageTabs.map((tab) => (
-            <button
-              key={tab.key}
-              type="button"
-              role="tab"
-              aria-selected={stageTab === tab.key}
-              className={`mwf-tab ${stageTab === tab.key ? 'on' : ''}`}
-              style={stageTab === tab.key ? { '--tab-tone': tab.tone } : undefined}
-              onClick={() => setStageTab(tab.key)}
-            >
-              <span className="dot" style={{ background: tab.tone }} />
-              <span className="nm">{tab.name}</span>
-              <span className="ct">{tab.count}</span>
-            </button>
-          ))}
+          <div className="mwf-toolbar-right">
+            <span className="mwf-toolbar-meta">{visibleTickets.length} shown</span>
+            <div className="seg">
+              <button className={view === 'board' ? 'on' : ''} onClick={() => setView('board')}>Board</button>
+              <button className={view === 'list' ? 'on' : ''} onClick={() => setView('list')}>List</button>
+            </div>
+            {canManage && <button className="opx-btn" onClick={() => setModal({ action: 'complaint' })}>📣 {t('workflow.board.newComplaint')}</button>}
+            {canLogistics && <button className="opx-btn primary" onClick={() => setModal({ action: 'request' })}><Icon.Plus className="h-4 w-4" /> {t('workflow.board.requestInspection')}</button>}
+          </div>
         </div>
 
         {/* BOARD */}
@@ -594,69 +508,6 @@ export default function MaintenanceWorkflow() {
             </div>
           </CommandPanel>
         )}
-
-        {/* BOTTOM COMMAND ROW — workflow-stage distribution across the whole shop. (Per-ticket detail
-            lives in the click-to-open drawer; the Recent Activity feed was removed at the operator's request.) */}
-        <div className="opx-grid opx-c12 mwf-bottom">
-          <div className="opx-span-12">
-            <CommandPanel title="Workflow Stages" label={`${stageDist.total} open`}>
-              {loading && stageDist.total === 0 ? <div className="opx-skel" style={{ height: 120 }} /> : stageDist.total === 0 ? (
-                <div className="opx-empty" style={{ padding: 24 }}>No tickets in the workflow</div>
-              ) : (
-                <div className="mwf-stages">
-                  {/* Donut — each arc sized by its stage's share of open tickets. */}
-                  <div className="mwf-donut">
-                    <svg viewBox="0 0 120 120" width="150" height="150" role="img" aria-label="Workflow stage distribution">
-                      {(() => {
-                        const R = 52;
-                        const C = 2 * Math.PI * R;
-                        let acc = 0;
-                        return stageDist.rows.map((r) => {
-                          const len = (r.count / stageDist.total) * C;
-                          const seg = (
-                            <circle
-                              key={r.key}
-                              cx="60" cy="60" r={R} fill="none"
-                              stroke={r.tone} strokeWidth="15"
-                              strokeDasharray={`${len} ${C - len}`}
-                              strokeDashoffset={-acc}
-                              transform="rotate(-90 60 60)"
-                              className="mwf-donut-seg"
-                            >
-                              <title>{`${r.name}: ${r.count}`}</title>
-                            </circle>
-                          );
-                          acc += len;
-                          return seg;
-                        });
-                      })()}
-                    </svg>
-                    <div className="mwf-donut-center">
-                      <b>{stageDist.total}</b>
-                      <span>open</span>
-                    </div>
-                  </div>
-                  {/* Legend — every active stage with its count; click to focus that stage on the board. */}
-                  <div className="mwf-stages-legend">
-                    {stageDist.rows.map((r) => (
-                      <button
-                        key={r.key}
-                        type="button"
-                        className={`mwf-stages-item ${stageTab === r.key ? 'on' : ''}`}
-                        onClick={() => { setStageTab(r.key); setView('board'); }}
-                        title={`Focus ${r.name}`}
-                      >
-                        <span className="d" style={{ background: r.tone }} />
-                        <span className="nm">{r.name}</span>
-                        <b>{r.count}</b>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </CommandPanel>
-          </div>
-        </div>
 
         {!loading && openTotal === 0 && (
           <div className="opx-empty" style={{ marginTop: 20 }}>

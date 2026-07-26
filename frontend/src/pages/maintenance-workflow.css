@@ -5,19 +5,24 @@
    same --panel/--ink/--line variables, so it reads in Platinum and Cockpit.
    ======================================================================= */
 
-.mwf .mwf-head-actions{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto}
-@media(max-width:900px){.mwf .mwf-head-actions{margin-left:0;width:100%}}
-
-.mwf .mwf-kpis{margin-bottom:16px}
 .mwf .mwf-error{margin-bottom:14px;padding:11px 14px;border-radius:11px;font-size:13px;
   color:var(--crit);background:rgba(251,113,133,.08);border:1px solid rgba(251,113,133,.3)}
 
-/* ---- toolbar ---- */
+/* ---- toolbar — the single control strip (search/filter · view toggle · actions) ---- */
 .mwf-toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:16px}
 .mwf-search{position:relative;display:flex;align-items:center}
 .mwf-search>svg{position:absolute;left:11px;color:var(--ink-3);pointer-events:none}
 .mwf-search .opx-input{min-width:280px}
-.mwf-toolbar-meta{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--ink-3);letter-spacing:.04em}
+.mwf-toolbar-right{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-left:auto}
+.mwf-toolbar-meta{font-family:var(--mono);font-size:11px;color:var(--ink-3);letter-spacing:.04em;white-space:nowrap}
+@media(max-width:900px){.mwf-toolbar-right{margin-left:0;width:100%}}
+
+/* view toggle — moved out of the (removed) command header into the toolbar */
+.mwf .seg{display:flex;gap:2px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:3px}
+.mwf .seg button{font-family:var(--mono);font-size:11px;color:var(--ink-3);background:none;border:none;
+  padding:6px 12px;border-radius:7px;cursor:pointer;transition:.15s;letter-spacing:.02em}
+.mwf .seg button:hover{color:var(--ink-2)}
+.mwf .seg button.on{color:var(--void);background:var(--cyan);font-weight:600}
 
 /* ---- stage tabs — click a stage to focus its tickets, "All" for the full board ---- */
 .mwf-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
@@ -132,34 +137,3 @@
 
 /* ---- list view over-age ---- */
 .mwf-over{color:var(--crit)!important}
-
-/* ---- bottom command row ---- */
-.mwf-bottom{margin-top:4px}
-.mwf-detail{display:flex;flex-direction:column;gap:14px}
-.mwf-dl{display:grid;grid-template-columns:auto 1fr;gap:7px 16px;margin:0}
-.mwf-dl dt{font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-3);align-self:center}
-.mwf-dl dd{margin:0;font-size:12.5px;color:var(--ink);font-weight:500}
-.mwf-detail-faults .lbl{font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.08em;
-  color:var(--ink-3);margin:0 0 6px}
-.mwf-detail-faults .mwf-task{padding:4px 0}
-.mwf-detail-actions{display:flex;gap:8px;flex-wrap:wrap}
-
-/* ---- workflow-stage distribution (bottom command row) — donut + legend ---- */
-.mwf-stages{display:flex;align-items:center;gap:26px}
-.mwf-donut{position:relative;flex:none;width:150px;height:150px;display:grid;place-items:center}
-.mwf-donut svg{transform:none}
-.mwf-donut-seg{transition:stroke-dasharray .4s ease,stroke-dashoffset .4s ease}
-.mwf-donut-seg:hover{stroke-width:18;filter:brightness(1.12)}
-.mwf-donut-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none}
-.mwf-donut-center b{font-size:30px;font-weight:800;color:var(--ink);line-height:1}
-.mwf-donut-center span{font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-3);margin-top:3px}
-.mwf-stages-legend{flex:1;display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:6px;min-width:0}
-.mwf-stages-item{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:9px;
-  background:var(--panel);border:1px solid var(--line);color:var(--ink-2);font-size:12px;
-  cursor:pointer;text-align:left;transition:border-color .15s,background .15s}
-.mwf-stages-item:hover{border-color:var(--ink-3);color:var(--ink-1)}
-.mwf-stages-item.on{border-color:var(--ink-3);background:var(--ov2);color:var(--ink-1)}
-.mwf-stages-item .d{width:9px;height:9px;border-radius:3px;flex:none}
-.mwf-stages-item .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.mwf-stages-item b{margin-left:auto;font-family:var(--mono);font-weight:700;color:var(--ink)}
-@media(max-width:640px){.mwf-stages{flex-direction:column;gap:16px}.mwf-stages-legend{width:100%}}
