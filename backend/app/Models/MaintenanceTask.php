@@ -72,8 +72,43 @@ class MaintenanceTask extends Model
         Maintenance::FAULT_SEVERITY_ROUTINE  => 1,
     ];
 
+    // ── PRIMARY DOMAIN CLASSIFICATION (Event Type layer) ──────────────────────────────────────────
+    // `kind` is the ONE field the whole system reads to know what an event IS. Its source of truth is
+    // the catalog the user picked (fault_catalog / service_catalog / inspection_types) — exactly one
+    // *_catalog_id is set, matching `kind`, enforced by the DB CHECK + the saving() guard below. NEVER
+    // decide type from symptom/category_key/severity/maintenance_type again — read `kind`.
+    // See docs/Service-vs-Fault-Domain-Separation.md.
+    public const KIND_FAULT      = 'fault';       // 🔴 unplanned failure/defect — counts in fault stats
+    public const KIND_SERVICE    = 'service';     // 🔵 planned preventive work — excluded from fault stats
+    public const KIND_INSPECTION = 'inspection';  // 🟨 a check — may spawn a separate fault
+    public const KINDS = [self::KIND_FAULT, self::KIND_SERVICE, self::KIND_INSPECTION];
+
+    /** Provenance of the `kind` value (audit + review targeting). */
+    public const CLS_CATALOG  = 'catalog';   // user picked a catalog row (authoritative)
+    public const CLS_RESOLVER = 'resolver';  // legacy backfill heuristic
+    public const CLS_IMPORT   = 'import';    // sheet/OM import mapping
+    public const CLS_MANUAL   = 'manual';    // admin override
+    public const CLS_SOURCES  = [self::CLS_CATALOG, self::CLS_RESOLVER, self::CLS_IMPORT, self::CLS_MANUAL];
+
+    /** Single source of the colour/emoji every surface (backend + frontend) uses to render a kind. */
+    public const KIND_META = [
+        self::KIND_FAULT      => ['emoji' => '🔴', 'label' => 'Fault',      'tone' => 'red'],
+        self::KIND_SERVICE    => ['emoji' => '🔵', 'label' => 'Service',    'tone' => 'blue'],
+        self::KIND_INSPECTION => ['emoji' => '🟨', 'label' => 'Inspection', 'tone' => 'amber'],
+    ];
+
+    /** Which *_catalog_id column backs each kind (used by the guard + catalog() resolver). */
+    public const KIND_CATALOG_FK = [
+        self::KIND_FAULT      => 'fault_catalog_id',
+        self::KIND_SERVICE    => 'service_catalog_id',
+        self::KIND_INSPECTION => 'inspection_type_id',
+    ];
+
     protected $fillable = [
         'maintenance_id', 'vehicle_id',
+        // Domain classification — the primary type + its catalog source-of-truth + provenance.
+        'kind', 'fault_catalog_id', 'service_catalog_id', 'inspection_type_id',
+        'classification_source', 'needs_review',
         'symptom', 'category_key', 'source', 'severity',
         'root_cause_id', 'root_cause', 'notes', 'resolution_note',
         'status', 'current_vendor_id',
@@ -97,6 +132,7 @@ class MaintenanceTask extends Model
         'resolved_at'           => 'datetime',
         'confirmed_at'          => 'datetime',
         'recurrence_flagged'    => 'boolean',
+        'needs_review'          => 'boolean',
         'repair_gate_at'        => 'datetime',
         'parts_cost'            => 'decimal:2',
         'labor_cost'            => 'decimal:2',
@@ -108,6 +144,28 @@ class MaintenanceTask extends Model
 
     protected static function booted(): void
     {
+        // Classification integrity — the FIRST line of defence (the DB CHECK is the last). Exactly the
+        // one *_catalog_id matching `kind` may be set; more than one is a bug; zero is allowed only as the
+        // legacy/unclassified case (matches the CHECK, so flag-off behaviour is unchanged).
+        static::saving(function (MaintenanceTask $t) {
+            $set = array_filter([
+                self::KIND_FAULT      => $t->fault_catalog_id,
+                self::KIND_SERVICE    => $t->service_catalog_id,
+                self::KIND_INSPECTION => $t->inspection_type_id,
+            ], fn ($v) => $v !== null);
+
+            if (count($set) === 0) {
+                return; // legacy / not-yet-classified — permitted
+            }
+            if (count($set) > 1) {
+                throw new \DomainException('A maintenance_task may reference at most one catalog (fault/service/inspection).');
+            }
+            $catalogKind = array_key_first($set);
+            if ($t->kind !== $catalogKind) {
+                throw new \DomainException("maintenance_task kind '{$t->kind}' does not match its catalog reference ('{$catalogKind}').");
+            }
+        });
+
         // A task appearing/changing/leaving re-derives the parent ticket's roll-ups. saveQuietly on the
         // parent side means this never recurses back into task events.
         static::saved(fn (MaintenanceTask $t) => optional($t->maintenance)->recalcFromTasks(true));
@@ -141,6 +199,34 @@ class MaintenanceTask extends Model
     public function rootCause(): BelongsTo
     {
         return $this->belongsTo(FaultCause::class, 'root_cause_id');
+    }
+
+    // ── Catalog (source-of-truth for `kind`) ────────────────────────────────────────────────────
+
+    public function faultCatalog(): BelongsTo
+    {
+        return $this->belongsTo(FaultCatalog::class, 'fault_catalog_id');
+    }
+
+    public function serviceCatalog(): BelongsTo
+    {
+        return $this->belongsTo(ServiceCatalog::class, 'service_catalog_id');
+    }
+
+    public function inspectionType(): BelongsTo
+    {
+        return $this->belongsTo(InspectionType::class, 'inspection_type_id');
+    }
+
+    /** The one catalog row backing this task's kind (null when unclassified/legacy). Query-free if loaded. */
+    public function catalog(): ?Model
+    {
+        return match ($this->kind) {
+            self::KIND_FAULT      => $this->faultCatalog,
+            self::KIND_SERVICE    => $this->serviceCatalog,
+            self::KIND_INSPECTION => $this->inspectionType,
+            default               => null,
+        };
     }
 
     public function identifiedBy(): BelongsTo
@@ -232,6 +318,35 @@ class MaintenanceTask extends Model
         return $q->whereNotIn('status', self::TERMINAL);
     }
 
+    // ── Kind scopes — the ONLY sanctioned way to filter events by type ────────────────────────────
+    // Every fault-oriented feature MUST start from ->faults(); every service feature from ->services().
+    // Do NOT write where('kind', …) inline, and NEVER filter type via category_key/symptom/severity.
+
+    public function scopeFaults(Builder $q): Builder
+    {
+        return $q->where('kind', self::KIND_FAULT);
+    }
+
+    public function scopeServices(Builder $q): Builder
+    {
+        return $q->where('kind', self::KIND_SERVICE);
+    }
+
+    public function scopeInspections(Builder $q): Builder
+    {
+        return $q->where('kind', self::KIND_INSPECTION);
+    }
+
+    public function scopeOfKind(Builder $q, string ...$kinds): Builder
+    {
+        return $q->whereIn('kind', $kinds);
+    }
+
+    public function scopeNeedsReview(Builder $q): Builder
+    {
+        return $q->where('needs_review', true);
+    }
+
     /**
      * "Pending Assignment" — an OPEN fault that has NOT been routed to any garage yet (no open stint). In
      * the split-dispatch model the delegate (Waleed/Abdullah) may send only SOME faults to a garage at
@@ -266,6 +381,29 @@ class MaintenanceTask extends Model
     public function isTerminal(): bool
     {
         return in_array($this->status, self::TERMINAL, true);
+    }
+
+    // ── Kind predicates + presentation ────────────────────────────────────────────────────────────
+
+    public function isFault(): bool
+    {
+        return $this->kind === self::KIND_FAULT;
+    }
+
+    public function isService(): bool
+    {
+        return $this->kind === self::KIND_SERVICE;
+    }
+
+    public function isInspection(): bool
+    {
+        return $this->kind === self::KIND_INSPECTION;
+    }
+
+    /** Emoji/label/tone for rendering this task's kind (falls back to Fault meta for legacy rows). */
+    public function kindMeta(): array
+    {
+        return self::KIND_META[$this->kind] ?? self::KIND_META[self::KIND_FAULT];
     }
 
     /** Has the workshop confirmed this fault genuinely exists (the gate for recurring-fault intelligence)? */

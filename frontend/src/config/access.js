@@ -18,7 +18,8 @@ export const ROLE_BLOCKED_PATHS = {
   // The field driver. Keeps its own boards (Driver Dispatch, My Queue, Workflow),
   // but is walled off from the fleet dashboards, analytics and maintenance admin.
   logistics: [
-    '/',                             // Dashboard
+    '/',                             // Workspace landing (Dashboard-gated)
+    '/dashboard',                    // Classic fleet Dashboard
     '/vendors',                      // Vendors
     '/garages',                      // Garages
     '/finding-keywords',             // Keyword Risk
@@ -29,7 +30,8 @@ export const ROLE_BLOCKED_PATHS = {
   // The Supervisor / Coordinator (dispatcher). Works the maintenance + logistics
   // boards; walled off from the fleet-wide command dashboards.
   supervisor: [
-    '/',                   // Dashboard
+    '/',                   // Workspace landing (Dashboard-gated)
+    '/dashboard',          // Classic fleet Dashboard
   ],
 };
 

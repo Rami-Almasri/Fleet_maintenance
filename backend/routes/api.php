@@ -33,6 +33,7 @@ use App\Http\Controllers\PartInvestigationController;
 use App\Http\Controllers\RecurringFaultReviewController;
 use App\Http\Controllers\MaintenanceSwapController;
 use App\Http\Controllers\MaintenanceWorkflowController;
+use App\Http\Controllers\MaintenanceCheckpointController;
 use App\Http\Controllers\InspectorPadController;
 use App\Http\Controllers\OperationController;
 use App\Http\Controllers\StatusMismatchController;
@@ -333,6 +334,10 @@ Route::middleware('auth:sanctum')->prefix('maintenance-tickets')->controller(Mai
     Route::get('/repair-quality', 'repairQuality')->middleware('permission:maintenance.view');
     // Fixed & Completed Repairs ledger — closed tickets, newest-closed first (STATIC — must precede /{ticket}).
     Route::get('/completed', 'completed')->middleware('permission:maintenance.view');
+    // Maintenance Checkpoint — assignable responsible-user picker (STATIC — must precede /{ticket}).
+    Route::get('/checkpoint-candidates', [MaintenanceCheckpointController::class, 'candidates'])->middleware('permission:maintenance.view');
+    // A vehicle's checkpoint timeline for its profile tab (STATIC /vehicle/... — precedes /{ticket}).
+    Route::get('/vehicle/{vehicle}/checkpoints', [MaintenanceCheckpointController::class, 'vehicleTimeline'])->middleware('permission:maintenance.view');
     Route::get('/{ticket}', 'show')->middleware('permission:maintenance.view');
     // The car's real current mileage + the full log of manual mileage corrections on this vehicle.
     Route::get('/{ticket}/mileage', 'mileage')->middleware('permission:maintenance.view');
@@ -420,6 +425,14 @@ Route::middleware('auth:sanctum')->prefix('maintenance-tickets')->controller(Mai
     Route::post('/{ticket}/video', 'storeVideo')->middleware('permission:maintenance.delegate');
     Route::get('/{ticket}/media', 'listMedia')->middleware('permission:maintenance.view');
     Route::delete('/{ticket}/media/{media}', 'destroyMedia')->middleware('permission:maintenance.delegate');
+    // Maintenance Checkpoint — workshop progress tracking. Route gate is view-level; the finer
+    // submit/manage authority (permission OR assigned-responsible OR admin) is enforced in the controller.
+    Route::get('/{ticket}/checkpoints', [MaintenanceCheckpointController::class, 'index'])->middleware('permission:maintenance.view');
+    Route::post('/{ticket}/checkpoints', [MaintenanceCheckpointController::class, 'store'])->middleware('permission:maintenance.view');
+    Route::delete('/{ticket}/checkpoints/{checkpoint}', [MaintenanceCheckpointController::class, 'destroy'])->middleware('permission:maintenance.view');
+    // Set the promised completion (duration → derived date, or an explicit date) + the responsible users.
+    Route::post('/{ticket}/expected-completion', [MaintenanceCheckpointController::class, 'setExpected'])->middleware('permission:maintenance.view');
+    Route::put('/{ticket}/responsibles', [MaintenanceCheckpointController::class, 'setResponsibles'])->middleware('permission:maintenance.view');
     // "Where is the car?" location tracking is now CANONICAL on Logistics Dispatch (see the /logistics
     // ping + status routes above) — one channel for every movement. The duplicate per-ticket
     // reassign/ping/status endpoints were removed in favour of it.
@@ -812,6 +825,8 @@ Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/most-maintained-models', [DashboardController::class, 'mostMaintainedModels']);
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/most-maintained-cars', [DashboardController::class, 'mostMaintainedCars']);
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/top-faults', [DashboardController::class, 'topFaults']);
+// Maintenance Progress: the workshop monitoring centre (cars in maintenance + checkpoint status + ETA)
+Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/maintenance-progress', [DashboardController::class, 'maintenanceProgress']);
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/fault-cars', [DashboardController::class, 'faultCars']);
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/maintenance-history', [DashboardController::class, 'maintenanceHistory']);
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/maintenance-history/{vehicle}/visits', [DashboardController::class, 'maintenanceHistoryVisits']);

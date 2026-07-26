@@ -63,25 +63,60 @@ const CoverageRow = ({ label, date, days }) => {
   );
 };
 
-const monthKey = (str) => {
-  if (!str) return null;
-  const d = new Date(str);
-  return isNaN(d.getTime()) ? null : `${d.getFullYear()}-${d.getMonth()}`;
-};
 const daysUntil = (str) => {
   if (!str) return null;
   const d = new Date(str);
   if (isNaN(d.getTime())) return null;
   return Math.round((d.getTime() - Date.now()) / 86400000);
 };
-// Whole days a period covers (start → end). An open period (no end) counts up to today.
-const spanDays = (start, end) => {
-  if (!start) return 0;
+// Spread a period's days across every calendar month it overlaps, so a long rental
+// that starts in October doesn't dump its full span into October (which has only 31 days).
+// Returns [{ key: "YYYY-M", days }, …] — days are the portion that actually fell in that month.
+// Collapse overlapping [start, end] periods into a set of non-overlapping intervals, so a car
+// with two overlapping rentals (exchange/swap chains, data quirks) counts each day ONCE — a
+// month can never report more days than actually elapsed.
+const mergeIntervals = (rows, startKey, endKey, endFallback) => {
+  const spans = rows
+    .map((r) => {
+      const s = new Date(r[startKey]);
+      if (isNaN(s.getTime())) return null;
+      const rawEnd = r[endKey] || (endFallback && r[endFallback]);
+      const e = rawEnd ? new Date(rawEnd) : new Date(); // open period → up to today
+      if (isNaN(e.getTime()) || e <= s) return null;
+      return [s, e];
+    })
+    .filter(Boolean)
+    .sort((a, b) => a[0] - b[0]);
+  const merged = [];
+  spans.forEach(([s, e]) => {
+    const last = merged[merged.length - 1];
+    if (last && s <= last[1]) {
+      if (e > last[1]) last[1] = e; // extend the open interval
+    } else {
+      merged.push([s, e]);
+    }
+  });
+  return merged;
+};
+const daysByMonth = (start, end) => {
+  if (!start) return [];
   const s = new Date(start);
-  if (isNaN(s.getTime())) return 0;
+  if (isNaN(s.getTime())) return [];
   const e = end ? new Date(end) : new Date();
-  if (isNaN(e.getTime())) return 0;
-  return Math.max(0, Math.round((e.getTime() - s.getTime()) / 86400000));
+  if (isNaN(e.getTime()) || e <= s) return [];
+  const out = [];
+  let cursor = new Date(s.getFullYear(), s.getMonth(), 1);
+  while (cursor <= e) {
+    const monthStart = cursor;
+    const nextMonth = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+    // Clamp the period to this month's window, then count days inside it.
+    const from = s > monthStart ? s : monthStart;
+    const to = e < nextMonth ? e : nextMonth;
+    const days = Math.max(0, Math.round((to.getTime() - from.getTime()) / 86400000));
+    if (days > 0) out.push({ key: `${cursor.getFullYear()}-${cursor.getMonth()}`, days });
+    cursor = nextMonth;
+  }
+  return out;
 };
 
 // One health signal → { key, label, status: good|warn|bad|unknown, detail }.
@@ -306,14 +341,20 @@ export default function VehicleOverviewDashboard({
         rentals: 0, service: 0,
       });
     }
-    (contracts || []).forEach((c) => {
-      if (c.contract_type === 'U') return;
-      const k = index[monthKey(c.out_date || c.in_date)];
-      if (k != null) buckets[k].rentals += spanDays(c.out_date, c.in_date);
+    // Merge overlapping periods per series FIRST, then spread each merged interval across the
+    // months it covers — so no month can exceed the days that actually elapsed in it.
+    const rentalRows = (contracts || []).filter((c) => c.contract_type !== 'U');
+    mergeIntervals(rentalRows, 'out_date', 'in_date').forEach(([s, e]) => {
+      daysByMonth(s, e).forEach(({ key, days }) => {
+        const k = index[key];
+        if (k != null) buckets[k].rentals += days;
+      });
     });
-    (maintenance || []).forEach((m) => {
-      const k = index[monthKey(m.date || m.in_date)];
-      if (k != null) buckets[k].service += spanDays(m.date, m.in_date || m.actual_in);
+    mergeIntervals(maintenance || [], 'date', 'in_date', 'actual_in').forEach(([s, e]) => {
+      daysByMonth(s, e).forEach(({ key, days }) => {
+        const k = index[key];
+        if (k != null) buckets[k].service += days;
+      });
     });
     return buckets;
   }, [contracts, maintenance, trendRange]);
@@ -501,8 +542,9 @@ export default function VehicleOverviewDashboard({
         </SectionCard>
       </div>
 
-      {/* ── 3 · Financial architecture (money-gated) ───────────────────── */}
-      {showFinancials && (
+      {/* ── 3 · Financial architecture (money-gated) ─────────────────────
+          Hidden for now (change `false &&` back to just showFinancials to restore). */}
+      {false && showFinancials && (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <SectionCard
             title="Revenue architecture"

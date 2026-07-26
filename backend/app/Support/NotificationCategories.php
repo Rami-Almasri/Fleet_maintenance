@@ -50,6 +50,12 @@ class NotificationCategories
             'maint_complaint_resolved',        // the complaint was closed / resolved
         ],
 
+        // Maintenance Progress — the Checkpoint tracking system's reminders to the responsible follow-up
+        // owners (Waleed/Abdullah): a car in the workshop needs a progress update before it goes overdue.
+        'progress' => [
+            'maint_checkpoint',
+        ],
+
         // Test-drive / re-inspection events — the Inspector is asked to road-test a car.
         'test_drive' => [
             'maint_review_pending',       // Inspection Request Review Gate: awaiting Controller (Lin/Marwa) approval

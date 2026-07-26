@@ -136,4 +136,31 @@ return [
     */
     'asset_layer' => env('ASSET_LAYER_MODE', 'off'),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Maintenance Event Type (Fault / Service / Inspection)
+    |--------------------------------------------------------------------------
+    |
+    | Governs the type-driven domain separation: every maintenance_task carries a
+    | first-class `kind` (fault | service | inspection) sourced from a catalog, so
+    | routine servicing (oil, filters, tyres) is never counted, ranked, or scored
+    | as a fault. See docs/Service-vs-Fault-Domain-Separation.md. Three modes:
+    |
+    |   'off'      — Phase 0 default. The catalogs + `kind` column exist and NEW
+    |                tasks are stamped with a kind, but NOTHING reads it: every
+    |                dashboard / analytics / health / recurrence figure is computed
+    |                exactly as before. Byte-identical behaviour.
+    |   'shadow'   — `kind` is written on new tasks AND legacy rows are backfilled,
+    |                but readers still ignore it. Lets the classification accumulate
+    |                and be validated before any number moves.
+    |   'enforced' — read paths use the `kind` scopes: fault analytics/health/
+    |                recurrence exclude services; services render in their own
+    |                section; the UI shows 🔴/🔵/🟨 per event.
+    |
+    | Rollback at any point = set EVENT_KIND_MODE=off (config flip, no deploy). The
+    | column and catalogs are additive; no existing column is dropped or repurposed.
+    |
+    */
+    'event_kind' => env('EVENT_KIND_MODE', 'off'),
+
 ];

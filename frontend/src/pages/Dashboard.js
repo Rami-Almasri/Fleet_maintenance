@@ -13,7 +13,7 @@ import BarChart from '../components/ui/BarChart';
 import LineChart from '../components/ui/LineChart';
 import CountUp from '../components/ui/CountUp';
 import FleetPulseGrid from '../components/FleetPulseGrid';
-import { usePageStat } from '../components/PageStat';
+import MaintenanceProgress from '../components/dashboard/MaintenanceProgress';
 import { aed, fmtDate } from '../lib/format';
 import { SHOW_FINANCIALS } from '../config/features';
 import { useAuth } from '../auth/AuthContext';
@@ -858,15 +858,6 @@ export default function Dashboard() {
   // Operational fleet = cars the team actually works with (ready + on-rent + in-shop); excludes
   // sold / disposed / office-use, which inflate fleet.total. All readiness ratios divide by THIS.
   const activeFleet = available + rented + maint;
-  const utilizationRate = activeFleet ? Math.round((rented / activeFleet) * 100) : 0;
-
-  // Headline percent for the floating page gauge: fleet utilization.
-  usePageStat({
-    percent: loading || !activeFleet ? null : utilizationRate,
-    label: 'Utilization',
-    color: 'indigo',
-    hint: `${rented} of ${activeFleet} operational cars currently rented out`,
-  });
 
   // Fleet Status — a live snapshot for the headline donut, limited to the three
   // operational states the team actually works with. The "Unavailable" catch-all
@@ -956,15 +947,14 @@ export default function Dashboard() {
 
         {view === 'metrics' && (
           <>
-        {/* Fleet composition — the status donut beside a compact utilization summary. */}
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        {/* Fleet composition — the status donut. */}
+        <div className="grid grid-cols-1 gap-6">
           {loading ? (
-            <Card className="lg:col-span-2">
+            <Card>
               <div className="flex justify-center py-16"><Skeleton className="h-56 w-56 rounded-full" /></div>
             </Card>
           ) : (
             <FleetStatusCard
-              className="lg:col-span-2"
               title="Fleet Status"
               centerLabel="Active Fleet"
               unit="cars"
@@ -978,36 +968,16 @@ export default function Dashboard() {
               }
             />
           )}
-
-          {/* Fleet split — a compact legend of the active-fleet composition
-              (Available / On Rent / Maintenance), matching the donut beside it. */}
-          <Card className="flex flex-col p-6">
-            <p className="flex items-center gap-1 text-sm font-semibold text-slate-800">
-              Fleet Split
-              <InfoTip content="How the active fleet breaks down right now — cars free to rent, out on rent, and in maintenance." />
-            </p>
-            <div className="mt-5 flex-1 space-y-3.5 border-t border-slate-100 pt-5">
-              {[
-                { label: 'Available',   value: available, dot: '#22C55E' },
-                { label: 'On Rent',     value: rented,    dot: '#2F7EF6' },
-                { label: 'Maintenance', value: maint,     dot: '#F5C518' },
-              ].map((s) => (
-                <div key={s.label} className="flex items-center gap-3">
-                  <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: s.dot }} />
-                  <span className="flex-1 text-sm font-medium text-slate-600">{s.label}</span>
-                  <span className="text-sm font-semibold tabular-nums text-slate-900">
-                    {loading ? '—' : s.value.toLocaleString()}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </Card>
         </div>
 
         {/* Proactive Flags — forward-looking conditions (rentals expiring, payments overdue,
             inspections due) surfaced before they become problems. Same source lists as the
             notification bell; every row deep-links to its record. */}
         <ProactiveFlags data={proactive} loading={loading} />
+
+        {/* Maintenance Progress — the workshop monitoring centre: every car in maintenance with its
+            checkpoint status, ETA and responsible owner. Full-width; the operational nerve centre. */}
+        <MaintenanceProgress />
 
         {/* Most Maintained Cars (by downtime) beside the Most Frequent Faults donut KPI. */}
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">

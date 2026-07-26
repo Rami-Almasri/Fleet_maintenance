@@ -125,7 +125,7 @@ export const GROUPS = [
     blurb: 'Service-due cars, garage overruns & approvals',
     icon: 'wrench',
     tone: 'info',
-    types: ['overdue_maintenance', 'maintenance_back_open', 'service_inspection', 'approval_pending'],
+    types: ['overdue_maintenance', 'maint_checkpoint', 'maintenance_back_open', 'service_inspection', 'approval_pending'],
   },
   {
     key: 'finance',
@@ -173,7 +173,7 @@ export const TABS = [
     icon: 'wrench',
     blurb: 'Service-due cars, repairs, diagnostics & approvals',
     empty: 'No maintenance notifications found',
-    types: ['overdue_maintenance', 'maintenance_back_open', 'service_inspection', 'approval_pending', 'high_maintenance_cost'],
+    types: ['overdue_maintenance', 'maint_checkpoint', 'maintenance_back_open', 'service_inspection', 'approval_pending', 'high_maintenance_cost'],
   },
   {
     key: 'incidents',
@@ -227,6 +227,14 @@ export const INBOX_CATEGORIES = [
     types: ['maint_complaint_intake', 'maint_complaint_headsup', 'maint_complaint_resolved', 'maint_complaint_triage', 'maint_complaint_call', 'maint_complaint_onsite_resolved', 'maint_complaint_diagnostic'],
   },
   {
+    key: 'progress',
+    label: 'Progress',
+    icon: 'wrench',
+    blurb: 'Workshop progress checkpoints owed before a car goes overdue',
+    empty: 'No progress notifications',
+    types: ['maint_checkpoint'],
+  },
+  {
     key: 'test_drive',
     label: 'Test Drive',
     icon: 'wrench',
@@ -258,6 +266,7 @@ export const TYPE_LABEL = {
   overdue_rental: 'Overdue Rental',
   rental_expiring: 'Rental Expiring',
   overdue_maintenance: 'Overdue Maintenance',
+  maint_checkpoint: 'Maintenance Progress',
   maintenance_back_open: 'Return Reconciliation',
   booking_in_maintenance: 'Booking In Maintenance',
   booking_readiness: 'Booking Readiness',
@@ -351,6 +360,7 @@ export const buildTypeTabs = (items) => {
 export const ACTION_LABEL = {
   overdue_rental: 'View Contract',
   overdue_maintenance: 'View Maintenance',
+  maint_checkpoint: 'Submit Checkpoint',
   maintenance_back_open: 'Close Contract',
   document_expiry: 'Renew Document',
   service_inspection: 'Service & Inspection',

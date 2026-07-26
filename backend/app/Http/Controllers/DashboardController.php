@@ -138,6 +138,26 @@ class DashboardController extends Controller
     }
 
     /**
+     * "Maintenance Progress" — the operational monitoring centre for every car currently in the
+     * workshop: live ETA, last checkpoint, responsible owner, and a colour-coded progress status
+     * (on_track / delayed / critical / needs_update / overdue) plus the roll-up counts.
+     */
+    public function maintenanceProgress(Request $request, DashboardService $dashboard)
+    {
+        try {
+            $limit = min(200, max(1, (int) $request->query('limit', 100)));
+
+            return ResponseHelper::SuccessResponse(
+                $dashboard->maintenanceProgress($limit),
+                "Maintenance progress retrieved successfully",
+                200
+            );
+        } catch (\Exception $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
      * "Most Frequent Faults" — the fleet's most-reported symptoms, ranked by occurrence. Powers the
      * homepage circular (donut) KPI. Read-only; all-time by design.
      */

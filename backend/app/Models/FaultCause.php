@@ -28,7 +28,7 @@ class FaultCause extends Model
     public const SOURCE_USER = 'user'; // typed in during a diagnosis
 
     protected $fillable = [
-        'symptom_key', 'symptom_label', 'category_key',
+        'symptom_key', 'symptom_label', 'category_key', 'fault_catalog_id',
         'root_cause', 'description',
         'status', 'source',
         'usage_count', 'odoo_ref',
@@ -62,6 +62,12 @@ class FaultCause extends Model
     public function scopeForSymptom(Builder $q, ?string $symptom): Builder
     {
         return $q->where('symptom_key', self::normalizeKey($symptom));
+    }
+
+    /** The Fault Catalog entry this symptom belongs to (Event Type layer; parallel to symptom_key for now). */
+    public function faultCatalog(): BelongsTo
+    {
+        return $this->belongsTo(FaultCatalog::class, 'fault_catalog_id');
     }
 
     public function submitter(): BelongsTo

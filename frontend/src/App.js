@@ -10,6 +10,8 @@ import { usePermissions } from './hooks/usePermissions';
 import { pathBlockedForRoles, homePathForRoles } from './config/access';
 import AppLayout from './layouts/AppLayout';
 import Login from './pages/Login';
+import ModuleLauncher from './pages/ModuleLauncher';
+import ModuleOverview from './pages/ModuleOverview';
 import Dashboard from './pages/Dashboard';
 import Vehicles from './pages/Vehicles';
 import VehicleProfile from './pages/vehicles/VehicleProfile';
@@ -67,9 +69,13 @@ import ResolvedTransfers from './pages/oversight/ResolvedTransfers';
 import CleaningCapture from './pages/cleaning/CleaningCapture';
 import FleetHealth from './pages/inspections/FleetHealth';
 
-// Index route ("/"). Normally the Dashboard, but roles blocked from it (the
-// driver) are redirected to a home they can actually see instead of hitting the
-// inline "Forbidden" notice on every fresh load. See config/access.js.
+// Index route ("/"). Normally the Workspace command center, but roles blocked
+// from the dashboard (the driver / supervisor) keep their existing dedicated
+// landing pages — they are redirected to a home they can actually see instead of
+// hitting the inline "Forbidden" notice on every fresh load. So only roles that
+// used to land on the Dashboard now land on the Workspace; specialised workflows
+// are unchanged. See config/access.js. The classic Dashboard lives on at
+// /dashboard for anyone with dashboard.view.
 function HomeGate() {
   const { can, roles } = usePermissions();
   if (pathBlockedForRoles('/', roles)) {
@@ -78,7 +84,7 @@ function HomeGate() {
   if (!can('dashboard.view')) {
     return <Navigate to="/notifications" replace />;
   }
-  return <Dashboard />;
+  return <ModuleLauncher />;
 }
 
 export default function App() {
@@ -102,6 +108,9 @@ export default function App() {
                 {/* Always available to any authenticated user */}
                 <Route path="/notifications" element={<Notifications />} />
                 <Route path="/settings" element={<Settings />} />
+                {/* Module Overview (Odoo-style mini-app home). Self-guards: redirects
+                    to the launcher if the user can't reach the module. */}
+                <Route path="/apps/:moduleId" element={<ModuleOverview />} />
                 {/* Vehicle Readiness board retired — send the old path to the Fleet Health hub. */}
                 <Route path="/readiness" element={<Navigate to="/inspections/schedules" replace />} />
 
@@ -114,6 +123,12 @@ export default function App() {
 
                 {/* Index route handles its own gating (redirects roles blocked from the Dashboard). */}
                 <Route path="/" element={<HomeGate />} />
+
+                {/* Classic fleet Dashboard — no longer the landing page (the Workspace is),
+                    but preserved verbatim at its own path for anyone with dashboard.view. */}
+                <Route element={<RequirePermission permission="dashboard.view" />}>
+                  <Route path="/dashboard" element={<Dashboard />} />
+                </Route>
 
                 <Route element={<RequirePermission permission="vehicles.view" />}>
                   <Route path="/vehicles" element={<Vehicles />} />

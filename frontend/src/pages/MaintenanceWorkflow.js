@@ -489,7 +489,7 @@ export default function MaintenanceWorkflow() {
       {/* Command header */}
       <header className="opx-head">
         <h1>
-          Maintenance Workflow
+          Maintenance Cycle
           <span className="live"><span className="d" />{t('workflow.board.live')}</span>
         </h1>
         <OpsClock />

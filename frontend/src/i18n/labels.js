@@ -600,7 +600,7 @@ const en = {
       faultTime: '{h}h on this fault',
     },
     board: {
-      title: 'Maintenance Workflow',
+      title: 'Maintenance Cycle',
       subtitle: "A diagnostic test drive becomes a ticket only when the inspector marks it 'Requires maintenance'. Then Supervisor (picks garage, all drivers notified) → Driver (pickup) → Garage → Driver (return) → Re-inspection. The board updates itself.",
       live: 'Live · auto-refresh',
       requestInspection: 'Request inspection',

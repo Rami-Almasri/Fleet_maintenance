@@ -95,6 +95,14 @@ Schedule::command('invoices:scan-overdue')
     ->dailyAt('08:05')
     ->withoutOverlapping();
 
+// Maintenance Checkpoint Scan — chase workshop progress updates before a car goes overdue. Runs at 08:00
+// and 20:00 (the 12-hour gap the request→reminder escalation needs) so the responsible follow-up owners
+// (Waleed/Abdullah) are nudged a day before the promised completion, again 12h later, on the due day, and
+// daily once overdue. Idempotent (level+date keys), so it never spams and clears when a checkpoint lands.
+Schedule::command('checkpoints:scan')
+    ->twiceDailyAt(8, 20, 10)
+    ->withoutOverlapping();
+
 // Daily: keep the auto-derived oil-change Service Reminders in step with the Oil Change sheet data on
 // each car (last_service_odometer + service_interval_km). Creates a reminder for newly-matched cars and
 // refreshes 'auto' anchors; a reminder a human has edited (source='manual') is left untouched. Runs after

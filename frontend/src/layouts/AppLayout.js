@@ -15,6 +15,8 @@ import { useNotifications } from '../hooks/useNotifications';
 import { PageStatProvider, PageStatGauge } from '../components/PageStat';
 import { SHOW_FINANCIALS, DEMO_MODE, SHOW_FLEET_INTELLIGENCE } from '../config/features';
 import { pathBlockedForRoles } from '../config/access';
+import { moduleForPath } from '../config/moduleRegistry';
+import ModuleTabBar from '../components/workspace/ModuleTabBar';
 
 // Thin gradient bar at the very top that fills as you scroll the page.
 function ScrollProgress() {
@@ -49,7 +51,7 @@ function LiveClock({ name }) {
   const date = now.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
   const first = (name || '').trim().split(/\s+/)[0];
   return (
-    <div className="hidden items-center gap-3 rounded-xl border border-slate-200/70 bg-white/60 px-3 py-1.5 md:flex">
+    <div className="hidden items-center gap-3 rounded-xl border border-slate-200/70 bg-white/60 px-3 py-1.5 lg:flex">
       <div className="leading-tight">
         <p className="text-[11px] font-semibold text-slate-700">{greet(now.getHours())}{first ? `, ${first}` : ''}</p>
         <p className="text-[10px] font-medium text-slate-400">{date}</p>
@@ -73,7 +75,8 @@ const NAV_SECTIONS = [
   {
     title: 'Overview',
     items: [
-      { name: 'Dashboard', to: '/', icon: 'M3 12l9-9 9 9M5 10v10a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V10', desc: 'Fleet-wide overview: how many cars are available, rented, or in maintenance, plus key totals. Availability and composition come from the OfficeManager lifecycle status.' },
+      { name: 'Workspace', to: '/', icon: 'M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z', desc: 'Your fleet command center — quick access to every module you can reach, a live operational KPI strip, and an Action Center of what needs attention today.' },
+      { name: 'Dashboard', to: '/dashboard', icon: 'M3 12l9-9 9 9M5 10v10a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V10', desc: 'Fleet-wide overview: how many cars are available, rented, or in maintenance, plus key totals. Availability and composition come from the OfficeManager lifecycle status.' },
       { name: 'Notifications', to: '/notifications', icon: 'M15 17h5l-1.4-1.4A2 2 0 0 1 18 14.2V11a6 6 0 0 0-4-5.7V5a2 2 0 1 0-4 0v.3A6 6 0 0 0 6 11v3.2a2 2 0 0 1-.6 1.4L4 17h5m6 0v1a3 3 0 1 1-6 0v-1m6 0H9', desc: 'Live fleet alerts — overdue rentals, maintenance overruns, expiring documents, service-due cars and approvals. The bell in the top bar updates in real time.' },
     ],
   },
@@ -84,10 +87,9 @@ const NAV_SECTIONS = [
   {
     title: 'Maintenance Operations',
     items: [
-      { name: 'Workflow', to: '/maintenance-workflow', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-3 7-3 3 3 3m6-6 3 3-3 3', desc: 'The live maintenance ticket pipeline (Inspector → Supervisor → Driver → Garage → Re-inspection). Open a ticket and advance it through the stages; the board updates in real time.' },
+      { name: 'Maintenance Cycle', to: '/maintenance-workflow', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-3 7-3 3 3 3m6-6 3 3-3 3', desc: 'The live maintenance ticket pipeline (Inspector → Supervisor → Driver → Garage → Re-inspection). Open a ticket and advance it through the stages; the board updates in real time.' },
       { name: 'My Queue', to: '/my-maintenance-queue', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-3 9 2 2 4-4', desc: 'Your role-scoped maintenance work in one place: Abu Maroof (Inspector) sees pending inspections and final re-inspections; a Supervisor (Dispatcher) sees tickets awaiting a garage + driver assignment; a Driver sees active trips/dispatches and cars waiting on a follow-up.' },
       { name: 'Inspection Review', to: '/inspection-review', icon: 'M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Controllers (Lin & Marwa) review inspection requests before they reach Abu Maroof — approve to send it on, or reject with a reason.' },
-      { name: 'Inspection Intelligence', to: '/inspection-intelligence', icon: 'M12 3v1m0 16v1m9-9h-1M4 12H3m15.36 6.36-.7-.7M6.34 6.34l-.7-.7m12.72 0-.7.7M6.34 17.66l-.7.7M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z', desc: 'Mission Control for the AUTOMATIC inspection engine (the daily Proactive Diagnostic Monitor): why the system requests inspections, which rule fired, which cars qualify now, and which were skipped and why. Read-only monitoring & debugging.' },
       { name: 'Recommendations', to: '/maintenance-recommendations', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-3 8h.01M9 11h6m-6 3h4', desc: 'Inspection recommendations awaiting a supervisor’s review, before any maintenance starts. Approve to begin work, order parts first, schedule for later, or dismiss — a recommendation-only car never clutters the active board.' },
     ],
   },
@@ -103,8 +105,6 @@ const NAV_SECTIONS = [
     title: 'Maintenance Intelligence',
     items: [
       { name: 'Foresight', to: '/maintenance-foresight', icon: 'M9.66 17h4.68M12 3v1m6.36 1.64-.7.7M21 12h-1M4 12H3m3.34-5.66-.7-.7M7 17a5 5 0 1 1 10 0', desc: 'Predictive maintenance: cars showing early mechanical warning signs (service overdue, chronic faults, aging battery) caught before they fail — with the downtime, parts-wait risk and lost rental revenue estimated from the fleet’s own repair history.' },
-      { name: 'Cost Capture', to: '/cost-capture', icon: 'M12 8c-1.7 0-3 .9-3 2s1.3 2 3 2 3 .9 3 2-1.3 2-3 2m0-8V6m0 12v-2m9-4a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Quick Cost Input: recent repairs with no cost recorded. Enter the amount in one tap to fix each vehicle’s repair spend and re-check its Negative-Yield flag — the tool for closing the understated-spend gap.' },
-      { name: 'Cost Analytics', to: '/maintenance-analytics', financial: true, icon: 'M3 3v18h18M7 15l3-3 3 3 5-5', desc: 'Maintenance cost trends and breakdowns across the fleet — spend by car, garage, and over time.' },
       { name: 'Keyword Risk', to: '/finding-keywords', icon: 'M20.59 13.41 13.42 20.6a2 2 0 0 1-2.83 0l-7-7A2 2 0 0 1 3 12V5a2 2 0 0 1 2-2h7a2 2 0 0 1 1.42.59l7.17 7.17a2 2 0 0 1 0 2.83zM7.5 7.5h.01', desc: 'The fault-keyword library the inspection picker offers, each graded by risk (🔴 critical / 🟡 moderate / 🟢 routine). Add, edit or retire keywords and set how serious each fault type is.' },
       { name: 'Recurring Fault Reviews', to: '/recurring-fault-reviews', icon: 'M3 2v6h6M3 8a9 9 0 1 0 2.6-4.36L3 8', desc: 'Cars that came back with the SAME confirmed fault after a completed repair. Each case shows the previous ticket, garage, parts used, days and distance since the repair, and how many times it recurred — so management can decide whether the earlier repair failed, it is a new failure, workshop responsibility, customer misuse, or needs investigation.' },
     ],
@@ -113,7 +113,6 @@ const NAV_SECTIONS = [
     title: 'Parts & Suppliers',
     items: [
       { name: 'Parts Purchase', to: '/parts', icon: 'M20 7h-9M14 17H5M17 20a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM7 10a3 3 0 1 0 0-6 3 3 0 0 0 0 6z', desc: 'The Parts Purchase + Repair Intelligence board: request a part (customer or garage), approve, buy (garage or supplier) and install it — with duplicate-purchase detection and repair history.' },
-      { name: 'Part Investigations', to: '/part-investigations', icon: 'M12 9v4m0 4h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z', desc: 'Admin inbox for duplicate-purchase and fault-recurrence alerts: review why the same part or fault repeated, capture the reason, and approve or reject the exception.' },
       { name: 'Garages', to: '/garages', icon: 'M3 9l9-6 9 6v11a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z', desc: 'Garages where fleet cars are serviced, with the work routed to each.' },
       { name: 'Vendors', to: '/vendors', icon: 'M3 9l1-5h16l1 5M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M3 9h18M9 20v-6h6v6', desc: 'Suppliers and service vendors referenced by maintenance and contracts.' },
     ],
@@ -195,6 +194,7 @@ const resolveModuleLabel = (path) => {
 // App.js and the `permission:` middleware on the backend — keep the three in sync.
 const NAV_PERMISSIONS = {
   '/': 'dashboard.view',
+  '/dashboard': 'dashboard.view',
   '/notifications': null,
   '/settings': null,
   '/team-presence': 'logistics.view',
@@ -453,8 +453,11 @@ export default function AppLayout() {
   const [open, setOpen] = useState(false);
   const [cmdOpen, setCmdOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
-  // Desktop sidebar collapse (icon-rail), remembered across sessions.
-  const [collapsed, setCollapsed] = useState(() => localStorage.getItem('fv:rail') === '1');
+  // Desktop sidebar collapse (icon-rail), remembered across sessions. In the
+  // module-first architecture the large sidebar is de-emphasised — the module
+  // tab bar is the primary in-app nav — so the rail is the DEFAULT unless the
+  // user has explicitly expanded it before.
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem('fv:rail') !== '0');
   // Which nav sections are collapsed (accordion), remembered across sessions.
   const [collapsedSections, setCollapsedSections] = useState(() => {
     try { return new Set(JSON.parse(localStorage.getItem('fv:navsections') || '[]')); } catch { return new Set(); }
@@ -514,6 +517,11 @@ export default function AppLayout() {
     .filter((i) => (i.to === '/' ? location.pathname === '/' : location.pathname.startsWith(i.to)))
     .sort((a, b) => b.to.length - a.to.length)[0];
 
+  // Module-first shell: the launcher (/) has no sidebar; every other page that
+  // belongs to a module shows that module's persistent tab bar under the header.
+  const isLauncher = location.pathname === '/';
+  const activeModule = moduleForPath(location.pathname);
+
   // The section holding the current page — kept open even if the user collapsed it.
   const activeSectionTitle = visibleSections.find((s) => s.items.includes(current))?.title;
 
@@ -547,7 +555,8 @@ export default function AppLayout() {
         <div className="fixed inset-0 z-30 bg-slate-900/50 backdrop-blur-sm lg:hidden" onClick={() => setOpen(false)} />
       )}
 
-      {/* Sidebar */}
+      {/* Sidebar — hidden entirely on the App Launcher (full-bleed app grid). */}
+      {!isLauncher && (
       <aside
         className={`fixed inset-y-0 start-0 z-40 flex w-64 transform flex-col bg-navy-950 text-steel-300 shadow-xl transition-all duration-300 ease-out lg:translate-x-0 ${
           collapsed ? 'lg:w-20' : 'lg:w-64'
@@ -606,25 +615,31 @@ export default function AppLayout() {
           </div>
         </div>
       </aside>
+      )}
 
-      {/* Main column */}
-      <div className={`transition-all duration-300 ${collapsed ? 'lg:ps-20' : 'lg:ps-64'}`}>
-        <header className="glass sticky top-0 z-20 flex h-16 items-center gap-4 border-b border-slate-200/70 px-4 sm:px-6 lg:px-8">
-          <button
-            className="rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 lg:hidden"
-            onClick={() => setOpen(true)}
-            aria-label="Open menu"
-          >
-            <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
-            </svg>
-          </button>
+      {/* Main column — no sidebar offset on the launcher. */}
+      <div className={`transition-all duration-300 ${isLauncher ? '' : collapsed ? 'lg:ps-20' : 'lg:ps-64'}`}>
+        <header className="glass sticky top-0 z-20 flex h-16 items-center gap-2 border-b border-slate-200/70 px-4 sm:gap-4 sm:px-6 lg:px-8">
+          {isLauncher ? (
+            // No sidebar on the launcher, so the brand lives in the header.
+            <Brand />
+          ) : (
+            <button
+              className="rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 lg:hidden"
+              onClick={() => setOpen(true)}
+              aria-label="Open menu"
+            >
+              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
+          )}
 
           <div className="flex min-w-0 flex-1 items-center gap-2">
-            <h2 className="truncate text-[15px] font-semibold text-slate-800">{current?.name || 'Faster'}</h2>
+            {!isLauncher && <h2 className="truncate text-[15px] font-semibold text-slate-800">{current?.name || 'Faster'}</h2>}
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5 sm:gap-3">
             <LiveClock name={user?.name} />
 
             <LanguageToggle />
@@ -653,9 +668,9 @@ export default function AppLayout() {
             <NotificationBell />
 
             {/* subtle divider between actions and the user identity block */}
-            <span className="hidden h-6 w-px bg-slate-200 sm:block" />
+            <span className="hidden h-6 w-px bg-slate-200 lg:block" />
 
-            <div className="hidden text-right sm:block">
+            <div className="hidden text-right lg:block">
               <p className="text-sm font-semibold leading-tight text-slate-900">{user?.name}</p>
               <p className="text-xs text-slate-500">{user?.email}</p>
             </div>
@@ -673,6 +688,10 @@ export default function AppLayout() {
             </button>
           </div>
         </header>
+
+        {/* Persistent module tab bar — the primary in-app navigation. Appears on
+            the module Overview and every section page that belongs to a module. */}
+        {activeModule && <ModuleTabBar module={activeModule} />}
 
         {/* Page content — re-animates on every route change; an error here can't blank the app */}
         <main>

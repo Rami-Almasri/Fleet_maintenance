@@ -34,6 +34,9 @@ export default function DataTable({
   dense = false,
   highlightRow,            // row => boolean — subtle amber tint + left accent
   onRowClick,              // row => void — makes rows clickable
+  sortKey,                 // key of the currently-sorted column (opt-in)
+  sortDir,                 // 'asc' | 'desc' — direction of the active sort
+  onSort,                  // key => void — called when a sortable header is clicked
   empty = 'Nothing to show.',
   className = '',
 }) {
@@ -45,17 +48,42 @@ export default function DataTable({
       <table className="min-w-full border-separate border-spacing-0 text-sm">
         <thead className={stickyHeader ? 'sticky top-0 z-10' : ''}>
           <tr>
-            {columns.map((c, i) => (
-              <th
-                key={c.key ?? i}
-                className={`whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 backdrop-blur ${ALIGN[c.align] || ALIGN.left} ${c.headerClass || ''}`}
-              >
-                <span className="inline-flex items-center gap-1">
+            {columns.map((c, i) => {
+              const sortable = c.sortable && onSort;
+              const active = sortable && sortKey === c.key;
+              const justify = (c.align === 'right') ? 'justify-end' : (c.align === 'center') ? 'justify-center' : 'justify-start';
+              const label = (
+                <>
                   {c.header}
                   {c.tooltip && <Tooltip content={c.tooltip}><span className="inline-flex h-3.5 w-3.5 cursor-help items-center justify-center rounded-full bg-slate-200 text-[9px] font-bold text-slate-500">i</span></Tooltip>}
-                </span>
-              </th>
-            ))}
+                  {sortable && (
+                    <span className={`text-[10px] leading-none ${active ? 'text-indigo-600' : 'text-slate-300'}`}>
+                      {active ? (sortDir === 'asc' ? '▲' : '▼') : '↕'}
+                    </span>
+                  )}
+                </>
+              );
+              return (
+                <th
+                  key={c.key ?? i}
+                  aria-sort={active ? (sortDir === 'asc' ? 'ascending' : 'descending') : undefined}
+                  className={`whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 backdrop-blur ${ALIGN[c.align] || ALIGN.left} ${c.headerClass || ''}`}
+                >
+                  {sortable ? (
+                    <button
+                      type="button"
+                      onClick={() => onSort(c.key)}
+                      className={`inline-flex w-full items-center gap-1 ${justify} uppercase tracking-wide transition-colors hover:text-slate-800 ${active ? 'text-indigo-600' : ''}`}
+                      title="Sort by this column"
+                    >
+                      {label}
+                    </button>
+                  ) : (
+                    <span className="inline-flex items-center gap-1">{label}</span>
+                  )}
+                </th>
+              );
+            })}
           </tr>
         </thead>
 

@@ -41,3 +41,12 @@ export const DEMO_MODE = false;
 // customer-balance widgets (a different reconciliation concern). Money numbers inside these
 // surfaces still honour SHOW_FINANCIALS via the usual nav `financial: true` gating.
 export const SHOW_FLEET_INTELLIGENCE = true;
+
+// Shared gate for the Workspace catalog / KPIs — resolves a declarative `flag`
+// field ('financial' | 'intel') to its live switch. One place so the launcher,
+// KPI strip and Action Center never drift on how a flag is interpreted.
+export function isFeatureEnabled(flag) {
+  if (flag === 'financial') return SHOW_FINANCIALS;
+  if (flag === 'intel') return SHOW_FLEET_INTELLIGENCE;
+  return true;
+}

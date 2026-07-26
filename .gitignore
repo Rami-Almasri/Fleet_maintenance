@@ -45,3 +45,10 @@ Thumbs.db
 /backend/_count_import.php
 /backend/_nullcheck.php
 /backend/_serialcheck.php
+/shot_bootstrap.php
+
+# Database / filestore backups (never commit — large binaries, exceed host limits)
+/filestore_backup.tar.gz
+/odoo_backup.dump
+*.dump
+*.tar.gz

@@ -101,6 +101,7 @@ class Vehicle extends Model
         'year',
         'color',
         'category',
+        'sheet_category',
         'vehicle_class',
         'status',
         'status_no',
@@ -228,6 +229,35 @@ class Vehicle extends Model
     public function maintenances(): HasMany
     {
         return $this->hasMany(Maintenance::class);
+    }
+
+    /**
+     * Every maintenance EVENT on this car, across all tickets. A vehicle is a container of typed events
+     * (Fault / Service / Inspection) — the typed helpers below are the sanctioned entry points; features
+     * read faults()/services()/inspections(), never a raw kind/category filter. Event Type layer; see
+     * docs/Service-vs-Fault-Domain-Separation.md.
+     */
+    public function maintenanceTasks(): HasMany
+    {
+        return $this->hasMany(MaintenanceTask::class);
+    }
+
+    /** 🔴 Unplanned failures/defects only — the grain fault analytics/health/recurrence read. */
+    public function faults(): HasMany
+    {
+        return $this->maintenanceTasks()->faults();
+    }
+
+    /** 🔵 Planned/preventive services only — counted in cost/history, excluded from fault stats. */
+    public function services(): HasMany
+    {
+        return $this->maintenanceTasks()->services();
+    }
+
+    /** 🟨 Inspections/checks only. */
+    public function inspections(): HasMany
+    {
+        return $this->maintenanceTasks()->inspections();
     }
 
     /** Recurring technical service due-points (oil, filters, brakes, …) for this car. */

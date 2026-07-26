@@ -260,6 +260,23 @@ class Maintenance extends Model
     ];
 
     /**
+     * Maintenance Checkpoint tracking window — the active, committed in-repair stages a car passes
+     * through while physically being worked on. The Checkpoint Scan monitors tickets in these states
+     * for progress updates, and the "Maintenance Progress" dashboard lists them. Mirrors
+     * WF_TICKET_STATES minus WF_CLOSED (a closed ticket needs no more follow-up).
+     */
+    public const CHECKPOINT_TRACKED_STATES = [
+        self::WF_INSPECTION_PENDING,
+        self::WF_AWAITING_DISPATCH,
+        self::WF_IN_TRANSIT,
+        self::WF_UNDER_REPAIR,
+        self::WF_REPAIR_REVIEW,
+        self::WF_READY_REINSPECTION,
+        self::WF_REINSPECTION_FAILED,
+        self::WF_READY_FOR_PICKUP,
+    ];
+
+    /**
      * The stages a live repair can be PAUSED from (Pause Maintenance & Return to Service). These are the
      * committed-ticket, in-progress states — a real repair is under way and the car is currently held in
      * maintenance, which is exactly when a customer might need it pulled out. Terminal, pre-ticket,
@@ -659,6 +676,11 @@ class Maintenance extends Model
         'responsible',
         'approved_by',
         'expected_return_date',
+        // Maintenance Checkpoint — the canonical promised ready-by date the whole progress-tracking system
+        // measures against (ETA gauge, dashboard, escalation, overdue). expected_duration_days is the
+        // duration typed at intake (we derive the date from it; a hand-edited date then wins).
+        // last_checkpoint_at anchors "does this car still need an update in the current window".
+        'expected_completion_date', 'expected_duration_days', 'last_checkpoint_at',
         'maintenance_notes',
         // sheet maintenance log (origin = 'sheet')
         'origin',
@@ -789,6 +811,9 @@ class Maintenance extends Model
     protected $casts = [
         'maintenance_tags'     => 'array',
         'expected_return_date' => 'date',
+        'expected_completion_date' => 'date',
+        'expected_duration_days'   => 'integer',
+        'last_checkpoint_at'   => 'datetime',
         'out_date'             => 'date',
         'follow_date'          => 'date',
         'actual_in_date'       => 'date',
@@ -895,6 +920,25 @@ class Maintenance extends Model
             ->withTimestamps();
     }
 
+    /**
+     * Maintenance Checkpoint responsible users — the follow-up owners (default Waleed & Abdullah,
+     * editable per ticket) who receive the checkpoint reminders and may submit updates. The ONLY
+     * recipients the Checkpoint Scan targets for this ticket (falling back to the default supervisors
+     * when empty; see MaintenanceCheckpointService::recipientsFor).
+     */
+    public function responsibles(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'maintenance_responsibles')
+            ->withPivot(['added_by'])
+            ->withTimestamps();
+    }
+
+    /** This ticket's progress checkpoints, newest first. */
+    public function checkpoints(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(MaintenanceCheckpoint::class, 'maintenance_id')->latest();
+    }
+
     /** Presentation meta (emoji + colour + label) for the ticket's current fault severity, or null. */
     public function faultSeverityMeta(): ?array
     {
@@ -995,8 +1039,19 @@ class Maintenance extends Model
     {
         return self::etaFromDates(
             $this->repair_started_at ?? $this->out_date ?? $this->dispatched_at ?? $this->created_at,
-            $this->expected_return_date,
+            $this->effectiveExpectedCompletion(),
         );
+    }
+
+    /**
+     * The canonical promised ready-by date every progress surface measures against: the Checkpoint
+     * completion date if set, else the legacy dispatch `expected_return_date`, else null (the ETA
+     * math then falls back to the fleet-default window). Single accessor so the ETA gauge, dashboard,
+     * escalation and overdue detection can never disagree on which date is "the promise".
+     */
+    public function effectiveExpectedCompletion(): ?\Carbon\Carbon
+    {
+        return $this->expected_completion_date ?? $this->expected_return_date;
     }
 
     /**

@@ -61,7 +61,7 @@ class VehicleStatusImporter
 
         $counts = [
             'rows' => 0, 'matched' => 0, 'unmatched' => 0, 'unchanged' => 0,
-            'protected' => 0, 'changed' => 0, 'flagged' => 0,
+            'protected' => 0, 'changed' => 0, 'flagged' => 0, 'category_set' => 0,
         ];
         $changes         = [];
         $unmatched       = [];
@@ -99,6 +99,19 @@ class VehicleStatusImporter
             if ($vehicle->origin === 'web') {
                 $counts['protected']++;
                 continue;
+            }
+
+            // Capture the sheet's human rental segment ("Premium Sedan" / "Premium SUV" / …) into
+            // sheet_category. This is independent of the status verdict below (a car keeps its
+            // category whether it stays Active or is pulled out), so persist it here before any of
+            // the status branches can `continue` past a save.
+            $category = trim($this->cell($row, $col['category'] ?? null));
+            if ($category !== '' && $vehicle->sheet_category !== $category) {
+                $counts['category_set']++;
+                if (! $dry) {
+                    $vehicle->sheet_category = $category;
+                    $vehicle->save();
+                }
             }
 
             $key = $this->norm($rawStatus);

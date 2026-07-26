@@ -33,6 +33,12 @@ class DatabaseSeeder extends Seeder
         // Asset Layer — component TYPE dictionary, seeded from config. Idempotent, additive-only.
         $this->call(ComponentCatalogSeeder::class);
 
+        // Event Type layer — the three maintenance-event catalogs (source of truth for `kind`).
+        // Idempotent, additive-only; safe with features.event_kind = off.
+        $this->call(ServiceCatalogSeeder::class);
+        $this->call(FaultCatalogSeeder::class);
+        $this->call(InspectionTypeSeeder::class);
+
         // A bootstrap super-admin so there's always one account that can do
         // everything (and promote others). Credentials come from the environment,
         // NOT a hardcoded default, and re-seeding NEVER resets the password of an

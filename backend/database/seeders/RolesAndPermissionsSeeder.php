@@ -43,6 +43,8 @@ class RolesAndPermissionsSeeder extends Seeder
         'maintenance.delegate',              // Supervisor: delegate a driver to pickup/dropoff, reassign + ping ("Where is the car?")
         'maintenance.recurring.view',        // see the Recurring Fault Reviews inbox (confirmed faults that came back after a fix)
         'maintenance.recurring.manage',      // record the management decision on a recurring-fault review case
+        'maintenance.checkpoint.create',     // submit a Maintenance Checkpoint (workshop progress update + evidence) on an in-shop ticket
+        'maintenance.checkpoint.manage',     // edit/delete checkpoints + set a ticket's responsible follow-up users (Waleed/Abdullah)
         'parts.view',                        // see part requests / purchases / vehicle part history
         'parts.request',                     // create a part request (customer walk-in or garage diagnosis)
         'parts.purchase',                    // record a purchase (garage or supplier) + install the part
@@ -79,6 +81,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'maintenance.view', 'maintenance.approve', 'maintenance.manage',
             'maintenance.initiate', 'maintenance.logistics', 'maintenance.delegate',
             'maintenance.recurring.view', 'maintenance.recurring.manage',
+            'maintenance.checkpoint.create', 'maintenance.checkpoint.manage',
             'parts.view', 'parts.request', 'parts.purchase', 'parts.investigate',
             'components.view', 'components.manage', // Asset Layer: full operational control includes asset custody
             'registration.view', 'registration.manage',
@@ -107,6 +110,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'maintenance.view', 'maintenance.approve', 'maintenance.manage',
             'maintenance.initiate', 'maintenance.logistics', 'maintenance.delegate',
             'maintenance.recurring.view', 'maintenance.recurring.manage',
+            'maintenance.checkpoint.create', 'maintenance.checkpoint.manage',
             'parts.view', 'parts.request', 'parts.purchase', 'parts.investigate',
             'components.view', 'components.manage', // Asset Layer: the workshop-manager role owns install/remove/transfer
             'logistics.view',
@@ -122,6 +126,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'vehicles.view', 'vendors.view', 'drivers.view',
             'maintenance.view', 'maintenance.delegate', 'maintenance.logistics',
             'maintenance.recurring.view',
+            'maintenance.checkpoint.create', 'maintenance.checkpoint.manage',
             'parts.view', 'parts.request',
             'components.view', 'components.manage', // Asset Layer: authorized maintenance delegates hold asset custody
             'logistics.view', 'logistics.dispatch',

@@ -1,0 +1,289 @@
+// Maintenance Checkpoint modal — the one place a responsible user files a workshop progress update and
+// reviews the ticket's checkpoint timeline. Also lets a manager set the promised completion (duration or
+// date) and the responsible follow-up owners. Opened from the dashboard "Maintenance Progress" widget and
+// the Vehicle Profile tab. Backend: MaintenanceCheckpointController.
+
+import { useEffect, useMemo, useRef, useState } from 'react';
+import Modal from '../ui/Modal';
+import Button from '../ui/Button';
+import { Textarea, Select, Input } from '../ui/Field';
+import CheckpointTimeline from './CheckpointTimeline';
+import { fmtDate } from '../../lib/format';
+import {
+  OUTCOMES, STATUS_OPTIONS, DELAY_REASONS,
+  getTicketCheckpoints, submitCheckpoint, deleteCheckpoint,
+  setExpectedCompletion, setResponsibles, getCheckpointCandidates,
+} from '../../lib/maintenanceCheckpoints';
+
+const OUTCOME_BTN = {
+  on_track: 'peer-checked:border-emerald-500 peer-checked:bg-emerald-50 peer-checked:text-emerald-700',
+  delayed:  'peer-checked:border-amber-500 peer-checked:bg-amber-50 peer-checked:text-amber-700',
+  critical: 'peer-checked:border-red-500 peer-checked:bg-red-50 peer-checked:text-red-700',
+};
+
+function MonitorBar({ monitor }) {
+  if (!monitor) return null;
+  const { expected_on, is_estimated, eta_status, days_left, days_over, overdue, needs_update } = monitor;
+  const tone = overdue ? 'text-red-700 bg-red-50 ring-red-200'
+    : needs_update ? 'text-amber-700 bg-amber-50 ring-amber-200'
+    : 'text-slate-600 bg-slate-50 ring-slate-200';
+  const etaText = !expected_on ? 'No ETA'
+    : overdue ? `${days_over} day(s) overdue`
+    : eta_status === 'due_today' ? 'Due today'
+    : `${days_left} day(s) left`;
+  return (
+    <div className={`flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg px-3 py-2 text-sm ring-1 ${tone}`}>
+      <span className="font-semibold">{etaText}</span>
+      {expected_on && (
+        <span className="text-xs opacity-80">
+          Expected {fmtDate(expected_on)}{is_estimated ? ' (estimated)' : ''}
+        </span>
+      )}
+      {needs_update && <span className="text-xs font-medium">· Checkpoint required</span>}
+    </div>
+  );
+}
+
+export default function CheckpointModal({ open, ticketId, title, subtitle, onClose, onDone }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  // Submit form
+  const [outcome, setOutcome] = useState('on_track');
+  const [status, setStatus] = useState('');
+  const [delayReason, setDelayReason] = useState('');
+  const [delayReasonOther, setDelayReasonOther] = useState('');
+  const [summary, setSummary] = useState('');
+  const [nextDate, setNextDate] = useState('');
+  const [files, setFiles] = useState([]);
+  const fileRef = useRef(null);
+
+  // Manager editors
+  const [candidates, setCandidates] = useState([]);
+  const [assigned, setAssigned] = useState([]);
+  const [durationDays, setDurationDays] = useState('');
+  const [expDate, setExpDate] = useState('');
+  const [showManage, setShowManage] = useState(false);
+
+  const load = useMemo(() => async () => {
+    setLoading(true);
+    setErr('');
+    try {
+      const d = await getTicketCheckpoints(ticketId);
+      setData(d);
+      setAssigned(d.assigned || []);
+      setExpDate(d.monitor?.expected_on || '');
+    } catch (e) {
+      setErr(e?.response?.data?.message || 'Failed to load checkpoints.');
+    } finally {
+      setLoading(false);
+    }
+  }, [ticketId]);
+
+  useEffect(() => {
+    if (!open || !ticketId) return;
+    load();
+  }, [open, ticketId, load]);
+
+  // Lazy-load the responsible-user candidate list when a manager opens the editors.
+  useEffect(() => {
+    if (showManage && data?.can_manage && candidates.length === 0) {
+      getCheckpointCandidates().then(setCandidates).catch(() => setCandidates([]));
+    }
+  }, [showManage, data, candidates.length]);
+
+  const resetForm = () => {
+    setOutcome('on_track'); setStatus(''); setDelayReason(''); setDelayReasonOther('');
+    setSummary(''); setNextDate(''); setFiles([]);
+    if (fileRef.current) fileRef.current.value = '';
+  };
+
+  const canSubmit = data?.can_submit;
+  const canManage = data?.can_manage;
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (busy) return;
+    setErr('');
+    if (outcome === 'delayed' && !delayReason) { setErr('Pick a delay reason.'); return; }
+    if (outcome === 'delayed' && delayReason === 'other' && !delayReasonOther.trim()) { setErr('Explain the delay.'); return; }
+    setBusy(true);
+    try {
+      await submitCheckpoint(ticketId, {
+        outcome, status, delayReason: outcome === 'delayed' ? delayReason : '',
+        delayReasonOther: outcome === 'delayed' && delayReason === 'other' ? delayReasonOther.trim() : '',
+        summary: summary.trim(), nextExpectedDate: nextDate || '', files,
+      });
+      resetForm();
+      await load();
+      onDone?.('Checkpoint saved');
+    } catch (e2) {
+      setErr(e2?.response?.data?.message || 'Failed to save checkpoint.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeCheckpoint = async (c) => {
+    if (!window.confirm('Delete this checkpoint and its evidence?')) return;
+    try {
+      await deleteCheckpoint(ticketId, c.id);
+      await load();
+      onDone?.('Checkpoint removed');
+    } catch (e2) {
+      setErr(e2?.response?.data?.message || 'Failed to delete.');
+    }
+  };
+
+  const saveExpected = async () => {
+    setBusy(true); setErr('');
+    try {
+      await setExpectedCompletion(ticketId, { durationDays, completionDate: expDate });
+      setDurationDays('');
+      await load();
+      onDone?.('Expected completion updated');
+    } catch (e2) {
+      setErr(e2?.response?.data?.message || 'Failed to update expected completion.');
+    } finally { setBusy(false); }
+  };
+
+  const toggleAssigned = (id) => {
+    setAssigned((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+  };
+
+  const saveResponsibles = async () => {
+    setBusy(true); setErr('');
+    try {
+      await setResponsibles(ticketId, assigned);
+      await load();
+      onDone?.('Responsible users updated');
+    } catch (e2) {
+      setErr(e2?.response?.data?.message || 'Failed to update responsible users.');
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} title={title || 'Maintenance Checkpoint'} subtitle={subtitle} size="xl">
+      {loading ? (
+        <p className="py-10 text-center text-sm text-slate-400">Loading checkpoints…</p>
+      ) : (
+        <div className="space-y-5">
+          <MonitorBar monitor={data?.monitor} />
+
+          {err && <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-200">{err}</div>}
+
+          {/* Responsible follow-up owners */}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Responsible</span>
+            {(data?.responsibles || []).length === 0
+              ? <span className="text-xs text-slate-400">Default supervisors</span>
+              : data.responsibles.map((u) => (
+                  <span key={u.id} className="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700 ring-1 ring-indigo-100">{u.name}</span>
+                ))}
+            {canManage && (
+              <button type="button" onClick={() => setShowManage((s) => !s)} className="ms-1 text-xs font-medium text-indigo-600 hover:text-indigo-700">
+                {showManage ? 'Hide settings' : 'Edit settings'}
+              </button>
+            )}
+          </div>
+
+          {/* Manager settings: expected completion + responsible users */}
+          {showManage && canManage && (
+            <div className="space-y-4 rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Expected completion</p>
+                <div className="flex flex-wrap items-end gap-3">
+                  <Input label="Duration (days)" type="number" min="1" max="365" value={durationDays}
+                         onChange={(e) => setDurationDays(e.target.value)} className="w-32" placeholder="e.g. 4" />
+                  <span className="pb-2 text-xs text-slate-400">or</span>
+                  <Input label="Completion date" type="date" value={expDate || ''} onChange={(e) => setExpDate(e.target.value)} className="w-44" />
+                  <Button type="button" variant="secondary" onClick={saveExpected} disabled={busy}>Save date</Button>
+                </div>
+                <p className="mt-1 text-[11px] text-slate-400">Enter a duration to derive the date, or set the date directly (the date wins).</p>
+              </div>
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Responsible users</p>
+                <div className="flex flex-wrap gap-2">
+                  {candidates.length === 0 && <span className="text-xs text-slate-400">Loading…</span>}
+                  {candidates.map((u) => (
+                    <label key={u.id} className={`cursor-pointer rounded-full px-3 py-1 text-xs font-medium ring-1 transition ${assigned.includes(u.id) ? 'bg-indigo-600 text-white ring-indigo-600' : 'bg-white text-slate-600 ring-slate-300 hover:bg-slate-50'}`}>
+                      <input type="checkbox" className="sr-only" checked={assigned.includes(u.id)} onChange={() => toggleAssigned(u.id)} />
+                      {u.name}
+                    </label>
+                  ))}
+                </div>
+                <div className="mt-3">
+                  <Button type="button" variant="secondary" onClick={saveResponsibles} disabled={busy}>Save responsible users</Button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Submit form */}
+          {canSubmit ? (
+            <form onSubmit={submit} className="space-y-4 rounded-xl border border-slate-200 p-4">
+              <div>
+                <span className="mb-1.5 block text-sm font-medium text-slate-700">Progress outcome <span className="text-red-500">*</span></span>
+                <div className="grid grid-cols-3 gap-2">
+                  {OUTCOMES.map((o) => (
+                    <label key={o.value} className="relative">
+                      <input type="radio" name="outcome" className="peer sr-only" value={o.value} checked={outcome === o.value} onChange={() => setOutcome(o.value)} />
+                      <span className={`block cursor-pointer rounded-lg border border-slate-300 px-3 py-2 text-center text-sm font-medium text-slate-500 transition ${OUTCOME_BTN[o.value]}`}>
+                        {o.label}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <Select label="Workshop status" value={status} onChange={(e) => setStatus(e.target.value)}>
+                  <option value="">— Select —</option>
+                  {STATUS_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+                </Select>
+                <Input label="New expected completion" type="date" value={nextDate} onChange={(e) => setNextDate(e.target.value)} />
+              </div>
+
+              {outcome === 'delayed' && (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <Select label="Delay reason" required value={delayReason} onChange={(e) => setDelayReason(e.target.value)}>
+                    <option value="">— Select —</option>
+                    {DELAY_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+                  </Select>
+                  {delayReason === 'other' && (
+                    <Input label="Explain" required value={delayReasonOther} onChange={(e) => setDelayReasonOther(e.target.value)} placeholder="Reason…" />
+                  )}
+                </div>
+              )}
+
+              <Textarea label="Summary" rows={3} value={summary} onChange={(e) => setSummary(e.target.value)} placeholder="What did the workshop say? What's next?" />
+
+              <div>
+                <span className="mb-1.5 block text-sm font-medium text-slate-700">Evidence (photos / videos)</span>
+                <input ref={fileRef} type="file" accept="image/*,video/*" multiple onChange={(e) => setFiles(Array.from(e.target.files || []))}
+                       className="block w-full text-sm text-slate-500 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-slate-700 hover:file:bg-slate-200" />
+                {files.length > 0 && <p className="mt-1 text-xs text-slate-500">{files.length} file(s) selected</p>}
+              </div>
+
+              <div className="flex justify-end">
+                <Button type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save checkpoint'}</Button>
+              </div>
+            </form>
+          ) : (
+            <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-500 ring-1 ring-slate-200">
+              You are not a responsible user for this ticket, so you can view the timeline but not submit updates.
+            </p>
+          )}
+
+          {/* History */}
+          <div>
+            <h4 className="mb-3 text-sm font-semibold text-slate-700">Timeline</h4>
+            <CheckpointTimeline checkpoints={data?.checkpoints || []} canManage={canManage} onDelete={removeCheckpoint} />
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}

@@ -57,6 +57,7 @@ class DashboardService
         private OperationsService $operations,
         private FleetUtilizationService $fleetUtilization,
         private VehicleExpenseProvider $expenses,
+        private MaintenanceCheckpointService $checkpoints,
     ) {
     }
 
@@ -197,9 +198,14 @@ class DashboardService
         // (open type-C) ⇒ available (an active car free to earn) ⇒ its lifecycle bucket. The result
         // is mutually exclusive, sums to total, and matches the Vehicles list, Fleet Ops, the
         // /maintenance board, the fleet-pulse grid and the per-car operational_status.
-        // The two override sets (same canonical sources as the board / per-car operational_status).
-        // Maintenance wins over rented, so drop any rented car that is also in the garage.
-        $maintSet  = array_flip($this->operations->vehiclesInMaintenance());
+        // The two override sets. Maintenance wins over rented, so drop any rented car that is also
+        // in the garage. NOTE: the dashboard donut counts CONTRACT-based maintenance only (open
+        // type-U contracts) — deliberately NARROWER than the canonical vehiclesInMaintenance() set
+        // (which also unions app workflow tickets + manual garage events and still drives the
+        // /maintenance board and rental-eligibility guards). So the donut may legitimately show
+        // fewer "in maintenance" cars than the board; ticket/manual-only cars fall back to their
+        // lifecycle bucket (available/rented) here.
+        $maintSet  = array_flip($this->contractMaintenanceVehicleIds());
         $rentedSet = [];
         foreach (
             Contract::where('contract_type', 'C')->currentlyOpen()
@@ -263,13 +269,32 @@ class DashboardService
     }
 
     /**
-     * Cars currently in the garage — the canonical maintenance set (open U-contract, manual garage
-     * event, OR open workflow ticket). One definition, shared with the donut, the fleet-pulse grid
-     * and the per-car operational_status, so the KPI can never disagree with them again.
+     * Cars currently in the garage for the DASHBOARD — CONTRACT-based maintenance only (open
+     * type-U contracts), matching the Fleet Split donut. This is intentionally narrower than the
+     * canonical OperationsService::vehiclesInMaintenance() (which also counts app workflow tickets
+     * and manual garage events and drives the /maintenance board + rental-eligibility guards).
      */
     public function carsInMaintenance(): int
     {
-        return count($this->operations->vehiclesInMaintenance());
+        return count($this->contractMaintenanceVehicleIds());
+    }
+
+    /**
+     * Vehicle IDs with an OPEN type-U (maintenance) contract — the contract-derived maintenance set
+     * powering the dashboard's Fleet Split donut and its cars-in-maintenance KPI. Kept separate from
+     * OperationsService::vehiclesInMaintenance() on purpose so the dashboard reflects only cars the
+     * OfficeManager/contract layer says are in the shop, without the ticket/manual overlays.
+     *
+     * @return array<int,int>
+     */
+    private function contractMaintenanceVehicleIds(): array
+    {
+        return Contract::where('contract_type', 'U')->currentlyOpen()
+            ->whereNotNull('vehicle_id')
+            ->distinct()
+            ->pluck('vehicle_id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
     }
 
     /**
@@ -595,6 +620,93 @@ class DashboardService
             ->sortByDesc(fn ($r) => ($r['eta']['days_over'] ?? 0) * 1000 - ($r['eta']['days_left'] ?? 0))
             ->values()
             ->all();
+    }
+
+    /**
+     * Maintenance Progress — the operational monitoring centre for every car currently in the workshop.
+     * One row per active in-shop ticket carrying its garage, live ETA, the last checkpoint (who/when/
+     * outcome), the responsible follow-up owner(s), and a single mutually-exclusive PROGRESS status the UI
+     * colours by. Status precedence (worst first, so a row shows its most urgent state):
+     *   overdue      — past the promised date with no fresh update (red)
+     *   critical     — last checkpoint reported Critical (red)
+     *   needs_update — inside the reminder window with no fresh update yet (amber, "Checkpoint required")
+     *   delayed      — last checkpoint reported Delayed (amber)
+     *   on_track     — progressing normally (green)
+     * Sorted worst-first. Cached like every dashboard aggregate; flushed on the next sync.
+     *
+     * @return array{summary:array<string,int>, items:array<int,array<string,mixed>>}
+     */
+    public function maintenanceProgress(int $limit = 100): array
+    {
+        return $this->remember("maint_progress:{$limit}", self::CACHE_TTL, function () use ($limit) {
+            $tickets = Maintenance::query()
+                ->whereIn('workflow_status', Maintenance::CHECKPOINT_TRACKED_STATES)
+                ->with(['vehicle:id,plate_no,make,model', 'vendor:id,name', 'checkpoints', 'responsibles:id,name'])
+                ->limit($limit)
+                ->get();
+
+            // Default follow-up owners resolved once (cached recipient query), used for tickets that
+            // never assigned explicit responsibles.
+            $defaults = $this->checkpoints->defaultRecipients()
+                ->map(fn ($u) => ['id' => $u->id, 'name' => $u->name])->values()->all();
+
+            $items = $tickets->map(function ($t) use ($defaults) {
+                $state = $this->checkpoints->monitorState($t);
+
+                // Single mutually-exclusive status, worst-first (see docblock).
+                $status = $state['overdue'] ? 'overdue'
+                    : (($state['last_outcome'] === 'critical') ? 'critical'
+                    : ($state['needs_update'] ? 'needs_update'
+                    : (($state['last_outcome'] === 'delayed') ? 'delayed' : 'on_track')));
+
+                $responsible = $t->responsibles->isNotEmpty()
+                    ? $t->responsibles->map(fn ($u) => ['id' => $u->id, 'name' => $u->name])->values()->all()
+                    : $defaults;
+
+                return [
+                    'ticket_id'          => (int) $t->id,
+                    'vehicle_id'         => $t->vehicle_id ? (int) $t->vehicle_id : null,
+                    'plate'              => $t->vehicle?->plate_no,
+                    'car'                => $t->vehicle ? (trim(($t->vehicle->make ?? '') . ' ' . ($t->vehicle->model ?? '')) ?: null) : null,
+                    'garage'             => $t->vendor?->name ?: ($t->garage ?: null),
+                    'workflow_status'    => $t->workflow_status,
+                    'status'             => $status,
+                    'eta_status'         => $state['eta_status'],
+                    'expected_on'        => $state['expected_on'],
+                    'is_estimated'       => $state['is_estimated'],
+                    'days_left'          => $state['days_left'],
+                    'days_over'          => $state['days_over'],
+                    'has_checkpoint'     => $state['has_checkpoint'],
+                    'last_checkpoint_at' => $state['last_checkpoint_at'],
+                    'last_outcome'       => $state['last_outcome'],
+                    'needs_update'       => $state['needs_update'],
+                    'overdue'            => $state['overdue'],
+                    'responsible'        => $responsible,
+                ];
+            })
+            // Worst-first: overdue/critical to the top, then unattended, then delayed, then by days over/left.
+            ->sortByDesc(function ($r) {
+                $rank = ['overdue' => 5, 'critical' => 4, 'needs_update' => 3, 'delayed' => 2, 'on_track' => 1];
+                return ($rank[$r['status']] ?? 0) * 100000
+                    + ($r['days_over'] ?? 0) * 100
+                    - ($r['days_left'] ?? 0);
+            })
+            ->values()->all();
+
+            $count = fn (string $s) => count(array_filter($items, fn ($r) => $r['status'] === $s));
+
+            return [
+                'summary' => [
+                    'total'        => count($items),
+                    'on_track'     => $count('on_track'),
+                    'delayed'      => $count('delayed'),
+                    'critical'     => $count('critical'),
+                    'needs_update' => $count('needs_update'),
+                    'overdue'      => $count('overdue'),
+                ],
+                'items' => $items,
+            ];
+        });
     }
 
     /**

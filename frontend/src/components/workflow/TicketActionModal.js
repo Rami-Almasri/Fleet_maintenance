@@ -518,7 +518,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   const [assignNote, setAssignNote] = useState(''); // assign: supervisor's reason/note when (re)assigning the garage
   const [recoveryUnit, setRecoveryUnit] = useState('');  // recovery: towing unit name/ID
   const [recoveryPhone, setRecoveryPhone] = useState(''); // recovery: operator mobile
-  const [outDate, setOutDate] = useState('');       // dispatch: date the car left (blank → today)
+  const [outDate] = useState('');                   // dispatch: date the car left (blank → today)
   const [inDate] = useState('');                    // reinspect-pass: date the car came back (blank → today)
   const [returnDate, setReturnDate] = useState('');
   const [feedback, setFeedback] = useState('');
@@ -719,11 +719,16 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
     }
   }, [action, contStage, prevOdometer, ticket, vehicleId]);
 
-  // Re-inspection, per-fault. Open faults (not completed/cancelled) become the checklist the inspector
-  // signs off. With faults present, the outcome is DERIVED (any fault still broken → fail); a legacy
-  // ticket with no faults falls back to the manual pass/fail toggle.
+  // Re-inspection, per-fault. The checklist is EVERY fault this sign-off judges — mirroring the backend's
+  // `$allFaults` (reopen: status != cancelled). Critically this INCLUDES already-`completed` faults: an
+  // in-shop repair marks each fault fixed at the garage gate, so the faults arrive here `completed`
+  // (terminal). Filtering those out (the old `!is_terminal`) left the checklist empty on every in-shop
+  // ticket, dropping the modal to the legacy pass/fail toggle with no fault to flag — so "Fail" posted an
+  // empty failed_task_ids and the backend rejected it ("Flag at least one fault…"). We only exclude
+  // cancelled faults (non-issues), exactly as the backend does. With faults present the outcome is DERIVED
+  // (any fault still broken → fail); a legacy ticket with no faults keeps the manual pass/fail toggle.
   const openFaults = useMemo(
-    () => (ticket?.tasks || []).filter((tk) => !tk.is_terminal),
+    () => (ticket?.tasks || []).filter((tk) => tk.status !== 'cancelled'),
     [ticket],
   );
   const perFault = action === 'reinspect' && openFaults.length > 0;

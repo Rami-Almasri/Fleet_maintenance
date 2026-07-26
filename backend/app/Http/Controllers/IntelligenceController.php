@@ -20,11 +20,21 @@ use Illuminate\Http\Request;
  */
 class IntelligenceController extends Controller
 {
-    /** Maintenance cost per km / day / rental, per vehicle + fleet totals. */
-    public function cost(CostIntelligenceService $cost)
+    /**
+     * Maintenance cost per km / day / rental, per vehicle + a rental-segment rollup + fleet totals.
+     * Optional ?from=Y-m-d&to=Y-m-d windows the maintenance spend, rentals and every derived total.
+     */
+    public function cost(Request $request, CostIntelligenceService $cost)
     {
         try {
-            return ResponseHelper::SuccessResponse($cost->fleet(), 'Cost intelligence retrieved successfully', 200);
+            $from = $request->query('from');
+            $to   = $request->query('to');
+
+            return ResponseHelper::SuccessResponse(
+                $cost->fleet(is_string($from) ? $from : null, is_string($to) ? $to : null),
+                'Cost intelligence retrieved successfully',
+                200,
+            );
         } catch (\Throwable $e) {
             return ResponseHelper::fromException($e);
         }
