@@ -2,13 +2,14 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useNotifications } from '../hooks/useNotifications';
+import { usePermissions } from '../hooks/usePermissions';
 import { PageHeader, EmptyState, Card } from '../components/ui/Misc';
 import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
 import FilterChips from '../components/ui/FilterChips';
 import {
-  INBOX_CATEGORIES,
-  inboxCategoryOf,
+  visibleLanes,
+  laneOf,
   severityRank,
   severityTheme,
   iconPath,
@@ -18,14 +19,11 @@ import {
   dateBucket,
 } from '../lib/notifications';
 
-// The fixed tab set for the Action Center: an "All" tab, the three focused inbox
-// categories, then an "Other" catch-all (only shown when it actually has rows, so
-// nothing is hidden yet the tab bar stays clean).
+// The "All" tab always leads; a per-role set of lanes follows (see visibleLanes),
+// then an "Other" catch-all shown only when it actually has rows — so nothing is
+// hidden yet the tab bar stays clean and tailored to the operator's job.
+const ALL_TAB = { key: 'all', label: 'All', icon: 'bell', empty: 'No notifications found' };
 const OTHER_TAB = { key: 'other', label: 'Other', icon: 'bell', empty: 'No other notifications' };
-const BASE_TABS = [
-  { key: 'all', label: 'All', icon: 'bell', empty: 'No notifications found' },
-  ...INBOX_CATEGORIES,
-];
 
 // Severity → Badge tone (Aurora semantic tones).
 const SEVERITY_TONE = { critical: 'red', warning: 'amber', info: 'blue', success: 'green' };
@@ -44,6 +42,13 @@ const BUCKET_ORDER = ['Today', 'Yesterday', 'This week', 'This month', 'Earlier'
 export default function Notifications() {
   const navigate = useNavigate();
   const { unreadCount, refresh, markAllRead, clearAll } = useNotifications();
+  const { can } = usePermissions();
+
+  // The lanes this operator is allowed to see (permission-gated), plus a Set of
+  // their keys for fast lane assignment. Recomputed only when the permission set
+  // changes — `can` is derived from the (stable) logged-in user.
+  const lanes = useMemo(() => visibleLanes(can), [can]);
+  const laneKeys = useMemo(() => new Set(lanes.map((l) => l.key)), [lanes]);
 
   const [filter, setFilter] = useState('all');       // all | unread (server-side)
   const [activeTab, setActiveTab] = useState('all');  // 'all' or a specific notification type (client-side)
@@ -109,25 +114,30 @@ export default function Notifications() {
     if (filter === 'unread') fetchPage(1, true);
   };
 
-  // Clear the whole feed, or just the active category tab. Backend keeps it
-  // strictly scoped to the current user either way.
+  // Clear the whole feed, or just the active lane. "All" uses the backend's
+  // scoped clear; a single lane (whose keys don't map to the backend category
+  // taxonomy) is cleared by deleting its loaded rows directly by id.
   const onClearAll = async () => {
-    const scope = activeTab !== 'all' ? activeTab : undefined;
-    if (scope) {
-      setItems((list) => list.filter((n) => inboxCategoryOf(n) !== scope));
-    } else {
+    if (activeTab === 'all') {
       setItems([]);
       setMeta({ last_page: 1, total: 0 });
+      await clearAll();
+      return;
     }
-    await clearAll(scope);
+    const rows = items.filter((n) => laneOf(n, laneKeys) === activeTab);
+    const ids = new Set(rows.map((n) => n.id));
+    setItems((list) => list.filter((n) => !ids.has(n.id)));
+    setMeta((m) => ({ ...m, total: Math.max(0, m.total - ids.size) }));
+    await Promise.all(rows.map((n) => api.delete(`/notifications/${n.id}`).catch(() => {})));
+    refresh();
   };
 
-  // Bucket loaded items by inbox category once (memoized), each sorted by urgency
-  // then recency. Switching tabs is then a constant-time lookup — no refetch.
+  // Bucket loaded items into the visible lanes once (memoized), each sorted by
+  // urgency then recency. Switching tabs is then a constant-time lookup — no refetch.
   const byTab = useMemo(() => {
     const buckets = { all: [] };
     for (const n of items) {
-      const c = inboxCategoryOf(n);
+      const c = laneOf(n, laneKeys);
       buckets.all.push(n);
       (buckets[c] || (buckets[c] = [])).push(n);
     }
@@ -136,19 +146,20 @@ export default function Notifications() {
       new Date(b.created_at) - new Date(a.created_at));
     Object.values(buckets).forEach(sortRows);
     return buckets;
-  }, [items]);
+  }, [items, laneKeys]);
 
-  // Fixed tabs: All + the three categories, plus "Other" only when it has rows.
-  const tabs = useMemo(() => (
-    (byTab.other && byTab.other.length) ? [...BASE_TABS, OTHER_TAB] : BASE_TABS
-  ), [byTab]);
+  // Tab bar: All + this role's lanes, plus an "Other" catch-all only when it has rows.
+  const tabs = useMemo(() => {
+    const base = [ALL_TAB, ...lanes];
+    return (byTab.other && byTab.other.length) ? [...base, OTHER_TAB] : base;
+  }, [lanes, byTab]);
 
-  // Per-tab counts feed the badge on each pill ("Routine · 3").
+  // Per-tab counts feed the badge on each pill ("Complaints · 3").
   const countsByTab = useMemo(() => {
     const counts = { all: 0 };
     const unread = { all: 0 };
     for (const n of items) {
-      const c = inboxCategoryOf(n);
+      const c = laneOf(n, laneKeys);
       counts.all += 1;
       counts[c] = (counts[c] || 0) + 1;
       if (!n.read) {
@@ -157,7 +168,7 @@ export default function Notifications() {
       }
     }
     return { counts, unread };
-  }, [items]);
+  }, [items, laneKeys]);
 
   // Fall back to "All" if the active type-tab no longer exists (e.g. all its
   // notifications were dismissed or the filter changed).
@@ -190,7 +201,7 @@ export default function Notifications() {
         {/* ── Header ─────────────────────────────────────────────────────── */}
         <PageHeader
           title="Action Center"
-          subtitle="Your fleet to-do list — overdue rentals, expiring documents and service-due cars, sorted into categories and ready to act on."
+          subtitle="Your to-do list — the tasks that need you, sorted into lanes for your role and ready to act on."
         >
           <Button variant="secondary" size="sm" onClick={onMarkAll} disabled={!unreadCount}>
             Mark all read

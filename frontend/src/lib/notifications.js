@@ -253,6 +253,132 @@ const TYPE_TO_INBOX = INBOX_CATEGORIES.reduce((acc, c) => {
 // (single source of truth) and falls back to the local type map, then `other`.
 export const inboxCategoryOf = (n) => n?.group || TYPE_TO_INBOX[n?.type] || 'other';
 
+// ── Role-aware operations lanes ──────────────────────────────────────────────
+// The Action Center is organised into LANES tailored to each operational role,
+// each gated by the permission that role uniquely holds. A user only ever sees the
+// lanes their permissions unlock, so the page reads as *their* to-do list:
+//   • Inspector (Abu Maroof · maintenance.initiate):
+//       Complaints · Awaiting Test · Re-inspect · Car Received
+//   • Supervisor / Drivers (Waleed & Abdullah · delegate / logistics / checkpoint):
+//       Assignments · Assign Garage · Pickup / Dropoff
+//   • Controller (Lin · maintenance.manage):
+//       Test Approvals · Test Interrupted
+// Managers / super-admins hold every permission and therefore see every lane.
+// The notifications themselves are already permission-gated at write time (the
+// backend NotificationScanner never writes an alert to a role that can't act on
+// it), so each lane naturally fills only for the person who owns it. Any received
+// type not claimed by a *visible* lane falls to the `other` catch-all, so nothing
+// is ever hidden. Two types (maint_vehicle_received, maint_test_interrupted) are
+// wired ahead of their backend hooks — the lane simply stays empty until they fire.
+export const LANES = [
+  // ── Inspector (Abu Maroof) — maintenance.initiate ──────────────────────────
+  {
+    key: 'complaints',
+    label: 'Complaints',
+    icon: 'phone',
+    permission: 'maintenance.initiate',
+    blurb: 'Customer complaints to triage — with the contact details to reach them',
+    empty: 'No customer complaints',
+    types: ['maint_complaint_triage', 'maint_complaint_headsup', 'maint_complaint_diagnostic',
+            'maint_complaint_call', 'maint_complaint_onsite_resolved', 'maint_complaint_resolved'],
+  },
+  {
+    key: 'awaiting_test',
+    label: 'Awaiting Test',
+    icon: 'wrench',
+    permission: 'maintenance.initiate',
+    blurb: 'Approved requests ready for you to take out for a test drive',
+    empty: 'Nothing awaiting a test drive',
+    types: ['maint_inspection_requested', 'maint_review_approved', 'maint_recommendation_dismissed'],
+  },
+  {
+    key: 'reinspect',
+    label: 'Re-inspect',
+    icon: 'shield',
+    permission: 'maintenance.initiate',
+    blurb: 'Cars back from the garage that need a re-inspection',
+    empty: 'Nothing to re-inspect',
+    types: ['maint_ready_reinspect', 'maint_reinspection_failed'],
+  },
+  {
+    key: 'car_received',
+    label: 'Car Received',
+    icon: 'truck',
+    permission: 'maintenance.initiate',
+    blurb: 'A driver has just collected the car from the customer',
+    empty: 'No cars received from customers yet',
+    types: ['maint_vehicle_received'],
+  },
+
+  // ── Supervisor / Drivers (Waleed & Abdullah) — delegate / logistics ────────
+  {
+    key: 'assignments',
+    label: 'Assignments',
+    icon: 'wrench',
+    permission: 'maintenance.checkpoint.manage',
+    blurb: 'Cars in the workshop that need you — progress updates owed',
+    empty: 'No open assignments',
+    types: ['maint_checkpoint'],
+  },
+  {
+    key: 'assign_garage',
+    label: 'Assign Garage',
+    icon: 'map-pin',
+    permission: 'maintenance.delegate',
+    blurb: 'Tickets waiting for you to pick a garage and dispatch a driver',
+    empty: 'No garages to assign right now',
+    types: ['maint_dispatch_ready', 'maint_complaint_intake', 'maint_pickup_intake', 'maint_service_intake',
+            'maint_breakdown_intake', 'maint_recommendation_pending', 'maint_triage_route_pending',
+            'maint_parts_ready', 'maint_arrived_at_garage', 'maint_repair_review'],
+  },
+  {
+    key: 'pickup_dropoff',
+    label: 'Pickup / Dropoff',
+    icon: 'truck',
+    permission: 'maintenance.logistics',
+    blurb: 'Moves assigned to you — go collect or deliver a car',
+    empty: 'No pickups or dropoffs',
+    types: ['maint_pickup_ready', 'maint_pickup_assigned', 'maint_delegated', 'maint_ready_for_pickup',
+            'logistics_dispatch', 'logistics_update', 'logistics_status', 'logistics_ping',
+            'logistics_reassigned', 'logistics_unassigned'],
+  },
+
+  // ── Controller (Lin) — maintenance.manage ──────────────────────────────────
+  {
+    key: 'test_approvals',
+    label: 'Test Approvals',
+    icon: 'check',
+    permission: 'maintenance.manage',
+    blurb: 'The system suggests a car needs a test — approve or reject the request',
+    empty: 'No test requests to approve',
+    types: ['maint_review_pending'],
+  },
+  {
+    key: 'test_interrupted',
+    label: 'Test Interrupted',
+    icon: 'alert',
+    permission: 'maintenance.manage',
+    blurb: 'A car due for a test went back on rent and has now returned — pick it up again',
+    empty: 'No interrupted tests',
+    types: ['maint_test_interrupted'],
+  },
+];
+
+// The lanes this user can see, in order — permission-gated. `can` is usePermissions().can.
+export const visibleLanes = (can) => LANES.filter((l) => can(l.permission));
+
+// The lane a notification belongs to, restricted to the lanes the user can actually
+// see (`visibleKeys` = a Set of keys from visibleLanes). A type shared by two lanes
+// resolves to the first VISIBLE one, so a supervisor's copy of a shared alert never
+// lands in an inspector-only lane. Falls back to `other` so nothing is dropped.
+export const laneOf = (n, visibleKeys) => {
+  const t = n?.type;
+  for (const lane of LANES) {
+    if (visibleKeys.has(lane.key) && lane.types.includes(t)) return lane.key;
+  }
+  return 'other';
+};
+
 // ── Per-type tabs ────────────────────────────────────────────────────────────
 // The page can also break notifications out into ONE tab per alert `type` (not
 // just the broad domains above). There are ~60 possible types on the backend, so
@@ -431,6 +557,15 @@ export const metaChips = (n) => {
       break;
     case 'maint_delegated':
       if (m.task) chips.push({ text: m.task === 'pickup' ? 'Pickup' : 'Dropoff', tone: 'strong' });
+      break;
+    // Customer complaints carry who reported it + how to reach them, so the
+    // Inspector can call straight from the card (Abu Maroof's "enough to contact").
+    case 'maint_complaint_triage':
+    case 'maint_complaint_headsup':
+    case 'maint_complaint_diagnostic':
+      if (m.customer) chips.push({ text: m.customer, tone: 'strong' });
+      if (m.customer_phone) chips.push({ text: `📞 ${m.customer_phone}` });
+      if (m.contract_no) chips.push({ text: `#${m.contract_no}` });
       break;
     case 'booking_readiness':
       if (m.days_left != null) chips.push({ text: m.days_left <= 0 ? 'Pickup today' : `${m.days_left}d to pickup`, tone: 'strong' });

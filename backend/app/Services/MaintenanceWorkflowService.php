@@ -4607,6 +4607,27 @@ class MaintenanceWorkflowService
                 report($e);
             }
 
+            // Operational hand-off to the Inspector (Abu Maroof): the driver has just completed the pickup
+            // handover — the vehicle has been RECEIVED back from the customer — so it's his moment to look it
+            // over. Fires here (right when the return handover is captured, before the discrepancy branch) so
+            // it always lands on receipt. Reuses the handover's existing note verbatim; no new field.
+            $receiveNote = $this->clean($handoverData['notes'] ?? null);
+            $vehicle = $ticket->loadMissing('vehicle')->vehicle;
+            $this->notifier->notifyByPermission(self::NOTIFY_INSPECTOR, [
+                'type'     => 'maint_vehicle_received',
+                'category' => 'maintenance',
+                'severity' => 'info',
+                'title'    => '🚗 Received from customer · ' . $this->label($vehicle),
+                'body'     => trim($this->label($vehicle) . ' has been received back from the customer'
+                                . ($actor ? ' by ' . $actor->name : '') . '.'
+                                . ($receiveNote ? ' Handover note: “' . $receiveNote . '”.' : '')
+                                . ' Inspect it as it re-enters the workshop.'),
+                'url'      => $this->link($ticket),
+                'key'      => 'maint_wf:' . $ticket->id . ':vehicle_received:' . Carbon::now()->timestamp,
+                'icon'     => 'truck',
+                'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no, 'note' => $receiveNote],
+            ], $actor->id);
+
             // Step 2/3 — compare against the pause-leg handover, IF one exists (a legacy ticket paused
             // before this feature shipped has none — skip comparison/incident logic entirely and finalize).
             $pauseHandover = $ticket->lastPauseHandover;

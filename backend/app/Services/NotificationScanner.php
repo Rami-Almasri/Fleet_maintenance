@@ -45,6 +45,7 @@ class NotificationScanner
         'service_reminder:', 'contact_reminder:',
         'rental_expiring:', 'invoice_overdue:', 'inspection_due:',
         'booking_in_maintenance:', 'booking_readiness:', 'deferred_maint_return:',
+        'test_interrupted:',
     ];
 
     /**
@@ -76,6 +77,7 @@ class NotificationScanner
         'booking_in_maintenance' => 'contracts.view',      // rental desk: a booked car still in the workshop
         'booking_readiness'      => 'booking_readiness.view', // rental desk: an upcoming booking whose car needs prep
         'deferred_maintenance_return' => 'maintenance.manage', // supervisors/ops: car back from rental still owes the workshop
+        'test_interrupted'            => 'maintenance.manage',   // controllers (Leen): a recommended test lapsed because the car went back on rent
     ];
 
     public function __construct(
@@ -298,6 +300,7 @@ class NotificationScanner
             ->concat($this->deferredMaintenanceReturns())
             ->concat($this->invoiceOverdue())
             ->concat($this->inspectionDue())
+            ->concat($this->testRecommendationsInterrupted())
             ->all();
     }
 
@@ -854,6 +857,47 @@ class NotificationScanner
                     'key'      => 'deferred_maint_return:' . $v->id,
                     'icon'     => 'wrench',
                     'meta'     => ['plate' => $v->plate_no, 'note' => $v->deferred_maintenance_reason],
+                ];
+            });
+    }
+
+    /**
+     * TEST INTERRUPTED — a car the system RECOMMENDED for a test (a ticket sitting in the Inspection
+     * Request Review gate, WF_PENDING_REVIEW, awaiting the Controller's approval) whose vehicle has since
+     * gone back out on rent (operational_status = 'rented') before the test could be performed. The
+     * recommendation has effectively lapsed: it can't be actioned while the car is with a customer, so
+     * Leen (maintenance.manage) is told the recommended test could not be completed.
+     *
+     * Pure detection over existing state — no new workflow event. Keyed per ticket; the moment the car
+     * returns (no longer 'rented') OR the review is actioned (ticket leaves WF_PENDING_REVIEW) the key
+     * drops from the active set and resolveStale() clears it.
+     */
+    private function testRecommendationsInterrupted(): Collection
+    {
+        return Maintenance::query()
+            ->where('workflow_status', Maintenance::WF_PENDING_REVIEW)
+            ->whereHas('vehicle', fn ($q) => $q->where('operational_status', 'rented'))
+            ->with('vehicle:id,plate_no,make,model,code')
+            ->orderByDesc('id')
+            ->limit(self::CAP)
+            ->get()
+            ->map(function (Maintenance $m) {
+                $v   = $m->vehicle;
+                $car = $v ? trim($v->make . ' ' . $v->model) : 'Vehicle';
+                return [
+                    'type'     => 'maint_test_interrupted',
+                    'category' => 'maintenance',
+                    'severity' => 'warning',
+                    'title'    => 'Test interrupted · car back with customer',
+                    'body'     => trim(($v && $v->code ? '#' . $v->code . ' ' : '') . $car
+                                    . ($v?->plate_no ? ' (' . $v->plate_no . ')' : '')
+                                    . ' was recommended for a test, but it has gone back out on rent before the'
+                                    . ' test could be done. The recommended test could not be completed — review'
+                                    . ' the pending request.'),
+                    'url'      => '/maintenance-workflow/' . $m->id,
+                    'key'      => 'test_interrupted:' . $m->id,
+                    'icon'     => 'alert',
+                    'meta'     => ['ticket_id' => $m->id, 'plate' => $v?->plate_no],
                 ];
             });
     }
