@@ -42,6 +42,12 @@ class LogisticsTaskEvent extends Model
         return $this->belongsTo(LogisticsTask::class, 'logistics_task_id');
     }
 
+    /** The vehicle this movement is about — used by ActivityFeedService when it unions the timeline. */
+    public function vehicle(): BelongsTo
+    {
+        return $this->belongsTo(Vehicle::class, 'vehicle_id');
+    }
+
     public function actor(): BelongsTo
     {
         return $this->belongsTo(User::class, 'actor_id');
