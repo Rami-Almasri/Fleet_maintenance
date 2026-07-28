@@ -41,12 +41,13 @@ class NotificationCategories
         // alert type the workflow emits must be listed here, or NotificationController stamps its
         // group as the catch-all `other` and it never reaches the Complaints tab.
         'complaints' => [
-            'maint_complaint_intake',          // a complaint was logged (to Supervisors)
-            'maint_complaint_headsup',         // heads-up to the Inspector: this car needs a test drive
-            'maint_complaint_triage',          // landed in Abu Maroof's triage lane
-            'maint_complaint_call',            // triage: called the customer
-            'maint_complaint_diagnostic',      // triage: sent the car in for diagnosis
-            'maint_complaint_onsite_resolved', // triage: resolved on-site
+            'maint_complaint_new',             // first-class Complaint entity: logged → Inspector triages
+            'maint_complaint_intake',          // (legacy) a complaint was logged (to Supervisors)
+            'maint_complaint_headsup',         // (legacy) heads-up to the Inspector: this car needs a test drive
+            'maint_complaint_triage',          // (legacy) landed in Abu Maroof's triage lane
+            'maint_complaint_call',            // (legacy) triage: called the customer
+            'maint_complaint_diagnostic',      // (legacy) triage: sent the car in for diagnosis
+            'maint_complaint_onsite_resolved', // (legacy) triage: resolved on-site
             'maint_complaint_resolved',        // the complaint was closed / resolved
         ],
 

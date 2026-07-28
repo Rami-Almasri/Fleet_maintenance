@@ -13,8 +13,8 @@ import BarChart from '../components/ui/BarChart';
 import LineChart from '../components/ui/LineChart';
 import CountUp from '../components/ui/CountUp';
 import FleetPulseGrid from '../components/FleetPulseGrid';
-import MaintenanceProgress from '../components/dashboard/MaintenanceProgress';
 import { aed, fmtDate } from '../lib/format';
+import { delayReasonLabel } from '../lib/maintenanceCheckpoints';
 import { SHOW_FINANCIALS } from '../config/features';
 import { useAuth } from '../auth/AuthContext';
 
@@ -53,6 +53,51 @@ const PROGRESS_TONE = {
   red:    { bar: 'bg-rose-500',    track: 'bg-rose-100',    badge: 'bg-rose-50 text-rose-700 ring-rose-200',          pct: 'text-rose-600',    dot: 'bg-rose-500',  from: '#fb7185', to: '#e11d48', accent: 'from-rose-400 to-rose-500',     glow: 'bg-rose-400/20' },
 };
 
+// Whole days the revised ETA slipped past the previous one (positive = later).
+function checkpointDelayDays(prev, next) {
+  if (!prev || !next) return null;
+  const a = new Date(`${prev}T00:00:00`);
+  const b = new Date(`${next}T00:00:00`);
+  if (isNaN(a) || isNaN(b)) return null;
+  return Math.round((b - a) / 86400000);
+}
+
+// The workshop's last progress update, clearly labelled so the delay story reads as information rather
+// than two unlabelled dates jammed together: the ETA change (Previous → New + how many days it slipped),
+// the reason it moved, and who filed it when. Amber "No update filed yet" when nobody has reported.
+function CheckpointLine({ cp }) {
+  if (!cp) {
+    return <p className="text-[11px] font-semibold text-amber-600">No update filed yet</p>;
+  }
+  const reason = cp.delay_reason === 'other' ? (cp.delay_reason_other || null) : delayReasonLabel(cp.delay_reason);
+  const etaMoved = !!cp.next_expected_date
+    && (!cp.previous_expected_date || cp.previous_expected_date !== cp.next_expected_date);
+  const dd = checkpointDelayDays(cp.previous_expected_date, cp.next_expected_date);
+  return (
+    <div className="space-y-0.5 leading-tight" title={cp.summary || undefined}>
+      {cp.next_expected_date ? (
+        <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px]">
+          {etaMoved && cp.previous_expected_date && (
+            <span className="text-slate-400"><span className="line-through decoration-slate-300">{fmtDate(cp.previous_expected_date)}</span> →</span>
+          )}
+          <span className="font-semibold text-slate-700">{etaMoved ? 'New ETA' : 'ETA'} {fmtDate(cp.next_expected_date)}</span>
+          {dd != null && dd > 0 && (
+            <span className="rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-bold text-red-600 ring-1 ring-red-200">+{dd}d</span>
+          )}
+        </p>
+      ) : (
+        <p className="text-[11px] font-semibold text-slate-600">Update filed</p>
+      )}
+      {etaMoved && (
+        reason
+          ? <p className="text-[11px] text-amber-700"><span className="font-semibold">Reason:</span> {reason}</p>
+          : <p className="text-[11px] text-amber-600">No delay reason recorded</p>
+      )}
+      <p className="text-[11px] text-slate-400">{cp.by ? `Updated by ${cp.by}` : 'Updated'}{cp.at ? ` · ${fmtDate(cp.at)}` : ''}</p>
+    </div>
+  );
+}
+
 // One labelled figure in a card's KPI grid.
 function KpiCell({ label, value, tone = 'text-slate-800' }) {
   return (
@@ -74,7 +119,7 @@ const days = (n) => `${n} day${Math.abs(n) === 1 ? '' : 's'}`;
 // a null target falls back to the default window and the card is flagged "Estimated"). Deep-links to
 // the vehicle. The whole card is the KPI the user asked for — no plain text ETA.
 function RepairProgressCard({ item }) {
-  const { id, plate, car, garage, eta } = item || {};
+  const { id, plate, car, garage, eta, checkpoint, problem, problem_items, problem_type } = item || {};
   const e = eta || {};
   const to = id ? `/vehicles/${id}` : '/maintenance-workflow';
 
@@ -121,6 +166,18 @@ function RepairProgressCard({ item }) {
         )}
       </div>
 
+      {/* WHY the car is in the shop — the fault(s)/reason behind the visit. */}
+      <div className="relative mb-3 rounded-xl bg-slate-50 px-2.5 py-2 ring-1 ring-slate-100">
+        <p className="text-[10px] font-medium uppercase tracking-wide text-slate-400">Problem</p>
+        {problem ? (
+          <p className="truncate text-xs font-semibold text-slate-700" title={(problem_items || []).length > 1 ? problem_items.join(' · ') : problem}>
+            {problem}{problem_type ? <span className="ms-1 font-normal text-slate-400">· {problem_type}</span> : null}
+          </p>
+        ) : (
+          <p className="text-xs text-slate-400">No fault recorded on the maintenance contract</p>
+        )}
+      </div>
+
       {/* Progress bar */}
       <div className="relative">
         <div className="mb-1.5 flex items-baseline justify-between gap-2">
@@ -141,12 +198,18 @@ function RepairProgressCard({ item }) {
             <span className="absolute inset-x-0 top-0 h-1/2 rounded-full bg-white/25" />
           </div>
         </div>
-        <div className="mt-2">
+        <div className="mt-2 flex flex-wrap items-center gap-2">
           <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ${c.badge}`}>
             <span className={`h-1.5 w-1.5 rounded-full ${c.dot} ${status === 'overdue' ? 'animate-pulse' : ''}`} />
             {badge}
           </span>
         </div>
+      </div>
+
+      {/* Last checkpoint filed on /maintenance-progress — the delay story (ETA change + reason + who/when). */}
+      <div className="relative mt-2.5 rounded-xl bg-slate-50/70 px-2.5 py-2 ring-1 ring-slate-100">
+        <p className="mb-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-400">Latest checkpoint</p>
+        <CheckpointLine cp={checkpoint} />
       </div>
 
       {/* Underlying figures */}
@@ -974,10 +1037,6 @@ export default function Dashboard() {
             inspections due) surfaced before they become problems. Same source lists as the
             notification bell; every row deep-links to its record. */}
         <ProactiveFlags data={proactive} loading={loading} />
-
-        {/* Maintenance Progress — the workshop monitoring centre: every car in maintenance with its
-            checkpoint status, ETA and responsible owner. Full-width; the operational nerve centre. */}
-        <MaintenanceProgress />
 
         {/* Most Maintained Cars (by downtime) beside the Most Frequent Faults donut KPI. */}
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">

@@ -41,8 +41,8 @@ export default function ResolvedTransfers() {
     <div className="py-8">
       <div className="mx-auto max-w-[1200px] space-y-6 px-4 sm:px-6 lg:px-8">
         <div>
-          <Link to="/oversight" className="mb-2 inline-flex items-center gap-1 text-xs font-medium text-slate-400 transition-colors hover:text-slate-600">
-            <Icon.ArrowRight className="h-3 w-3 rotate-180" /> {t('oversight.hub.title')}
+          <Link to="/apps/reports" className="mb-2 inline-flex items-center gap-1 text-xs font-medium text-slate-400 transition-colors hover:text-slate-600">
+            <Icon.ArrowRight className="h-3 w-3 rotate-180" /> Reports
           </Link>
           <PageHeader title={t('oversight.resolvedTransfers.title')} subtitle={t('oversight.resolvedTransfers.subtitle')}>
             <div className="rounded-2xl border border-slate-200/60 bg-white px-4 py-3 text-center shadow-soft">

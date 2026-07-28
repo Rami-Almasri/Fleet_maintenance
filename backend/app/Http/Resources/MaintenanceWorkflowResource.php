@@ -3,6 +3,7 @@
 namespace App\Http\Resources;
 
 use App\Models\Maintenance;
+use App\Models\PartRequest;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -249,6 +250,10 @@ class MaintenanceWorkflowResource extends JsonResource
             'requested_by_name'  => $t->requester?->name,
             'follow_ups'         => array_values($t->follow_ups ?? []),
 
+            // "Why this garage?" — the durable data-driven garage-choice decision (recommended vs chosen,
+            // reasons + confidence), so the ticket history answers the question months later.
+            'garage_recommendation' => $this->garageRecommendation($t),
+
             // "Sent back" summary — was this car ever re-dispatched after failing re-inspection? Derived
             // from the tagged follow-up entries (kind = 'sent_back'), so the board can show an at-a-glance
             // badge without opening the ticket. Carries the count + the most recent from→to garages.
@@ -264,6 +269,13 @@ class MaintenanceWorkflowResource extends JsonResource
             // Garage 2" and gate the container on "all faults resolved". Only present when eager-loaded.
             'tasks'          => MaintenanceTaskResource::collection($this->whenLoaded('tasks')),
             'tasks_progress' => $this->when($t->relationLoaded('tasks'), fn () => $t->tasksProgress()),
+
+            // Parts still owed on this ticket — the distinct names of every non-terminal part request across
+            // its faults. `waiting_parts` is the quick flag a card reads; `parts_pending` names them. Only
+            // meaningful when the board eager-loads tasks.partRequests (else empty / false). Drives the
+            // "Waiting for parts" signal on the Car Status stage board.
+            'waiting_parts'  => count($this->pendingPartNames($t)) > 0,
+            'parts_pending'  => $this->pendingPartNames($t),
 
             // Post-Repair Inspection — the ticket's durable QC verdicts (Repair Quality Check panel). Only
             // present when eager-loaded; the drawer otherwise fetches them via /repair-inspections.
@@ -511,6 +523,29 @@ class MaintenanceWorkflowResource extends JsonResource
     }
 
     /**
+     * The distinct names of every OPEN (non-terminal) part request across this ticket's faults — the
+     * parts the car is still waiting on. Empty when the tasks / their part requests aren't eager-loaded
+     * (so it never fires a lazy query) or nothing is outstanding.
+     *
+     * @return array<int,string>
+     */
+    private function pendingPartNames(Maintenance $t): array
+    {
+        if (! $t->relationLoaded('tasks')) {
+            return [];
+        }
+
+        return $t->tasks
+            ->flatMap(fn ($task) => $task->relationLoaded('partRequests') ? $task->partRequests : collect())
+            ->reject(fn (PartRequest $r) => in_array($r->status, PartRequest::TERMINAL, true))
+            ->pluck('part_name')
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    /**
      * Whole seconds between two stage anchors, or null when either end hasn't happened yet (so an
      * unreached stage reads as "—", never a bogus 0). Clamped at 0 against any clock skew.
      */
@@ -528,6 +563,32 @@ class MaintenanceWorkflowResource extends JsonResource
      * count + the most recent from→to garages + whether that last move changed garage — enough for the
      * board to render a badge + tooltip without opening the ticket.
      */
+    /**
+     * The "Why this garage?" record for the ticket — the latest garage-choice decision, resolved to garage
+     * names so the history reads plainly ("Recommended: Nissan Service · Accepted: Yes · Confidence: High").
+     * Null when the ticket was assigned before the engine existed / with no recommendation attached.
+     */
+    private function garageRecommendation($t): ?array
+    {
+        $d = $t->latestRecommendationDecision;
+        if (! $d) {
+            return null;
+        }
+        return [
+            'recommended_garage' => $d->recommendedVendor?->name,
+            'chosen_garage'      => $d->chosenVendor?->name,
+            'accepted'           => (bool) $d->accepted,
+            'followed'           => $d->followed,
+            'rank'               => $d->rank,
+            'score'              => $d->score,
+            'confidence'         => $d->confidence,
+            'reasons'            => $d->reasons ?? [],
+            'criteria'           => $d->criteria,
+            'decided_by'         => $d->actor?->name,
+            'decided_at'         => optional($d->created_at)->toIso8601String(),
+        ];
+    }
+
     private function sentBackSummary($t): ?array
     {
         // Match the tagged entries (kind = 'sent_back'); also recognise notes written before the tag

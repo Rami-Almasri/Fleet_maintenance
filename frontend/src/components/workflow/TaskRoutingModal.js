@@ -531,6 +531,35 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
                         <span className={`h-1.5 w-1.5 rounded-full ${st.dot}`} />
                         {t(`workflow.task.status.${task.status}`)}
                       </span>
+                      {/* Fault-history at a glance — is this the FIRST time, or has the SAME fault been fixed
+                          before on this car and come back (recurring)? Skipped for a fault ruled Incorrect
+                          (not a real fault). The amber "Recurring" badge carries the previous repair in its tip. */}
+                      {! task.is_incorrect && (task.recurrence_flagged ? (
+                        <Tooltip content={task.recurrence?.garage
+                          ? t('workflow.task.history.recurringTip', { garage: task.recurrence.garage, date: task.recurrence?.repaired_on ? fmtDay(task.recurrence.repaired_on) : '—' })
+                          : t('workflow.task.history.recurringTipShort')}>
+                          <span className="inline-flex cursor-help items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 font-semibold text-amber-700 ring-1 ring-inset ring-amber-200">
+                            🔁 {t('workflow.task.history.recurring')}
+                          </span>
+                        </Tooltip>
+                      ) : (
+                        <Tooltip content={t('workflow.task.history.firstTimeTip')}>
+                          <span className="inline-flex cursor-help items-center gap-1 rounded-full bg-slate-50 px-2 py-0.5 font-medium text-slate-500 ring-1 ring-inset ring-slate-200">
+                            🆕 {t('workflow.task.history.firstTime')}
+                          </span>
+                        </Tooltip>
+                      ))}
+                      {/* Sent back still broken — this fault flunked the closing re-inspection (one or more
+                          times). A rising count at the same garage is the "shop can't fix it" signal. */}
+                      {task.reinspection_failures > 0 && (
+                        <Tooltip content={task.last_failed_garage
+                          ? t('workflow.task.history.stillBrokenTip', { garage: task.last_failed_garage })
+                          : t('workflow.task.history.stillBrokenTipShort')}>
+                          <span className="inline-flex cursor-help items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 font-semibold text-red-700 ring-1 ring-inset ring-red-200">
+                            🔴 {t('workflow.task.history.stillBroken', { n: task.reinspection_failures })}
+                          </span>
+                        </Tooltip>
+                      )}
                       {/* Persistent workshop-confirmation verdict badge — stays visible after the fault is fixed. */}
                       {task.confirmation_status && (
                         <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-semibold ring-1 ring-inset ${CONFIRM_TONE[task.confirmation_status]?.idle || 'bg-slate-50 text-slate-600 ring-slate-200'}`}>
@@ -682,9 +711,22 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
                         );
                       })}
                     </div>
-                    {task.confirmation_status && task.confirmed_by && (
+                    {/* Confirmed → a clear green "this fault exists" verdict banner, so the answer to the
+                        question above is unmistakable and stays attributed to who confirmed it. Legacy
+                        non-confirmed verdicts keep the plain reviewer line. */}
+                    {task.confirmation_status === 'confirmed' ? (
+                      <div className="mt-2 flex items-start gap-2 rounded-lg border border-emerald-300 bg-emerald-50 p-2.5">
+                        <span className="text-sm leading-none">✅</span>
+                        <div className="min-w-0">
+                          <p className="text-[11px] font-bold text-emerald-800">{t('workflow.task.review.existsYes')}</p>
+                          {task.confirmed_by && (
+                            <p className="text-[11px] text-emerald-700/80">{t('workflow.task.review.confirmedBy', { name: task.confirmed_by })}</p>
+                          )}
+                        </div>
+                      </div>
+                    ) : task.confirmation_status && task.confirmed_by ? (
                       <p className="mt-1.5 text-[11px] text-slate-400">{t('workflow.task.review.reviewedBy', { name: task.confirmed_by })}</p>
-                    )}
+                    ) : null}
                   </div>
                 )}
 

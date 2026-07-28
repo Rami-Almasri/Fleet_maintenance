@@ -11,7 +11,11 @@ import { useToast } from '../ui/Toast';
 import { useCountUp } from '../ui/Gauge';
 import FindingsList from './FindingsList';
 import TicketParts from './TicketParts';
-import { resolveAction, allows, ctaLabel, ago, fmtDuration, fmtDateTime, REASON_TONE, custodyBlocked, custodyHolderName, isAtGarage } from './meta';
+import CheckpointModal from '../maintenance/CheckpointModal';
+import CheckpointTimeline from '../maintenance/CheckpointTimeline';
+import { getTicketCheckpoints, isCheckpointStage } from '../../lib/maintenanceCheckpoints';
+import { resolveAction, allows, ctaLabel, ago, fmtDuration, fmtDateTime, REASON_TONE, custodyBlocked, custodyHolderName, isAtGarage, canOrderParts } from './meta';
+import { fmtDate } from '../../lib/format';
 import { SHOW_FINANCIALS } from '../../config/features';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -250,6 +254,15 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
   const [rejecting, setRejecting] = useState(false);  // toggles the reject-reason box
   const [rejectNote, setRejectNote] = useState('');
   const [partsOpenSignal, setPartsOpenSignal] = useState(0); // "Request Part" action → opens the Parts modal
+  // Maintenance-progress checkpoints filed against THIS ticket — the same timeline shown on the dashboard
+  // widget + vehicle profile, surfaced here so a checkpoint appears on the ticket's own command page.
+  const [cp, setCp] = useState(null); // { monitor, responsibles, checkpoints, can_submit, can_manage, faults }
+  const [cpOpen, setCpOpen] = useState(false);
+
+  const loadCheckpoints = useCallback(() => {
+    if (!ticketId) return;
+    getTicketCheckpoints(ticketId).then(setCp).catch(() => setCp(null));
+  }, [ticketId]);
 
   const load = useCallback(async () => {
     if (!ticketId) return;
@@ -262,12 +275,13 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
           .then((r) => setPhotos((r.data?.data?.photos || []).filter((p) => p.body_part === 'odometer')))
           .catch(() => setPhotos([]));
       }
+      loadCheckpoints();
     } catch (e) {
       setError(e?.response?.data?.message || t('workflow.detail.loadError'));
     } finally {
       setLoading(false);
     }
-  }, [ticketId, t]);
+  }, [ticketId, t, loadCheckpoints]);
 
   // ── Garage Invoice Portal (team side) ──────────────────────────────────────
   // Issue a link. Pass a vendorId to scope it to one garage (it can then bill only its own faults); omit
@@ -446,6 +460,18 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
   // awaiting_invoice (repair done, invoice outstanding) — which is not a WF_TICKET_STATE so is_ticket is false.
   const invoicing = tk.is_ticket || tk.workflow_status === 'awaiting_invoice';
   const awaitingInvoice = tk.workflow_status === 'awaiting_invoice';
+
+  // Maintenance progress: show the checkpoint timeline once there's history, the user may file one, or the
+  // car is at a workshop stage where checkpoints are tracked. `cpMon` drives the at-a-glance ETA line.
+  const cpMon = cp?.monitor;
+  const showCheckpoints = !!cp && (cp.checkpoints?.length > 0 || cp.can_submit || isCheckpointStage(tk.workflow_status));
+  const cpEtaTone = cpMon?.overdue ? 'bg-red-50 text-red-700 ring-red-200'
+    : cpMon?.needs_update ? 'bg-amber-50 text-amber-700 ring-amber-200'
+    : 'bg-slate-50 text-slate-600 ring-slate-200';
+  const cpEtaText = !cpMon?.expected_on ? 'No ETA set'
+    : cpMon.overdue ? `${cpMon.days_over} day(s) overdue`
+    : cpMon.eta_status === 'due_today' ? 'Due today'
+    : `${cpMon.days_left} day(s) left`;
 
   const timing = tk.stage_timing?.durations || {};
   const odoDelta = tk.dispatch_odometer != null && tk.return_odometer != null ? tk.return_odometer - tk.dispatch_odometer : null;
@@ -639,6 +665,37 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
               />
             )}
 
+            {/* Maintenance Progress — the checkpoint timeline filed against this ticket. Read-only here;
+                "File update" opens the same full checkpoint modal used by the dashboard + vehicle profile,
+                so a checkpoint stored anywhere shows up on this ticket's command page. */}
+            {showCheckpoints && (
+              <Panel
+                title="Maintenance Progress"
+                icon={<Icon.Clock className="h-4 w-4" />}
+                accent="#6366f1"
+                action={(cp.can_submit || cp.can_manage) ? (
+                  <button
+                    type="button"
+                    onClick={() => setCpOpen(true)}
+                    className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-700"
+                  >
+                    <Icon.Spark className="h-3.5 w-3.5" /> {cp.can_submit ? 'File update' : 'Manage'}
+                  </button>
+                ) : null}
+              >
+                <div className={`mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg px-3 py-2 text-sm ring-1 ${cpEtaTone}`}>
+                  <span className="font-semibold">{cpEtaText}</span>
+                  {cpMon?.expected_on && (
+                    <span className="text-xs opacity-80">
+                      Expected {fmtDate(cpMon.expected_on)}{cpMon.is_estimated ? ' (estimated)' : ''}
+                    </span>
+                  )}
+                  {cpMon?.needs_update && <span className="text-xs font-medium">· Checkpoint required</span>}
+                </div>
+                <CheckpointTimeline checkpoints={cp.checkpoints || []} />
+              </Panel>
+            )}
+
             {/* Audit trail — newest at the top, with an up-arrow FROM each stage TO the next one above,
                 so the progression is explicit. Dwell time is computed in chronological order (the gap to
                 the stage that came after), then the list is flipped for display. */}
@@ -725,7 +782,7 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
           {/* sidebar */}
           <div className="space-y-6">
             {/* Take action */}
-            {(allowed || canFollowUp || canRoute || can('parts.request')) && (
+            {(allowed || canFollowUp || canRoute || (can('parts.request') && canOrderParts(tk))) && (
               <Panel title="Take action" icon={<Icon.Spark className="h-4 w-4" />} accent={tone}>
                 <div className="flex flex-col gap-2">
                   {allowed && custodyLocked && (
@@ -753,8 +810,9 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
                       {t('workflow.cardAction.followup')}
                     </Button>
                   )}
-                  {/* Request Part — file a part request against this ticket without leaving the page. */}
-                  {can('parts.request') && (
+                  {/* Request Part — file a part request against this ticket without leaving the page. Only
+                      while the car is being inspected or in the workshop. Mirrors the drawer + Parts-card gate. */}
+                  {can('parts.request') && canOrderParts(tk) && (
                     <Button variant="secondary" onClick={() => setPartsOpenSignal((n) => n + 1)} className="w-full justify-center">
                       <Icon.Wrench className="h-4 w-4" /> Request Part
                     </Button>
@@ -926,6 +984,17 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
           </div>
         </div>
       </div>
+
+      {/* Checkpoint modal — file/manage a progress update; on save, refresh the ticket + timeline so the
+          new checkpoint appears immediately in the panel above. */}
+      <CheckpointModal
+        open={cpOpen}
+        ticketId={ticketId}
+        title="Maintenance Checkpoint"
+        subtitle={tk.plate || tk.car || `#${tk.id}`}
+        onClose={() => setCpOpen(false)}
+        onDone={(msg) => { if (msg) toast.success(msg); load(); }}
+      />
     </div>
   );
 }

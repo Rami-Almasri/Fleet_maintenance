@@ -80,7 +80,9 @@ class CheckpointsScan extends Command
                     'severity' => $meta['severity'],
                     'title'    => $meta['label'] . ' · ' . $plate,
                     'body'     => $body,
-                    'url'      => $ticket->vehicle_id ? ('/vehicles/' . $ticket->vehicle_id . '?tab=checkpoints') : '/dashboard',
+                    // Deep-link to the supervisors' Maintenance Progress queue, focused on this ticket so
+                    // the checkpoint form opens straight away.
+                    'url'      => '/maintenance-progress?ticket=' . $ticket->id,
                     'key'      => $key . ':u' . $user->id,
                     'icon'     => 'wrench',
                     'meta'     => [

@@ -10,6 +10,16 @@
 // add it to BOTH `en` and `ar` below.
 
 const en = {
+  classReview: {
+    title: 'Classification Review',
+    subtitle: 'Confirm the event type for maintenance the classifier was unsure about.',
+    loading: 'Loading the review queue…',
+    loadError: 'Could not load the review queue.',
+    empty: 'Nothing to review — every event is confidently classified.',
+    original: 'Original text', current: 'Current', suggested: 'Suggested',
+    fault: 'Fault', service: 'Service', inspection: 'Inspection',
+    pickCatalog: 'No specific catalog', confirm: 'Confirm',
+  },
   common: {
     cancel: 'Cancel',
     close: 'Close',
@@ -45,6 +55,53 @@ const en = {
   workflow: {
     // Live-position badge extras (garage→garage transfer marker).
     position: { transfer: 'Transfer' },
+    // Data-driven garage recommendation (assign step) — see GarageRecommendations.js.
+    garageRec: {
+      title: 'Recommended garages',
+      subtitle: 'Learned from repair history — proven experience with this vehicle & fault',
+      loading: 'Finding the best garages…',
+      none: 'No history-based suggestion yet — choose a garage below.',
+      use: 'Use this garage',
+      selected: 'Selected',
+      jobs: '{matched} matching · {total} total jobs',
+      matches: '{n} historical matches',
+      specialization: '{pct}% specialization',
+      alsoTitle: 'Also worth considering — specialists',
+      alsoHint: 'Strong in one area, but no record on this exact vehicle + fault',
+      provenHint: 'Ranked by proven experience with this exact vehicle + fault',
+      specialistJobs: '{jobs} jobs · {conc}% of its work',
+      recTitle: 'FleetView Recommendation',
+      score: 'Score',
+      selectRecommended: 'Select recommended garage',
+      compare: 'Compare',
+      hide: 'Hide options',
+      otherProven: 'Other proven garages',
+      specialists: 'Specialists',
+      recommendedFor: 'Recommended for',
+      noPrimaryTitle: 'No proven garage yet',
+      noPrimary: 'No garage has a proven repair record for this vehicle + fault yet. These specialists are the closest match — or pick any garage below.',
+      noPrimaryNoAlso: 'No garage has a matching repair history for this vehicle + fault yet. Choose a garage manually below.',
+      prefillNote: 'Recommended by FleetView Intelligence',
+      basedOn: 'This recommendation is based on historical FleetView maintenance data.',
+      lowWarning: 'Limited historical evidence. Please review the alternatives before assigning.',
+      viewDetails: 'View details',
+      hideDetails: 'Hide details',
+      confirmSelected: 'FleetView recommendation selected',
+      auditNote: 'This recommendation will be saved to the maintenance audit history.',
+      rankOf: '#{rank} of {total}',
+      altSummary: '{proven} proven · {spec} specialists',
+      details: { matches: 'Historical matches', specialization: 'Specialization', ranking: 'Ranking', confidence: 'Confidence', alternatives: 'Alternatives' },
+      faultCoverageTitle: 'Current fault coverage',
+      repairsHere: '{n} {label} repairs at this garage',
+      repairsModel: '{n} {model} {label} repairs',
+      missingExperience: 'Missing experience',
+      confidence: { high: 'High', medium: 'Medium', low: 'Low' },
+      confidenceTip: { high: 'High — strong history and specialization', medium: 'Medium — some relevant history', low: 'Low — limited evidence' },
+      why: {
+        title: 'Why this garage?', recommended: 'Recommended', assigned: 'Assigned', accepted: 'Accepted',
+        yes: 'Yes', no: 'No', overridden: 'Manual override', reason: 'Reason', confidence: 'Confidence',
+      },
+    },
     meta: {
       request:    { title: 'Request inspection',          sub: 'Driver — flag a car for the inspector to test-drive',           submit: 'Send request' },
       start:      { title: 'Start inspection',             sub: 'Inspector — pick up the request and begin the test drive',      submit: 'Start inspection' },
@@ -96,6 +153,9 @@ const en = {
     // external inspection / storage) WITHOUT pausing; the ticket stays at its stage.
     tempRelease: {
       hint: 'The car leaves the workshop for a bit, but the repair is NOT stopped — the ticket stays exactly where it is and continues when the car comes back. Capture who takes it and the odometer now, and the odometer again on return.',
+      faultsTitle: 'Faults on this ticket',
+      faultsHint: 'The car is leaving mid-repair — anything marked “Not fixed” is still outstanding.',
+      outBadge: 'Temporarily out',
       reasonLabel: 'Reason',
       reason: {
         road_test: 'Road test',
@@ -617,6 +677,9 @@ const en = {
       noPermission: 'No permission',
       finding: 'finding',
       sentBack: 'Sent back',
+      expectedReturn: 'Back {date}',
+      expectedOverdue: 'Due {date}',
+      expectedReturnTip: 'Expected return date — when the garage promised the car back.',
       sentBackTipSame: 'Came back broken after re-inspection — sent back to the SAME garage: {to}.',
       sentBackTipChanged: 'Came back broken after re-inspection — moved to a DIFFERENT garage: {from} → {to}.',
       findings: 'findings',
@@ -684,6 +747,26 @@ const en = {
       temporarilyRelease: 'Temporarily release',
       returnFromRelease: 'Return to workshop',
     },
+    // "How the cycle works" — the inline flow map explaining the board's stage sequence.
+    cycle: {
+      toggle: 'How the cycle works',
+      title: 'How a ticket moves through the cycle',
+      subtitle: 'The eight stages every car passes through, in order — who owns each and what pushes it forward. Exception paths branch off below.',
+      advanceLabel: 'Advances when:',
+      actors: {
+        inspector: 'Inspector',
+        supervisor: 'Supervisor',
+        driver: 'Driver',
+        manager: 'Manager',
+        garage: 'Garage',
+      },
+      loopbacks: {
+        title: 'Branches & loop-backs',
+        qaFailed: 'Final QA fails → “Sent Back — QA Failed” → Supervisor re-dispatches to a garage.',
+        paused: 'Any live stage can be Paused (car released to service) → Resume returns it to the exact stage it left.',
+        onsite: 'A minor fault found at inspection can be handled On-Site — no dispatch, no garage, no QA.',
+      },
+    },
     // Multi-garage task routing — each fault routed to its own garage independently.
     task: {
       route: 'Manage faults',
@@ -703,6 +786,18 @@ const en = {
       incorrectHint: 'This reported fault isn’t a real fault. It cancels only this fault — the other faults stay under repair — with no repair and no cost, and records who ruled it incorrect and why.',
       incorrectReason: 'Why is this not a real fault? (required)',
       incorrectBy: 'Marked incorrect by {name}',
+      // At-a-glance fault-history badges on the fault row: is this the first time, has it come back after a
+      // previous fix, and has it flunked a closing re-inspection (sent back still broken)?
+      history: {
+        firstTime: 'First time',
+        firstTimeTip: 'First time this fault is reported on this car — no earlier repair on record.',
+        recurring: 'Recurring',
+        recurringTip: 'Same fault was fixed before on this car — {garage}, fixed {date}.',
+        recurringTipShort: 'Same fault was fixed before on this car.',
+        stillBroken: 'Still broken ×{n}',
+        stillBrokenTip: 'Failed the closing re-inspection — last handed back unfixed by {garage}.',
+        stillBrokenTipShort: 'Failed the closing re-inspection and was sent back still broken.',
+      },
       // Workshop confirmation gate — the technician verifies each reported fault before repair. Only a
       // "Confirmed" verdict triggers recurring-fault intelligence.
       review: {
@@ -711,6 +806,8 @@ const en = {
         not_found: 'Not found',
         different_cause: 'Different cause',
         reviewedBy: 'Reviewed by {name}',
+        existsYes: 'Yes — this fault exists',
+        confirmedBy: 'Confirmed by {name}',
         note: 'Add a note (optional)',
         recurrenceFlag: 'Possible recurring fault — this was fixed before',
         // "Previous repair found" card — the report-time recurrence flag, shown to the workshop.
@@ -757,6 +854,7 @@ const en = {
     error: {
       generic: 'Could not complete this step.',
       stale: 'This ticket has already moved on — someone else updated it while this was open. Refresh to see its current state, then try again.',
+      odometerTooLarge: 'That odometer reading is too large — enter a value of {max} km or less.',
     },
     confirm: {
       reinspectFail: 'Send {who} back to the supervisor and flag its garage for {count} unfixed fault(s)? This re-queues the car for another garage trip.',
@@ -1149,6 +1247,28 @@ const en = {
     emptyTitle: 'No completed repairs yet',
     emptyBody: 'Once a repair is signed off and closed, it shows up here.',
   },
+  repairIntel: {
+    title: 'Previous Similar Repairs',
+    confidence: 'Confidence',
+    confidenceBand: { high: 'High', medium: 'Medium', low: 'Low' },
+    likelyCause: 'Likely cause',
+    suggestedGarage: 'Best garage',
+    expectedParts: 'Likely parts',
+    expectedCost: 'Expected cost',
+    expectedDuration: 'Expected duration',
+    recurrenceRisk: 'Recurrence risk',
+    risk: { low: 'Low', medium: 'Medium', high: 'High' },
+    similar: 'Similar repairs',
+    tier: { vehicle: 'Same vehicle', model: 'Same model', make: 'Same make', fleet: 'Fleet-wide' },
+    outcome: { verified_fixed: 'Verified fixed', fixed: 'Fixed', failed: 'Came back' },
+    why: 'Why this recommendation',
+    jobs: '{n} jobs',
+    successRate: '{pct}% success',
+    noHistoryTitle: 'No comparable repairs yet',
+    recurred: 'Recurred',
+    showEvidence: 'Show evidence',
+    hideEvidence: 'Hide evidence',
+  },
   oversight: {
     hub: {
       title: 'Workflow Oversight',
@@ -1160,7 +1280,7 @@ const en = {
       stagesDesc: 'Every workflow stage per ticket: who owned it and the mileage they recorded there.',
       garageCard: 'Left-the-Garage Invoices',
       garageDesc: 'Cars that have left the garage but still owe an invoice — the list of garages to chase.',
-      severityCard: 'Severity Grade Review',
+      severityCard: 'Diagnostic Review',
       severityDesc: 'Tickets graded too low for the situation — Routine / Moderate where the signals point to Critical.',
       misdiagCard: 'Mis-Diagnosis',
       misdiagDesc: 'Faults the inspector called that a supervisor later overruled as wrong — the symptom, who overruled it and why.',
@@ -1320,14 +1440,58 @@ const en = {
       request: 'Request invoice',
     },
     severity: {
-      title: 'Severity Grade Review',
-      subtitle: 'Where the fault-severity grade looks too low for the situation — e.g. graded Routine when a critical-risk fault, a breakdown or a red-graded car says otherwise.',
+      title: 'Diagnostic Review',
+      subtitle: 'Quality control for maintenance grading — where the fault-severity grade looks too low for the situation. Review each recommendation, then upgrade the grade or keep it.',
       mismatches: 'Under-graded',
       criticalMissed: 'Should be Critical',
       graded: 'Graded',
       shouldBe: 'Should be',
       reasons: 'Why',
       gradedBy: 'Graded by',
+      // KPIs
+      issuesDetected: 'Issues detected',
+      pending: 'Pending review',
+      upgraded: 'Upgraded',
+      kept: 'Kept (false alarm)',
+      // Filters
+      filterAll: 'All',
+      filterRoutineCritical: 'Routine → Critical',
+      filterModerateCritical: 'Moderate → Critical',
+      filterModerateHigh: 'Moderate → High',
+      filterReviewed: 'Reviewed / kept',
+      statusPending: 'Pending',
+      statusReviewed: 'Reviewed',
+      // Decision card
+      currentDiagnosis: 'Current diagnosis',
+      recommended: 'Recommended',
+      confidence: 'Confidence',
+      ruleTriggered: 'Rule triggered',
+      systemRecommendation: 'System recommendation',
+      humanDecision: 'Human decision',
+      decisionPending: 'Pending',
+      // Explainability
+      detected: 'Detected',
+      riskCategory: 'Risk category',
+      impact: 'Impact',
+      recommendedAction: 'Recommended action',
+      // Actions
+      upgradeSeverity: 'Upgrade severity',
+      keepCurrent: 'Keep current',
+      openTicket: 'Open ticket',
+      viewInspection: 'View inspection',
+      // Decision outcomes
+      decisionUpgraded: 'Upgraded',
+      decisionKept: 'Kept',
+      decidedBy: 'by',
+      // Prompts / toasts
+      keepReasonPrompt: 'Why keep the current grade? (optional)',
+      upgradeSuccess: 'Severity upgraded',
+      keepSuccess: 'Recommendation reviewed — grade kept',
+      actionFailed: 'Could not save the decision',
+      noPermission: 'You don’t have permission to change severity.',
+      // Empty state
+      allGraded: 'Everything is graded appropriately',
+      allGradedBody: 'No tickets are under-graded versus the signals right now.',
     },
     misdiag: {
       title: 'Mis-Diagnosis Review',
@@ -1355,6 +1519,16 @@ const en = {
 };
 
 const ar = {
+  classReview: {
+    title: 'مراجعة التصنيف',
+    subtitle: 'أكّد نوع الحدث للصيانة التي لم يكن المصنّف متأكدًا منها.',
+    loading: 'جارٍ تحميل قائمة المراجعة…',
+    loadError: 'تعذّر تحميل قائمة المراجعة.',
+    empty: 'لا شيء للمراجعة — كل حدث مصنّف بثقة.',
+    original: 'النص الأصلي', current: 'الحالي', suggested: 'المقترح',
+    fault: 'عطل', service: 'خدمة', inspection: 'فحص',
+    pickCatalog: 'بدون كتالوج محدد', confirm: 'تأكيد',
+  },
   common: {
     cancel: 'إلغاء',
     close: 'إغلاق',
@@ -1389,6 +1563,52 @@ const ar = {
   },
   workflow: {
     position: { transfer: 'نقل' },
+    garageRec: {
+      title: 'الكراجات الموصى بها',
+      subtitle: 'مبني على سجل الصيانة — خبرة مثبتة مع هذه السيارة والعطل',
+      loading: 'جارٍ إيجاد أفضل الكراجات…',
+      none: 'لا توجد توصية بعد — اختر كراجًا أدناه.',
+      use: 'اختر هذا الكراج',
+      selected: 'مختار',
+      jobs: '{matched} مطابقة · {total} إجمالي المهام',
+      matches: '{n} سجل مطابق',
+      specialization: '{pct}% تخصص',
+      alsoTitle: 'خيارات أخرى — متخصصون',
+      alsoHint: 'قوي في مجال واحد، لكن لا سجل مع هذه السيارة والعطل بالتحديد',
+      provenHint: 'مرتّبة حسب الخبرة المثبتة مع هذه السيارة والعطل بالتحديد',
+      specialistJobs: '{jobs} مهمة · {conc}% من عمله',
+      recTitle: 'توصية FleetView',
+      score: 'الدرجة',
+      selectRecommended: 'اختر الكراج الموصى به',
+      compare: 'قارن',
+      hide: 'إخفاء الخيارات',
+      otherProven: 'كراجات أخرى مُثبتة',
+      specialists: 'متخصصون',
+      recommendedFor: 'موصى به لـ',
+      noPrimaryTitle: 'لا يوجد كراج مُثبت بعد',
+      noPrimary: 'لا يوجد كراج له سجل إصلاح مُثبت لهذه السيارة والعطل بعد. هؤلاء المتخصصون هم الأقرب مطابقةً — أو اختر أي كراج أدناه.',
+      noPrimaryNoAlso: 'لا يوجد كراج له سجل إصلاح مطابق لهذه السيارة والعطل بعد. اختر كراجًا يدويًا أدناه.',
+      prefillNote: 'موصى به من ذكاء FleetView',
+      basedOn: 'هذه التوصية مبنية على بيانات صيانة FleetView التاريخية.',
+      lowWarning: 'أدلة تاريخية محدودة. يُرجى مراجعة البدائل قبل الإسناد.',
+      viewDetails: 'عرض التفاصيل',
+      hideDetails: 'إخفاء التفاصيل',
+      confirmSelected: 'تم اختيار توصية FleetView',
+      auditNote: 'سيتم حفظ هذه التوصية في سجل تدقيق الصيانة.',
+      rankOf: '#{rank} من {total}',
+      altSummary: '{proven} مُثبتة · {spec} متخصصون',
+      details: { matches: 'السجلات المطابقة', specialization: 'التخصص', ranking: 'الترتيب', confidence: 'الثقة', alternatives: 'البدائل' },
+      faultCoverageTitle: 'تغطية الأعطال الحالية',
+      repairsHere: '{n} إصلاح {label} في هذا الكراج',
+      repairsModel: '{n} إصلاح {label} لسيارة {model}',
+      missingExperience: 'خبرة غير متوفرة',
+      confidence: { high: 'عالية', medium: 'متوسطة', low: 'منخفضة' },
+      confidenceTip: { high: 'عالية — سجل قوي وتخصص', medium: 'متوسطة — بعض السجل ذي الصلة', low: 'منخفضة — أدلة محدودة' },
+      why: {
+        title: 'لماذا هذا الكراج؟', recommended: 'موصى به', assigned: 'المُسنَد', accepted: 'مقبول',
+        yes: 'نعم', no: 'لا', overridden: 'اختيار يدوي', reason: 'السبب', confidence: 'الثقة',
+      },
+    },
     meta: {
       request:    { title: 'طلب فحص',                 sub: 'السائق — الإبلاغ عن سيارة ليفحصها المفتش',                submit: 'إرسال الطلب' },
       start:      { title: 'ابدأ الفحص',              sub: 'المفتش — تسلّم الطلب وابدأ تجربة القيادة',                submit: 'ابدأ الفحص' },
@@ -1439,6 +1659,9 @@ const ar = {
     // تخزين) دون إيقاف الصيانة؛ تبقى التذكرة في مرحلتها.
     tempRelease: {
       hint: 'تخرج السيارة من الورشة قليلًا، لكن الإصلاح لا يتوقف — تبقى التذكرة كما هي وتتابع عند عودة السيارة. سجّل من يأخذها والعدّاد الآن، ثم العدّاد مرة أخرى عند الرجوع.',
+      faultsTitle: 'الأعطال في هذه التذكرة',
+      faultsHint: 'السيارة تخرج أثناء الإصلاح — أي عطل موسوم بـ«غير مُصلَّح» لا يزال قائمًا.',
+      outBadge: 'خارج الورشة مؤقتًا',
       reasonLabel: 'السبب',
       reason: {
         road_test: 'تجربة قيادة',
@@ -1953,6 +2176,9 @@ const ar = {
       noPermission: 'لا صلاحية',
       finding: 'ملاحظة',
       sentBack: 'أُعيدت',
+      expectedReturn: 'العودة {date}',
+      expectedOverdue: 'مستحقة {date}',
+      expectedReturnTip: 'تاريخ العودة المتوقع — الموعد الذي وعد به الكراج بإعادة السيارة.',
       sentBackTipSame: 'عادت معطّلة بعد إعادة الفحص — أُعيدت إلى الكراج نفسه: {to}.',
       sentBackTipChanged: 'عادت معطّلة بعد إعادة الفحص — نُقلت إلى كراج مختلف: {from} ← {to}.',
       findings: 'ملاحظات',
@@ -2010,6 +2236,26 @@ const ar = {
       temporarilyRelease: 'إخراج مؤقت',
       returnFromRelease: 'إرجاع للورشة',
     },
+    // "كيف تسير الدورة" — خريطة التدفق التوضيحية لتسلسل مراحل اللوحة.
+    cycle: {
+      toggle: 'كيف تسير الدورة',
+      title: 'كيف تتحرّك التذكرة عبر الدورة',
+      subtitle: 'المراحل الثماني التي تمرّ بها كل سيارة، بالترتيب — من المسؤول عن كل مرحلة وما الذي يدفعها للأمام. المسارات الاستثنائية تتفرّع أدناه.',
+      advanceLabel: 'تتقدّم عند:',
+      actors: {
+        inspector: 'الفاحص',
+        supervisor: 'المشرف',
+        driver: 'السائق',
+        manager: 'المدير',
+        garage: 'الكراج',
+      },
+      loopbacks: {
+        title: 'التفرّعات والرجوع',
+        qaFailed: 'فشل الفحص النهائي → «أُعيدت — فشل الفحص» → يعيد المشرف الإرسال إلى كراج.',
+        paused: 'يمكن إيقاف أي مرحلة نشطة (تُحرَّر السيارة للخدمة) → الاستئناف يعيدها إلى المرحلة نفسها التي غادرتها.',
+        onsite: 'العطل البسيط المكتشف عند الفحص يمكن معالجته في الموقع — بلا إرسال ولا كراج ولا فحص نهائي.',
+      },
+    },
     // توجيه الأعطال متعدد الكراجات — كل عطل يُوجَّه إلى كراجه الخاص.
     task: {
       route: 'إدارة الأعطال',
@@ -2029,6 +2275,16 @@ const ar = {
       incorrectHint: 'هذا العطل المُبلَّغ ليس عطلاً حقيقياً. يُلغي هذا العطل فقط — تبقى الأعطال الأخرى قيد الإصلاح — بدون إصلاح وبدون تكلفة، ويسجّل من حدَّده كغير صحيح والسبب.',
       incorrectReason: 'لماذا ليس عطلاً حقيقياً؟ (مطلوب)',
       incorrectBy: 'حُدِّد كغير صحيح بواسطة {name}',
+      history: {
+        firstTime: 'أول مرة',
+        firstTimeTip: 'أول مرة يُبلَّغ فيها هذا العطل على هذه السيارة — لا يوجد إصلاح سابق مسجَّل.',
+        recurring: 'متكرر',
+        recurringTip: 'أُصلح هذا العطل من قبل على هذه السيارة — {garage}، بتاريخ {date}.',
+        recurringTipShort: 'أُصلح هذا العطل من قبل على هذه السيارة.',
+        stillBroken: 'ما زال معطلاً ×{n}',
+        stillBrokenTip: 'رسب في الفحص النهائي — أعاده دون إصلاح آخر كراج: {garage}.',
+        stillBrokenTipShort: 'رسب في الفحص النهائي وأُعيد وهو ما زال معطلاً.',
+      },
       // بوابة تأكيد الورشة — يتحقق الفني من كل عطل مُبلَّغ قبل الإصلاح. التأكيد وحده يشغّل ذكاء تكرار الأعطال.
       review: {
         title: 'مراجعة الورشة — هل هذا العطل موجود؟',
@@ -2036,6 +2292,8 @@ const ar = {
         not_found: 'غير موجود',
         different_cause: 'سبب مختلف',
         reviewedBy: 'رُوجع بواسطة {name}',
+        existsYes: 'نعم — هذا العطل موجود',
+        confirmedBy: 'أكّده {name}',
         note: 'أضف ملاحظة (اختياري)',
         recurrenceFlag: 'عطل متكرر محتمل — أُصلح سابقاً',
         prevRepairFound: 'تم العثور على إصلاح سابق',
@@ -2078,6 +2336,7 @@ const ar = {
     error: {
       generic: 'تعذّر إكمال هذه الخطوة.',
       stale: 'تم تحديث هذه التذكرة بالفعل — قام شخص آخر بتغييرها أثناء فتحك لها. حدّث الصفحة لرؤية حالتها الحالية ثم أعد المحاولة.',
+      odometerTooLarge: 'قراءة العداد كبيرة جداً — أدخل قيمة {max} كم أو أقل.',
     },
     confirm: {
       reinspectFail: 'إرجاع {who} إلى المشرف وتسجيل فشل الكراج في {count} عطل غير مُصلَّح؟ سيعيد ذلك إدراج السيارة لرحلة كراج أخرى.',
@@ -2469,6 +2728,28 @@ const ar = {
     emptyTitle: 'لا إصلاحات مكتملة بعد',
     emptyBody: 'بمجرد اعتماد الإصلاح وإغلاقه سيظهر هنا.',
   },
+  repairIntel: {
+    title: 'إصلاحات سابقة مشابهة',
+    confidence: 'الثقة',
+    confidenceBand: { high: 'عالية', medium: 'متوسطة', low: 'منخفضة' },
+    likelyCause: 'السبب المرجّح',
+    suggestedGarage: 'أفضل كراج',
+    expectedParts: 'القطع المتوقعة',
+    expectedCost: 'التكلفة المتوقعة',
+    expectedDuration: 'المدة المتوقعة',
+    recurrenceRisk: 'خطر التكرار',
+    risk: { low: 'منخفض', medium: 'متوسط', high: 'مرتفع' },
+    similar: 'إصلاحات مشابهة',
+    tier: { vehicle: 'نفس السيارة', model: 'نفس الموديل', make: 'نفس الصانع', fleet: 'كامل الأسطول' },
+    outcome: { verified_fixed: 'تم التحقق', fixed: 'أُصلح', failed: 'عاد العطل' },
+    why: 'لماذا هذه التوصية',
+    jobs: '{n} إصلاح',
+    successRate: '{pct}% نجاح',
+    noHistoryTitle: 'لا إصلاحات مشابهة بعد',
+    recurred: 'تكرّر',
+    showEvidence: 'عرض الأدلة',
+    hideEvidence: 'إخفاء الأدلة',
+  },
   oversight: {
     hub: {
       title: 'الرقابة على سير العمل',
@@ -2480,7 +2761,7 @@ const ar = {
       stagesDesc: 'كل مرحلة في سير العمل لكل تذكرة: من كان مسؤولًا عنها والعدّاد المسجّل فيها.',
       garageCard: 'فواتير مغادرة الكراج',
       garageDesc: 'سيارات غادرت الكراج ولا تزال بحاجة لفاتورة — قائمة الكراجات لمتابعتها.',
-      severityCard: 'مراجعة درجة الخطورة',
+      severityCard: 'المراجعة التشخيصية',
       severityDesc: 'تذاكر صُنّفت أدنى مما يجب — «روتيني/متوسط» بينما تشير المؤشرات إلى «حرِج».',
       misdiagCard: 'تشخيص خاطئ',
       misdiagDesc: 'أعطال شخّصها الفاحص وألغاها المشرف لاحقًا كخطأ — العَرَض ومن ألغاه ولماذا.',
@@ -2629,14 +2910,58 @@ const ar = {
       request: 'طلب فاتورة',
     },
     severity: {
-      title: 'مراجعة درجة الخطورة',
-      subtitle: 'حيث تبدو درجة خطورة العطل أدنى مما يجب — مثل تصنيف «روتيني» بينما يشير عطل حرِج أو عطل مفاجئ أو سيارة مصنّفة أحمر إلى خلاف ذلك.',
+      title: 'المراجعة التشخيصية',
+      subtitle: 'ضبط جودة تصنيف الصيانة — حيث تبدو درجة خطورة العطل أدنى مما يجب. راجع كل توصية ثم ارفع الدرجة أو أبقِها.',
       mismatches: 'تصنيف أدنى',
       criticalMissed: 'يجب أن تكون حرِجة',
       graded: 'المُصنَّف',
       shouldBe: 'يجب أن يكون',
       reasons: 'السبب',
       gradedBy: 'صنّفها',
+      // KPIs
+      issuesDetected: 'المشاكل المكتشفة',
+      pending: 'بانتظار المراجعة',
+      upgraded: 'تمت الترقية',
+      kept: 'أُبقيت (إنذار خاطئ)',
+      // Filters
+      filterAll: 'الكل',
+      filterRoutineCritical: 'روتيني → حرِج',
+      filterModerateCritical: 'متوسط → حرِج',
+      filterModerateHigh: 'متوسط → عالٍ',
+      filterReviewed: 'تمت مراجعتها / أُبقيت',
+      statusPending: 'قيد الانتظار',
+      statusReviewed: 'تمت المراجعة',
+      // Decision card
+      currentDiagnosis: 'التشخيص الحالي',
+      recommended: 'الموصى به',
+      confidence: 'درجة الثقة',
+      ruleTriggered: 'القاعدة المُفعَّلة',
+      systemRecommendation: 'توصية النظام',
+      humanDecision: 'قرار المستخدم',
+      decisionPending: 'قيد الانتظار',
+      // Explainability
+      detected: 'المُكتشَف',
+      riskCategory: 'فئة الخطورة',
+      impact: 'الأثر',
+      recommendedAction: 'الإجراء الموصى به',
+      // Actions
+      upgradeSeverity: 'ترقية الخطورة',
+      keepCurrent: 'الإبقاء على الحالي',
+      openTicket: 'فتح التذكرة',
+      viewInspection: 'عرض الفحص',
+      // Decision outcomes
+      decisionUpgraded: 'تمت الترقية',
+      decisionKept: 'أُبقيت',
+      decidedBy: 'بواسطة',
+      // Prompts / toasts
+      keepReasonPrompt: 'لماذا الإبقاء على الدرجة الحالية؟ (اختياري)',
+      upgradeSuccess: 'تمت ترقية الخطورة',
+      keepSuccess: 'تمت مراجعة التوصية — أُبقيت الدرجة',
+      actionFailed: 'تعذّر حفظ القرار',
+      noPermission: 'ليس لديك صلاحية لتغيير الخطورة.',
+      // Empty state
+      allGraded: 'كل شيء مُصنَّف بشكل مناسب',
+      allGradedBody: 'لا توجد تذاكر مُصنَّفة أدنى مما تشير إليه المؤشرات حاليًا.',
     },
     misdiag: {
       title: 'مراجعة التشخيص الخاطئ',

@@ -189,6 +189,9 @@ class MaintenanceSheetImporter
                 // MAIN column (refined by an EXACT SUP match only). Deterministic, no guessing.
                 $reason = $this->reasonMatcher->resolve($data['service_main'] ?? null, $data['service_sup'] ?? null);
                 $data['maintenance_reason_id'] = $reason?->id;
+                // Provenance: this category came from the sheet's own MAIN column at import
+                // time. Distinguishes it from a later system backfill or a manual edit.
+                $data['reason_source'] = $reason ? 'sheet' : null;
 
                 // Occurrence index within this import: the k-th row sharing the same
                 // (plate, event, out_date). Kept stable by the sheet's append order so it

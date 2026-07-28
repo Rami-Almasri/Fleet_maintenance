@@ -8,7 +8,9 @@ use App\Services\CostIntelligenceService;
 use App\Services\Explainability\ExplanationContext;
 use App\Services\Explainability\ExplanationEngine;
 use App\Services\FinancialExplanationService;
+use App\Services\MaintenanceCheckpointService;
 use App\Services\MaintenanceForecastService;
+use App\Services\MaintenanceOpsCenterService;
 use App\Services\VehicleFinancialBreakdownService;
 use Illuminate\Http\Request;
 
@@ -45,6 +47,33 @@ class IntelligenceController extends Controller
     {
         try {
             return ResponseHelper::SuccessResponse($forecast->board(), 'Service-due board retrieved successfully', 200);
+        } catch (\Throwable $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
+     * Maintenance Operations Center board — the actionable service-due list enriched with the weighted
+     * Maintenance Priority Score, risk level, active-maintenance context and a Recommended Next Action
+     * per vehicle, plus the attention-driving KPI summary. Composes existing engines (no new logic).
+     */
+    public function maintenanceOps(MaintenanceOpsCenterService $ops)
+    {
+        try {
+            return ResponseHelper::SuccessResponse($ops->board(), 'Maintenance operations board retrieved successfully', 200);
+        } catch (\Throwable $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
+     * The Vehicle Maintenance Context drawer — health, active maintenance (+ checkpoint), service
+     * timeline, recent history and the recommended action for one car. Sensitive: insights.view.
+     */
+    public function maintenanceOpsVehicle(Vehicle $vehicle, MaintenanceOpsCenterService $ops, MaintenanceCheckpointService $checkpoints)
+    {
+        try {
+            return ResponseHelper::SuccessResponse($ops->vehicleDetail($vehicle, $checkpoints), 'Vehicle maintenance detail retrieved successfully', 200);
         } catch (\Throwable $e) {
             return ResponseHelper::fromException($e);
         }

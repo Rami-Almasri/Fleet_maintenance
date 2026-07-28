@@ -8,18 +8,13 @@ import Modal from '../ui/Modal';
 import Button from '../ui/Button';
 import { Textarea, Select, Input } from '../ui/Field';
 import CheckpointTimeline from './CheckpointTimeline';
+import RepairIntelligencePanel from '../knowledge/RepairIntelligencePanel';
 import { fmtDate } from '../../lib/format';
 import {
-  OUTCOMES, STATUS_OPTIONS, DELAY_REASONS,
+  STATUS_OPTIONS, DELAY_REASONS,
   getTicketCheckpoints, submitCheckpoint, deleteCheckpoint,
   setExpectedCompletion, setResponsibles, getCheckpointCandidates,
 } from '../../lib/maintenanceCheckpoints';
-
-const OUTCOME_BTN = {
-  on_track: 'peer-checked:border-emerald-500 peer-checked:bg-emerald-50 peer-checked:text-emerald-700',
-  delayed:  'peer-checked:border-amber-500 peer-checked:bg-amber-50 peer-checked:text-amber-700',
-  critical: 'peer-checked:border-red-500 peer-checked:bg-red-50 peer-checked:text-red-700',
-};
 
 function MonitorBar({ monitor }) {
   if (!monitor) return null;
@@ -50,8 +45,7 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
-  // Submit form
-  const [outcome, setOutcome] = useState('on_track');
+  // Submit form — a progress update centred on the ETA (no manual "outcome").
   const [status, setStatus] = useState('');
   const [delayReason, setDelayReason] = useState('');
   const [delayReasonOther, setDelayReasonOther] = useState('');
@@ -75,6 +69,9 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
       setData(d);
       setAssigned(d.assigned || []);
       setExpDate(d.monitor?.expected_on || '');
+      // Prefill the update's ETA with the promise currently in force, so leaving it untouched files a
+      // plain progress note; changing it flags an extension (and requires a reason).
+      setNextDate(d.monitor?.expected_on || '');
     } catch (e) {
       setErr(e?.response?.data?.message || 'Failed to load checkpoints.');
     } finally {
@@ -94,33 +91,39 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
     }
   }, [showManage, data, candidates.length]);
 
-  const resetForm = () => {
-    setOutcome('on_track'); setStatus(''); setDelayReason(''); setDelayReasonOther('');
-    setSummary(''); setNextDate(''); setFiles([]);
-    if (fileRef.current) fileRef.current.value = '';
-  };
-
   const canSubmit = data?.can_submit;
   const canManage = data?.can_manage;
+
+  // The promise currently in force + whether this update moves it (→ a reason becomes mandatory).
+  const currentEta = data?.monitor?.expected_on || '';
+  const etaChanged = !!nextDate && nextDate !== currentEta;
+
+  const resetForm = () => {
+    setStatus(''); setDelayReason(''); setDelayReasonOther('');
+    setSummary(''); setNextDate(currentEta); setFiles([]);
+    if (fileRef.current) fileRef.current.value = '';
+  };
 
   const submit = async (e) => {
     e.preventDefault();
     if (busy) return;
     setErr('');
-    if (outcome === 'delayed' && !delayReason) { setErr('Pick a delay reason.'); return; }
-    if (outcome === 'delayed' && delayReason === 'other' && !delayReasonOther.trim()) { setErr('Explain the delay.'); return; }
+    if (!nextDate) { setErr('Set the expected completion date.'); return; }
+    if (etaChanged && !delayReason) { setErr('Select a reason for the changed completion date.'); return; }
+    if (etaChanged && delayReason === 'other' && !delayReasonOther.trim()) { setErr('Explain the reason for the change.'); return; }
     setBusy(true);
     try {
       await submitCheckpoint(ticketId, {
-        outcome, status, delayReason: outcome === 'delayed' ? delayReason : '',
-        delayReasonOther: outcome === 'delayed' && delayReason === 'other' ? delayReasonOther.trim() : '',
-        summary: summary.trim(), nextExpectedDate: nextDate || '', files,
+        status,
+        delayReason: etaChanged ? delayReason : '',
+        delayReasonOther: etaChanged && delayReason === 'other' ? delayReasonOther.trim() : '',
+        summary: summary.trim(), nextExpectedDate: nextDate, files,
       });
       resetForm();
       await load();
-      onDone?.('Checkpoint saved');
+      onDone?.('Progress update saved');
     } catch (e2) {
-      setErr(e2?.response?.data?.message || 'Failed to save checkpoint.');
+      setErr(e2?.response?.data?.message || 'Failed to save the update.');
     } finally {
       setBusy(false);
     }
@@ -221,54 +224,49 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
             </div>
           )}
 
-          {/* Submit form */}
+          {/* Submit form — a progress update, not a classification. The status is derived from the ETA. */}
           {canSubmit ? (
             <form onSubmit={submit} className="space-y-4 rounded-xl border border-slate-200 p-4">
-              <div>
-                <span className="mb-1.5 block text-sm font-medium text-slate-700">Progress outcome <span className="text-red-500">*</span></span>
-                <div className="grid grid-cols-3 gap-2">
-                  {OUTCOMES.map((o) => (
-                    <label key={o.value} className="relative">
-                      <input type="radio" name="outcome" className="peer sr-only" value={o.value} checked={outcome === o.value} onChange={() => setOutcome(o.value)} />
-                      <span className={`block cursor-pointer rounded-lg border border-slate-300 px-3 py-2 text-center text-sm font-medium text-slate-500 transition ${OUTCOME_BTN[o.value]}`}>
-                        {o.label}
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <Input
+                  label="Expected completion date" required
+                  type="date" value={nextDate} onChange={(e) => setNextDate(e.target.value)}
+                />
                 <Select label="Workshop status" value={status} onChange={(e) => setStatus(e.target.value)}>
                   <option value="">— Select —</option>
                   {STATUS_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
                 </Select>
-                <Input label="New expected completion" type="date" value={nextDate} onChange={(e) => setNextDate(e.target.value)} />
               </div>
 
-              {outcome === 'delayed' && (
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <Select label="Delay reason" required value={delayReason} onChange={(e) => setDelayReason(e.target.value)}>
+              {/* The reason is asked for only when the completion date actually moves. */}
+              {etaChanged && (
+                <div className="grid grid-cols-1 gap-3 rounded-lg bg-amber-50/60 p-3 ring-1 ring-amber-100 sm:grid-cols-2">
+                  <Select label="Reason for ETA change" required value={delayReason} onChange={(e) => setDelayReason(e.target.value)}>
                     <option value="">— Select —</option>
                     {DELAY_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
                   </Select>
                   {delayReason === 'other' && (
-                    <Input label="Explain" required value={delayReasonOther} onChange={(e) => setDelayReasonOther(e.target.value)} placeholder="Reason…" />
+                    <Input label="Explain" required value={delayReasonOther} onChange={(e) => setDelayReasonOther(e.target.value)} placeholder="Why did the date move?" />
+                  )}
+                  {currentEta && (
+                    <p className="text-[11px] text-amber-700 sm:col-span-2">
+                      Moving the completion date from {fmtDate(currentEta)} to {nextDate ? fmtDate(nextDate) : '—'}.
+                    </p>
                   )}
                 </div>
               )}
 
-              <Textarea label="Summary" rows={3} value={summary} onChange={(e) => setSummary(e.target.value)} placeholder="What did the workshop say? What's next?" />
+              <Textarea label="Progress note" rows={3} value={summary} onChange={(e) => setSummary(e.target.value)} placeholder="What was done since the last update? What's next?" />
 
               <div>
-                <span className="mb-1.5 block text-sm font-medium text-slate-700">Evidence (photos / videos)</span>
+                <span className="mb-1.5 block text-sm font-medium text-slate-700">Attachments (photos / videos)</span>
                 <input ref={fileRef} type="file" accept="image/*,video/*" multiple onChange={(e) => setFiles(Array.from(e.target.files || []))}
                        className="block w-full text-sm text-slate-500 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-slate-700 hover:file:bg-slate-200" />
                 {files.length > 0 && <p className="mt-1 text-xs text-slate-500">{files.length} file(s) selected</p>}
               </div>
 
               <div className="flex justify-end">
-                <Button type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save checkpoint'}</Button>
+                <Button type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save update'}</Button>
               </div>
             </form>
           ) : (
@@ -282,6 +280,15 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
             <h4 className="mb-3 text-sm font-semibold text-slate-700">Timeline</h4>
             <CheckpointTimeline checkpoints={data?.checkpoints || []} canManage={canManage} onDelete={removeCheckpoint} />
           </div>
+
+          {/* Repair intelligence per fault — the SAME reusable panel used in the drawer (read-only). */}
+          {data?.faults?.length > 0 && (
+            <div className="space-y-2">
+              {data.faults.map((f) => (
+                <RepairIntelligencePanel key={f.id} taskId={f.id} />
+              ))}
+            </div>
+          )}
         </div>
       )}
     </Modal>

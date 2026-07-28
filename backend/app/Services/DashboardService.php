@@ -58,6 +58,7 @@ class DashboardService
         private FleetUtilizationService $fleetUtilization,
         private VehicleExpenseProvider $expenses,
         private MaintenanceCheckpointService $checkpoints,
+        private MaintenanceAnalyticsService $analytics,
     ) {
     }
 
@@ -594,26 +595,68 @@ class DashboardService
      */
     public function inMaintenanceList(int $limit = 25): array
     {
-        return Contract::query()
+        $contracts = Contract::query()
             ->where('contract_type', 'U')
             ->currentlyOpen()
             ->whereNotNull('vehicle_id')
-            ->with(['vehicle:id,plate_no,make,model', 'maintenance:id,contract_id,garage,vendor_id,expected_return_date', 'maintenance.vendor:id,name'])
+            ->with([
+                'vehicle:id,plate_no,make,model',
+                'maintenance:id,contract_id,garage,vendor_id,expected_return_date,maintenance_reason_id,maintenance_type,customer_complaint,service_main,maintenance_notes,findings',
+                'maintenance.vendor:id,name',
+                'maintenance.checkpoints',
+                // The fault(s)/reason behind the visit — so each card can say WHY the car is in the shop.
+                'maintenance.tasks:id,maintenance_id,symptom,status,severity',
+                'maintenance.reason:id,reason_en',
+            ])
             ->limit($limit)
-            ->get(['id', 'vehicle_id', 'out_date'])
-            ->map(function ($c) {
+            ->get(['id', 'vehicle_id', 'out_date', 'in_date']);
+
+        // The contract header carries no fault — pull the current problem from the N-Maintenance sheet
+        // event matched to THIS contract's visit window (our contract↔sheet Hard-Lock rule).
+        $sheetProblems = $this->sheetProblemsForContracts($contracts);
+
+        return $contracts
+            ->map(function ($c) use ($sheetProblems) {
                 $m = $c->maintenance;
+                // Prefer any fault recorded on the ticket itself; else fall back to the matched sheet fault.
+                $problem = $this->ticketProblem($m);
+                if (! $problem['label']) {
+                    $problem = $sheetProblems[(int) $c->id] ?? $problem;
+                }
                 // In-shop clock anchored to when the car went in (contract out_date); target is the
                 // garage's promised ready-by date when set, else the fleet-default window.
                 $eta = Maintenance::etaFromDates($c->out_date, $m?->expected_return_date);
 
+                // Did the supervisors file a checkpoint on this car from /maintenance-progress? The
+                // contract's own maintenance ticket is the same record that page tracks — surface its
+                // latest checkpoint inline so a card shows whether a value was inserted (and what it said)
+                // rather than only the auto-computed ETA.
+                $cp = $m?->checkpoints?->first();
+
                 return [
-                    'id'     => (int) $c->vehicle_id,
-                    'plate'  => $c->vehicle?->plate_no,
-                    'car'    => $c->vehicle ? (trim(($c->vehicle->make ?? '') . ' ' . ($c->vehicle->model ?? '')) ?: null) : null,
-                    'stage'  => 'In workshop',
-                    'garage' => $m?->vendor?->name ?: ($m?->garage ?: null),
-                    'eta'    => $eta,
+                    'id'         => (int) $c->vehicle_id,
+                    'plate'      => $c->vehicle?->plate_no,
+                    'car'        => $c->vehicle ? (trim(($c->vehicle->make ?? '') . ' ' . ($c->vehicle->model ?? '')) ?: null) : null,
+                    'stage'      => 'In workshop',
+                    'garage'     => $m?->vendor?->name ?: ($m?->garage ?: null),
+                    // WHY the car is in the shop — the fault(s)/reason behind the visit.
+                    'problem'       => $problem['label'],
+                    'problem_items' => $problem['items'],
+                    'problem_type'  => $problem['type'],
+                    'eta'        => $eta,
+                    'checkpoint' => $cp ? [
+                        'status'                 => $cp->status,
+                        'summary'                => $cp->summary,
+                        // Both ends of the promise + the structured reason it moved, so the card can
+                        // explain WHY the car is delayed (previous → new ETA, delay reason), not just
+                        // print the new date next to the update date.
+                        'previous_expected_date' => optional($cp->previous_expected_date)->toDateString(),
+                        'next_expected_date'     => optional($cp->next_expected_date)->toDateString(),
+                        'delay_reason'           => $cp->delay_reason,
+                        'delay_reason_other'     => $cp->delay_reason_other,
+                        'at'                     => optional($cp->created_at)->toIso8601String(),
+                        'by'                     => $cp->submitted_by_name,
+                    ] : null,
                 ];
             })
             // Worst-overdue first, then closest-to-due; keeps the urgent cars at the top of the panel.
@@ -625,13 +668,12 @@ class DashboardService
     /**
      * Maintenance Progress — the operational monitoring centre for every car currently in the workshop.
      * One row per active in-shop ticket carrying its garage, live ETA, the last checkpoint (who/when/
-     * outcome), the responsible follow-up owner(s), and a single mutually-exclusive PROGRESS status the UI
-     * colours by. Status precedence (worst first, so a row shows its most urgent state):
-     *   overdue      — past the promised date with no fresh update (red)
-     *   critical     — last checkpoint reported Critical (red)
-     *   needs_update — inside the reminder window with no fresh update yet (amber, "Checkpoint required")
-     *   delayed      — last checkpoint reported Delayed (amber)
-     *   on_track     — progressing normally (green)
+     * note), the responsible follow-up owner(s), and a single mutually-exclusive PROGRESS status the UI
+     * colours by. The status is DERIVED (never a manual verdict) — precedence, worst first:
+     *   overdue          — today is past the promised completion date (red)
+     *   needs_update     — inside the reminder window with no fresh update yet (amber, "Checkpoint due")
+     *   on_schedule      — today is on/before the promised date (green)
+     *   ready_for_pickup — the car sits at the Ready-for-Pickup workflow stage (essentially done)
      * Sorted worst-first. Cached like every dashboard aggregate; flushed on the next sync.
      *
      * @return array{summary:array<string,int>, items:array<int,array<string,mixed>>}
@@ -641,7 +683,11 @@ class DashboardService
         return $this->remember("maint_progress:{$limit}", self::CACHE_TTL, function () use ($limit) {
             $tickets = Maintenance::query()
                 ->whereIn('workflow_status', Maintenance::CHECKPOINT_TRACKED_STATES)
-                ->with(['vehicle:id,plate_no,make,model', 'vendor:id,name', 'checkpoints', 'responsibles:id,name'])
+                ->with([
+                    'vehicle:id,plate_no,make,model', 'vendor:id,name', 'checkpoints', 'responsibles:id,name',
+                    // The fault(s) behind the visit — so each row can say WHY the car is in the shop.
+                    'tasks:id,maintenance_id,symptom,status,severity', 'reason:id,reason_en',
+                ])
                 ->limit($limit)
                 ->get();
 
@@ -650,63 +696,319 @@ class DashboardService
             $defaults = $this->checkpoints->defaultRecipients()
                 ->map(fn ($u) => ['id' => $u->id, 'name' => $u->name])->values()->all();
 
-            $items = $tickets->map(function ($t) use ($defaults) {
-                $state = $this->checkpoints->monitorState($t);
-
-                // Single mutually-exclusive status, worst-first (see docblock).
-                $status = $state['overdue'] ? 'overdue'
-                    : (($state['last_outcome'] === 'critical') ? 'critical'
-                    : ($state['needs_update'] ? 'needs_update'
-                    : (($state['last_outcome'] === 'delayed') ? 'delayed' : 'on_track')));
-
-                $responsible = $t->responsibles->isNotEmpty()
+            // Source A — the app workflow tickets (origin = the maintenance workflow engine). Tagged
+            // 'workshop' so the UI can badge where a row came from.
+            $workshop = $tickets->map(fn ($t) => $this->progressRow(
+                ticketId:    (int) $t->id,
+                vehicleId:   $t->vehicle_id ? (int) $t->vehicle_id : null,
+                vehicle:     $t->vehicle,
+                garage:      $t->vendor?->name ?: ($t->garage ?: null),
+                workflow:    $t->workflow_status,
+                state:       $this->checkpoints->monitorState($t),
+                latest:      $t->checkpoints->first(),
+                responsible: $t->responsibles->isNotEmpty()
                     ? $t->responsibles->map(fn ($u) => ['id' => $u->id, 'name' => $u->name])->values()->all()
-                    : $defaults;
+                    : $defaults,
+                source:      'workshop',
+                contractId:  $t->contract_id ? (int) $t->contract_id : null,
+                problem:     $this->ticketProblem($t),
+            ));
 
-                return [
-                    'ticket_id'          => (int) $t->id,
-                    'vehicle_id'         => $t->vehicle_id ? (int) $t->vehicle_id : null,
-                    'plate'              => $t->vehicle?->plate_no,
-                    'car'                => $t->vehicle ? (trim(($t->vehicle->make ?? '') . ' ' . ($t->vehicle->model ?? '')) ?: null) : null,
-                    'garage'             => $t->vendor?->name ?: ($t->garage ?: null),
-                    'workflow_status'    => $t->workflow_status,
-                    'status'             => $status,
-                    'eta_status'         => $state['eta_status'],
-                    'expected_on'        => $state['expected_on'],
-                    'is_estimated'       => $state['is_estimated'],
-                    'days_left'          => $state['days_left'],
-                    'days_over'          => $state['days_over'],
-                    'has_checkpoint'     => $state['has_checkpoint'],
-                    'last_checkpoint_at' => $state['last_checkpoint_at'],
-                    'last_outcome'       => $state['last_outcome'],
-                    'needs_update'       => $state['needs_update'],
-                    'overdue'            => $state['overdue'],
-                    'responsible'        => $responsible,
-                ];
-            })
-            // Worst-first: overdue/critical to the top, then unattended, then delayed, then by days over/left.
-            ->sortByDesc(function ($r) {
-                $rank = ['overdue' => 5, 'critical' => 4, 'needs_update' => 3, 'delayed' => 2, 'on_track' => 1];
-                return ($rank[$r['status']] ?? 0) * 100000
-                    + ($r['days_over'] ?? 0) * 100
-                    - ($r['days_left'] ?? 0);
-            })
-            ->values()->all();
+            // Source B — the open type-U maintenance CONTRACTS (OM / sheet-synced), the same set the
+            // Proactive-Flags "In Maintenance" panel shows. Merged in here (tagged 'contract') so every
+            // car that is physically in the shop appears in the queue, whichever record we hold for it.
+            $contract = collect($this->contractProgressRows($defaults));
+
+            // Union, then rank worst-first (overdue to the top, then unattended, then on-schedule, with the
+            // ready-for-pickup cars — essentially done — at the tail).
+            $items = $workshop->concat($contract)
+                ->sortByDesc(function ($r) {
+                    $rank = ['overdue' => 4, 'needs_update' => 3, 'on_schedule' => 2, 'ready_for_pickup' => 1];
+                    return ($rank[$r['status']] ?? 0) * 100000
+                        + ($r['days_over'] ?? 0) * 100
+                        - ($r['days_left'] ?? 0);
+                })
+                ->values()->all();
 
             $count = fn (string $s) => count(array_filter($items, fn ($r) => $r['status'] === $s));
+            $bySource = fn (string $s) => count(array_filter($items, fn ($r) => $r['source'] === $s));
 
             return [
                 'summary' => [
-                    'total'        => count($items),
-                    'on_track'     => $count('on_track'),
-                    'delayed'      => $count('delayed'),
-                    'critical'     => $count('critical'),
-                    'needs_update' => $count('needs_update'),
-                    'overdue'      => $count('overdue'),
+                    'total'            => count($items),
+                    'on_schedule'      => $count('on_schedule'),
+                    'needs_update'     => $count('needs_update'),
+                    'overdue'          => $count('overdue'),
+                    'ready_for_pickup' => $count('ready_for_pickup'),
+                    // How many rows came from each source (contract cars vs app workflow tickets).
+                    'contract'         => $bySource('contract'),
+                    'workshop'         => $bySource('workshop'),
                 ],
                 'items' => $items,
             ];
         });
+    }
+
+    /**
+     * Normalise one Maintenance-Progress row from an already-resolved monitor state, so the workflow-ticket
+     * and contract branches emit the IDENTICAL shape (the only difference is `source` + `contract_id`, and
+     * a contract car that has no ticket yet carries a null `ticket_id` — the UI lazily creates one when the
+     * first checkpoint is filed via /maintenance-tickets/contract/{contract}/ensure-ticket).
+     *
+     * @param  array<string,mixed>  $state         monitorState() output
+     * @param  array<int,array>     $responsible
+     * @return array<string,mixed>
+     */
+    private function progressRow(
+        ?int $ticketId,
+        ?int $vehicleId,
+        $vehicle,
+        ?string $garage,
+        ?string $workflow,
+        array $state,
+        $latest,
+        array $responsible,
+        string $source,
+        ?int $contractId,
+        array $problem = ['label' => null, 'items' => [], 'type' => null],
+    ): array {
+        // Single mutually-exclusive status, DERIVED (never a manual verdict): a car parked at the
+        // Ready-for-Pickup stage reads as such; otherwise it's Overdue when today is past the promised
+        // date, "Checkpoint due" when an update is owed in the current window, else On Schedule.
+        $status = $workflow === Maintenance::WF_READY_FOR_PICKUP ? 'ready_for_pickup'
+            : ($state['overdue'] ? 'overdue'
+            : ($state['needs_update'] ? 'needs_update' : 'on_schedule'));
+
+        return [
+            'ticket_id'          => $ticketId,
+            'vehicle_id'         => $vehicleId,
+            'plate'              => $vehicle?->plate_no,
+            'car'                => $vehicle ? (trim(($vehicle->make ?? '') . ' ' . ($vehicle->model ?? '')) ?: null) : null,
+            'garage'             => $garage,
+            'workflow_status'    => $workflow,
+            'status'             => $status,
+            'eta_status'         => $state['eta_status'],
+            'expected_on'        => $state['expected_on'],
+            'is_estimated'       => $state['is_estimated'],
+            'days_left'          => $state['days_left'],
+            'days_over'          => $state['days_over'],
+            // WHY the car is in the shop — the fault(s)/reason behind the visit (headline + full list).
+            'problem'            => $problem['label'],
+            'problem_items'      => $problem['items'],
+            'problem_type'       => $problem['type'],
+            'has_checkpoint'     => $state['has_checkpoint'],
+            'last_checkpoint_at' => $state['last_checkpoint_at'],
+            'last_checkpoint'    => $latest ? [
+                'status'                 => $latest->status,
+                'delay_reason'           => $latest->delay_reason,
+                'delay_reason_other'     => $latest->delay_reason_other,
+                'summary'                => $latest->summary,
+                'previous_expected_date' => optional($latest->previous_expected_date)->toDateString(),
+                'next_expected_date'     => optional($latest->next_expected_date)->toDateString(),
+                'at'                     => optional($latest->created_at)->toIso8601String(),
+                'by'                     => $latest->submitted_by_name,
+            ] : null,
+            'needs_update'       => $state['needs_update'],
+            'overdue'            => $state['overdue'],
+            'responsible'        => $responsible,
+            // Provenance so the UI can badge each row: 'contract' (open type-U contract, the OM/sheet
+            // source of truth) vs 'workshop' (an app maintenance-workflow ticket).
+            'source'             => $source,
+            'contract_id'        => $contractId,
+        ];
+    }
+
+    /**
+     * WHY is this car in the shop? Distil the fault(s)/reason behind a maintenance ticket (or contract
+     * header) into a short headline + the full list (for a hover tooltip) + the ticket-type label. Reads
+     * whichever source we actually hold, most-specific first:
+     *   1) the app's structured active faults (maintenance_tasks.symptom, dropping cancelled/not-found);
+     *   2) the inspector's findings snapshot (findings JSON);
+     *   3) the customer complaint / classified reason / free-text service (sheet + contract headers).
+     * A ticket with none of these still shows its type ("Routine Maintenance") so no row reads blank.
+     *
+     * @return array{label:?string, items:array<int,string>, type:?string}
+     */
+    private function ticketProblem(?Maintenance $m): array
+    {
+        $empty = ['label' => null, 'items' => [], 'type' => null];
+        if (! $m) {
+            return $empty;
+        }
+
+        $typeLabel = $m->maintenance_type
+            ? (Maintenance::MAINTENANCE_TYPES[$m->maintenance_type] ?? null)
+            : null;
+
+        // 1) Structured active faults — the app's fault list (drop cancelled / not-found non-issues).
+        $items = [];
+        if ($m->relationLoaded('tasks')) {
+            $items = $m->tasks
+                ->reject(fn ($t) => in_array($t->status, MaintenanceTask::NON_REPAIR_TERMINAL, true))
+                ->map(fn ($t) => trim((string) $t->symptom))
+                ->filter()
+                ->unique()
+                ->values()
+                ->all();
+        }
+
+        // 2) Inspector findings snapshot (JSON list of keyword/label entries) — fallback for a ticket with
+        //    no structured task rows yet.
+        if (! $items && is_array($m->findings)) {
+            $items = collect($m->findings)
+                ->map(fn ($f) => is_array($f) ? ($f['label'] ?? $f['keyword'] ?? $f['symptom'] ?? null) : $f)
+                ->map(fn ($f) => trim((string) $f))
+                ->filter()
+                ->unique()
+                ->values()
+                ->all();
+        }
+
+        // 3) Free-text fallbacks — customer complaint, the classified sheet reason, or the service text.
+        if (! $items) {
+            $fallback = $m->customer_complaint
+                ?: ($m->relationLoaded('reason') ? $m->reason?->reason_en : null)
+                ?: $m->service_main
+                ?: $m->maintenance_notes;
+            if ($fallback) {
+                $items = [trim((string) $fallback)];
+            }
+        }
+
+        // Headline = first fault (+N more), else the ticket-type label so no row is blank.
+        $label = $items[0] ?? $typeLabel;
+        if ($label !== null && count($items) > 1) {
+            $label .= ' +' . (count($items) - 1);
+        }
+
+        return ['label' => $label, 'items' => $items, 'type' => $typeLabel];
+    }
+
+    /**
+     * Fault-from-the-sheet fallback. An OM type-U maintenance CONTRACT carries no fault text of its own,
+     * but the N-Maintenance workshop log does: the fault the car actually went in for lives on the
+     * sheet/manual `maintenances` rows (reason category + service_main/service_sup issue keywords).
+     *
+     * This resolves the CURRENT problem for each contract using our EXISTING contract↔sheet matching rule
+     * — MaintenanceAnalyticsService::linkedSheetEvents(), the "Hard Lock" windowed by the contract's own
+     * lifespan (out_date − buffer … in_date cutoff) — so a card can never borrow a fault from a different
+     * visit. Within a contract's linked sequence the LATEST issue-bearing event is the current stage; its
+     * issue tags (sheetIssueTags) + classified reason map onto the standard problem shape. Keyed by
+     * CONTRACT id. Contracts with no matching sheet event are simply absent (the caller shows "—").
+     *
+     * @param  \Illuminate\Support\Collection<int,\App\Models\Contract>  $contracts  need id, vehicle_id, out_date, in_date
+     * @return array<int,array{label:?string, items:array<int,string>, type:?string}>
+     */
+    private function sheetProblemsForContracts($contracts): array
+    {
+        // [contract id => chronological Collection<Maintenance> of the sheet events inside its window].
+        $linked = $this->analytics->linkedSheetEvents($contracts);
+
+        $out = [];
+        foreach ($linked as $contractId => $sequence) {
+            // Current stage is the newest event; walk newest→oldest to the latest one that actually carries
+            // an issue, so a bare OUT/IN handover row doesn't blank a car that has a real fault behind it.
+            $event = $sequence->reverse()->first(
+                fn ($e) => ! empty($this->analytics->sheetIssueTags($e)) || $e->reason?->reason_en
+            );
+            if (! $event) {
+                continue;
+            }
+
+            $items = $this->analytics->sheetIssueTags($event);  // service_main + service_sup keywords
+            $type  = $event->reason?->reason_en ?: null;         // controlled reason (e.g. "Mechanical Issues")
+            $label = $items[0] ?? $type;
+            if ($label !== null && count($items) > 1) {
+                $label .= ' +' . (count($items) - 1);
+            }
+
+            $out[(int) $contractId] = ['label' => $label, 'items' => $items, 'type' => $type];
+        }
+
+        return $out;
+    }
+
+    /**
+     * Maintenance-Progress rows for the open type-U maintenance CONTRACTS — every car physically in the
+     * shop per OM/sheet, the same set inMaintenanceList() (Proactive Flags) shows. Each reuses the exact
+     * checkpoint monitor logic: when the contract already has a linked maintenance ticket we read it
+     * directly (so its filed checkpoints + responsibles surface); otherwise we compute the live ETA from a
+     * transient ticket seeded with the contract's in-shop start, and leave `ticket_id` null until the first
+     * checkpoint is filed.
+     *
+     * @param  array<int,array>  $defaults  fallback follow-up owners
+     * @return array<int,array<string,mixed>>
+     */
+    private function contractProgressRows(array $defaults): array
+    {
+        $contracts = Contract::query()
+            ->where('contract_type', 'U')
+            ->currentlyOpen()
+            ->whereNotNull('vehicle_id')
+            ->with([
+                'vehicle:id,plate_no,make,model',
+                'maintenance:id,contract_id,vehicle_id,garage,vendor_id,workflow_status,expected_return_date,expected_completion_date,expected_duration_days,last_checkpoint_at,out_date,repair_started_at,dispatched_at,maintenance_reason_id,maintenance_type,customer_complaint,service_main,maintenance_notes,findings',
+                'maintenance.vendor:id,name',
+                'maintenance.checkpoints',
+                'maintenance.responsibles:id,name',
+                // The fault(s)/reason behind the visit — so a contract row can also show WHY.
+                'maintenance.tasks:id,maintenance_id,symptom,status,severity',
+                'maintenance.reason:id,reason_en',
+            ])
+            ->limit(50)
+            ->get(['id', 'vehicle_id', 'out_date', 'in_date']);
+
+        // Fault-from-the-sheet fallback, matched to each contract's own visit window (Hard-Lock rule).
+        $sheetProblems = $this->sheetProblemsForContracts($contracts);
+
+        return $contracts
+            ->map(function ($c) use ($defaults, $sheetProblems) {
+                $m = $c->maintenance;
+
+                if ($m) {
+                    // A real ticket exists for this contract — read its live state + last checkpoint.
+                    $state       = $this->checkpoints->monitorState($m);
+                    $latest      = $m->checkpoints->first();
+                    $garage      = $m->vendor?->name ?: ($m->garage ?: null);
+                    $responsible = $m->responsibles->isNotEmpty()
+                        ? $m->responsibles->map(fn ($u) => ['id' => $u->id, 'name' => $u->name])->values()->all()
+                        : $defaults;
+                    $workflow    = $m->workflow_status;
+                    $ticketId    = (int) $m->id;
+                } else {
+                    // No ticket yet — compute the ETA/monitor state from a transient ticket anchored to the
+                    // contract's in-shop start (out_date). No row is written until a checkpoint is filed.
+                    $probe = new Maintenance(['out_date' => $c->out_date]);
+                    $probe->setRelation('checkpoints', collect());
+                    $state       = $this->checkpoints->monitorState($probe);
+                    $latest      = null;
+                    $garage      = null;
+                    $responsible = $defaults;
+                    $workflow    = null;
+                    $ticketId    = null;
+                }
+
+                // Prefer any fault on the ticket; else fall back to the matched sheet fault.
+                $problem = $this->ticketProblem($m);
+                if (! $problem['label']) {
+                    $problem = $sheetProblems[(int) $c->id] ?? $problem;
+                }
+
+                return $this->progressRow(
+                    ticketId:    $ticketId,
+                    vehicleId:   (int) $c->vehicle_id,
+                    vehicle:     $c->vehicle,
+                    garage:      $garage,
+                    workflow:    $workflow,
+                    state:       $state,
+                    latest:      $latest,
+                    responsible: $responsible,
+                    source:      'contract',
+                    contractId:  (int) $c->id,
+                    problem:     $problem,
+                );
+            })
+            ->all();
     }
 
     /**
@@ -899,6 +1201,8 @@ class DashboardService
                 ->whereNull('v.deleted_at')
                 ->whereNotIn('v.status', PlateResolver::GONE_STATUSES)
                 ->whereNotIn('t.status', MaintenanceTask::NON_REPAIR_TERMINAL)
+                // Event Type layer: once enforced, planned services stop being counted as faults.
+                ->when(\App\Support\EventKind::enforced(), fn ($q) => $q->where('t.kind', MaintenanceTask::KIND_FAULT))
                 ->whereNotNull('t.symptom')->where('t.symptom', '<>', '')
                 ->select('t.symptom', 't.severity', 't.vehicle_id', DB::raw('COUNT(*) AS c'))
                 ->groupBy('t.symptom', 't.severity', 't.vehicle_id')
@@ -999,6 +1303,7 @@ class DashboardService
                 ->whereNull('v.deleted_at')
                 ->whereNotIn('v.status', PlateResolver::GONE_STATUSES)
                 ->whereNotIn('t.status', MaintenanceTask::NON_REPAIR_TERMINAL)
+                ->when(\App\Support\EventKind::enforced(), fn ($q) => $q->where('t.kind', MaintenanceTask::KIND_FAULT))
                 ->whereNotNull('t.symptom')->where('t.symptom', '<>', '')
                 ->select('t.symptom', 't.severity', 't.vehicle_id', 'v.plate_no', 'v.make', 'v.model', DB::raw('MAX(t.created_at) AS last_at'), DB::raw('COUNT(*) AS c'))
                 ->groupBy('t.symptom', 't.severity', 't.vehicle_id', 'v.plate_no', 'v.make', 'v.model')

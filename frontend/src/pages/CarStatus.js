@@ -2,431 +2,312 @@ import { useCallback, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import useFetch from '../hooks/useFetch';
-import { SearchInput } from '../components/ui/Misc';
-import DataTable from '../components/ui/Table';
+import { SearchInput, ErrorState, EmptyState } from '../components/ui/Misc';
+import { SectionCard } from '../components/ui/Table';
 import Badge from '../components/ui/Badge';
 import Icon from '../components/ui/Icon';
-import { num, fmtDate } from '../lib/format';
+import { num } from '../lib/format';
+import { stageAge } from '../components/workflow/meta';
+import { useI18n } from '../i18n/I18nContext';
 
-// Car Status — the maintenance department's flagship screen: every vehicle that currently has an OPEN
-// maintenance ticket, presented as a premium fleet board. Who holds each car, what it's waiting on, how
-// close it is to breaching SLA. Click any car for its full intelligence profile. Self-refreshes.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// Car Status — the live stage board. Every car in the maintenance workflow, laid out by the exact
+// stage it sits in right now, and — the whole point of this page — WHO is responsible for it at
+// that stage: the inspector on a test drive, the supervisor who must dispatch, the driver who has
+// the car, or the garage doing the work. When nobody has taken the stage yet it reads "Waiting";
+// the moment someone picks it up their name replaces the placeholder.
+//
+// It reads the same live pipeline the Maintenance Cycle board does (/maintenance-tickets/board),
+// so counts and holders never disagree between the two surfaces.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
 
-// Filter key → the workflow_status set it counts (null = handled by a row flag below).
-const FILTERS = {
-  all:                  null,
-  in_workshop:          ['under_repair', 'repair_review', 'ready_for_pickup'],
-  waiting_dispatch:     ['inspection_pending', 'awaiting_dispatch', 'in_transit'],
-  waiting_approval:     ['pending_review', 'triage_approval_pending', 'recommendation_pending', 'repair_review'],
-  waiting_parts:        null,
-  waiting_reinspection: ['ready_for_reinspection', 'reinspection_failed'],
-  ready_for_delivery:   ['ready_for_pickup'],
-  overdue:              null,
+// The canonical journey, left → right. `key` is the board column key; `role` is who owns the stage.
+const STAGES = [
+  { key: 'requested',        name: 'Needs Test Drive',   role: 'inspector',  tone: '#d946ef' },
+  { key: 'diagnostic',       name: 'Being Inspected',    role: 'inspector',  tone: '#8b5cf6' },
+  { key: 'pending',          name: 'Needs Dispatch',     role: 'supervisor', tone: '#a855f7' },
+  { key: 'awaiting_pickup',  name: 'Awaiting Pickup',    role: 'driver',     tone: '#f59e0b' },
+  { key: 'in_transit',       name: 'En Route to Garage', role: 'driver',     tone: '#f59e0b' },
+  { key: 'under_repair',     name: 'In Workshop',        role: 'garage',     tone: '#f97316' },
+  { key: 'ready_for_pickup', name: 'Ready for Pickup',   role: 'driver',     tone: '#10b981' },
+  { key: 'qa_reinspection',  name: 'Final QA',           role: 'inspector',  tone: '#9333ea' },
+];
+
+// Exception lanes — only rendered when they actually hold cars, so no ticket is ever hidden but the
+// board stays focused on the eight-step happy path the rest of the time.
+const EXCEPTION_STAGES = [
+  { key: 'triage',                  name: 'Complaint Triage',      role: 'inspector',  tone: '#f43f5e' },
+  { key: 'on_site',                 name: 'On-Site Service',       role: 'inspector',  tone: '#0d9488' },
+  { key: 'repair_review',           name: 'Video Review',          role: 'supervisor', tone: '#7c3aed' },
+  { key: 'reinspection_failed',     name: 'Sent Back — QA Failed', role: 'supervisor', tone: '#dc2626' },
+  { key: 'paused',                  name: 'Paused',                role: 'none',       tone: '#64748b' },
+  { key: 'returned_waiting_resume', name: 'Returned — Resume Due', role: 'none',       tone: '#f97316' },
+];
+
+// Role → how the responsible chip is drawn. `waiting` is the placeholder label shown until a real
+// person/garage is on the hook for the stage.
+const ROLES = {
+  inspector:  { label: 'Inspector',  Icon: Icon.Shield, cls: 'bg-amber-50 text-amber-700 ring-amber-200',   waiting: 'Waiting for inspector' },
+  supervisor: { label: 'Supervisor', Icon: Icon.Users,  cls: 'bg-violet-50 text-violet-700 ring-violet-200', waiting: 'Waiting for supervisor' },
+  driver:     { label: 'Driver',     Icon: Icon.Truck,  cls: 'bg-blue-50 text-blue-700 ring-blue-200',       waiting: 'Waiting for driver' },
+  garage:     { label: 'Garage',     Icon: Icon.Wrench, cls: 'bg-orange-50 text-orange-700 ring-orange-200', waiting: 'Not dispatched' },
+  none:       { label: 'On hold',    Icon: Icon.Clock,  cls: 'bg-slate-100 text-slate-500 ring-slate-200',   waiting: 'On hold' },
 };
 
-// Stage tone → the visual language of a card: a gradient banner, a tinted icon plate, a progress fill.
-const STAGE_GRAD = {
-  red: 'from-rose-500 to-red-600', amber: 'from-amber-400 to-orange-500', green: 'from-emerald-400 to-teal-500',
-  emerald: 'from-emerald-400 to-teal-500', blue: 'from-blue-500 to-indigo-500', violet: 'from-violet-500 to-purple-600',
-  teal: 'from-teal-400 to-cyan-500', slate: 'from-slate-400 to-slate-500', gray: 'from-slate-400 to-slate-500',
-};
-const STAGE_TINT = {
-  red: 'bg-rose-50 text-rose-600 ring-rose-200', amber: 'bg-amber-50 text-amber-600 ring-amber-200',
-  green: 'bg-emerald-50 text-emerald-600 ring-emerald-200', emerald: 'bg-emerald-50 text-emerald-600 ring-emerald-200',
-  blue: 'bg-blue-50 text-blue-600 ring-blue-200', violet: 'bg-violet-50 text-violet-600 ring-violet-200',
-  teal: 'bg-teal-50 text-teal-600 ring-teal-200', slate: 'bg-slate-100 text-slate-500 ring-slate-200', gray: 'bg-slate-100 text-slate-500 ring-slate-200',
-};
-const STAGE_BAR = {
-  red: 'bg-red-500', amber: 'bg-amber-400', green: 'bg-emerald-400', emerald: 'bg-emerald-400',
-  blue: 'bg-blue-400', violet: 'bg-violet-400', teal: 'bg-teal-400', slate: 'bg-slate-300', gray: 'bg-slate-300',
-};
-const PARTY_TONE = { inspector: 'cyan', supervisor: 'violet', garage: 'amber', driver: 'blue', vendor: 'orange', system: 'slate' };
-const DELAY_TONE = { on_track: 'emerald', at_risk: 'amber', overdue: 'red' };
-
-const days = (v) => (v == null ? '—' : v === 0 ? 'Today' : `${num(v)}d`);
-const sla = (h) => (h == null ? '—' : h < 0 ? `${Math.round(Math.abs(h) / 24) || 1}d over` : h >= 48 ? `${Math.round(h / 24)}d` : `${h}h`);
-const initials = (s) => (s || '').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join('').toUpperCase() || '—';
-
-function exportCsv(rows) {
-  const cols = [
-    ['Ticket', (r) => r.ticket_no], ['Plate', (r) => r.plate_no], ['Vehicle', (r) => r.car],
-    ['Stage', (r) => r.stage], ['Responsible', (r) => r.responsible], ['Garage', (r) => r.garage],
-    ['Faults', (r) => r.active_faults], ['Severity', (r) => r.severity_label],
-    ['Days in', (r) => r.days_in_maintenance], ['Expected', (r) => (r.expected_completion || '').slice(0, 10)],
-    ['SLA hrs', (r) => r.sla_remaining_hours], ['Delay', (r) => r.delay_status], ['Waiting reason', (r) => r.waiting_reason],
-  ];
-  const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-  const csv = [cols.map((c) => c[0]).join(','), ...rows.map((r) => cols.map((c) => esc(c[1](r))).join(','))].join('\n');
-  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-  const a = document.createElement('a');
-  a.href = url; a.download = `car-status-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
-  URL.revokeObjectURL(url);
+// WHO is responsible for this car right now, given the stage. Returns the resolved name (or null →
+// the stage's "Waiting" placeholder). Names come straight off the live ticket — never invented:
+//   • Inspector stages → the inspector stamped on the test drive (Abu Maroof once he's on it)
+//   • Driver stages    → the assigned / dispatched / collecting driver, whichever leg applies
+//   • Garage stage     → the garage the car is being repaired at
+//   • Supervisor / QA  → no one is "assigned" until they act, so these read Waiting until done
+function holderName(stageKey, tk) {
+  switch (stageKey) {
+    case 'requested':
+    case 'diagnostic':
+    case 'triage':
+    case 'on_site':
+      return tk.handoffs?.inspected?.name || null;
+    case 'awaiting_pickup':
+      return tk.assigned_driver_name || tk.delegation?.driver_name || null;
+    case 'in_transit':
+      return tk.dispatched_by_name || tk.assigned_driver_name || null;
+    case 'under_repair':
+      return tk.garage || null;
+    case 'ready_for_pickup':
+      return tk.picked_up_from_garage_by_name || tk.assigned_driver_name || tk.dispatched_by_name || null;
+    default:
+      // pending (supervisor), qa_reinspection, reinspection_failed, repair_review, paused, returned
+      return null;
+  }
 }
 
 export default function CarStatus() {
   const navigate = useNavigate();
-  const [filter, setFilter] = useState('all');
+  const { t } = useI18n();
   const [q, setQ] = useState('');
-  const [view, setView] = useState('cards'); // premium cards lead; table on demand
 
-  const fetcher = useCallback(async () => (await api.get('/car-status')).data.data, []);
-  const { data, loading, error } = useFetch(fetcher, [], { refreshInterval: 30000 });
-  // (premium card view is the default; the table stays available for dense scanning)
+  const fetcher = useCallback(async () => (await api.get('/maintenance-tickets/board')).data.data, []);
+  const { data, loading, error, reload, validating } = useFetch(fetcher, [], { refreshInterval: 15000 });
 
-  const kpis = data?.kpis || {};
-  const rows = useMemo(() => data?.rows || [], [data]);
+  const columns = useMemo(() => data?.columns || {}, [data]);
+  const counts = data?.counts || {};
 
-  const openVehicle = useCallback((vehicleId) => vehicleId && navigate(`/car-status/${vehicleId}`), [navigate]);
+  const needle = q.trim().toLowerCase();
+  const matches = useCallback((tk) => {
+    if (!needle) return true;
+    return [tk.plate, tk.car, tk.garage, tk.assigned_driver_name, tk.dispatched_by_name]
+      .filter(Boolean).some((x) => String(x).toLowerCase().includes(needle));
+  }, [needle]);
 
-  const matchesFilter = useCallback((r) => {
-    if (filter === 'all') return true;
-    if (filter === 'waiting_parts') return r.waiting_parts;
-    if (filter === 'overdue') return r.is_overdue;
-    const set = FILTERS[filter];
-    return set ? set.includes(r.workflow_status) : true;
-  }, [filter]);
+  // Build every lane; keep primary lanes always, and exception lanes only when they hold a match.
+  const primaryLanes = useMemo(
+    () => STAGES.map((s) => ({ ...s, tickets: (columns[s.key] || []).filter(matches) })),
+    [columns, matches],
+  );
+  const exceptionLanes = useMemo(
+    () => EXCEPTION_STAGES
+      .map((s) => ({ ...s, tickets: (columns[s.key] || []).filter(matches) }))
+      .filter((s) => s.tickets.length > 0),
+    [columns, matches],
+  );
+  const lanes = useMemo(() => [...primaryLanes, ...exceptionLanes], [primaryLanes, exceptionLanes]);
 
-  const visible = useMemo(() => {
-    const term = q.trim().toLowerCase();
-    return rows.filter((r) => {
-      if (!matchesFilter(r)) return false;
-      if (!term) return true;
-      return [r.plate_no, r.car, r.garage, r.responsible, r.ticket_no].some((f) => (f || '').toLowerCase().includes(term));
-    });
-  }, [rows, matchesFilter, q]);
-
-  const columns = [
-    {
-      key: 'car', header: 'Vehicle',
-      render: (r) => (
-        <div className="flex min-w-0 items-center gap-3">
-          <span className={`h-9 w-1.5 shrink-0 rounded-full ${STAGE_BAR[r.stage_tone] || STAGE_BAR.slate}`} title={r.stage} />
-          <div className="min-w-0">
-            <p className="truncate font-semibold text-slate-900">{r.car || 'Vehicle'}</p>
-            <p className="truncate text-xs text-slate-400">{r.plate_no || '—'} · {r.ticket_no}</p>
-          </div>
-        </div>
-      ),
-    },
-    { key: 'stage', header: 'Stage', render: (r) => <Badge tone={r.stage_tone} dot>{r.stage}</Badge> },
-    {
-      key: 'responsible', header: 'Responsible', tooltip: 'The party that holds the car at this stage.',
-      render: (r) => (
-        <div className="flex min-w-0 items-center gap-2">
-          <Badge tone={PARTY_TONE[r.party] || 'slate'} className="capitalize">{r.party}</Badge>
-          <span className="truncate text-xs text-slate-500">{r.responsible}</span>
-        </div>
-      ),
-    },
-    { key: 'garage', header: 'Garage', cellClass: 'text-slate-600', render: (r) => r.garage || '—' },
-    {
-      key: 'active_faults', header: 'Faults', align: 'right', cellClass: 'tabular-nums',
-      render: (r) => <span className="text-slate-700">{num(r.active_faults)}<span className="text-slate-400">/{num(r.fault_total)}</span></span>,
-    },
-    {
-      key: 'severity', header: 'Severity',
-      render: (r) => (r.severity_label ? <Badge tone={r.severity_tone}>{r.severity_emoji} {r.severity_label}</Badge> : <span className="text-slate-300">—</span>),
-    },
-    {
-      key: 'waiting_reason', header: 'Waiting on', cellClass: 'text-slate-500 max-w-[220px] truncate',
-      render: (r) => (
-        <span className="flex items-center gap-1.5">
-          {r.waiting_parts && <Badge tone="amber">Parts</Badge>}
-          {r.reinspection_required && <Badge tone="violet">Re-insp</Badge>}
-          <span className="truncate">{r.waiting_reason || '—'}</span>
-        </span>
-      ),
-    },
-    { key: 'days_in_maintenance', header: 'Days in', align: 'right', cellClass: 'tabular-nums text-slate-600', render: (r) => days(r.days_in_maintenance) },
-    { key: 'expected_completion', header: 'Expected', cellClass: 'whitespace-nowrap text-slate-600', render: (r) => (r.expected_completion ? fmtDate(r.expected_completion) : '—') },
-    {
-      key: 'sla_remaining_hours', header: 'SLA', align: 'right',
-      tooltip: 'Time left before the expected completion / SLA is breached.',
-      render: (r) => (
-        <div className="flex items-center justify-end gap-2">
-          <span className={`tabular-nums ${r.delay_status === 'overdue' ? 'font-semibold text-red-600' : r.delay_status === 'at_risk' ? 'text-amber-600' : 'text-slate-600'}`}>{sla(r.sla_remaining_hours)}</span>
-          <Badge tone={DELAY_TONE[r.delay_status]} dot>{r.delay_status.replace('_', ' ')}</Badge>
-        </div>
-      ),
-    },
-    {
-      key: 'actions', header: '', align: 'right',
-      render: (r) => (
-        <button type="button" onClick={(e) => { e.stopPropagation(); openVehicle(r.vehicle_id); }}
-          className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-200">
-          Open <Icon.ArrowRight className="h-3.5 w-3.5" />
-        </button>
-      ),
-    },
-  ];
-
-  const TILES = [
-    { key: 'all',                 label: 'In Maintenance',     kpi: 'in_maintenance',     icon: <Icon.Car />,    tone: 'indigo',  hint: 'Open tickets' },
-    { key: 'in_workshop',         label: 'In Workshop',        kpi: 'in_workshop',        icon: <Icon.Wrench />, tone: 'amber',   hint: 'At a garage' },
-    { key: 'waiting_parts',       label: 'Waiting Parts',      kpi: 'waiting_parts',      icon: <Icon.Coins />,  tone: 'amber',   hint: 'On order' },
-    { key: 'waiting_reinspection', label: 'Re-inspection',     kpi: 'waiting_reinspection', icon: <Icon.Shield />, tone: 'violet', hint: 'Final QA' },
-    { key: 'ready_for_delivery',  label: 'Ready',              kpi: 'ready_for_delivery', icon: <Icon.Check />,  tone: 'emerald', hint: 'Awaiting pickup' },
-    { key: 'overdue',             label: 'Overdue',            kpi: 'overdue',            icon: <Icon.Alert />,  tone: 'red',     hint: 'Past due' },
-  ];
-
-  const CHIPS = [
-    ['all', 'All open'], ['in_workshop', 'In Workshop'], ['waiting_dispatch', 'Dispatch'],
-    ['waiting_approval', 'Approval'], ['waiting_parts', 'Parts'], ['waiting_reinspection', 'Re-inspect'],
-    ['ready_for_delivery', 'Ready'], ['overdue', 'Overdue'],
-  ];
+  const totalShown = useMemo(() => lanes.reduce((n, l) => n + l.tickets.length, 0), [lanes]);
+  const openTotal = counts.open_total ?? 0;
 
   return (
-    <div className="py-8">
-      <div className="mx-auto max-w-[1500px] space-y-6 px-4 sm:px-6 lg:px-8">
-        <HeroHeader kpis={kpis} loading={loading && !data} />
-
-        {/* Clickable stat tiles — the KPI strip doubles as the primary filter. */}
-        <div className="stagger grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          {TILES.map((t) => (
-            <StatTile key={t.key} {...t} value={kpis[t.kpi]} active={filter === t.key}
-              loading={loading && !data} onClick={() => setFilter(t.key)} />
-          ))}
+    <div className="pb-10">
+      {/* Hero */}
+      <div className="relative overflow-hidden bg-navy-900 text-white">
+        <div className="pointer-events-none absolute inset-0" aria-hidden="true">
+          <div className="absolute -right-24 -top-32 h-96 w-96 rounded-full bg-brand-500/25 blur-3xl" />
+          <div className="absolute -bottom-40 left-10 h-80 w-80 rounded-full bg-violet-500/10 blur-3xl" />
         </div>
-
-        {/* The board. */}
-        <div className="overflow-hidden rounded-2xl border border-slate-200/60 bg-white shadow-soft">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
+        <div className="relative mx-auto max-w-[1700px] px-4 pb-10 pt-8 sm:px-6 lg:px-8">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div className="min-w-0">
-              <h3 className="truncate text-base font-semibold text-slate-900">Cars in Open Maintenance</h3>
-              <p className="mt-0.5 truncate text-xs text-slate-400">
-                {loading && !data ? 'Loading…' : `${visible.length} vehicle${visible.length === 1 ? '' : 's'}${filter === 'all' ? '' : ` of ${rows.length}`} · live, refreshes every 30s`}
+              <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-steel-300">
+                <span className="relative flex h-2 w-2">
+                  <span className={`absolute inline-flex h-full w-full rounded-full bg-emerald-400 ${validating ? 'animate-ping' : 'opacity-75'}`} />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
+                </span>
+                Live · Maintenance Pipeline
+              </div>
+              <h1 className="mt-2 font-display text-3xl font-bold tracking-tight sm:text-4xl">Car Status</h1>
+              <p className="mt-2 max-w-2xl text-sm text-steel-200">
+                Every car in maintenance, by the stage it's in right now — and who's responsible for it at that stage.
+                A stage reads <span className="font-semibold text-white">Waiting</span> until someone takes it, then shows their name.
               </p>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <SearchInput value={q} onChange={setQ} placeholder="Plate, car, ticket…" className="w-48" />
-              <div className="flex overflow-hidden rounded-full border border-slate-200">
-                {[['cards', 'Cards'], ['table', 'Table']].map(([key, label]) => (
-                  <button key={key} onClick={() => setView(key)}
-                    className={`px-3 py-1.5 text-xs font-semibold transition ${view === key ? 'bg-slate-900 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
-                    {label}
-                  </button>
-                ))}
+            <div className="flex shrink-0 items-center gap-3">
+              <div className="rounded-2xl bg-white/[0.06] px-4 py-3 text-center ring-1 ring-inset ring-white/15">
+                <div className="font-display text-3xl font-bold tabular-nums leading-none">{num(openTotal)}</div>
+                <div className="mt-1 text-[11px] font-medium uppercase tracking-wide text-steel-200">In the pipeline</div>
               </div>
-              <button type="button" onClick={() => exportCsv(visible)}
-                className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">
-                <Icon.Download className="h-3.5 w-3.5" /> Export
+              <button
+                type="button"
+                onClick={() => reload()}
+                className="focus-ring-self inline-flex items-center gap-2 rounded-xl bg-white/10 px-3.5 py-2 text-sm font-semibold text-white ring-1 ring-inset ring-white/15 transition hover:bg-white/15"
+              >
+                <Icon.Refresh className={`h-4 w-4 ${validating ? 'animate-spin' : ''}`} /> Refresh
               </button>
             </div>
           </div>
+        </div>
+      </div>
 
-          {/* Filter chips */}
-          <div className="flex flex-wrap gap-1.5 border-b border-slate-100 bg-slate-50/40 px-5 py-3">
-            {CHIPS.map(([key, label]) => (
-              <button key={key} onClick={() => setFilter(key)}
-                className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${filter === key ? 'bg-slate-900 text-white shadow-sm' : 'bg-white text-slate-500 ring-1 ring-slate-200 hover:bg-slate-100'}`}>
-                {label}
-              </button>
+      <div className="mx-auto -mt-5 max-w-[1700px] space-y-5 px-4 sm:px-6 lg:px-8">
+        {error && <ErrorState onRetry={reload} message={error} />}
+
+        {/* Control bar */}
+        <div className="rounded-2xl border border-slate-200/70 bg-white/80 p-3 shadow-soft backdrop-blur">
+          <div className="flex flex-wrap items-center gap-3">
+            <SearchInput value={q} onChange={setQ} placeholder="Plate, car, driver, garage…" className="w-full max-w-xs" />
+            <div className="ml-auto text-xs font-medium text-slate-400">
+              <span className="tabular-nums text-slate-600">{num(totalShown)}</span> shown
+            </div>
+          </div>
+        </div>
+
+        {/* Stage board — horizontal scroll of stage columns */}
+        {!loading && openTotal === 0 ? (
+          <SectionCard>
+            <EmptyState
+              icon={<Icon.Wrench className="h-6 w-6" />}
+              title="Pipeline is clear"
+              message="No car is in the maintenance workflow right now."
+            />
+          </SectionCard>
+        ) : (
+          <div className="flex gap-4 overflow-x-auto pb-4">
+            {lanes.map((lane) => (
+              <Lane key={lane.key} lane={lane} loading={loading} t={t} onOpen={(tk) => navigate(`/maintenance-workflow/${tk.id}`)} />
             ))}
           </div>
-
-          {error && !data ? (
-            <div className="px-5 py-16 text-center text-sm text-red-500">{error}</div>
-          ) : view === 'table' ? (
-            <DataTable columns={columns} rows={visible} rowKey={(r) => r.ticket_id} loading={loading && !data}
-              onRowClick={(r) => openVehicle(r.vehicle_id)} empty="No cars in open maintenance right now. 🎉" stickyHeader dense />
-          ) : loading && !data ? (
-            <div className="grid grid-cols-1 gap-5 p-5 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
-              {Array.from({ length: 8 }).map((_, i) => <div key={i} className="h-52 animate-pulse rounded-2xl bg-slate-100" />)}
-            </div>
-          ) : visible.length === 0 ? (
-            <div className="px-5 py-20 text-center">
-              <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-500 ring-1 ring-emerald-200">
-                <Icon.Check className="h-7 w-7" />
-              </div>
-              <p className="text-sm font-medium text-slate-500">No cars in open maintenance right now.</p>
-              <p className="mt-1 text-xs text-slate-400">The whole fleet is on the road. 🎉</p>
-            </div>
-          ) : (
-            <div className="stagger grid grid-cols-1 gap-5 p-5 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
-              {visible.map((r) => <VehicleCard key={r.ticket_id} r={r} onOpen={openVehicle} />)}
-            </div>
-          )}
-        </div>
+        )}
       </div>
     </div>
   );
 }
 
-// ── Hero ────────────────────────────────────────────────────────────────────────────────────────
-
-function HeroHeader({ kpis, loading }) {
-  const stats = [
-    { label: 'In maintenance', value: kpis.in_maintenance },
-    { label: 'In workshop', value: kpis.in_workshop },
-    { label: 'Overdue', value: kpis.overdue, danger: true },
-  ];
+// One stage column — accent header with count + role, then its cars.
+function Lane({ lane, loading, onOpen, t }) {
+  const role = ROLES[lane.role] || ROLES.none;
+  const RIcon = role.Icon;
   return (
-    <div className="relative overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br from-slate-900 via-slate-900 to-indigo-950 px-6 py-7 text-white shadow-soft sm:px-8">
-      {/* decorative glow orbs */}
-      <div className="pointer-events-none absolute -right-16 -top-24 h-64 w-64 rounded-full bg-indigo-500/20 blur-3xl" />
-      <div className="pointer-events-none absolute -bottom-24 left-1/3 h-56 w-56 rounded-full bg-cyan-500/10 blur-3xl" />
-      <div className="relative flex flex-wrap items-end justify-between gap-6">
-        <div className="min-w-0">
-          <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-cyan-200 ring-1 ring-white/15">
-            <span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
-            </span>
-            Maintenance Command · Live
+    <div className="flex w-[300px] shrink-0 flex-col rounded-2xl bg-slate-50/70 ring-1 ring-slate-200/70">
+      <div className="rounded-t-2xl border-b border-slate-200/70 bg-white/70 px-3.5 py-3">
+        <div className="flex items-center gap-2">
+          <span className="h-2.5 w-2.5 rounded-full" style={{ background: lane.tone, boxShadow: `0 0 8px ${lane.tone}66` }} />
+          <span className="font-display text-sm font-bold tracking-tight text-slate-800">{lane.name}</span>
+          <span
+            className="ml-auto rounded-full px-2 py-0.5 text-xs font-bold tabular-nums"
+            style={{ color: lane.tone, background: `${lane.tone}1a` }}
+          >
+            {lane.tickets.length}
+          </span>
+        </div>
+        <div className="mt-1.5 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+          <RIcon className="h-3 w-3" /> Owned by {role.label}
+        </div>
+      </div>
+
+      <div className="flex flex-1 flex-col gap-2.5 p-2.5">
+        {loading ? (
+          <>
+            <div className="h-24 animate-pulse rounded-xl bg-white" />
+            <div className="h-24 animate-pulse rounded-xl bg-white" />
+          </>
+        ) : lane.tickets.length === 0 ? (
+          <div className="flex flex-col items-center gap-1 rounded-xl border border-dashed border-slate-200 py-6 text-center">
+            <Icon.Check className="h-4 w-4 text-slate-300" />
+            <span className="text-[11px] font-medium text-slate-400">No cars here</span>
           </div>
-          <h1 className="font-display text-3xl font-bold tracking-tight sm:text-4xl">Car Status</h1>
-          <p className="mt-2 max-w-2xl text-sm text-slate-300">
-            Every vehicle currently in open maintenance — its stage, who holds it, what it's waiting on and its SLA.
-            Click any car for its full maintenance profile.
-          </p>
-        </div>
-        <div className="flex gap-6">
-          {stats.map((s) => (
-            <div key={s.label} className="text-right">
-              <p className={`font-display text-3xl font-bold tabular-nums leading-none ${s.danger ? 'text-rose-300' : 'text-white'}`}>
-                {loading ? '—' : num(s.value)}
-              </p>
-              <p className="mt-1 text-[11px] font-medium uppercase tracking-wide text-slate-400">{s.label}</p>
-            </div>
-          ))}
-        </div>
+        ) : (
+          lane.tickets.map((tk) => <CarCard key={tk.id} tk={tk} lane={lane} role={role} onOpen={onOpen} t={t} />)
+        )}
       </div>
     </div>
   );
 }
 
-// ── Stat tile (KPI + filter) ────────────────────────────────────────────────────────────────────
-
-const TILE_TONE = {
-  indigo:  { icon: 'bg-indigo-100 text-indigo-600', ring: 'ring-indigo-500', accent: 'from-indigo-500 to-blue-500' },
-  amber:   { icon: 'bg-amber-100 text-amber-600',   ring: 'ring-amber-500',  accent: 'from-amber-400 to-orange-500' },
-  violet:  { icon: 'bg-violet-100 text-violet-600', ring: 'ring-violet-500', accent: 'from-violet-500 to-purple-500' },
-  emerald: { icon: 'bg-emerald-100 text-emerald-600', ring: 'ring-emerald-500', accent: 'from-emerald-400 to-teal-500' },
-  red:     { icon: 'bg-red-100 text-red-600',       ring: 'ring-red-500',    accent: 'from-rose-500 to-red-600' },
-};
-
-function StatTile({ label, value, icon, tone = 'indigo', hint, active, loading, onClick }) {
-  const t = TILE_TONE[tone] || TILE_TONE.indigo;
-  return (
-    <button type="button" onClick={onClick}
-      className={`hover-lift group relative overflow-hidden rounded-2xl border bg-white p-4 text-left shadow-soft transition ${active ? `border-transparent ring-2 ${t.ring}` : 'border-slate-200/60'}`}>
-      {/* top accent bar — full colour when active, subtle otherwise */}
-      <span className={`absolute inset-x-0 top-0 h-1 bg-gradient-to-r ${t.accent} ${active ? 'opacity-100' : 'opacity-0 group-hover:opacity-60'} transition-opacity`} />
-      <div className="flex items-start justify-between gap-2">
-        <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${t.icon}`}>{icon}</span>
-        {active && <span className="mt-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-400">Filtered</span>}
-      </div>
-      <p className="mt-3 font-display text-2xl font-bold leading-none tracking-tight tabular-nums text-slate-900">
-        {loading ? '—' : num(value)}
-      </p>
-      <p className="mt-1 truncate text-xs font-medium text-slate-500">{label}</p>
-      {hint && <p className="truncate text-[11px] text-slate-400">{hint}</p>}
-    </button>
-  );
+// One car in a stage — plate + model, the responsible-party chip (the headline of this page),
+// severity + how long it's sat in the stage. Click → the ticket on the Maintenance Cycle board.
+// Why is this car in the shop — the primary open fault's symptom, else the customer complaint.
+function reasonFor(tk) {
+  const tasks = tk.tasks || [];
+  const primary = tasks.find((x) => !x.is_terminal) || tasks[0];
+  return primary?.symptom || tk.customer_complaint || null;
 }
 
-// ── Vehicle card (the star) ─────────────────────────────────────────────────────────────────────
-
-const STAGE_STROKE = {
-  red: '#ef4444', amber: '#f59e0b', green: '#10b981', emerald: '#10b981', blue: '#3b82f6',
-  violet: '#8b5cf6', teal: '#14b8a6', slate: '#94a3b8', gray: '#94a3b8',
-};
-
-// A slim SVG donut — the car's pipeline progress, colored by stage. A premium touch over a flat bar.
-function ProgressRing({ value = 0, stroke = '#3b82f6', blocked = false }) {
-  const r = 26, c = 2 * Math.PI * r;
-  const pct = Math.max(0, Math.min(100, value));
-  return (
-    <div className="relative h-[62px] w-[62px] shrink-0">
-      <svg viewBox="0 0 62 62" className="h-full w-full -rotate-90">
-        <circle cx="31" cy="31" r={r} fill="none" stroke="rgb(241 245 249)" strokeWidth="6" />
-        <circle cx="31" cy="31" r={r} fill="none" stroke={blocked ? '#ef4444' : stroke} strokeWidth="6"
-          strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c - (pct / 100) * c}
-          style={{ transition: 'stroke-dashoffset 0.6s cubic-bezier(0.21,1.02,0.73,1)' }} />
-      </svg>
-      <span className="absolute inset-0 flex items-center justify-center font-display text-sm font-bold tabular-nums text-slate-700">{pct}%</span>
-    </div>
-  );
-}
-
-// A mini UAE-style number plate — a small delight for a car-loving audience.
-function PlateChip({ plate }) {
-  return (
-    <span className="inline-flex items-stretch overflow-hidden rounded-md border border-slate-300 bg-white text-xs font-bold shadow-sm">
-      <span className="flex items-center bg-slate-900 px-1.5 text-[8px] font-black uppercase tracking-tight text-white">UAE</span>
-      <span className="flex items-center px-2 py-0.5 font-mono tracking-widest text-slate-800">{plate || '—'}</span>
-    </span>
-  );
-}
-
-function VehicleCard({ r, onOpen }) {
-  const grad = STAGE_GRAD[r.stage_tone] || STAGE_GRAD.slate;
-  const tint = STAGE_TINT[r.stage_tone] || STAGE_TINT.slate;
-  const stroke = STAGE_STROKE[r.stage_tone] || STAGE_STROKE.slate;
-  const overdue = r.delay_status === 'overdue';
-  const atRisk = r.delay_status === 'at_risk';
+function CarCard({ tk, lane, role, onOpen, t }) {
+  const RIcon = role.Icon;
+  const name = holderName(lane.key, tk);
+  const age = stageAge(tk, t);
+  const reason = reasonFor(tk);
+  const openFaults = tk.tasks_progress?.open ?? 0;
+  const otherFaults = Math.max(0, openFaults - 1);
+  const partsPending = tk.parts_pending || [];
 
   return (
     <button
       type="button"
-      onClick={() => onOpen(r.vehicle_id)}
-      className={`hover-lift group relative flex flex-col overflow-hidden rounded-2xl border bg-white text-left shadow-soft ${overdue ? 'border-red-200 ring-1 ring-red-100' : 'border-slate-200/60'}`}
+      onClick={() => onOpen(tk)}
+      className="group w-full rounded-xl bg-white p-3 text-left shadow-soft ring-1 ring-slate-200/70 transition hover:ring-indigo-300"
     >
-      {/* stage colour edge */}
-      <span className={`h-1.5 w-full shrink-0 bg-gradient-to-r ${grad}`} />
-
-      <div className="flex flex-1 flex-col gap-4 p-5">
-        {/* top: stage + SLA */}
-        <div className="flex items-center justify-between gap-2">
-          <Badge tone={r.stage_tone} dot>{r.stage}</Badge>
-          <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-bold ${overdue ? 'bg-red-50 text-red-600 ring-1 ring-red-200' : atRisk ? 'bg-amber-50 text-amber-600 ring-1 ring-amber-200' : 'bg-emerald-50 text-emerald-600 ring-1 ring-emerald-200'}`}>
-            {overdue && <Icon.Alert className="h-3 w-3" />}
-            {sla(r.sla_remaining_hours)}
-          </span>
-        </div>
-
-        {/* identity + progress ring */}
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <div className="mb-1.5 flex items-center gap-2">
-              <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ring-1 ${tint}`}>
-                <Icon.Car className="h-5 w-5" />
-              </span>
-              <h3 className="truncate font-display text-lg font-bold leading-tight text-slate-900">{r.car || 'Vehicle'}</h3>
-            </div>
-            <div className="flex items-center gap-2">
-              <PlateChip plate={r.plate_no} />
-              <span className="text-xs text-slate-400">{r.ticket_no}</span>
-            </div>
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="font-display text-base font-bold leading-none tracking-tight text-slate-900">
+            {tk.plate || `#${tk.id}`}
           </div>
-          <ProgressRing value={r.progress} stroke={stroke} blocked={r.blocked} />
+          {tk.car && <div className="mt-1 truncate text-xs text-slate-500">{tk.car}</div>}
         </div>
+        {tk.fault_severity && (
+          <Badge tone={tk.fault_severity_tone || 'slate'} dot>{tk.fault_severity_label || tk.fault_severity}</Badge>
+        )}
+      </div>
 
-        {/* responsible panel */}
-        <div className="flex items-center gap-2.5 rounded-xl bg-slate-50 p-2.5 ring-1 ring-slate-100">
-          <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ring-1 ${tint}`}>
-            {initials(r.responsible)}
+      {/* Why it's in the shop — the reason + how many other faults ride along */}
+      {reason && (
+        <div className="mt-2 flex items-start gap-1.5 text-xs leading-snug text-slate-600">
+          <Icon.Wrench className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" />
+          <span className="min-w-0">
+            <span className="font-medium text-slate-700">{reason}</span>
+            {otherFaults > 0 && <span className="text-slate-400"> +{otherFaults} more</span>}
           </span>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-xs font-semibold text-slate-700">{r.responsible}</p>
-            <p className="truncate text-[11px] text-slate-400">{r.garage || r.waiting_reason || '—'}</p>
-          </div>
-          <Badge tone={PARTY_TONE[r.party] || 'slate'} className="shrink-0 capitalize">{r.party}</Badge>
         </div>
+      )}
 
-        {/* footer chips */}
-        <div className="mt-auto flex flex-wrap items-center gap-1.5 border-t border-slate-100 pt-3 text-xs">
-          <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-600" title="Open / total faults">
-            <Icon.Wrench className="h-3 w-3" /> {num(r.active_faults)}/{num(r.fault_total)}
+      {/* Waiting for parts — the distinct parts still owed on the ticket */}
+      {partsPending.length > 0 && (
+        <div className="mt-1.5 flex items-start gap-1.5 rounded-lg bg-violet-50 px-2 py-1.5 ring-1 ring-inset ring-violet-100">
+          <Icon.Coins className="mt-0.5 h-3.5 w-3.5 shrink-0 text-violet-500" />
+          <span className="min-w-0 text-[11px] leading-snug text-violet-700">
+            <span className="font-semibold">Waiting for parts</span>
+            <span className="text-violet-600"> · {partsPending.slice(0, 3).join(', ')}{partsPending.length > 3 ? `, +${partsPending.length - 3}` : ''}</span>
           </span>
-          {r.severity_label && <Badge tone={r.severity_tone}>{r.severity_emoji} {r.severity_label}</Badge>}
-          {r.waiting_parts && <Badge tone="amber" dot>Parts</Badge>}
-          {r.reinspection_required && <Badge tone="violet" dot>Re-insp</Badge>}
-          <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-medium text-slate-400">
-            <Icon.Clock className="h-3 w-3" /> {days(r.days_in_maintenance)}
-          </span>
+        </div>
+      )}
+
+      {/* Responsible party — the point of the board */}
+      <div className={`mt-2.5 flex items-center gap-2 rounded-lg px-2.5 py-2 ring-1 ring-inset ${name ? role.cls : 'bg-slate-50 text-slate-400 ring-slate-200'}`}>
+        <RIcon className="h-4 w-4 shrink-0" />
+        <div className="min-w-0 flex-1">
+          <div className="text-[9px] font-semibold uppercase tracking-wide opacity-70">{role.label}</div>
+          {name ? (
+            <div className="truncate text-sm font-bold leading-tight">{name}</div>
+          ) : (
+            <div className="truncate text-sm font-semibold italic leading-tight">{role.waiting}</div>
+          )}
         </div>
       </div>
+
+      {/* Time in stage */}
+      {age && (
+        <div className={`mt-2 flex items-center gap-1 text-[11px] font-medium ${age.over ? 'text-red-600' : 'text-slate-400'}`}>
+          <Icon.Clock className="h-3 w-3" /> {age.label} in this stage
+        </div>
+      )}
     </button>
   );
 }

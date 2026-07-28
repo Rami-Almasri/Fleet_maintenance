@@ -294,6 +294,7 @@ Route::middleware('auth:sanctum')->prefix('part-purchases')->controller(PartPurc
     Route::get('/recurrence-check', 'recurrenceCheck')->middleware('permission:parts.view|maintenance.view');
     Route::get('/vehicle/{vehicle}/history', 'vehicleHistory')->middleware('permission:parts.view');
     Route::post('/{partPurchase}/install', 'install')->middleware('permission:parts.purchase|maintenance.logistics');
+    Route::post('/{partPurchase}/delivered', 'markDelivered')->middleware('permission:parts.purchase|maintenance.logistics');
 });
 
 Route::middleware('auth:sanctum')->prefix('part-investigations')->controller(PartInvestigationController::class)->group(function () {
@@ -338,6 +339,10 @@ Route::middleware('auth:sanctum')->prefix('maintenance-tickets')->controller(Mai
     Route::get('/checkpoint-candidates', [MaintenanceCheckpointController::class, 'candidates'])->middleware('permission:maintenance.view');
     // A vehicle's checkpoint timeline for its profile tab (STATIC /vehicle/... — precedes /{ticket}).
     Route::get('/vehicle/{vehicle}/checkpoints', [MaintenanceCheckpointController::class, 'vehicleTimeline'])->middleware('permission:maintenance.view');
+    // Lazily link (idempotent) the checkpoint ticket for a contract-sourced Maintenance-Progress row —
+    // open type-U contract cars have no workflow ticket until their first checkpoint is filed (STATIC
+    // /contract/... — precedes /{ticket}).
+    Route::post('/contract/{contract}/ensure-ticket', [MaintenanceCheckpointController::class, 'ensureForContract'])->middleware('permission:maintenance.view');
     Route::get('/{ticket}', 'show')->middleware('permission:maintenance.view');
     // The car's real current mileage + the full log of manual mileage corrections on this vehicle.
     Route::get('/{ticket}/mileage', 'mileage')->middleware('permission:maintenance.view');
@@ -394,6 +399,9 @@ Route::middleware('auth:sanctum')->prefix('maintenance-tickets')->controller(Mai
     // Supervisor Delegation — a supervisor delegates a specific driver to pickup/dropoff
     // (→ "Driver Assigned"). Fault severity itself is set by the inspector at /report, not here.
     Route::post('/{ticket}/delegate', 'delegate')->middleware('permission:maintenance.delegate');
+    // Data-driven garage recommendation for THIS ticket (learned from maintenance history) — surfaced in
+    // the assign step so the Supervisor sees which garages have proven experience with this vehicle+fault.
+    Route::get('/{ticket}/garage-recommendations', [\App\Http\Controllers\GarageRecommendationController::class, 'forTicket'])->middleware('permission:maintenance.delegate');
     // Phase 2 — Supervisor (Dispatcher): review the open ticket, pick the garage + assign a driver. May
     // split-dispatch: route only a subset of faults now (fault_ids), leaving the rest Pending Assignment.
     Route::post('/{ticket}/assign-dispatch', 'assignDispatch')->middleware('permission:maintenance.delegate');
@@ -504,6 +512,33 @@ Route::middleware('auth:sanctum')->prefix('inspector-pad')->controller(Inspector
     // Static segment before {flag}/{vehicle} — pick a car up for maintenance (odometer-gated).
     Route::post('/pickup/{vehicle}', 'pickup')->middleware('permission:maintenance.initiate');
     Route::delete('/{flag}', 'destroy')->middleware('permission:maintenance.initiate');
+});
+
+// Complaints Center — the first-class Customer Complaint entity (App\Models\Complaint), with its own
+// customer-support lifecycle INDEPENDENT of maintenance. Reads: the filterable management table (+ KPIs)
+// and a single complaint's timeline. Mutations: intake (Ops) + triage actions (Inspector). A complaint
+// only touches the workshop via `send-in`, which spawns a maintenance ticket. See [[complaint-entity]].
+Route::middleware('auth:sanctum')->prefix('complaints')->controller(\App\Http\Controllers\ComplaintController::class)->group(function () {
+    Route::get('/', 'index')->middleware('permission:maintenance.view');
+    // Intake — Operations (Marwa & Leen) log a customer complaint → Inspector notified to triage.
+    Route::post('/', 'store')->middleware('permission:maintenance.manage');
+    Route::get('/{complaint}', 'show')->middleware('permission:maintenance.view');
+    // Triage actions (Abu Maroof, maintenance.initiate): contact the customer, record the decision, send
+    // the car in (spawns a maintenance ticket), resolve (no repair), or close.
+    Route::post('/{complaint}/contact', 'contact')->middleware('permission:maintenance.initiate');
+    Route::post('/{complaint}/decision', 'decide')->middleware('permission:maintenance.initiate');
+    Route::post('/{complaint}/send-in', 'sendIn')->middleware('permission:maintenance.initiate');
+    Route::post('/{complaint}/resolve', 'resolve')->middleware('permission:maintenance.initiate');
+    Route::post('/{complaint}/close', 'close')->middleware('permission:maintenance.initiate');
+});
+
+// Driver Handover Observations — the lightweight internal-note path (driver noticed something on return).
+// NOT a customer complaint: no contact, no escalation. May raise an inspection request → the review queue.
+Route::middleware('auth:sanctum')->prefix('driver-observations')->controller(\App\Http\Controllers\DriverObservationController::class)->group(function () {
+    Route::get('/', 'index')->middleware('permission:maintenance.view');
+    Route::post('/', 'store')->middleware('permission:maintenance.logistics');
+    Route::post('/{observation}/request-inspection', 'requestInspection')->middleware('permission:maintenance.logistics|maintenance.manage');
+    Route::post('/{observation}/dismiss', 'dismiss')->middleware('permission:maintenance.manage');
 });
 
 // Per-fault status actions (independent fault tracking) — a fault is marked fixed / reopened / cancelled
@@ -739,12 +774,51 @@ Route::middleware(['auth:sanctum', 'permission:insights.view'])->prefix('Oversig
     Route::get('/resolved-transfers', 'resolvedTransfers'); // car moved to another garage with all faults already fixed
 });
 
+// Severity Review write action — a supervisor's Quality-Control decision on an under-graded ticket
+// (upgrade the grade, or keep it and dismiss the recommendation). A grading change, so it needs the
+// stronger maintenance.manage permission, not the read-only insights.view of the surface above.
+Route::middleware(['auth:sanctum', 'permission:maintenance.manage'])->prefix('Oversight')
+    ->controller(\App\Http\Controllers\WorkflowOversightController::class)->group(function () {
+        Route::post('/severity-review/{ticket}/decide', 'decide');
+    });
+
 // Car Status — the enterprise "what is happening in my workshop right now?" command center: a KPI strip,
 // one live row per vehicle inside the maintenance workflow, the six manager sections (repeat repairs,
 // overdue, waiting-for-parts, waiting-for-approval, high-severity, recently-finished), and a per-vehicle
 // Maintenance Intelligence Center. Pure reads over existing data → maintenance.view.
 Route::middleware(['auth:sanctum', 'permission:maintenance.view'])->prefix('car-status')->controller(\App\Http\Controllers\CarStatusController::class)->group(function () {
     Route::get('/', 'dashboard');
+    Route::get('/vehicle/{vehicle}', 'vehicle');
+});
+
+// Event Type layer — Classification Review queue: the human-in-the-loop for maintenance events the resolver
+// was unsure about (needs_review). Confirm/correct kind (fault/service/inspection) → the classifier improves.
+Route::middleware(['auth:sanctum', 'permission:maintenance.manage'])->prefix('event-classification')->controller(\App\Http\Controllers\EventClassificationReviewController::class)->group(function () {
+    Route::get('/review', 'index');
+    Route::post('/review/{task}/confirm', 'confirm');
+});
+
+// Garage Recommendation — the DATA-DRIVEN "which garage should this vehicle go to?" engine, learned from
+// maintenance history (the complement to the rules-based Smart Routing). Free-form query by model/brand/
+// fault; the ticket-scoped variant lives in the maintenance-tickets group (assign step). Pure reads.
+Route::middleware(['auth:sanctum', 'permission:maintenance.view'])->prefix('garage-recommendations')->controller(\App\Http\Controllers\GarageRecommendationController::class)->group(function () {
+    Route::get('/', 'index');
+});
+
+// Fleet Knowledge Engine (P0) — "Previous Similar Repairs + Recommendation Explanation". Read-only
+// intelligence over maintenance history: tiered similar repairs (vehicle→model→make→fleet) + a composed
+// recommendation (likely cause, best garage, expected parts/cost/duration, recurrence risk) with an honest
+// confidence + the evidence/why behind it. No new tables. `preview` works before a fault row exists.
+Route::middleware(['auth:sanctum', 'permission:maintenance.view'])->controller(\App\Http\Controllers\RepairIntelligenceController::class)->group(function () {
+    Route::get('/maintenance-tasks/{task}/repair-intelligence', 'forTask');
+    Route::post('/repair-intelligence/preview', 'preview');
+});
+
+// Maintenance Operations — the operational control center for every vehicle CURRENTLY IN THE WORKSHOP:
+// a KPI summary + one rich card per in-shop vehicle (ownership, faults, progress, blockers, next action)
+// and a per-vehicle detail (full checkpoint + workflow timeline). Pure reads → maintenance.view.
+Route::middleware(['auth:sanctum', 'permission:maintenance.view'])->prefix('maintenance-operations')->controller(\App\Http\Controllers\MaintenanceOperationsController::class)->group(function () {
+    Route::get('/', 'index');
     Route::get('/vehicle/{vehicle}', 'vehicle');
 });
 
@@ -759,6 +833,8 @@ Route::middleware(['auth:sanctum', 'permission:insights.view'])->get('Profitabil
 Route::middleware(['auth:sanctum', 'permission:insights.view'])->prefix('intelligence')->controller(\App\Http\Controllers\IntelligenceController::class)->group(function () {
     Route::get('/cost', 'cost');                 // maintenance cost per km / day / rental, per vehicle + fleet
     Route::get('/service-due', 'serviceDue');    // overdue + due-soon service board (reuses forecast engine)
+    Route::get('/maintenance-ops', 'maintenanceOps');                    // Maintenance Operations Center board (priority score + recommended action)
+    Route::get('/vehicle/{vehicle}/maintenance-detail', 'maintenanceOpsVehicle'); // one-car maintenance context drawer
     // Financial drill-down for one car — every Profitability number traced to its source rows.
     Route::get('/vehicle/{vehicle}/financial-breakdown', 'financialBreakdown');
     // Recursive explanation tree — every figure drillable to the original record (formula + reconciliation).
@@ -767,6 +843,14 @@ Route::middleware(['auth:sanctum', 'permission:insights.view'])->prefix('intelli
     // reverse dependencies, business rules, evidence, confidence, audit, snapshot (?as_of=&modules=).
     Route::get('/vehicle/{vehicle}/explain', 'explain');
 });
+
+// Service-Due snooze — a manager's "not now" on the Maintenance Operations Center. A write (hides the
+// row, never mutates service data), so it's gated by a maintenance-action permission, not insights.view.
+Route::middleware(['auth:sanctum', 'permission:maintenance.initiate|maintenance.manage'])
+    ->controller(\App\Http\Controllers\ServiceDueSnoozeController::class)->group(function () {
+        Route::post('service-due/snooze', 'store');
+        Route::delete('service-due/{vehicle}/snooze', 'release');
+    });
 
 // Fuel & Mileage Reconciliation (live "fuel_data_plate_summary"): per car, actual odometer travel vs.
 // km explained by contracts → out-of-contract (unlogged) km leakage, total fuel debit, odometer-rollback

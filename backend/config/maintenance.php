@@ -21,6 +21,21 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Long-running maintenance threshold (days)
+    |--------------------------------------------------------------------------
+    |
+    | A car that has sat in the workshop for at least this many days is flagged
+    | "Long-running" on the Maintenance Operations control center — a standing
+    | operational signal independent of whether it is past its promised ETA (a
+    | job can run long while its ETA keeps being pushed back, so this catches the
+    | slow-burners overdue-detection alone would miss).
+    |
+    */
+
+    'long_running_days' => (int) env('MAINT_LONG_RUNNING_DAYS', 14),
+
+    /*
+    |--------------------------------------------------------------------------
     | Maintenance Checkpoint (progress tracking)
     |--------------------------------------------------------------------------
     |

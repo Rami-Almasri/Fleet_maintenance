@@ -16,8 +16,9 @@ import ComplaintTriageModal from '../components/workflow/ComplaintTriageModal';
 import BreakdownIntakeModal from '../components/workflow/BreakdownIntakeModal';
 import TestIntakeModal from '../components/workflow/TestIntakeModal';
 import CreateMoveModal from './logistics/CreateMoveModal';
+import CycleGuide from '../components/workflow/CycleGuide';
 import {
-  resolveAction, allows, ctaLabel, TASK_STATUS, stageAge, stageSeconds,
+  resolveAction, allows, ctaLabel, TASK_STATUS, stageAge,
   isAtGarage, custodyBlocked, custodyHolderName,
 } from '../components/workflow/meta';
 import { SHOW_VIDEO_REVIEW } from '../config/features';
@@ -52,6 +53,20 @@ const EXCEPTION_LANES = [
 // Cards shown per lane before the "+N more" toggle. Keeps every collapsed column short and roughly
 // even (no scroll); expanding a lane reveals all its cards on demand.
 const LANE_PAGE_SIZE = 3;
+
+// Expected-return date (captured at dispatch / garage check-in) → a short "DD Mon" label + an overdue
+// flag when the promised day has already passed. Returns null for a missing/unparseable date.
+function expectedReturn(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return {
+    label: d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' }),
+    over: d < today,
+  };
+}
 
 // Fault-severity tone (resource's fault_severity_tone) → dark opx chip class.
 const SEV_OPX = { red: 'crit', orange: 'paused', amber: 'paused', green: 'avail' };
@@ -95,6 +110,7 @@ function TicketCard({ tk, tone, can, userId, active, onSelect, onAct }) {
   const isComplaint = tk.trigger_reason === 'customer_reported';
   const isDisabled = tk.maintenance_type === 'breakdown' || tk.is_recovery;
   const age = stageAge(tk, t);
+  const expected = expectedReturn(tk.expected_return_date);
   const sevCls = SEV_OPX[tk.fault_severity_tone] || 'paused';
 
   const railCls = active ? 'sel' : critical ? 'sev-crit' : isComplaint ? 'sev-paused' : '';
@@ -150,6 +166,13 @@ function TicketCard({ tk, tone, can, userId, active, onSelect, onAct }) {
           )}
           {tk.sent_back && (
             <span className="mwf-pill crit">⛔ {t('workflow.board.sentBack')}{tk.sent_back.count > 1 ? ` ×${tk.sent_back.count}` : ''}</span>
+          )}
+          {/* Expected return day — the date the garage promised the car back (set at dispatch / check-in).
+              Turns red once that day has passed and the car still isn't back. */}
+          {expected && (
+            <span className={`mwf-pill due ${expected.over ? 'over' : ''}`} title={t('workflow.board.expectedReturnTip')}>
+              🗓️ {t(expected.over ? 'workflow.board.expectedOverdue' : 'workflow.board.expectedReturn', { date: expected.label })}
+            </span>
           )}
         </div>
 
@@ -294,6 +317,7 @@ export default function MaintenanceWorkflow() {
   // nav dropdown can deep-link straight to a stage; kept in sync when that query param changes.
   const [stageTab, setStageTab] = useState(() => new URLSearchParams(window.location.search).get('stage') || 'all');
   const [expandedLanes, setExpandedLanes] = useState({});
+  const [showCycleGuide, setShowCycleGuide] = useState(false);
 
   // Real-time board (silent revalidation every 6s), paused while a modal/drawer is open.
   const fetcher = useCallback(async () => (await api.get('/maintenance-tickets/board')).data.data, []);
@@ -453,6 +477,14 @@ export default function MaintenanceWorkflow() {
 
           <div className="mwf-toolbar-right">
             <span className="mwf-toolbar-meta">{visibleTickets.length} shown</span>
+            <button
+              type="button"
+              className={`opx-btn ${showCycleGuide ? 'primary' : ''}`}
+              onClick={() => setShowCycleGuide((v) => !v)}
+              title={t('workflow.cycle.title')}
+            >
+              <Icon.Activity className="h-4 w-4" /> {t('workflow.cycle.toggle')}
+            </button>
             <div className="seg">
               <button className={view === 'board' ? 'on' : ''} onClick={() => setView('board')}>Board</button>
               <button className={view === 'list' ? 'on' : ''} onClick={() => setView('list')}>List</button>
@@ -461,6 +493,9 @@ export default function MaintenanceWorkflow() {
             {canLogistics && <button className="opx-btn primary" onClick={() => setModal({ action: 'request' })}><Icon.Plus className="h-4 w-4" /> {t('workflow.board.requestInspection')}</button>}
           </div>
         </div>
+
+        {/* Cycle guide — inline flow map of the whole pipeline (documentation from the board's own meta) */}
+        {showCycleGuide && <CycleGuide lanes={primaryLanes} onClose={() => setShowCycleGuide(false)} />}
 
         {/* BOARD */}
         {view === 'board' && (

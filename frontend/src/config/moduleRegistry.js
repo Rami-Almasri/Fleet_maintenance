@@ -27,22 +27,38 @@ import { pathBlockedForRoles } from './access';
 
 export const MODULES = [
   {
+    // Direct-link tile: opens the classic fleet Dashboard straight away instead of
+    // an Overview page. `link` + `permission` mark it as a single-page shortcut
+    // (no sections, no mega-menu, no module tab bar) — see the helpers below and
+    // ModuleCard.
+    id: 'dashboard',
+    name: 'Dashboard',
+    icon: Icon.Gauge,
+    tone: 'indigo',
+    tagline: 'Fleet-wide overview — availability, composition and key totals',
+    link: '/dashboard',
+    permission: 'dashboard.view',
+    sections: [],
+  },
+  {
     id: 'fleet-operations',
     name: 'Fleet Operations',
     icon: Icon.Car,
     tone: 'indigo',
     tagline: 'Vehicles, rentals and the daily movement of the fleet',
     sections: [
-      { name: 'Vehicles', route: '/vehicles', permission: 'vehicles.view', icon: Icon.Car },
-      { name: 'Contracts', route: '/contracts', permission: 'contracts.view', icon: Icon.Invoice },
-      { name: 'Customers', route: '/customers', permission: 'customers.view', icon: Icon.Users },
-      { name: 'Drivers', route: '/drivers', permission: 'drivers.view', icon: Icon.Users },
-      { name: 'Driver Dispatch', route: '/driver-dispatch', permission: 'logistics.view', icon: Icon.Truck },
-      { name: "Who's Where", route: '/team-presence', permission: 'logistics.view', icon: Icon.Route },
-      { name: 'Fleet Health', route: '/inspections/schedules', permission: 'inspections.view', icon: Icon.Shield },
-      { name: 'Damage & Accidents', route: '/damage-accidents', permission: 'maintenance.view', icon: Icon.Alert },
-      { name: 'Odometer Approvals', route: '/odometer-approvals', permission: 'vehicles.approve_odometer', icon: Icon.Gauge },
-      { name: 'Reports', route: '/apps/reports', permission: 'insights.view', icon: Icon.Chart },
+      { name: 'Vehicles', route: '/vehicles', permission: 'vehicles.view', icon: Icon.Car, desc: 'Every car in the fleet — open a row for its full profile, history and documents.' },
+      { name: 'Contracts', route: '/contracts', permission: 'contracts.view', icon: Icon.Invoice, desc: 'Rental contracts synced from OfficeManager — all open, plus recently closed.' },
+      { name: 'Customers', route: '/customers', permission: 'customers.view', icon: Icon.Users, desc: 'Customer contacts, contracts and available wallet (carried-forward credit).' },
+      { name: 'Drivers', route: '/drivers', permission: 'drivers.view', icon: Icon.Users, desc: 'Fleet drivers with licence number, expiry and status — expiring licences flagged.' },
+      { name: 'Driver Dispatch', route: '/driver-dispatch', permission: 'logistics.view', icon: Icon.Truck, desc: 'Send a vehicle between locations and track which driver holds it and where.' },
+      { name: "Who's Where", route: '/team-presence', permission: 'logistics.view', icon: Icon.Route, desc: 'Live team availability — who’s free, who’s busy, and on which car and why.' },
+      { name: 'Fleet Health', route: '/inspections/schedules', permission: 'inspections.view', icon: Icon.Shield, desc: 'Service-due and registration/insurance expiry surfaces, consolidated in one hub.' },
+      { name: 'Damage & Accidents', route: '/damage-accidents', permission: 'maintenance.view', icon: Icon.Alert, desc: 'Damage and accident records per vehicle, coloured by liable party and insurance.' },
+      { name: 'Maintenance Swap', route: '/maintenance-swap', permission: 'insights.view', icon: Icon.Refresh, desc: 'Keep a customer on the road — assign a replacement car while theirs is repaired.' },
+      { name: 'Vendors', route: '/vendors', permission: 'vendors.view', icon: Icon.Truck, desc: 'Suppliers and service vendors referenced by maintenance and contracts.' },
+      { name: 'Odometer Approvals', route: '/odometer-approvals', permission: 'vehicles.approve_odometer', icon: Icon.Gauge, desc: 'Review queue for significant manual odometer edits — approve or reject each.' },
+      { name: 'Reports', route: '/apps/reports', permission: 'insights.view', icon: Icon.Chart, desc: 'Operational reports, audit trails and data-quality surfaces in one place.' },
     ],
   },
   {
@@ -52,12 +68,13 @@ export const MODULES = [
     tone: 'amber',
     tagline: 'The repair pipeline, queues, parts, suppliers and history',
     sections: [
-      { name: 'Workshop', route: '/car-status', permission: 'maintenance.view', icon: Icon.Wrench },
+      { name: 'Car Status', route: '/car-status', permission: 'maintenance.view', icon: Icon.Wrench, desc: 'Live stage board — every car by the exact workflow stage it sits in and who is responsible right now.' },
       {
         name: 'Maintenance Cycle',
         route: '/maintenance-workflow',
         permission: 'maintenance.view',
         icon: Icon.Activity,
+        desc: 'The repair ticket pipeline — advance each ticket from test-drive request through to final QA.',
         // Odoo-style click dropdown — jump straight to a single stage of the repair pipeline.
         // `key` is the board column key (used to show live ticket counts, fetched from countsUrl);
         // keys + tones mirror PRIMARY_LANES in pages/MaintenanceWorkflow.js; the board reads ?stage=.
@@ -79,15 +96,17 @@ export const MODULES = [
           { name: 'On-Site Service',       key: 'on_site',                 route: '/maintenance-workflow?stage=on_site',                 tone: '#0d9488' },
         ],
       },
-      { name: 'My Queue', route: '/my-maintenance-queue', permission: 'maintenance.view', icon: Icon.Check },
-      { name: 'Recommendations', route: '/maintenance-recommendations', permission: 'maintenance.view', icon: Icon.Flag },
-      { name: 'Inspection Review', route: '/inspection-review', permission: 'maintenance.manage', icon: Icon.Check },
-      { name: 'Completed Repairs', route: '/completed-repairs', permission: 'maintenance.view', icon: Icon.Check },
-      { name: 'Service Due', route: '/service-due', permission: 'insights.view', flag: 'intel', icon: Icon.Clock },
-      { name: 'Parts', route: '/parts', permission: 'parts.view', icon: Icon.Coins },
-      { name: 'Garages', route: '/garages', permission: 'maintenance.view', icon: Icon.Wrench },
-      { name: 'Vendors', route: '/vendors', permission: 'vendors.view', icon: Icon.Truck },
-      { name: 'History', route: '/maintenance-history', permission: 'maintenance.view', icon: Icon.Clock },
+      { name: 'Maintenance Progress', route: '/maintenance-progress', permission: 'maintenance.view', icon: Icon.Activity, desc: 'Track in-shop progress against each car’s promised completion date, with escalating reminders.' },
+      { name: 'My Queue', route: '/my-maintenance-queue', permission: 'maintenance.view', icon: Icon.Check, desc: 'Your role-scoped maintenance work in one place — what needs you, right now.' },
+      { name: 'Recommendations', route: '/maintenance-recommendations', permission: 'maintenance.view', icon: Icon.Flag, desc: 'Inspection recommendations awaiting a supervisor’s go-ahead before any work begins.' },
+      { name: 'Inspection Review', route: '/inspection-review', permission: 'maintenance.manage', icon: Icon.Check, desc: 'Controllers vet inspection requests — approve to send on, or reject with a reason.' },
+      { name: 'Complaints', route: '/complaints', permission: 'maintenance.view', icon: Icon.Flag, desc: 'Every customer complaint and its follow-up timeline, in one management view.' },
+      { name: 'Driver Observations', route: '/driver-observations', permission: 'maintenance.view', icon: Icon.Search, desc: 'Internal handover notes from drivers — escalate to an inspection only when needed.' },
+      { name: 'Completed Repairs', route: '/completed-repairs', permission: 'maintenance.view', icon: Icon.Check, desc: 'The signed-off ledger — who, where, what was found and fixed, and what it cost.' },
+      { name: 'Service Due', route: '/service-due', permission: 'insights.view', flag: 'intel', icon: Icon.Clock, desc: 'Cars overdue or approaching service, by odometer interval and each car’s usage rate.' },
+      { name: 'Parts', route: '/parts', permission: 'parts.view', icon: Icon.Coins, desc: 'Request, approve, buy and install parts — with duplicate-spend and recurrence detection.' },
+      { name: 'Garages', route: '/garages', permission: 'maintenance.view', icon: Icon.Wrench, desc: 'The garages that service the fleet, and the work routed to each.' },
+      { name: 'History', route: '/maintenance-history', permission: 'maintenance.view', icon: Icon.Clock, desc: 'Every workshop visit per car — how often and how long, trip by trip.' },
     ],
   },
   {
@@ -97,15 +116,13 @@ export const MODULES = [
     tone: 'violet',
     tagline: 'Operational analytics — cost, prediction, faults and utilization',
     sections: [
-      { name: 'Cost Intelligence', route: '/cost-intelligence', permission: 'insights.view', flag: 'intel', icon: Icon.Chart },
-      { name: 'Predictive Maintenance', route: '/maintenance-foresight', permission: 'maintenance.view', icon: Icon.Spark },
-      { name: 'Fleet Analytics', route: '/fleet-utilization', permission: 'insights.view', icon: Icon.Gauge },
-      { name: 'Maintenance Analytics', route: '/maintenance-analytics', permission: 'maintenance.view', icon: Icon.Chart },
-      { name: 'Keyword Risk', route: '/finding-keywords', permission: 'maintenance.view', icon: Icon.Flag },
-      { name: 'Recurring Faults', route: '/recurring-fault-reviews', permission: 'maintenance.recurring.view', icon: Icon.Refresh },
-      { name: 'Inspection Intelligence', route: '/inspection-intelligence', permission: 'maintenance.view', icon: Icon.Search },
-      { name: 'Part Investigations', route: '/part-investigations', permission: 'parts.investigate', icon: Icon.Search },
-      { name: 'Health Scores', route: null, permission: 'insights.view', icon: Icon.Scale, status: 'soon' },
+      { name: 'Predictive Maintenance', route: '/maintenance-foresight', permission: 'maintenance.view', icon: Icon.Spark, desc: 'Catch cars showing early warning signs before they break down, with cost of inaction.' },
+      { name: 'Fleet Analytics', route: '/fleet-utilization', permission: 'insights.view', icon: Icon.Gauge, desc: 'Per-car split of owned time into rented, in-maintenance and idle days.' },
+      { name: 'Keyword Risk', route: '/finding-keywords', permission: 'maintenance.view', icon: Icon.Flag, desc: 'The fault-keyword library, each graded critical, moderate or routine.' },
+      { name: 'Recurring Faults', route: '/recurring-fault-reviews', permission: 'maintenance.recurring.view', icon: Icon.Refresh, desc: 'Cars back with the same confirmed fault after a repair — for a management ruling.' },
+      { name: 'Part Investigations', route: '/part-investigations', permission: 'parts.investigate', icon: Icon.Search, desc: 'Flagged duplicate-spend and fault-recurrence cases for admin review.' },
+      { name: 'Maintenance Analytics', route: null, permission: 'maintenance.view', icon: Icon.Chart, status: 'soon', desc: 'Deeper trends across repairs, cost and turnaround — coming soon.' },
+      { name: 'Health Scores', route: null, permission: 'insights.view', icon: Icon.Scale, status: 'soon', desc: 'A single per-car condition score rolled up from every signal — coming soon.' },
     ],
   },
   {
@@ -115,11 +132,12 @@ export const MODULES = [
     tone: 'emerald',
     tagline: 'Profitability, reconciliation and financial integrity',
     sections: [
-      { name: 'Profitability', route: '/profitability', permission: 'insights.view', flag: 'financial', icon: Icon.TrendUp },
-      { name: 'Financial Conflicts', route: '/financial-conflicts', permission: 'insights.view', flag: 'financial', icon: Icon.Alert },
-      { name: 'Reconciliation', route: '/financial-reconciliation', permission: 'insights.view', flag: 'financial', icon: Icon.Scale },
-      { name: 'Accounting Data', route: null, permission: 'insights.view', icon: Icon.Invoice, status: 'soon' },
-      { name: 'Reports', route: '/apps/reports', permission: 'insights.view', icon: Icon.Chart },
+      { name: 'Profitability', route: '/profitability', permission: 'insights.view', flag: 'financial', icon: Icon.TrendUp, desc: 'Operational profit per car — rental income minus logged maintenance cost.' },
+      { name: 'Cost Intelligence', route: '/cost-intelligence', permission: 'insights.view', flag: 'intel', icon: Icon.Chart, desc: 'The true running cost of each asset — per kilometre, per day and per rental.' },
+      { name: 'Financial Conflicts', route: '/financial-conflicts', permission: 'insights.view', flag: 'financial', icon: Icon.Alert, desc: 'Accounting clean-up hub — only the broken invoices and double billing.' },
+      { name: 'Reconciliation', route: '/financial-reconciliation', permission: 'insights.view', flag: 'financial', icon: Icon.Scale, desc: 'Bridge a contract to the accounting system — ledger vs. real cash collected.' },
+      { name: 'Accounting Data', route: null, permission: 'insights.view', icon: Icon.Invoice, status: 'soon', desc: 'Direct feed from the accounting system — coming soon.' },
+      { name: 'Reports', route: '/apps/reports', permission: 'insights.view', icon: Icon.Chart, desc: 'Operational reports, audit trails and data-quality surfaces in one place.' },
     ],
   },
   {
@@ -129,12 +147,13 @@ export const MODULES = [
     tone: 'blue',
     tagline: 'Operational reports, audit trails and data quality',
     sections: [
-      { name: 'Maintenance History', route: '/maintenance-history', permission: 'maintenance.view', icon: Icon.Clock },
-      { name: 'Oversight', route: '/oversight', permission: 'insights.view', icon: Icon.Shield },
-      { name: 'Maintenance Swap', route: '/maintenance-swap', permission: 'insights.view', icon: Icon.Refresh },
-      { name: 'Data Health', route: '/data-health', permission: 'insights.view', icon: Icon.Activity },
-      { name: 'Mileage & Fuel', route: '/mileage', permission: 'insights.view', icon: Icon.Gauge },
-      { name: 'Sync Audit', route: '/sync-audit', permission: 'sync.run', icon: Icon.Refresh },
+      { name: 'Mileage Discrepancies', route: '/oversight/mileage', permission: 'insights.view', icon: Icon.Gauge, desc: 'Odometer readings that don’t line up across contracts — flagged for review.' },
+      { name: 'Left-the-Garage Invoices', route: '/oversight/left-garage', permission: 'insights.view', icon: Icon.Truck, desc: 'Cars that left the garage while their maintenance contract stayed open.' },
+      { name: 'Diagnostic Review', route: '/oversight/severity', permission: 'insights.view', icon: Icon.Flag, desc: 'QC gate for fault severity — keep the call or upgrade it, with the reasoning shown.' },
+      { name: 'Mis-Diagnosis', route: '/oversight/misdiagnoses', permission: 'insights.view', icon: Icon.XCircle, desc: 'Faults later marked incorrect — the audited mis-diagnosis trail.' },
+      { name: 'Transferred — Faults Fixed', route: '/oversight/resolved-transfers', permission: 'insights.view', icon: Icon.ArrowRight, desc: 'Cars moved on with all faults fixed — each transfer noted and logged.' },
+      { name: 'Data Health', route: '/data-health', permission: 'insights.view', icon: Icon.Activity, desc: 'Overall data quality — incomplete records and status mismatches.' },
+      { name: 'Mileage & Fuel', route: '/mileage', permission: 'insights.view', icon: Icon.Gauge, desc: 'Every odometer and fuel tool — travel vs. contract km, leakage and chain audit.' },
     ],
   },
   {
@@ -144,12 +163,13 @@ export const MODULES = [
     tone: 'slate',
     tagline: 'People, access and system configuration',
     sections: [
-      { name: 'Users', route: '/users', permission: 'users.manage', icon: Icon.Users },
-      { name: 'Settings', route: '/settings', permission: null, icon: Icon.Filter },
-      { name: 'Notifications', route: '/notifications', permission: null, icon: Icon.Alert },
-      { name: 'Simulation', route: '/simulation', permission: 'users.manage', demoOnly: true, icon: Icon.Spark },
-      { name: 'Roles & Permissions', route: null, permission: 'users.manage', icon: Icon.Shield, status: 'soon' },
-      { name: 'Audit Logs', route: null, permission: 'users.manage', icon: Icon.Route, status: 'soon' },
+      { name: 'Users', route: '/users', permission: 'users.manage', icon: Icon.Users, desc: 'Every account, its status and role(s) — the live workforce dashboard.' },
+      { name: 'Sync Audit', route: '/sync-audit', permission: 'sync.run', icon: Icon.Refresh, desc: 'History of each sync run — what it scanned, updated and auto-corrected.' },
+      { name: 'Settings', route: '/settings', permission: null, icon: Icon.Filter, desc: 'Your account and preferences — appearance, language, roles and shortcuts.' },
+      { name: 'Notifications', route: '/notifications', permission: null, icon: Icon.Alert, desc: 'Live fleet alerts, organised into role-aware action lanes.' },
+      { name: 'Simulation', route: '/simulation', permission: 'users.manage', demoOnly: true, icon: Icon.Spark, desc: 'Admin demo console — trigger a real alert end-to-end, then roll it back.' },
+      { name: 'Roles & Permissions', route: null, permission: 'users.manage', icon: Icon.Shield, status: 'soon', desc: 'Manage roles and per-permission grants from one screen — coming soon.' },
+      { name: 'Audit Logs', route: null, permission: 'users.manage', icon: Icon.Route, status: 'soon', desc: 'A searchable trail of every system action — coming soon.' },
     ],
   },
 ];
@@ -173,9 +193,13 @@ export function sectionReachable(section, can, roles = []) {
 export const visibleSections = (module, can, roles) =>
   module.sections.filter((s) => sectionReachable(s, can, roles));
 
-// A module appears on the launcher only if the user can reach ≥1 real (non-soon) section.
+// A module appears on the launcher only if the user can reach ≥1 real (non-soon)
+// section. A direct-link tile (e.g. Dashboard) is instead gated by its own
+// `permission` field, since it has no sections.
 export const isModuleVisible = (module, can, roles) =>
-  module.sections.some((s) => s.status !== 'soon' && s.route && sectionReachable(s, can, roles));
+  module.link
+    ? can(module.permission)
+    : module.sections.some((s) => s.status !== 'soon' && s.route && sectionReachable(s, can, roles));
 
 export const visibleModules = (can, roles) =>
   MODULES.filter((m) => isModuleVisible(m, can, roles));

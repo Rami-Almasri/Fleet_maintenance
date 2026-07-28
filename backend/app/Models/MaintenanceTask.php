@@ -144,6 +144,27 @@ class MaintenanceTask extends Model
 
     protected static function booted(): void
     {
+        // Event Type layer — every task is BORN classified (kind + the matching catalog id when resolvable),
+        // so no creation path silently defaults to `fault`. Runs on CREATE only. An explicit catalog pick
+        // (classification_source already set — e.g. type-first intake) is respected; otherwise the SHIELD
+        // resolver stamps kind from the symptom + ticket context. Best-effort: a classification hiccup never
+        // blocks the task being created. The DB CHECK still validates the final kind↔catalog integrity.
+        static::creating(function (MaintenanceTask $t) {
+            if (filled($t->classification_source)) {
+                return; // already classified by the caller (catalog pick)
+            }
+            if (blank($t->symptom) && blank($t->maintenance_id)) {
+                return; // nothing to classify on
+            }
+            try {
+                foreach (app(\App\Services\EventClassificationService::class)->resolveLegacyKind($t) as $k => $v) {
+                    $t->{$k} = $v;
+                }
+            } catch (\Throwable $e) {
+                report($e); // never let classification sink a task creation
+            }
+        });
+
         // Classification integrity — the FIRST line of defence (the DB CHECK is the last). Exactly the
         // one *_catalog_id matching `kind` may be set; more than one is a bug; zero is allowed only as the
         // legacy/unclassified case (matches the CHECK, so flag-off behaviour is unchanged).

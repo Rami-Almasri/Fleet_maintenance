@@ -15,6 +15,7 @@ use App\Models\MaintenanceTemporaryRelease;
 use App\Models\OdometerBlockEvent;
 use App\Models\User;
 use App\Models\Vehicle;
+use App\Models\GarageRecommendationDecision;
 use App\Models\VehicleLogEvent;
 use App\Models\Vendor;
 use Illuminate\Support\Carbon;
@@ -1397,8 +1398,11 @@ class MaintenanceWorkflowService
             ->first();
         $renter     = $rental?->customer;
         $renterName = $renter?->name_en ?: ($renter?->name_ar ?: null);
+        // The renter's phone — so the triage alert (and the Complaint Center) lets the Inspector call the
+        // customer directly. Best-effort: null when the car isn't on rent right now.
+        $renterPhone = $renter?->mobile1 ?: ($renter?->whatsapp ?: null);
 
-        return DB::transaction(function () use ($vehicleId, $complaint, $faultSeverity, $actor, $rental, $renterName) {
+        return DB::transaction(function () use ($vehicleId, $complaint, $faultSeverity, $actor, $rental, $renterName, $renterPhone) {
             $ticket = new Maintenance();
             $ticket->origin          = Maintenance::ORIGIN_MANUAL;
             $ticket->vehicle_id      = $vehicleId;
@@ -1435,6 +1439,7 @@ class MaintenanceWorkflowService
                     'source'         => 'complaint_intake',
                     // WHO reported it — the renter on the car's open contract (best-effort).
                     'customer'       => $renterName,
+                    'customer_phone' => $renterPhone,
                     'contract_id'    => $rental?->id,
                     'contract_no'    => $rental?->contract_no,
                 ],
@@ -1455,12 +1460,13 @@ class MaintenanceWorkflowService
                 'title'    => trim('📣 Customer complaint — triage · ' . $this->label($vehicle)),
                 'body'     => trim($actor->name . ' logged a customer complaint'
                                 . ($renterName ? ' from ' . $renterName : '')
+                                . ($renterPhone ? ' (📞 ' . $renterPhone . ')' : '')
                                 . ' on ' . $this->label($vehicle)
-                                . ' — “' . $complaint . '”. Triage it: talk to the customer, resolve on-site, or send the car in.'),
+                                . ' — “' . $complaint . '”. Triage it: call the customer, resolve on-site, or send the car in.'),
                 'url'      => $this->link($ticket),
                 'key'      => 'maint_wf:' . $ticket->id . ':complaint_triage',
                 'icon'     => 'bell',
-                'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no, 'fault_severity' => $faultSeverity, 'customer_complaint' => true, 'customer' => $renterName, 'contract_no' => $rental?->contract_no],
+                'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no, 'fault_severity' => $faultSeverity, 'customer_complaint' => true, 'customer' => $renterName, 'customer_phone' => $renterPhone, 'contract_no' => $rental?->contract_no],
             ], $actor->id);
 
             return $ticket->load($this->eager());
@@ -2961,6 +2967,73 @@ class MaintenanceWorkflowService
     // ── PHASE 2 — Supervisor (dispatcher) picks the garage + assigns a driver ────
 
     /**
+     * Normalise the decision-support recommendation payload for the garage_assigned audit meta. Records
+     * what the data-driven engine suggested, the Supervisor's chosen garage, whether they FOLLOWED the
+     * recommendation (chosen === recommended), and the reason — so "why this garage?" is auditable. Returns
+     * null when the client sent nothing (older clients / manual assigns), keeping the meta backward-compatible.
+     *
+     * @param  array<string, mixed>|null  $rec
+     * @return array<string, mixed>|null
+     */
+    private function recommendationMeta(?array $rec, Vendor $chosen): ?array
+    {
+        if (empty($rec)) {
+            return null;
+        }
+        $recommendedId = isset($rec['recommended_vendor_id']) ? (int) $rec['recommended_vendor_id'] : null;
+        $recommendedName = $recommendedId ? optional(Vendor::find($recommendedId))->name : null;
+
+        return [
+            'recommended_vendor_id' => $recommendedId,
+            'recommended_garage'    => $recommendedName,
+            'chosen_vendor_id'      => $chosen->id,
+            'chosen_garage'         => $chosen->name,
+            // followed = the Supervisor picked the engine's top suggestion; overridden otherwise.
+            'followed'              => $recommendedId !== null ? ($recommendedId === $chosen->id) : null,
+            'accepted'              => array_key_exists('accepted', $rec) ? (bool) $rec['accepted'] : null,
+            'rank'                  => isset($rec['rank']) ? (int) $rec['rank'] : null,
+            'score'                 => isset($rec['score']) ? (float) $rec['score'] : null,
+            'confidence'            => $rec['confidence'] ?? null,
+            'reason'                => isset($rec['reason']) ? $this->clean($rec['reason']) : null,
+            'reasons'               => is_array($rec['reasons'] ?? null) ? array_slice($rec['reasons'], 0, 4) : null,
+            'source'                => $rec['source'] ?? 'experience_engine',
+        ];
+    }
+
+    /**
+     * Persist the durable garage-choice decision (garage_recommendation_decisions) — the canonical "why did
+     * we send this car here?" record that survives independently of the audit log. Best-effort: a write
+     * failure never blocks the dispatch the Supervisor just made.
+     *
+     * @param  array<string, mixed>|null  $rec
+     */
+    private function recordRecommendationDecision(Maintenance $ticket, ?array $rec, Vendor $chosen, User $actor): void
+    {
+        if (empty($rec)) {
+            return;
+        }
+        try {
+            $recommendedId = isset($rec['recommended_vendor_id']) ? (int) $rec['recommended_vendor_id'] : null;
+            GarageRecommendationDecision::create([
+                'maintenance_id'        => $ticket->id,
+                'vehicle_id'            => $ticket->vehicle_id,
+                'recommended_vendor_id' => $recommendedId,
+                'chosen_vendor_id'      => $chosen->id,
+                'accepted'              => (bool) ($rec['accepted'] ?? false),
+                'followed'              => $recommendedId !== null ? ($recommendedId === $chosen->id) : null,
+                'rank'                  => isset($rec['rank']) ? (int) $rec['rank'] : null,
+                'score'                 => isset($rec['score']) ? (float) $rec['score'] : null,
+                'confidence'            => $rec['confidence'] ?? null,
+                'reasons'               => is_array($rec['reasons'] ?? null) ? array_slice($rec['reasons'], 0, 4) : null,
+                'criteria'              => is_array($rec['criteria'] ?? null) ? $rec['criteria'] : null,
+                'actor_id'              => $actor->id,
+            ]);
+        } catch (\Throwable $e) {
+            report($e); // the decision log must never sink a real dispatch
+        }
+    }
+
+    /**
      * Phase 2 — the DISPATCHER's call. A Supervisor (Waleed/Abdullah) reviews an open ticket
      * (inspection_pending), chooses the destination garage from the vendor list and assigns a driver
      * to collect the car. This is the clear separation of authority the operation needs: the garage
@@ -3084,8 +3157,14 @@ class MaintenanceWorkflowService
                         . ($note ? ' · Note: ' . $note : ''))
                     . ($driver ? ', driver ' . $driver->name : ', pickup open to the pool')
                     . ' (by ' . $actor->name . ')',
-                'meta' => ['garage' => $vendor->name, 'vendor_id' => $vendor->id, 'driver_id' => $driver?->id, 'driver' => $driver?->name, 'by' => $actor->name, 'note' => $note, 'sent_back' => $fromReinspectionFailed, 'from_garage' => $fromReinspectionFailed ? $previousGarage : null],
+                'meta' => ['garage' => $vendor->name, 'vendor_id' => $vendor->id, 'driver_id' => $driver?->id, 'driver' => $driver?->name, 'by' => $actor->name, 'note' => $note, 'sent_back' => $fromReinspectionFailed, 'from_garage' => $fromReinspectionFailed ? $previousGarage : null,
+                    // Decision-support trail: what the data-driven recommendation engine suggested and whether
+                    // the Supervisor followed it. Answers "why was this garage selected?" in the audit log.
+                    'recommendation' => $this->recommendationMeta($data['recommendation'] ?? null, $vendor)],
             ]);
+
+            // Canonical, durable record of the garage choice (survives independently of the audit log).
+            $this->recordRecommendationDecision($ticket, $data['recommendation'] ?? null, $vendor, $actor);
 
             $vehicle  = $ticket->loadMissing('vehicle')->vehicle;
             $meta     = $ticket->fault_severity ? (Maintenance::FAULT_SEVERITY_META[$ticket->fault_severity] ?? null) : null;

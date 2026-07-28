@@ -2,8 +2,8 @@
 // inspection requests awaiting approval before they are sent to the Inspector (Abu Maroof).
 // Approve sends the request on exactly as before; reject terminates it (requires a reason).
 
-import { useCallback, useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 import useFetch from '../hooks/useFetch';
 import { usePermissions } from '../hooks/usePermissions';
@@ -15,10 +15,12 @@ import Modal from '../components/ui/Modal';
 import { Textarea } from '../components/ui/Field';
 import { EmptyState } from '../components/ui/Misc';
 import { Skeleton } from '../components/ui/Skeleton';
-import TestIntakeModal from '../components/workflow/TestIntakeModal';
+import TicketActionModal from '../components/workflow/TicketActionModal';
 import ComplaintIntakeModal from '../components/workflow/ComplaintIntakeModal';
 
-const REASON_LABEL = { test_drive: 'Test drive', customer_reported: 'Customer complaint', periodic: 'Routine (system)' };
+// Note: `customer_reported` here is a LEGACY driver-request reason — real customer complaints are their own
+// entity now (Complaints Center), so it reads "Customer-reported", not "Customer complaint".
+const REASON_LABEL = { test_drive: 'Test drive', customer_reported: 'Customer-reported', periodic: 'Routine (system)' };
 const REASON_TONE = { test_drive: 'violet', customer_reported: 'amber', periodic: 'blue' };
 
 // The car's live operational status → a small context pill on the card, so the reviewer knows at a
@@ -174,7 +176,7 @@ function MetaTile({ icon, label, value, sub, muted }) {
   );
 }
 
-function RequestCard({ tk, onApprove, onReject, onAcknowledge, ackBusy }) {
+function RequestCard({ tk, onApprove, onReject, onAcknowledge, ackBusy, highlight }) {
   const [expanded, setExpanded] = useState(false);
   const reasonTone = REASON_TONE[tk.trigger_reason] || 'slate';
   const reasonLabel = REASON_LABEL[tk.trigger_reason] || tk.trigger_reason;
@@ -202,7 +204,14 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, ackBusy }) {
   const lmOnboard = !!lm && (lm.reason === 'onboarding' || lm.source === 'onboarding');
 
   return (
-    <div className={`overflow-hidden rounded-2xl border bg-white shadow-soft transition hover:shadow-md ${isSystem ? 'border-indigo-200' : 'border-slate-200'}`}>
+    <div
+      id={`review-card-${tk.id}`}
+      className={`scroll-mt-24 overflow-hidden rounded-2xl border bg-white shadow-soft transition-all duration-300 hover:shadow-md ${
+        highlight
+          ? 'border-indigo-400 ring-2 ring-indigo-400 ring-offset-2 shadow-lg'
+          : isSystem ? 'border-indigo-200' : 'border-slate-200'
+      }`}
+    >
       {/* ── Header: vehicle identity (primary) + classification badges ───────────────── */}
       <div className="flex items-start gap-3 border-b border-slate-100 p-4">
         <VehicleAvatar make={tk.vehicle_make} />
@@ -460,7 +469,39 @@ export default function InspectionReviewQueue() {
     paused: () => !!modal,
   });
 
-  const tickets = data || [];
+  const tickets = useMemo(() => data || [], [data]);
+
+  // Deep-link focus — the Action Center links here as /inspection-review?ticket=<id> when a Controller
+  // clicks "Review Request" on a maint_review_pending alert. Scroll that exact card into view and pulse
+  // a highlight ring so they land on the right request, not the top of a long queue.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const targetTicket = searchParams.get('ticket');
+  const [highlightId, setHighlightId] = useState(null);
+  const focusedRef = useRef(false);
+  const highlightTimer = useRef(null);
+
+  useEffect(() => {
+    // Wait for the first load; act once. Set the guard up front so clearing the query param below
+    // (which re-runs this effect) can't re-enter and cancel the highlight timer.
+    if (!targetTicket || loading || focusedRef.current) return;
+    focusedRef.current = true;
+
+    const match = tickets.find((t) => String(t.id) === String(targetTicket));
+    if (match) {
+      setHighlightId(match.id);
+      requestAnimationFrame(() => {
+        document.getElementById(`review-card-${match.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      });
+      highlightTimer.current = setTimeout(() => setHighlightId(null), 3500);
+    } else {
+      // No longer pending — already approved/rejected by someone else, or auto-resolved.
+      toast.info('That request is no longer awaiting review — it may have already been actioned.');
+    }
+    // Drop the query param so a manual refresh doesn't re-highlight.
+    setSearchParams({}, { replace: true });
+  }, [targetTicket, loading, tickets, toast, setSearchParams]);
+
+  useEffect(() => () => clearTimeout(highlightTimer.current), []);
 
   // Pickers for the New Test / New Complaint intake modals — only Ready + Rented cars.
   useEffect(() => {
@@ -509,7 +550,7 @@ export default function InspectionReviewQueue() {
             <p style={{ marginTop: 6, fontSize: 13.5, color: 'var(--ink-3)' }}>Requests awaiting Controller approval before they reach Abu Maroof.</p>
           </div>
           <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap' }}>
-            {canManage && <button className="opx-btn primary" onClick={() => setModal({ action: 'test' })}>+ Request Inspection</button>}
+            {canManage && <button className="opx-btn primary" onClick={() => setModal({ action: 'request' })}>+ Request Inspection</button>}
             {canManage && <button className="opx-btn" onClick={() => setModal({ action: 'complaint' })}>📣 New complaint</button>}
           </div>
         </div>
@@ -537,6 +578,7 @@ export default function InspectionReviewQueue() {
                 onReject={(t) => setModal({ action: 'reject', ticket: t })}
                 onAcknowledge={onAcknowledge}
                 ackBusy={ackBusyId === tk.id}
+                highlight={highlightId === tk.id}
               />
             ))}
           </div>
@@ -549,10 +591,11 @@ export default function InspectionReviewQueue() {
       {modal?.action === 'reject' && (
         <RejectModal ticket={modal.ticket} onClose={() => setModal(null)} onDone={onDone} />
       )}
-      {/* Test Intake — the tabbed front door: Routine (oil/battery/tyres) · Scheduled (park-time +
-          Breakdown) · Accidents (→ Damage & Accidents log). Same entry point as the full board. */}
-      {modal?.action === 'test' && (
-        <TestIntakeModal vehicles={vehicles} onClose={() => setModal(null)} onDone={onDone} />
+      {/* Request Inspection — the driver "flag a car" form: vehicle + What happened? (test drive /
+          customer / routine) + notes + optional photo/video. Born in pending_review, so it lands right
+          back in this queue for a Controller to approve before it reaches Abu Maroof. */}
+      {modal?.action === 'request' && (
+        <TicketActionModal action="request" vehicles={vehicles} onClose={() => setModal(null)} onDone={onDone} />
       )}
       {/* Complaint Intake — logs a customer complaint straight into Abu Maroof's triage lane. */}
       {modal?.action === 'complaint' && (

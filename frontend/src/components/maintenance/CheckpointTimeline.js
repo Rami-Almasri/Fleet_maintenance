@@ -1,15 +1,12 @@
-// Maintenance Checkpoint timeline — a chronological feed of progress updates (outcome, status, delay
-// reason, summary, pushed-back date, and photos/videos). Shared by the CheckpointModal history and the
+// Maintenance Checkpoint timeline — a chronological feed of progress updates. Each entry is an ETA
+// update: it shows the previous → new expected completion date, the reason it moved, a workshop status,
+// a progress note, photos/videos, and who filed it when. Shared by the CheckpointModal history and the
 // Vehicle Profile "Maintenance Progress" tab. Presentation only; data comes from the checkpoints API.
+//
+// There is NO manual "outcome" — a job's On Schedule / Overdue status is derived from the ETA elsewhere.
 
-import { outcomeLabel, statusLabel, delayReasonLabel } from '../../lib/maintenanceCheckpoints';
+import { statusLabel, delayReasonLabel } from '../../lib/maintenanceCheckpoints';
 import { fmtDate } from '../../lib/format';
-
-const OUTCOME_TONE = {
-  on_track: { dot: 'bg-emerald-500', ring: 'ring-emerald-100', chip: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
-  delayed:  { dot: 'bg-amber-500',   ring: 'ring-amber-100',   chip: 'bg-amber-50 text-amber-700 ring-amber-200' },
-  critical: { dot: 'bg-red-500',     ring: 'ring-red-100',     chip: 'bg-red-50 text-red-700 ring-red-200' },
-};
 
 function when(iso) {
   if (!iso) return '';
@@ -21,11 +18,15 @@ function when(iso) {
   }
 }
 
+const reasonText = (c) => (c.delay_reason === 'other'
+  ? (c.delay_reason_other || 'Other')
+  : delayReasonLabel(c.delay_reason));
+
 export default function CheckpointTimeline({ checkpoints = [], onDelete = null, canManage = false }) {
   if (!checkpoints.length) {
     return (
       <p className="py-8 text-center text-sm text-slate-400">
-        No checkpoints yet — the first progress update will appear here.
+        No updates yet — the first progress update will appear here.
       </p>
     );
   }
@@ -35,9 +36,14 @@ export default function CheckpointTimeline({ checkpoints = [], onDelete = null, 
       {/* Connecting rail behind the markers. */}
       <span aria-hidden="true" className="absolute left-[15px] top-2 bottom-2 w-px bg-slate-200" />
       {checkpoints.map((c) => {
-        const tone = OUTCOME_TONE[c.outcome] || OUTCOME_TONE.on_track;
         const images = (c.media || []).filter((m) => m.kind === 'image');
         const videos = (c.media || []).filter((m) => m.kind === 'video');
+        // The ETA moved when a new date is present that differs from the previous one.
+        const etaChanged = !!c.next_expected_date
+          && (!c.previous_expected_date || c.previous_expected_date !== c.next_expected_date);
+        const tone = etaChanged
+          ? { dot: 'bg-amber-500', ring: 'ring-amber-100' }
+          : { dot: 'bg-slate-300', ring: 'ring-slate-100' };
         return (
           <li key={c.id} className="relative flex gap-3">
             <span className={`relative z-10 mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white ring-4 ${tone.ring}`}>
@@ -46,8 +52,8 @@ export default function CheckpointTimeline({ checkpoints = [], onDelete = null, 
             <div className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
-                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ${tone.chip}`}>
-                    {outcomeLabel(c.outcome)}
+                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ${etaChanged ? 'bg-amber-50 text-amber-700 ring-amber-200' : 'bg-slate-50 text-slate-600 ring-slate-200'}`}>
+                    {etaChanged ? 'ETA changed' : 'Progress update'}
                   </span>
                   {c.status && (
                     <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
@@ -58,20 +64,29 @@ export default function CheckpointTimeline({ checkpoints = [], onDelete = null, 
                 <span className="text-xs text-slate-400">{when(c.created_at)}</span>
               </div>
 
-              {c.outcome === 'delayed' && (c.delay_reason || c.delay_reason_other) && (
-                <p className="mt-2 text-xs font-medium text-amber-700">
-                  Delay: {delayReasonLabel(c.delay_reason)}
-                  {c.delay_reason === 'other' && c.delay_reason_other ? ` — ${c.delay_reason_other}` : ''}
-                </p>
+              {/* The ETA change — previous → new + why it moved. */}
+              {etaChanged ? (
+                <div className="mt-2 rounded-lg bg-amber-50/70 px-2.5 py-2 text-xs ring-1 ring-amber-100">
+                  <p className="flex flex-wrap items-center gap-1.5 text-slate-600">
+                    {c.previous_expected_date && (
+                      <>
+                        <span className="text-slate-400 line-through">{fmtDate(c.previous_expected_date)}</span>
+                        <span aria-hidden className="text-amber-500">→</span>
+                      </>
+                    )}
+                    <span className="font-semibold text-amber-800">{fmtDate(c.next_expected_date)}</span>
+                  </p>
+                  {reasonText(c) && <p className="mt-1 font-medium text-amber-700">Reason: {reasonText(c)}</p>}
+                </div>
+              ) : (
+                c.next_expected_date && (
+                  <p className="mt-2 text-xs text-slate-500">
+                    Expected completion confirmed: <span className="font-semibold text-slate-700">{fmtDate(c.next_expected_date)}</span>
+                  </p>
+                )
               )}
 
               {c.summary && <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{c.summary}</p>}
-
-              {c.next_expected_date && (
-                <p className="mt-2 text-xs text-slate-500">
-                  New expected completion: <span className="font-semibold text-slate-700">{fmtDate(c.next_expected_date)}</span>
-                </p>
-              )}
 
               {(images.length > 0 || videos.length > 0) && (
                 <div className="mt-2 flex flex-wrap gap-2">

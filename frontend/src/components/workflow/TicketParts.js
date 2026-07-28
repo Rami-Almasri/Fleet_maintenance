@@ -10,6 +10,7 @@ import { Skeleton } from '../ui/Skeleton';
 import { Input, Select, Textarea } from '../ui/Field';
 import { SHOW_FINANCIALS } from '../../config/features';
 import { fmtAgo, aed, num } from '../../lib/format';
+import { canOrderParts } from './meta';
 
 // Envelope-aware unwrap: the API wraps most payloads in { data: … }.
 const payload = (r) => (r?.data && 'data' in r.data ? r.data.data : r?.data);
@@ -317,8 +318,14 @@ export default function TicketParts({
 
   useEffect(() => { setLoading(true); load(); }, [load]);
 
+  // A part can only be ordered while the car is being inspected or in the workshop. Folds the stage rule
+  // into the permission so EVERY call site (drawer, command view) is gated the same way, regardless of
+  // what its own footer button checks.
+  const canRequestNow = canRequest && canOrderParts(ticket);
+
   // The host's footer "Request Part" button bumps openSignal → open the modal. (Ignore the initial 0.)
-  useEffect(() => { if (openSignal) setModalOpen(true); }, [openSignal]);
+  // Guard on canRequestNow too so a stray signal can never open the modal at a stage that can't order.
+  useEffect(() => { if (openSignal && canRequestNow) setModalOpen(true); }, [openSignal]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const onCreated = () => { load(); onChanged?.(); };
 
@@ -349,7 +356,7 @@ export default function TicketParts({
             <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500">{count}</span>
           )}
         </h3>
-        {canRequest && (
+        {canRequestNow && (
           <Button size="sm" variant="secondary" onClick={() => setModalOpen(true)}>
             <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14" /></svg>
             Request Part
@@ -366,7 +373,7 @@ export default function TicketParts({
         ) : count === 0 ? (
           <p className="text-xs text-slate-400">
             No parts requested for this ticket yet.
-            {canRequest && ' Use “Request Part” to order one.'}
+            {canRequestNow && ' Use “Request Part” to order one.'}
           </p>
         ) : (
           <ul className="space-y-2">

@@ -29,36 +29,37 @@ class MaintenanceCheckpointService
     private ?bool $hasStatusColumn = null;
 
     /**
-     * Record a checkpoint against a ticket. Advances the ticket's promised completion date when the
-     * garage pushed it back (a manual date change → the new date becomes the source of truth), and
-     * stamps last_checkpoint_at so the escalation knows the current window is covered.
+     * Record a progress update against a ticket. Every update carries the new ETA (next_expected_date,
+     * required); this snapshots the ETA that was in force just before it as `previous_expected_date` so the
+     * timeline shows every extension, advances the ticket's promised completion date to the new ETA (the
+     * new date becomes the single source of truth), and stamps last_checkpoint_at so the escalation knows
+     * the current window is covered.
      *
-     * @param array{outcome:string, status?:?string, delay_reason?:?string, delay_reason_other?:?string,
-     *              summary?:?string, next_expected_date?:?string} $data
+     * @param array{status?:?string, delay_reason?:?string, delay_reason_other?:?string,
+     *              summary?:?string, next_expected_date:string} $data
      */
     public function submit(Maintenance $ticket, User $actor, array $data): MaintenanceCheckpoint
     {
         return DB::transaction(function () use ($ticket, $actor, $data) {
-            $next = ! empty($data['next_expected_date']) ? Carbon::parse($data['next_expected_date'])->startOfDay() : null;
+            // The ETA in force BEFORE this update (the promise the workshop is now revising).
+            $previous = $ticket->effectiveExpectedCompletion()?->copy()->startOfDay();
+            $next = Carbon::parse($data['next_expected_date'])->startOfDay();
 
             $checkpoint = $ticket->checkpoints()->create([
-                'vehicle_id'         => $ticket->vehicle_id,
-                'outcome'            => $data['outcome'],
-                'status'             => $data['status'] ?? null,
-                'delay_reason'       => $data['delay_reason'] ?? null,
-                'delay_reason_other' => $data['delay_reason_other'] ?? null,
-                'summary'            => $data['summary'] ?? null,
-                'next_expected_date' => $next,
-                'submitted_by'       => $actor->id,
-                'submitted_by_name'  => $actor->name,
+                'vehicle_id'             => $ticket->vehicle_id,
+                'status'                 => $data['status'] ?? null,
+                'delay_reason'           => $data['delay_reason'] ?? null,
+                'delay_reason_other'     => $data['delay_reason_other'] ?? null,
+                'summary'                => $data['summary'] ?? null,
+                'previous_expected_date' => $previous,
+                'next_expected_date'     => $next,
+                'submitted_by'           => $actor->id,
+                'submitted_by_name'      => $actor->name,
             ]);
 
-            // Advance the promised ready-by date when the garage pushed it back — the hand-entered date
-            // now wins over any originally-derived duration (see the intake rule). Everything downstream
-            // (ETA gauge, escalation, overdue) measures against expected_completion_date.
-            if ($next) {
-                $ticket->expected_completion_date = $next;
-            }
+            // The new ETA becomes the promise everything downstream (ETA gauge, escalation, overdue,
+            // derived status) measures against — the hand-entered date wins over any derived duration.
+            $ticket->expected_completion_date = $next;
             $ticket->last_checkpoint_at = now();
             $ticket->save();
 
@@ -143,7 +144,7 @@ class MaintenanceCheckpointService
      *   'overdue'   — past the promised day with no update (re-fires daily; red on the dashboard)
      *
      * @return array{expected_on:?string, is_estimated:bool, eta_status:string, days_left:int,
-     *               days_over:int, has_checkpoint:bool, last_checkpoint_at:?string, last_outcome:?string,
+     *               days_over:int, has_checkpoint:bool, last_checkpoint_at:?string,
      *               needs_update:bool, overdue:bool, escalation:?string}
      */
     public function monitorState(Maintenance $ticket, ?MaintenanceCheckpoint $latest = null): array
@@ -186,7 +187,6 @@ class MaintenanceCheckpointService
             'days_over'          => (int) ($eta['days_over'] ?? 0),
             'has_checkpoint'     => $last !== null || $latest !== null,
             'last_checkpoint_at' => optional($last ?: $latest?->created_at)->toIso8601String(),
-            'last_outcome'       => $latest?->outcome,
             'needs_update'       => $escalation !== null,
             'overdue'            => $escalation === 'overdue',
             'escalation'         => $escalation,

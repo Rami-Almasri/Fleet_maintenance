@@ -2,9 +2,9 @@
 // car. This is the customer-facing START of the maintenance workflow. Unlike the inspector's flow it
 // asks for no odometer / test drive: just the car, what the customer reported, and how bad it is.
 //
-// On submit the server (POST /maintenance-tickets/complaint) opens a ticket straight in the
-// Supervisors' dispatch queue (inspection_pending, trigger_reason = customer_reported), and instantly
-// alerts Management to assign a garage + gives the Inspector a heads-up. See openComplaint().
+// On submit the server (POST /complaints) creates a first-class Complaint entity (its own customer-support
+// lifecycle, NOT a maintenance ticket) and notifies the Inspector (Abu Maroof) to triage it — call the
+// customer, decide, and only send the car in if it needs real work. See ComplaintWorkflowService::open().
 
 import { useEffect, useMemo, useState } from 'react';
 import api from '../../api/client';
@@ -56,9 +56,10 @@ export default function ComplaintIntakeModal({ vehicles = [], onClose, onDone })
     setSaving(true);
     setError(null);
     try {
-      await api.post('/maintenance-tickets/complaint', {
+      await api.post('/complaints', {
         vehicle_id: Number(vehicleId),
-        fault_description: description.trim(),
+        description: description.trim(),
+        source: 'ops',
       });
       onDone?.(t('workflow.complaint.success'));
     } catch (e) {

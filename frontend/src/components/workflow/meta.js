@@ -157,6 +157,19 @@ export const SEVERITY_CHIP = {
 export const AT_GARAGE_STATUSES = ['under_repair', 'repair_review', 'ready_for_pickup', 'closed'];
 export const isAtGarage = (tk) => AT_GARAGE_STATUSES.includes(tk?.workflow_status);
 
+// Parts Ordering — a part can only be requested while the car is BEING INSPECTED (with the inspector for
+// the diagnostic / test drive) or IN THE WORKSHOP (physically at the garage). Everywhere else — awaiting
+// a dispatch decision, in transit, on-site, triage, back at our park, QA re-inspection, closed — the
+// "Request Part" button is hidden. Gates that button on every ticket surface (drawer footer, command
+// view, Parts card).
+export const PART_ORDERABLE_STATES = [
+  // Being inspected — the car is with the inspector (diagnostic / test drive).
+  'inspection_requested', 'inspection_diagnostic',
+  // In the workshop — the car is physically at the garage.
+  'under_repair', 'repair_review', 'ready_for_pickup',
+];
+export const canOrderParts = (tk) => PART_ORDERABLE_STATES.includes(tk?.workflow_status);
+
 // Per-fault (maintenance_task) status → presentation. `chip` styles the status pill (consistent with
 // SEVERITY_CHIP), `dot` is the tiny status indicator on the dense board card. Keys are the backend
 // MaintenanceTask::STATUSES contract; labels resolve from workflow.task.status.<key>.

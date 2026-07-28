@@ -40,6 +40,12 @@ class MaintenanceCheckpointController extends Controller
                 'responsibles'  => $this->checkpoints->recipientsFor($ticket)
                     ->map(fn ($u) => ['id' => $u->id, 'name' => $u->name])->values()->all(),
                 'assigned'      => $ticket->responsibles()->pluck('users.id')->all(),
+                // The ticket's faults — so the modal can surface Repair Intelligence per fault (read-only,
+                // the same panel used in the drawer). Excludes planned service / inspection tasks.
+                'faults'        => $ticket->tasks()
+                    ->where(fn ($q) => $q->whereNull('kind')->orWhere('kind', 'fault'))
+                    ->get(['id', 'symptom'])
+                    ->map(fn ($x) => ['id' => $x->id, 'symptom' => $x->symptom])->all(),
                 'checkpoints'   => $items,
                 'can_submit'    => optional(request()->user()) ? $this->checkpoints->canSubmit(request()->user(), $ticket) : false,
                 'can_manage'    => optional(request()->user()) ? $this->checkpoints->canManage(request()->user()) : false,
@@ -48,8 +54,9 @@ class MaintenanceCheckpointController extends Controller
     }
 
     /**
-     * File a checkpoint (multipart): the required OUTCOME + workshop status, an optional structured DELAY
-     * REASON, a summary, a pushed-back completion date, and any number of photo/video files. One save.
+     * File a progress update (multipart): the required new EXPECTED COMPLETION DATE, the REASON it moved
+     * (required only when the date actually changes), a workshop status, a progress note, and any number
+     * of photo/video files. One save. No manual "outcome" — the status is derived downstream from the ETA.
      */
     public function store(Request $request, Maintenance $ticket)
     {
@@ -60,21 +67,31 @@ class MaintenanceCheckpointController extends Controller
             }
 
             $data = $request->validate([
-                'outcome'            => ['required', Rule::in(MaintenanceCheckpoint::OUTCOMES)],
+                // The new ETA — the point of the update. Always required.
+                'next_expected_date' => ['required', 'date'],
                 'status'             => ['nullable', Rule::in(MaintenanceCheckpoint::STATUSES)],
-                // Structured delay reason is REQUIRED when the outcome is "delayed".
-                'delay_reason'       => ['nullable', 'required_if:outcome,delayed', Rule::in(MaintenanceCheckpoint::DELAY_REASONS)],
+                // WHY the ETA moved — validated against the catalogue; the required-when-it-changes rule is
+                // enforced below (it depends on the ticket's current ETA, which a static rule can't see).
+                'delay_reason'       => ['nullable', Rule::in(MaintenanceCheckpoint::DELAY_REASONS)],
                 // Free-text explanation is REQUIRED only when the reason is "other".
                 'delay_reason_other' => ['nullable', 'required_if:delay_reason,other', 'string', 'max:255'],
                 'summary'            => ['nullable', 'string', 'max:2000'],
-                'next_expected_date' => ['nullable', 'date'],
                 // Evidence — photos/videos, up to 256 MB each (same allow-list as repair videos).
                 'files'              => ['nullable', 'array', 'max:10'],
                 'files.*'            => ['file', 'mimetypes:video/mp4,video/quicktime,video/x-msvideo,video/webm,video/3gpp,image/jpeg,image/png,image/webp,image/heic,image/heif', 'max:262144'],
             ]);
 
-            // A non-delayed outcome carries no delay reason — drop any stray values so the row stays clean.
-            if ($data['outcome'] !== MaintenanceCheckpoint::OUTCOME_DELAYED) {
+            // Did the ETA actually move? Compare the new date to the promise currently in force. When it
+            // changes, a reason is mandatory (so managers always see WHY a car slipped); when it doesn't,
+            // any stray reason is dropped so the row stays clean.
+            $previous = $ticket->effectiveExpectedCompletion()?->startOfDay();
+            $next     = \Carbon\Carbon::parse($data['next_expected_date'])->startOfDay();
+            $etaChanged = $previous === null || ! $previous->equalTo($next);
+
+            if ($etaChanged && empty($data['delay_reason'])) {
+                return ResponseHelper::FailureResponse(null, 'Select a reason for the changed completion date.', 422);
+            }
+            if (! $etaChanged) {
                 $data['delay_reason'] = null;
                 $data['delay_reason_other'] = null;
             } elseif (($data['delay_reason'] ?? null) !== 'other') {
@@ -119,6 +136,37 @@ class MaintenanceCheckpointController extends Controller
                 'monitor'          => $active ? $this->checkpoints->monitorState($active) : null,
                 'checkpoints'      => $items,
             ], 'Vehicle checkpoints retrieved', 200);
+        });
+    }
+
+    /**
+     * Ensure the maintenance ticket a contract-sourced Maintenance-Progress row files its checkpoints
+     * against. Open type-U maintenance contracts have no workflow ticket of their own; the queue shows them
+     * with a null ticket_id, so the first time the supervisors file a checkpoint we lazily link one
+     * lightweight ticket to the contract (idempotent — keyed on contract_id) and hand back its id. The row
+     * (origin 'contract', no workflow_status) stays out of the workshop-log / open-workflow queries, so it
+     * never double-counts anywhere else. See DashboardService::contractProgressRows().
+     */
+    public function ensureForContract(Request $request, \App\Models\Contract $contract)
+    {
+        return $this->run(function () use ($request, $contract) {
+            $user = $request->user();
+            // Same submit authority as store(): the create permission, or an admin. (A contract car has no
+            // assigned responsibles until its ticket exists, so only the permission path applies here.)
+            if (! $user || ! $user->can('maintenance.checkpoint.create')) {
+                return ResponseHelper::FailureResponse(null, 'You are not allowed to file checkpoints.', 403);
+            }
+
+            $ticket = Maintenance::firstOrCreate(
+                ['contract_id' => $contract->id],
+                [
+                    'vehicle_id' => $contract->vehicle_id,
+                    'origin'     => 'contract',
+                    'out_date'   => $contract->out_date,
+                ],
+            );
+
+            return ResponseHelper::SuccessResponse(['ticket_id' => (int) $ticket->id], 'Ticket ready', 200);
         });
     }
 
@@ -252,15 +300,15 @@ class MaintenanceCheckpointController extends Controller
     private function checkpointArray(MaintenanceCheckpoint $c): array
     {
         return [
-            'id'                 => $c->id,
-            'outcome'            => $c->outcome,
-            'status'             => $c->status,
-            'delay_reason'       => $c->delay_reason,
-            'delay_reason_other' => $c->delay_reason_other,
-            'summary'            => $c->summary,
-            'next_expected_date' => optional($c->next_expected_date)->toDateString(),
-            'submitted_by_name'  => $c->submitted_by_name,
-            'created_at'         => optional($c->created_at)->toIso8601String(),
+            'id'                     => $c->id,
+            'status'                 => $c->status,
+            'delay_reason'           => $c->delay_reason,
+            'delay_reason_other'     => $c->delay_reason_other,
+            'summary'                => $c->summary,
+            'previous_expected_date' => optional($c->previous_expected_date)->toDateString(),
+            'next_expected_date'     => optional($c->next_expected_date)->toDateString(),
+            'submitted_by_name'      => $c->submitted_by_name,
+            'created_at'             => optional($c->created_at)->toIso8601String(),
             'media'              => $c->media->map(fn ($m) => [
                 'id'            => $m->id,
                 'kind'          => $m->kind,

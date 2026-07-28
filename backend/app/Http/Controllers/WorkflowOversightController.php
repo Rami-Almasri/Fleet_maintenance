@@ -7,8 +7,11 @@ use App\Models\FindingKeyword;
 use App\Models\Maintenance;
 use App\Models\User;
 use App\Models\Vehicle;
+use App\Models\VehicleLogEvent;
+use App\Services\VehicleLogService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 
 /**
  * Workflow Oversight — the read-only accountability & data-integrity layer over the Maintenance
@@ -483,9 +486,15 @@ class WorkflowOversightController extends Controller
     public function severityReview(Request $request)
     {
         try {
-            // The admin-curated keyword → risk lookup, lowercased for forgiving matching.
-            $library = FindingKeyword::active()->get(['keyword', 'risk'])
-                ->mapWithKeys(fn ($k) => [Str::lower(trim($k->keyword)) => $k->risk]);
+            // The admin-curated keyword library, lowercased for forgiving matching. We keep each keyword's
+            // risk AND its findings category (engine / brakes / …) so a flag can carry a real explainability
+            // block — what the risk is, its impact, and the recommended action (config/severity_impact.php).
+            $library = FindingKeyword::active()->get(['keyword', 'risk', 'category_key', 'category_label'])
+                ->mapWithKeys(fn ($k) => [Str::lower(trim($k->keyword)) => [
+                    'risk'           => $k->risk,
+                    'category_key'   => $k->category_key,
+                    'category_label' => $k->category_label,
+                ]]);
 
             $tickets = Maintenance::workflowTickets()
                 ->whereNotNull('fault_severity')
@@ -496,7 +505,13 @@ class WorkflowOversightController extends Controller
 
             $names = $this->userNames($tickets, ['inspected_by']);
 
+            // Prior QC decisions — the audit trail IS the state store in V1 (no dedicated table). The latest
+            // severity-review event per ticket tells us whether a recommendation was already Upgraded (applied)
+            // or Kept (reviewed & dismissed as a false alarm), plus who / when / why.
+            $decisions = $this->latestSeverityDecisions($tickets->pluck('id'));
+
             $rows = collect();
+            $upgradedCount = 0;
             foreach ($tickets as $t) {
                 $graded     = $t->fault_severity;
                 $gradedRank = $this->severityRank($graded);
@@ -506,7 +521,7 @@ class WorkflowOversightController extends Controller
                 $expected     = $graded;
 
                 // (a) critical-risk keyword among the findings.
-                [$kwRisk, $kwHit] = $this->topKeywordRisk($t, $library);
+                [$kwRisk, $kwHit, $kwCatKey, $kwCatLabel] = $this->topKeywordRisk($t, $library);
                 if ($kwRisk !== null) {
                     $r = $this->severityRank($kwRisk);
                     if ($r > $expectedRank) {
@@ -514,7 +529,7 @@ class WorkflowOversightController extends Controller
                         $expected     = $kwRisk;
                     }
                     if ($this->severityRank($kwRisk) > $gradedRank) {
-                        $reasons[] = ['type' => 'keyword', 'label' => 'Keyword "' . $kwHit . '" is graded ' . ucfirst($kwRisk), 'risk' => $kwRisk];
+                        $reasons[] = ['type' => 'keyword', 'label' => 'Keyword "' . $kwHit . '" is graded ' . ucfirst($kwRisk), 'risk' => $kwRisk, 'keyword' => $kwHit, 'category_key' => $kwCatKey, 'category_label' => $kwCatLabel];
                     }
                 }
 
@@ -532,9 +547,27 @@ class WorkflowOversightController extends Controller
                     $reasons[]    = ['type' => 'condition', 'label' => 'Car is graded RED (blocked from rent)', 'risk' => 'critical'];
                 }
 
+                $decision = $decisions[$t->id] ?? null;
+
+                // A prior UPGRADE means the recommendation was already applied — the ticket now grades at (or
+                // above) the recommendation, so it no longer surfaces as a mismatch. Count it for the KPI and
+                // move on; the audit history lives on the vehicle log.
+                if ($decision && $decision['decision'] === 'upgraded') {
+                    $upgradedCount++;
+                }
+
                 if (empty($reasons) || $expectedRank <= $gradedRank) {
                     continue; // graded appropriately (or higher) — not a mismatch
                 }
+
+                // The single strongest signal drives the headline explainability + confidence.
+                $top     = $this->topReason($reasons);
+                $gap     = $expectedRank - $gradedRank;
+                $explain = $this->explainSignal($top, $expected);
+                [$confidence, $confidenceBasis] = $this->signalConfidence($reasons, $top, $gap);
+
+                // State: 'kept' if the last decision dismissed this recommendation, else 'pending'.
+                $state = ($decision && $decision['decision'] === 'kept') ? 'kept' : 'pending';
 
                 $gm = Maintenance::FAULT_SEVERITY_META[$graded] ?? [];
                 $em = Maintenance::FAULT_SEVERITY_META[$expected] ?? [];
@@ -552,23 +585,125 @@ class WorkflowOversightController extends Controller
                     'expected_label'   => $em['label'] ?? ucfirst((string) $expected),
                     'expected_emoji'   => $em['emoji'] ?? null,
                     'expected_tone'    => $em['tone'] ?? null,
-                    'gap'              => $expectedRank - $gradedRank,
+                    'gap'              => $gap,
+                    'transition'       => $graded . '_' . $expected,   // e.g. routine_critical — the filter key
                     'reasons'          => $reasons,
+                    'explain'          => $explain,                    // detected / risk_category / impact / action
+                    'confidence'       => $confidence,                 // deterministic, from the rule library
+                    'confidence_basis' => $confidenceBasis,
                     'graded_by'        => $names[$t->inspected_by] ?? null,
                     'at'               => optional($t->inspected_at)->toIso8601String(),
+                    // Human decision (from the audit trail), null while still pending.
+                    'decision'         => $state,
+                    'decided_by'       => $decision['decided_by'] ?? null,
+                    'decided_at'       => $decision['decided_at'] ?? null,
+                    'decision_note'    => $decision['note'] ?? null,
                 ]);
             }
 
-            $sorted = $rows->sortByDesc('gap')->values();
+            // Pending first (highest gap on top), then reviewed/kept rows for the audit view.
+            $sorted = $rows->sortBy([
+                fn ($a, $b) => ($a['decision'] === 'pending' ? 0 : 1) <=> ($b['decision'] === 'pending' ? 0 : 1),
+                fn ($a, $b) => $b['gap'] <=> $a['gap'],
+            ])->values();
+
+            $pending = $sorted->where('decision', 'pending');
+            $kept    = $sorted->where('decision', 'kept');
 
             return ResponseHelper::SuccessResponse([
                 'rows'         => $sorted,
-                'total'        => $sorted->count(),
-                'critical'     => $sorted->where('expected', 'critical')->count(),
-                // Every ticket the inspector actually graded — the denominator for a grading-accuracy KPI
-                // (graded_total − total mismatches = the ones scored appropriately).
+                // KPI dashboard — the state of the QC queue.
+                'total'        => $pending->count() + $kept->count() + $upgradedCount, // every issue detected, any state
+                'pending'      => $pending->count(),
+                'upgraded'     => $upgradedCount,          // recommendations applied
+                'kept'         => $kept->count(),          // reviewed & dismissed (false alarms)
+                'critical'     => $pending->where('expected', 'critical')->count(),
+                // Transition breakdown over the still-pending queue (what kind of under-grading is open).
+                'transitions'  => [
+                    'routine_critical'  => $pending->where('transition', 'routine_critical')->count(),
+                    'moderate_critical' => $pending->where('transition', 'moderate_critical')->count(),
+                    'moderate_high'     => $pending->where('transition', 'moderate_high')->count(),
+                ],
+                // Every ticket the inspector actually graded — the denominator for a grading-accuracy read.
                 'graded_total' => $tickets->count(),
             ], 'Severity grade review retrieved', 200);
+        } catch (\Throwable $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
+     * Apply a supervisor's Quality-Control decision on an under-graded ticket. Two actions, both written
+     * to the vehicle log (the V1 audit trail + state store — no dedicated table yet):
+     *   • upgrade — raise the ticket's fault_severity (and the board's `severity` headline) to the
+     *     recommendation (or an explicit override), recording previous → new. The car re-grades so the
+     *     card falls off the pending queue on the next load.
+     *   • keep    — the recommendation is a false alarm; record the review + reason, leave the grade as-is.
+     *
+     * Write-gated (maintenance.manage) at the route. The read page stays insights.view.
+     */
+    public function decide(Request $request, Maintenance $ticket, VehicleLogService $log)
+    {
+        try {
+            $data = $request->validate([
+                'action'   => ['required', Rule::in(['upgrade', 'keep'])],
+                // Optional explicit target on upgrade (a supervisor may pick a tier other than the
+                // recommendation); defaults to the recommended severity computed below.
+                'severity' => ['nullable', Rule::in(Maintenance::FAULT_SEVERITIES)],
+                'note'     => ['nullable', 'string', 'max:2000'],
+            ]);
+
+            $actor    = $request->user();
+            $previous = $ticket->fault_severity;
+
+            if ($data['action'] === 'keep') {
+                $log->record($ticket, VehicleLogEvent::EVENT_SEVERITY_REVIEW_KEPT, $actor, [
+                    'description' => 'Severity review — kept ' . ($previous ?: 'current grade')
+                                     . ' (recommendation dismissed as a false alarm)'
+                                     . ($actor ? ' by ' . $actor->name : '')
+                                     . (($data['note'] ?? null) ? ': ' . $data['note'] : ''),
+                    'meta'        => [
+                        'decision'         => 'kept',
+                        'previous_severity' => $previous,
+                        'note'             => $data['note'] ?? null,
+                    ],
+                ]);
+
+                return ResponseHelper::SuccessResponse(['ticket_id' => $ticket->id, 'decision' => 'kept'], 'Severity review recorded', 200);
+            }
+
+            // upgrade — target the recommendation unless an explicit tier is supplied. Only ever raises,
+            // never lowers: a QC upgrade that would drop the grade is a no-op guard.
+            $target = $data['severity'] ?? Maintenance::FAULT_SEVERITY_CRITICAL;
+            if ($this->severityRank($target) <= $this->severityRank($previous)) {
+                return ResponseHelper::FailureResponse(null, 'The chosen grade is not higher than the current one — nothing to upgrade.', 422);
+            }
+
+            $ticket->fault_severity = $target;
+            $ticket->severity       = $target; // the board reads `severity` as the headline urgency, keep in lock-step
+            $ticket->save();
+
+            $pm = Maintenance::FAULT_SEVERITY_META[$previous] ?? [];
+            $tm = Maintenance::FAULT_SEVERITY_META[$target] ?? [];
+            $log->record($ticket, VehicleLogEvent::EVENT_SEVERITY_UPGRADED, $actor, [
+                'description' => 'Severity upgraded ' . ($pm['label'] ?? ucfirst((string) $previous))
+                                 . ' → ' . ($tm['label'] ?? ucfirst((string) $target))
+                                 . ($actor ? ' by ' . $actor->name : '')
+                                 . (($data['note'] ?? null) ? ': ' . $data['note'] : ''),
+                'meta'        => [
+                    'decision'          => 'upgraded',
+                    'previous_severity' => $previous,
+                    'new_severity'      => $target,
+                    'note'              => $data['note'] ?? null,
+                ],
+            ]);
+
+            return ResponseHelper::SuccessResponse([
+                'ticket_id'         => $ticket->id,
+                'decision'          => 'upgraded',
+                'previous_severity' => $previous,
+                'new_severity'      => $target,
+            ], 'Severity upgraded', 200);
         } catch (\Throwable $e) {
             return ResponseHelper::fromException($e);
         }
@@ -709,7 +844,8 @@ class WorkflowOversightController extends Controller
                 'mileage_readings_total'=> $mileage['readings_total'] ?? 0,
                 'left_garage'          => $garage['total'] ?? 0,
                 'needs_invoice'        => $garage['needs_request'] ?? 0,
-                'severity_mismatches'  => $severity['total'] ?? 0,
+                // The landing card counts what still NEEDS review (pending), not resolved/kept items.
+                'severity_mismatches'  => $severity['pending'] ?? $severity['total'] ?? 0,
                 'severity_critical'    => $severity['critical'] ?? 0,
                 'severity_graded_total'=> $severity['graded_total'] ?? 0,
                 'misdiagnoses'         => $misdiag['total'] ?? 0,
@@ -790,9 +926,10 @@ class WorkflowOversightController extends Controller
 
     /**
      * The highest-risk finding keyword on a ticket, matched against the library. Scans the ticket's
-     * findings text (inspector + garage) and the inspector's suggested findings; returns [risk, hitText]
-     * or [null, null]. Matching is forgiving: exact lowercased hit, else a library keyword contained in
-     * the finding text (or vice-versa) so "engine overheating" still catches the "overheating" keyword.
+     * findings text (inspector + garage) and the inspector's suggested findings; returns
+     * [risk, hitText, categoryKey, categoryLabel] or [null, null, null, null]. Matching is forgiving:
+     * exact lowercased hit, else a library keyword contained in the finding text (or vice-versa) so
+     * "engine overheating" still catches the "overheating" keyword.
      */
     private function topKeywordRisk(Maintenance $t, $library): array
     {
@@ -803,25 +940,148 @@ class WorkflowOversightController extends Controller
             ->unique();
 
         $bestRank = 0;
-        $bestRisk = null;
-        $bestHit  = null;
+        $best     = [null, null, null, null];
 
         foreach ($texts as $text) {
-            foreach ($library as $keyword => $risk) {
-                if ($keyword === '' ) {
+            foreach ($library as $keyword => $meta) {
+                if ($keyword === '') {
                     continue;
                 }
                 if ($text === $keyword || Str::contains($text, $keyword) || Str::contains($keyword, $text)) {
-                    $r = $this->severityRank($risk);
+                    $r = $this->severityRank($meta['risk']);
                     if ($r > $bestRank) {
                         $bestRank = $r;
-                        $bestRisk = $risk;
-                        $bestHit  = $keyword;
+                        $best     = [$meta['risk'], $keyword, $meta['category_key'], $meta['category_label']];
                     }
                 }
             }
         }
 
-        return [$bestRisk, $bestHit];
+        return $best;
+    }
+
+    /**
+     * The latest Severity-Review decision per ticket, read straight off the vehicle log (V1 has no
+     * dedicated table — the append-only audit trail IS the state store). Returns
+     * [ticket_id => ['decision' => upgraded|kept, 'decided_by', 'decided_at', 'note']].
+     */
+    private function latestSeverityDecisions($ticketIds): array
+    {
+        $ids = collect($ticketIds)->filter()->values();
+        if ($ids->isEmpty()) {
+            return [];
+        }
+
+        $events = VehicleLogEvent::query()
+            ->whereIn('maintenance_id', $ids)
+            ->whereIn('event_type', [VehicleLogEvent::EVENT_SEVERITY_UPGRADED, VehicleLogEvent::EVENT_SEVERITY_REVIEW_KEPT])
+            ->with('actor:id,name')
+            ->orderByDesc('occurred_at')
+            ->orderByDesc('id')
+            ->get(['id', 'maintenance_id', 'event_type', 'meta', 'actor_id', 'occurred_at']);
+
+        $out = [];
+        foreach ($events as $e) {
+            if (isset($out[$e->maintenance_id])) {
+                continue; // ordered newest-first, so the first hit per ticket is the current state
+            }
+            $out[$e->maintenance_id] = [
+                'decision'   => $e->event_type === VehicleLogEvent::EVENT_SEVERITY_UPGRADED ? 'upgraded' : 'kept',
+                'decided_by' => $e->actor?->name,
+                'decided_at' => optional($e->occurred_at)->toIso8601String(),
+                'note'       => $e->meta['note'] ?? null,
+            ];
+        }
+
+        return $out;
+    }
+
+    /** The single strongest reason driving a mismatch — highest risk rank, breakdown/condition break ties. */
+    private function topReason(array $reasons): array
+    {
+        $priority = ['breakdown' => 3, 'condition' => 2, 'keyword' => 1];
+        usort($reasons, function ($a, $b) use ($priority) {
+            $ra = $this->severityRank($a['risk'] ?? null);
+            $rb = $this->severityRank($b['risk'] ?? null);
+            return $rb <=> $ra ?: (($priority[$b['type']] ?? 0) <=> ($priority[$a['type']] ?? 0));
+        });
+        return $reasons[0] ?? [];
+    }
+
+    /**
+     * Build the explainability block for a mismatch — what was detected, the risk category it belongs to,
+     * the impact of leaving it under-graded, and the recommended action. Deterministic, curated copy from
+     * config/severity_impact.php, localised to the app locale (falls back to English).
+     */
+    private function explainSignal(array $top, string $expected): array
+    {
+        $impact = config('severity_impact');
+        $cat    = $top['category_key'] ?? null;
+        $node   = $impact['categories'][$cat] ?? $impact['_default'];
+
+        // "Detected" — the concrete signal the reviewer is judging.
+        $detected = match ($top['type'] ?? null) {
+            'keyword'   => $top['keyword'] ?? null,
+            'breakdown' => 'Reported as a breakdown',
+            'condition' => 'Car graded RED',
+            default     => null,
+        };
+
+        $action = $impact['actions'][$expected] ?? $impact['actions']['moderate'];
+
+        return [
+            'detected'      => $detected,
+            'risk_category' => $this->localise($node['risk_category'] ?? $impact['_default']['risk_category']),
+            'impact'        => $this->localise($node['impact'] ?? $impact['_default']['impact']),
+            'action'        => $this->localise($action),
+        ];
+    }
+
+    /** Pick the app-locale string from a {en, ar} copy node, defaulting to English. */
+    private function localise(array $node): ?string
+    {
+        return $node[app()->getLocale()] ?? $node['en'] ?? null;
+    }
+
+    /**
+     * Deterministic confidence that this ticket really is under-graded — how certain the RULE is, NOT a
+     * learned score. Anchored on the strongest signal (a breakdown is near-certain; an explicitly critical
+     * keyword is strong), lifted a little when independent signals agree and when the grading gap is wide.
+     * Returns [0-99 score, human-readable basis].
+     */
+    private function signalConfidence(array $reasons, array $top, int $gap): array
+    {
+        $type = $top['type'] ?? null;
+        $risk = $top['risk'] ?? null;
+
+        $base = match ($type) {
+            'breakdown' => 95,   // an undriveable car IS critical by definition
+            'condition' => 90,   // the car is already grounded (graded RED)
+            'keyword'   => $risk === 'critical' ? 85 : ($risk === 'high' ? 80 : 70),
+            default     => 70,
+        };
+
+        // Corroboration — each additional independent signal type beyond the strongest adds certainty.
+        $distinctTypes = collect($reasons)->pluck('type')->unique()->count();
+        $score = $base + max(0, $distinctTypes - 1) * 4;
+
+        // A two-tier jump (e.g. routine → critical) is a bigger, clearer miss than a one-tier nudge.
+        if ($gap >= 2) {
+            $score += 3;
+        }
+
+        $score = (int) min(99, max(50, $score));
+
+        $basis = match ($type) {
+            'breakdown' => 'Reported as a breakdown — an undriveable car is critical by definition.',
+            'condition' => 'The car is already graded RED (blocked from rent).',
+            'keyword'   => 'Keyword “' . ($top['keyword'] ?? '') . '” is a known ' . ($risk ?? 'moderate') . '-risk fault.',
+            default     => 'Signals point to a higher grade than the one recorded.',
+        };
+        if ($distinctTypes > 1) {
+            $basis .= ' ' . $distinctTypes . ' independent signals agree.';
+        }
+
+        return [$score, $basis];
     }
 }

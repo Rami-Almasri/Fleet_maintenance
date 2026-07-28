@@ -13,10 +13,20 @@ import {
   severityRank,
   severityTheme,
   iconPath,
-  timeAgo,
+  relativeTime,
+  exactTime,
+  typeLabel,
   actionLabel,
-  metaChips,
+  actionTarget,
+  metaHighlights,
+  metaEntities,
   dateBucket,
+  hasAction,
+  worstSeverity,
+  clusterByEntity,
+  clusterLabel,
+  PRIORITY_ORDER,
+  PRIORITY_SECTION,
 } from '../lib/notifications';
 
 // The "All" tab always leads; a per-role set of lanes follows (see visibleLanes),
@@ -52,6 +62,8 @@ export default function Notifications() {
 
   const [filter, setFilter] = useState('all');       // all | unread (server-side)
   const [activeTab, setActiveTab] = useState('all');  // 'all' or a specific notification type (client-side)
+  const [viewMode, setViewMode] = useState('priority'); // priority | time — how the board groups
+  const [focus, setFocus] = useState('all');          // all | critical | action — the quick workload filter
   const [items, setItems] = useState([]);
   const [page, setPage] = useState(1);
   const [meta, setMeta] = useState({ last_page: 1, total: 0 });
@@ -91,7 +103,8 @@ export default function Notifications() {
       try { await api.post(`/notifications/${n.id}/read`); } catch (_) {}
       refresh();
     }
-    if (n.url) navigate(n.url);
+    const to = actionTarget(n);
+    if (to) navigate(to);
   };
 
   // Mark read in place — clears the unread cue without leaving the page.
@@ -178,9 +191,33 @@ export default function Notifications() {
     }
   }, [tabs, activeTab]);
 
-  const visible = byTab[activeTab] || [];
+  const visible = useMemo(() => byTab[activeTab] || [], [byTab, activeTab]);
   const activeTabDef = tabs.find((t) => t.key === activeTab) || tabs[0];
-  const criticalCount = items.filter((n) => n.severity === 'critical' && !n.read).length;
+
+  // Workload stats for the ACTIVE lane — the numbers an operator reads first. Computed
+  // before the focus filter so the tiles always show the true lane totals.
+  const stats = useMemo(() => {
+    let critical = 0; let unread = 0; let action = 0;
+    for (const n of visible) {
+      if (n.severity === 'critical') critical += 1;
+      if (!n.read) unread += 1;
+      if (!n.read && hasAction(n)) action += 1;
+    }
+    return { total: visible.length, critical, unread, action };
+  }, [visible]);
+
+  // Apply the quick workload focus (Critical / Action required) on top of the lane.
+  const focused = useMemo(() => {
+    if (focus === 'critical') return visible.filter((n) => n.severity === 'critical');
+    if (focus === 'action') return visible.filter((n) => !n.read && hasAction(n));
+    return visible;
+  }, [visible, focus]);
+
+  // Reset focus when it would show nothing (e.g. after clearing the last critical item).
+  useEffect(() => {
+    if (focus === 'critical' && stats.critical === 0) setFocus('all');
+    if (focus === 'action' && stats.action === 0) setFocus('all');
+  }, [focus, stats.critical, stats.action]);
 
   // FilterChips options: unread count when present (indigo), else total (slate).
   const chipOptions = tabs.map((t) => {
@@ -193,6 +230,13 @@ export default function Notifications() {
       tone: unread > 0 ? 'indigo' : 'slate',
     };
   });
+
+  // Cluster a section's rows into groups/singles and render each.
+  const renderNodes = (rows) => clusterByEntity(rows).map((node) => (
+    node.type === 'group'
+      ? <VehicleGroup key={node.key} node={node} onAction={openNotification} onMarkRead={markRead} onDismiss={dismiss} />
+      : <NotificationRow key={node.item.id} n={node.item} onAction={openNotification} onMarkRead={markRead} onDismiss={dismiss} />
+  ));
 
   return (
     <div className="py-8">
@@ -211,50 +255,81 @@ export default function Notifications() {
           </Button>
         </PageHeader>
 
-        {/* glanceable totals */}
-        <div className="flex items-center gap-2 text-xs font-medium text-slate-400 sm:ps-3.5">
-          <span className="tabular-nums">{meta.total} total</span>
-          <span className="text-slate-300">·</span>
-          <span className={`tabular-nums ${unreadCount ? 'text-indigo-600' : ''}`}>{unreadCount} unread</span>
-          {criticalCount > 0 && (
-            <>
-              <span className="text-slate-300">·</span>
-              <span className="inline-flex items-center gap-1 tabular-nums text-red-600">
-                <span className="h-1.5 w-1.5 rounded-full bg-red-500" aria-hidden="true" />
-                {criticalCount} critical
-              </span>
-            </>
-          )}
+        {/* ── Workload summary — the numbers an operator reads first. Critical and ──
+            Action-required tiles double as one-click focus filters. */}
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <StatTile
+            label="Critical"
+            value={stats.critical}
+            tone="red"
+            icon="alert"
+            active={focus === 'critical'}
+            disabled={stats.critical === 0}
+            onClick={() => setFocus((f) => (f === 'critical' ? 'all' : 'critical'))}
+          />
+          <StatTile
+            label="Action required"
+            value={stats.action}
+            tone="indigo"
+            icon="check"
+            active={focus === 'action'}
+            disabled={stats.action === 0}
+            onClick={() => setFocus((f) => (f === 'action' ? 'all' : 'action'))}
+          />
+          <StatTile label="Unread" value={stats.unread} tone="blue" icon="bell" />
+          <StatTile label="In this lane" value={stats.total} tone="slate" icon={activeTabDef.icon || 'bell'} />
         </div>
 
-        {/* ── Controls: category chips (client filter) + unread toggle (server) ── */}
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <nav aria-label="Notification categories" className="min-w-0 overflow-x-auto pb-1">
+        {/* ── Controls: lane chips (client filter) · view mode · unread toggle ── */}
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <nav aria-label="Notification lanes" className="min-w-0 overflow-x-auto pb-1">
             <FilterChips value={activeTab} onChange={setActiveTab} options={chipOptions} />
           </nav>
 
-          {/* Unread-only toggle — server-side filter, kept subtle on the right. */}
-          <button
-            type="button"
-            onClick={() => setFilter((f) => (f === 'unread' ? 'all' : 'unread'))}
-            aria-pressed={filter === 'unread'}
-            className={[
-              'inline-flex shrink-0 items-center gap-2 self-start rounded-lg px-3 py-2 text-xs font-semibold ring-1 ring-inset transition-colors duration-150 sm:self-auto',
-              filter === 'unread'
-                ? 'bg-indigo-50 text-indigo-700 ring-indigo-200'
-                : 'bg-white text-slate-500 ring-slate-200 hover:bg-slate-50 hover:text-slate-700',
-            ].join(' ')}
-          >
-            <span
-              aria-hidden="true"
+          <div className="flex shrink-0 items-center gap-2">
+            {/* Group-by: priority vs time — the two ways an ops manager scans the board. */}
+            <div className="inline-flex items-center rounded-lg bg-slate-100 p-0.5" role="group" aria-label="Group by">
+              {[['priority', 'Priority'], ['time', 'Time']].map(([key, lbl]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setViewMode(key)}
+                  aria-pressed={viewMode === key}
+                  className={[
+                    'rounded-md px-3 py-1.5 text-xs font-semibold transition-colors duration-150',
+                    viewMode === key ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700',
+                  ].join(' ')}
+                >
+                  {lbl}
+                </button>
+              ))}
+            </div>
+
+            {/* Unread-only toggle — server-side filter. */}
+            <button
+              type="button"
+              onClick={() => setFilter((f) => (f === 'unread' ? 'all' : 'unread'))}
+              aria-pressed={filter === 'unread'}
               className={[
-                'h-2 w-2 rounded-full transition-colors',
-                filter === 'unread' ? 'bg-indigo-500' : 'bg-slate-300',
+                'inline-flex shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold ring-1 ring-inset transition-colors duration-150',
+                filter === 'unread'
+                  ? 'bg-indigo-50 text-indigo-700 ring-indigo-200'
+                  : 'bg-white text-slate-500 ring-slate-200 hover:bg-slate-50 hover:text-slate-700',
               ].join(' ')}
-            />
-            Unread only
-          </button>
+            >
+              <span aria-hidden="true" className={['h-2 w-2 rounded-full transition-colors', filter === 'unread' ? 'bg-indigo-500' : 'bg-slate-300'].join(' ')} />
+              Unread only
+            </button>
+          </div>
         </div>
+
+        {/* Active-lane context — what this lane is for, so the board always has a purpose. */}
+        {activeTab !== 'all' && activeTabDef.blurb && (
+          <p className="-mt-2 flex items-center gap-2 px-1 text-xs text-slate-500">
+            <svg className="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 8v4m0 4h.01M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z" /></svg>
+            {activeTabDef.blurb}
+          </p>
+        )}
 
         {/* ── Error ──────────────────────────────────────────────────────── */}
         {error && (
@@ -274,36 +349,45 @@ export default function Notifications() {
             />
           </Card>
         ) : visible.length === 0 ? (
+          <LaneEmptyState tab={activeTabDef} isAll={activeTab === 'all'} />
+        ) : focused.length === 0 ? (
           <Card>
             <EmptyState
-              title={activeTabDef.empty}
-              message={activeTab === 'all'
-                ? 'New fleet alerts will land here automatically as conditions change.'
-                : 'Switch to another tab — or check back as new alerts come in.'}
+              icon={(
+                <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" />
+                </svg>
+              )}
+              title={focus === 'critical' ? 'No critical items' : 'Nothing needs action'}
+              message={focus === 'critical'
+                ? 'Nothing in this lane is critical right now — the highest-priority work is clear.'
+                : 'Every item here has already been actioned or read. Nice work.'}
+              action={<Button variant="secondary" size="sm" onClick={() => setFocus('all')}>Show everything</Button>}
             />
           </Card>
         ) : (
-          <div className="stagger space-y-6">
-            {BUCKET_ORDER.map((bucket) => {
-              const rows = visible.filter((n) => dateBucket(n.created_at) === bucket);
-              if (rows.length === 0) return null;
-              return (
-                <section key={bucket} className="space-y-3">
-                  <h2 className="px-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                    {bucket}
-                  </h2>
-                  {rows.map((n) => (
-                    <NotificationRow
-                      key={n.id}
-                      n={n}
-                      onAction={openNotification}
-                      onMarkRead={markRead}
-                      onDismiss={dismiss}
-                    />
-                  ))}
-                </section>
-              );
-            })}
+          <div className="stagger space-y-5">
+            {viewMode === 'priority'
+              ? PRIORITY_ORDER.map((sev) => {
+                  const rows = focused.filter((n) => n.severity === sev);
+                  if (rows.length === 0) return null;
+                  return (
+                    <PrioritySection key={sev} severity={sev} rows={rows}>
+                      {renderNodes(rows)}
+                    </PrioritySection>
+                  );
+                })
+              : BUCKET_ORDER.map((bucket) => {
+                  const rows = focused.filter((n) => dateBucket(n.created_at) === bucket);
+                  if (rows.length === 0) return null;
+                  const unread = rows.filter((r) => !r.read).length;
+                  return (
+                    <section key={bucket} className="space-y-3">
+                      <SectionHeader accent="bg-slate-300" label={bucket} count={rows.length} unread={unread} />
+                      {renderNodes(rows)}
+                    </section>
+                  );
+                })}
 
             {page < meta.last_page && (
               <div className="flex justify-center pt-1">
@@ -319,96 +403,144 @@ export default function Notifications() {
   );
 }
 
+// Highlight-chip tone → classes. Highlights are the "why it matters" metrics
+// (days late, cost, km over) so they carry weight; danger/warn read hot.
+const HIGHLIGHT_TONE = {
+  danger: 'bg-red-50 text-red-700 ring-red-600/20',
+  warn: 'bg-amber-50 text-amber-700 ring-amber-600/20',
+  strong: 'bg-indigo-50 text-indigo-700 ring-indigo-600/20',
+  neutral: 'bg-slate-100 text-slate-600 ring-slate-500/15',
+};
+
+// One entity fact (Vehicle · D-58213). Icon-led, label above the value, so the
+// card reads as a structured record instead of a sentence. Actionable when `href`.
+function EntityField({ label, value, icon, mono, href }) {
+  const body = (
+    <>
+      <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-400 ring-1 ring-inset ring-slate-200/70 group-hover/ent:bg-indigo-50 group-hover/ent:text-indigo-500">
+        <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+          <path d={iconPath(icon)} />
+        </svg>
+      </span>
+      <span className="min-w-0">
+        <span className="block text-[10px] font-semibold uppercase tracking-wide text-slate-400">{label}</span>
+        <span className={`block truncate text-[13px] font-semibold text-slate-700 ${mono ? 'font-mono tabular-nums' : ''} ${href ? 'text-indigo-600 group-hover/ent:underline' : ''}`}>
+          {value}
+        </span>
+      </span>
+    </>
+  );
+
+  const cls = 'group/ent flex items-start gap-2 rounded-xl bg-slate-50/70 px-2.5 py-2 ring-1 ring-inset ring-slate-200/50 transition-colors';
+  return href
+    ? <a href={href} className={`${cls} hover:bg-indigo-50/60`} onClick={(e) => e.stopPropagation()}>{body}</a>
+    : <div className={cls}>{body}</div>;
+}
+
+// Primary CTA colour = the card's urgency, so the next step on a critical item reads red.
+const CTA_VARIANT = { critical: 'danger', warning: 'warning', info: 'primary', success: 'success' };
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Notification row — a clean, breathable Aurora card.
+// Notification card — the operations "work item".
 //
-// Hierarchy: soft severity-tinted icon tile · bold dark title · muted body ·
-// glanceable badges · primary CTA. Unread is a quiet cue (a coloured dot +
-// faint accent rail), never a loud banner. Read rows recede to plain white.
+// Reads top-to-bottom as: WHAT (icon tile · severity · type · title),
+// WHY (highlight metrics), WHO/WHAT (entity grid: vehicle · customer · contract ·
+// ticket · garage · driver), and WHAT NEXT (severity-coloured CTA + mark-read).
+// A severity rail + tint carry urgency; unread criticals dominate, read cards recede.
+// `grouped` strips the outer frame + redundant vehicle chip when nested in a VehicleGroup.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function NotificationRow({ n, onAction, onMarkRead, onDismiss }) {
+function NotificationRow({ n, onAction, onMarkRead, onDismiss, grouped = false }) {
   const theme = severityTheme(n.severity);
-  const chips = metaChips(n);
+  const highlights = metaHighlights(n);
+  let entities = metaEntities(n);
+  if (grouped) entities = entities.filter((e) => e.key !== 'plate' && e.key !== 'ticket');
   const label = actionLabel(n);
+  const kind = typeLabel(n.type);
+  const isCritical = n.severity === 'critical';
+  const emphasize = !n.read && (isCritical || n.severity === 'warning');
 
-  return (
-    <article
-      className={[
-        'group relative flex gap-4 rounded-2xl border border-slate-200/60 bg-white p-5 shadow-soft hover-lift',
-        n.read ? '' : 'bg-indigo-50/20',
-      ].join(' ')}
-    >
-      {/* unread accent rail — faint, only when unread */}
-      {!n.read && (
-        <span className={`absolute inset-y-3 left-0 w-1 rounded-full ${theme.accent}`} aria-hidden="true" />
-      )}
+  // Grouped members sit inside a shared frame → flat, divided rows. Standalone cards
+  // carry their own frame, severity rail and (for hot unread items) a tinted body.
+  const shell = grouped
+    ? 'group relative flex gap-4 p-4 transition-colors duration-150 hover:bg-slate-50'
+    : [
+        'group relative overflow-hidden rounded-2xl border shadow-soft transition-all duration-150 hover:-translate-y-px hover:shadow-card',
+        isCritical && !n.read ? 'border-red-200' : 'border-slate-200/70',
+        emphasize ? theme.cardTint : 'bg-white',
+        n.read ? '' : `ring-1 ring-inset ${theme.ring}`,
+      ].join(' ');
 
-      {/* icon tile — soft tint, carries severity colour without shouting */}
-      <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${theme.chipBg} ${theme.chipText}`}>
+  const inner = (
+    <>
+      {/* icon tile — critical unread gets the solid gradient tile so it pops hardest */}
+      <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${isCritical && !n.read ? `${theme.iconBg} text-white shadow-sm` : `${theme.chipBg} ${theme.chipText}`}`}>
         <svg aria-hidden="true" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
           <path d={iconPath(n.icon)} />
         </svg>
       </div>
 
       <div className="min-w-0 flex-1">
-        {/* title row + timestamp + dismiss */}
         <div className="flex items-start gap-3">
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <Badge tone={SEVERITY_TONE[n.severity] || 'blue'} dot>{theme.label}</Badge>
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{kind}</span>
               {!n.read && <span className={`h-2 w-2 shrink-0 rounded-full ${theme.dot}`} aria-label="unread" />}
-              <h3 className={`text-sm leading-snug ${n.read ? 'font-medium text-slate-600' : 'font-bold text-slate-900'}`}>
-                {n.title}
-              </h3>
             </div>
-            {n.body && (
-              <p className="mt-1 text-[13px] leading-relaxed text-slate-500">{n.body}</p>
-            )}
+            <h3 className={`mt-1.5 text-sm leading-snug ${n.read ? 'font-semibold text-slate-700' : 'font-bold text-slate-900'}`}>
+              {n.title}
+            </h3>
+            {n.body && <p className="mt-1 text-[13px] leading-relaxed text-slate-500">{n.body}</p>}
           </div>
 
-          <div className="flex shrink-0 items-center gap-1">
-            <span className="whitespace-nowrap text-xs font-medium tabular-nums text-slate-400">{timeAgo(n.created_at)}</span>
-            {onDismiss && (
-              <button
-                type="button"
-                onClick={() => onDismiss(n.id)}
-                className="rounded-lg p-1 text-slate-300 opacity-0 transition-colors duration-150 hover:bg-slate-100 hover:text-slate-500 focus-visible:opacity-100 group-hover:opacity-100"
-                title="Dismiss"
-                aria-label="Dismiss notification"
-              >
-                <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            )}
+          {/* timestamp (exact on hover) + dismiss */}
+          <div className="flex shrink-0 flex-col items-end gap-1">
+            <div className="flex items-center gap-1">
+              <time dateTime={n.created_at} title={exactTime(n.created_at)} className="whitespace-nowrap text-xs font-medium text-slate-400">
+                {relativeTime(n.created_at)}
+              </time>
+              {onDismiss && (
+                <button
+                  type="button"
+                  onClick={() => onDismiss(n.id)}
+                  className="rounded-lg p-1 text-slate-300 opacity-0 transition-colors duration-150 hover:bg-slate-100 hover:text-slate-500 focus-visible:opacity-100 group-hover:opacity-100"
+                  title="Dismiss"
+                  aria-label="Dismiss notification"
+                >
+                  <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              )}
+            </div>
+            {!grouped && <span className="hidden whitespace-nowrap text-[10px] tabular-nums text-slate-300 sm:block">{exactTime(n.created_at)}</span>}
           </div>
         </div>
 
-        {/* badges: severity + glanceable meta chips */}
-        <div className="mt-3 flex flex-wrap items-center gap-1.5">
-          <Badge tone={SEVERITY_TONE[n.severity] || 'blue'} dot>{theme.label}</Badge>
-          {chips.map((c, i) => (
-            <span
-              key={i}
-              className={[
-                'inline-flex items-center rounded-lg px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset',
-                c.plate
-                  ? 'bg-slate-50 font-mono tabular-nums text-slate-600 ring-slate-200'
-                  : c.tone === 'strong'
-                    ? `${theme.chipBg} ${theme.chipText} ring-transparent`
-                    : 'bg-slate-50 text-slate-600 ring-slate-200',
-              ].join(' ')}
-            >
-              {c.text}
-            </span>
-          ))}
-        </div>
+        {/* highlights — the urgency metrics */}
+        {highlights.length > 0 && (
+          <div className="mt-3 flex flex-wrap items-center gap-1.5">
+            {highlights.map((h, i) => (
+              <span key={i} className={`inline-flex items-center rounded-lg px-2 py-0.5 text-[11px] font-bold capitalize ring-1 ring-inset ${HIGHLIGHT_TONE[h.tone] || HIGHLIGHT_TONE.neutral}`}>
+                {h.text}
+              </span>
+            ))}
+          </div>
+        )}
 
-        {/* actions: primary CTA + ghost "mark read" */}
+        {/* entities — the structured who/what grid */}
+        {entities.length > 0 && (
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {entities.map((e) => <EntityField key={e.key} {...e} />)}
+          </div>
+        )}
+
+        {/* actions: severity-coloured primary CTA + ghost "mark read" */}
         {(label || (onMarkRead && !n.read)) && (
           <div className="mt-4 flex items-center gap-2">
             {label && (
-              <Button variant="primary" size="sm" onClick={() => onAction?.(n)}>
+              <Button variant={CTA_VARIANT[n.severity] || 'primary'} size={grouped ? 'sm' : 'md'} onClick={() => onAction?.(n)} className="shadow-sm">
                 {label}
                 <svg aria-hidden="true" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M9 5l7 7-7 7" />
@@ -416,14 +548,195 @@ function NotificationRow({ n, onAction, onMarkRead, onDismiss }) {
               </Button>
             )}
             {onMarkRead && !n.read && (
-              <Button variant="ghost" size="sm" onClick={() => onMarkRead(n)}>
+              <Button variant="ghost" size={grouped ? 'sm' : 'md'} onClick={() => onMarkRead(n)}>
                 Mark read
               </Button>
             )}
           </div>
         )}
       </div>
+    </>
+  );
+
+  if (grouped) return <article className={shell}>{inner}</article>;
+
+  return (
+    <article className={shell}>
+      <span className={`absolute inset-y-0 left-0 ${isCritical ? 'w-1.5' : 'w-1'} ${theme.accent} ${n.read ? 'opacity-40' : ''}`} aria-hidden="true" />
+      <div className="flex gap-4 p-5 pl-6">{inner}</div>
     </article>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Workload stat tile — the glanceable counts across the top. Critical & Action
+// tiles are buttons that toggle a focus filter; the rest are plain read-outs.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const STAT_TONE = {
+  red: { ring: 'ring-red-200', activeRing: 'ring-red-400', bg: 'bg-red-50', text: 'text-red-600', icon: 'bg-red-100 text-red-600' },
+  indigo: { ring: 'ring-indigo-200', activeRing: 'ring-indigo-400', bg: 'bg-indigo-50', text: 'text-indigo-600', icon: 'bg-indigo-100 text-indigo-600' },
+  blue: { ring: 'ring-blue-200', activeRing: 'ring-blue-400', bg: 'bg-blue-50', text: 'text-blue-600', icon: 'bg-blue-100 text-blue-600' },
+  slate: { ring: 'ring-slate-200', activeRing: 'ring-slate-400', bg: 'bg-slate-50', text: 'text-slate-700', icon: 'bg-slate-100 text-slate-500' },
+};
+
+function StatTile({ label, value, tone = 'slate', icon = 'bell', active = false, disabled = false, onClick }) {
+  const t = STAT_TONE[tone] || STAT_TONE.slate;
+  const clickable = !!onClick && !disabled;
+  const zero = !value;
+  return (
+    <button
+      type="button"
+      onClick={clickable ? onClick : undefined}
+      aria-pressed={onClick ? active : undefined}
+      disabled={!clickable}
+      className={[
+        'flex items-center gap-3 rounded-2xl border bg-white px-4 py-3 text-left shadow-soft transition-all duration-150',
+        active ? `${t.bg} ring-2 ${t.activeRing} border-transparent` : 'border-slate-200/70',
+        clickable ? 'hover:-translate-y-px hover:shadow-card focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2' : 'cursor-default',
+        zero && !active ? 'opacity-70' : '',
+      ].join(' ')}
+    >
+      <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${zero ? 'bg-slate-100 text-slate-400' : t.icon}`}>
+        <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <path d={iconPath(icon)} />
+        </svg>
+      </span>
+      <span className="min-w-0">
+        <span className={`block text-xl font-bold leading-none tabular-nums ${zero ? 'text-slate-400' : t.text}`}>{value}</span>
+        <span className="mt-1 block truncate text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</span>
+      </span>
+    </button>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Section header — a coloured spine + label + count. Shared by priority & time views.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function SectionHeader({ accent, label, sub, count, unread }) {
+  return (
+    <div className="flex items-center gap-2.5 px-1">
+      <span className={`h-5 w-1.5 rounded-full ${accent}`} aria-hidden="true" />
+      <h2 className="text-sm font-bold text-slate-800">{label}</h2>
+      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold tabular-nums text-slate-500">{count}</span>
+      {sub && <span className="hidden text-xs text-slate-400 sm:inline">· {sub}</span>}
+      {unread > 0 && (
+        <span className="ml-auto rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-bold tabular-nums text-indigo-600">{unread} unread</span>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Priority section — Critical gets a dominant framed panel; the rest are plain
+// sections under a coloured header so the eye falls to the top of the page first.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function PrioritySection({ severity, rows, children }) {
+  const theme = severityTheme(severity);
+  const def = PRIORITY_SECTION[severity];
+  const unread = rows.filter((r) => !r.read).length;
+
+  if (severity === 'critical') {
+    return (
+      <section className="overflow-hidden rounded-2xl border-2 border-red-200 bg-red-50/40 shadow-card">
+        <header className="flex items-center gap-3 bg-gradient-to-r from-red-500 to-rose-600 px-4 py-3 text-white">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-white/20">
+            <svg aria-hidden="true" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
+            </svg>
+          </span>
+          <div className="min-w-0">
+            <p className="text-sm font-bold">Critical · {rows.length} need{rows.length === 1 ? 's' : ''} immediate attention</p>
+            <p className="text-xs text-red-50/90">Start here — highest-priority work in your fleet right now.</p>
+          </div>
+          {unread > 0 && <span className="ml-auto rounded-full bg-white/20 px-2.5 py-1 text-[11px] font-bold tabular-nums">{unread} unread</span>}
+        </header>
+        <div className="space-y-3 p-3">{children}</div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="space-y-3">
+      <SectionHeader accent={theme.accent} label={def.label} sub={def.sub} count={rows.length} unread={unread} />
+      {children}
+    </section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VehicleGroup — the several alerts piled on one car / one repair, collapsed into a
+// single work item with a shared header so the board reads as vehicles, not rows.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function VehicleGroup({ node, onAction, onMarkRead, onDismiss }) {
+  const worst = worstSeverity(node.items);
+  const theme = severityTheme(worst);
+  const heading = clusterLabel(node);
+  const unread = node.items.filter((r) => !r.read).length;
+  const isPlate = node.key.startsWith('plate:');
+
+  return (
+    <section className={`overflow-hidden rounded-2xl border shadow-soft transition-shadow hover:shadow-card ${worst === 'critical' ? 'border-red-200' : 'border-slate-200/70'}`}>
+      <header className="flex items-center gap-3 border-b border-slate-100 bg-slate-50/80 px-4 py-2.5">
+        <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${theme.chipBg} ${theme.chipText}`}>
+          <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <path d={iconPath(isPlate ? 'car' : 'wrench')} />
+          </svg>
+        </span>
+        <div className="min-w-0">
+          <p className={`truncate text-sm font-bold text-slate-800 ${isPlate ? 'font-mono' : ''}`}>{heading}</p>
+          <p className="text-[11px] font-medium text-slate-400">{node.items.length} related alerts on this {isPlate ? 'vehicle' : 'ticket'}</p>
+        </div>
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          <Badge tone={SEVERITY_TONE[worst] || 'blue'} dot>{theme.label}</Badge>
+          {unread > 0 && <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-bold tabular-nums text-indigo-600">{unread} new</span>}
+        </div>
+      </header>
+      <div className="divide-y divide-slate-100">
+        {node.items.map((n) => (
+          <NotificationRow key={n.id} n={n} grouped onAction={onAction} onMarkRead={onMarkRead} onDismiss={onDismiss} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Lane empty state — never a dead end. Explains what belongs in the lane and what
+// the operator can expect to land here, so an empty lane still reads as "on top of it".
+// ─────────────────────────────────────────────────────────────────────────────
+
+function LaneEmptyState({ tab, isAll }) {
+  const blurb = tab.blurb
+    ? `${tab.blurb.charAt(0).toUpperCase()}${tab.blurb.slice(1)}`
+    : 'Operational alerts for this lane';
+  return (
+    <Card>
+      <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
+        <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-500 ring-1 ring-inset ring-emerald-200/70">
+          <svg className="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" />
+          </svg>
+        </div>
+        <p className="text-sm font-bold text-slate-900">{isAll ? "You're all caught up" : tab.empty}</p>
+        <p className="mt-1.5 max-w-md text-sm text-slate-500">
+          {isAll
+            ? 'Nothing needs you right now. New fleet alerts land here automatically the moment conditions change.'
+            : `Nothing needs you in this lane right now.`}
+        </p>
+        {!isAll && (
+          <div className="mt-4 flex items-start gap-2 rounded-xl bg-slate-50 px-3.5 py-2.5 text-left ring-1 ring-inset ring-slate-200/60">
+            <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-white text-slate-400 ring-1 ring-inset ring-slate-200">
+              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={iconPath(tab.icon || 'bell')} /></svg>
+            </span>
+            <span className="text-xs text-slate-500"><span className="font-semibold text-slate-600">What lands here:</span> {blurb}.</span>
+          </div>
+        )}
+      </div>
+    </Card>
   );
 }
 

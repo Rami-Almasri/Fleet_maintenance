@@ -23,15 +23,16 @@ import Contracts from './pages/Contracts';
 import ContractDetail from './pages/contracts/ContractDetail';
 import ContractForm from './pages/contracts/ContractForm';
 import Vendors from './pages/Vendors';
-import MaintenanceAnalytics from './pages/MaintenanceAnalytics';
 import MaintenanceHistory from './pages/MaintenanceHistory';
 import MaintenanceWorkflow from './pages/MaintenanceWorkflow';
+import MaintenanceCheckpoints from './pages/MaintenanceCheckpoints';
 import CarStatus from './pages/CarStatus';
 import CarStatusVehicle from './pages/CarStatusVehicle';
 import MaintenanceRecommendations from './pages/MaintenanceRecommendations';
 import MyMaintenanceQueue from './pages/MyMaintenanceQueue';
 import InspectionReviewQueue from './pages/InspectionReviewQueue';
-import InspectionIntelligenceCenter from './pages/InspectionIntelligenceCenter';
+import ComplaintsCenter from './pages/ComplaintsCenter';
+import DriverObservations from './pages/DriverObservations';
 import MaintenanceForesight from './pages/MaintenanceForesight';
 import FleetUtilization from './pages/FleetUtilization';
 import MaintenanceSwap from './pages/MaintenanceSwap';
@@ -47,6 +48,7 @@ import DamageAccidents from './pages/DamageAccidents';
 import Profitability from './pages/Profitability';
 import CostIntelligence from './pages/CostIntelligence';
 import ServiceDueBoard from './pages/ServiceDueBoard';
+import EventClassificationReview from './pages/EventClassificationReview';
 import MileageCenter from './pages/MileageCenter';
 import DataHealth from './pages/DataHealth';
 import FinancialConflicts from './pages/FinancialConflicts';
@@ -59,9 +61,7 @@ import Users from './pages/Users';
 import NotFound from './pages/NotFound';
 import GarageInvoicePortal from './pages/GarageInvoicePortal';
 import CompletedRepairs from './pages/CompletedRepairs';
-import WorkflowOversight from './pages/oversight/WorkflowOversight';
 import MileageDiscrepancies from './pages/oversight/MileageDiscrepancies';
-import StageAccountability from './pages/oversight/StageAccountability';
 import GarageInvoiceQueue from './pages/oversight/GarageInvoiceQueue';
 import SeverityReview from './pages/oversight/SeverityReview';
 import Misdiagnoses from './pages/oversight/Misdiagnoses';
@@ -113,6 +113,11 @@ export default function App() {
                 <Route path="/apps/:moduleId" element={<ModuleOverview />} />
                 {/* Vehicle Readiness board retired — send the old path to the Fleet Health hub. */}
                 <Route path="/readiness" element={<Navigate to="/inspections/schedules" replace />} />
+
+                {/* Event Type layer — human-in-the-loop classification review (needs_review queue). */}
+                <Route element={<RequirePermission permission="maintenance.manage" />}>
+                  <Route path="/classification-review" element={<EventClassificationReview />} />
+                </Route>
 
                 <Route element={<RequirePermission permission="users.manage" />}>
                   {/* Admin-only Simulation Panel — force a live demo scenario, gated again server-side by demo_mode. */}
@@ -189,10 +194,12 @@ export default function App() {
                 </Route>
 
                 <Route element={<RequirePermission permission="maintenance.view" />}>
-                  {/* Car Status — the operations control center (KPIs + live table + widgets), and the
-                      per-vehicle operational profile it opens into (hosts the live Maintenance Workflow). */}
+                  {/* Car Status — the live stage board: every car in the maintenance workflow by the stage
+                      it's in and who's responsible for it there; opens into the per-vehicle operational profile. */}
                   <Route path="/car-status" element={<CarStatus />} />
                   <Route path="/car-status/:vehicleId" element={<CarStatusVehicle />} />
+                  {/* Old Maintenance Operations control center — folded into Car Status; keep the path alive. */}
+                  <Route path="/maintenance-operations" element={<Navigate to="/car-status" replace />} />
                   {/* Old Maintenance Board retired — the Workflow board is now the single maintenance hub. */}
                   <Route path="/maintenance" element={<Navigate to="/maintenance-workflow" replace />} />
                   {/* Old Workflow Hub — retired; point at the live Workflow board. */}
@@ -200,17 +207,28 @@ export default function App() {
                   {/* "Booked in Shop" now lives inside the Fleet Health hub — redirect the old path. */}
                   <Route path="/maintenance-bookings" element={<Navigate to="/inspections/schedules?tab=bookings" replace />} />
                   <Route path="/maintenance-workflow" element={<MaintenanceWorkflow />} />
+                  {/* Complaints Center — management & follow-up view of every customer complaint + its timeline. */}
+                  <Route path="/complaints" element={<ComplaintsCenter />} />
+                  {/* Deep link from a complaint notification: opens that complaint's drawer over the Center. */}
+                  <Route path="/complaints/:id" element={<ComplaintsCenter />} />
+                  {/* Driver Observations — lightweight handover notes; may raise an inspection request. */}
+                  <Route path="/driver-observations" element={<DriverObservations />} />
                   {/* Deep link from notifications: focuses one ticket on the board */}
                   <Route path="/maintenance-workflow/:id" element={<MaintenanceWorkflow />} />
                   {/* Pre-maintenance Recommendation queue — Supervisor triage before the active board */}
                   <Route path="/maintenance-recommendations" element={<MaintenanceRecommendations />} />
                   <Route path="/my-maintenance-queue" element={<MyMaintenanceQueue />} />
+                  {/* Maintenance Progress — the supervisors' checkpoint queue; notifications deep-link here
+                      (?ticket=<id>) to open a car's progress form directly. */}
+                  <Route path="/maintenance-progress" element={<MaintenanceCheckpoints />} />
                   {/* Fixed & Completed Repairs ledger — every closed ticket with its full story */}
                   <Route path="/completed-repairs" element={<CompletedRepairs />} />
                   <Route path="/maintenance-foresight" element={<MaintenanceForesight />} />
                   <Route path="/garages" element={<Garages />} />
                   <Route path="/finding-keywords" element={<FindingKeywords />} />
-                  <Route path="/maintenance-analytics" element={<MaintenanceAnalytics />} />
+                  {/* Maintenance Analytics is marked "Coming Soon" in the module registry —
+                      redirect the old URL so the unfinished page isn't reachable directly. */}
+                  <Route path="/maintenance-analytics" element={<Navigate to="/apps/fleet-intelligence" replace />} />
                   <Route path="/maintenance-history" element={<MaintenanceHistory />} />
                   <Route path="/damage-accidents" element={<DamageAccidents />} />
                 </Route>
@@ -232,7 +250,6 @@ export default function App() {
                   <Route path="/cost-capture" element={<QuickCostInput />} />
                   {/* Inspection Request Review Gate — Controllers (Lin & Marwa) approve/reject before Abu Maroof is notified */}
                   <Route path="/inspection-review" element={<InspectionReviewQueue />} />
-                  <Route path="/inspection-intelligence" element={<InspectionIntelligenceCenter />} />
                 </Route>
 
                 <Route element={<RequirePermission permission="insights.view" />}>
@@ -256,9 +273,7 @@ export default function App() {
                   <Route path="/financial-conflicts" element={<FinancialConflicts />} />
                   <Route path="/financial-reconciliation" element={<FinancialReconciliation />} />
                   {/* Workflow Oversight — accountability & data-integrity suite over the maintenance workflow. */}
-                  <Route path="/oversight" element={<WorkflowOversight />} />
                   <Route path="/oversight/mileage" element={<MileageDiscrepancies />} />
-                  <Route path="/oversight/stages" element={<StageAccountability />} />
                   <Route path="/oversight/left-garage" element={<GarageInvoiceQueue />} />
                   <Route path="/oversight/severity" element={<SeverityReview />} />
                   <Route path="/oversight/misdiagnoses" element={<Misdiagnoses />} />

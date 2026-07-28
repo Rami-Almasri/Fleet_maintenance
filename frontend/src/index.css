@@ -130,6 +130,18 @@ h1, h2, h3, .font-display {
 .sidebar-scroll { scrollbar-color: rgb(255 255 255 / 0.15) transparent; }
 .sidebar-scroll::-webkit-scrollbar-thumb { background: rgb(255 255 255 / 0.14); background-clip: content-box; }
 
+/* Module tab bar: an always-visible, grabbable horizontal scrollbar so the user
+   can slide through tabs that overflow the width. Thicker than the default and
+   drawn in slate so it reads as a real handle on the light glass bar. */
+.tabbar-scroll { overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; scrollbar-color: rgb(100 116 139 / 0.55) transparent; cursor: grab; }
+.tabbar-scroll.is-dragging { cursor: grabbing; }
+.tabbar-scroll::-webkit-scrollbar { height: 9px; }
+.tabbar-scroll::-webkit-scrollbar-track { background: transparent; }
+.tabbar-scroll::-webkit-scrollbar-thumb { background: rgb(100 116 139 / 0.5); border-radius: 9999px; border: 2px solid transparent; background-clip: content-box; }
+.tabbar-scroll::-webkit-scrollbar-thumb:hover { background: rgb(71 85 105 / 0.75); background-clip: content-box; }
+[data-theme='dark'] .tabbar-scroll { scrollbar-color: rgb(148 163 184 / 0.55) transparent; }
+[data-theme='dark'] .tabbar-scroll::-webkit-scrollbar-thumb { background: rgb(148 163 184 / 0.5); background-clip: content-box; }
+
 /* Shimmer sweep for skeletons / loading accents. */
 .shimmer { position: relative; overflow: hidden; }
 .shimmer::after {

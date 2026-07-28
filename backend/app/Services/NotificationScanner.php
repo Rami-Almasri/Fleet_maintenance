@@ -10,6 +10,9 @@ use App\Models\User;
 use App\Models\Vehicle;
 use App\Models\VehicleRegistration;
 use App\Notifications\FleetAlert;
+use App\Services\State\MaintenanceDelay;
+use App\Services\State\MaintenanceDelayResolver;
+use App\Services\State\OperationalStateLoader;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -45,7 +48,7 @@ class NotificationScanner
         'service_reminder:', 'contact_reminder:',
         'rental_expiring:', 'invoice_overdue:', 'inspection_due:',
         'booking_in_maintenance:', 'booking_readiness:', 'deferred_maint_return:',
-        'test_interrupted:',
+        'part_delivery_overdue:', 'test_interrupted:',
     ];
 
     /**
@@ -77,6 +80,7 @@ class NotificationScanner
         'booking_in_maintenance' => 'contracts.view',      // rental desk: a booked car still in the workshop
         'booking_readiness'      => 'booking_readiness.view', // rental desk: an upcoming booking whose car needs prep
         'deferred_maintenance_return' => 'maintenance.manage', // supervisors/ops: car back from rental still owes the workshop
+        'part_delivery_overdue'       => 'parts.view',          // parts desk: a purchased part is past its promised delivery date
         'test_interrupted'            => 'maintenance.manage',   // controllers (Leen): a recommended test lapsed because the car went back on rent
     ];
 
@@ -87,6 +91,8 @@ class NotificationScanner
         private MaintenanceForecastService $forecast,
         private OperationsService $operations,
         private BookingReadinessService $bookingReadiness,
+        private OperationalStateLoader $loader,
+        private MaintenanceDelayResolver $delayResolver,
     ) {}
 
     /**
@@ -300,6 +306,7 @@ class NotificationScanner
             ->concat($this->deferredMaintenanceReturns())
             ->concat($this->invoiceOverdue())
             ->concat($this->inspectionDue())
+            ->concat($this->partsAwaitingDelivery())
             ->concat($this->testRecommendationsInterrupted())
             ->all();
     }
@@ -343,6 +350,54 @@ class NotificationScanner
                 'icon'     => 'wrench',
                 'meta'     => ['plate' => $r['plate'], 'garage' => $r['garage'], 'days_overdue' => $r['days_overdue']],
             ]);
+    }
+
+    /**
+     * The proactive "chase the supplier" nudge for the parts desk. This detector does NOT own the delay
+     * rule — it CONSUMES the single derived source ({@see MaintenanceDelayResolver}) over the open-ticket
+     * graph ({@see OperationalStateLoader}) and asks only: "is this a DERIVED parts delay whose promised
+     * ETA has now passed → notify?". All delay facts (headline, ETA, supplier) come from the resolver;
+     * the scanner adds only the notification-timing decision (ETA < today) and the stable key. Auto-
+     * resolves the moment the part is delivered and the resolver stops reporting a parts delay.
+     */
+    private function partsAwaitingDelivery(): Collection
+    {
+        $today = Carbon::today();
+
+        return $this->loader->openTickets()
+            ->map(function (Maintenance $t) use ($today) {
+                $delay = $this->delayResolver->resolve($t);
+
+                // Only a derived parts delay WITH a promised ETA that has already passed warrants a chase.
+                if ($delay->delaySource !== MaintenanceDelay::SOURCE_DERIVED_PARTS || $delay->expectedResolutionDate === null) {
+                    return null;
+                }
+                $eta = Carbon::parse($delay->expectedResolutionDate);
+                if (! $eta->lt($today)) {
+                    return null; // on-track — the ETA has not passed yet
+                }
+
+                $daysOverdue = (int) $eta->diffInDays($today);
+                $car   = $t->vehicle ? trim($t->vehicle->make . ' ' . $t->vehicle->model) : 'Vehicle';
+                $plate = $t->vehicle?->plate_no;
+
+                return [
+                    'type'     => 'part_delivery_overdue',
+                    'category' => 'maintenance',
+                    'severity' => $daysOverdue >= 7 ? 'critical' : 'warning',
+                    'title'    => 'Part delivery overdue · ' . $daysOverdue . 'd late',
+                    'body'     => trim(($delay->headline ?: 'Waiting for parts') . ' — ' . $car . ($plate ? ' (' . $plate . ')' : '')
+                                    . ' · expected ' . $delay->expectedResolutionDate
+                                    . ($delay->supplierName ? ' · ' . $delay->supplierName : '')),
+                    'url'      => '/parts',
+                    'key'      => 'part_delivery_overdue:' . $t->id,
+                    'icon'     => 'package',
+                    'meta'     => ['maintenance_id' => $t->id, 'plate' => $plate, 'days_overdue' => $daysOverdue, 'supplier' => $delay->supplierName],
+                ];
+            })
+            ->filter()
+            ->take(self::CAP)
+            ->values();
     }
 
     /**

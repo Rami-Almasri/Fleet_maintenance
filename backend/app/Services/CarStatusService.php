@@ -9,6 +9,10 @@ use App\Models\RepairInspection;
 use App\Models\User;
 use App\Models\Vehicle;
 use App\Models\Vendor;
+use App\Services\State\EffectiveState;
+use App\Services\State\MaintenanceDelayResolver;
+use App\Services\State\OperationalStateLoader;
+use App\Services\State\WorkflowStateResolver;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
@@ -118,31 +122,18 @@ class CarStatusService
     // ── Dashboard ────────────────────────────────────────────────────────────────────────────────
 
     /** The whole Car Status dashboard: KPI strip, live workshop rows, and the operational widgets. */
+    public function __construct(
+        private readonly OperationalStateLoader $loader,
+        private readonly WorkflowStateResolver $repairResolver,
+        private readonly MaintenanceDelayResolver $delayResolver,
+    ) {}
+
     public function dashboard(): array
     {
-        $open = Maintenance::openWorkflow()
-            ->with([
-                'vehicle:id,plate_no,make,model,vin,operational_status,condition_grade',
-                'vendor:id,name',
-                'transferToVendor:id,name',
-                'assignedDriver:id,name',
-                'inspector:id,name',
-                'activeMove',
-                'activeTemporaryRelease',
-                'tasks:id,maintenance_id,status,severity,category_key,symptom',
-            ])
-            ->orderByDesc('last_state_change_at')
-            ->limit(800)
-            ->get();
-
-        $openPartsByTicket = PartRequest::query()
-            ->whereIn('maintenance_id', $open->pluck('id'))
-            ->whereNotIn('status', PartRequest::TERMINAL)
-            ->get(['id', 'maintenance_id', 'part_name'])
-            ->groupBy('maintenance_id');
+        $open = $this->loader->openTickets();
 
         $now  = Carbon::now();
-        $rows = $open->map(fn (Maintenance $t) => $this->ticketRow($t, $openPartsByTicket, $now))->values();
+        $rows = $open->map(fn (Maintenance $t) => $this->ticketRow($t, $now))->values();
 
         $repeatRepairs = collect($this->repeatRepairsThisMonth());
 
@@ -169,15 +160,27 @@ class CarStatusService
     }
 
     /** One live-workshop row. All real data: stage from livePosition(), party/reason from STAGE_META. */
-    private function ticketRow(Maintenance $t, Collection $openPartsByTicket, Carbon $now): array
+    private function ticketRow(Maintenance $t, Carbon $now): array
     {
         $pos      = $t->livePosition();
         $progress = $t->tasksProgress();
         $sev      = Maintenance::FAULT_SEVERITY_META[$t->fault_severity] ?? null;
         $meta     = self::STAGE_META[$t->workflow_status] ?? ['supervisor', 'In workflow', 'In Workflow'];
 
-        $parts        = $openPartsByTicket->get($t->id, collect());
-        $waitingParts = $t->workflow_status === Maintenance::WF_AWAITING_PARTS || $parts->isNotEmpty();
+        // Operational-row truth — the single interpretation (blueprint DP3-A): resolver-derived,
+        // composed here over the loader's eager-loaded graph (no queries).
+        $repair    = $this->repairResolver->resolve($t);
+        $delay     = $this->delayResolver->resolve($t);
+        $effective = EffectiveState::reduce($t->vehicle?->operational_status, $repair);
+
+        // Open (non-terminal) part names on the ticket — a display list, from the loaded graph.
+        $openPartNames = $t->tasks
+            ->flatMap(fn ($task) => $task->partRequests)
+            ->reject(fn (PartRequest $r) => in_array($r->status, PartRequest::TERMINAL, true))
+            ->pluck('part_name')->filter()->unique()->values()->all();
+
+        // waiting_parts: resolver owns the mid-repair block; keep the pre-ticket lane fact (WF_AWAITING_PARTS).
+        $waitingParts = $t->workflow_status === Maintenance::WF_AWAITING_PARTS || $repair->isWaitingForParts();
 
         // Days the car has been inside maintenance (since the ticket opened).
         $openedAt        = $t->created_at ?? $t->requested_at;
@@ -195,6 +198,14 @@ class CarStatusService
         $atRisk    = ! $isOverdue && $slaRemainingHrs !== null && $slaRemainingHrs <= 24;
         $delay     = $isOverdue ? 'overdue' : ($atRisk ? 'at_risk' : 'on_track');
 
+        // The two questions a manager asks in the first 2 seconds: WHY is it here, and WHERE is it in the
+        // pipeline. Both derived from data that already exists — no new columns, no guessing.
+        $reason = $this->maintenanceReason($t);
+        $pipe   = $this->pipelineFor($t->workflow_status);
+
+        // When the ticket opened (used both for "days in maintenance" and as the started-at on the card).
+        $startedAt = $t->repair_started_at ?? $t->created_at ?? $t->requested_at;
+
         return [
             'ticket_id'          => $t->id,
             'ticket_no'          => '#' . $t->id,
@@ -202,6 +213,9 @@ class CarStatusService
             'plate_no'           => $t->vehicle?->plate_no,
             'car'                => $this->carLabel($t->vehicle),
             'workflow_status'    => $t->workflow_status,
+            'reason'             => $reason,
+            'pipeline'           => $pipe['steps'],
+            'started_at'         => optional($startedAt)->toIso8601String(),
             'stage'              => $pos['label'],
             'stage_detail'       => $pos['detail'],
             'stage_tone'         => $pos['tone'],
@@ -218,10 +232,25 @@ class CarStatusService
             'severity_tone'      => $sev['tone'] ?? null,
             'priority'           => $t->priority,
             'progress'           => self::PROGRESS[$t->workflow_status] ?? 30,
-            'blocked'            => in_array($t->workflow_status, self::BLOCKED_STATES, true),
+            'blocked'            => $repair->isBlocked() || in_array($t->workflow_status, self::BLOCKED_STATES, true),
             'reinspection_required' => in_array($t->workflow_status, self::KPI_STATES['waiting_reinspection'], true),
             'waiting_parts'      => $waitingParts,
-            'missing_parts'      => $parts->pluck('part_name')->filter()->values()->all(),
+            'missing_parts'      => $openPartNames,
+            'effective_state'    => [
+                'headline'     => $effective->headline,
+                'service'      => $effective->service,
+                'availability' => $effective->availability,
+            ],
+            'delay'              => [
+                'is_delayed'          => $delay->isDelayed,
+                'reason'              => $delay->delayReason,
+                'source'              => $delay->delaySource,
+                'days_waiting'        => $delay->daysWaiting,
+                'expected_resolution' => $delay->expectedResolutionDate,
+                'supplier'            => $delay->supplierName,
+                'checkpoint_status'   => $delay->checkpointStatus,
+                'headline'            => $delay->headline,
+            ],
             'days_in_maintenance' => $daysInMaint,
             'expected_completion' => optional($due)->toIso8601String(),
             'sla_remaining_hours' => $slaRemainingHrs,
@@ -231,6 +260,87 @@ class CarStatusService
             'days_overdue'       => $isOverdue && $daysRemaining !== null ? abs($daysRemaining) : ($isOverdue && $slaRemainingHrs !== null ? (int) ceil(abs($slaRemainingHrs) / 24) : 0),
             'last_update'        => optional($t->last_state_change_at ?? $t->updated_at)->toIso8601String(),
         ];
+    }
+
+    /**
+     * "Why is this vehicle in maintenance?" — the single headline the ops board must answer at a glance.
+     * Resolved from data that already exists, in priority order: the customer complaint / breakdown reason,
+     * the primary (worst open) fault, or the ticket's classification. The `source` says where the reason
+     * came from (Inspection / Diagnostic / Scheduled Maintenance / Breakdown Report / Customer Report) and
+     * the tone/emoji come from the ticket's inspector-assigned fault severity.
+     */
+    private function maintenanceReason(Maintenance $t): array
+    {
+        $tasks = $t->relationLoaded('tasks') ? $t->tasks : collect();
+        $rank  = fn ($x) => MaintenanceTask::SEVERITY_RANK[$x->severity] ?? 0;
+
+        // Primary fault = the worst-graded still-open fault, else the worst fault of any state.
+        $openTasks = $tasks->whereNotIn('status', MaintenanceTask::TERMINAL);
+        $primary   = $openTasks->sortByDesc($rank)->first() ?? $tasks->sortByDesc($rank)->first();
+        $faultLabel = $primary?->symptom ?: $this->categoryLabel($primary?->category_key);
+
+        $trigger   = $t->trigger_reason;
+        $type      = $t->maintenance_type;
+        $complaint = $t->customer_complaint ? Str::limit(trim($t->customer_complaint), 90) : null;
+
+        $isBreakdown  = $type === Maintenance::TYPE_BREAKDOWN || $trigger === Maintenance::TRIGGER_BREAKDOWN;
+        $isRoutine    = $type === Maintenance::TYPE_ROUTINE || $trigger === Maintenance::TRIGGER_PERIODIC || $t->visit_context === Maintenance::CONTEXT_ROUTINE;
+        $isCustomer   = $trigger === Maintenance::TRIGGER_CUSTOMER;
+        $isInspection = in_array($trigger, [Maintenance::TRIGGER_TEST_DRIVE, Maintenance::TRIGGER_PICKUP], true);
+
+        if ($isBreakdown) {
+            [$label, $source, $key] = [$complaint ?: $faultLabel ?: 'Breakdown', 'Breakdown Report', 'breakdown'];
+        } elseif ($isRoutine) {
+            [$label, $source, $key] = [$faultLabel ?: 'Scheduled Service', 'Scheduled Maintenance', 'scheduled'];
+        } elseif ($isCustomer) {
+            [$label, $source, $key] = [$complaint ?: $faultLabel ?: 'Customer Complaint', 'Customer Report', 'customer'];
+        } elseif ($isInspection) {
+            [$label, $source, $key] = [$faultLabel ?: 'Inspection Finding', 'Inspection', 'inspection'];
+        } else {
+            [$label, $source, $key] = [$faultLabel ?: ($complaint ?: (Maintenance::MAINTENANCE_TYPES[$type] ?? 'Diagnostic Finding')), 'Diagnostic', 'diagnostic'];
+        }
+
+        $sev = Maintenance::FAULT_SEVERITY_META[$t->fault_severity] ?? null;
+
+        return [
+            'label'           => $label,
+            'source'          => $source,
+            'source_key'      => $key,
+            'tone'            => $sev['tone'] ?? 'slate',
+            'emoji'           => $sev['emoji'] ?? null,
+            'category'        => $this->categoryLabel($primary?->category_key),
+            // Extra open faults beyond the headline one — "+2 more issues".
+            'other_faults'    => max(0, $openTasks->count() - 1),
+        ];
+    }
+
+    /**
+     * The committed maintenance pipeline for one ticket, each step marked completed / current / blocked /
+     * waiting. Powers the card's workflow timeline (Inspection → Decision → … → Ready) so a manager reads
+     * WHERE the car is rather than a static progress number. Read-only — mirrors liveWorkflow().
+     *
+     * @return array{steps: array<int, array{label: string, state: string}>, current_index: int}
+     */
+    private function pipelineFor(?string $status): array
+    {
+        $blocked    = in_array($status, self::BLOCKED_STATES, true);
+        $currentIdx = 0;
+        foreach (self::LIVE_PIPELINE as $i => [$label, $states]) {
+            if (in_array($status, $states, true)) {
+                $currentIdx = $i;
+                break;
+            }
+        }
+
+        $steps = [];
+        foreach (self::LIVE_PIPELINE as $i => [$label, $states]) {
+            $steps[] = [
+                'label' => $label,
+                'state' => $i < $currentIdx ? 'completed' : ($i === $currentIdx ? ($blocked ? 'blocked' : 'current') : 'waiting'),
+            ];
+        }
+
+        return ['steps' => $steps, 'current_index' => $currentIdx];
     }
 
     /** The KPI strip — every count derived from the live rows (no extra queries) + the repeat-repair count. */
@@ -298,13 +408,14 @@ class CarStatusService
             ->where('workflow_status', Maintenance::WF_CLOSED)
             ->where('wf_closed_at', '>=', $since)
             ->whereNotNull('vehicle_id')
-            ->with(['vehicle:id,plate_no,make,model', 'vendor:id,name', 'tasks:id,maintenance_id,category_key,symptom'])
+            ->with(['vehicle:id,plate_no,make,model', 'vendor:id,name', 'tasks:id,maintenance_id,category_key,symptom,kind'])
             ->get()
             ->groupBy('vehicle_id')
             ->filter(fn ($g) => $g->count() >= 2)
             ->map(function ($g) {
                 $vehicle   = $g->first()->vehicle;
-                $catCounts = $g->flatMap(fn ($t) => $t->tasks->pluck('category_key'))->filter()->countBy();
+                // Event Type layer: repeat-FAULT detection ignores planned services once enforced.
+                $catCounts = $g->flatMap(fn ($t) => (\App\Support\EventKind::enforced() ? $t->tasks->where('kind', MaintenanceTask::KIND_FAULT) : $t->tasks)->pluck('category_key'))->filter()->countBy();
                 return [
                     'vehicle_id'    => $g->first()->vehicle_id,
                     'plate_no'      => $vehicle?->plate_no,
@@ -521,6 +632,10 @@ class CarStatusService
             ->get();
 
         $tasks       = $tickets->flatMap->tasks;
+        // Event Type layer: once enforced, the FAULT metrics (health, KPIs, analytics, reliability, fault
+        // history) count only kind=fault — planned services drop out. Cost + the "why in shop" headline keep
+        // ALL tasks (a service still has cost and can be the reason a car is in the shop).
+        $faultTasks  = \App\Support\EventKind::enforced() ? $tasks->where('kind', MaintenanceTask::KIND_FAULT)->values() : $tasks;
         $inspections = RepairInspection::query()
             ->where('vehicle_id', $vehicle->id)
             ->orderByDesc('inspection_date')
@@ -549,8 +664,8 @@ class CarStatusService
         $openTicket = $tickets->first(fn ($t) => $notTerminal($t) && ! in_array($t->workflow_status, Maintenance::WF_PRE_TICKET, true))
             ?? $tickets->first($notTerminal);
 
-        $health = $this->healthScore($tickets, $tasks, $inspections);
-        $kpis   = $this->vehicleKpis($tickets, $tasks, $inspections);
+        $health = $this->healthScore($tickets, $faultTasks, $inspections);
+        $kpis   = $this->vehicleKpis($tickets, $faultTasks, $inspections);
 
         return [
             'vehicle'      => [
@@ -567,13 +682,13 @@ class CarStatusService
             'live_workflow' => $this->liveWorkflow($openTicket),
             'kpis'         => $kpis,
             'history_summary' => $this->historySummary($vehicle, $tickets),
-            'fault_analytics' => $this->faultAnalytics($tasks),
+            'fault_analytics' => $this->faultAnalytics($faultTasks),
             'costs'        => $this->costBreakdown($tickets, $tasks),
             'parts'        => $this->partsIntelligence($vehicle),
-            'reliability'  => $this->reliability($tickets, $tasks, $inspections),
+            'reliability'  => $this->reliability($tickets, $faultTasks, $inspections),
             'garages'      => $this->garagePerformance($tickets, $inspections),
             'history'      => $this->repairHistory($tickets, $inspByTicket),
-            'faults'       => $this->faultHistory($tasks, $logByTask),
+            'faults'       => $this->faultHistory($faultTasks, $logByTask),
             'workflow_journey' => $this->workflowJourney($logEvents),
             'documents'    => $this->documents($vehicle, $tickets),
             'generated_at' => Carbon::now()->toIso8601String(),

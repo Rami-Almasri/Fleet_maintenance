@@ -669,6 +669,10 @@ class Maintenance extends Model
         // current one (vendor_id). Set at transfer-request, cleared on arrival at the destination.
         'transfer_to_vendor_id',
         'maintenance_reason_id',
+        // Provenance of the category above: 'sheet' (from import), 'backfill'
+        // (system-matched later), or 'manual' (human-set). See reason_matched_at.
+        'reason_source',
+        'reason_matched_at',
         'approval_status',
         'approved_amount',
         'approved_at',
@@ -825,6 +829,7 @@ class Maintenance extends Model
         'receipt_total'        => 'decimal:2',
         'reconciliation_flagged_at' => 'datetime',
         'approved_at'          => 'datetime',
+        'reason_matched_at'    => 'datetime',
         // workflow
         'test_drive_report'    => 'array',
         'findings'             => 'array',
@@ -1145,6 +1150,18 @@ class Maintenance extends Model
     public function vendor(): BelongsTo
     {
         return $this->belongsTo(Vendor::class);
+    }
+
+    /** Every garage-choice decision recorded for this ticket (newest first) — the "why this garage?" trail. */
+    public function recommendationDecisions()
+    {
+        return $this->hasMany(GarageRecommendationDecision::class)->latest();
+    }
+
+    /** The most recent garage-choice decision — surfaced on the ticket for the "Why this garage?" card. */
+    public function latestRecommendationDecision()
+    {
+        return $this->hasOne(GarageRecommendationDecision::class)->latestOfMany();
     }
 
     /**

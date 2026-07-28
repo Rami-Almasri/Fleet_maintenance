@@ -20,7 +20,7 @@ export const SEVERITY = {
     btn: 'bg-red-600 text-white shadow-sm shadow-red-600/20 hover:bg-red-700 focus-visible:outline-red-600',
   },
   warning: {
-    label: 'Warning',
+    label: 'High',
     rank: 1,
     dot: 'bg-amber-500',
     ring: 'ring-amber-500/30',
@@ -50,7 +50,7 @@ export const SEVERITY = {
     btn: 'bg-blue-600 text-white shadow-sm shadow-blue-600/20 hover:bg-blue-700 focus-visible:outline-blue-600',
   },
   success: {
-    label: 'Success',
+    label: 'Resolved',
     rank: 3,
     dot: 'bg-emerald-500',
     ring: 'ring-emerald-500/30',
@@ -83,6 +83,16 @@ export const ICONS = {
   truck: 'M3 6a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v9H3zM14 9h3.5L21 12.5V15h-7zM7 18.5A1.5 1.5 0 1 0 7 15.5a1.5 1.5 0 0 0 0 3zM17.5 18.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z',
   'map-pin': 'M12 21s-6-5.3-6-10a6 6 0 1 1 12 0c0 4.7-6 10-6 10zm0-7.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z',
   calendar: 'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z',
+  // Entity + extra glyphs — several backend detectors emit these icon names
+  // (phone, package, dollar, clipboard) which previously fell back to the bell.
+  phone: 'M2 4.5A2 2 0 0 1 4 2.5h2.2a1 1 0 0 1 1 .8l1 4a1 1 0 0 1-.27 1L6.6 9.8a13 13 0 0 0 6 6l1.4-1.3a1 1 0 0 1 1-.27l4 1a1 1 0 0 1 .8 1V19a2 2 0 0 1-2 2A17 17 0 0 1 2 4.5z',
+  package: 'M21 8l-9-5-9 5m18 0l-9 5m9-5v8l-9 5m0-8L3 8m9 5v8M3 8v8l9 5',
+  dollar: 'M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6',
+  clipboard: 'M9 4h6a1 1 0 0 1 1 1v1h1a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h1V5a1 1 0 0 1 1-1z',
+  car: 'M3 13l2-5a2 2 0 0 1 1.9-1.3h10.2A2 2 0 0 1 19 8l2 5m-18 0h18m-18 0v4h2m14-4v4h-2M7.5 17a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm9 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2z',
+  user: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 20a8 8 0 0 1 16 0',
+  doc: 'M8 3h6l4 4v12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM14 3v4h4M9 13h6M9 17h4',
+  building: 'M4 21V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16M14 9h4a2 2 0 0 1 2 2v10M3 21h18M8 7h2M8 11h2M8 15h2',
 };
 
 export const iconPath = (key) => ICONS[key] || ICONS.bell;
@@ -224,7 +234,7 @@ export const INBOX_CATEGORIES = [
     icon: 'alert',
     blurb: 'Customer complaints logged against a car',
     empty: 'No complaint notifications',
-    types: ['maint_complaint_intake', 'maint_complaint_headsup', 'maint_complaint_resolved', 'maint_complaint_triage', 'maint_complaint_call', 'maint_complaint_onsite_resolved', 'maint_complaint_diagnostic'],
+    types: ['maint_complaint_new', 'maint_complaint_intake', 'maint_complaint_headsup', 'maint_complaint_resolved', 'maint_complaint_triage', 'maint_complaint_call', 'maint_complaint_onsite_resolved', 'maint_complaint_diagnostic'],
   },
   {
     key: 'progress',
@@ -279,7 +289,7 @@ export const LANES = [
     permission: 'maintenance.initiate',
     blurb: 'Customer complaints to triage — with the contact details to reach them',
     empty: 'No customer complaints',
-    types: ['maint_complaint_triage', 'maint_complaint_headsup', 'maint_complaint_diagnostic',
+    types: ['maint_complaint_new', 'maint_complaint_triage', 'maint_complaint_headsup', 'maint_complaint_diagnostic',
             'maint_complaint_call', 'maint_complaint_onsite_resolved', 'maint_complaint_resolved'],
   },
   {
@@ -498,6 +508,64 @@ export const ACTION_LABEL = {
   logistics_status: 'View Move',
   logistics_ping: 'Reply',
   booking_readiness: 'Prep Car',
+
+  // ── Operations-lane verbs — each button reads as the action that lane owns ──
+  // Inspector (Abu Maroof)
+  maint_complaint_new: 'Triage Complaint',
+  maint_complaint_triage: 'Triage Complaint',
+  maint_complaint_headsup: 'View Complaint',
+  maint_complaint_diagnostic: 'View Complaint',
+  maint_complaint_call: 'View Complaint',
+  maint_complaint_onsite_resolved: 'View Complaint',
+  maint_complaint_resolved: 'View Complaint',
+  maint_inspection_requested: 'Start Test',
+  maint_review_approved: 'Start Test',
+  maint_recommendation_dismissed: 'View Ticket',
+  maint_ready_reinspect: 'Re-inspect',
+  maint_reinspection_failed: 'Re-inspect',
+  maint_vehicle_received: 'Inspect Car',
+  // Supervisor / Drivers (Waleed & Abdullah)
+  maint_dispatch_ready: 'Assign Garage',
+  maint_pickup_intake: 'Assign Garage',
+  maint_service_intake: 'Assign Garage',
+  maint_breakdown_intake: 'Assign Garage',
+  maint_complaint_intake: 'Assign Garage',
+  maint_parts_ready: 'Assign Garage',
+  maint_recommendation_pending: 'Review & Assign',
+  maint_triage_route_pending: 'Route Ticket',
+  maint_arrived_at_garage: 'View Ticket',
+  maint_repair_review: 'Review Repair',
+  maint_pickup_ready: 'Go to Pickup',
+  maint_pickup_assigned: 'Go to Pickup',
+  maint_delegated: 'View Task',
+  maint_ready_for_pickup: 'Go to Pickup',
+  // Controller (Lin)
+  maint_review_pending: 'Review Request',
+  maint_test_interrupted: 'Review Ticket',
+};
+
+// Destination override: a few alerts must route to the page where their action is actually PERFORMED,
+// not to the raw payload url. The review-gate approve/reject lives on the Inspection Review Queue
+// (POST /maintenance-tickets/{id}/review/approve) — the ticket command view can't action it — so
+// `maint_review_pending` is sent there. Everything else keeps its payload url. Applied on the frontend
+// so it also corrects notifications already stored with the old url.
+export const ACTION_TARGET = {
+  maint_review_pending: '/inspection-review',
+};
+
+// The place a notification's action button should navigate to: the per-type override if any, else the
+// payload url. Returns null when there's nowhere to go (button is then hidden).
+//
+// For a review-gate alert we also deep-link to the exact card: `/inspection-review?ticket=<id>` so the
+// queue can scroll to and highlight the request the operator clicked, instead of dropping them at the
+// top of a long list to hunt for it.
+export const actionTarget = (n) => {
+  const base = ACTION_TARGET[n?.type] || n?.url || null;
+  if (base && n?.type === 'maint_review_pending') {
+    const ticket = n?.meta?.ticket_id;
+    if (ticket) return `/inspection-review?ticket=${ticket}`;
+  }
+  return base;
 };
 
 // Resolve the button label, refining document_expiry into Insurance vs Registration.
@@ -509,7 +577,7 @@ export const actionLabel = (n) => {
     if (t.startsWith('insurance')) return 'Renew Insurance';
     if (t.startsWith('registration')) return 'Renew Registration';
   }
-  return ACTION_LABEL[n?.type] || (n?.url ? 'View Details' : null);
+  return ACTION_LABEL[n?.type] || (actionTarget(n) ? 'View Details' : null);
 };
 
 // ── Meta chips ───────────────────────────────────────────────────────────────
@@ -560,6 +628,7 @@ export const metaChips = (n) => {
       break;
     // Customer complaints carry who reported it + how to reach them, so the
     // Inspector can call straight from the card (Abu Maroof's "enough to contact").
+    case 'maint_complaint_new':
     case 'maint_complaint_triage':
     case 'maint_complaint_headsup':
     case 'maint_complaint_diagnostic':
@@ -576,6 +645,207 @@ export const metaChips = (n) => {
   }
   if (m.plate) chips.push({ text: m.plate, plate: true });
   return chips;
+};
+
+// ── Structured metadata: highlights + entities ───────────────────────────────
+// The rich Action-Center card splits an alert's `meta` into two reads:
+//   • highlights — the URGENCY numbers ("6d late", "AED 1,450", "1,200 km over").
+//     Colour-toned so the reason-it-matters pops. tone: danger | warn | strong | neutral.
+//   • entities   — the WHO / WHAT (vehicle, customer, contract, ticket, garage, driver …),
+//     rendered as an icon-labelled info grid so operators never dig through prose.
+// Both are derived from the payload the backend already sends — no extra lookups.
+
+const numFmt = (v) => Number(v).toLocaleString();
+
+// fault_severity (workflow tickets) → a chip tone, so "critical" reads red at a glance.
+export const FAULT_SEVERITY_TONE = {
+  critical: 'danger',
+  major: 'warn',
+  moderate: 'warn',
+  minor: 'neutral',
+  cosmetic: 'neutral',
+};
+
+// The urgency metrics for a card — the "why it matters" line. Type-specific first,
+// then a generic sweep so a brand-new backend type still surfaces something sensible.
+export const metaHighlights = (n) => {
+  const m = n?.meta || {};
+  const out = [];
+  const seen = new Set();
+  const add = (text, tone = 'strong') => {
+    if (text == null || text === '' || seen.has(text)) return;
+    seen.add(text);
+    out.push({ text, tone });
+  };
+
+  switch (n?.type) {
+    case 'overdue_rental':
+    case 'overdue_maintenance':
+    case 'part_delivery_overdue':
+      if (m.days_overdue != null) add(`${m.days_overdue}d late`, 'danger');
+      break;
+    case 'maintenance_back_open':
+      if (m.days_since_return != null) add(`${m.days_since_return}d back`, 'warn');
+      break;
+    case 'document_expiry':
+      if (m.days != null) add(m.days < 0 ? `${Math.abs(m.days)}d expired` : `${m.days}d left`, m.days < 0 ? 'danger' : 'warn');
+      break;
+    case 'service_inspection':
+      if (m.overdue_km != null) add(`${numFmt(m.overdue_km)} km over`, 'warn');
+      else if (m.remaining_km != null) add(`~${numFmt(m.remaining_km)} km left`, 'strong');
+      if (m.days_to_due != null) add(`~${m.days_to_due}d to due`, 'neutral');
+      break;
+    case 'service_reminder_due':
+      if (m.km_remaining != null && m.km_remaining < 0) add(`${numFmt(Math.abs(m.km_remaining))} km over`, 'warn');
+      else if (m.days_remaining != null && m.days_remaining < 0) add(`${Math.abs(m.days_remaining)}d over`, 'warn');
+      break;
+    case 'negative_yield':
+      if (m.net_yield != null) add(`−AED ${numFmt(Math.abs(m.net_yield))}`, 'danger');
+      break;
+    case 'high_maintenance_cost':
+      if (m.cost != null) add(`AED ${numFmt(m.cost)}`, 'warn');
+      break;
+    case 'invoice_overdue':
+      if (m.balance != null) add(`AED ${numFmt(m.balance)} due`, 'danger');
+      break;
+    case 'rental_expiring':
+    case 'booking_readiness':
+    case 'booking_in_maintenance':
+      if (m.days_left != null) add(m.days_left <= 0 ? 'Due today' : `${m.days_left}d left`, m.days_left <= 1 ? 'danger' : 'warn');
+      break;
+    case 'inspection_due':
+      if (m.status === 'overdue') add('Overdue', 'warn');
+      else if (m.days_remaining != null) add(`${m.days_remaining}d left`, 'neutral');
+      break;
+    default:
+      // Generic fallbacks for the many event-driven workflow types.
+      if (m.days_overdue != null) add(`${m.days_overdue}d late`, 'danger');
+      if (m.days_left != null) add(m.days_left <= 0 ? 'Due today' : `${m.days_left}d left`, 'warn');
+      break;
+  }
+
+  // Fault severity is meaningful across almost every workshop alert — always show it.
+  if (m.fault_severity) add(m.fault_severity, FAULT_SEVERITY_TONE[m.fault_severity] || 'neutral');
+  if (m.priority_label) add(`${m.priority_emoji || ''} ${m.priority_label}`.trim(), 'warn');
+
+  return out;
+};
+
+// The who/what entities on a card — a labelled, icon-led info grid. Order = importance.
+// `mono` renders identifiers (plate, contract, ticket) in a tabular mono chip; `href`
+// makes a value directly actionable (tel: for a customer phone).
+export const metaEntities = (n) => {
+  const m = n?.meta || {};
+  const out = [];
+  const push = (key, label, value, icon, opts = {}) => {
+    if (value == null || value === '') return;
+    out.push({ key, label, value: String(value), icon, ...opts });
+  };
+
+  push('plate', 'Vehicle', m.plate, 'car', { mono: true });
+  push('customer', 'Customer', m.customer, 'user');
+  if (m.customer_phone) push('phone', 'Phone', m.customer_phone, 'phone', { mono: true, href: `tel:${String(m.customer_phone).replace(/\s+/g, '')}` });
+  if (m.contract_no) push('contract', 'Contract', `#${m.contract_no}`, 'doc', { mono: true });
+  const ticket = m.ticket_id || m.maintenance_id;
+  if (ticket) push('ticket', 'Ticket', `#${ticket}`, 'wrench', { mono: true });
+  const garage = m.garage || m.to_garage;
+  if (garage) push('garage', 'Garage', garage, 'map-pin');
+  if (m.from_garage && m.from_garage !== garage) push('from_garage', 'From', m.from_garage, 'map-pin');
+  push('driver', 'Driver', m.driver, 'truck');
+  push('vendor', 'Vendor', m.vendor, 'building');
+  push('supplier', 'Supplier', m.supplier, 'building');
+  if (m.service || m.service_type) push('service', 'Service', typeLabel(m.service || m.service_type), 'oil');
+  const eta = m.projected_date || m.out_date || m.scheduled_for;
+  if (eta) push('eta', 'Date', String(eta).slice(0, 10), 'calendar');
+  const actor = m.requested_by || m.reviewed_by || m.assigned_by || m.by;
+  if (actor && actor !== 'system') push('actor', 'By', actor, 'user');
+
+  return out;
+};
+
+// ── Priority axis + entity clustering ────────────────────────────────────────
+// Severity IS our priority axis on the Action Center: critical (immediate) →
+// warning (high, today) → info (standard) → success (resolved).
+export const PRIORITY_ORDER = ['critical', 'warning', 'info', 'success'];
+
+// Human section copy per priority tier — headline + a one-line "how urgent".
+export const PRIORITY_SECTION = {
+  critical: { label: 'Critical', sub: 'Needs immediate attention' },
+  warning: { label: 'High priority', sub: 'Handle these today' },
+  info: { label: 'Standard', sub: 'Work through when you can' },
+  success: { label: 'Resolved', sub: 'Completed — for your records' },
+};
+
+// Does this alert carry a next-step action (a CTA)? Drives the "Action required" count.
+export const hasAction = (n) => !!actionLabel(n);
+
+// The most-urgent (lowest-rank) severity across a set of alerts — a cluster's headline.
+export const worstSeverity = (items) =>
+  (items || []).reduce((worst, n) => (severityRank(n.severity) < severityRank(worst) ? n.severity : worst), 'success');
+
+// The operational entity an alert is about — its maintenance ticket first, else its
+// vehicle. Used to visually cluster the several alerts that pile up on one car / one
+// repair so the board reads as "work items", not a flat stream of rows.
+export const entityKeyOf = (n) => {
+  const m = n?.meta || {};
+  const ticket = m.ticket_id || m.maintenance_id;
+  if (ticket) return `ticket:${ticket}`;
+  if (m.plate) return `plate:${m.plate}`;
+  return null;
+};
+
+// Cluster a (pre-sorted) list into render nodes: a { type:'group' } when 2+ alerts share
+// an entity, else { type:'single' }. First-occurrence order is preserved; later members
+// of a group are pulled up under its first appearance so a car's alerts read as one block.
+export const clusterByEntity = (items) => {
+  const groups = new Map();
+  const order = [];
+  for (const n of items || []) {
+    const k = entityKeyOf(n);
+    if (!k) { order.push({ type: 'single', item: n }); continue; }
+    let g = groups.get(k);
+    if (!g) { g = { type: 'group', key: k, items: [] }; groups.set(k, g); order.push(g); }
+    g.items.push(n);
+  }
+  // A "group" of one is just a single card.
+  return order.map((node) =>
+    node.type === 'group' && node.items.length === 1 ? { type: 'single', item: node.items[0] } : node);
+};
+
+// A human label for a cluster header: prefer the plate (what an operator recognises),
+// fall back to the ticket number.
+export const clusterLabel = (node) => {
+  const withPlate = node.items.find((n) => n?.meta?.plate);
+  if (withPlate) return withPlate.meta.plate;
+  const t = node.items.find((n) => n?.meta?.ticket_id || n?.meta?.maintenance_id);
+  const id = t?.meta?.ticket_id || t?.meta?.maintenance_id;
+  return id ? `Ticket #${id}` : 'Related';
+};
+
+// Verbose relative time for the page: "just now" · "5 min ago" · "2 hours ago" ·
+// "Yesterday" · "3 days ago" · then an absolute date. (timeAgo() stays terse for the bell.)
+export const relativeTime = (iso) => {
+  if (!iso) return '';
+  const then = new Date(iso).getTime();
+  if (isNaN(then)) return '';
+  const s = Math.floor((Date.now() - then) / 1000);
+  if (s < 45) return 'just now';
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} min ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} hour${h === 1 ? '' : 's'} ago`;
+  const d = Math.floor(h / 24);
+  if (d === 1) return 'Yesterday';
+  if (d < 7) return `${d} days ago`;
+  return new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+};
+
+// The exact timestamp for the title tooltip / secondary line: "28 Jul 2026, 14:32".
+export const exactTime = (iso) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 };
 
 // Compact "time ago": just now · 5m · 2h · 3d · then a date.

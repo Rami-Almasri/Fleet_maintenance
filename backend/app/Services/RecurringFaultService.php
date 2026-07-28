@@ -105,6 +105,8 @@ class RecurringFaultService
             ->where('id', '!=', $fault->id)
             ->where('maintenance_id', '!=', $fault->maintenance_id) // never the current ticket
             ->where('status', MaintenanceTask::STATUS_COMPLETED)     // RULE: previous must be Fixed
+            // Event Type layer: a recurring FAULT must not be "confirmed" by a prior planned service.
+            ->when(\App\Support\EventKind::enforced(), fn ($q) => $q->faults())
             ->whereNotNull('resolved_at')
             ->where('resolved_at', '>=', $since);
 

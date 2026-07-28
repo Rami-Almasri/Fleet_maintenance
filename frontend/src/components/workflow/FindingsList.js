@@ -24,6 +24,10 @@ const STATUS_BADGE = {
 // service with the repair on hold. Same class shape as STATUS_BADGE above.
 const PAUSED_BADGE = { label: 'Paused', cls: 'bg-slate-100 text-slate-500 ring-slate-200' };
 
+// Opt-in (showPending): make a still-open fault say so EXPLICITLY instead of staying unadorned — used when
+// the car is about to leave mid-repair (Temporary Release) so "this fixed / this not" is unmistakable.
+const PENDING_BADGE = { label: 'Not fixed', cls: 'bg-amber-50 text-amber-700 ring-amber-200' };
+
 // Vehicle-sync confirmation for a PERFORMED routine service: the vehicle record is updated only when the
 // ticket closes, so a performed-but-open service reads "Pending Confirmation", a closed one "Confirmed".
 const CONFIRM_BADGE = {
@@ -71,7 +75,7 @@ function FaultParts({ parts }) {
   );
 }
 
-export default function FindingsList({ findings = [], tasks = [], compact = false, paused = false }) {
+export default function FindingsList({ findings = [], tasks = [], compact = false, paused = false, showPending = false }) {
   if (!findings.length) {
     return compact ? null : <p className="text-xs text-slate-400">No findings recorded yet.</p>;
   }
@@ -80,13 +84,16 @@ export default function FindingsList({ findings = [], tasks = [], compact = fals
   // treated as cancelled (a mis-diagnosis), matching the routing panel.
   const taskBySymptom = {};
   tasks.forEach((tk) => { if (tk?.symptom) taskBySymptom[norm(tk.symptom)] = tk; });
+  // An open fault's fallback badge: "Paused" if the ticket is paused, an explicit "Not fixed" when the
+  // caller asked to spell it out (showPending), otherwise nothing.
+  const openBadge = () => (paused ? PAUSED_BADGE : (showPending ? PENDING_BADGE : null));
   const statusFor = (f) => {
     const tk = taskBySymptom[norm(f.text)];
-    if (!tk) return paused ? PAUSED_BADGE : null; // no fault-task match (or no tasks at all) → still-open
+    if (!tk) return openBadge(); // no fault-task match (or no tasks at all) → still-open
     const badge = tk.is_incorrect ? STATUS_BADGE.cancelled : STATUS_BADGE[tk.status];
     // A settled fault (fixed/in-progress/cancelled) keeps its own badge even while the ticket is paused;
-    // only a genuinely open fault falls back to the "Paused" badge.
-    if (!badge) return paused ? PAUSED_BADGE : null;
+    // only a genuinely open fault falls back to the Paused / Not-fixed badge.
+    if (!badge) return openBadge();
     // A completed fault keeps the garage that fixed it in current_vendor_id — surface its name so the
     // "✓ Fixed" badge reads "✓ Fixed · <Garage>" (where the repair actually happened).
     const garage = tk.status === 'completed' && !tk.is_incorrect ? tk.current_garage : null;

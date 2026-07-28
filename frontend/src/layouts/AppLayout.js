@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
-import api from '../api/client';
+import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { usePermissions } from '../hooks/usePermissions';
 import useActivityTracker from '../hooks/useActivityTracker';
@@ -11,7 +10,6 @@ import NotificationBell from '../components/NotificationBell';
 import ThemeToggle from '../components/ThemeToggle';
 import LanguageToggle from '../components/LanguageToggle';
 import Brand from '../components/Brand';
-import { useNotifications } from '../hooks/useNotifications';
 import { PageStatProvider, PageStatGauge } from '../components/PageStat';
 import { SHOW_FINANCIALS, DEMO_MODE, SHOW_FLEET_INTELLIGENCE } from '../config/features';
 import { pathBlockedForRoles } from '../config/access';
@@ -98,7 +96,6 @@ const NAV_SECTIONS = [
     items: [
       { name: 'Completed Repairs', to: '/completed-repairs', icon: 'M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'The ledger of every car whose repair is done and signed off — who requested it, who drove it, where it was fixed, what was found and repaired, and what it cost. Expand any row for the full custody chain, the resolved faults and the odometer readings.' },
       { name: 'Maintenance History', to: '/maintenance-history', icon: 'M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Every car that saw the workshop over the chosen window — how often it went in (visits) and how long it spent there (total days in the shop), sortable and searchable. Open a car\'s visit list to see each individual trip: date, garage, what was done and the cost.' },
-      { name: 'Oversight', to: '/oversight', icon: 'M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z', desc: 'The maintenance-workflow accountability & data-integrity hub — one landing page linking the four audit surfaces below with their live counts.' },
     ],
   },
   {
@@ -129,7 +126,7 @@ const NAV_SECTIONS = [
       { name: 'Driver Dispatch', to: '/driver-dispatch', icon: 'M3 7h11v8H3zM14 10h3.5L21 13v2h-7M6.5 18.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM17.5 18.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z', desc: 'Driver Dispatch: send a vehicle between locations (to Deals on Wheels, the garage, …) and track which driver has it and where. Dispatching a car flips it to “In Transit to …” on the grid and drops an Action Required task into the assignee’s My Queue.' },
       { name: "Who's Where", to: '/team-presence', icon: 'M17 20h5v-2a4 4 0 0 0-3-3.87M9 20H4v-2a4 4 0 0 1 3-3.87m10-5.13a4 4 0 1 0-4-4 4 4 0 0 0 4 4zM9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6z', desc: 'Live team availability — everyone on the team and whether they’re free or busy right now, and if busy, exactly why (driving a move, on a maintenance pickup, or inspecting a car), which car and for how long.' },
       { name: 'Fleet Health', to: '/inspections/schedules', icon: 'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM9 15l2 2 4-4', desc: 'The fleet\'s neural center — a unified hub with tabs for Service Due (odometer-based) and Registration & Insurance expiry, consolidating the live per-car health surfaces in one place.' },
-      { name: 'Car Status', to: '/car-status', icon: 'M5 17h14M5 17a2 2 0 0 1-2-2v-3l2-5a2 2 0 0 1 2-1.4h8A2 2 0 0 1 19 7l2 5v3a2 2 0 0 1-2 2M7 17v1a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-1m14 0v1a1 1 0 0 1-1 1h0a1 1 0 0 1-1-1v-1M9 12l2 2 4-4', desc: 'The workshop command center — every vehicle inside the maintenance workflow right now in one live table (stage, who holds it, garage, priority, faults, parts, deadline), with KPI cards and manager sections for repeat repairs, overdue cars, waiting-for-parts, waiting-for-approval and recently finished. Click any car for its full Maintenance Intelligence Center.' },
+      { name: 'Car Status', to: '/car-status', icon: 'M5 17h14M5 17a2 2 0 0 1-2-2v-3l2-5a2 2 0 0 1 2-1.4h8A2 2 0 0 1 19 7l2 5v3a2 2 0 0 1-2 2M7 17v1a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-1m14 0v1a1 1 0 0 1-1 1h0a1 1 0 0 1-1-1v-1M9 12l2 2 4-4', desc: 'The live stage board — every car in the maintenance workflow laid out by the exact stage it\'s in right now (Needs Test Drive → Being Inspected → Needs Dispatch → Awaiting Pickup → En Route → In Workshop → Ready for Pickup → Final QA), each showing who is responsible for it at that stage: the inspector, the supervisor who must dispatch, the driver who holds the car, or the garage. A stage reads “Waiting” until someone takes it, then shows their name. Click any car to open its ticket.' },
     ],
   },
   {
@@ -222,7 +219,6 @@ const NAV_PERMISSIONS = {
   '/maintenance-foresight': 'maintenance.view',
   '/cost-capture': 'maintenance.manage',
   '/inspection-review': 'maintenance.manage',
-  '/inspection-intelligence': 'maintenance.view',
   '/garages': 'maintenance.view',
   '/vendors': 'vendors.view',
   '/maintenance-analytics': 'maintenance.view',
@@ -236,9 +232,7 @@ const NAV_PERMISSIONS = {
   '/data-health': 'insights.view',
   '/financial-conflicts': 'insights.view',
   '/financial-reconciliation': 'insights.view',
-  '/oversight': 'insights.view',
   '/oversight/mileage': 'insights.view',
-  '/oversight/stages': 'insights.view',
   '/oversight/left-garage': 'insights.view',
   '/oversight/severity': 'insights.view',
   '/oversight/misdiagnoses': 'insights.view',
@@ -285,109 +279,6 @@ function ScrollTop() {
   );
 }
 
-// `collapsed` only takes effect at the lg breakpoint (the icon-rail); below lg
-// the sidebar is a full-width drawer and always shows labels.
-function NavItem({ item, onNavigate, collapsed, badgeCount = 0 }) {
-  // Live unread count, only surfaced on the Notifications row. Reuses the same
-  // polling context that drives the top-bar bell, so the badge and bell agree.
-  // Other rows can pass an attention `badgeCount` (e.g. overdue reminders/schedules).
-  const { unreadCount } = useNotifications();
-  const count = item.to === '/notifications' ? unreadCount : badgeCount;
-  const badge = count > 99 ? '99+' : String(count);
-  return (
-    <NavLink
-      to={item.to}
-      end={item.to === '/'}
-      onClick={onNavigate}
-      className={({ isActive }) =>
-        [
-          'group relative flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors duration-150',
-          collapsed ? 'lg:justify-center lg:gap-0 lg:px-0' : '',
-          isActive
-            ? 'bg-accent-400/[0.10] text-white ring-1 ring-inset ring-accent-400/15'
-            : 'text-steel-300 hover:bg-white/[0.05] hover:text-white',
-        ].join(' ')
-      }
-    >
-      {({ isActive }) => (
-        <>
-          {/* active accent bar — Faster yellow signature */}
-          <span
-            className={`absolute start-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-e-full bg-accent-400 transition-opacity duration-150 ${
-              isActive ? 'opacity-100' : 'opacity-0'
-            }`}
-          />
-          <svg
-            className={`h-[18px] w-[18px] shrink-0 transition-colors ${isActive ? 'text-accent-400' : 'text-steel-400 group-hover:text-steel-200'}`}
-            fill="none" viewBox="0 0 24 24" stroke="currentColor"
-            strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"
-          >
-            <path d={item.icon} />
-          </svg>
-          {/* unread dot on the icon — only visible in the collapsed icon-rail (lg+) */}
-          {count > 0 && collapsed && (
-            <span className="absolute end-1 top-1 hidden h-2 w-2 rounded-full bg-rose-500 ring-2 ring-slate-900 lg:block" />
-          )}
-          <span className={`truncate ${collapsed ? 'lg:hidden' : ''}`}>{item.name}</span>
-          {/* unread count pill — shown whenever the label is visible (expanded sidebar / mobile drawer) */}
-          {count > 0 && (
-            <span
-              className={`ms-auto inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-rose-500 px-1.5 text-[11px] font-semibold tabular-nums text-white ${
-                collapsed ? 'lg:hidden' : ''
-              }`}
-            >
-              {badge}
-            </span>
-          )}
-          {/* hover tooltip, only in the collapsed rail (lg+) */}
-          <span className={`rail-tip ${collapsed ? 'hidden lg:block' : 'hidden'}`}>{item.name}</span>
-        </>
-      )}
-    </NavLink>
-  );
-}
-
-// A nav section with a collapsible header (accordion). In the lg icon-rail
-// (`collapsed`) there are no labels to click, so the section just renders its
-// items with a thin divider, exactly as before. `open` is forced true for the
-// section holding the current page so you always see where you are.
-function NavSection({ section, collapsed, open, onToggle, onNavigate, badges = {} }) {
-  return (
-    <div>
-      {collapsed ? (
-        <>
-          {/* below lg the drawer is full-width, so the label still shows */}
-          <p className="px-3 pb-1.5 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-steel-500 lg:hidden">
-            {section.title}
-          </p>
-          <div className="mx-auto mb-1.5 hidden h-px w-6 bg-white/10 lg:block" />
-        </>
-      ) : (
-        <button
-          type="button"
-          onClick={onToggle}
-          className="group/sec mb-0.5 flex w-full items-center justify-between rounded-lg px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-steel-500 transition hover:text-steel-300"
-        >
-          <span className="text-left">{section.title}</span>
-          <svg
-            className={`h-3.5 w-3.5 text-steel-500 transition-transform duration-200 group-hover/sec:text-steel-300 ${open ? '' : '-rotate-90'}`}
-            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
-          >
-            <path d="M6 9l6 6 6-6" />
-          </svg>
-        </button>
-      )}
-      {(collapsed || open) && (
-        <div className="space-y-0.5">
-          {section.items.map((item) => (
-            <NavItem key={item.name} item={item} onNavigate={onNavigate} collapsed={collapsed} badgeCount={badges[item.to] || 0} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 export default function AppLayout() {
   const { user, logout } = useAuth();
   const { can, roles } = usePermissions();
@@ -408,76 +299,17 @@ export default function AppLayout() {
     (SHOW_FLEET_INTELLIGENCE || !i.intel) &&
     (!i.hideWhenIntel || !SHOW_FLEET_INTELLIGENCE) &&
     (!i.demoOnly || DEMO_MODE);
-  const visibleSections = NAV_SECTIONS
-    .map((s) => ({ ...s, items: s.items.filter(navVisible) }))
-    .filter((s) => s.items.length > 0);
+  // Feeds the ⌘K command palette — the sidebar is gone, so search + the launcher
+  // (/) + the per-module tab bar are the navigation surfaces.
   const visibleSearch = SEARCH_ITEMS.filter(navVisible);
 
-  // Sidebar attention badges — overdue counts for the Inspections & Reminders items,
-  // so what needs attention is visible before clicking. Polled lightly (60s) and only
-  // for the sections the user can actually see. Contact "overdue" = open + past due.
-  const canInspections = can('inspections.view');
-  const canReminders = can('reminders.view');
-  const canReview = can('maintenance.manage'); // gates the Inspection Review row + its badge
-  const [attention, setAttention] = useState({});
-  useEffect(() => {
-    let alive = true;
-    const load = async () => {
-      const jobs = [];
-      if (canInspections) {
-        jobs.push(['/inspections/schedules',
-          api.get('/InspectionSchedules', { params: { status: 'overdue' } }).then((r) => (r.data?.data || []).length)]);
-      }
-      if (canReminders) {
-        jobs.push(['/reminders/service',
-          api.get('/ServiceReminders', { params: { status: 'overdue' } }).then((r) => (r.data?.data || []).length)]);
-      }
-      if (canReview) {
-        // How many requests are sitting in the Inspection Review queue right now — a live
-        // notification-style count on the sidebar row, so Lin/Marwa see the backlog at a glance.
-        jobs.push(['/inspection-review',
-          api.get('/maintenance-tickets/pending-review').then((r) => (r.data?.data || r.data || []).length)]);
-      }
-      if (!jobs.length) return;
-      const results = await Promise.all(jobs.map(([, p]) => p.catch(() => 0)));
-      if (!alive) return;
-      const next = {};
-      jobs.forEach(([path], i) => { next[path] = results[i]; });
-      setAttention(next);
-    };
-    load();
-    const id = setInterval(() => { if (document.visibilityState === 'visible') load(); }, 60000);
-    return () => { alive = false; clearInterval(id); };
-  }, [canInspections, canReminders, canReview]);
-
-  const [open, setOpen] = useState(false);
   const [cmdOpen, setCmdOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
-  // Desktop sidebar collapse (icon-rail), remembered across sessions. In the
-  // module-first architecture the large sidebar is de-emphasised — the module
-  // tab bar is the primary in-app nav — so the rail is the DEFAULT unless the
-  // user has explicitly expanded it before.
-  const [collapsed, setCollapsed] = useState(() => localStorage.getItem('fv:rail') !== '0');
-  // Which nav sections are collapsed (accordion), remembered across sessions.
-  const [collapsedSections, setCollapsedSections] = useState(() => {
-    try { return new Set(JSON.parse(localStorage.getItem('fv:navsections') || '[]')); } catch { return new Set(); }
-  });
-  const toggleSection = (title) =>
-    setCollapsedSections((prev) => {
-      const next = new Set(prev);
-      next.has(title) ? next.delete(title) : next.add(title);
-      localStorage.setItem('fv:navsections', JSON.stringify([...next]));
-      return next;
-    });
   // Recently visited pages (paths), most-recent first — feeds the command palette.
   const [recents, setRecents] = useState(() => {
     try { return JSON.parse(localStorage.getItem('fv:recents') || '[]'); } catch { return []; }
   });
   const lastG = useRef(0); // timestamp of the last "g" press, for g+key chords
-
-  useEffect(() => {
-    localStorage.setItem('fv:rail', collapsed ? '1' : '0');
-  }, [collapsed]);
 
   const handleLogout = async () => {
     await logout();
@@ -517,13 +349,12 @@ export default function AppLayout() {
     .filter((i) => (i.to === '/' ? location.pathname === '/' : location.pathname.startsWith(i.to)))
     .sort((a, b) => b.to.length - a.to.length)[0];
 
-  // Module-first shell: the launcher (/) has no sidebar; every other page that
-  // belongs to a module shows that module's persistent tab bar under the header.
+  // Module-first shell: the launcher (/) is the home surface; every other page
+  // that belongs to a module shows that module's persistent tab bar under the
+  // header. There is no sidebar — navigation is the launcher, the module tab
+  // bar, ⌘K search, and the header Back / Home buttons.
   const isLauncher = location.pathname === '/';
   const activeModule = moduleForPath(location.pathname);
-
-  // The section holding the current page — kept open even if the user collapsed it.
-  const activeSectionTitle = visibleSections.find((s) => s.items.includes(current))?.title;
 
   const initial = (user?.name || '?').charAt(0).toUpperCase();
   const pageName = current?.name;
@@ -550,94 +381,50 @@ export default function AppLayout() {
     <PageStatProvider>
     <div className="min-h-screen">
       <ScrollProgress />
-      {/* Mobile overlay */}
-      {open && (
-        <div className="fixed inset-0 z-30 bg-slate-900/50 backdrop-blur-sm lg:hidden" onClick={() => setOpen(false)} />
-      )}
 
-      {/* Sidebar — hidden entirely on the App Launcher (full-bleed app grid). */}
-      {!isLauncher && (
-      <aside
-        className={`fixed inset-y-0 start-0 z-40 flex w-64 transform flex-col bg-navy-950 text-steel-300 shadow-xl transition-all duration-300 ease-out lg:translate-x-0 ${
-          collapsed ? 'lg:w-20' : 'lg:w-64'
-        } ${open ? 'translate-x-0' : 'max-lg:-translate-x-full max-lg:rtl:translate-x-full'}`}
-      >
-        {/* plain hairline seam along the sidebar's outer edge */}
-        <div className="pointer-events-none absolute inset-y-0 end-0 w-px bg-white/[0.07]" />
-
-        {/* Brand — top-left identity slot (logo-ready; see components/Brand.js). */}
-        <div className={`flex h-16 shrink-0 items-center border-b border-white/[0.06] px-5 ${collapsed ? 'lg:justify-center lg:px-0' : ''}`}>
-          <Brand collapsed={collapsed} />
-        </div>
-
-        {/* Nav */}
-        <nav className="sidebar-scroll flex-1 space-y-5 overflow-y-auto px-3 py-5">
-          {visibleSections.map((section) => (
-            <NavSection
-              key={section.title}
-              section={section}
-              collapsed={collapsed}
-              open={!collapsedSections.has(section.title) || section.title === activeSectionTitle}
-              onToggle={() => toggleSection(section.title)}
-              onNavigate={() => setOpen(false)}
-              badges={attention}
-            />
-          ))}
-        </nav>
-
-        {/* Footer: live status + desktop collapse toggle */}
-        <div className="shrink-0 border-t border-white/[0.06] px-3 py-3">
-          <div className={`flex items-center ${collapsed ? 'lg:flex-col lg:gap-2' : 'justify-between'} gap-2 px-2`}>
-            <div className={`flex items-center gap-2 text-[11px] font-medium text-steel-400 ${collapsed ? 'lg:hidden' : ''}`}>
-              <span className="relative flex h-2 w-2">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
-              </span>
-              Live — OfficeManager connected
-            </div>
-            {/* collapsed state: just the pulsing dot */}
-            {collapsed && (
-              <span className="relative hidden h-2 w-2 lg:flex">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
-              </span>
-            )}
-            <button
-              onClick={() => setCollapsed((v) => !v)}
-              className="hidden rounded-lg p-1.5 text-steel-400 transition hover:bg-white/[0.06] hover:text-white lg:inline-flex"
-              title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-              aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            >
-              <svg className={`h-5 w-5 transition-transform ${collapsed ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M15 6l-6 6 6 6" />
-              </svg>
-            </button>
-          </div>
-        </div>
-      </aside>
-      )}
-
-      {/* Main column — no sidebar offset on the launcher. */}
-      <div className={`transition-all duration-300 ${isLauncher ? '' : collapsed ? 'lg:ps-20' : 'lg:ps-64'}`}>
+      {/* Full-width shell — no sidebar. The launcher (/) is home; the header
+          Back/Home buttons + the module tab bar + ⌘K search carry navigation. */}
+      <div>
         <header className="glass sticky top-0 z-20 flex h-16 items-center gap-2 border-b border-slate-200/70 px-4 sm:gap-4 sm:px-6 lg:px-8">
           {isLauncher ? (
-            // No sidebar on the launcher, so the brand lives in the header.
-            <Brand />
+            // Home surface — show the full brand lockup, no nav buttons needed.
+            <div className="flex min-w-0 flex-1 items-center">
+              <Brand />
+            </div>
           ) : (
-            <button
-              className="rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 lg:hidden"
-              onClick={() => setOpen(true)}
-              aria-label="Open menu"
-            >
-              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
-              </svg>
-            </button>
+            // Inner page — a single compact nav cluster (Back · Home) followed by
+            // the page title. The module bar below carries the module identity, so
+            // the header stays clean and un-duplicated.
+            <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
+              <div className="flex shrink-0 items-center gap-1 rounded-xl border border-slate-200 bg-white p-0.5 shadow-sm">
+                <button
+                  onClick={() => navigate(-1)}
+                  className="flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-100 hover:text-slate-900"
+                  title="Back to previous page"
+                  aria-label="Back to previous page"
+                >
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M15 18l-6-6 6-6" />
+                  </svg>
+                  <span className="hidden sm:inline">Back</span>
+                </button>
+                <span className="h-5 w-px bg-slate-200" />
+                <button
+                  onClick={() => navigate('/')}
+                  className="flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-100 hover:text-slate-900"
+                  title="Home — main page"
+                  aria-label="Home — main page"
+                >
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M3 12l9-9 9 9M5 10v10a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V10" />
+                  </svg>
+                  <span className="hidden sm:inline">Home</span>
+                </button>
+              </div>
+              <span className="hidden h-6 w-px bg-slate-200 sm:block" />
+              <h2 className="truncate text-[15px] font-semibold text-slate-800">{current?.name || 'Faster'}</h2>
+            </div>
           )}
-
-          <div className="flex min-w-0 flex-1 items-center gap-2">
-            {!isLauncher && <h2 className="truncate text-[15px] font-semibold text-slate-800">{current?.name || 'Faster'}</h2>}
-          </div>
 
           <div className="flex items-center gap-1.5 sm:gap-3">
             <LiveClock name={user?.name} />

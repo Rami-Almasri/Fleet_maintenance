@@ -31,6 +31,14 @@ use Illuminate\Validation\Rule;
 class MaintenanceWorkflowController extends Controller
 {
     /**
+     * Upper bound (km) for any odometer reading captured through the workflow. The odometer columns are
+     * unsignedInteger (max ~4.29 billion); a real vehicle reading sits far below this, so we cap inputs
+     * well under the column limit. This turns a fat-fingered / garbage value into a clean 422 validation
+     * error instead of a raw "SQLSTATE[22003] Out of range value" 500 at write time.
+     */
+    public const MAX_ODOMETER = 9_999_999;
+
+    /**
      * Live workflow rows grouped into the dashboard columns. The two-stage model adds a leading
      * `diagnostic` lane (Stage 1, not yet a ticket); `pending` is the just-opened ticket awaiting
      * Logistics dispatch. Terminal rows (closed / diagnostic_cleared) are excluded by openWorkflow().
@@ -82,7 +90,9 @@ class MaintenanceWorkflowController extends Controller
         'invoices.vendor:id,name', 'invoices.tasks:id,maintenance_invoice_id,symptom,status', 'invoices.lineItems',
         // Enterprise Handover Workflow — the open discrepancy incident (if any), the latest pause/resume
         // custody handovers, and every generated comparison report on the ticket's history.
-        'activeIncident.acknowledgedBy:id,name', 'lastPauseHandover', 'lastResumeHandover', 'handoverComparisons'];
+        'activeIncident.acknowledgedBy:id,name', 'lastPauseHandover', 'lastResumeHandover', 'handoverComparisons',
+        // Data-driven garage-choice record — powers the "Why this garage?" card in the ticket history.
+        'latestRecommendationDecision.recommendedVendor:id,name', 'latestRecommendationDecision.chosenVendor:id,name', 'latestRecommendationDecision.actor:id,name'];
 
     /** The standard eager set for a fully-hydrated ticket — reused by the invoice controller's reloads. */
     public static function eagerWith(): array
@@ -105,6 +115,9 @@ class MaintenanceWorkflowController extends Controller
         'assignedDriver:id,name', 'delegatedBy:id,name',
         'recommendationReviewer:id,name', 'linkedContract:id,contract_no',
         'tasks.currentVendor:id,name', 'tasks.lastFailedVendor:id,name',
+        // Part requests per fault — so the board (and the Car Status stage board) can show whether a car
+        // is still waiting on a part, without a second round-trip to the Parts board.
+        'tasks.partRequests:id,maintenance_task_id,part_name,status',
         'activeMove',
     ];
 
@@ -727,7 +740,7 @@ class MaintenanceWorkflowController extends Controller
                 'vehicle_id'         => ['required', 'integer', Rule::exists('vehicles', 'id')],
                 'trigger_reason'     => ['required', Rule::in(Maintenance::TRIGGER_REASONS)],
                 'customer_complaint' => ['nullable', 'string', 'max:2000'],
-                'test_odometer'      => ['required', 'integer', 'min:1'],
+                'test_odometer'      => ['required', 'integer', 'min:1', 'max:' . self::MAX_ODOMETER],
                 'odometer_photo'     => ['required', 'image', 'max:8192'], // ≤ 8 MB
                 // Mandatory (client-enforced) explanation when the reading is >10 km off the previous one.
                 'odometer_note'      => ['nullable', 'string', 'max:2000'],
@@ -927,7 +940,7 @@ class MaintenanceWorkflowController extends Controller
             $fuelScale = config('maintenance_handover.fuel_scale', []);
             $data = $request->validate([
                 'reason'              => ['nullable', 'string', 'max:2000'],
-                'pause_odometer'      => ['required', 'integer', 'min:1'],
+                'pause_odometer'      => ['required', 'integer', 'min:1', 'max:' . self::MAX_ODOMETER],
                 'odometer_photo'      => ['required', 'image', 'max:8192'], // ≤ 8 MB
                 'fuel_level'          => ['required', 'string', Rule::in($fuelScale)],
                 'exterior_condition'  => ['required', 'string', 'max:255'],
@@ -997,7 +1010,7 @@ class MaintenanceWorkflowController extends Controller
         return $this->run(function () use ($request, $ticket) {
             $fuelScale = config('maintenance_handover.fuel_scale', []);
             $data = $request->validate([
-                'resume_odometer'     => ['required', 'integer', 'min:1'],
+                'resume_odometer'     => ['required', 'integer', 'min:1', 'max:' . self::MAX_ODOMETER],
                 'odometer_photo'      => ['required', 'image', 'max:8192'], // ≤ 8 MB
                 'fuel_level'          => ['required', 'string', Rule::in($fuelScale)],
                 'exterior_condition'  => ['required', 'string', 'max:255'],
@@ -1054,7 +1067,7 @@ class MaintenanceWorkflowController extends Controller
                 // Who physically takes the car. Defaults to the signed-in user (they hold custody); an
                 // explicit name is only needed when someone ELSE takes it.
                 'taken_by'       => ['nullable', 'string', 'max:120'],
-                'release_odometer' => ['required', 'integer', 'min:1'],
+                'release_odometer' => ['required', 'integer', 'min:1', 'max:' . self::MAX_ODOMETER],
             ]);
 
             $ticket = $this->workflow->temporarilyReleaseVehicle($ticket, [
@@ -1082,7 +1095,7 @@ class MaintenanceWorkflowController extends Controller
     {
         return $this->run(function () use ($request, $ticket) {
             $data = $request->validate([
-                'return_odometer' => ['required', 'integer', 'min:1'],
+                'return_odometer' => ['required', 'integer', 'min:1', 'max:' . self::MAX_ODOMETER],
                 'return_note'     => ['nullable', 'string', 'max:2000'],
             ]);
 
@@ -1253,7 +1266,7 @@ class MaintenanceWorkflowController extends Controller
     {
         return $this->run(function () use ($request, $ticket) {
             $data = $request->validate([
-                'test_odometer'      => ['required', 'integer', 'min:1'],
+                'test_odometer'      => ['required', 'integer', 'min:1', 'max:' . self::MAX_ODOMETER],
                 'odometer_photo'     => ['required', 'image', 'max:8192'], // ≤ 8 MB
                 'odometer_note'      => ['nullable', 'string', 'max:2000'], // explanation for a >10 km gap
                 'odometer_confirmed' => ['nullable', 'boolean'],
@@ -1322,7 +1335,7 @@ class MaintenanceWorkflowController extends Controller
                 'deferrable_for_rental' => ['nullable', 'boolean'],
                 // End-of-test-drive odometer (optional) + the >10 km gap explanation. Captured at Decide,
                 // stored under the 'report' flag key — never overwrites the start-of-drive test_odometer.
-                'report_odometer'      => ['nullable', 'integer', 'min:1'],
+                'report_odometer'      => ['nullable', 'integer', 'min:1', 'max:' . self::MAX_ODOMETER],
                 'odometer_note'        => ['nullable', 'string', 'max:2000'],
                 'odometer_confirmed'   => ['nullable', 'boolean'],
                 // End-of-test-drive odometer PHOTO (optional) — same best-effort, saved-after-commit
@@ -1504,6 +1517,19 @@ class MaintenanceWorkflowController extends Controller
                 // a fault on this ticket. Unselected open faults stay Pending Assignment for the Dispatch Queue.
                 'fault_ids'            => ['nullable', 'array'],
                 'fault_ids.*'          => ['integer', Rule::exists('maintenance_tasks', 'id')->where('maintenance_id', $ticket->id)],
+                // Decision-support audit: what the recommendation engine suggested, whether the Supervisor
+                // took it, and the reason — recorded in the garage_assigned event so "why this garage?" is
+                // answerable later. Purely informational; the actual garage is still `vendor_id` above.
+                'recommendation'                       => ['nullable', 'array'],
+                'recommendation.recommended_vendor_id' => ['nullable', 'integer'],
+                'recommendation.accepted'              => ['nullable', 'boolean'],
+                'recommendation.rank'                  => ['nullable', 'integer'],
+                'recommendation.score'                 => ['nullable', 'numeric'],
+                'recommendation.confidence'            => ['nullable', 'string', 'max:12'],
+                'recommendation.reason'                => ['nullable', 'string', 'max:500'],
+                'recommendation.reasons'               => ['nullable', 'array'],
+                'recommendation.criteria'              => ['nullable', 'array'],
+                'recommendation.source'                => ['nullable', 'string', 'max:60'],
             ]);
 
             $ticket = $this->workflow->assignDispatch($ticket, $data, $request->user());
@@ -1564,7 +1590,7 @@ class MaintenanceWorkflowController extends Controller
     {
         return $this->run(function () use ($request, $ticket) {
             $data = $request->validate([
-                'dispatch_odometer'    => ['required', 'integer', 'min:1'],
+                'dispatch_odometer'    => ['required', 'integer', 'min:1', 'max:' . self::MAX_ODOMETER],
                 'out_date'             => ['nullable', 'date'], // when the car left — defaults to today
                 'expected_return_date' => ['nullable', 'date'],
                 'odometer_photo'       => ['nullable', 'image', 'max:8192'], // ≤ 8 MB
@@ -1606,7 +1632,7 @@ class MaintenanceWorkflowController extends Controller
     {
         return $this->run(function () use ($request, $ticket) {
             $data = $request->validate([
-                'dispatch_odometer'    => ['required', 'integer', 'min:1'],
+                'dispatch_odometer'    => ['required', 'integer', 'min:1', 'max:' . self::MAX_ODOMETER],
                 'recovery_unit_name'   => ['required', 'string', 'max:191'],
                 'recovery_unit_phone'  => ['nullable', 'string', 'max:40'],
                 'odometer_note'        => ['nullable', 'string', 'max:2000'], // explanation for a >10 km gap
@@ -1691,7 +1717,7 @@ class MaintenanceWorkflowController extends Controller
     {
         return $this->run(function () use ($request, $ticket) {
             $data = $request->validate([
-                'receive_odometer'     => ['required', 'integer', 'min:1'],
+                'receive_odometer'     => ['required', 'integer', 'min:1', 'max:' . self::MAX_ODOMETER],
                 'odometer_photo'       => ['required', 'image', 'max:8192'], // ≤ 8 MB — arrival check-in shot
                 'odometer_note'        => ['nullable', 'string', 'max:2000'], // explanation for a >10 km gap
                 'odometer_confirmed'   => ['nullable', 'boolean'],
@@ -1767,7 +1793,7 @@ class MaintenanceWorkflowController extends Controller
                 // No odometer is captured at "Maintenance complete" — the car doesn't move inside the
                 // workshop, so a reading here would just duplicate the garage-arrival one. Kept nullable
                 // (not removed) so the endpoint stays backward-compatible if a client still sends it.
-                'final_odometer'  => ['nullable', 'integer', 'min:1'],
+                'final_odometer'  => ['nullable', 'integer', 'min:1', 'max:' . self::MAX_ODOMETER],
                 'odometer_photo'  => ['nullable', 'image', 'max:8192'],
                 'odometer_note'   => ['nullable', 'string', 'max:2000'],
                 'odometer_confirmed' => ['nullable', 'boolean'],
@@ -1854,7 +1880,7 @@ class MaintenanceWorkflowController extends Controller
             $data = $request->validate([
                 'odometer_photo'  => ['required', 'image', 'max:8192'], // ≤ 8 MB — mandatory "received from garage" shot
                 // Garage-OUT reading — mandatory: this is when the car physically leaves the garage.
-                'return_odometer' => ['required', 'integer', 'min:1'],
+                'return_odometer' => ['required', 'integer', 'min:1', 'max:' . self::MAX_ODOMETER],
                 'odometer_note'   => ['nullable', 'string', 'max:2000'], // explanation for a >10 km gap
                 'odometer_confirmed' => ['nullable', 'boolean'],
             ]);
@@ -1892,7 +1918,7 @@ class MaintenanceWorkflowController extends Controller
                 // Arrival-at-park odometer (mandatory) — the reading the moment the car is back at base on
                 // the return leg. Continuity-checked vs the last recorded reading, and it becomes the at-base
                 // anchor the final QA sign-off's strict ±5 km cap compares against.
-                'park_odometer'  => ['required', 'integer', 'min:1'],
+                'park_odometer'  => ['required', 'integer', 'min:1', 'max:' . self::MAX_ODOMETER],
                 'odometer_note'  => ['nullable', 'string', 'max:2000'],
                 'odometer_confirmed' => ['nullable', 'boolean'],
                 'cost'           => ['nullable', 'numeric', 'min:0'],
@@ -2065,7 +2091,7 @@ class MaintenanceWorkflowController extends Controller
                 'notes'          => ['nullable', 'string', 'max:2000'],
                 // Final re-inspection odometer captured at sign-off (car is physically back) + the >10 km
                 // gap explanation. Optional at the validation layer; the modal makes it required on PASS.
-                'final_odometer' => ['nullable', 'integer', 'min:1'],
+                'final_odometer' => ['nullable', 'integer', 'min:1', 'max:' . self::MAX_ODOMETER],
                 'odometer_note'  => ['nullable', 'string', 'max:2000'],
                 'odometer_confirmed' => ['nullable', 'boolean'],
                 // Deferred-invoice: sign off + return the car to service now, but park in awaiting_invoice
@@ -2583,7 +2609,7 @@ class MaintenanceWorkflowController extends Controller
                 'reason'    => ['nullable', 'string', 'max:2000'],
                 // Mileage Gate — the current odometer is mandatory on every garage switch; the move is
                 // rejected here (min:1) until it's recorded. No more silent, mileage-less transfers.
-                'odometer'  => ['required', 'integer', 'min:1'],
+                'odometer'  => ['required', 'integer', 'min:1', 'max:' . self::MAX_ODOMETER],
                 // Explanation for a >10 km gap from the last recorded reading (mandatory in the UI when it fires).
                 'odometer_note' => ['nullable', 'string', 'max:2000'],
                 // Transport Responsibility — optional custodian (a driver / logistics officer). When named,

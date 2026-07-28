@@ -8,11 +8,13 @@ import Badge from '../ui/Badge';
 import Icon from '../ui/Icon';
 import { Skeleton } from '../ui/Skeleton';
 import FindingsList from './FindingsList';
+import WhyThisGarage from './WhyThisGarage';
 import RepairQualityCheck from './RepairQualityCheck';
+import RepairIntelligencePanel from '../knowledge/RepairIntelligencePanel';
 import VideoEvidence from './VideoEvidence';
 import InvoicesPanel from './InvoicesPanel';
 import TicketParts from './TicketParts';
-import { resolveAction, allows, ctaLabel, ago, fmtDuration, fmtDateTime, SEVERITY_CHIP, custodyBlocked, custodyHolderName, isAtGarage, isPausable, isPaused, isPausedOut, isTempReleasable, isTemporarilyReleased } from './meta';
+import { resolveAction, allows, ctaLabel, ago, fmtDuration, fmtDateTime, SEVERITY_CHIP, custodyBlocked, custodyHolderName, isAtGarage, isPausable, isPaused, isPausedOut, isTempReleasable, isTemporarilyReleased, canOrderParts } from './meta';
 import { SHOW_VIDEO_REVIEW } from '../../config/features';
 
 // workflow_status → the lane colour, reused for the status pill so the drawer reads as the
@@ -203,8 +205,14 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
   // The whole gate is hidden while parked (SHOW_VIDEO_REVIEW = false).
   const canRefix = SHOW_VIDEO_REVIEW && tk && tk.workflow_status === 'repair_review' && can('maintenance.delegate');
   // Pause Maintenance & Return to Service — pull a mid-repair car out for a customer (the controllers'
-  // decision). Offered on any in-progress stage; the ticket keeps all its state and Resume continues here.
-  const canPause = tk && isPausable(tk) && can('maintenance.manage');
+  // decision). Only offered once the car is physically IN THE WORKSHOP (at-garage stages: under_repair,
+  // repair_review, ready_for_pickup) — isAtGarage ∩ isPausable drops the pre-arrival stages (pending
+  // dispatch, in transit) and the post-garage QA stages, so you only "release" a car that's actually in
+  // the shop. (isAtGarage includes closed, but isPausable excludes it.) The ticket keeps all its state
+  // and Resume continues from here; the released car becomes rentable via the backend cascade. NOTE: the
+  // backend PAUSABLE_STATES stays wider on purpose so the rental-creation "pull from maintenance" path can
+  // still auto-pause an earlier-stage ticket.
+  const canPause = tk && isPausable(tk) && isAtGarage(tk) && can('maintenance.manage');
   // Vehicle Physically Returned — a light checkpoint (no handover required yet) offered while the car
   // is paused and still out; once flagged, "Resume" (the primary action) takes over and captures the
   // full return handover. Mirrors isPausedOut() — controller, supervisor, or the driver/logistics claim.
@@ -212,7 +220,10 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
   // Temporary Vehicle Release — take the car OUT of the workshop mid-repair (road test / customer test /
   // external inspection / storage) WITHOUT pausing; the ticket stays at its stage. Releasing it is the
   // controllers' call; bringing it back may also be a supervisor or the driver/logistics claim role.
-  const canTempRelease = tk && isTempReleasable(tk) && can('maintenance.manage');
+  // Only while the car is physically IN THE WORKSHOP (at-garage stages: under_repair, repair_review,
+  // ready_for_pickup) — isAtGarage ∩ isTempReleasable, matching Pause & Release. You can't "take the car
+  // out of the workshop" before it has arrived there. (isAtGarage includes closed; isTempReleasable excludes it.)
+  const canTempRelease = tk && isTempReleasable(tk) && isAtGarage(tk) && can('maintenance.manage');
   const canReturnRelease = tk && isTemporarilyReleased(tk) && (can('maintenance.manage') || can('maintenance.delegate') || can('logistics.claim'));
   // Video Evidence is relevant once the car has reached the garage (or whenever any video already exists).
   const showVideo = SHOW_VIDEO_REVIEW && tk && (tk.has_video
@@ -232,7 +243,7 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
       {tk.workflow_status === 'under_repair' && can('maintenance.logistics') && (
         <Button size="sm" variant="secondary" onClick={() => onAct('finding', tk)}>{t('workflow.board.addFinding')}</Button>
       )}
-      {can('parts.request') && (
+      {can('parts.request') && canOrderParts(tk) && (
         <Button size="sm" variant="secondary" onClick={() => setPartsOpenSignal((n) => n + 1)}>
           <Icon.Wrench className="h-3.5 w-3.5" /> Request Part
         </Button>
@@ -330,6 +341,15 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
               <span className="h-2 w-2 rounded-full" style={{ background: tone }} />
               {tk.status_label}
             </span>
+            {/* Temporarily out — the car left the workshop mid-repair (road test / customer test). Its
+                workflow_status stays at the repair stage, so without this the banner would read "In
+                Workshop" while the car is physically gone. This makes the OUT state explicit, so the
+                "Return to workshop" action reads correctly (it only shows while the car is out). */}
+            {isTemporarilyReleased(tk) && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-1 text-sm font-bold text-amber-800 ring-1 ring-inset ring-amber-300">
+                🚗 {t('workflow.tempRelease.outBadge')}
+              </span>
+            )}
             <div className="ms-auto flex items-center gap-3">
               {/* Jump from the quick drawer to the full-page command view. */}
               <Link
@@ -518,6 +538,23 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
               <p className="text-xs text-slate-400">{t('workflow.detail.noFindings')}</p>
             )}
           </Section>
+
+          {/* Repair intelligence — "Previous Similar Repairs + Recommendation" per fault. Read-only; the
+              panel self-loads the frozen contract and degrades gracefully when history is thin. */}
+          {tk.tasks?.some((task) => task.kind !== 'service' && task.kind !== 'inspection') && (
+            <Section title={t('repairIntel.title')} icon={<Icon.Chart className="h-3.5 w-3.5 text-indigo-400" />}>
+              <div className="space-y-2">
+                {tk.tasks
+                  .filter((task) => task.kind !== 'service' && task.kind !== 'inspection')
+                  .map((task) => (
+                    <div key={task.id} className="space-y-1">
+                      <div className="text-xs font-medium text-slate-500">{task.symptom}</div>
+                      <RepairIntelligencePanel taskId={task.id} />
+                    </div>
+                  ))}
+              </div>
+            </Section>
+          )}
 
           {/* Parts — every part requested against this ticket + a technician's in-context "Request Part".
               Approve/purchase/install still happen on the standalone /parts board. */}
@@ -787,6 +824,13 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
                   </div>
                 ))}
               </div>
+            </Section>
+          )}
+
+          {/* Why this garage was chosen — the durable data-driven decision record */}
+          {tk.garage_recommendation && (
+            <Section title={t('workflow.garageRec.why.title')} icon={<Icon.Wrench className="h-3.5 w-3.5 text-slate-400" />}>
+              <WhyThisGarage rec={tk.garage_recommendation} t={t} />
             </Section>
           )}
 

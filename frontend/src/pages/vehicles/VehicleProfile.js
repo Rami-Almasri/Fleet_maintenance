@@ -16,6 +16,7 @@ import Icon from '../../components/ui/Icon';
 import Tabs from '../../components/ui/Tabs';
 import VehicleWorkflowPanel from '../../components/vehicles/VehicleWorkflowPanel';
 import VehicleCheckpointsPanel from '../../components/vehicles/VehicleCheckpointsPanel';
+import VehicleComplaintsPanel from '../../components/vehicles/VehicleComplaintsPanel';
 import VehicleInvestigationTimeline from '../../components/vehicles/VehicleInvestigationTimeline';
 import { aed2, fmtDate, fmtClock, num } from '../../lib/format';
 import CompositionDonut from '../../components/ui/CompositionDonut';
@@ -420,7 +421,7 @@ const PRIO = {
 };
 
 // Top-level tabs for the profile. Keys are also the ?tab= URL value (deep-linkable / shareable).
-const TAB_KEYS = ['overview', 'plate', 'visits', 'timeline', 'journey', 'activity', 'checkpoints', 'financials', 'media'];
+const TAB_KEYS = ['overview', 'plate', 'visits', 'timeline', 'journey', 'activity', 'checkpoints', 'complaints', 'financials', 'media'];
 
 // Per-tab "Data Origin" line — the standing traceability rule: every surface names where its
 // numbers come from, so a manager on any tab still sees the source (no black boxes).
@@ -430,7 +431,7 @@ const TAB_ORIGIN = {
   visits: 'Each maintenance visit is an OfficeManager type-U contract, enriched with its workshop events from the N-Maintenance sheet log (garage, issues, priority, cost).',
   timeline: 'The N-Maintenance sheet workshop log interleaved with the manual maintenance-workflow audit trail (transitions & follow-ups) logged in-app, newest first.',
   journey: 'The same in-app maintenance-workflow audit trail (vehicle event log), reshaped per ticket: each workflow_status transition marks a stage, timed to the next transition — so you see every stage the car went through and how long it sat in each.',
-  checkpoints: 'Workshop progress checkpoints filed by the responsible follow-up owners (Waleed/Abdullah, or a ticket’s assigned users): outcome, delay reason, summary and photos/videos, plus the live ETA against the promised completion date. Reminders escalate automatically before a job goes overdue.',
+  checkpoints: 'Workshop progress updates filed by the responsible follow-up owners (Waleed/Abdullah, or a ticket’s assigned users): the revised completion date, the reason it moved, a progress note and photos/videos. The On Schedule / Overdue status is derived automatically from the promised date; reminders escalate before a job goes overdue.',
   activity: 'The car’s whole history as an investigation tool — search, filters, KPIs, grouping and sorting over every source unified: the N-Maintenance sheet workshop visits, the maintenance-workflow audit trail (inspections, dispatch, repair, re-inspection, parts, approvals & follow-ups), the logistics movement log, and inspection records. Every row carries who acted and when; nothing is editable, and the exact filtered view is captured in the URL to share.',
   financials: 'Reverse-engineered from OfficeManager billing via RealProfitService: rent − discount + realized usage − operating − car-level maintenance.',
   media: 'Pre/post condition & odometer photos captured during the maintenance workflow (inspection & garage steps).',
@@ -872,6 +873,7 @@ export default function VehicleProfile() {
               { key: 'timeline', label: 'Maintenance Log', badge: num(timeline.length) },
               { key: 'journey', label: 'Journey', badge: num(journeys.length) },
               { key: 'checkpoints', label: 'Progress' },
+              { key: 'complaints', label: 'Complaints' },
               { key: 'media', label: 'Media' },
             ]}
           />
@@ -1300,6 +1302,13 @@ export default function VehicleProfile() {
         <div role="tabpanel" id="panel-checkpoints" aria-labelledby="tab-checkpoints" className="space-y-6">
           <VehicleCheckpointsPanel vehicleId={id} />
           <DataOrigin tab="checkpoints" />
+        </div>
+        )}
+
+        {/* ── COMPLAINTS ─────────────────────── customer complaint history + triage timeline */}
+        {activeTab === 'complaints' && (
+        <div role="tabpanel" id="panel-complaints" aria-labelledby="tab-complaints" className="space-y-6">
+          <VehicleComplaintsPanel vehicleId={id} />
         </div>
         )}
 

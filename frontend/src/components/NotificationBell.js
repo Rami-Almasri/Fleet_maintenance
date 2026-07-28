@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useNotifications } from '../hooks/useNotifications';
+import { actionTarget } from '../lib/notifications';
 import NotificationRow from './NotificationRow';
 import Button from './ui/Button';
 
@@ -39,7 +40,8 @@ export default function NotificationBell() {
   const openNotification = (n) => {
     if (!n.read) markRead(n.id);
     setOpen(false);
-    if (n.url) navigate(n.url);
+    const to = actionTarget(n);
+    if (to) navigate(to);
   };
 
   const badge = unreadCount > 99 ? '99+' : unreadCount;

@@ -3,11 +3,15 @@
 // module, so the user always knows which app they're in and can move between its
 // sections without "leaving" it. Tabs are permission-filtered via the registry.
 //
+// When the tabs overflow the bar's width they don't collapse — instead the bar
+// scrolls horizontally with an always-visible, grabbable scrollbar (`.tabbar-scroll`),
+// and the user can also click-and-drag anywhere on the bar to pan through them.
+//
 // A section may declare a `menu` (array of { name, route, tone? } and optional
 // { heading } separators); its tab then behaves like an Odoo dropdown — clicking
 // it reveals the sub-items (e.g. the Maintenance Cycle stages) that deep-link into
 // the page. The dropdown is rendered through a portal to document.body so the tab
-// bar's horizontal scroll container (overflow-x) can't clip it.
+// bar's horizontal-scroll container can't clip it.
 
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -37,6 +41,7 @@ export default function ModuleTabBar({ module }) {
   const [counts, setCounts] = useState(null);
   const barRef = useRef(null);
   const menuRef = useRef(null);
+  const navRef = useRef(null);
 
   const closeMenu = () => setMenu(null);
 
@@ -63,6 +68,56 @@ export default function ModuleTabBar({ module }) {
     };
   }, [menu]);
 
+  // ── Grab-and-drag panning ────────────────────────────────────────────────────
+  // Press anywhere on the bar and drag to slide the tabs. A movement threshold keeps
+  // this from stealing plain clicks on tabs; once it counts as a drag we swallow the
+  // click so the tab under the pointer isn't accidentally activated.
+  const drag = useRef({ active: false, moved: false, startX: 0, startLeft: 0 });
+
+  const onPointerDown = (e) => {
+    // Only the primary (left) button, and never through a scrollbar-thumb grab (those
+    // land on the element too, but the browser handles them — pointerdown y is fine to allow).
+    if (e.button !== 0) return;
+    const nav = navRef.current;
+    if (!nav) return;
+    drag.current = { active: true, moved: false, startX: e.clientX, startLeft: nav.scrollLeft };
+  };
+  const onPointerMove = (e) => {
+    const d = drag.current;
+    if (!d.active) return;
+    const dx = e.clientX - d.startX;
+    if (!d.moved && Math.abs(dx) < 5) return; // below threshold — still a click
+    if (!d.moved) {
+      d.moved = true;
+      navRef.current?.classList.add('is-dragging');
+      navRef.current?.setPointerCapture?.(e.pointerId);
+    }
+    navRef.current.scrollLeft = d.startLeft - dx;
+  };
+  const endDrag = (e) => {
+    const d = drag.current;
+    if (d.active && d.moved) {
+      try { navRef.current?.releasePointerCapture?.(e.pointerId); } catch { /* noop */ }
+    }
+    navRef.current?.classList.remove('is-dragging');
+    // Keep `moved` true through the click event that fires right after pointerup.
+    drag.current = { ...d, active: false };
+  };
+  // Suppress the click that follows a drag so we don't navigate on release.
+  const onClickCapture = (e) => {
+    if (drag.current.moved) {
+      e.preventDefault();
+      e.stopPropagation();
+      drag.current.moved = false;
+    }
+  };
+  // Let a mouse wheel scroll the bar horizontally when it overflows.
+  const onWheel = (e) => {
+    const nav = navRef.current;
+    if (!nav || nav.scrollWidth <= nav.clientWidth) return;
+    if (e.deltaY !== 0 && e.deltaX === 0) { nav.scrollLeft += e.deltaY; }
+  };
+
   const tabs = [
     { name: 'Overview', route: OVERVIEW_ROUTE(module.id), icon: module.icon },
     ...visibleSections(module, can, roles),
@@ -74,9 +129,9 @@ export default function ModuleTabBar({ module }) {
     return pathname === tab.route || pathname.startsWith(tab.route + '/');
   };
 
-  const baseTab = 'flex items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-3 text-sm outline-none transition focus-visible:ring-2 focus-visible:ring-indigo-500/50';
-  const activeTab = 'border-indigo-500 font-semibold text-indigo-600';
-  const idleTab = 'border-transparent font-medium text-slate-500 hover:text-slate-800';
+  const baseTab = 'group/tab relative flex items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-2 my-1.5 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-indigo-500/50';
+  const activeTab = 'bg-indigo-50 font-semibold text-indigo-600';
+  const idleTab = 'font-medium text-slate-500 hover:bg-slate-100/70 hover:text-slate-800';
 
   const toggleMenu = (tab, e) => {
     if (menu?.name === tab.name) { closeMenu(); return; }
@@ -117,7 +172,17 @@ export default function ModuleTabBar({ module }) {
           <span className="font-display text-sm font-bold text-slate-900">{module.name}</span>
         </div>
 
-        <nav className="sidebar-scroll flex min-w-0 flex-1 items-stretch gap-1 overflow-x-auto" aria-label={`${module.name} sections`}>
+        <nav
+          ref={navRef}
+          className="tabbar-scroll flex min-w-0 flex-1 items-stretch gap-1"
+          aria-label={`${module.name} sections`}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={endDrag}
+          onPointerCancel={endDrag}
+          onClickCapture={onClickCapture}
+          onWheel={onWheel}
+        >
           {tabs.map((tab) => {
             const active = isActive(tab);
             const TabIcon = tab.icon;
@@ -162,6 +227,7 @@ export default function ModuleTabBar({ module }) {
                 to={tab.route}
                 aria-current={active ? 'page' : undefined}
                 className={`${baseTab} ${active ? activeTab : idleTab}`}
+                draggable={false}
               >
                 {TabIcon && <TabIcon className="h-4 w-4" />}
                 {tab.name}

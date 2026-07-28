@@ -42,8 +42,8 @@ export default function GarageInvoiceQueue() {
       <div className="mx-auto max-w-[1200px] space-y-6 px-4 sm:px-6 lg:px-8">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <Link to="/oversight" className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-400 hover:text-slate-600">
-              <Icon.ArrowRight className="h-3 w-3 rotate-180" /> {t('oversight.hub.title')}
+            <Link to="/apps/reports" className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-400 hover:text-slate-600">
+              <Icon.ArrowRight className="h-3 w-3 rotate-180" /> Reports
             </Link>
             <h1 className="font-display text-2xl font-bold tracking-tight text-slate-900">{t('oversight.garage.title')}</h1>
             <p className="mt-1 max-w-2xl text-sm text-slate-500">{t('oversight.garage.subtitle')}</p>

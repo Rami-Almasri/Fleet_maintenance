@@ -7,40 +7,40 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
- * One Maintenance Checkpoint — a dated progress report a responsible user (Waleed/Abdullah, or a ticket's
+ * One Maintenance Checkpoint — a dated progress UPDATE a responsible user (Waleed/Abdullah, or a ticket's
  * assigned owners) files while a car is in the workshop. It is the atom of the Maintenance Progress
- * Tracking System: an OUTCOME the dashboard colours by, a workshop STATUS, an optional structured DELAY
- * REASON, a summary, a pushed-back completion date, and its own photos/videos (maintenance_media). See
- * [[maintenance-workflow-engine]].
+ * Tracking System: it captures the ETA (previous_expected_date → next_expected_date), the structured
+ * REASON the ETA moved (delay_reason), a workshop STATUS, a progress summary, and its own photos/videos
+ * (maintenance_media).
+ *
+ * There is deliberately NO manual "Progress outcome" here: nobody classifies the job as On Track /
+ * Delayed / Critical. The dashboard DERIVES that from the promised date (today ≤ ETA → On Schedule,
+ * today > ETA → Overdue) and the workflow (Ready for Pickup / Completed). See
+ * [[maintenance-checkpoint-feature]] and [[maintenance-workflow-engine]].
  */
 class MaintenanceCheckpoint extends Model
 {
     protected $table = 'maintenance_checkpoints';
-
-    /** Management verdict — drives dashboard colour + reporting (never parsed from free text). */
-    public const OUTCOME_ON_TRACK = 'on_track';
-    public const OUTCOME_DELAYED  = 'delayed';
-    public const OUTCOME_CRITICAL = 'critical';
-    public const OUTCOMES = [self::OUTCOME_ON_TRACK, self::OUTCOME_DELAYED, self::OUTCOME_CRITICAL];
 
     /** The workshop's current stage at the moment of the checkpoint. */
     public const STATUSES = [
         'waiting_parts', 'under_repair', 'painting', 'testing', 'ready_today', 'delayed', 'other',
     ];
 
-    /** Structured delay reasons (required when outcome = delayed). */
+    /** Structured reasons the ETA moved (required only when next_expected_date differs from the old ETA). */
     public const DELAY_REASONS = [
         'waiting_parts', 'workshop_busy', 'additional_damage', 'customer_approval',
         'insurance_approval', 'vendor_delay', 'other',
     ];
 
     protected $fillable = [
-        'maintenance_id', 'vehicle_id', 'outcome', 'status', 'delay_reason', 'delay_reason_other',
-        'summary', 'next_expected_date', 'submitted_by', 'submitted_by_name',
+        'maintenance_id', 'vehicle_id', 'status', 'delay_reason', 'delay_reason_other',
+        'summary', 'previous_expected_date', 'next_expected_date', 'submitted_by', 'submitted_by_name',
     ];
 
     protected $casts = [
-        'next_expected_date' => 'date',
+        'previous_expected_date' => 'date',
+        'next_expected_date'     => 'date',
     ];
 
     /** The ticket this checkpoint reports on (loose link, mirroring media / line items). */

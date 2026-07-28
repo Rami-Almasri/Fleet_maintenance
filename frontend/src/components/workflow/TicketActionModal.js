@@ -29,8 +29,10 @@ import Icon from '../ui/Icon';
 import { Input, Textarea, Select } from '../ui/Field';
 import FindingsList from './FindingsList';
 import FindingsPicker from './FindingsPicker';
+import GarageRecommendations from './GarageRecommendations';
 import RootCausePicker, { rootCausesComplete } from './RootCausePicker';
 import FaultHistoryInsight from './FaultHistoryInsight';
+import RepairIntelligencePanel from '../knowledge/RepairIntelligencePanel';
 import LineItemsEditor, { serializeLineItems, lineItemsUnlinked, invoiceVarianceBlocked, lineItemsHaveZeroCost } from './LineItemsEditor';
 import { compressImage, formatBytes } from '../../lib/imageCompression';
 import { evaluateContinuity, needsConfirm, needsNote, isHardBlocked, stageIgnoresTolerance, stageRequiresIncrease, STAGE } from '../../lib/odometerContinuity';
@@ -41,6 +43,11 @@ import { useAuth } from '../../auth/AuthContext';
 
 // Enterprise Handover Workflow — CONTRACT with backend/config/maintenance_handover.php. Small, fixed
 // enums, so hardcoded client-side rather than fetched.
+// Upper bound (km) for any odometer reading — mirrors the backend cap
+// (MaintenanceWorkflowController::MAX_ODOMETER). The DB odometer columns are unsigned INT; a value above
+// this overflows them, so we block it client-side with a clear message rather than round-trip a 422.
+const MAX_ODOMETER = 9_999_999;
+
 const FUEL_SCALE = ['E', '1/4', '1/2', '3/4', 'F'];
 const CONDITION_PRESETS = ['Good', 'Minor scratches', 'Damaged'];
 const ACCESSORY_KEYS = ['spare_tire', 'jack', 'first_aid_kit', 'warning_triangle', 'floor_mats', 'charging_cable'];
@@ -69,7 +76,11 @@ const FAILURE_REASONS = ['wrong_diagnosis', 'part_failed', 'repair_incomplete', 
 
 // Persisted enum values — these are CONTRACT with the backend and never localize.
 // Their visible labels are resolved from the i18n catalog at render time.
-const TRIGGER_REASON_VALUES = ['test_drive', 'customer_reported', 'periodic']; // App\Models\Maintenance::TRIGGER_REASONS
+// Inspection trigger reasons offered in the human pickers. `customer_reported` is deliberately ABSENT: after
+// the complaint split, that trigger is set ONLY by the Complaint entity's "send in" — a customer issue lives
+// in the Complaint entity (Complaints Center, source driver_relayed) or a Driver Observation, never a
+// hand-picked complaint-tagged inspection request. (Backend contract stays App\Models\Maintenance::TRIGGER_REASONS.)
+const INSPECTION_TRIGGER_REASONS = ['test_drive', 'periodic'];
 const MAINTENANCE_TYPES = [
   { value: 'breakdown', icon: '⚠️' },
 ]; // App\Models\Maintenance::MAINTENANCE_TYPES
@@ -540,6 +551,8 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   // (car grounded until the workshop finishes); true = deferrable (a customer may still take it — the
   // rental pauses this ticket and it resumes on return). Carried by the ticket for its whole life.
   const [deferrableForRental, setDeferrableForRental] = useState(() => !!ticket?.deferrable_for_rental);
+  // assign: the data-driven garage recommendation result (for the audit trail — what was suggested vs chosen).
+  const [recoResult, setRecoResult] = useState(null);
 
   // Hard coupling (Rev. 11 Gate 1): a Breakdown is, by definition, 🔴 critical. The moment the inspector
   // classifies a ticket as Breakdown at the Decide step, force the grade to critical and lock the picker
@@ -694,6 +707,9 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   // A strict-increase violation (garage intake ≤ pickup) is a hard block — it can't be acked away, so it
   // gates submit on its own regardless of the soft ack/note requirements. Mirrors the backend guard.
   const odoGateBlocked = isHardBlocked(continuity) || (odoAckRequired && !odoConfirmed) || (odoNoteRequired && !odoNote.trim());
+  // Guard against an odometer reading that would overflow the DB column (unsigned INT). Only meaningful
+  // when a value is actually entered; steps with no odometer input never trip it.
+  const odoOutOfRange = odometer !== '' && odometer != null && Number(odometer) > MAX_ODOMETER;
 
   // A changed reading invalidates a prior acknowledgment + note — re-confirm/re-explain the new value.
   useEffect(() => { setOdoConfirmed(false); setOdoNote(''); }, [odometer]);
@@ -785,8 +801,29 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
         return { url: `${base}/${ticket.id}/report`, body: { requires_maintenance: requiresMaintenance, symptoms, causes: buildCauses(symptoms), fault_severity: requiresMaintenance ? (faultSeverity || null) : null, recommended_action: recommended || null, notes: notes || null, maintenance_type: maintType || null, repair_location: requiresMaintenance ? repairLocation : null, report_odometer: odometer ? Number(odometer) : null, odometer_note: odoNote.trim() || null, odometer_confirmed: odoAckRequired ? odoConfirmed : null } };
       case 'delegate':
         return { url: `${base}/${ticket.id}/delegate`, body: { driver_id: Number(driverId), delegation_task: delegationTask } };
-      case 'assign':
-        return { url: `${base}/${ticket.id}/assign-dispatch`, body: { vendor_id: Number(vendorId), driver_id: driverId ? Number(driverId) : null, expected_return_date: returnDate || null, note: assignNote.trim() || null } };
+      case 'assign': {
+        // Decision-support audit: record what the recommendation engine suggested and whether the
+        // supervisor followed it, so the garage_assigned event can answer "why this garage?".
+        let recommendation = null;
+        const recPrimary = recoResult?.primary || [];
+        if (recPrimary.length) {
+          const chosen = Number(vendorId);
+          const match = recPrimary.find((p) => Number(p.vendor_id) === chosen);
+          const src = match || recPrimary[0];
+          recommendation = {
+            recommended_vendor_id: recPrimary[0].vendor_id,
+            accepted: !!match,
+            rank: match ? match.rank : null,
+            score: src.score,
+            confidence: src.confidence || null,
+            reason: (src.reasons || []).map((r) => r.t).slice(0, 3).join('; ') || null,
+            reasons: (src.reasons || []).slice(0, 4),
+            criteria: recoResult?.criteria || null,
+            source: 'experience_engine',
+          };
+        }
+        return { url: `${base}/${ticket.id}/assign-dispatch`, body: { vendor_id: Number(vendorId), driver_id: driverId ? Number(driverId) : null, expected_return_date: returnDate || null, note: assignNote.trim() || null, recommendation } };
+      }
       case 'dispatch':
         // Garage is the supervisor's pre-assigned choice — the driver doesn't send it.
         return { url: `${base}/${ticket.id}/dispatch`, body: { dispatch_odometer: Number(odometer), out_date: outDate || null, expected_return_date: returnDate || null } };
@@ -873,6 +910,8 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
 
   // ---- minimal client guard (the server is the source of truth) ----
   function invalid() {
+    // An out-of-range odometer would overflow the DB column — block every step that captures one.
+    if (odoOutOfRange) return true;
     if (action === 'request') return !vehicleId;
     // Re-inspection: on FAIL, re-routing to a different garage needs a written reason (same-garage fail
     // is unaffected). On PASS the car is physically back, so the final QC odometer is mandatory — plus the
@@ -1220,11 +1259,20 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
           err && <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{err}</div>
         )}
 
+        {/* Proactive out-of-range guard — explains why submit is disabled before the server round-trip. */}
+        {odoOutOfRange && (
+          <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">
+            {t('workflow.error.odometerTooLarge', { max: MAX_ODOMETER.toLocaleString() })}
+          </div>
+        )}
+
         {/* Stage timing — per-stage durations + total downtime, at a glance on any existing ticket */}
         {ticket && <StageTimeline ticket={ticket} t={t} />}
 
-        {/* Original findings — inherited and shown at every stage, grouped by source */}
-        {ticket?.findings?.length > 0 && action !== 'decide' && (
+        {/* Original findings — inherited and shown at every stage, grouped by source. Temporary Release
+            renders its OWN findings panel below (with explicit "Not fixed" badges), so it's excluded here
+            to avoid showing the list twice. */}
+        {ticket?.findings?.length > 0 && action !== 'decide' && action !== 'temporarilyRelease' && (
           <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3">
             <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{t('workflow.field.findings')}</p>
             <FindingsList findings={ticket.findings} tasks={ticket.tasks} paused={isPaused(ticket)} />
@@ -1258,7 +1306,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
             <div>
               <span className="mb-1.5 block text-sm font-medium text-slate-700">{t('workflow.reason.label')}</span>
               <div className="grid gap-2">
-                {TRIGGER_REASON_VALUES.map((rv) => {
+                {INSPECTION_TRIGGER_REASONS.map((rv) => {
                   const active = reason === rv;
                   return (
                     <button
@@ -1278,10 +1326,11 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                   );
                 })}
               </div>
+              {/* A customer complaint is not opened here — it lives in the Complaints Center. */}
+              <p className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-[11px] leading-relaxed text-slate-500 ring-1 ring-inset ring-slate-100">
+                Customer complaint? Log it in the <a href="/complaints" className="font-semibold text-indigo-600 hover:underline">Complaints Center</a> instead.
+              </p>
             </div>
-            {reason === 'customer_reported' && (
-              <Textarea label={t('workflow.field.customerReport')} value={complaint} onChange={(e) => setComplaint(e.target.value)} placeholder={t('workflow.ph.brakePull')} />
-            )}
 
             {/* Odometer at test-drive start — mandatory reading + photo, the chain's start anchor */}
             <div className="border-t border-slate-100 pt-4">
@@ -1346,6 +1395,11 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
               tags={Array.from(new Set([...lockedFindings, ...symptoms]))}
               excludeTicketId={ticket?.id}
             />
+            {/* Previous Similar Repairs + Recommendation — live PREVIEW as the inspector picks a symptom
+                (before the fault exists). Same reusable panel + frozen contract as the drawer/checkpoint. */}
+            {symptoms.length > 0 && ticket?.vehicle_id && (
+              <RepairIntelligencePanel preview={{ vehicleId: ticket.vehicle_id, symptom: symptoms[symptoms.length - 1] }} />
+            )}
             <Input label={t('workflow.field.recommendedAction')} value={recommended} onChange={(e) => setRecommended(e.target.value)} placeholder={t('workflow.ph.replacePads')} />
             <Textarea label={t('common.notes')} value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} placeholder={t('workflow.ph.testDriveNotes')} />
 
@@ -1488,9 +1542,26 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                 <span aria-hidden>⛔</span> {t('workflow.hint.redispatchSameGarage', { garage: ticket.garage })}
               </div>
             )}
+            {/* Data-driven suggestion: which garages have proven experience with this vehicle + fault.
+                Tapping one pre-fills the picker; the supervisor may still choose any garage manually.
+                Skipped on a "came back broken" re-dispatch (reinspection_failed): the car is going back
+                to the SAME garage that botched the repair, so a "find best garage" pick is noise here. */}
+            {ticket?.workflow_status !== 'reinspection_failed' && (
+              <GarageRecommendations
+                ticketId={ticket?.id}
+                selectedVendorId={vendorId}
+                onPick={(id) => setVendorId(id)}
+                onResult={setRecoResult}
+              />
+            )}
             <div>
               <span className="mb-1 block text-sm font-medium text-slate-700">{t('workflow.field.destinationGarage')}<Req /></span>
               <SearchSelect value={vendorId} onChange={setVendorId} options={garageOptions} placeholder={t('workflow.ph.pickGarage')} />
+              {vendorId && recoResult?.primary?.some((p) => String(p.vendor_id) === String(vendorId)) && (
+                <p className="mt-1.5 flex items-center gap-1 text-xs font-semibold text-emerald-700">
+                  <Icon.Check className="h-3.5 w-3.5" /> {t('workflow.garageRec.prefillNote')}
+                </p>
+              )}
               <p className="mt-1.5 text-xs text-slate-400">{t('workflow.hint.notifyAllDrivers')}</p>
             </div>
             {/* Note — ONLY offered when the supervisor is actually CHANGING the garage on a re-dispatch
@@ -1808,6 +1879,15 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
             <div className="rounded-lg bg-amber-50/70 px-3 py-2 text-sm text-amber-700 ring-1 ring-inset ring-amber-600/10">
               {t('workflow.tempRelease.hint')}
             </div>
+            {/* What we found + what's still open — the car is going out mid-repair, so surface every fault
+                with an explicit Fixed / Not-fixed badge before it leaves. */}
+            {ticket?.findings?.length > 0 && (
+              <div className="rounded-xl border border-slate-200 bg-white p-3">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">{t('workflow.tempRelease.faultsTitle')}</p>
+                <FindingsList findings={ticket.findings} tasks={ticket.tasks} showPending />
+                <p className="mt-2 text-xs text-slate-500">{t('workflow.tempRelease.faultsHint')}</p>
+              </div>
+            )}
             <Select label={t('workflow.tempRelease.reasonLabel')} value={releaseReason} onChange={(e) => setReleaseReason(e.target.value)} required>
               {TEMP_RELEASE_REASONS.map((r) => (
                 <option key={r} value={r}>{t(`workflow.tempRelease.reason.${r}`)}</option>
@@ -2143,7 +2223,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
             <div>
               <span className="mb-1.5 block text-sm font-medium text-slate-700">{t('workflow.reason.driverLabel')}</span>
               <div className="grid gap-2">
-                {TRIGGER_REASON_VALUES.map((rv) => {
+                {INSPECTION_TRIGGER_REASONS.map((rv) => {
                   const active = reason === rv;
                   return (
                     <button
@@ -2163,6 +2243,10 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                   );
                 })}
               </div>
+              {/* A customer issue is NOT an inspection request — route it to the right entity. */}
+              <p className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-[11px] leading-relaxed text-slate-500 ring-1 ring-inset ring-slate-100">
+                A customer reported a problem? Log it in the <a href="/complaints" className="font-semibold text-indigo-600 hover:underline">Complaints Center</a>. Just noticed something on return? Use <a href="/driver-observations" className="font-semibold text-indigo-600 hover:underline">Driver Observations</a>.
+              </p>
             </div>
             <Textarea label={t('workflow.field.notesForInspector')} value={complaint} onChange={(e) => setComplaint(e.target.value)} placeholder={t('workflow.ph.customerPullLeft')} />
 

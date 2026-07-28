@@ -4,6 +4,7 @@ import api from '../../api/client';
 import useFetch from '../../hooks/useFetch';
 import Badge from '../ui/Badge';
 import Icon from '../ui/Icon';
+import WhyThisGarage from '../workflow/WhyThisGarage';
 import { num, fmtDate, fmtClock, fmtAgo } from '../../lib/format';
 import {
   TYPE_META, TYPE_KEYS, typeMeta, eventKind, QUICK_JUMPS,
@@ -124,6 +125,11 @@ function EventRow({ e }) {
         {subAction && <p className="mt-0.5 text-xs font-medium text-slate-400">{subAction}</p>}
         {e.transition && <p className="mt-1 inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">{e.transition}</p>}
         {e.description && <p className="mt-1.5 text-sm leading-relaxed text-slate-600">{e.description}</p>}
+
+        {/* "Why this garage?" — the data-driven decision behind a garage assignment (from meta.recommendation) */}
+        {e.event_type === 'garage_assigned' && e.details?.recommendation && (
+          <WhyThisGarage rec={e.details.recommendation} className="mt-2.5" />
+        )}
 
         <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
           {e.odometer != null && (

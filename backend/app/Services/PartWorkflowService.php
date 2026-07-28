@@ -2,7 +2,13 @@
 
 namespace App\Services;
 
+use App\Events\PartDelivered;
+use App\Events\PartInstalled;
+use App\Events\PartRequestApproved;
+use App\Events\PartRequirementRaised;
 use App\Models\Maintenance;
+use App\Models\RfqLine;
+use App\Models\SupplierQuote;
 use App\Models\MaintenanceLineItem;
 use App\Models\PartInvestigation;
 use App\Models\PartPurchase;
@@ -66,6 +72,7 @@ class PartWorkflowService
             'description' => "Part requested: {$req->part_name} ({$req->source})",
             'meta'        => ['part_request_id' => $req->id, 'part_class' => $req->part_class, 'source' => $req->source],
         ]);
+        PartRequirementRaised::dispatch($req->id, $req->vehicle_id, $req->maintenance_id, $req->maintenance_task_id, $actor->id);
 
         // Real-time intelligence at REQUEST time: if this vehicle already received the same part recently,
         // alert the admins to review BEFORE approval. (The purchase-time gate + investigation still apply
@@ -152,6 +159,7 @@ class PartWorkflowService
             'description' => "Part request approved: {$req->part_name}" . ($ackDuplicate ? ' (duplicate acknowledged)' : ''),
             'meta'        => ['part_request_id' => $req->id, 'duplicate_ack' => $ackDuplicate],
         ]);
+        PartRequestApproved::dispatch($req->id, $req->vehicle_id, $req->maintenance_id, $actor->id);
 
         return $req->fresh();
     }
@@ -226,6 +234,12 @@ class PartWorkflowService
                 'requires_review'     => $verdict['duplicate'],
                 'duplicate_of_purchase_id' => $verdict['duplicate'] ? optional($verdict['previous'])->id : null,
                 'notes'               => $data['notes'] ?? null,
+                // Phase 2 (P2-3): RFQ linkage + the awarded quote's promised delivery date, when the PO
+                // is issued from an RFQ award. Null for a direct single-supplier buy — behaviour unchanged.
+                'expected_delivery_date' => $data['expected_delivery_date'] ?? null,
+                'rfq_line_id'            => $data['rfq_line_id'] ?? null,
+                'supplier_quote_id'      => $data['supplier_quote_id'] ?? null,
+                'po_number'              => $data['po_number'] ?? null,
             ]);
             $purchase->save();
 
@@ -375,9 +389,62 @@ class PartWorkflowService
                 'description' => "Part installed: {$purchase->part_name} ({$purchase->result})",
                 'meta'        => ['part_purchase_id' => $purchase->id, 'line_item_id' => $lineItemId, 'result' => $purchase->result],
             ]);
+            PartInstalled::dispatch($purchase->id, $purchase->part_request_id, $purchase->vehicle_id, $purchase->maintenance_id, $actor->id);
 
             return $purchase->fresh();
         });
+    }
+
+    /**
+     * Mark a purchased part as delivered to the workshop (Phase 1, Step 6): stamps delivered_at, records a
+     * rich timeline entry, and emits {@see PartDelivered} so derived boards recompute. A delivered part is
+     * what unblocks the repair in the resolver — the wait was for DELIVERY, not the fitting. Guards: no
+     * re-delivery, and a part already installed is past this step.
+     */
+    public function markDelivered(PartPurchase $purchase, User $actor): PartPurchase
+    {
+        if ($purchase->delivered_at !== null) {
+            abort(409, 'This part is already marked delivered.');
+        }
+        if ($purchase->isInstalled()) {
+            abort(409, 'This part is already installed.');
+        }
+
+        $purchase->forceFill(['delivered_at' => Carbon::now()])->save();
+
+        $this->logVehicle($purchase->vehicle_id, VehicleLogEvent::EVENT_PART_DELIVERED, $actor, $purchase->maintenance_id, [
+            'description' => "Part delivered: {$purchase->part_name}",
+            'meta'        => ['part_purchase_id' => $purchase->id],
+        ]);
+        PartDelivered::dispatch($purchase->id, $purchase->part_request_id, $purchase->vehicle_id, $purchase->maintenance_id, $actor->id);
+
+        return $purchase->fresh();
+    }
+
+    /**
+     * Issue a purchase order from an AWARDED RFQ line (Phase 2, P2-3). PartWorkflowService stays the SOLE
+     * writer of part_purchases — ProcurementService delegates here rather than writing a PO itself. Reuses
+     * purchase() wholesale (duplicate detection, cost bridge on install, request → purchased), fed the
+     * awarded quote's price/supplier/ETA plus the RFQ linkage.
+     */
+    public function issuePurchaseOrderFromQuote(RfqLine $line, SupplierQuote $quote, User $actor): array
+    {
+        $request = $line->request;
+        if ($request === null) {
+            abort(422, 'This RFQ line is not linked to a part request.');
+        }
+
+        return $this->purchase($request, [
+            'purchase_source'        => PartPurchase::SOURCE_SUPPLIER,
+            'source_vendor_id'       => $quote->vendor_id,
+            'purchase_price'         => $quote->unit_price,
+            'currency'               => $quote->currency,
+            'quantity'               => $quote->quantity,
+            'expected_delivery_date' => optional($quote->expected_delivery_date)->toDateString(),
+            'rfq_line_id'            => $line->id,
+            'supplier_quote_id'      => $quote->id,
+            'po_number'              => 'PO-' . $line->part_rfq_id . '-' . $line->id,
+        ], $actor);
     }
 
     public function complete(PartRequest $req, User $actor): PartRequest

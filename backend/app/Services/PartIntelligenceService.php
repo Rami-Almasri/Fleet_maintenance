@@ -167,6 +167,7 @@ class PartIntelligenceService
         return $this->priorPurchaseQuery($vehicleId, $partNumber, $partName, $excludeId, $lock)
             ->where(fn ($q) => $q->where('purchased_at', '>=', $since)->orWhere('created_at', '>=', $since))
             ->whereHas('task', function ($q) use ($faultCategoryKey, $faultSymptom) {
+                $q->when(\App\Support\EventKind::enforced(), fn ($qq) => $qq->faults());
                 if ($faultCategoryKey) {
                     $q->whereRaw('LOWER(TRIM(category_key)) = ?', [strtolower(trim($faultCategoryKey))]);
                 } elseif ($faultSymptom) {
@@ -281,6 +282,8 @@ class PartIntelligenceService
         $q = MaintenanceTask::query()
             ->where('vehicle_id', $vehicleId)
             ->where('status', MaintenanceTask::STATUS_COMPLETED)
+            // Event Type layer: fault recurrence counts prior FAULTS, not prior planned services.
+            ->when(\App\Support\EventKind::enforced(), fn ($q) => $q->faults())
             ->whereNotNull('resolved_at')
             ->where('resolved_at', '>=', $since)
             ->when($excludeTaskId, fn ($q) => $q->where('id', '!=', $excludeTaskId));

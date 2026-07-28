@@ -234,4 +234,19 @@ return [
         'tire change'         => 'tire_change',
     ],
 
+    /**
+     * CLEAR fault evidence (Event Type layer). A symptom containing one of these substrings is an
+     * unplanned FAILURE, so it must be classified `fault` even when the ticket it sits on is a
+     * Routine/Periodic visit — a "Brake Failure" found during a routine inspection is still a fault.
+     * The rule "a clear fault symptom beats ticket context" (EventClassificationService::resolveLegacyKind)
+     * reads this list. Deliberately unambiguous failure words only — routine service names ("oil change",
+     * "brake pads", "wheel alignment") contain none of them, so they stay `service`. One-line editable.
+     */
+    'fault_evidence_keywords' => [
+        'failure', 'failed', 'fault', 'broken', 'not working', 'no start', 'won\'t start', 'wont start',
+        'noise', 'knocking', 'grinding', 'rattling', 'leak', 'overheat', 'smoke', 'warning light',
+        'check engine', 'misfire', 'vibration', 'shaking', 'stall', 'dead', 'malfunction', 'damage',
+        'cracked', 'worn out', 'stuck', 'loss of power', 'rough idle', 'burning', 'won\'t turn',
+    ],
+
 ];

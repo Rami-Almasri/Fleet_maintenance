@@ -207,4 +207,17 @@ class PartPurchaseController extends Controller
             return ResponseHelper::fromException($e);
         }
     }
+
+    /** Mark a purchased part as delivered to the workshop — sets delivered_at, so the derived state unblocks the repair. */
+    public function markDelivered(Request $request, PartPurchase $partPurchase)
+    {
+        try {
+            return ResponseHelper::SuccessResponse(
+                new PartPurchaseResource($this->service->markDelivered($partPurchase, $request->user())),
+                'Part marked delivered'
+            );
+        } catch (\Throwable $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
 }

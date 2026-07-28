@@ -66,6 +66,7 @@ const Icon = {
   Download: base(<><path d="M12 3v12M7 11l5 5 5-5" /><path d="M5 21h14" /></>),
   Plus: base(<><path d="M12 5v14M5 12h14" /></>),
   ArrowRight: base(<><path d="M5 12h14M13 6l6 6-6 6" /></>),
+  ArrowUpRight: base(<><path d="M7 17L17 7M8 7h9v9" /></>),
   ChevronDown: base(<><path d="M6 9l6 6 6-6" /></>),
   Video: base(<><rect x="2" y="6" width="14" height="12" rx="2" /><path d="M16 10l6-3v10l-6-3z" /></>),
   Camera: base(<><path d="M4 8a2 2 0 0 1 2-2h1.5l1-1.5h5l1 1.5H18a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" /><circle cx="12" cy="13" r="3.2" /></>),

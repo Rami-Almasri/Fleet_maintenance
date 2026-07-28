@@ -12,7 +12,7 @@ import { useState } from 'react';
 
 const LOGO_SRC = '/brand-logo.webp';
 
-export default function Brand({ collapsed = false }) {
+export default function Brand({ collapsed = false, markOnly = false }) {
   const [imgOk, setImgOk] = useState(true);
 
   return (
@@ -33,11 +33,14 @@ export default function Brand({ collapsed = false }) {
         )}
       </div>
 
-      {/* Wordmark (Sora) + tagline (Inter) — hidden in the collapsed rail. */}
+      {/* Wordmark (Sora) + tagline (Inter) — hidden in the collapsed rail and
+          when the caller asks for the mark only (e.g. a compact header). */}
+      {!markOnly && (
       <div className={`min-w-0 leading-tight ${collapsed ? 'lg:hidden' : ''}`}>
         <p className="truncate font-display text-[16px] font-bold tracking-tight text-white">Faster</p>
         <p className="truncate text-[10px] font-semibold uppercase tracking-[0.16em] text-accent-400/90">Fleet Maintenance</p>
       </div>
+      )}
     </div>
   );
 }

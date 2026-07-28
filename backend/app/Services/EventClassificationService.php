@@ -78,6 +78,13 @@ class EventClassificationService
             return $this->attributes(MaintenanceTask::KIND_SERVICE, null, MaintenanceTask::CLS_RESOLVER);
         }
 
+        // 2.5) CLEAR fault evidence WINS over ticket context — an explicit failure word ("Brake Failure",
+        //      "Engine noise", "oil leak") is a fault even when found on a Routine/Periodic visit. This runs
+        //      BEFORE the routine-context rule below so routine tickets can't bury a real fault.
+        if ($symptom !== '' && $this->hasFaultEvidence($symptom)) {
+            return $this->attributes(MaintenanceTask::KIND_FAULT, $this->faultMap()[$symptom] ?? null, MaintenanceTask::CLS_RESOLVER);
+        }
+
         // 3) Ticket/finding context says routine/periodic → service.
         if ($task->category_key === 'routine'
             || ($ticket && $ticket->visit_context === Maintenance::CONTEXT_ROUTINE)
@@ -161,6 +168,17 @@ class EventClassificationService
         }
 
         return $this->faultMap;
+    }
+
+    /** True when the (normalised) symptom carries an explicit failure word — see fault_evidence_keywords. */
+    private function hasFaultEvidence(string $symptom): bool
+    {
+        foreach ((array) config('maintenance_findings.fault_evidence_keywords', []) as $needle) {
+            if ($needle !== '' && str_contains($symptom, $this->norm($needle))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Normalise for matching: lowercase + collapse whitespace (mirrors FaultCause::normalizeKey). */
