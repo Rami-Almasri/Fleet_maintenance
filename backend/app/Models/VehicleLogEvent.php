@@ -65,6 +65,10 @@ class VehicleLogEvent extends Model
     public const EVENT_TASK_REINSPECTION_FAILED = 'task_reinspection_failed'; // QC: the garage returned it unfixed, failed re-inspection
     public const EVENT_TASK_MARKED_INCORRECT    = 'task_marked_incorrect';    // delegate overruled the inspector — the fault was a mis-diagnosis
 
+    // ── Severity Review (Diagnostic QC) — a supervisor's decision on an under-graded ticket ─────────
+    public const EVENT_SEVERITY_UPGRADED    = 'severity_upgraded';    // QC upgrade applied: fault_severity raised to the recommendation
+    public const EVENT_SEVERITY_REVIEW_KEPT = 'severity_review_kept'; // QC "keep current": the recommendation was reviewed and dismissed as a false alarm
+
     // Deferred-invoice decoupling — repair signed off with the invoice still pending, then received.
     public const EVENT_AWAITING_INVOICE = 'awaiting_invoice';  // closed operationally, invoice deferred
     public const EVENT_INVOICE_RECEIVED = 'invoice_received';  // the outstanding invoice landed → fully closed
@@ -86,6 +90,7 @@ class VehicleLogEvent extends Model
     public const EVENT_PART_APPROVED          = 'part_approved';           // the request was approved for purchase
     public const EVENT_PART_REJECTED          = 'part_rejected';           // the request was rejected
     public const EVENT_PART_PURCHASED         = 'part_purchased';          // a part was bought (garage or supplier), price recorded
+    public const EVENT_PART_DELIVERED         = 'part_delivered';          // the purchased part arrived at the workshop (delivered_at set)
     public const EVENT_PART_INSTALLED         = 'part_installed';          // the purchased part was fitted → cost bridged to the ticket
     public const EVENT_PART_COMPLETED         = 'part_completed';          // the request was closed out
     public const EVENT_PART_DUPLICATE_FLAGGED = 'part_duplicate_flagged';  // duplicate-purchase detected → investigation opened
@@ -147,6 +152,9 @@ class VehicleLogEvent extends Model
         self::EVENT_RECOMMENDATION_SCHEDULED => Maintenance::FINDING_INSPECTOR,
         self::EVENT_PARTS_ORDERED            => Maintenance::FINDING_INSPECTOR,
         self::EVENT_PARTS_READY              => Maintenance::FINDING_INSPECTOR,
+        // Severity Review is a supervisory grading decision → inspector-side audit bucket.
+        self::EVENT_SEVERITY_UPGRADED        => Maintenance::FINDING_INSPECTOR,
+        self::EVENT_SEVERITY_REVIEW_KEPT     => Maintenance::FINDING_INSPECTOR,
     ];
 
     protected $fillable = [

@@ -110,6 +110,7 @@ class ActivityFeedService
         VehicleLogEvent::EVENT_PART_APPROVED        => 'Part approved',
         VehicleLogEvent::EVENT_PART_REJECTED        => 'Part rejected',
         VehicleLogEvent::EVENT_PART_PURCHASED       => 'Part purchased',
+        VehicleLogEvent::EVENT_PART_DELIVERED       => 'Part delivered',
         VehicleLogEvent::EVENT_PART_INSTALLED       => 'Part installed',
         VehicleLogEvent::EVENT_PART_COMPLETED       => 'Part request completed',
         VehicleLogEvent::EVENT_PART_DUPLICATE_FLAGGED  => 'Duplicate part flagged',
