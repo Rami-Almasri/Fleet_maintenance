@@ -26,12 +26,15 @@ class PartPurchase extends Model
 
     protected $fillable = [
         'part_request_id',
+        // Phase 2 (blueprint §3d): the awarded RFQ line + supplier quote this PO fulfils, + a human PO ref.
+        'rfq_line_id', 'supplier_quote_id', 'po_number',
         'vehicle_id', 'maintenance_id', 'maintenance_task_id',
         'part_name', 'part_number', 'category_key', 'part_class',
         'purchase_source', 'source_vendor_id', 'source_name',
         'repair_location',
         'purchase_price', 'currency', 'quantity',
         'purchased_by', 'purchased_by_name', 'purchased_at',
+        'expected_delivery_date', 'delivered_at',
         'installed_by', 'installed_by_name', 'installed_at', 'installed_odometer',
         'result',
         'maintenance_line_item_id',
@@ -43,6 +46,8 @@ class PartPurchase extends Model
         'purchase_price'     => 'decimal:2',
         'quantity'           => 'decimal:2',
         'purchased_at'       => 'datetime',
+        'expected_delivery_date' => 'date',
+        'delivered_at'       => 'datetime',
         'installed_at'       => 'datetime',
         'installed_odometer' => 'integer',
         'requires_review'    => 'boolean',
@@ -56,6 +61,18 @@ class PartPurchase extends Model
     public function request(): BelongsTo
     {
         return $this->belongsTo(PartRequest::class, 'part_request_id');
+    }
+
+    /** Phase 2: the awarded RFQ line this PO was issued against (null for direct buys). */
+    public function rfqLine(): BelongsTo
+    {
+        return $this->belongsTo(RfqLine::class, 'rfq_line_id');
+    }
+
+    /** Phase 2: the awarded supplier quote this PO was issued against (null for direct buys). */
+    public function supplierQuote(): BelongsTo
+    {
+        return $this->belongsTo(SupplierQuote::class, 'supplier_quote_id');
     }
 
     public function vehicle(): BelongsTo
