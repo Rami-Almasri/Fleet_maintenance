@@ -633,6 +633,21 @@ export default function Parts() {
     }
   };
 
+  // Mark a purchased part as delivered to the workshop (before install). Targets the request's active
+  // (uninstalled) purchase; the backend derives "waiting for parts" from delivered_at.
+  const markDelivered = async (req, po) => {
+    setBusy(`${req.id}:delivered`);
+    try {
+      await api.post(`/part-purchases/${po.id}/delivered`, {});
+      toast.success('Part marked delivered');
+      reload({ silent: true });
+    } catch (err) {
+      toast.error(err.response?.data?.message || err.response?.data?.msg || 'Could not mark delivered');
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const rowActions = (r) => {
     const actions = [];
     // 'under_review' kept in the guard so any legacy row in that state can still be actioned,
@@ -647,6 +662,12 @@ export default function Parts() {
       actions.push(<Button key="purchase" size="sm" onClick={() => setPurchaseFor(r)}>Record Purchase</Button>);
     }
     if (r.status === 'purchased' && canPurchase) {
+      const po = r.purchases?.find((p) => !p.installed_at) || r.purchases?.[r.purchases.length - 1];
+      if (po && !po.delivered_at) {
+        actions.push(<Button key="delivered" variant="ghost" size="sm" className="text-cyan-700 hover:bg-cyan-50" loading={isBusy(r, 'delivered')} onClick={() => markDelivered(r, po)}>Mark delivered</Button>);
+      } else if (po?.delivered_at) {
+        actions.push(<span key="delivered-tag" className="inline-flex items-center rounded-md bg-cyan-50 px-2 py-1 text-xs font-medium text-cyan-700 ring-1 ring-inset ring-cyan-200">✓ Delivered</span>);
+      }
       actions.push(<Button key="install" variant="secondary" size="sm" onClick={() => setInstallFor(r)}>Install</Button>);
     }
     if (r.status === 'installed' && canRequest) {

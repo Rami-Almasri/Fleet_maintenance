@@ -28,6 +28,8 @@ class PartPurchaseResource extends JsonResource
             'quantity'            => $this->quantity,
             'purchased_by'        => $this->purchased_by_name,
             'purchased_at'        => optional($this->purchased_at)->toIso8601String(),
+            'expected_delivery_date' => optional($this->expected_delivery_date)->toDateString(),
+            'delivered_at'        => optional($this->delivered_at)->toIso8601String(),
             'installed_by'        => $this->installed_by_name,
             'installed_at'        => optional($this->installed_at)->toIso8601String(),
             'installed_odometer'  => $this->installed_odometer,
