@@ -280,10 +280,21 @@ export const inboxCategoryOf = (n) => n?.group || TYPE_TO_INBOX[n?.type] || 'oth
 // type not claimed by a *visible* lane falls to the `other` catch-all, so nothing
 // is ever hidden. Two types (maint_vehicle_received, maint_test_interrupted) are
 // wired ahead of their backend hooks — the lane simply stays empty until they fire.
+//
+// Each lane also carries a `group` — the stage of the job it belongs to — so the
+// Action Center's lane picker can cluster them under headings instead of showing
+// one flat run of a dozen chips. A group renders only when it has visible lanes.
+export const LANE_GROUPS = [
+  { key: 'inspection', label: 'Inspection', hint: "Abu Maroof's lane — diagnose the car" },
+  { key: 'workshop', label: 'Workshop & Moves', hint: 'Dispatch, repair progress & vehicle moves' },
+  { key: 'control', label: 'Control', hint: 'Approvals and interrupted work' },
+];
+
 export const LANES = [
   // ── Inspector (Abu Maroof) — maintenance.initiate ──────────────────────────
   {
     key: 'complaints',
+    group: 'inspection',
     label: 'Complaints',
     icon: 'phone',
     permission: 'maintenance.initiate',
@@ -294,6 +305,7 @@ export const LANES = [
   },
   {
     key: 'awaiting_test',
+    group: 'inspection',
     label: 'Awaiting Test',
     icon: 'wrench',
     permission: 'maintenance.initiate',
@@ -303,6 +315,7 @@ export const LANES = [
   },
   {
     key: 'reinspect',
+    group: 'inspection',
     label: 'Re-inspect',
     icon: 'shield',
     permission: 'maintenance.initiate',
@@ -312,6 +325,7 @@ export const LANES = [
   },
   {
     key: 'car_received',
+    group: 'inspection',
     label: 'Car Received',
     icon: 'truck',
     permission: 'maintenance.initiate',
@@ -323,6 +337,7 @@ export const LANES = [
   // ── Supervisor / Drivers (Waleed & Abdullah) — delegate / logistics ────────
   {
     key: 'assignments',
+    group: 'workshop',
     label: 'Assignments',
     icon: 'wrench',
     permission: 'maintenance.checkpoint.manage',
@@ -332,6 +347,7 @@ export const LANES = [
   },
   {
     key: 'assign_garage',
+    group: 'workshop',
     label: 'Assign Garage',
     icon: 'map-pin',
     permission: 'maintenance.delegate',
@@ -343,6 +359,7 @@ export const LANES = [
   },
   {
     key: 'pickup_dropoff',
+    group: 'workshop',
     label: 'Pickup / Dropoff',
     icon: 'truck',
     permission: 'maintenance.logistics',
@@ -356,6 +373,7 @@ export const LANES = [
   // ── Controller (Lin) — maintenance.manage ──────────────────────────────────
   {
     key: 'test_approvals',
+    group: 'control',
     label: 'Test Approvals',
     icon: 'check',
     permission: 'maintenance.manage',
@@ -365,6 +383,7 @@ export const LANES = [
   },
   {
     key: 'test_interrupted',
+    group: 'control',
     label: 'Test Interrupted',
     icon: 'alert',
     permission: 'maintenance.manage',

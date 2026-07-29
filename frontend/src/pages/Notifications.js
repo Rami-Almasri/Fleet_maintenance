@@ -6,7 +6,6 @@ import { usePermissions } from '../hooks/usePermissions';
 import { PageHeader, EmptyState, Card } from '../components/ui/Misc';
 import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
-import FilterChips from '../components/ui/FilterChips';
 import {
   visibleLanes,
   laneOf,
@@ -21,6 +20,7 @@ import {
   metaHighlights,
   metaEntities,
   dateBucket,
+  LANE_GROUPS,
   hasAction,
   worstSeverity,
   clusterByEntity,
@@ -44,7 +44,7 @@ const BUCKET_ORDER = ['Today', 'Yesterday', 'This week', 'This month', 'Earlier'
 // ─────────────────────────────────────────────────────────────────────────────
 // Action Center — Aurora design system.
 //
-// Built on the shared ui/ primitives (PageHeader, FilterChips, Badge, Button,
+// Built on the shared ui/ primitives (PageHeader, Badge, Button,
 // EmptyState). All data/theming still flows from lib/notifications.js so the
 // bell dropdown and this page stay in lock-step.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -167,6 +167,19 @@ export default function Notifications() {
     return (byTab.other && byTab.other.length) ? [...base, OTHER_TAB] : base;
   }, [lanes, byTab]);
 
+  // The picker's layout: an "overview" row (All + Other) on top, then one row per
+  // stage of the job (Inspection → Workshop & Moves → Control). A group that this
+  // role can't see is dropped entirely, so the picker only ever shows real work.
+  const laneSections = useMemo(() => {
+    const overview = tabs.filter((t) => t.key === 'all' || t.key === 'other');
+    const groups = LANE_GROUPS
+      .map((g) => ({ ...g, items: lanes.filter((l) => l.group === g.key) }))
+      .filter((g) => g.items.length > 0);
+    const ungrouped = lanes.filter((l) => !LANE_GROUPS.some((g) => g.key === l.group));
+    if (ungrouped.length) groups.push({ key: 'more', label: 'More', hint: '', items: ungrouped });
+    return { overview, groups };
+  }, [tabs, lanes]);
+
   // Per-tab counts feed the badge on each pill ("Complaints · 3").
   const countsByTab = useMemo(() => {
     const counts = { all: 0 };
@@ -219,18 +232,6 @@ export default function Notifications() {
     if (focus === 'action' && stats.action === 0) setFocus('all');
   }, [focus, stats.critical, stats.action]);
 
-  // FilterChips options: unread count when present (indigo), else total (slate).
-  const chipOptions = tabs.map((t) => {
-    const count = countsByTab.counts[t.key] || 0;
-    const unread = countsByTab.unread[t.key] || 0;
-    return {
-      key: t.key,
-      label: t.label,
-      count: count > 0 ? (unread > 0 ? unread : count) : undefined,
-      tone: unread > 0 ? 'indigo' : 'slate',
-    };
-  });
-
   // Cluster a section's rows into groups/singles and render each.
   const renderNodes = (rows) => clusterByEntity(rows).map((node) => (
     node.type === 'group'
@@ -280,56 +281,114 @@ export default function Notifications() {
           <StatTile label="In this lane" value={stats.total} tone="slate" icon={activeTabDef.icon || 'bell'} />
         </div>
 
-        {/* ── Controls: lane chips (client filter) · view mode · unread toggle ── */}
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <nav aria-label="Notification lanes" className="min-w-0 overflow-x-auto pb-1">
-            <FilterChips value={activeTab} onChange={setActiveTab} options={chipOptions} />
+        {/* ── Control panel: lane picker + how the board is grouped ──────────
+            One framed panel so the twelve lanes read as a labelled toolbar
+            instead of a cramped strip of grey text. */}
+        <div className="overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-soft">
+
+          {/* Toolbar row: section label · group-by · unread-only */}
+          <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 bg-slate-50/60 px-4 py-2.5">
+            <span className="text-[11px] font-bold uppercase tracking-[0.09em] text-slate-500">
+              Lanes
+            </span>
+            <span className="hidden text-xs text-slate-400 sm:inline">Pick the work you own</span>
+
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              {/* Group-by: priority vs time — the two ways an ops manager scans the board. */}
+              <div className="inline-flex items-center gap-2">
+                <span className="hidden text-[11px] font-semibold uppercase tracking-wide text-slate-400 sm:inline">Group by</span>
+                <div className="inline-flex items-center rounded-xl bg-slate-200/60 p-1" role="group" aria-label="Group by">
+                  {[['priority', 'Priority'], ['time', 'Time']].map(([key, lbl]) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setViewMode(key)}
+                      aria-pressed={viewMode === key}
+                      className={[
+                        'rounded-lg px-3 py-1.5 text-xs font-bold transition-all duration-150',
+                        viewMode === key
+                          ? 'bg-white text-indigo-600 shadow-sm ring-1 ring-inset ring-indigo-100'
+                          : 'text-slate-600 hover:text-slate-900',
+                      ].join(' ')}
+                    >
+                      {lbl}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Unread-only toggle — server-side filter. */}
+              <button
+                type="button"
+                onClick={() => setFilter((f) => (f === 'unread' ? 'all' : 'unread'))}
+                aria-pressed={filter === 'unread'}
+                className={[
+                  'inline-flex shrink-0 items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold ring-1 ring-inset transition-all duration-150',
+                  filter === 'unread'
+                    ? 'bg-indigo-600 text-white ring-indigo-600 shadow-sm'
+                    : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50 hover:text-slate-900 hover:ring-slate-300',
+                ].join(' ')}
+              >
+                <span
+                  aria-hidden="true"
+                  className={['h-2 w-2 rounded-full transition-colors', filter === 'unread' ? 'bg-white' : 'bg-slate-300'].join(' ')}
+                />
+                Unread only
+              </button>
+            </div>
+          </div>
+
+          {/* Lane picker — overview row on top, then one labelled row per stage of the
+              job. Chips wrap onto as many lines as they need; nothing hides off-screen. */}
+          <nav aria-label="Notification lanes" className="divide-y divide-slate-100">
+            {(() => {
+              const chip = (t) => (
+                <LaneChip
+                  key={t.key}
+                  tab={t}
+                  active={activeTab === t.key}
+                  count={countsByTab.counts[t.key] || 0}
+                  unread={countsByTab.unread[t.key] || 0}
+                  onClick={() => setActiveTab(t.key)}
+                />
+              );
+              return (
+                <>
+                  <div className="flex flex-wrap gap-2 px-3 py-3">
+                    {laneSections.overview.map(chip)}
+                  </div>
+                  {laneSections.groups.map((g) => {
+                    const total = g.items.reduce((s, l) => s + (countsByTab.counts[l.key] || 0), 0);
+                    const unread = g.items.reduce((s, l) => s + (countsByTab.unread[l.key] || 0), 0);
+                    return (
+                      <div key={g.key} className="px-3 py-3 sm:flex sm:items-start sm:gap-3">
+                        <div className="mb-2 flex w-40 shrink-0 items-center gap-1.5 sm:mb-0 sm:mt-1.5">
+                          <span className="text-[11px] font-bold uppercase tracking-[0.07em] text-slate-500" title={g.hint}>
+                            {g.label}
+                          </span>
+                          {unread > 0
+                            ? <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" aria-hidden="true" />
+                            : total === 0 && <span className="text-[11px] font-medium text-slate-300">clear</span>}
+                        </div>
+                        <div className="flex min-w-0 flex-1 flex-wrap gap-2">
+                          {g.items.map(chip)}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </>
+              );
+            })()}
           </nav>
 
-          <div className="flex shrink-0 items-center gap-2">
-            {/* Group-by: priority vs time — the two ways an ops manager scans the board. */}
-            <div className="inline-flex items-center rounded-lg bg-slate-100 p-0.5" role="group" aria-label="Group by">
-              {[['priority', 'Priority'], ['time', 'Time']].map(([key, lbl]) => (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => setViewMode(key)}
-                  aria-pressed={viewMode === key}
-                  className={[
-                    'rounded-md px-3 py-1.5 text-xs font-semibold transition-colors duration-150',
-                    viewMode === key ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700',
-                  ].join(' ')}
-                >
-                  {lbl}
-                </button>
-              ))}
-            </div>
-
-            {/* Unread-only toggle — server-side filter. */}
-            <button
-              type="button"
-              onClick={() => setFilter((f) => (f === 'unread' ? 'all' : 'unread'))}
-              aria-pressed={filter === 'unread'}
-              className={[
-                'inline-flex shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold ring-1 ring-inset transition-colors duration-150',
-                filter === 'unread'
-                  ? 'bg-indigo-50 text-indigo-700 ring-indigo-200'
-                  : 'bg-white text-slate-500 ring-slate-200 hover:bg-slate-50 hover:text-slate-700',
-              ].join(' ')}
-            >
-              <span aria-hidden="true" className={['h-2 w-2 rounded-full transition-colors', filter === 'unread' ? 'bg-indigo-500' : 'bg-slate-300'].join(' ')} />
-              Unread only
-            </button>
-          </div>
+          {/* Active-lane context — what this lane is for, so the board always has a purpose. */}
+          {activeTab !== 'all' && activeTabDef.blurb && (
+            <p className="flex items-start gap-2 border-t border-slate-100 bg-slate-50/60 px-4 py-2.5 text-xs leading-relaxed text-slate-600">
+              <svg className="mt-px h-4 w-4 shrink-0 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 8v4m0 4h.01M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z" /></svg>
+              <span><span className="font-semibold text-slate-700">{activeTabDef.label}:</span> {activeTabDef.blurb}</span>
+            </p>
+          )}
         </div>
-
-        {/* Active-lane context — what this lane is for, so the board always has a purpose. */}
-        {activeTab !== 'all' && activeTabDef.blurb && (
-          <p className="-mt-2 flex items-center gap-2 px-1 text-xs text-slate-500">
-            <svg className="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 8v4m0 4h.01M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z" /></svg>
-            {activeTabDef.blurb}
-          </p>
-        )}
 
         {/* ── Error ──────────────────────────────────────────────────────── */}
         {error && (
@@ -565,6 +624,62 @@ function NotificationRow({ n, onAction, onMarkRead, onDismiss, grouped = false }
       <span className={`absolute inset-y-0 left-0 ${isCritical ? 'w-1.5' : 'w-1'} ${theme.accent} ${n.read ? 'opacity-40' : ''}`} aria-hidden="true" />
       <div className="flex gap-4 p-5 pl-6">{inner}</div>
     </article>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Lane chip — one lane in the picker. Icon-led and full-size so a dozen lanes stay
+// scannable: the label carries the weight, the pill is the total, and a small
+// indigo dot marks "there's something new in here". Empty lanes recede but stay
+// clickable, so the operator can always see the full shape of their board.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function LaneChip({ tab, active, count, unread, onClick }) {
+  const empty = count === 0;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      title={tab.blurb || tab.label}
+      className={[
+        'group inline-flex items-center gap-2 rounded-xl px-3 py-2 text-[13px] font-bold ring-1 ring-inset transition-all duration-150',
+        'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500',
+        active
+          ? 'bg-indigo-600 text-white ring-indigo-600 shadow-sm'
+          : empty
+            ? 'bg-white text-slate-400 ring-slate-200/70 hover:text-slate-700 hover:ring-slate-300'
+            : 'bg-white text-slate-700 ring-slate-200 hover:-translate-y-px hover:bg-slate-50 hover:text-slate-900 hover:shadow-soft hover:ring-slate-300',
+      ].join(' ')}
+    >
+      <svg
+        aria-hidden="true"
+        className={[
+          'h-4 w-4 shrink-0 transition-colors',
+          active ? 'text-white/90' : empty ? 'text-slate-300' : 'text-slate-400 group-hover:text-indigo-500',
+        ].join(' ')}
+        fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+      >
+        <path d={iconPath(tab.icon || 'bell')} />
+      </svg>
+
+      <span className="whitespace-nowrap">{tab.label}</span>
+
+      {count > 0 && (
+        <span
+          className={[
+            'inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full px-1.5 text-[11px] font-bold tabular-nums',
+            active ? 'bg-white/25 text-white' : unread > 0 ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-500',
+          ].join(' ')}
+        >
+          {count}
+        </span>
+      )}
+
+      {unread > 0 && !active && (
+        <span aria-label={`${unread} unread`} className="h-1.5 w-1.5 shrink-0 rounded-full bg-indigo-500" />
+      )}
+    </button>
   );
 }
 
