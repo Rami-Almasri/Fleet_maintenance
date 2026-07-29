@@ -101,6 +101,11 @@ class MaintenanceWorkflowController extends Controller
         'tasks.partRequests.purchases', 'tasks.partRequests.purchases.sourceVendor:id,name',
         'checkpoints', 'responsibles:id,name', 'pickedUpFromGarageBy:id,name'];
 
+    // Mileage-chain sources kept OUT of the drawer's chain. Purely a display filter: the readings still
+    // exist on their source rows (contracts, tickets) and every other consumer — utilization, the mileage
+    // baseline, reconciliation — reads them unchanged. Empty this array to show the full chain again.
+    private const MILEAGE_CHAIN_HIDDEN = ['contract_out', 'contract_in'];
+
     /** The standard eager set for a fully-hydrated ticket — reused by the invoice controller's reloads. */
     public static function eagerWith(): array
     {
@@ -792,7 +797,8 @@ class MaintenanceWorkflowController extends Controller
                     ]);
                 });
 
-            // 2) Contract handover readings — the backbone of the mileage chain (pickup + return).
+            // 2) Contract handover readings (pickup + return). Collected here but dropped from the
+            //    rendered chain by MILEAGE_CHAIN_HIDDEN below — display only, the contracts are untouched.
             \App\Models\Contract::query()
                 ->where('vehicle_id', $vid)
                 ->get(['id', 'contract_no', 'out_date', 'out_milage', 'in_date', 'in_milage'])
@@ -832,7 +838,8 @@ class MaintenanceWorkflowController extends Controller
             $rank = ['contract_out' => 1, 'test_drive' => 2, 'report' => 3, 'dispatch' => 4, 'return' => 5, 'pause' => 5.5, 'reinspect' => 6, 'resume' => 5.7, 'contract_in' => 7, 'manual' => 9];
 
             $sorted = $entries
-                ->filter(fn ($e) => $e['value'] !== null && $e['value'] > 0) // drop 0 / null junk readings
+                ->filter(fn ($e) => $e['value'] !== null && $e['value'] > 0   // drop 0 / null junk readings
+                    && ! in_array($e['how'], self::MILEAGE_CHAIN_HIDDEN, true))
                 ->sort(function ($a, $b) use ($rank) {
                     $ta = $a['at'] ? $a['at']->timestamp : PHP_INT_MAX;
                     $tb = $b['at'] ? $b['at']->timestamp : PHP_INT_MAX;
