@@ -378,7 +378,14 @@ export default function TicketParts({
         ) : (
           <ul className="space-y-2">
             {rows.map((r) => (
-              <li key={r.id} className="rounded-lg bg-slate-50/70 px-3 py-2.5 ring-1 ring-inset ring-slate-100">
+              // Each row deep-links to its own row on the Parts board (?focus=id) — the board jumps to the
+              // right page, scrolls to it and highlights it, so "manage this part" is one click.
+              <li key={r.id}>
+                <Link
+                  to={`/parts?focus=${r.id}`}
+                  title="Open on the Parts board"
+                  className="block rounded-lg bg-slate-50/70 px-3 py-2.5 ring-1 ring-inset ring-slate-100 transition hover:bg-indigo-50/60 hover:ring-indigo-200"
+                >
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-1.5">
@@ -397,14 +404,15 @@ export default function TicketParts({
                   </div>
                   <Badge tone={STATUS_TONE[r.status] || 'gray'}>{STATUS_LABEL[r.status] || r.status}</Badge>
                 </div>
+                </Link>
               </li>
             ))}
           </ul>
         )}
 
-        {/* The hub for approve → purchase → install stays the standalone board. */}
+        {/* The hub for approve → purchase → install stays the standalone board — scoped to this ticket. */}
         {count > 0 && (
-          <Link to="/parts" className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-700">
+          <Link to={`/parts?ticket=${ticketId}`} className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-700">
             Manage on Parts board <Icon.ArrowRight className="h-3.5 w-3.5" />
           </Link>
         )}

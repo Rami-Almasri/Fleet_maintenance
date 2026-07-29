@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 import useFetch from '../hooks/useFetch';
 import { useToast } from '../components/ui/Toast';
@@ -570,6 +571,22 @@ export default function Parts() {
   const [status, setStatus] = useState('');
   const [page, setPage] = useState(1);
 
+  // ─── Deep links from the ticket's Parts section ───────────────────────────
+  // ?focus=<request id> → jump to the page holding that row, scroll to it, highlight it.
+  // ?ticket=<maintenance id> → scope the board to one ticket's parts.
+  const [params, setParams] = useSearchParams();
+  const focusId = Number(params.get('focus')) || null;
+  const ticketId = Number(params.get('ticket')) || null;
+  const [highlightId, setHighlightId] = useState(null);
+  const focusHandled = useRef(false);
+  useEffect(() => { focusHandled.current = false; }, [focusId]);
+
+  const clearTicketFilter = () => {
+    const next = new URLSearchParams(params);
+    next.delete('ticket');
+    setParams(next, { replace: true });
+  };
+
   const counts = useMemo(() => {
     const acc = {};
     for (const s of ALL_STATUSES) acc[s] = 0;
@@ -586,13 +603,34 @@ export default function Parts() {
           .some((f) => (f || '').toLowerCase().includes(q));
       const matchSource = !source || r.source === source;
       const matchStatus = !status || r.status === status;
-      return matchSearch && matchSource && matchStatus;
+      const matchTicket = !ticketId || r.maintenance_id === ticketId;
+      return matchSearch && matchSource && matchStatus && matchTicket;
     });
-  }, [requests, search, source, status]);
+  }, [requests, search, source, status, ticketId]);
 
   const pageCount = Math.ceil(filtered.length / PAGE_SIZE) || 1;
   const safePage = Math.min(page, pageCount);
   const paged = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
+  // Once the focused request is in the (filtered) list, page to it and arm the highlight. Runs once per
+  // ?focus value so the 30s background refresh can't yank the page back or re-flash the row.
+  useEffect(() => {
+    if (!focusId || focusHandled.current || loading) return;
+    const idx = filtered.findIndex((r) => r.id === focusId);
+    if (idx < 0) return;
+    focusHandled.current = true;
+    setPage(Math.floor(idx / PAGE_SIZE) + 1);
+    setHighlightId(focusId);
+  }, [focusId, filtered, loading]);
+
+  // Scroll to the row once it has actually rendered on the current page, then fade the highlight.
+  useEffect(() => {
+    if (!highlightId) return undefined;
+    const el = document.getElementById(`part-row-${highlightId}`);
+    el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const t = setTimeout(() => setHighlightId(null), 5000);
+    return () => clearTimeout(t);
+  }, [highlightId, safePage]);
 
   const toggleStatus = (s) => { setStatus(status === s ? '' : s); setPage(1); };
 
@@ -719,6 +757,16 @@ export default function Parts() {
           </Select>
         </div>
 
+        {/* Arrived from a ticket's Parts section — say so, and offer the way back to the full board. */}
+        {ticketId && (
+          <div className="flex items-center gap-2 rounded-lg bg-indigo-50 px-4 py-2 text-sm text-indigo-800 ring-1 ring-inset ring-indigo-600/20">
+            <span>Showing parts for maintenance ticket <span className="font-semibold">#{ticketId}</span> only.</span>
+            <button type="button" onClick={clearTicketFilter} className="font-semibold underline underline-offset-2 hover:text-indigo-900">
+              Show all parts
+            </button>
+          </div>
+        )}
+
         {error && (
           <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error}</div>
         )}
@@ -750,7 +798,11 @@ export default function Parts() {
               ) : (
                 <tbody>
                   {paged.map((r) => (
-                    <tr key={r.id} className="bg-white transition-colors even:bg-slate-50/40 hover:bg-indigo-50/40">
+                    <tr
+                      key={r.id}
+                      id={`part-row-${r.id}`}
+                      className={`transition-colors hover:bg-indigo-50/40 ${highlightId === r.id ? 'bg-amber-100/80 ring-2 ring-inset ring-amber-400' : 'bg-white even:bg-slate-50/40'}`}
+                    >
                       <td className="border-b border-slate-100 px-5 py-3.5">
                         <div className="font-medium text-slate-900">{r.vehicle?.plate || (r.vehicle?.id ? `#${r.vehicle.id}` : '—')}</div>
                         <div className="text-xs text-slate-400">{[r.vehicle?.make, r.vehicle?.model].filter(Boolean).join(' ') || '—'}</div>
