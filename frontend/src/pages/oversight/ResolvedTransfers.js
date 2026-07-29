@@ -5,6 +5,7 @@
 // transfer is caught. Backed by GET /Oversight/resolved-transfers.
 
 import { useEffect, useMemo, useState } from 'react';
+import AuditAnalytics from '../../components/analytics/AuditAnalytics';
 import { Link } from 'react-router-dom';
 import api from '../../api/client';
 import { useI18n } from '../../i18n/I18nContext';
@@ -71,6 +72,14 @@ export default function ResolvedTransfers() {
             />
           </Card>
         ) : (
+          <>
+          <AuditAnalytics
+            rows={rows}
+            title="Cars transferred on most often"
+            subtitle="Repeat clean transfers per car — normal for a busy car, worth a look when one dominates"
+            metricLabel="Transfers"
+            color="emerald"
+          />
           <div className="stagger space-y-3">
             {rows.map((r) => (
               <div key={r.id} className="flex flex-col gap-4 rounded-2xl border border-slate-200/60 bg-white p-5 shadow-soft sm:flex-row sm:items-start">
@@ -107,6 +116,7 @@ export default function ResolvedTransfers() {
               </div>
             ))}
           </div>
+          </>
         )}
       </div>
     </div>

@@ -10,6 +10,7 @@
 // Backed by GET /Oversight/severity-review and POST /Oversight/severity-review/{ticket}/decide.
 
 import { useEffect, useMemo, useState } from 'react';
+import AuditAnalytics from '../../components/analytics/AuditAnalytics';
 import { Link } from 'react-router-dom';
 import api from '../../api/client';
 import { useI18n } from '../../i18n/I18nContext';
@@ -158,11 +159,14 @@ export default function SeverityReview() {
             <p className="text-xs text-slate-400">{t('oversight.severity.allGradedBody')}</p>
           </div>
         ) : (
+          <>
+          <AuditAnalytics rows={filtered} title="Cars sent back for a second look most often" subtitle="Repeat appearances in the diagnostic-review queue — a car here often means the first grade keeps missing something" metricLabel="Reviews" color="purple" />
           <div className="space-y-4">
             {filtered.map((r) => (
               <DecisionCard key={r.ticket_id} row={r} t={t} canDecide={canDecide} busy={busy === r.ticket_id} onDecide={decide} />
             ))}
           </div>
+          </>
         )}
       </div>
     </div>

@@ -183,6 +183,10 @@ class ComplaintWorkflowService
             'customer_complaint' => $complaint->description,
         ], $actor);
 
+        // The Controller pressed "send in", but the issue came from the renter — record the true source.
+        $ticket->request_origin = Maintenance::SOURCE_CUSTOMER;
+        $ticket->save();
+
         $complaint->maintenance_id = $ticket->id;
         $complaint->status         = Complaint::STATUS_IN_MAINTENANCE;
         $complaint->assigned_to    = $actor->id;

@@ -5,6 +5,7 @@ import useFetch from '../hooks/useFetch';
 import Badge from '../components/ui/Badge';
 import { Card, PageHeader, Spinner, EmptyState } from '../components/ui/Misc';
 import { usePageStat } from '../components/PageStat';
+import IssueGroupsAnalytics from '../components/analytics/IssueGroupsAnalytics';
 import { num } from '../lib/format';
 import StatusMismatch from './StatusMismatch';
 
@@ -161,6 +162,10 @@ function DataHealthPanel({ data, loading, error, only = null }) {
           <Stat label="Nice to fill" dot="bg-blue-500" value={num(data?.info)} tone="text-blue-600" />
         </div>
       )}
+
+      {/* Analytics — ranks the WHOLE backlog, including the groups promoted to their
+          own tabs, so the priority view matches the totals in the strip above. */}
+      {!only && <IssueGroupsAnalytics groups={allGroups} />}
 
       {groups.length === 0
         ? <Card><EmptyState title="All clean 🎉" message={only ? 'No cars in this category.' : 'Every car, contract and customer has its key fields filled in.'} /></Card>

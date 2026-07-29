@@ -121,22 +121,27 @@ class Maintenance extends Model
     // recommendTriageRoute() / approveTriageRoute() / rejectTriageRoute().
     public const WF_TRIAGE_APPROVAL_PENDING = 'triage_approval_pending';
 
-    // ── PRE-MAINTENANCE RECOMMENDATION QUEUE ────────────────────────────────────────────────────────
-    // A recommendation is NOT a commitment to repair. When the Inspector files an in-shop "requires
-    // maintenance" report, the ticket lands HERE — a lightweight review queue the Supervisor triages —
-    // instead of jumping straight into the active dispatch pipeline (inspection_pending). Like the other
-    // pre-ticket states these are FENCED: NOT in WF_TICKET_STATES, so the car is never counted as an
-    // active maintenance job, never drives operational_status, links no contract and raises no garage
-    // alert. Only the Supervisor's explicit "Start Maintenance" advances it into inspection_pending, from
-    // which the existing workflow runs completely unchanged. See submitReport() + the recommendation* methods.
-    public const WF_RECOMMENDATION_PENDING = 'recommendation_pending'; // awaiting the Supervisor's review
-    // "Waiting for Parts" — the Supervisor approved the intent but the repair needs a spare part first. The
-    // car stays in the recommendation queue (still fenced, still Available) until parts are ready; it is NOT
-    // an active maintenance job while it waits. parts-ready returns it to recommendation_pending to start.
-    public const WF_AWAITING_PARTS = 'awaiting_parts';
-    // Terminal: the recommendation was dismissed WITHOUT any maintenance — either rejected or judged not
+    // ── COORDINATOR APPROVAL GATE (pre-maintenance) ─────────────────────────────────────────────────
+    // An inspection report is NOT a commitment to repair. When the Inspector files an in-shop "requires
+    // maintenance" report, the ticket lands HERE — the maintenance coordinator's review — instead of
+    // jumping straight into the active dispatch pipeline (inspection_pending). Like the other pre-ticket
+    // states this is FENCED: NOT in WF_TICKET_STATES, so the car is never counted as an active maintenance
+    // job, never drives operational_status, links no contract and raises no garage alert.
+    //
+    // The coordinator reads the report + faults + the inspector's required parts, picks the garage, and
+    // decides. Only his explicit "Start Maintenance" advances the ticket into inspection_pending, from
+    // which the existing workflow runs completely unchanged. This state has NO page of its own: it is
+    // surfaced as a lane on the maintenance workflow board and actioned from the ticket drawer.
+    // See submitReport() + the recommendation* methods.
+    public const WF_RECOMMENDATION_PENDING = 'recommendation_pending'; // awaiting the coordinator's review
+    // Terminal: the report was dismissed WITHOUT any maintenance — either rejected or judged not
     // required. The reason + which disposition is stored on recommendation_disposition / recommendation_note.
     public const WF_RECOMMENDATION_DISMISSED = 'recommendation_dismissed';
+    //
+    // NOTE — there is deliberately NO waiting-for-parts state here any more. The queue used to carry its
+    // own `awaiting_parts` + `recommendation_parts_ready` pair, which was a second, blinder answer to "are
+    // we waiting on a part?". That question now has exactly one owner: the ticket's part_requests.
+    // See [[inspection-required-parts-split]].
 
     // ── PAUSED — RETURNED TO SERVICE (operational pause) ────────────────────────────────────────────
     // The repair had already started, but the car is urgently needed back in service — for a customer
@@ -155,9 +160,10 @@ class Maintenance extends Model
     // identical stage (nothing restarts). See pauseForRental()/resumeMaintenance().
     public const WF_PAUSED_RETURNED_TO_SERVICE = 'paused_returned_to_service';
 
-    /** The two live recommendation-queue states (pending + waiting-for-parts). Fenced pre-ticket, shown
-     *  only on the Maintenance Recommendations page — never on the active repair board. */
-    public const WF_RECOMMENDATION_STATES = [self::WF_RECOMMENDATION_PENDING, self::WF_AWAITING_PARTS];
+    /** The live pre-maintenance approval state. Fenced pre-ticket: surfaced as its own lane on the
+     *  maintenance workflow board, never mixed into the active repair lanes. Kept as an array because
+     *  the whole codebase filters on it as a set (it used to hold the retired awaiting_parts too). */
+    public const WF_RECOMMENDATION_STATES = [self::WF_RECOMMENDATION_PENDING];
 
     /** How a dismissed recommendation was disposed of (recommendation_disposition column). */
     public const RECO_REJECTED     = 'rejected';
@@ -173,7 +179,6 @@ class Maintenance extends Model
         self::WF_TRIAGE_APPROVAL_PENDING,
         self::WF_INSPECTION_DIAGNOSTIC,
         self::WF_RECOMMENDATION_PENDING,
-        self::WF_AWAITING_PARTS,
         self::WF_INSPECTION_PENDING,
         self::WF_ON_SITE_PENDING,
         self::WF_AWAITING_DISPATCH,
@@ -229,10 +234,9 @@ class Maintenance extends Model
         // hasn't been committed to a garage yet, so it stays free and raises no dispatch.
         self::WF_TRIAGE_APPROVAL_PENDING,
         self::WF_INSPECTION_DIAGNOSTIC,
-        // The recommendation queue is pre-ticket too: an approved-to-repair decision hasn't been made yet,
-        // so a car sitting in recommendation_pending / awaiting_parts is NOT an active maintenance job.
+        // The coordinator's approval gate is pre-ticket too: an approved-to-repair decision hasn't been
+        // made yet, so a car sitting in recommendation_pending is NOT an active maintenance job.
         self::WF_RECOMMENDATION_PENDING,
-        self::WF_AWAITING_PARTS,
     ];
 
     /**
@@ -559,7 +563,50 @@ class Maintenance extends Model
     // on the pad. Like breakdown it is its own intake path (no test drive), so it is kept OUT of
     // TRIGGER_REASONS — the diagnostic-open endpoints must not accept it as a test-drive reason.
     public const TRIGGER_PICKUP     = 'inspector_pickup';
+    // A fault someone who drove the car reported — the reason an escalated Driver Observation carries.
+    // Kept OUT of TRIGGER_REASONS: it is set only by DriverObservationService::spawnInspection, never
+    // hand-picked at an HTTP endpoint (the controllers validate against TRIGGER_REASONS).
+    public const TRIGGER_DRIVER_REPORTED = 'driver_reported';
     public const TRIGGER_REASONS    = [self::TRIGGER_PERIODIC, self::TRIGGER_CUSTOMER, self::TRIGGER_TEST_DRIVE];
+
+    /**
+     * REQUEST ORIGIN — WHERE the ticket came from, kept strictly separate from `trigger_reason` (WHY
+     * the car needs attention). One asks "who found this?", the other "what's wrong with it?"; merging
+     * them (as the observation escalation used to, by writing trigger_reason = periodic) destroys the
+     * source intelligence — how many issues drivers find vs. inspectors vs. the scheduler, which source
+     * produces the most repeat failures, which cars drivers keep reporting.
+     *
+     * Stamped ONCE at creation by the service that mints the ticket, and never rewritten afterwards:
+     * a reclassified fault does not change who reported it.
+     */
+    public const SOURCE_DRIVER_OBSERVATION = 'driver_observation'; // escalated from a Driver Observation note
+    public const SOURCE_DRIVER_REQUEST     = 'driver_request';     // a Driver's own Stage-0 inspection request
+    public const SOURCE_CONTROLLER         = 'controller';         // a Controller (Lin/Marwa) raised it directly
+    public const SOURCE_INSPECTOR          = 'inspector';          // Abu Maroof — diagnostic open or pad pick-up
+    public const SOURCE_SYSTEM_SCHEDULE    = 'system_schedule';    // mileage scanner / due Service Reminder
+    public const SOURCE_WORKSHOP           = 'workshop';           // breakdown intake, reported from the floor
+    public const SOURCE_CUSTOMER           = 'customer';           // a Complaint sent in by the renter
+
+    public const REQUEST_ORIGINS = [
+        self::SOURCE_DRIVER_OBSERVATION,
+        self::SOURCE_DRIVER_REQUEST,
+        self::SOURCE_CONTROLLER,
+        self::SOURCE_INSPECTOR,
+        self::SOURCE_SYSTEM_SCHEDULE,
+        self::SOURCE_WORKSHOP,
+        self::SOURCE_CUSTOMER,
+    ];
+
+    /** Human labels for the origin — the "Source:" line on the board, cards and drawers. */
+    public const REQUEST_ORIGIN_LABELS = [
+        self::SOURCE_DRIVER_OBSERVATION => 'Driver Observation',
+        self::SOURCE_DRIVER_REQUEST     => 'Driver Request',
+        self::SOURCE_CONTROLLER         => 'Controller',
+        self::SOURCE_INSPECTOR          => 'Inspector',
+        self::SOURCE_SYSTEM_SCHEDULE    => 'System Schedule',
+        self::SOURCE_WORKSHOP           => 'Workshop',
+        self::SOURCE_CUSTOMER           => 'Customer Report',
+    ];
 
     /**
      * TEST KIND — which intake tab the diagnostic came from (a periodic test can be one of two kinds).
@@ -752,6 +799,8 @@ class Maintenance extends Model
         'active_temporary_release_id',
         'linked_contract_id',
         'trigger_reason',
+        // WHERE the request came from — see REQUEST_ORIGINS. Separate axis from trigger_reason.
+        'request_origin',
         'customer_complaint',
         'suggested_findings',
         'trigger_detail',
@@ -798,13 +847,12 @@ class Maintenance extends Model
         'invoice_requested_at', 'invoice_requested_by',
         // Awaiting-Invoice SLA — when the ticket entered awaiting_invoice (the 3-day overdue clock).
         'awaiting_invoice_since',
-        // Pre-Maintenance Recommendation queue — the Supervisor's triage of an inspection recommendation
-        // before it becomes an active maintenance job. scheduled_for = "review again on"; disposition +
-        // note = how a dismissed recommendation was closed / a parts note; parts_ready = the spare arrived.
+        // Coordinator approval gate — his review of an inspection report before it becomes an active
+        // maintenance job. scheduled_for = "review again on"; disposition + note = how a dismissed report
+        // was closed. (The retired parts_ready flag lived here; parts are part_requests' business now.)
         'recommendation_scheduled_for',
         'recommendation_disposition',
         'recommendation_note',
-        'recommendation_parts_ready',
         'recommendation_reviewed_by',
         'recommendation_reviewed_at',
         // Triage Routing Approval — Abu Maroof's recommended routing (destination + optional replacement +
@@ -867,7 +915,6 @@ class Maintenance extends Model
         // Recommendation queue triage
         'recommendation_scheduled_for' => 'datetime',
         'recommendation_reviewed_at'   => 'datetime',
-        'recommendation_parts_ready'   => 'boolean',
         // Rental Eligibility — deferrable (true) vs mandatory (false) maintenance.
         'deferrable_for_rental'        => 'boolean',
         // Triage Routing Approval — the pending routing recommendation (JSON).
@@ -942,6 +989,15 @@ class Maintenance extends Model
     public function checkpoints(): \Illuminate\Database\Eloquent\Relations\HasMany
     {
         return $this->hasMany(MaintenanceCheckpoint::class, 'maintenance_id')->latest();
+    }
+
+    /**
+     * Just the most recent progress checkpoint — so a board of N tickets can show "what the workshop
+     * last reported" in ONE query instead of N. Feeds MaintenanceOpsCardService.
+     */
+    public function latestCheckpoint(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(MaintenanceCheckpoint::class, 'maintenance_id')->latestOfMany();
     }
 
     /** Presentation meta (emoji + colour + label) for the ticket's current fault severity, or null. */
@@ -1116,6 +1172,24 @@ class Maintenance extends Model
         return $this->belongsTo(User::class, 'requested_by');
     }
 
+    /**
+     * The Driver Observation this ticket was escalated from, if any. The link already existed in the
+     * other direction (driver_observations.inspection_request_id); this is the read the ticket side
+     * needs to show "Source: Driver Observation" with the original note behind it.
+     */
+    public function driverObservation(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(DriverObservation::class, 'inspection_request_id');
+    }
+
+    /** Human label for this ticket's request origin (null when the origin was never stamped). */
+    public function requestOriginLabel(): ?string
+    {
+        return $this->request_origin
+            ? (self::REQUEST_ORIGIN_LABELS[$this->request_origin] ?? $this->request_origin)
+            : null;
+    }
+
     /** The Controller (Lin/Marwa) who approved or rejected the inspection review. */
     public function reviewer(): BelongsTo
     {
@@ -1280,10 +1354,9 @@ class Maintenance extends Model
             self::WF_COMPLAINT_TRIAGE      => $base('complaint_triage', 'Pending Triage', 'amber', 'Customer complaint — Abu Maroof to triage'),
             self::WF_TRIAGE_APPROVAL_PENDING => $base('triage_approval_pending', 'Awaiting Routing Approval', 'violet', 'Abu Maroof recommended sending the car in — awaiting the supervisor\'s approval'),
             self::WF_INSPECTION_DIAGNOSTIC => $base('under_diagnosis', 'Under Diagnosis', 'violet', 'Test-drive diagnostic in progress'),
-            // Pre-maintenance recommendation queue — a recommendation awaiting the Supervisor's review, or
-            // approved-but-waiting-for-parts. Fenced: the car is NOT an active maintenance job here.
-            self::WF_RECOMMENDATION_PENDING => $base('recommendation_pending', 'Pending Recommendation', 'violet', 'Recommended action awaiting the supervisor\'s approval'),
-            self::WF_AWAITING_PARTS         => $base('awaiting_parts', 'Waiting for Parts', 'amber', 'Approved — waiting for the spare part before maintenance can start'),
+            // Coordinator approval gate — the inspection report awaiting his review. Fenced: the car is
+            // NOT an active maintenance job here.
+            self::WF_RECOMMENDATION_PENDING => $base('recommendation_pending', 'Pending Approval', 'violet', 'Inspection report awaiting the coordinator\'s approval'),
             self::WF_INSPECTION_PENDING    => $base('awaiting_dispatch', 'Awaiting Dispatch', 'amber', "Awaiting the supervisor's garage decision"),
             // On-Site (mobile) job — the car is NOT out; it stays where it's parked, tagged only.
             self::WF_ON_SITE_PENDING       => $base('on_site_pending', 'Pending On-Site Service', 'teal', 'Minor job — to be done where the car is parked (stays available)'),
@@ -1408,6 +1481,22 @@ class Maintenance extends Model
     public function tasks(): \Illuminate\Database\Eloquent\Relations\HasMany
     {
         return $this->hasMany(MaintenanceTask::class, 'maintenance_id');
+    }
+
+    /**
+     * The parts the INSPECTOR said this repair would need — a technical list, not procurement. They only
+     * become real part requests when the coordinator converts them, after the garage is chosen.
+     * See {@see \App\Services\MaintenanceRequiredPartService}.
+     */
+    public function requiredParts(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(MaintenanceRequiredPart::class, 'maintenance_id');
+    }
+
+    /** The procurement requests raised against this ticket (converted required parts + any ad-hoc ones). */
+    public function partRequests(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(PartRequest::class, 'maintenance_id');
     }
 
     /** Asset Layer (read-only convenience): component installs/removals this ticket caused. */

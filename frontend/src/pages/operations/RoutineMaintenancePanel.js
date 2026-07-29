@@ -14,6 +14,7 @@ const TRIGGER_LABEL = {
   customer: 'Customer complaint',
   customer_reported: 'Customer complaint',
   test_drive: 'Test-drive finding',
+  driver_reported: 'Driver reported issue',
   inspector_pickup: 'Inspector pick-up',
   breakdown: 'Breakdown',
   diagnostic: 'Diagnostic',

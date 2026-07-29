@@ -9,6 +9,7 @@
 // (DashboardService::maintenanceProgress).
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import CheckpointsAnalytics from '../components/analytics/CheckpointsAnalytics';
 import { Link, useSearchParams } from 'react-router-dom';
 import Icon from '../components/ui/Icon';
 import { Skeleton } from '../components/ui/Skeleton';
@@ -27,7 +28,6 @@ const SUMMARY_CHIPS = [
   { key: 'overdue', label: 'Overdue', cls: 'bg-red-50 text-red-700 ring-red-200' },
   { key: 'needs_update', label: 'Checkpoint due', cls: 'bg-amber-50 text-amber-700 ring-amber-200' },
   { key: 'on_schedule', label: 'On schedule', cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
-  { key: 'ready_for_pickup', label: 'Ready for pickup', cls: 'bg-sky-50 text-sky-700 ring-sky-200' },
 ];
 
 // The in-shop workflow stages (Maintenance::CHECKPOINT_TRACKED_STATES) → a friendly "current maintenance
@@ -286,6 +286,9 @@ export default function MaintenanceCheckpoints() {
             </span>
           </div>
         )}
+
+        {/* Analytics — the whole workshop queue, before the toolbar narrows the list. */}
+        {!loading && items.length > 0 && <CheckpointsAnalytics rows={items} />}
 
         {/* Toolbar */}
         <div className="flex flex-wrap items-center gap-2">

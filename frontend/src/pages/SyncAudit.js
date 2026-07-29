@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react';
+import SyncAuditAnalytics from '../components/analytics/SyncAuditAnalytics';
 import { Link } from 'react-router-dom';
 import api from '../api/client';
 import useFetch from '../hooks/useFetch';
@@ -259,6 +260,9 @@ export default function SyncAudit() {
         {error && (
           <div className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error}</div>
         )}
+
+        {/* Analytics — what the log actually did, before the run table. */}
+        {!loading && runs.length > 0 && <SyncAuditAnalytics runs={runs} />}
 
         <SectionCard title="Sync runs" subtitle="Newest first · click a run to see its change feed below">
           <DataTable

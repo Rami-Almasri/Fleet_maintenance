@@ -33,11 +33,11 @@ import {
 import TicketActionModal from '../components/workflow/TicketActionModal';
 import BreakdownIntakeModal from '../components/workflow/BreakdownIntakeModal';
 import ComplaintTriageModal from '../components/workflow/ComplaintTriageModal';
-import { resolveAction, stageAge, ago, custodyBlocked, custodyHolderName } from '../components/workflow/meta';
+import { resolveAction, stageAge, ago, custodyBlocked, custodyHolderName, ORIGIN_LABEL } from '../components/workflow/meta';
 import './MyMaintenanceQueue.css';
 
 // Reason → chip class. The visible label comes from workflow.reasonShort.<value>.
-const REASON_CHIP = { test_drive: 'reserved', customer_reported: 'paused', periodic: 'rented' };
+const REASON_CHIP = { test_drive: 'reserved', customer_reported: 'paused', periodic: 'rented', driver_reported: 'paused' };
 
 // The role sections, in display order, tagged with the role that owns them. A `readonly` section is
 // for tracking only — its cards show a status, never an action button. Titles/hints come from
@@ -197,7 +197,16 @@ function QueueCard({ tk, can, userId, onAct, readonly = false }) {
         {tk.temporarily_released && <span className="opx-chip paused"><span className="cd" />⤴</span>}
       </div>
 
-      {tk.customer_complaint && <p className="qc-quote" title={tk.customer_complaint}>“{tk.customer_complaint}”</p>}
+      {/* The reported note, attributed to its source — an escalated Driver Observation must not read
+          as an anonymous quote on the inspector's own queue. */}
+      {tk.customer_complaint && (
+        <p className="qc-quote" title={tk.customer_complaint}>
+          {(tk.request_origin_label || ORIGIN_LABEL[tk.request_origin]) && (
+            <span className="qc-quote-src">{tk.request_origin_label || ORIGIN_LABEL[tk.request_origin]}: </span>
+          )}
+          “{tk.customer_complaint}”
+        </p>
+      )}
 
       {(pos.label || tk.status_label) && (
         <div className="qc-pos">

@@ -10,6 +10,7 @@ import Pagination from '../components/ui/Pagination';
 import SearchSelect from '../components/ui/SearchSelect';
 import { Card, PageHeader, SearchInput, TableSkeleton, EmptyState } from '../components/ui/Misc';
 import { Input, Select, Textarea } from '../components/ui/Field';
+import PartsAnalytics from '../components/analytics/PartsAnalytics';
 import { SHOW_FINANCIALS } from '../config/features';
 import { aed, fmtAgo, num } from '../lib/format';
 
@@ -720,6 +721,13 @@ export default function Parts() {
 
         {error && (
           <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error}</div>
+        )}
+
+        {/* Analytics — request VOLUME follows the filtered set so those charts agree with the
+            table below; the money chart is fleet-wide (invoiced part lines are not requests),
+            so it renders even when the filtered request list is empty. */}
+        {!loading && (filtered.length > 0 || SHOW_FINANCIALS) && (
+          <PartsAnalytics requests={filtered} showFinancials={SHOW_FINANCIALS} />
         )}
 
         <Card>

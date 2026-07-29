@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
@@ -104,6 +105,17 @@ class PartRequest extends Model
     public function purchases(): HasMany
     {
         return $this->hasMany(PartPurchase::class);
+    }
+
+    /**
+     * The inspector's technical requirement(s) this request was raised from — the traceability link back to
+     * the inspection. Many-to-many: a coordinator can merge the same part asked for by two faults into one
+     * request, and can split one requirement across several requests. Empty for ad-hoc/customer requests.
+     */
+    public function requiredParts(): BelongsToMany
+    {
+        return $this->belongsToMany(MaintenanceRequiredPart::class, 'part_request_required_part', 'part_request_id', 'maintenance_required_part_id')
+            ->withTimestamps();
     }
 
     public function requester(): BelongsTo

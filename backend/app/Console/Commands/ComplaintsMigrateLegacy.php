@@ -38,7 +38,7 @@ class ComplaintsMigrateLegacy extends Command
         Maintenance::WF_ON_SITE_PENDING, Maintenance::WF_AWAITING_DISPATCH, Maintenance::WF_IN_TRANSIT,
         Maintenance::WF_UNDER_REPAIR, Maintenance::WF_REPAIR_REVIEW, Maintenance::WF_READY_REINSPECTION,
         Maintenance::WF_REINSPECTION_FAILED, Maintenance::WF_READY_FOR_PICKUP, Maintenance::WF_IN_OUR_PARK,
-        Maintenance::WF_AWAITING_INVOICE, Maintenance::WF_AWAITING_PARTS,
+        Maintenance::WF_AWAITING_INVOICE,
         Maintenance::WF_RECOMMENDATION_PENDING, Maintenance::WF_TRIAGE_APPROVAL_PENDING,
         Maintenance::WF_PAUSED_RETURNED_TO_SERVICE,
     ];

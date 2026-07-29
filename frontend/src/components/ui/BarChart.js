@@ -29,7 +29,13 @@ export default function BarChart({
   const [tip, setTip] = useState(null);
   const [active, setActive] = useState(null);
 
-  const pal = palette(color);
+  // Per-bar colour: a datum may carry its own palette key, for the case where each
+  // bar is a STATUS rather than a position on a scale (e.g. expired / due / valid).
+  // One gradient is defined per distinct key; without `d.color` everything falls
+  // back to the chart-level colour exactly as before.
+  const tones = [...new Set(data.map((d) => d.color || color))];
+  const toneIndex = (d) => tones.indexOf(d.color || color);
+
   const padL = 46, padR = 14, padT = 14, padB = 30;
   const innerW = Math.max(0, width - padL - padR);
   const innerH = Math.max(0, height - padT - padB);
@@ -60,10 +66,15 @@ export default function BarChart({
     <div ref={ref} className={className}>
       <svg width={width} height={height} role="img" aria-label={`${valueLabel} bar chart`}>
         <defs>
-          <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={pal.to} />
-            <stop offset="100%" stopColor={pal.from} />
-          </linearGradient>
+          {tones.map((t, ti) => {
+            const p = palette(t);
+            return (
+              <linearGradient key={ti} id={`${gid}-${ti}`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={p.to} />
+                <stop offset="100%" stopColor={p.from} />
+              </linearGradient>
+            );
+          })}
         </defs>
 
         {/* horizontal gridlines + y-axis labels on friendly numbers */}
@@ -95,7 +106,7 @@ export default function BarChart({
                 width={barW}
                 height={h}
                 rx={Math.min(6, barW / 2)}
-                fill={`url(#${gid})`}
+                fill={`url(#${gid}-${toneIndex(d)})`}
                 opacity={active == null || isActive ? 1 : 0.45}
                 style={{ transition: 'height 0.9s cubic-bezier(0.22,1,0.36,1), y 0.9s cubic-bezier(0.22,1,0.36,1), opacity 0.2s' }}
               />

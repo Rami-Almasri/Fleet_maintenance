@@ -8,6 +8,7 @@
 // by GET /Oversight/mileage-discrepancies. No business logic lives here.
 
 import { useEffect, useMemo, useState } from 'react';
+import AuditAnalytics from '../../components/analytics/AuditAnalytics';
 import { Link } from 'react-router-dom';
 import api from '../../api/client';
 import { useI18n } from '../../i18n/I18nContext';
@@ -280,6 +281,16 @@ export default function MileageDiscrepancies() {
             {rows.length === 0 ? (
               <Empty t={t} />
             ) : (
+              <>
+              <AuditAnalytics
+                rows={rows}
+                title="Cars with the largest odometer drift"
+                subtitle="Biggest single discrepancy per car — a large gap on one car is a reading error, the same car repeatedly is a process problem"
+                magnitude={(r) => r.delta}
+                magnitudeLabel="Largest gap"
+                magnitudeFormat={(n) => `${Math.round(n).toLocaleString()} km`}
+                color="red"
+              />
               <div className="overflow-x-auto rounded-2xl border border-slate-200/60 bg-white shadow-soft">
                 <table className="w-full min-w-[1080px] border-separate border-spacing-0 text-sm">
                   <thead>
@@ -379,6 +390,7 @@ export default function MileageDiscrepancies() {
                   </tbody>
                 </table>
               </div>
+              </>
             )}
           </>
         )}

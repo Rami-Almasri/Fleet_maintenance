@@ -20,6 +20,14 @@ use Illuminate\Http\Request;
  */
 class ServiceReminderController extends Controller
 {
+    /**
+     * Past-due distance beyond which the reading is a data error, not a service need (a real
+     * interval is 5–15k km). Used by dueByVehicle() to keep broken odometer anchors from
+     * ranking above cars that genuinely need a wrench.
+     */
+    private const IMPLAUSIBLE_KM = 200000;
+
+
     /** List reminders. Filter by ?vehicle_id, ?source (auto|manual), ?status, ?active. */
     public function index(Request $request)
     {
@@ -43,6 +51,101 @@ class ServiceReminderController extends Controller
                 'Service reminders retrieved successfully',
                 200
             );
+        } catch (\Throwable $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
+     * Dashboard feed: "this car needs a check — oil, battery". One row PER CAR (not per reminder),
+     * carrying only the services that are actually overdue or due soon, worst car first. Same
+     * statusInfo() maths as the reminders board, just folded by vehicle so the dashboard can say
+     * "plate X → Oil Change, Battery" in a single line.
+     *
+     * ?limit=N (default 8, max 50) caps the cars returned; `total_cars` reports the true count.
+     */
+    public function dueByVehicle(Request $request)
+    {
+        try {
+            $limit = min(max($request->integer('limit', 8), 1), 50);
+
+            $cars = ServiceReminder::query()
+                ->with('vehicle')
+                ->where('active', true)
+                ->where('is_muted', false)
+                ->get()
+                // Only the two states that call for a wrench, and only reminders that still have a car.
+                ->filter(function ($r) {
+                    $status = $r->statusInfo()['status'];
+
+                    return $r->vehicle && in_array($status, ['overdue', 'due_soon'], true);
+                })
+                ->groupBy('vehicle_id')
+                ->map(function ($group) {
+                    /** @var \App\Models\ServiceReminder $first */
+                    $first    = $group->first();
+                    $vehicle  = $first->vehicle;
+
+                    $services = $group->map(function ($r) {
+                        $status = $r->statusInfo();
+                        $km     = $status['km_remaining'];
+
+                        return [
+                            'id'             => $r->id,
+                            'service_type'   => $r->service_type,
+                            'name'           => $r->displayName(),
+                            'status'         => $status['status'],
+                            'km_remaining'   => $km,
+                            'days_remaining' => $status['days_remaining'],
+                            // A car cannot genuinely be this far past a service interval — the odometer or
+                            // the last-service anchor is wrong. Flagged so the UI shows "check odometer"
+                            // instead of a fake number, and excluded from the ranking below.
+                            'data_suspect'   => $km !== null && abs($km) > self::IMPLAUSIBLE_KM,
+                        ];
+                    })
+                        // Overdue services lead the chip list, then the closest to due. Suspect
+                        // readings sink to the end so real work is never buried under bad data.
+                        ->sortBy(fn ($s) => [
+                            $s['data_suspect'] ? 1 : 0,
+                            $s['status'] === 'overdue' ? 0 : 1,
+                            $s['km_remaining'] ?? PHP_INT_MAX,
+                        ])
+                        ->values();
+
+                    $overdue = $services->where('status', 'overdue')->where('data_suspect', false);
+
+                    return [
+                        'vehicle_id'    => $vehicle->id,
+                        'plate'         => $vehicle->plate_no ?: $vehicle->code,
+                        'car'           => trim(($vehicle->make ?? '') . ' ' . ($vehicle->model ?? '')) ?: null,
+                        'odometer'      => $vehicle->odometer,
+                        'overdue_count' => $overdue->count(),
+                        'due_count'     => $services->count(),
+                        'suspect_count' => $services->where('data_suspect', true)->count(),
+                        // How far past due the worst service on this car is — the ranking metric.
+                        'worst_km_over' => $overdue->isNotEmpty()
+                            ? (int) abs((int) $overdue->min('km_remaining'))
+                            : 0,
+                        'services'      => $services->all(),
+                    ];
+                })
+                ->sortByDesc(fn ($c) => [$c['overdue_count'], $c['worst_km_over'], $c['due_count']])
+                ->values();
+
+            // Three DISJOINT buckets so the dashboard tally sums to total_cars: a car is counted
+            // once, by its worst state. "suspect" is reserved for cars whose only due services are
+            // un-trustable readings — they need a data fix, not a wrench.
+            $overdueCars = $cars->where('overdue_count', '>', 0);
+            $rest        = $cars->where('overdue_count', 0);
+            $suspectCars = $rest->filter(fn ($c) => $c['due_count'] === $c['suspect_count']);
+
+            return ResponseHelper::SuccessResponse([
+                'items'         => $cars->take($limit)->all(),
+                'total_cars'    => $cars->count(),
+                'overdue_cars'  => $overdueCars->count(),
+                'due_soon_cars' => $rest->count() - $suspectCars->count(),
+                'suspect_cars'  => $suspectCars->count(),
+            ], 'Cars needing service retrieved successfully', 200);
         } catch (\Throwable $e) {
             return ResponseHelper::fromException($e);
         }

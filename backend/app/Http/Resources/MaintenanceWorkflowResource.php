@@ -25,8 +25,7 @@ class MaintenanceWorkflowResource extends JsonResource
         Maintenance::WF_REVIEW_REJECTED        => 'Review rejected',
         Maintenance::WF_INSPECTION_REQUESTED  => 'Inspection requested',
         Maintenance::WF_INSPECTION_DIAGNOSTIC => 'Diagnostic',
-        Maintenance::WF_RECOMMENDATION_PENDING => 'Pending recommendation',
-        Maintenance::WF_AWAITING_PARTS         => 'Waiting for parts',
+        Maintenance::WF_RECOMMENDATION_PENDING => 'Pending approval',
         Maintenance::WF_RECOMMENDATION_DISMISSED => 'Recommendation dismissed',
         Maintenance::WF_INSPECTION_PENDING => 'Pending dispatch',
         Maintenance::WF_ON_SITE_PENDING    => 'Pending on-site service',
@@ -184,6 +183,14 @@ class MaintenanceWorkflowResource extends JsonResource
 
             // Why it exists + what the inspector found
             'trigger_reason'        => $t->trigger_reason,
+            // WHERE the request came from — a separate axis from the reason above. "Who found this?"
+            // vs. "what's wrong with it?"; the board renders both (see Maintenance::REQUEST_ORIGINS).
+            // Null on rows created before the column existed and never backfilled.
+            'request_origin'        => $t->request_origin,
+            'request_origin_label'  => $t->requestOriginLabel(),
+            // The Driver Observation this ticket was escalated from, so the card can link back to the
+            // original note instead of only echoing its text into customer_complaint.
+            'driver_observation_id' => $t->relationLoaded('driverObservation') ? $t->driverObservation?->id : null,
             // Repair Location — 'in_shop' (workshop pipeline) | 'on_site' (mobile; car stays available).
             // `is_on_site` is the quick flag the board/drawer read to render the On-Site lane + tag.
             'repair_location'       => $t->repair_location,
@@ -276,6 +283,17 @@ class MaintenanceWorkflowResource extends JsonResource
             // "Waiting for parts" signal on the Car Status stage board.
             'waiting_parts'  => count($this->pendingPartNames($t)) > 0,
             'parts_pending'  => $this->pendingPartNames($t),
+
+            // OPERATIONS CARD — the "what is happening to this car right now" block the Car Status
+            // Operations Dashboard renders: the primary maintenance reason, the real operational state,
+            // the latest checkpoint, the blocker, the parts owed, the clock, who's accountable, the repair
+            // spine and the escalation alerts. Built by MaintenanceOpsCardService from stored data only;
+            // serialized only when the ticket's faults are eager-loaded (the board/show queries), so it
+            // never fires a lazy query on a light listing.
+            'ops' => $this->when(
+                $t->relationLoaded('tasks'),
+                fn () => app(\App\Services\MaintenanceOpsCardService::class)->build($t),
+            ),
 
             // Post-Repair Inspection — the ticket's durable QC verdicts (Repair Quality Check panel). Only
             // present when eager-loaded; the drawer otherwise fetches them via /repair-inspections.
@@ -512,7 +530,6 @@ class MaintenanceWorkflowResource extends JsonResource
                 'scheduled_for'    => optional($t->recommendation_scheduled_for)->toIso8601String(),
                 'disposition'      => $t->recommendation_disposition,
                 'note'             => $t->recommendation_note,
-                'parts_ready'      => (bool) $t->recommendation_parts_ready,
                 'reviewed_by_name' => $t->recommendationReviewer?->name,
                 'reviewed_at'      => optional($t->recommendation_reviewed_at)->toIso8601String(),
             ],

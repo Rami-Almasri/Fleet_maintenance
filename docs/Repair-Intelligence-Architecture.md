@@ -221,6 +221,67 @@ no manual data entry, fully rebuildable.
   that does transmissions. The **per-category** view is the fair comparison; the headline average is context.
 - "OFFICE PARKING" / holding states are **not** garages and are excluded (A3).
 
+### 7.1 Garage Performance Score — a standalone composer (`GaragePerformanceQueryService`)
+
+The profile above is not "experience" alone; it answers *"who consistently repairs this fault best?"* via a
+multi-KPI **Garage Performance Score**. The KPIs deliberately span **multiple data substrates**, and that
+split dictates the architecture.
+
+**Architecture decision (LOCKED 2026-07-28): standalone composer, NOT an extension of
+`RepairDurationQueryService`.** Reasons, all code-backed:
+1. The KPIs live in **three substrates that don't share a garage key** — SHEET (`maintenances.vendor_id`),
+   and TASK/workflow (`repair_inspections.previous_vendor_id`, `recurring_fault_reviews.previous_garage_id`,
+   `maintenance_tasks.current_vendor_id`). They resolve to the **same vendor entity** (so `vendor_id` is the
+   universal join key) but are different tables at different grains. No single table links repair → garage →
+   later verdict.
+2. `RepairDurationQueryService` is **deliberately single-substrate** ("the SINGLE place the Time-To-Fix
+   definition lives," `origin='sheet'` LOCKED) with a **DB-free pure core**. Absorbing QC/reopen/recurrence
+   would force it to read foreign substrates and collapse that single responsibility.
+3. Reuse would **regress**: `RepairInspectionService::technicianQuality()` already computes the per-garage QC
+   pass-rate. The composer must *call* it, not reimplement it.
+
+So `GaragePerformanceQueryService` **composes** existing single-purpose services and serves all three
+consumers (the `GarageRecommendationService.signalResolver` hook, dashboards, future analytics) from one place.
+
+**KPI source-of-truth map (audited):**
+
+| KPI | Source | Substrate · garage key | Data today | Phase |
+|---|---|---|---|---|
+| Duration (median/p25/p90/fast/slow) | `RepairDurationQueryService` | SHEET · `vendor_id` | ~5,638 cycles, 106 vendors | **1** |
+| Relative-to-fleet speed index | derived (garage vs fleet median) | SHEET | abundant | **1** |
+| On-time / ETA compliance | *(deferred — see below)* | — | **disqualified** | **2** |
+| QC / re-inspection pass rate | `RepairInspectionService::technicianQuality()` | TASK · `repair_inspections.previous_vendor_id` | 6 | **2** |
+| Repeat-fault rate (30/60/90d) | `RecurringFaultService::detectPriorFix()` | TASK · `recurring_fault_reviews.previous_garage_id` | 5 | **2** |
+| Reopen rate | `maintenance_tasks.reinspection_failures` / `last_failed_vendor_id` | TASK · `current_vendor_id` | 2 | **2** |
+| Parts efficiency | `maintenance_line_items` | TASK | — | **3** |
+
+**On-time is deferred — provenance check FAILED (2026-07-28).** The sheet's `expected_return_date` is not a
+trustworthy forward promise: measured over 4,261 cycles, it **equals `actual_in_date` in 88.7%** of rows (the
+"estimate" is the actual return date backfilled at close) and equals `out_date` in another 36%; only **10.5%**
+are a genuinely independent estimate. Computing `actual ≤ expected` on this yields a meaningless ~94% "on-time"
+by construction. **On-time therefore waits for the workflow substrate's `expected_completion_date`** — a
+forward-looking promise set at ticket-open (§10, R1/R2), which accrues as the new workflow runs. *This is why
+we provenance-check a metric before it goes live.*
+
+**Composite score design (honest by construction):**
+- Each KPI is reported with its **own `n`, confidence band, and vs-fleet delta** — never a bare number.
+- The composite `score` (0–100) blends only the KPIs that **clear a sample threshold**; weights are
+  **renormalized over the available KPIs**, and the response states which KPIs were included (`coverage`).
+  A garage with 312 sheet repairs but 0 QC verdicts scores on what we actually know, and the score
+  **strengthens as task data accrues** — no architecture change, mirroring the ETA cascade's "never present a
+  number as fact" rule.
+- Confidence band comes from cohort size against the `config/repair_intelligence.php` thresholds (same knobs
+  as the ETA cascade), not from a bespoke scorer.
+
+**Phased rollout (aligned to the data, not aspiration):**
+- **Phase 1 (buildable now):** composer with **Duration + relative-to-fleet speed**, per `(vendor, category)`,
+  + composite over the available KPIs. Delivers the *"2.4 days, 18% faster than fleet"* card. On-time is
+  scaffolded as an `unavailable` KPI with its deferral reason surfaced.
+- **Phase 2:** fold in QC / repeat-fault / reopen (code paths exist; thin until data grows, gated by
+  threshold) and on-time from `expected_completion_date`.
+- **Phase 3:** promote the key `category_key → fault_catalog_id` as exact-fault history accrues — no consumer
+  change.
+
 ---
 
 ## 8. Required backend services and data models

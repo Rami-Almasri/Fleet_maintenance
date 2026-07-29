@@ -7,6 +7,7 @@ import MetricCard, { MetricGrid } from '../components/ui/MetricCard';
 import DataTable, { SectionCard } from '../components/ui/Table';
 import { MetricGridSkeleton, Skeleton } from '../components/ui/Skeleton';
 import { Tooltip } from '../components/ui/Tooltip';
+import FleetUtilizationAnalytics from '../components/analytics/FleetUtilizationAnalytics';
 import Icon from '../components/ui/Icon';
 import { aed2, num, fmtDate } from '../lib/format';
 
@@ -604,6 +605,9 @@ export default function FleetUtilization() {
             <span className="ml-auto italic">Maintenance = true off-road shop days — workshop days with no active rental, from the OfficeManager maintenance contracts. Rental is King: a day a car is both on rent and in the shop counts as <span className="font-semibold text-emerald-600 not-italic">rental time</span>, never shop time. The three always add up to days in service.</span>
           </p>
         </Card>
+
+        {/* Analytics — same filtered rows as the table below. */}
+        {!loading && !error && rows.length > 0 && <FleetUtilizationAnalytics rows={rows} />}
 
         {/* Table */}
         {error ? (

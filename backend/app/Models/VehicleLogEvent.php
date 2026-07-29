@@ -78,14 +78,21 @@ class VehicleLogEvent extends Model
     public const EVENT_GARAGE_INVOICE_ACCEPTED  = 'garage_invoice_accepted';  // team accepted it → applied to the ticket
     public const EVENT_GARAGE_INVOICE_REJECTED  = 'garage_invoice_rejected';  // team rejected it
 
-    // Pre-Maintenance Recommendation queue (Supervisor triage of an inspection recommendation).
-    public const EVENT_RECOMMENDATION_APPROVED  = 'recommendation_approved';  // approveRecommendation(): "Start Maintenance" → enters the dispatch pipeline
-    public const EVENT_RECOMMENDATION_DISMISSED = 'recommendation_dismissed'; // dismissRecommendation(): rejected / not-required, no maintenance
-    public const EVENT_RECOMMENDATION_SCHEDULED = 'recommendation_scheduled'; // scheduleRecommendation(): deferred to a later date, stays in the queue
-    public const EVENT_PARTS_ORDERED            = 'parts_ordered';            // orderParts(): approved but waiting for a spare part
-    public const EVENT_PARTS_READY              = 'parts_ready';              // partsReady(): the spare arrived → ready to start maintenance
+    // HISTORICAL — the retired pre-maintenance approval gate and its parts branch. Nothing writes these any
+    // more (a report now opens a ticket immediately, and required parts raise their own part requests), but
+    // rows logged while the gate was live still exist and must keep rendering on the vehicle timeline.
+    // See [[inspection-required-parts-split]].
+    public const EVENT_RECOMMENDATION_APPROVED  = 'recommendation_approved';  // gate approved → entered the dispatch pipeline
+    public const EVENT_RECOMMENDATION_DISMISSED = 'recommendation_dismissed'; // gate dismissed: rejected / not-required, no maintenance
+    public const EVENT_RECOMMENDATION_SCHEDULED = 'recommendation_scheduled'; // gate deferred to a later date
+    public const EVENT_PARTS_ORDERED            = 'parts_ordered';            // waited on a spare before starting
+    public const EVENT_PARTS_READY              = 'parts_ready';              // the spare arrived → ready to start
 
     // ── Parts Purchase + Repair Intelligence — the part-request lifecycle on the vehicle trail ──────
+    // The INSPECTOR's technical requirement, recorded during the report — what the repair is expected to
+    // need. Deliberately its own event, BEFORE part_requested: nothing is ordered and no money is committed
+    // until the coordinator converts it once the garage is known. See MaintenanceRequiredPartService.
+    public const EVENT_PART_REQUIRED          = 'part_required';           // inspection listed a part the repair will need
     public const EVENT_PART_REQUESTED         = 'part_requested';          // a part request was opened (customer or garage source)
     public const EVENT_PART_APPROVED          = 'part_approved';           // the request was approved for purchase
     public const EVENT_PART_REJECTED          = 'part_rejected';           // the request was rejected
@@ -152,6 +159,8 @@ class VehicleLogEvent extends Model
         self::EVENT_RECOMMENDATION_SCHEDULED => Maintenance::FINDING_INSPECTOR,
         self::EVENT_PARTS_ORDERED            => Maintenance::FINDING_INSPECTOR,
         self::EVENT_PARTS_READY              => Maintenance::FINDING_INSPECTOR,
+        // A required part is part of the inspector's diagnosis, not a procurement act → inspector-side.
+        self::EVENT_PART_REQUIRED            => Maintenance::FINDING_INSPECTOR,
         // Severity Review is a supervisory grading decision → inspector-side audit bucket.
         self::EVENT_SEVERITY_UPGRADED        => Maintenance::FINDING_INSPECTOR,
         self::EVENT_SEVERITY_REVIEW_KEPT     => Maintenance::FINDING_INSPECTOR,

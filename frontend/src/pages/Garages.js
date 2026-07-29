@@ -4,6 +4,7 @@ import api from '../api/client';
 import useFetch from '../hooks/useFetch';
 import Badge from '../components/ui/Badge';
 import { Card, PageHeader, Spinner, EmptyState } from '../components/ui/Misc';
+import GaragesAnalytics from '../components/analytics/GaragesAnalytics';
 import { aed2, num } from '../lib/format';
 
 const DOT = { on_track: 'bg-emerald-500', at_risk: 'bg-amber-500', breached: 'bg-red-500', unknown: 'bg-slate-300' };
@@ -50,6 +51,9 @@ export default function Garages() {
         </div>
 
         {garages.length === 0 && <Card><EmptyState title="No garage activity" message="Once maintenance visits have a garage assigned, they'll show here." /></Card>}
+
+        {/* Analytics — every garage side by side, before the per-garage detail cards. */}
+        {garages.length > 0 && <GaragesAnalytics garages={garages} />}
 
         <div className="space-y-4">
           {garages.map((g) => (

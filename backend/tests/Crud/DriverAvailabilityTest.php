@@ -72,19 +72,4 @@ class DriverAvailabilityTest extends CrudTestCase
         $task->update(['status' => LogisticsTask::STATUS_RETURNED, 'completed_at' => now()]);
         $this->assertSame('available', $svc->statusFor($driver->id));
     }
-
-    public function test_presence_endpoint_reports_the_transport_leg(): void
-    {
-        $vehicle = $this->makeVehicle();
-        $driver  = $this->driver();
-        $this->leg($vehicle, $driver->id, LogisticsTask::STATUS_EN_ROUTE);
-
-        $res = $this->getJson('/api/team/presence');
-        $res->assertSuccessful();
-
-        $person = collect($res->json('data.team'))->firstWhere('id', $driver->id);
-        $this->assertNotNull($person, 'driver should appear on the presence board');
-        $this->assertSame('busy', $person['status']);
-        $this->assertSame('move', data_get($person, 'activity.kind'));
-    }
 }

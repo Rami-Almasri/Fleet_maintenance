@@ -21,6 +21,7 @@ import { usePermissions } from '../hooks/usePermissions';
 import { useToast } from '../components/ui/Toast';
 import Button from '../components/ui/Button';
 import { STAGE_ORDER, STAGE_META } from '../components/complaints/stages';
+import ComplaintsAnalytics from '../components/analytics/ComplaintsAnalytics';
 
 function ago(iso) {
   if (!iso) return '—';
@@ -215,6 +216,9 @@ export default function ComplaintsCenter() {
             );
           })}
         </div>
+
+        {/* Analytics — the filtered set, matching the table below. */}
+        {!loading && filtered.length > 0 && <ComplaintsAnalytics rows={filtered} />}
 
         {/* Table + secondary filters */}
         <SectionCard

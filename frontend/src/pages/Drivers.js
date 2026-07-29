@@ -11,6 +11,7 @@ import Pagination from '../components/ui/Pagination';
 import { Card, PageHeader, SearchInput, TableSkeleton, EmptyState } from '../components/ui/Misc';
 import { Select } from '../components/ui/Field';
 import { usePageStat } from '../components/PageStat';
+import DriversAnalytics from '../components/analytics/DriversAnalytics';
 import { fmtDate, num, dayBadge } from '../lib/format';
 import DriverForm, { DRIVER_STATUSES, driverToForm, cleanPayload } from './drivers/DriverForm';
 
@@ -165,6 +166,9 @@ export default function Drivers() {
         {error && (
           <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error}</div>
         )}
+
+        {/* Analytics — the filtered set, matching the table below. */}
+        {!loading && filtered.length > 0 && <DriversAnalytics drivers={filtered} />}
 
         <Card>
           <div className="overflow-x-auto">

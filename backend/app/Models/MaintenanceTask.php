@@ -320,6 +320,16 @@ class MaintenanceTask extends Model
         return $this->hasMany(PartRequest::class, 'maintenance_task_id')->latest('id');
     }
 
+    /**
+     * What the INSPECTOR said this fault would need — technical requirements only. They precede the part
+     * requests above: the coordinator converts them once the garage is known.
+     * See {@see \App\Services\MaintenanceRequiredPartService}.
+     */
+    public function requiredParts(): HasMany
+    {
+        return $this->hasMany(MaintenanceRequiredPart::class, 'maintenance_task_id');
+    }
+
     /** The garage invoice this fault is billed on (null = not yet invoiced; fault → one invoice). */
     public function invoice(): BelongsTo
     {

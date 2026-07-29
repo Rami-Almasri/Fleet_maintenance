@@ -15,6 +15,7 @@ import DataTable, { SectionCard } from '../components/ui/Table';
 import { MetricGridSkeleton } from '../components/ui/Skeleton';
 import Icon from '../components/ui/Icon';
 import { usePageStat } from '../components/PageStat';
+import CustomersAnalytics from '../components/analytics/CustomersAnalytics';
 import { aed2, num } from '../lib/format';
 import { SHOW_FINANCIALS } from '../config/features';
 import CustomerForm, { customerToForm, cleanPayload } from './customers/CustomerForm';
@@ -201,6 +202,11 @@ export default function Customers() {
 
         {error && (
           <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error}</div>
+        )}
+
+        {/* Analytics — the filtered set, matching the table below. */}
+        {!loading && filtered.length > 0 && (
+          <CustomersAnalytics customers={filtered} showFinancials={SHOW_FINANCIALS} />
         )}
 
         <SectionCard

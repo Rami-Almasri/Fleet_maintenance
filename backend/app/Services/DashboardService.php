@@ -574,7 +574,17 @@ class DashboardService
                 // Cars physically in the workshop right now, tagged with the lifecycle stage they sit at.
                 // The panel is the primary Proactive-Flags column, so it shows the FULL in-shop list
                 // (inMaintenanceList already caps at 25), not a top-5 teaser.
-                'in_maintenance'  => ['count' => count($inShop),        'items' => $inShop],
+                'in_maintenance'  => [
+                    'count' => count($inShop),
+                    'items' => $inShop,
+                    // How many of those cars we know about from each record, so the panel can state
+                    // its provenance split up front (sheet contract vs app workflow ticket vs both).
+                    'sources' => [
+                        'contract' => count(array_filter($inShop, fn ($r) => $r['source'] === 'contract')),
+                        'workshop' => count(array_filter($inShop, fn ($r) => $r['source'] === 'workshop')),
+                        'both'     => count(array_filter($inShop, fn ($r) => $r['source'] === 'both')),
+                    ],
+                ],
                 // count/total are the TRUE totals of the whole set; items is just the top-5 shown.
                 'invoice_overdue' => ['count' => $invSummary['count'], 'total' => $invSummary['total'], 'items' => $invItems],
                 'inspection_due'  => ['count' => count($inspections),  'items' => array_slice($inspections, 0, 5)],
@@ -583,17 +593,56 @@ class DashboardService
     }
 
     /**
-     * Cars physically in the workshop right now — sourced from the REAL maintenance data we hold
-     * today: OPEN type-U maintenance CONTRACTS (OM / sheet-synced), one row per in-shop car. The
-     * app-side workflow tickets are still being adopted, so the contract is the source of truth for
-     * "is this car in the garage" for now. Each row carries its garage and a repair-ETA gauge
-     * computed from the contract's in-shop start (out_date) vs the promised ready-by date
-     * (maintenance.expected_return_date), falling back to the fleet-default target when none is set.
-     * Longest-overdue first so the cars blowing their window sit at the top.
+     * Cars physically in the workshop right now — the UNION of the two records we hold for a car
+     * being in the garage, so no in-shop car can hide behind whichever system it was logged in:
      *
-     * @return array<int,array{id:?int, plate:?string, car:?string, stage:string, garage:?string, eta:array}>
+     *   source 'contract' ("from sheet")  — an OPEN type-U maintenance CONTRACT (OM / sheet-synced).
+     *                                       In-shop clock = contract out_date; target = the ticket's
+     *                                       promised ready-by date, else the fleet-default window.
+     *   source 'workshop' ("from system") — an app maintenance-workflow TICKET sitting in one of the
+     *                                       in-shop states, with no open contract behind it. Clock =
+     *                                       the ticket's own start stamp; target = its effective
+     *                                       expected-completion date (same maths the Checkpoints
+     *                                       monitor uses), else the default window.
+     *   source 'both'                     — the same visit exists in BOTH (a contract whose ticket is
+     *                                       live in the workflow). Shown ONCE, badged as both.
+     *
+     * De-duplicated by vehicle, longest-overdue first so the cars blowing their window sit at the top.
+     *
+     * @return array<int,array{id:?int, plate:?string, car:?string, stage:string, garage:?string, source:string, eta:array}>
      */
     public function inMaintenanceList(int $limit = 25): array
+    {
+        $rows = $this->contractInShopRows($limit);
+
+        // Vehicles already accounted for by an open contract — a workflow ticket for the same car is
+        // the same visit seen from the other side, so it upgrades that row to 'both' instead of
+        // adding a duplicate card.
+        $seen = [];
+        foreach ($rows as $r) {
+            if ($r['id']) {
+                $seen[(int) $r['id']] = true;
+            }
+        }
+
+        foreach ($this->ticketInShopRows($limit, array_keys($seen)) as $r) {
+            $rows[] = $r;
+        }
+
+        return collect($rows)
+            // Worst-overdue first, then closest-to-due; keeps the urgent cars at the top of the panel.
+            ->sortByDesc(fn ($r) => ($r['eta']['days_over'] ?? 0) * 1000 - ($r['eta']['days_left'] ?? 0))
+            ->values()
+            ->take($limit)
+            ->all();
+    }
+
+    /**
+     * Source A — cars in the shop per the OPEN type-U maintenance contracts (OM / sheet-synced).
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    private function contractInShopRows(int $limit): array
     {
         $contracts = Contract::query()
             ->where('contract_type', 'U')
@@ -601,7 +650,7 @@ class DashboardService
             ->whereNotNull('vehicle_id')
             ->with([
                 'vehicle:id,plate_no,make,model',
-                'maintenance:id,contract_id,garage,vendor_id,expected_return_date,maintenance_reason_id,maintenance_type,customer_complaint,service_main,maintenance_notes,findings',
+                'maintenance:id,contract_id,garage,vendor_id,workflow_status,expected_return_date,maintenance_reason_id,maintenance_type,customer_complaint,service_main,maintenance_notes,findings',
                 'maintenance.vendor:id,name',
                 'maintenance.checkpoints',
                 // The fault(s)/reason behind the visit — so each card can say WHY the car is in the shop.
@@ -638,6 +687,12 @@ class DashboardService
                     'plate'      => $c->vehicle?->plate_no,
                     'car'        => $c->vehicle ? (trim(($c->vehicle->make ?? '') . ' ' . ($c->vehicle->model ?? '')) ?: null) : null,
                     'stage'      => 'In workshop',
+                    // Provenance — 'contract' (the sheet/OM record alone) or 'both' when the same visit
+                    // is ALSO live as an app workflow ticket.
+                    'source'      => $m && in_array($m->workflow_status, Maintenance::CHECKPOINT_TRACKED_STATES, true)
+                        ? 'both' : 'contract',
+                    'contract_id' => (int) $c->id,
+                    'ticket_id'   => $m?->id ? (int) $m->id : null,
                     'garage'     => $m?->vendor?->name ?: ($m?->garage ?: null),
                     // WHY the car is in the shop — the fault(s)/reason behind the visit.
                     'problem'       => $problem['label'],
@@ -659,8 +714,79 @@ class DashboardService
                     ] : null,
                 ];
             })
-            // Worst-overdue first, then closest-to-due; keeps the urgent cars at the top of the panel.
-            ->sortByDesc(fn ($r) => ($r['eta']['days_over'] ?? 0) * 1000 - ($r['eta']['days_left'] ?? 0))
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Source B — cars in the shop per the APP's own maintenance-workflow tickets: any ticket sitting
+     * in an in-shop state (the same set the Checkpoints monitor tracks). Vehicles already covered by
+     * an open contract row are skipped here — that row is badged 'both' instead. The ETA is computed
+     * exactly as MaintenanceCheckpointService::monitorState does (start stamp → effective expected
+     * completion → fleet-default window), so a ticket card and its Checkpoints row can never disagree.
+     *
+     * @param  array<int,int>  $excludeVehicleIds  vehicles already listed from the contract side
+     * @return array<int,array<string,mixed>>
+     */
+    private function ticketInShopRows(int $limit, array $excludeVehicleIds): array
+    {
+        return Maintenance::query()
+            ->whereIn('workflow_status', Maintenance::CHECKPOINT_TRACKED_STATES)
+            ->whereNotNull('vehicle_id')
+            ->when($excludeVehicleIds, fn ($q) => $q->whereNotIn('vehicle_id', $excludeVehicleIds))
+            ->with([
+                'vehicle:id,plate_no,make,model',
+                'vendor:id,name',
+                'checkpoints',
+                'tasks:id,maintenance_id,symptom,status,severity',
+                'reason:id,reason_en',
+            ])
+            ->limit($limit)
+            ->get()
+            ->map(function (Maintenance $t) {
+                $start = $t->repair_started_at ?? $t->out_date ?? $t->dispatched_at ?? $t->created_at;
+                $eta   = Maintenance::etaFromDates($start, $t->effectiveExpectedCompletion());
+                $cp    = $t->checkpoints->first();
+                $problem = $this->ticketProblem($t);
+
+                return [
+                    'id'          => (int) $t->vehicle_id,
+                    'plate'       => $t->vehicle?->plate_no,
+                    'car'         => $t->vehicle ? (trim(($t->vehicle->make ?? '') . ' ' . ($t->vehicle->model ?? '')) ?: null) : null,
+                    'stage'       => 'In workshop',
+                    // Provenance — this car is in the shop per the app's own workflow, with no open
+                    // maintenance contract behind it.
+                    'source'      => 'workshop',
+                    'contract_id' => $t->contract_id ? (int) $t->contract_id : null,
+                    'ticket_id'   => (int) $t->id,
+                    'garage'      => $t->vendor?->name ?: ($t->garage ?: null),
+                    'problem'       => $problem['label'],
+                    'problem_items' => $problem['items'],
+                    'problem_type'  => $problem['type'],
+                    'eta'         => $eta,
+                    'checkpoint'  => $cp ? [
+                        'status'                 => $cp->status,
+                        'summary'                => $cp->summary,
+                        'previous_expected_date' => optional($cp->previous_expected_date)->toDateString(),
+                        'next_expected_date'     => optional($cp->next_expected_date)->toDateString(),
+                        'delay_reason'           => $cp->delay_reason,
+                        'delay_reason_other'     => $cp->delay_reason_other,
+                        'at'                     => optional($cp->created_at)->toIso8601String(),
+                        'by'                     => $cp->submitted_by_name,
+                    ] : null,
+                ];
+            })
+            // One card per CAR, not per ticket: a car carrying several open tickets shows its
+            // longest-running one and counts the rest, so the board stays "one car, one card"
+            // without hiding that more work is open on it.
+            ->sortByDesc(fn ($r) => $r['eta']['days_elapsed'] ?? 0)
+            ->groupBy('id')
+            ->map(function ($group) {
+                $row = $group->first();
+                $row['other_tickets'] = $group->count() - 1;
+
+                return $row;
+            })
             ->values()
             ->all();
     }

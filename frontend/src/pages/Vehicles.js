@@ -11,6 +11,7 @@ import { usePermissions } from '../hooks/usePermissions';
 import VehicleForm, { VEHICLE_STATUSES, vehicleToForm, cleanPayload } from './vehicles/VehicleForm';
 import DualState from '../components/ops/DualState';
 import { CommandPanel, StatGaugeTile } from '../components/ops';
+import VehiclesAnalytics from '../components/analytics/VehiclesAnalytics';
 
 const PAGE_SIZE = 12;
 
@@ -265,6 +266,9 @@ export default function Vehicles() {
             </div>
           ))}
         </div>
+
+        {/* Analytics — the active fleet (sold/disposed excluded), matching the KPI tiles. */}
+        {!loading && <VehiclesAnalytics vehicles={active} />}
 
         {/* Fleet Registry — the mission-control telemetry table. */}
         <CommandPanel

@@ -52,6 +52,8 @@
   margin: 10px 0 0; font-size: 11.5px; color: var(--ink-2); line-height: 1.45; font-style: italic;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
+/* Source prefix on the quote — upright + bolder so the attribution reads apart from the italic note. */
+.opx .qc-quote-src { font-style: normal; font-weight: 700; color: var(--ink-3); }
 .opx .qc-pos {
   display: flex; align-items: center; gap: 6px; margin-top: 10px;
   font-size: 11.5px; color: var(--ink-2); font-weight: 500;

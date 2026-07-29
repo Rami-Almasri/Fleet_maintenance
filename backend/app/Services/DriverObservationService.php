@@ -66,9 +66,13 @@ class DriverObservationService
         }
 
         return DB::transaction(function () use ($observation, $actor) {
+            // WHY (a fault a driver reported) and WHERE FROM (this observation) are two separate facts.
+            // They used to be collapsed into trigger_reason = periodic, which made a driver's note read
+            // as "Routine (system)" in the review queue and erased the source for good.
             $ticket = $this->workflow->requestInspection([
                 'vehicle_id'         => $observation->vehicle_id,
-                'trigger_reason'     => Maintenance::TRIGGER_PERIODIC,
+                'trigger_reason'     => Maintenance::TRIGGER_DRIVER_REPORTED,
+                'request_origin'     => Maintenance::SOURCE_DRIVER_OBSERVATION,
                 'customer_complaint' => $observation->note,
             ], $actor);
 

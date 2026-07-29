@@ -6,6 +6,7 @@ import Badge from '../components/ui/Badge';
 import Button from '../components/ui/Button';
 import { Card, PageHeader, Spinner, EmptyState, SearchInput } from '../components/ui/Misc';
 import { Select } from '../components/ui/Field';
+import DamageAnalytics from '../components/analytics/DamageAnalytics';
 import { aed2, fmtDate, num } from '../lib/format';
 
 const FAULTS = [
@@ -199,6 +200,9 @@ export default function DamageAccidents() {
             Accidents only
           </label>
         </div>
+
+        {/* Analytics — the filtered records, matching the table below. */}
+        {incidents.length > 0 && <DamageAnalytics incidents={incidents} />}
 
         {incidents.length === 0 ? (
           <Card><EmptyState title="No records match" message="Try clearing the fault filter or search." /></Card>

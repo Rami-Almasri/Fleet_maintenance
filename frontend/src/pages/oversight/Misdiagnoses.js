@@ -4,6 +4,7 @@
 // so a recurring mis-caller stands out. Backed by GET /Oversight/misdiagnoses.
 
 import { useEffect, useMemo, useState } from 'react';
+import AuditAnalytics from '../../components/analytics/AuditAnalytics';
 import { Link } from 'react-router-dom';
 import api from '../../api/client';
 import { useI18n } from '../../i18n/I18nContext';
@@ -92,6 +93,8 @@ export default function Misdiagnoses() {
             <p className="text-xs text-slate-400">{t('oversight.misdiag.emptyBody')}</p>
           </div>
         ) : (
+          <>
+          <AuditAnalytics rows={rows} title="Cars with the most mis-diagnoses" subtitle="Repeat wrong calls on the same car — the signal that a fault is being misread, not recurring" metricLabel="Mis-diagnoses" color="red" />
           <div className="space-y-3">
             {rows.map((r) => (
               <div key={r.task_id} className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
@@ -129,6 +132,7 @@ export default function Misdiagnoses() {
               </div>
             ))}
           </div>
+          </>
         )}
       </div>
     </div>

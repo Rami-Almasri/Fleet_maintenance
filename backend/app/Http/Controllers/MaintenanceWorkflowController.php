@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Helpers\ResponseHelper;
 use App\Http\Resources\MaintenanceLineItemResource;
 use App\Http\Resources\MaintenanceWorkflowResource;
+use App\Models\Contract;
 use App\Models\FaultCause;
 use App\Models\InspectionRecord;
 use App\Models\Maintenance;
@@ -12,9 +13,11 @@ use App\Models\MaintenanceHandover;
 use App\Models\MaintenanceIncident;
 use App\Models\MaintenanceTemporaryRelease;
 use App\Models\Vehicle;
+use App\Services\MaintenanceAnalyticsService;
 use App\Services\MaintenanceWorkflowService;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
@@ -92,7 +95,11 @@ class MaintenanceWorkflowController extends Controller
         // custody handovers, and every generated comparison report on the ticket's history.
         'activeIncident.acknowledgedBy:id,name', 'lastPauseHandover', 'lastResumeHandover', 'handoverComparisons',
         // Data-driven garage-choice record — powers the "Why this garage?" card in the ticket history.
-        'latestRecommendationDecision.recommendedVendor:id,name', 'latestRecommendationDecision.chosenVendor:id,name', 'latestRecommendationDecision.actor:id,name'];
+        'latestRecommendationDecision.recommendedVendor:id,name', 'latestRecommendationDecision.chosenVendor:id,name', 'latestRecommendationDecision.actor:id,name',
+        // Operations card (`ops`) — the State-resolver graph, the progress checkpoints and the follow-up
+        // owners, so a fully-hydrated ticket carries the SAME ops block the board does.
+        'tasks.partRequests.purchases', 'tasks.partRequests.purchases.sourceVendor:id,name',
+        'checkpoints', 'responsibles:id,name', 'pickedUpFromGarageBy:id,name'];
 
     /** The standard eager set for a fully-hydrated ticket — reused by the invoice controller's reloads. */
     public static function eagerWith(): array
@@ -111,13 +118,19 @@ class MaintenanceWorkflowController extends Controller
     private const BOARD_EAGER = [
         'vendor', 'transferToVendor:id,name',
         'vehicle:id,plate_no,make,model,operational_status',
-        'inspector:id,name', 'requester:id,name',
+        'inspector:id,name', 'requester:id,name', 'pickedUpFromGarageBy:id,name',
         'assignedDriver:id,name', 'delegatedBy:id,name',
         'recommendationReviewer:id,name', 'linkedContract:id,contract_no',
         'tasks.currentVendor:id,name', 'tasks.lastFailedVendor:id,name',
         // Part requests per fault — so the board (and the Car Status stage board) can show whether a car
         // is still waiting on a part, without a second round-trip to the Parts board.
-        'tasks.partRequests:id,maintenance_task_id,part_name,status',
+        // Operations Dashboard (Car Status) — the graph the State resolvers read (faults → part requests
+        // → purchases → supplier) plus the progress checkpoints and the ticket's standing follow-up
+        // owners. Loaded here, once for the whole board, because WorkflowStateResolver /
+        // MaintenanceDelayResolver are pure readers that never eager-load themselves. See
+        // MaintenanceOpsCardService.
+        'tasks.partRequests', 'tasks.partRequests.purchases', 'tasks.partRequests.purchases.sourceVendor:id,name',
+        'checkpoints', 'responsibles:id,name',
         'activeMove',
     ];
 
@@ -126,6 +139,7 @@ class MaintenanceWorkflowController extends Controller
         private \App\Services\MaintenanceTaskService $tasks,
         private \App\Services\MaintenanceForecastService $forecast,
         private \App\Services\RepairInspectionService $inspections,
+        private \App\Services\MaintenanceRequiredPartService $requiredParts,
     ) {
     }
 
@@ -221,38 +235,129 @@ class MaintenanceWorkflowController extends Controller
     }
 
     /**
-     * Fixed & Completed Repairs — every workflow ticket whose repair is DONE and signed off (closed).
-     * The "what happened to this car" ledger: who requested it, who drove it, where it was fixed, what
-     * was found + repaired, and what it cost. Newest-closed first. Filter with ?search= (plate / car /
-     * garage) and ?vehicle_id=. Backs the /completed-repairs page.
+     * Fixed & Completed Repairs — every repair this fleet has finished, from BOTH data origins:
+     *
+     *   source = 'system' — an app workflow ticket signed off through the lifecycle (workflow_status
+     *                       = closed). Carries the full story: who requested it, who drove it, the
+     *                       per-fault root cause / resolution / parts, the odometer chain and the cost.
+     *   source = 'sheet'  — a historical workshop event imported from the Google Sheet (origin =
+     *                       sheet / customer-sheet) whose car CAME BACK (actual_in_date is set). No
+     *                       people chain exists for these — the sheet never recorded one — so they
+     *                       carry only what the sheet holds: service, garage, dates, cost.
+     *
+     * Newest-completed first, the two origins merged into one ledger. Filter with ?source=all|system|
+     * sheet, ?search= (plate / car / garage), ?vehicle_id= and ?limit=. Backs the /completed-repairs
+     * page and the Dashboard's "Recently Fixed" card.
      */
     public function completed(Request $request)
     {
         try {
-            $q = trim((string) $request->query('search', ''));
+            $q      = trim((string) $request->query('search', ''));
+            $source = (string) $request->query('source', 'all');   // all | system | sheet
+            // The ledger is capped at 500; ?limit= lets a compact surface (the Dashboard's "Recently
+            // Fixed" card) ask for just the newest handful instead of the whole set.
+            $limit  = max(1, min(500, (int) $request->query('limit', 500)));
 
-            $tickets = Maintenance::workflowTickets()
-                ->where('workflow_status', Maintenance::WF_CLOSED)
-                ->with(self::EAGER)->withCount('media')
-                ->when($request->filled('vehicle_id'), fn ($qq) => $qq->where('vehicle_id', $request->integer('vehicle_id')))
-                ->when($q !== '', function ($qq) use ($q) {
-                    $qq->where(function ($w) use ($q) {
-                        $w->where('plate', 'like', "%{$q}%")
-                          ->orWhere('car_label', 'like', "%{$q}%")
-                          ->orWhere('garage', 'like', "%{$q}%")
-                          ->orWhereHas('vehicle', fn ($v) => $v->where('plate_no', 'like', "%{$q}%"))
-                          ->orWhereHas('vendor', fn ($v) => $v->where('name', 'like', "%{$q}%"));
-                    });
-                })
-                ->orderByDesc('wf_closed_at')
-                ->orderByDesc('id')
-                ->limit(500)
-                ->get();
+            $rows = collect();
+
+            // A) SYSTEM — tickets signed off through the app's own workflow.
+            if ($source !== 'sheet') {
+                $tickets = Maintenance::workflowTickets()
+                    ->where('workflow_status', Maintenance::WF_CLOSED)
+                    ->with(self::EAGER)->withCount('media')
+                    ->when($request->filled('vehicle_id'), fn ($qq) => $qq->where('vehicle_id', $request->integer('vehicle_id')))
+                    ->when($q !== '', function ($qq) use ($q) {
+                        $qq->where(function ($w) use ($q) {
+                            $w->where('plate', 'like', "%{$q}%")
+                              ->orWhere('car_label', 'like', "%{$q}%")
+                              ->orWhere('garage', 'like', "%{$q}%")
+                              ->orWhereHas('vehicle', fn ($v) => $v->where('plate_no', 'like', "%{$q}%"))
+                              ->orWhereHas('vendor', fn ($v) => $v->where('name', 'like', "%{$q}%"));
+                        });
+                    })
+                    ->orderByDesc('wf_closed_at')
+                    ->orderByDesc('id')
+                    ->limit($limit)
+                    ->get();
+
+                $rows = $rows->concat(
+                    collect(MaintenanceWorkflowResource::collection($tickets)->toArray($request))
+                        ->map(fn (array $r) => array_merge($r, [
+                            'source' => 'system',
+                            // One canonical "when was this finished" key both origins fill, so the ledger
+                            // sorts + date-filters on ONE field. Falls back for a legacy closed ticket
+                            // whose wf_closed_at was never stamped.
+                            'completed_at' => $r['handoffs']['closed']['at']
+                                ?? ($r['actual_in_date'] ? $r['actual_in_date'] . 'T00:00:00' : null)
+                                ?? $r['updated_at'] ?? null,
+                        ]))
+                );
+            }
+
+            // B) SHEET — CONTRACT-ANCHORED. A sheet repair is finished when its type-'U' maintenance
+            // CONTRACT is closed (in_date set) — the contract, not the sheet row, is the authority on
+            // when the visit ended (the sheet's actual_in_date is a hand-typed field that is often
+            // blank or stale). One row per closed contract; the workshop-log events matched to that
+            // contract window supply WHAT was done. A contract already owned by an app workflow ticket
+            // is skipped — that repair belongs to the System lane.
+            if ($source !== 'system') {
+                $contracts = Contract::query()
+                    ->where('contract_type', 'U')
+                    ->whereNotNull('in_date')       // CLOSED — the visit is over
+                    ->whereNotNull('out_date')      // …and we know when it started
+                    ->whereNotIn('id', Maintenance::workflowTickets()->whereNotNull('linked_contract_id')->select('linked_contract_id'))
+                    ->with('vehicle:id,plate_no,make,model')
+                    ->when($request->filled('vehicle_id'), fn ($qq) => $qq->where('vehicle_id', $request->integer('vehicle_id')))
+                    // The garage / service text lives on the linked EVENTS, not the contract — so the
+                    // event match is correlated to THIS contract's window (same rule as the join
+                    // below). Matching at vehicle level instead would return every later visit of any
+                    // car that once had, say, a brake job.
+                    ->when($q !== '', function ($qq) use ($q) {
+                        $qq->where(function ($w) use ($q) {
+                            $w->where('contract_no', 'like', "%{$q}%")
+                              ->orWhereHas('vehicle', fn ($v) => $v->where('plate_no', 'like', "%{$q}%")
+                                  ->orWhere('make', 'like', "%{$q}%")
+                                  ->orWhere('model', 'like', "%{$q}%"))
+                              ->orWhereExists(fn ($sub) => $sub
+                                  ->from('maintenances as m')
+                                  ->selectRaw('1')
+                                  ->whereColumn('m.vehicle_id', 'contracts.vehicle_id')
+                                  ->whereIn('m.origin', Maintenance::WORKSHOP_LOG_ORIGINS)
+                                  ->whereNull('m.workflow_status')
+                                  ->whereNotNull('m.out_date')
+                                  ->whereRaw('m.out_date >= DATE_SUB(contracts.out_date, INTERVAL ' . (int) MaintenanceAnalyticsService::LINK_BUFFER_DAYS . ' DAY)')
+                                  ->whereColumn('m.out_date', '<=', 'contracts.in_date')
+                                  ->where(fn ($e) => $e->where('m.garage', 'like', "%{$q}%")
+                                      ->orWhere('m.service_main', 'like', "%{$q}%")
+                                      ->orWhere('m.service_sup', 'like', "%{$q}%")));
+                        });
+                    })
+                    ->orderByDesc('in_date')
+                    ->orderByDesc('id')
+                    ->limit($limit)
+                    ->get();
+
+                $events = $this->linkedWorkshopEvents($contracts);
+                $rows   = $rows->concat($contracts->map(
+                    fn (Contract $c) => $this->contractRepairRow($c, $events[$c->id] ?? collect())
+                ));
+            }
+
+            // One ledger, newest-completed first, then capped — so "the newest N repairs" means the same
+            // thing whichever origins are in play.
+            $merged = $rows
+                ->sortByDesc(fn (array $r) => $r['completed_at'] ?? '')
+                ->take($limit)
+                ->values();
 
             return ResponseHelper::SuccessResponse(
                 [
-                    'tickets' => MaintenanceWorkflowResource::collection($tickets),
-                    'total'   => $tickets->count(),
+                    'tickets' => $merged,
+                    'total'   => $merged->count(),
+                    'counts'  => [
+                        'system' => $merged->where('source', 'system')->count(),
+                        'sheet'  => $merged->where('source', 'sheet')->count(),
+                    ],
                 ],
                 'Completed repairs retrieved successfully',
                 200
@@ -260,6 +365,141 @@ class MaintenanceWorkflowController extends Controller
         } catch (\Throwable $e) {
             return ResponseHelper::fromException($e);
         }
+    }
+
+    /**
+     * The workshop-log events belonging to each closed maintenance contract, by the SAME strict rule
+     * MaintenanceAnalyticsService::linkedSheetEvents() uses — vehicle match, event out_date within
+     * [contract out_date − LINK_BUFFER_DAYS, contract in_date] — so this ledger can never disagree
+     * with the maintenance board about which visit a sheet row belongs to.
+     *
+     * Done as one bounded id-join (then a single hydrate of exactly the matched events) rather than by
+     * calling the service directly, which loads EVERY event for every vehicle involved — fine for one
+     * board, far too heavy for a 500-contract ledger page.
+     *
+     * @param  \Illuminate\Support\Collection<int,Contract>  $contracts
+     * @return array<int,\Illuminate\Support\Collection<int,Maintenance>>  keyed by contract id, chronological
+     */
+    private function linkedWorkshopEvents($contracts): array
+    {
+        $contracts = collect($contracts);
+        if ($contracts->isEmpty()) {
+            return [];
+        }
+
+        $pairs = DB::table('contracts as c')
+            ->join('maintenances as m', function ($j) {
+                $j->on('m.vehicle_id', '=', 'c.vehicle_id')
+                  ->whereIn('m.origin', Maintenance::WORKSHOP_LOG_ORIGINS)
+                  ->whereNull('m.workflow_status')      // an app ticket is never sheet history
+                  ->whereNotNull('m.out_date')
+                  ->whereRaw('m.out_date >= DATE_SUB(c.out_date, INTERVAL ? DAY)', [MaintenanceAnalyticsService::LINK_BUFFER_DAYS])
+                  ->whereColumn('m.out_date', '<=', 'c.in_date');   // Hard Cutoff: the contract's close
+            })
+            ->whereIn('c.id', $contracts->pluck('id'))
+            ->orderBy('m.out_date')->orderBy('m.id')
+            ->get(['c.id as contract_id', 'm.id as event_id']);
+
+        if ($pairs->isEmpty()) {
+            return [];
+        }
+
+        $byId = Maintenance::with('vendor:id,name')
+            ->whereIn('id', $pairs->pluck('event_id')->unique())
+            ->get()
+            ->keyBy('id');
+
+        $out = [];
+        foreach ($pairs as $p) {
+            if ($e = $byId->get($p->event_id)) {
+                $out[$p->contract_id][] = $e;
+            }
+        }
+
+        return array_map(fn (array $seq) => collect($seq), $out);
+    }
+
+    /**
+     * One CLOSED maintenance contract as a completed-repair row: the contract owns the timeline (out →
+     * in, and therefore the completion date + the downtime), while its matched workshop-log events
+     * supply what was actually done — garage, services, spare part, invoice, cost.
+     *
+     * Only what the data really holds is filled. There is no people chain, no odometer chain and no
+     * per-fault breakdown in the sheet, and inventing them would be a lie; a contract with no matching
+     * event is still returned (the visit demonstrably happened and closed) but flagged `has_sheet_log
+     * = false` so the UI can say so instead of implying a silent gap.
+     *
+     * @param  \Illuminate\Support\Collection<int,Maintenance>  $events
+     */
+    private function contractRepairRow(Contract $c, $events): array
+    {
+        $events = collect($events);
+        $last   = $events->last();                       // the closing event = the latest in the window
+
+        $out = $c->out_date;
+        $in  = $c->in_date;                              // ← THE completion date: the contract's close
+
+        // What was done: every service line across the visit's events, de-duplicated, in order.
+        $services = $events
+            ->flatMap(fn (Maintenance $e) => preg_split('/\s*,\s*/', trim(($e->service_main ?? '') . ',' . ($e->service_sup ?? '')), -1, PREG_SPLIT_NO_EMPTY))
+            ->map(fn ($s) => trim($s))
+            ->filter()
+            ->unique()
+            ->values();
+
+        $garages = $events
+            ->map(fn (Maintenance $e) => $e->vendor?->name ?: $e->garage)
+            ->filter()->unique()->values();
+
+        $costs = $events->pluck('cost')->filter(fn ($v) => $v !== null);
+
+        return [
+            // Namespaced id — a contract row and a ticket row can share a numeric id, and the merged
+            // ledger is keyed by this in the UI.
+            'id'          => 'c' . $c->id,
+            'contract_id' => $c->id,
+            'contract_no' => $c->contract_no,
+            'source'      => 'sheet',
+            'vehicle_id'  => $c->vehicle_id,
+            'plate'       => $c->vehicle?->plate_no,
+            'car'         => trim(($c->vehicle?->make ?? '') . ' ' . ($c->vehicle?->model ?? '')) ?: null,
+            'garage'      => $garages->join(' → ') ?: null,
+            'cost'        => $costs->isNotEmpty() ? (float) $costs->sum() : null,
+
+            // The sheet records the SERVICE performed, which is the closest thing it has to a complaint.
+            'customer_complaint'     => $services->first(),
+            'maintenance_type'       => $last?->maintenance_type,
+            'maintenance_type_label' => $last?->maintenance_type ? (Maintenance::MAINTENANCE_TYPES[$last->maintenance_type] ?? $last->maintenance_type) : null,
+            'findings'               => $services->map(fn ($s) => ['symptom' => $s, 'source' => 'sheet'])->all(),
+            'tasks'                  => [],
+            'severity'               => $last?->severity,
+            'maintenance_notes'      => $last?->maintenance_notes,
+            'invoice_no'             => $last?->invoice_no,
+            'spare_part'             => $last?->spare_part,
+            'driver'                 => $last?->driver,
+            'event_status'           => $last?->event_status,
+            'requested_by_name'      => null,
+
+            // Traceability: how much of this row is backed by a workshop log, and how many garage trips
+            // the visit took (an OUT → IN → OUT ping-pong is a real, visible fact).
+            'has_sheet_log' => $events->isNotEmpty(),
+            'event_count'   => $events->count(),
+            'trips'         => $events->where('event_status', 'IN')->count(),
+
+            'out_date'       => optional($out)->toDateString(),
+            'actual_in_date' => optional($last?->actual_in_date)->toDateString(),
+            'contract_in'    => optional($in)->toDateString(),
+            'completed_at'   => optional($in)->toIso8601String(),
+            // The only "handoff" that exists here is the close — and the contract names no actor.
+            'handoffs'       => ['closed' => ['user_id' => null, 'name' => null, 'at' => optional($in)->toIso8601String()]],
+            // Downtime from the CONTRACT window — the same out→in span Fleet Utilization counts, so the
+            // ledger and the utilization report can never quote different numbers for the same visit.
+            'stage_timing'   => ['durations' => [
+                'total_downtime' => ($out && $in) ? max(0, $in->getTimestamp() - $out->getTimestamp()) : null,
+            ]],
+            'created_at'     => optional($out)->toIso8601String(),
+            'updated_at'     => optional($c->updated_at)->toIso8601String(),
+        ];
     }
 
     /** The live pipeline: open tickets bucketed into the four dashboard columns, with counts. */
@@ -271,10 +511,6 @@ class MaintenanceWorkflowController extends Controller
             // repair pipeline — so they're excluded here.
             $open = Maintenance::openWorkflow()
                 ->where('workflow_status', '!=', Maintenance::WF_AWAITING_INVOICE)
-                // Recommendation-queue tickets are pre-maintenance (not active jobs) — they live on the
-                // Maintenance Recommendations page, not the active repair pipeline. Exclude them here so the
-                // board and its open_total stay focused on cars actually being worked on.
-                ->whereNotIn('workflow_status', Maintenance::WF_RECOMMENDATION_STATES)
                 ->whereHas('vehicle', fn ($q) => $q->whereIn('status', Vehicle::ACTIVE_STATUSES))
                 ->with(self::BOARD_EAGER)->withCount('media')->orderBy('id')->get();
 
@@ -1341,23 +1577,43 @@ class MaintenanceWorkflowController extends Controller
                 // End-of-test-drive odometer PHOTO (optional) — same best-effort, saved-after-commit
                 // pattern as dispatch/receive; a storage hiccup can never block the report from filing.
                 'odometer_photo'       => ['nullable', 'image', 'max:8192'], // ≤ 8 MB
+                // REQUIRED PARTS — the inspector's technical answer to "what will this repair need?".
+                // Recorded with the report but deliberately inert: no part request, no approval, no money.
+                // Procurement starts only when the coordinator converts these, after the garage is chosen
+                // (POST /{ticket}/required-parts/request). See MaintenanceRequiredPartService.
+                'required_parts'             => ['nullable', 'array'],
+                'required_parts.*.part_name' => ['required_with:required_parts', 'string', 'max:255'],
+                'required_parts.*.quantity'  => ['nullable', 'numeric', 'min:0.01', 'max:9999'],
+                'required_parts.*.priority'  => ['nullable', Rule::in(\App\Models\MaintenanceRequiredPart::PRIORITIES)],
+                'required_parts.*.notes'     => ['nullable', 'string', 'max:1000'],
+                // Which finding (symptom text) the part serves — the key that binds it to the fault once
+                // findings are promoted to first-class tasks.
+                'required_parts.*.finding'   => ['nullable', 'string', 'max:500'],
             ]);
 
             $requires = $request->boolean('requires_maintenance');
             $ticket = $this->workflow->submitReport($ticket, $data, $requires, $request->user());
 
+            // Record the technical requirements BEFORE findings are promoted below, so each line binds to
+            // its fault automatically (MaintenanceTaskService::bindRequiredParts). A cleared diagnostic
+            // needs no parts — the car required no work — so they are only kept when a ticket is opened.
+            if ($requires && ! empty($data['required_parts'])) {
+                $this->requiredParts->record($ticket, $data['required_parts'], $request->user());
+            }
+
             // Promote the inspector's findings into first-class routable tasks (one per fault), so the
-            // ticket can be split across garages from the moment it opens. A RECOMMENDATION is not yet an
-            // active job — its faults still live on the `findings` JSON for the queue card, and tasks are
-            // created only when a Supervisor approves it (approveRecommendation). Deferring keeps a dismissed
-            // recommendation from leaving orphaned open tasks behind. Breakdowns / on-site jobs open a real
-            // ticket now, so they still promote here.
-            if ($requires && $ticket->workflow_status !== Maintenance::WF_RECOMMENDATION_PENDING) {
+            // ticket can be split across garages from the moment it opens.
+            if ($requires) {
                 $this->tasks->syncFromFindings($ticket, $request->user());
                 $ticket->load(self::EAGER);
             }
 
-            $isRecommendation = $ticket->workflow_status === Maintenance::WF_RECOMMENDATION_PENDING;
+            // Hand the required parts to PROCUREMENT — now, not after a maintenance approval. Runs after
+            // findings promotion so every request already carries its originating fault. Best-effort
+            // internally: a procurement hiccup never fails the inspection the technician just filed.
+            $partRequests = ($requires && ! empty($data['required_parts']))
+                ? $this->requiredParts->raiseRequests($ticket, $request->user())
+                : [];
 
             $photoSaved = false;
             if ($request->hasFile('odometer_photo')) {
@@ -1368,135 +1624,24 @@ class MaintenanceWorkflowController extends Controller
                 }
             }
 
-            return ResponseHelper::SuccessResponse(
-                ['ticket' => MaintenanceWorkflowResource::make($ticket), 'odometer_photo_saved' => $photoSaved],
-                $isRecommendation
-                    ? 'Recommendation filed — awaiting the supervisor’s approval'
-                    : ($requires ? 'Requires maintenance — ticket opened, logistics notified' : 'No maintenance needed — diagnostic closed'),
-                200
-            );
-        });
-    }
-
-    // ── PRE-MAINTENANCE RECOMMENDATION QUEUE ────────────────────────────────────
-
-    /**
-     * The Maintenance Recommendations page data — inspection recommendations awaiting the Supervisor's
-     * triage (recommendation_pending + waiting-for-parts), newest first. These are FENCED pre-tickets: the
-     * cars are NOT active maintenance jobs, so they live here, off the active repair board.
-     */
-    public function recommendations(Request $request)
-    {
-        return $this->run(function () {
-            $tickets = Maintenance::recommendationQueue()
-                ->whereHas('vehicle', fn ($q) => $q->whereIn('status', Vehicle::ACTIVE_STATUSES))
-                ->with(self::EAGER)->withCount('media')
-                ->orderByDesc('id')
-                ->get();
-
-            // Triage Routing Approvals — Abu Maroof's routing recommendations awaiting a Supervisor's
-            // sign-off. Same approval hub, a distinct source (a complaint he wants sent in).
-            $triageApprovals = Maintenance::triageApprovalQueue()
-                ->whereHas('vehicle', fn ($q) => $q->whereIn('status', Vehicle::ACTIVE_STATUSES))
-                ->with(self::EAGER)->withCount('media')
-                ->orderByDesc('id')
-                ->get();
-
-            $counts = [
-                'pending'          => $tickets->where('workflow_status', Maintenance::WF_RECOMMENDATION_PENDING)->count(),
-                'awaiting_parts'   => $tickets->where('workflow_status', Maintenance::WF_AWAITING_PARTS)->count(),
-                'triage_approvals' => $triageApprovals->count(),
-                'total'            => $tickets->count() + $triageApprovals->count(),
-            ];
+            $partsRaised = count($partRequests);
 
             return ResponseHelper::SuccessResponse(
                 [
-                    'recommendations'  => MaintenanceWorkflowResource::collection($tickets),
-                    'triage_approvals' => MaintenanceWorkflowResource::collection($triageApprovals),
-                    'counts'           => $counts,
+                    'ticket'                => MaintenanceWorkflowResource::make($ticket),
+                    'odometer_photo_saved'  => $photoSaved,
+                    // So the UI can confirm procurement was actually reached, not just promised.
+                    'part_requests_created' => $partsRaised,
                 ],
-                'Maintenance recommendations retrieved',
+                $requires
+                    ? 'Requires maintenance — ticket opened, logistics notified'
+                        . ($partsRaised > 0 ? " · {$partsRaised} part request(s) sent to procurement" : '')
+                    : 'No maintenance needed — diagnostic closed',
                 200
             );
         });
     }
 
-    /**
-     * "Start Maintenance" — the Supervisor approves a recommendation, promoting it into the existing
-     * dispatch pipeline (inspection_pending). From here the workflow is completely unchanged.
-     */
-    public function approveRecommendation(Request $request, Maintenance $ticket)
-    {
-        return $this->run(function () use ($request, $ticket) {
-            $ticket = $this->workflow->approveRecommendation($ticket, $request->user());
-
-            // NOW the recommendation is a real ticket — promote the inspector's findings into first-class
-            // routable tasks (deferred from report time), so it can be split across garages at dispatch.
-            $this->tasks->syncFromFindings($ticket, $request->user());
-            $ticket->load(self::EAGER);
-
-            return ResponseHelper::SuccessResponse(
-                MaintenanceWorkflowResource::make($ticket),
-                'Maintenance approved — ticket opened, supervisors notified to pick a garage',
-                200
-            );
-        });
-    }
-
-    /** Reject a recommendation or mark it not required — terminal, no maintenance happens. */
-    public function dismissRecommendation(Request $request, Maintenance $ticket)
-    {
-        return $this->run(function () use ($request, $ticket) {
-            $data = $request->validate([
-                'disposition' => ['required', Rule::in(Maintenance::RECO_DISPOSITIONS)],
-                'reason'      => ['nullable', 'string', 'max:2000'],
-            ]);
-
-            $ticket = $this->workflow->dismissRecommendation($ticket, $data['disposition'], $data['reason'] ?? null, $request->user());
-            $label  = $data['disposition'] === Maintenance::RECO_NOT_REQUIRED ? 'marked not required' : 'rejected';
-
-            return ResponseHelper::SuccessResponse(MaintenanceWorkflowResource::make($ticket), 'Recommendation ' . $label, 200);
-        });
-    }
-
-    /** Schedule a recommendation for a later date — it stays in the queue with a date badge. */
-    public function scheduleRecommendation(Request $request, Maintenance $ticket)
-    {
-        return $this->run(function () use ($request, $ticket) {
-            $data = $request->validate([
-                'scheduled_for' => ['required', 'date', 'after_or_equal:today'],
-                'note'          => ['nullable', 'string', 'max:2000'],
-            ]);
-
-            $ticket = $this->workflow->scheduleRecommendation($ticket, $data['scheduled_for'], $data['note'] ?? null, $request->user());
-
-            return ResponseHelper::SuccessResponse(MaintenanceWorkflowResource::make($ticket), 'Recommendation scheduled', 200);
-        });
-    }
-
-    /** "Order Parts First" — move the recommendation to Waiting for Parts (stays in the queue). */
-    public function orderRecommendationParts(Request $request, Maintenance $ticket)
-    {
-        return $this->run(function () use ($request, $ticket) {
-            $data = $request->validate([
-                'note' => ['nullable', 'string', 'max:2000'], // what's on order
-            ]);
-
-            $ticket = $this->workflow->orderParts($ticket, $data['note'] ?? null, $request->user());
-
-            return ResponseHelper::SuccessResponse(MaintenanceWorkflowResource::make($ticket), 'Waiting for parts — recommendation held in the queue', 200);
-        });
-    }
-
-    /** "Parts Ready" — the spare arrived; return the recommendation to pending so it can be started. */
-    public function recommendationPartsReady(Request $request, Maintenance $ticket)
-    {
-        return $this->run(function () use ($request, $ticket) {
-            $ticket = $this->workflow->partsReady($ticket, $request->user());
-
-            return ResponseHelper::SuccessResponse(MaintenanceWorkflowResource::make($ticket), 'Parts ready — recommendation can now be started', 200);
-        });
-    }
 
     /**
      * Phase 2 — the Supervisor (dispatcher) reviews the open ticket, picks the ONE primary garage and

@@ -6,6 +6,7 @@ import Pagination from '../components/ui/Pagination';
 import { Card, PageHeader, SearchInput, TableSkeleton, EmptyState } from '../components/ui/Misc';
 import { Select } from '../components/ui/Field';
 import { usePageStat } from '../components/PageStat';
+import RegistrationsAnalytics from '../components/analytics/RegistrationsAnalytics';
 import { fmtDate, dayBadge, num } from '../lib/format';
 
 const PAGE_SIZE = 15;
@@ -168,6 +169,9 @@ export default function Registrations() {
         {error && (
           <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error}</div>
         )}
+
+        {/* Analytics — the filtered set, matching the table below. */}
+        {!loading && filtered.length > 0 && <RegistrationsAnalytics rows={filtered} />}
 
         <Card>
           <div className="overflow-x-auto">

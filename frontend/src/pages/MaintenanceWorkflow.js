@@ -21,38 +21,57 @@ import {
   resolveAction, allows, ctaLabel, TASK_STATUS, stageAge,
   isAtGarage, custodyBlocked, custodyHolderName,
 } from '../components/workflow/meta';
-import { SHOW_VIDEO_REVIEW } from '../config/features';
+import { PRIMARY_LANES, EXCEPTION_LANES, PIPELINE_KEYS } from '../config/maintenanceLanes';
 import {
-  CommandPanel,
+  CommandPanel, OpsClock,
 } from '../components/ops';
 import '../components/ops/ops.css';
 import './maintenance-workflow.css';
 
-// The Cockpit board lanes. Titles here are the operator-facing names used in the redesigned
-// control surface; each maps to the API board.columns key(s) it draws from. The first eight are
-// the canonical pipeline (always shown, left→right = the ticket journey); the rest are EXCEPTION
-// lanes appended only when they actually hold tickets, so no live ticket is ever hidden.
-const PRIMARY_LANES = [
-  { key: 'requested',        name: 'Needs Test Drive',   tone: '#d946ef', hint: 'Vehicles need a test drive to confirm the issue' },
-  { key: 'diagnostic',       name: 'Being Inspected',    tone: '#8b5cf6', hint: 'Currently under inspection or diagnostic' },
-  { key: 'pending',          name: 'Needs Dispatch',     tone: '#a855f7', hint: 'Ready to be dispatched to a garage' },
-  { key: 'awaiting_pickup',  name: 'Awaiting Pickup',    tone: '#f59e0b', hint: 'Garage + driver assigned — awaiting pickup' },
-  { key: 'in_transit',       name: 'En Route to Garage', tone: '#f59e0b', hint: 'On the way to the garage' },
-  { key: 'under_repair',     name: 'In Workshop',        tone: '#f97316', hint: 'Being worked on at the garage' },
-  { key: 'ready_for_pickup', name: 'Ready for Pickup',   tone: '#10b981', hint: 'Work complete — awaiting collection' },
-  { key: 'qa_reinspection',  name: 'Final QA',           tone: '#9333ea', hint: 'Back at our park, awaiting re-inspection sign-off' },
-];
-const EXCEPTION_LANES = [
-  ...(SHOW_VIDEO_REVIEW ? [{ key: 'repair_review', name: 'Video Review', tone: '#7c3aed', hint: 'Awaiting supervisor video sign-off' }] : []),
-  { key: 'reinspection_failed',     name: 'Sent Back — QA Failed', tone: '#dc2626', hint: 'Came back still broken — supervisor re-dispatches' },
-  { key: 'paused',                  name: 'Paused',                tone: '#64748b', hint: 'Repair on hold — car released to service' },
-  { key: 'returned_waiting_resume', name: 'Returned — Resume Due', tone: '#f97316', hint: 'Physically back — return handover pending' },
-  { key: 'on_site',                 name: 'On-Site Service',       tone: '#0d9488', hint: 'Minor job done where the car is parked' },
-];
+// The Cockpit board lanes (PRIMARY_LANES / EXCEPTION_LANES) and the canonical PIPELINE_KEYS now live
+// in ../config/maintenanceLanes so the Dashboard analytics panel draws the exact same stages.
 
 // Cards shown per lane before the "+N more" toggle. Keeps every collapsed column short and roughly
 // even (no scroll); expanding a lane reveals all its cards on demand.
 const LANE_PAGE_SIZE = 3;
+
+// The pipeline "journey" spine — a segmented bar showing how far a ticket has moved through the 8
+// canonical stages. Filled segments glow in the stage tone; the current one pulses. Off-pipeline
+// (exception) lanes have no linear position, so they render a single tone strip instead of segments.
+function PipelineBar({ laneKey, laneName, tone }) {
+  const idx = PIPELINE_KEYS.indexOf(laneKey);
+  const total = PIPELINE_KEYS.length;
+  if (idx < 0) {
+    return (
+      <div className="mwf-stage">
+        <div className="mwf-stage-hd">
+          <span className="mwf-stage-nm">{laneName}</span>
+          <span className="mwf-stage-step exc" style={{ color: tone }}>OFF-PIPELINE</span>
+        </div>
+        <div className="mwf-pipe">
+          <span className="mwf-pipe-seg exc" style={{ background: tone, boxShadow: `0 0 10px ${tone}` }} />
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="mwf-stage">
+      <div className="mwf-stage-hd">
+        <span className="mwf-stage-nm">{laneName}</span>
+        <span className="mwf-stage-step">Step {idx + 1}/{total}</span>
+      </div>
+      <div className="mwf-pipe" role="progressbar" aria-valuenow={idx + 1} aria-valuemin={1} aria-valuemax={total} aria-label={`${laneName} — step ${idx + 1} of ${total}`}>
+        {PIPELINE_KEYS.map((k, i) => (
+          <span
+            key={k}
+            className={`mwf-pipe-seg ${i === idx ? 'now' : ''} ${i <= idx ? 'on' : ''}`}
+            style={i <= idx ? { background: tone, ...(i === idx ? { boxShadow: `0 0 9px ${tone}` } : null) } : undefined}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
 
 // Expected-return date (captured at dispatch / garage check-in) → a short "DD Mon" label + an overdue
 // flag when the promised day has already passed. Returns null for a missing/unparseable date.
@@ -84,7 +103,7 @@ const SEV_FILTERS = [
 // One dark board card — the Cockpit restyle of the classic ticket card. It keeps EVERY operator
 // affordance (severity, complaint/breakdown flags, live position, single-garage fault routing,
 // custody gate, delegation, the one primary stage action) — only the skin changed to the .opx tokens.
-function TicketCard({ tk, tone, can, userId, active, onSelect, onAct }) {
+function TicketCard({ tk, tone, laneKey, laneName, can, userId, active, onSelect, onAct }) {
   const { t } = useI18n();
   const cardRef = useRef(null);
   useEffect(() => {
@@ -103,6 +122,7 @@ function TicketCard({ tk, tone, can, userId, active, onSelect, onAct }) {
     : `Only ${custodyHolder || 'the driver who picked up the car'} can check it in`;
   const tasks = tk.tasks || [];
   const canRoute = can('maintenance.delegate');
+  const showRoute = tasks.length > 0 && canRoute && isAtGarage(tk) && tk.workflow_status !== 'ready_for_pickup';
   const canFollowUp = can('maintenance.delegate') && tk.workflow_status === 'under_repair';
   const driverName = tk.dispatched_by_name || tk.assigned_driver_name;
   const delegated = tk.delegation?.status === 'driver_assigned' && tk.delegation.driver_name;
@@ -123,6 +143,7 @@ function TicketCard({ tk, tone, can, userId, active, onSelect, onAct }) {
       tabIndex={0}
       onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onSelect(tk))}
       className={`mwf-card ${railCls}`}
+      style={{ '--tone': tone }}
     >
       <span className="mwf-rail" style={{ background: tone }} />
       <div className="mwf-card-bd">
@@ -149,6 +170,9 @@ function TicketCard({ tk, tone, can, userId, active, onSelect, onAct }) {
             </Link>
           </div>
         </div>
+
+        {/* Journey spine — how far this vehicle has moved through the pipeline */}
+        <PipelineBar laneKey={laneKey} laneName={laneName} tone={tone} />
 
         {/* Flags */}
         <div className="mwf-flags">
@@ -211,11 +235,6 @@ function TicketCard({ tk, tone, can, userId, active, onSelect, onAct }) {
                 </div>
               );
             })}
-            {canRoute && isAtGarage(tk) && tk.workflow_status !== 'ready_for_pickup' && (
-              <button type="button" className="mwf-ghost" onClick={(e) => { e.stopPropagation(); onAct('route', tk); }}>
-                <Icon.Wrench className="h-3 w-3" /> {t('workflow.task.route')}
-              </button>
-            )}
           </div>
         )}
 
@@ -230,28 +249,39 @@ function TicketCard({ tk, tone, can, userId, active, onSelect, onAct }) {
           </div>
         )}
 
-        {canFollowUp && (
-          <button type="button" className="mwf-ghost" onClick={(e) => { e.stopPropagation(); onAct('followup', tk); }}>
-            <Icon.Plus className="h-3 w-3" /> {t('workflow.cardAction.followup')}
-          </button>
-        )}
-
-        {/* Primary stage action */}
-        {allowed && custodyLocked && <p className="mwf-warn">{custodyHint}</p>}
-        {allowed && !custodyLocked && (
-          <div onClick={(e) => e.stopPropagation()}>
-            <button
-              type="button"
-              className={`opx-btn ${act.variant === 'danger' ? 'danger' : 'primary'} mwf-cta`}
-              disabled={readyBlocked}
-              title={readyBlocked ? readyHint : undefined}
-              onClick={() => onAct(act.action, tk)}
-            >
-              {ctaLabel(t, tk)}
-            </button>
-            {readyBlocked && <p className="mwf-warn">{readyHint}</p>}
+        {/* Action footer — secondary icon-tools on the left, the primary stage CTA on the right */}
+        {(showRoute || canFollowUp || (allowed && !custodyLocked)) && (
+          <div className="mwf-foot" onClick={(e) => e.stopPropagation()}>
+            <div className="mwf-foot-tools">
+              {showRoute && (
+                <button type="button" className="mwf-tool" title={t('workflow.task.route')}
+                  onClick={() => onAct('route', tk)}>
+                  <Icon.Wrench className="h-3.5 w-3.5" /><span>{t('workflow.task.route')}</span>
+                </button>
+              )}
+              {canFollowUp && (
+                <button type="button" className="mwf-tool" title={t('workflow.cardAction.followup')}
+                  onClick={() => onAct('followup', tk)}>
+                  <Icon.Plus className="h-3.5 w-3.5" /><span>{t('workflow.cardAction.followup')}</span>
+                </button>
+              )}
+            </div>
+            {allowed && !custodyLocked && (
+              <button
+                type="button"
+                className={`opx-btn ${act.variant === 'danger' ? 'danger' : 'primary'} mwf-cta`}
+                disabled={readyBlocked}
+                title={readyBlocked ? readyHint : undefined}
+                onClick={() => onAct(act.action, tk)}
+              >
+                {ctaLabel(t, tk)}
+              </button>
+            )}
           </div>
         )}
+        {/* Blocking reasons — sit under the footer so the CTA stays visually primary */}
+        {allowed && custodyLocked && <p className="mwf-warn">{custodyHint}</p>}
+        {allowed && !custodyLocked && readyBlocked && <p className="mwf-warn">{readyHint}</p>}
       </div>
     </div>
   );
@@ -281,7 +311,7 @@ function Lane({ lane, loading, expanded, onToggle, cardProps }) {
           </div>
         ) : (
           <>
-            {shown.map((tk) => <TicketCard key={tk.id} tk={tk} tone={lane.tone} active={tk.id === cardProps.selectedId} {...cardProps} />)}
+            {shown.map((tk) => <TicketCard key={tk.id} tk={tk} tone={lane.tone} laneKey={lane.key} laneName={lane.name} active={tk.id === cardProps.selectedId} {...cardProps} />)}
             {hidden > 0 && <button type="button" className="opx-lane-more" onClick={onToggle}>+{hidden} more</button>}
             {expanded && tickets.length > LANE_PAGE_SIZE && <button type="button" className="opx-lane-more" onClick={onToggle}>Show less</button>}
           </>
@@ -359,7 +389,7 @@ export default function MaintenanceWorkflow() {
   }, [canDelegate]);
 
   const columns = useMemo(() => data?.columns || {}, [data]);
-  const counts = data?.counts || {};
+  const counts = useMemo(() => data?.counts || {}, [data]);
 
   const onDone = (message) => {
     setModal(null);
@@ -460,6 +490,21 @@ export default function MaintenanceWorkflow() {
   return (
     <div className="opx mwf">
       <div className="opx-body">
+        {/* ---- Command header — live pipeline title + running clock ---- */}
+        <header className="mwf-hero">
+          <div className="mwf-hero-id">
+            <span className="mwf-hero-ic"><Icon.Wrench className="h-6 w-6" strokeWidth={2} /></span>
+            <div className="mwf-hero-copy">
+              <h1>
+                Maintenance Command
+                <span className="mwf-live"><span className="d" />LIVE</span>
+              </h1>
+              <p>{openTotal} {openTotal === 1 ? 'ticket' : 'tickets'} in the pipeline · auto-refreshing every 6s</p>
+            </div>
+          </div>
+          <div className="mwf-hero-clock"><OpsClock /></div>
+        </header>
+
         {error && <div className="mwf-error">{error}</div>}
 
         {/* One control strip — search + filters on the left, view toggle + primary actions on the right. */}

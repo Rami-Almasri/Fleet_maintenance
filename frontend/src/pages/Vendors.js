@@ -10,6 +10,7 @@ import ConfirmDialog from '../components/ui/ConfirmDialog';
 import Pagination from '../components/ui/Pagination';
 import { Card, PageHeader, SearchInput, TableSkeleton, EmptyState } from '../components/ui/Misc';
 import { Select } from '../components/ui/Field';
+import VendorsAnalytics from '../components/analytics/VendorsAnalytics';
 import { num } from '../lib/format';
 import VendorForm, { vendorToForm, cleanPayload } from './vendors/VendorForm';
 
@@ -193,6 +194,9 @@ export default function Vendors() {
         {error && (
           <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error}</div>
         )}
+
+        {/* Analytics — the filtered set, matching the table below. */}
+        {!loading && filtered.length > 0 && <VendorsAnalytics vendors={filtered} />}
 
         <Card>
           <div className="overflow-x-auto">

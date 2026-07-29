@@ -14,7 +14,7 @@ import Registrations from '../Registrations';
  * surfaces into one tabbed page:
  *
  *   • Vehicle Readiness       → /readiness      (fleet status, handover queues, cars in maintenance)
- *   • Service Due             → /reminders/service (odometer-based service reminders)
+ *   • Service Reminders       → /service-reminders (odometer/date-based service due points)
  *   • Booked in Shop          → /maintenance-bookings (cars in the workshop with an upcoming booking)
  *   • Registration & Insurance→ /registrations  (official-document expiry)
  *
@@ -32,7 +32,7 @@ export default function FleetHealth() {
         // Vehicle Readiness — the same permission set the /readiness endpoint accepts, so the tab only
         // shows for a user who can actually load it (and ?tab=readiness deep-links straight here).
         { key: 'readiness', label: 'Vehicle Readiness', icon: <Icon.Shield className="h-4 w-4" />, show: canAny(['insights.view', 'logistics.view', 'maintenance.view', 'maintenance.initiate', 'maintenance.delegate', 'inspections.view']), Component: ReadinessDashboard },
-        { key: 'service', label: 'Service Due', icon: <Icon.Wrench className="h-4 w-4" />, show: can('reminders.view'), Component: ServiceReminders },
+        { key: 'service', label: 'Service Reminders', icon: <Icon.Wrench className="h-4 w-4" />, show: can('reminders.view'), Component: ServiceReminders },
         { key: 'bookings', label: 'Booked in Shop', icon: <Icon.Calendar className="h-4 w-4" />, show: can('maintenance.view'), Component: MaintenanceBookings },
         { key: 'registrations', label: 'Registration & Insurance', icon: <Icon.Invoice className="h-4 w-4" />, show: can('registration.view'), Component: Registrations },
       ].filter((t) => t.show),

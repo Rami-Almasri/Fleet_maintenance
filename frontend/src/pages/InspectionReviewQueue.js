@@ -3,6 +3,7 @@
 // Approve sends the request on exactly as before; reject terminates it (requires a reason).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import InspectionReviewAnalytics from '../components/analytics/InspectionReviewAnalytics';
 import { Link, useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 import useFetch from '../hooks/useFetch';
@@ -20,8 +21,38 @@ import ComplaintIntakeModal from '../components/workflow/ComplaintIntakeModal';
 
 // Note: `customer_reported` here is a LEGACY driver-request reason — real customer complaints are their own
 // entity now (Complaints Center), so it reads "Customer-reported", not "Customer complaint".
-const REASON_LABEL = { test_drive: 'Test drive', customer_reported: 'Customer-reported', periodic: 'Routine (system)' };
-const REASON_TONE = { test_drive: 'violet', customer_reported: 'amber', periodic: 'blue' };
+// The reason answers WHY the car needs attention. It used to double as the source ("Routine (system)"
+// fused both), which is why an escalated Driver Observation read as scheduled service. WHERE the request
+// came from is now its own field — request_origin — rendered separately as the Source line below.
+const REASON_LABEL = {
+  test_drive: 'Test drive',
+  customer_reported: 'Customer-reported',
+  periodic: 'Routine',
+  driver_reported: 'Driver reported issue',
+};
+const REASON_TONE = { test_drive: 'violet', customer_reported: 'amber', periodic: 'blue', driver_reported: 'emerald' };
+
+// request_origin → the human "Source:" label. Mirrors Maintenance::REQUEST_ORIGIN_LABELS (backend
+// CONTRACT); an unknown value falls back to the raw key rather than being hidden.
+const ORIGIN_LABEL = {
+  driver_observation: 'Driver Observation',
+  driver_request: 'Driver Request',
+  controller: 'Controller',
+  inspector: 'Inspector',
+  system_schedule: 'System Schedule',
+  workshop: 'Workshop',
+  customer: 'Customer Report',
+};
+
+const ORIGIN_TONE = {
+  driver_observation: 'emerald',
+  driver_request: 'cyan',
+  controller: 'blue',
+  inspector: 'violet',
+  system_schedule: 'indigo',
+  workshop: 'red',
+  customer: 'amber',
+};
 
 // The car's live operational status → a small context pill on the card, so the reviewer knows at a
 // glance whether the car is free to inspect before deciding.
@@ -181,9 +212,14 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, ackBusy, highligh
   const reasonTone = REASON_TONE[tk.trigger_reason] || 'slate';
   const reasonLabel = REASON_LABEL[tk.trigger_reason] || tk.trigger_reason;
   const requested = tk.handoffs?.requested;
-  // System-generated when there's no human requester on the request handoff (the mileage scanner raises
-  // it with requested_by = null). trigger_detail carries the "why" snapshot for these.
-  const isSystem = !requested?.user_id;
+  // WHERE the request came from. The stored origin is authoritative; the "no human requester" guess is
+  // only the fallback for rows written before the column existed.
+  const origin = tk.request_origin || null;
+  const originLabel = tk.request_origin_label || ORIGIN_LABEL[origin] || origin;
+  // System-generated = raised by the scheduler, not merely missing a requester (an escalated Driver
+  // Observation has no requester either, and is emphatically NOT a system request).
+  const isSystem = origin ? origin === 'system_schedule' : !requested?.user_id;
+  const fromObservation = origin === 'driver_observation';
   const isLegacy = !!tk.is_legacy_unreviewed;
   // The car is out on hire — it can't be sent for inspection until it's physically back, so approval is
   // held (the downtime clock still counts against it; see the 15-day test-based rule).
@@ -221,9 +257,14 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, ackBusy, highligh
               {tk.plate || `#${tk.id}`}
             </Link>
             <div className="flex shrink-0 flex-col items-end gap-1">
-              {isSystem
-                ? <Badge tone="indigo"><span aria-hidden>🤖</span> System</Badge>
-                : <Badge tone={reasonTone}>{reasonLabel}</Badge>}
+              {/* Reason (WHY) and Source (WHERE FROM) are two independent facts — both are shown, and
+                  neither is inferred from the other. */}
+              <Badge tone={reasonTone}>{reasonLabel}</Badge>
+              {originLabel && (
+                <Badge tone={ORIGIN_TONE[origin] || 'slate'}>
+                  {isSystem && <span aria-hidden>🤖</span>} {originLabel}
+                </Badge>
+              )}
               {sev && (
                 <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ring-1 ring-inset ${sev.cls}`}>
                   <span aria-hidden>{sev.emoji}</span> {sev.label}
@@ -251,13 +292,25 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, ackBusy, highligh
         {complaint && (
           <div className="rounded-lg bg-slate-50 px-3 py-2 ring-1 ring-inset ring-slate-100">
             <p className="mb-0.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-              <Icon.Flag className="h-3 w-3" /> {isSystem ? 'Flagged reason' : 'What the driver reported'}
+              <Icon.Flag className="h-3 w-3" />
+              {isSystem ? 'Flagged reason' : fromObservation ? 'What the driver observed' : 'What the driver reported'}
             </p>
             <p className={`text-xs italic text-slate-600 ${isLong && !expanded ? 'line-clamp-2' : ''}`}>“{complaint}”</p>
             {isLong && (
               <button type="button" onClick={() => setExpanded((v) => !v)} className="mt-0.5 text-[11px] font-semibold text-indigo-600 hover:text-indigo-700">
                 {expanded ? 'Show less' : 'Show more'}
               </button>
+            )}
+            {/* Data Origin — this text did not start life as an inspection request; say where it came
+                from and link back to the record that owns it (see [[traceability-visibility-requirement]]). */}
+            {fromObservation && (
+              <p className="mt-1.5 border-t border-slate-200/70 pt-1.5 text-[11px] text-slate-400">
+                Escalated from a{' '}
+                <Link to="/driver-observations" className="font-semibold text-indigo-600 hover:text-indigo-700">
+                  Driver Observation
+                </Link>
+                {tk.driver_observation_id ? ` #${tk.driver_observation_id}` : ''} — logged as a note first, then raised for inspection.
+              </p>
             )}
           </div>
         )}
@@ -371,13 +424,15 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, ackBusy, highligh
 
 function ApproveModal({ ticket, onClose, onDone }) {
   const toast = useToast();
-  const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
 
   const submit = async () => {
     setBusy(true);
     try {
-      await api.post(`/maintenance-tickets/${ticket.id}/review/approve`, { notes: notes || undefined });
+      // No reviewer note is collected: the card already shows what was reported and where it came
+      // from, and that text travels with the ticket to the inspector. A second free-text box here
+      // only invited a restatement of it. (The API still accepts `notes` for legacy/other callers.)
+      await api.post(`/maintenance-tickets/${ticket.id}/review/approve`, {});
       onDone('Approved — sent to Abu Maroof');
     } catch (e) {
       toast.error(e.response?.data?.message || 'Could not approve this request');
@@ -399,13 +454,16 @@ function ApproveModal({ ticket, onClose, onDone }) {
         </>
       )}
     >
-      <Textarea
-        label="Notes (optional)"
-        rows={3}
-        value={notes}
-        onChange={(e) => setNotes(e.target.value)}
-        placeholder="Anything Abu Maroof should know…"
-      />
+      {/* Confirm what actually travels to the inspector, rather than asking for it again. */}
+      <p className="text-sm text-slate-600">
+        Abu Maroof will receive this request with everything already on the card
+        {ticket.customer_complaint ? ' — including the note below.' : '.'}
+      </p>
+      {ticket.customer_complaint && (
+        <p className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-sm italic text-slate-600 ring-1 ring-inset ring-slate-100">
+          “{ticket.customer_complaint}”
+        </p>
+      )}
     </Modal>
   );
 }
@@ -569,6 +627,9 @@ export default function InspectionReviewQueue() {
             message="No inspection requests are waiting for review."
           />
         ) : (
+          <>
+          {/* Analytics — the shape of the queue, before the request cards. */}
+          <InspectionReviewAnalytics tickets={tickets} />
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             {tickets.map((tk) => (
               <RequestCard
@@ -582,6 +643,7 @@ export default function InspectionReviewQueue() {
               />
             ))}
           </div>
+          </>
         )}
       </div>
 

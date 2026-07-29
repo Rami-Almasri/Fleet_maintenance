@@ -10,7 +10,7 @@
 //     format={(n) => n.toLocaleString()}
 //   />
 
-import { palette } from './chartUtils';
+import { palette, LINE } from './chartUtils';
 
 const resolve = (c) => (typeof c === 'string' && c.startsWith('#') ? c : palette(c).from);
 
@@ -97,7 +97,7 @@ export default function LeaderDonut({
     <div className={`w-full ${className}`}>
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ maxHeight: H }}>
         {/* track */}
-        <circle cx={CX} cy={CY} r={R} fill="none" stroke="rgb(var(--line))" strokeWidth={STROKE} />
+        <circle cx={CX} cy={CY} r={R} fill="none" stroke={LINE} strokeWidth={STROKE} />
 
         {/* arcs */}
         {segs.map((s) => (

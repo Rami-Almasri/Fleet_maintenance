@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import PartInvestigationsAnalytics from '../components/analytics/PartInvestigationsAnalytics';
 import api from '../api/client';
 import useFetch from '../hooks/useFetch';
 import { useToast } from '../components/ui/Toast';
@@ -340,6 +341,8 @@ export default function PartInvestigations() {
         {error && (
           <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error}</div>
         )}
+        {/* Analytics — the filtered set, matching the table below. */}
+        {!loading && filtered.length > 0 && <PartInvestigationsAnalytics investigations={filtered} />}
 
         <Card>
           <div className="overflow-x-auto">

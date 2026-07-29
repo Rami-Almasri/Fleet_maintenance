@@ -17,7 +17,7 @@ import './dualstate.css';
 const WF = {
   inspection_pending: ['Inspection', 'inspect'], inspection_requested: ['Inspection', 'inspect'],
   complaint_triage: ['Triage', 'inspect'], inspection_diagnostic: ['Diagnosis', 'inspect'],
-  recommendation_pending: ['Diagnosis', 'inspect'], awaiting_parts: ['Waiting Parts', 'paused'],
+  recommendation_pending: ['Needs Approval', 'inspect'],
   awaiting_dispatch: ['Dispatch', 'inspect'], in_transit: ['In Transit', 'transit'],
   under_repair: ['In Repair', 'repair'], repair_review: ['Review', 'repair'],
   ready_for_pickup: ['Ready', 'avail'], ready_for_reinspection: ['QA', 'inspect'],

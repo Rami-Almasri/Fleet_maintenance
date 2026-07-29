@@ -227,7 +227,7 @@ export function normalizeLegacyTimeline(rows) {
 const STAGE_ORDER = [
   'pending_review', 'complaint_triage', 'inspection_requested', 'inspection_diagnostic',
   'triage_approval_pending', 'recommendation_pending', 'inspection_pending', 'on_site_pending',
-  'awaiting_parts', 'awaiting_dispatch', 'in_transit', 'under_repair', 'repair_review',
+  'awaiting_dispatch', 'in_transit', 'under_repair', 'repair_review',
   'reinspection_failed', 'ready_reinspection', 'ready_for_pickup', 'in_our_park', 'awaiting_invoice',
   'paused_returned_to_service', 'closed',
 ];

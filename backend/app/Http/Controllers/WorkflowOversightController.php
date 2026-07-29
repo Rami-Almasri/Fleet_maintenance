@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Helpers\ResponseHelper;
 use App\Models\FindingKeyword;
 use App\Models\Maintenance;
+use App\Models\PartRequest;
 use App\Models\User;
 use App\Models\Vehicle;
 use App\Models\VehicleLogEvent;
@@ -831,10 +832,13 @@ class WorkflowOversightController extends Controller
             $misdiag  = $this->misdiagnoses($request)->getData(true)['data'] ?? [];
             $resolved = $this->resolvedTransfers($request)->getData(true)['data'] ?? [];
 
-            // Cars approved for maintenance but held in the recommendation queue waiting on a spare
-            // part (same count the /maintenance-recommendations board shows as "waiting for parts").
-            $awaitingParts = Maintenance::recommendationQueue()
-                ->where('workflow_status', Maintenance::WF_AWAITING_PARTS)
+            // Open tickets whose repair is waiting on a part. This used to read the recommendation queue's
+            // own awaiting_parts state; that state is gone, because "are we waiting on a part?" now has
+            // exactly one owner — the ticket's part requests, which actually know what the part is and
+            // where it has got to. See [[inspection-required-parts-split]].
+            $awaitingParts = Maintenance::query()
+                ->whereIn('workflow_status', Maintenance::WF_TICKET_STATES)
+                ->whereHas('partRequests', fn ($q) => $q->whereNotIn('status', PartRequest::TERMINAL))
                 ->whereHas('vehicle', fn ($q) => $q->whereIn('status', Vehicle::ACTIVE_STATUSES))
                 ->count();
 

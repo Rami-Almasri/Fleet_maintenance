@@ -13,10 +13,14 @@ import BarChart from '../components/ui/BarChart';
 import LineChart from '../components/ui/LineChart';
 import CountUp from '../components/ui/CountUp';
 import FleetPulseGrid from '../components/FleetPulseGrid';
+import ServiceDueCard from '../components/ServiceDueCard';
+import RecentlyFixedCard from '../components/RecentlyFixedCard';
+import MaintenanceWorkflowAnalyticsPanel from '../components/analytics/MaintenanceWorkflowAnalyticsPanel';
 import { aed, fmtDate } from '../lib/format';
 import { delayReasonLabel } from '../lib/maintenanceCheckpoints';
 import { SHOW_FINANCIALS } from '../config/features';
 import { useAuth } from '../auth/AuthContext';
+import { usePermissions } from '../hooks/usePermissions';
 
 // Time-of-day greeting for the dashboard header ("Good morning, Rami!").
 function greeting() {
@@ -111,6 +115,40 @@ function KpiCell({ label, value, tone = 'text-slate-800' }) {
 // pluralised "N day(s)".
 const days = (n) => `${n} day${Math.abs(n) === 1 ? '' : 's'}`;
 
+// WHERE we know this car is in the shop from — the standing traceability rule: no card without its
+// data origin. 'contract' = the OM/sheet-synced maintenance contract; 'workshop' = the app's own
+// maintenance-workflow ticket; 'both' = the same visit exists in each (shown once).
+const SOURCE_BADGE = {
+  contract: {
+    label: 'From sheet',
+    cls: 'bg-sky-50 text-sky-700 ring-sky-200',
+    title: 'Source: the open type-U maintenance contract synced from OfficeManager / the N-Maintenance sheet. No app workflow ticket is running for this visit.',
+  },
+  workshop: {
+    label: 'From system',
+    cls: 'bg-violet-50 text-violet-700 ring-violet-200',
+    title: 'Source: a maintenance-workflow ticket created in this app. No open maintenance contract stands behind this visit.',
+  },
+  both: {
+    label: 'Sheet + System',
+    cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
+    title: 'Source: both records agree — an open maintenance contract (sheet/OM) AND a live app workflow ticket for the same visit. Listed once.',
+  },
+};
+
+function SourceBadge({ source }) {
+  const s = SOURCE_BADGE[source];
+  if (!s) return null;
+  return (
+    <span
+      className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ring-1 ${s.cls}`}
+      title={s.title}
+    >
+      {s.label}
+    </span>
+  );
+}
+
 // Repair-Progress KPI card for one car in the workshop. A visual horizontal progress bar (elapsed
 // days-in-shop / planned target days) with threshold colours — green < 75%, orange 75–100%, red once
 // the target is exceeded (bar stays pinned at 100% when overdue) — a status badge ("N days remaining"
@@ -119,9 +157,10 @@ const days = (n) => `${n} day${Math.abs(n) === 1 ? '' : 's'}`;
 // a null target falls back to the default window and the card is flagged "Estimated"). Deep-links to
 // the vehicle. The whole card is the KPI the user asked for — no plain text ETA.
 function RepairProgressCard({ item }) {
-  const { id, plate, car, garage, eta, checkpoint, problem, problem_items, problem_type } = item || {};
+  const { id, plate, car, garage, eta, checkpoint, problem, problem_items, problem_type, source, ticket_id, other_tickets } = item || {};
   const e = eta || {};
-  const to = id ? `/vehicles/${id}` : '/maintenance-workflow';
+  // Deep-link to the car; a ticket-sourced card with no vehicle falls back to its own ticket.
+  const to = id ? `/vehicles/${id}` : ticket_id ? `/maintenance-workflow/${ticket_id}` : '/maintenance-workflow';
 
   const el = e.days_elapsed ?? 0;     // total days in the workshop
   const al = e.days_allotted ?? 0;    // planned repair duration (target)
@@ -156,14 +195,26 @@ function RepairProgressCard({ item }) {
           <p className="truncate text-sm font-bold text-slate-900">{plate || car || 'Vehicle'}</p>
           <p className="truncate text-xs text-slate-400">{[car, garage].filter(Boolean).join(' · ') || '—'}</p>
         </div>
-        {est && (
-          <span
-            className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500"
-            title="No ready-by date on the maintenance contract — measured against the default repair window"
-          >
-            Estimated
-          </span>
-        )}
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
+          {/* Data origin — sheet contract, app ticket, or both (traceability: no card without its source). */}
+          <SourceBadge source={source} />
+          {other_tickets > 0 && (
+            <span
+              className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500"
+              title={`This car has ${other_tickets + 1} open workflow tickets. The card shows the longest-running one.`}
+            >
+              +{other_tickets} ticket{other_tickets === 1 ? '' : 's'}
+            </span>
+          )}
+          {est && (
+            <span
+              className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500"
+              title={`No ready-by date on the ${source === 'workshop' ? 'ticket' : 'maintenance contract'} — measured against the default repair window`}
+            >
+              Estimated
+            </span>
+          )}
+        </div>
       </div>
 
       {/* WHY the car is in the shop — the fault(s)/reason behind the visit. */}
@@ -174,7 +225,9 @@ function RepairProgressCard({ item }) {
             {problem}{problem_type ? <span className="ms-1 font-normal text-slate-400">· {problem_type}</span> : null}
           </p>
         ) : (
-          <p className="text-xs text-slate-400">No fault recorded on the maintenance contract</p>
+          <p className="text-xs text-slate-400">
+            {source === 'workshop' ? 'No fault recorded on the ticket' : 'No fault recorded on the maintenance contract'}
+          </p>
         )}
       </div>
 
@@ -230,14 +283,63 @@ function RepairProgressCard({ item }) {
 
 function ProactiveFlags({ data, loading }) {
   const inShop = data?.in_maintenance || { count: 0, items: [] };
+  const src = inShop.sources || {};
+  const allItems = inShop.items || [];
+
+  // Provenance filter — look at the whole shop, or only the cars we know about from ONE record.
+  // 'both' cars (contract AND live ticket) satisfy either single-source filter, since they genuinely
+  // exist in both systems.
+  const [sourceFilter, setSourceFilter] = useState('all');
+  const matchesSource = (it) =>
+    sourceFilter === 'all' ||
+    it.source === sourceFilter ||
+    (it.source === 'both' && (sourceFilter === 'contract' || sourceFilter === 'workshop'));
+  const items = allItems.filter(matchesSource);
+
+  const SOURCE_FILTERS = [
+    { key: 'all',      label: 'All',         count: inShop.count },
+    { key: 'contract', label: 'From sheet',  count: (src.contract || 0) + (src.both || 0) },
+    { key: 'workshop', label: 'From system', count: (src.workshop || 0) + (src.both || 0) },
+  ];
 
   const groups = [
     {
       // Every car in the shop right now rendered as a visual Repair-Progress KPI card (progress bar +
       // figures), not a text row. `cardItems` switches the renderer from the row list to the card grid.
       key: 'maintenance', title: 'In Maintenance', icon: <Icon.Wrench className="h-4 w-4" />, tone: 'blue',
-      count: inShop.count, viewAll: '/maintenance-workflow', empty: 'No cars in the workshop right now',
-      cardItems: inShop.items || [],
+      count: inShop.count, viewAll: '/maintenance-workflow',
+      empty: sourceFilter === 'all'
+        ? 'No cars in the workshop right now'
+        : 'No cars in the workshop from this source right now',
+      cardItems: items,
+      // The provenance filter, doubling as the split ("7 from sheet · 10 from system").
+      filter: (
+        <div className="flex shrink-0 flex-wrap items-center gap-1" role="group" aria-label="Filter by data source">
+          {SOURCE_FILTERS.map((f) => {
+            const on = sourceFilter === f.key;
+            return (
+              <button
+                key={f.key}
+                type="button"
+                onClick={() => setSourceFilter(f.key)}
+                aria-pressed={on}
+                title={
+                  f.key === 'contract' ? 'Only cars in the shop per the OM / N-Maintenance sheet contract'
+                    : f.key === 'workshop' ? "Only cars in the shop per the app's own maintenance-workflow ticket"
+                      : 'Every car in the shop, whichever record we hold for it'
+                }
+                className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 transition ${
+                  on
+                    ? 'bg-indigo-600 text-white ring-indigo-600'
+                    : 'bg-white text-slate-500 ring-slate-200 hover:bg-slate-50 hover:text-slate-700'
+                }`}
+              >
+                {f.label} <span className="tabular-nums opacity-80">{f.count}</span>
+              </button>
+            );
+          })}
+        </div>
+      ),
     },
   ];
 
@@ -248,10 +350,10 @@ function ProactiveFlags({ data, loading }) {
       title={
         <span className="flex items-center gap-1.5">
           Proactive Flags
-          <InfoTip content="Conditions to act on. Sources — In Maintenance: every car with an open maintenance contract (in the workshop right now), shown as a Repair-Progress card — a bar filling elapsed days-in-shop against the planned target (green under 75%, orange 75–100%, red once exceeded), a badge (N days remaining / Due today / +N days overdue), and the figures behind it (in-shop total, planned duration, remaining/overdue, expected completion, repair start). Repair start = the contract's out-date; target = its ready-by date, or a default window (card flagged 'Estimated') when none is set. Payments Overdue: returned rentals with an outstanding contract balance. Click a card to open its vehicle." />
+          <InfoTip content="Conditions to act on. Sources — In Maintenance: every car in the workshop right now, from BOTH records we hold: an open type-U maintenance contract (OM / N-Maintenance sheet, badged 'From sheet') and an app maintenance-workflow ticket in an in-shop state (badged 'From system'); a car present in both is listed once and badged 'Sheet + System'. Each is shown as a Repair-Progress card — a bar filling elapsed days-in-shop against the planned target (green under 75%, orange 75–100%, red once exceeded), a badge (N days remaining / Due today / +N days overdue), and the figures behind it (in-shop total, planned duration, remaining/overdue, expected completion, repair start). Repair start = the contract's out-date; target = its ready-by date, or a default window (card flagged 'Estimated') when none is set. Payments Overdue: returned rentals with an outstanding contract balance. Click a card to open its vehicle." />
         </span>
       }
-      subtitle="What needs attention now — every car in the shop and how it's tracking against its repair ETA"
+      subtitle="What needs attention now — every car in the shop (from the sheet contract and from the app's own tickets) and how it's tracking against its repair ETA"
       actions={<Badge tone={totalCount ? 'amber' : 'gray'}>{totalCount}</Badge>}
     >
       {loading ? (
@@ -265,14 +367,17 @@ function ProactiveFlags({ data, loading }) {
               key={g.key}
               className="rounded-2xl border border-slate-200/60 bg-white p-4 shadow-soft"
             >
-              <div className="mb-3 flex items-center justify-between gap-2">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2">
                   <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${TILE_TONE_SOFT[g.tone]}`}>{g.icon}</span>
                   <h3 className="truncate text-sm font-semibold text-slate-800">{g.title}</h3>
                   <Badge tone={g.count ? g.tone : 'gray'}>{g.count}</Badge>
                   {g.note && <span className="truncate text-xs font-medium text-slate-400">{g.note}</span>}
                 </div>
-                <Link to={g.viewAll} className="shrink-0 text-xs font-medium text-indigo-600 hover:text-indigo-700">All →</Link>
+                <div className="flex flex-wrap items-center gap-2">
+                  {g.filter}
+                  <Link to={g.viewAll} className="shrink-0 text-xs font-medium text-indigo-600 hover:text-indigo-700">All →</Link>
+                </div>
               </div>
               {g.cardItems ? (
                 // In Maintenance — a responsive grid of visual Repair-Progress KPI cards, one per car.
@@ -881,6 +986,7 @@ function MostMaintainedCars() {
 
 export default function Dashboard() {
   const { user } = useAuth();
+  const { can } = usePermissions();
   const firstName = user?.name ? String(user.name).trim().split(/\s+/)[0] : '';
   const [view, setView] = useState('metrics'); // 'metrics' | 'pulse'
 
@@ -1038,11 +1144,24 @@ export default function Dashboard() {
             notification bell; every row deep-links to its record. */}
         <ProactiveFlags data={proactive} loading={loading} />
 
+        {/* Cars Needing a Check — which car needs oil, battery, tires… right now. Self-fetching from
+            the service-reminder engine, so it can never disagree with /service-reminders. */}
+        {can('reminders.view') && <ServiceDueCard limit={3} />}
+
+        {/* Recently Fixed — the cars that came back working: the problem, the fix, the garage and the
+            downtime. The good-news counterpart to the pipeline cards above; the full ledger (with the
+            date filter and the per-fault story) lives on /completed-repairs. */}
+        <RecentlyFixedCard limit={3} />
+
         {/* Most Maintained Cars (by downtime) beside the Most Frequent Faults donut KPI. */}
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <MostMaintainedCars />
           <MostFrequentFaults />
         </div>
+
+        {/* Maintenance Pipeline — the live workshop funnel (stage / severity / garage), the same
+            charts as the /maintenance-workflow board, self-fetched so both stay in sync. */}
+        <MaintenanceWorkflowAnalyticsPanel />
 
         {/* Data visualization — maintenance spend per month (bar) and the downtime
             trend (line). Both are bespoke SVG, so they match the gauges and donut. */}

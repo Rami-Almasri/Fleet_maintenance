@@ -13,6 +13,7 @@ import Skeleton from '../../components/ui/Skeleton';
 import DataTable, { SectionCard } from '../../components/ui/Table';
 import Tabs from '../../components/ui/Tabs';
 import MetricCard, { MetricGrid } from '../../components/ui/MetricCard';
+import OdometerApprovalsAnalytics from '../../components/analytics/OdometerApprovalsAnalytics';
 import { num, fmtAgo, fmtDate } from '../../lib/format';
 
 // Odometer Modification Approval — the review board for significant manual odometer edits
@@ -169,6 +170,9 @@ export default function OdometerApprovals() {
         >
           <Link to="/vehicles" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">Vehicles →</Link>
         </PageHeader>
+
+        {/* Analytics — the queue plus its recent history, before the tabbed detail. */}
+        {!loading && <OdometerApprovalsAnalytics pending={pending} recent={recent} />}
 
         <Tabs
           active={tab}

@@ -9,6 +9,7 @@ import api from '../api/client';
 import Icon from '../components/ui/Icon';
 import { Skeleton } from '../components/ui/Skeleton';
 import DateRangePicker from '../components/ui/DateRangePicker';
+import MaintenanceHistoryAnalytics from '../components/analytics/MaintenanceHistoryAnalytics';
 
 const fmtDate = (iso) => (iso ? new Date(iso).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
 const plural = (n, w) => `${Number(n).toLocaleString()} ${w}${n === 1 ? '' : 's'}`;
@@ -115,6 +116,9 @@ export default function MaintenanceHistory() {
           <Kpi icon="Clock" label="Avg days in shop" value={loading ? null : `${summary.avgDays}d`} />
           <Kpi icon="Activity" label="Currently in shop" value={loading ? null : summary.inShop} tone={summary.inShop ? 'amber' : 'slate'} />
         </div>
+
+        {/* Analytics — the whole window, before the search narrows the table below. */}
+        {!loading && items.length > 0 && <MaintenanceHistoryAnalytics items={items} />}
 
         {/* Search */}
         <div className="relative max-w-xs">

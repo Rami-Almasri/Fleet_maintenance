@@ -28,7 +28,6 @@ import MaintenanceWorkflow from './pages/MaintenanceWorkflow';
 import MaintenanceCheckpoints from './pages/MaintenanceCheckpoints';
 import CarStatus from './pages/CarStatus';
 import CarStatusVehicle from './pages/CarStatusVehicle';
-import MaintenanceRecommendations from './pages/MaintenanceRecommendations';
 import MyMaintenanceQueue from './pages/MyMaintenanceQueue';
 import InspectionReviewQueue from './pages/InspectionReviewQueue';
 import ComplaintsCenter from './pages/ComplaintsCenter';
@@ -37,7 +36,6 @@ import MaintenanceForesight from './pages/MaintenanceForesight';
 import FleetUtilization from './pages/FleetUtilization';
 import MaintenanceSwap from './pages/MaintenanceSwap';
 import LogisticsDispatch from './pages/LogisticsDispatch';
-import TeamPresence from './pages/TeamPresence';
 import QuickCostInput from './pages/QuickCostInput';
 import Garages from './pages/Garages';
 import FindingKeywords from './pages/FindingKeywords';
@@ -47,7 +45,7 @@ import RecurringFaultReviews from './pages/RecurringFaultReviews';
 import DamageAccidents from './pages/DamageAccidents';
 import Profitability from './pages/Profitability';
 import CostIntelligence from './pages/CostIntelligence';
-import ServiceDueBoard from './pages/ServiceDueBoard';
+import ServiceReminders from './pages/reminders/ServiceReminders';
 import EventClassificationReview from './pages/EventClassificationReview';
 import MileageCenter from './pages/MileageCenter';
 import DataHealth from './pages/DataHealth';
@@ -148,7 +146,6 @@ export default function App() {
                   {/* "Drivers" dispatch board. Route renamed from /logistics → /driver-dispatch
                       (the bare /drivers route is the fleet-driver records page). Old links redirect. */}
                   <Route path="/driver-dispatch" element={<LogisticsDispatch />} />
-                  <Route path="/team-presence" element={<TeamPresence />} />
                   <Route path="/logistics" element={<Navigate to="/driver-dispatch" replace />} />
                 </Route>
 
@@ -179,8 +176,10 @@ export default function App() {
                 </Route>
 
                 <Route element={<RequirePermission permission="reminders.view" />}>
-                  {/* Service Reminders now lives inside the Fleet Health hub — redirect the old path. */}
-                  <Route path="/reminders/service" element={<Navigate to="/inspections/schedules?tab=service" replace />} />
+                  {/* Service Reminders — the fleet's recurring service due points (oil, filters, tires…).
+                      Also mounted as a tab inside the Fleet Health hub; both paths render the same page. */}
+                  <Route path="/service-reminders" element={<ServiceReminders />} />
+                  <Route path="/reminders/service" element={<Navigate to="/service-reminders" replace />} />
                 </Route>
 
                 {/* Registrations now lives inside the Fleet Health hub — keep the old path working
@@ -216,7 +215,6 @@ export default function App() {
                   {/* Deep link from notifications: focuses one ticket on the board */}
                   <Route path="/maintenance-workflow/:id" element={<MaintenanceWorkflow />} />
                   {/* Pre-maintenance Recommendation queue — Supervisor triage before the active board */}
-                  <Route path="/maintenance-recommendations" element={<MaintenanceRecommendations />} />
                   <Route path="/my-maintenance-queue" element={<MyMaintenanceQueue />} />
                   {/* Maintenance Progress — the supervisors' checkpoint queue; notifications deep-link here
                       (?ticket=<id>) to open a car's progress form directly. */}
@@ -259,7 +257,8 @@ export default function App() {
                   <Route path="/vehicle-status" element={<Navigate to="/maintenance-workflow" replace />} />
                   <Route path="/profitability" element={<Profitability />} />
                   <Route path="/cost-intelligence" element={<CostIntelligence />} />
-                  <Route path="/service-due" element={<ServiceDueBoard />} />
+                  {/* Service Due board retired — Service Reminders is the one service surface now. */}
+                  <Route path="/service-due" element={<Navigate to="/service-reminders" replace />} />
                   {/* Fuel & Mileage, Reconciliation and Chain Audit are unified into one tabbed page. */}
                   <Route path="/mileage" element={<MileageCenter />} />
                   <Route path="/fuel-mileage" element={<Navigate to="/mileage" replace />} />

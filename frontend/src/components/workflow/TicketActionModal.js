@@ -29,6 +29,7 @@ import Icon from '../ui/Icon';
 import { Input, Textarea, Select } from '../ui/Field';
 import FindingsList from './FindingsList';
 import FindingsPicker from './FindingsPicker';
+import RequiredPartsEditor, { cleanRequiredParts } from './RequiredPartsEditor';
 import GarageRecommendations from './GarageRecommendations';
 import RootCausePicker, { rootCausesComplete } from './RootCausePicker';
 import FaultHistoryInsight from './FaultHistoryInsight';
@@ -38,7 +39,7 @@ import { compressImage, formatBytes } from '../../lib/imageCompression';
 import { evaluateContinuity, needsConfirm, needsNote, isHardBlocked, stageIgnoresTolerance, stageRequiresIncrease, STAGE } from '../../lib/odometerContinuity';
 import OdometerContinuityHint from './OdometerContinuityHint';
 import SignaturePad from './SignaturePad';
-import { isPaused } from './meta';
+import { isPaused, ORIGIN_LABEL } from './meta';
 import { useAuth } from '../../auth/AuthContext';
 
 // Enterprise Handover Workflow — CONTRACT with backend/config/maintenance_handover.php. Small, fixed
@@ -81,6 +82,12 @@ const FAILURE_REASONS = ['wrong_diagnosis', 'part_failed', 'repair_incomplete', 
 // in the Complaint entity (Complaints Center, source driver_relayed) or a Driver Observation, never a
 // hand-picked complaint-tagged inspection request. (Backend contract stays App\Models\Maintenance::TRIGGER_REASONS.)
 const INSPECTION_TRIGGER_REASONS = ['test_drive', 'periodic'];
+// The driver's "What happened?" choices. The first two are real trigger reasons; OBSERVATION_CHOICE is a
+// UI-ONLY third path — it is never sent as a trigger_reason. Picking it switches the form into Driver
+// Observation mode (POST /driver-observations), so a passing remark from someone who merely tried the car
+// is captured as an internal note instead of inflating the inspection queue. See [[driver-observation-entity]].
+const OBSERVATION_CHOICE = 'observation';
+const DRIVER_REQUEST_CHOICES = [...INSPECTION_TRIGGER_REASONS, OBSERVATION_CHOICE];
 const MAINTENANCE_TYPES = [
   { value: 'breakdown', icon: '⚠️' },
 ]; // App\Models\Maintenance::MAINTENANCE_TYPES
@@ -95,7 +102,8 @@ const FAULT_SEVERITY_OPTS = [
 
 // Submit-button tone per action (visual only). The footer further overrides this
 // for the branching decisions (reinspect pass/fail, decide requires/clear).
-const baseTone = (action) => (['ready', 'serviced'].includes(action) ? 'success' : 'primary');
+const baseTone = (action) => (['ready', 'serviced'].includes(action) ? 'success'
+  : 'primary');
 
 // Compact "who/when" timestamp for the follow-up log: relative for recent notes, an absolute
 // date+time once they age past a day. `t` localizes the relative phrasing.
@@ -226,6 +234,31 @@ function StageTimeline({ ticket, t }) {
 
 // A required-field asterisk.
 const Req = () => <span className="text-red-500"> *</span>;
+
+// A numbered section of a long form — used to break the Inspector's test-drive report ('decide') into
+// four readable steps (mileage → findings → diagnosis → decision) instead of one undifferentiated
+// scroll. `done` flips the step number to a green tick so progress through the report is visible.
+function Step({ n, title, hint, done = false, children }) {
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <header className="flex items-start gap-2.5 border-b border-slate-100 px-4 py-3">
+        <span
+          className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+            done ? 'bg-emerald-500 text-white' : 'bg-slate-100 text-slate-500'
+          }`}
+          aria-hidden
+        >
+          {done ? '✓' : n}
+        </span>
+        <span className="min-w-0">
+          <span className="block text-sm font-semibold text-slate-800">{title}</span>
+          {hint && <span className="mt-0.5 block text-xs text-slate-500">{hint}</span>}
+        </span>
+      </header>
+      <div className="space-y-3 p-4">{children}</div>
+    </section>
+  );
+}
 
 // The 🔴/🟡/🟢 Fault Severity chooser — the inspector's mandatory diagnostic grade on the 'decide'
 // step. Clicking the active level clears it. Colour-codes the selected level so the grade reads at
@@ -504,6 +537,10 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   // ---- form state (one bag; only the relevant keys are read per action) ----
   const [vehicleId, setVehicleId] = useState('');
   const [reason, setReason] = useState('test_drive');
+  // Driver Observation mode (the third "What happened?" choice) — the form writes a note instead of a
+  // ticket, and only raises an inspection request when the driver explicitly ticks the box.
+  const [observationRaise, setObservationRaise] = useState(false);
+  const isObservation = action === 'request' && reason === OBSERVATION_CHOICE;
   // The maintenance classification. On the inspector's decision ('decide') a test ALWAYS yields a
   // type — routine is the common case, so it's preselected; the inspector confirms or changes it.
   const [maintType, setMaintType] = useState(() => ticket?.maintenance_type || '');
@@ -515,6 +552,11 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   const [driverId, setDriverId] = useState('');          // delegate: chosen logistics driver
   const [delegationTask, setDelegationTask] = useState('pickup'); // delegate: pickup | dropoff
   const [recommended, setRecommended] = useState('');
+  // "Requires Parts" — the inspector's TECHNICAL list of what the repair will need. Recorded with the
+  // report but inert: it starts no procurement. The coordinator converts these into real part requests
+  // later, once the garage is chosen. See RequiredPartsEditor.
+  const [requiresParts, setRequiresParts] = useState(false);
+  const [requiredParts, setRequiredParts] = useState([]);
   const [notes, setNotes] = useState('');
   // Pre-fill the reading for a Temporary Vehicle Release with the car's last known odometer (editable).
   const [odometer, setOdometer] = useState(() => {
@@ -784,6 +826,11 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
     const base = `/maintenance-tickets`;
     switch (action) {
       case 'request':
+        // Third choice = Driver Observation: a different entity entirely, so it leaves the ticket API.
+        // submit() handles the (optional) follow-up inspection call; `reason` is deliberately not sent.
+        if (isObservation) {
+          return { url: '/driver-observations', body: { vehicle_id: Number(vehicleId), note: complaint.trim() } };
+        }
         return { url: `${base}/request`, body: { vehicle_id: Number(vehicleId), trigger_reason: reason, customer_complaint: complaint || null } };
       case 'start':
         // Inspector's odometer at test-drive start (the chain anchor) — posted multipart with the photo.
@@ -798,7 +845,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
       case 'typechange':
         return { url: `${base}/${ticket.id}/type`, body: { maintenance_type: maintType }, method: 'patch' };
       case 'decide':
-        return { url: `${base}/${ticket.id}/report`, body: { requires_maintenance: requiresMaintenance, symptoms, causes: buildCauses(symptoms), fault_severity: requiresMaintenance ? (faultSeverity || null) : null, recommended_action: recommended || null, notes: notes || null, maintenance_type: maintType || null, repair_location: requiresMaintenance ? repairLocation : null, report_odometer: odometer ? Number(odometer) : null, odometer_note: odoNote.trim() || null, odometer_confirmed: odoAckRequired ? odoConfirmed : null } };
+        return { url: `${base}/${ticket.id}/report`, body: { requires_maintenance: requiresMaintenance, symptoms, causes: buildCauses(symptoms), fault_severity: requiresMaintenance ? (faultSeverity || null) : null, recommended_action: recommended || null, notes: notes || null, maintenance_type: maintType || null, repair_location: requiresMaintenance ? repairLocation : null, report_odometer: odometer ? Number(odometer) : null, odometer_note: odoNote.trim() || null, odometer_confirmed: odoAckRequired ? odoConfirmed : null, required_parts: requiresMaintenance && requiresParts ? cleanRequiredParts(requiredParts) : null } };
       case 'delegate':
         return { url: `${base}/${ticket.id}/delegate`, body: { driver_id: Number(driverId), delegation_task: delegationTask } };
       case 'assign': {
@@ -912,7 +959,8 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   function invalid() {
     // An out-of-range odometer would overflow the DB column — block every step that captures one.
     if (odoOutOfRange) return true;
-    if (action === 'request') return !vehicleId;
+    // An observation IS its note, so the text is mandatory there; a plain inspection request only needs a car.
+    if (action === 'request') return !vehicleId || (isObservation && !complaint.trim());
     // Re-inspection: on FAIL, re-routing to a different garage needs a written reason (same-garage fail
     // is unaffected). On PASS the car is physically back, so the final QC odometer is mandatory — plus the
     // shared >10 km ack/note gate. No odometer is asked on the FAIL branch (the car goes back out).
@@ -1042,7 +1090,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
         resp = await api.patch(r.url, r.body);
       } else if (r.method === 'put') {
         resp = await api.put(r.url, r.body);
-      } else if (action === 'request' && requestMedia?.file) {
+      } else if (action === 'request' && !isObservation && requestMedia?.file) {
         // Driver's inspection request WITH an attached photo/video — go multipart so the evidence rides
         // along and is stored on the new ticket (see requestInspection server-side). No odometer here.
         const fd = new FormData();
@@ -1119,6 +1167,17 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
           if (maintType) fd.append('maintenance_type', maintType);
           if (requiresMaintenance && repairLocation) fd.append('repair_location', repairLocation);
           if (requiresMaintenance) fd.append('deferrable_for_rental', deferrableForRental ? '1' : '0');
+          // Required parts — technical only, and only when a ticket is actually opened (a cleared
+          // diagnostic needed no work, so it needs no parts).
+          if (requiresMaintenance && requiresParts) {
+            cleanRequiredParts(requiredParts).forEach((p, i) => {
+              fd.append(`required_parts[${i}][part_name]`, p.part_name);
+              fd.append(`required_parts[${i}][quantity]`, String(p.quantity));
+              fd.append(`required_parts[${i}][priority]`, p.priority);
+              if (p.notes) fd.append(`required_parts[${i}][notes]`, p.notes);
+              if (p.finding) fd.append(`required_parts[${i}][finding]`, p.finding);
+            });
+          }
           if (odometer) fd.append('report_odometer', String(Number(odometer)));
         } else {
           // start | open — the inspector's odometer reading at test-drive start (the chain anchor).
@@ -1141,6 +1200,17 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
         resp = await api.post(r.url, fd);
       } else {
         resp = await api.post(r.url, r.body);
+      }
+
+      // Driver Observation: the note is saved. Only when the driver asked for it does a second call spawn
+      // the inspection request that enters the review queue — otherwise this stays a pure internal note.
+      if (isObservation) {
+        const created = resp?.data?.data;
+        if (observationRaise && created?.id) {
+          await api.post(`/driver-observations/${created.id}/request-inspection`);
+        }
+        onDone?.(t(observationRaise ? 'workflow.success.observationInspection' : 'workflow.success.observation'));
+        return;
       }
 
       // Resume may come back with blocked_by_incident: true — the handover was saved and the request
@@ -1217,7 +1287,9 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   }
 
   // Submit-button label: the branching steps spell out their decision; the rest use the action's submit verb.
-  const submitLabel = action === 'reinspect'
+  const submitLabel = isObservation
+    ? t('workflow.field.observationSubmit')
+    : action === 'reinspect'
     ? (reFail ? t('workflow.reinspect.failBack') : t('workflow.reinspect.passClose'))
     : action === 'decide'
       ? (requiresMaintenance ? t('workflow.decision.requiresOpen') : t('workflow.decision.noClose'))
@@ -1345,102 +1417,140 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
           </>
         )}
 
-        {/* STAGE 2 — test-drive report + the repair decision */}
+        {/* STAGE 2 — test-drive report + the repair decision.
+            Laid out as four numbered steps (mileage → findings → diagnosis → decision) so a long form
+            reads as a sequence the inspector works down, not one undifferentiated scroll. */}
         {action === 'decide' && (
           <>
-            {/* End-of-test-drive odometer — optional here, so the inspector can log the reading when they
-                step out of the car. Runs the same continuity + >10 km note gate as every other capture and
-                lands as its own "End of test drive" row in the mileage timeline. */}
-            <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+            {/* STEP 1 — end-of-test-drive odometer. Optional here, so the inspector can log the reading when
+                they step out of the car. Runs the same continuity + >10 km note gate as every other capture
+                and lands as its own "End of test drive" row in the mileage timeline. */}
+            <Step n={1} title={t('workflow.decideStep.mileageTitle')} hint={t('workflow.decideStep.mileageHint')} done={!!odometer}>
               <Input label={t('workflow.field.reportOdometerKm')} type="number" min="1" value={odometer} onChange={(e) => setOdometer(e.target.value)} placeholder={ticket?.test_odometer ? t('workflow.ph.startedAt', { km: Number(ticket.test_odometer).toLocaleString() }) : t('workflow.ph.odometerExample')} />
               <OdometerContinuityHint previous={prevOdometer} continuity={continuity} confirmed={odoConfirmed} onConfirm={setOdoConfirmed} noteRequired={odoNoteRequired} note={odoNote} onNote={setOdoNote} ignoreTolerance={ignoreOdoTolerance} t={t} />
-              <p className="mt-1.5 text-xs text-slate-400">{t('workflow.hint.reportOdometer')}</p>
-              <div className="mt-3">
+              <div>
                 <span className="mb-1 block text-sm font-medium text-slate-700">{t('workflow.field.odometerPhoto')}</span>
                 {photoTile}
               </div>
-            </div>
-            {/* Post-downtime INSPECTION checklist — what to look over on a long-idle car. Read-only: it
-                tells the inspector what to check, it does NOT pre-log any finding. Anything actually found
-                gets tapped in the Findings picker below. */}
-            {inspectChecklist.length > 0 && (
-              <div className="rounded-xl border border-sky-200 bg-sky-50/70 p-3">
-                <p className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-sky-700">
-                  <Icon.Shield className="h-3.5 w-3.5" /> {t('workflow.field.inspectChecklistTitle')}
-                </p>
-                <p className="mb-2 text-xs text-sky-800/80">{t('workflow.field.inspectChecklistHint')}</p>
-                <ul className="flex flex-wrap gap-1.5">
-                  {inspectChecklist.map((item) => (
-                    <li key={item} className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1 text-xs font-medium text-sky-800 ring-1 ring-sky-200">
-                      <Icon.Search className="h-3 w-3 text-sky-500" /> {item}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            <div>
-              <span className="mb-1.5 block text-sm font-medium text-slate-700">{t('workflow.field.findingsTapAll')}</span>
+            </Step>
+
+            {/* STEP 2 — the findings themselves. The post-downtime inspection checklist rides INSIDE this
+                step (it tells the inspector what to look over; it never pre-logs a finding). */}
+            <Step
+              n={2}
+              title={t('workflow.decideStep.findingsTitle')}
+              hint={t('workflow.decideStep.findingsHint')}
+              done={symptoms.length > 0 || !requiresMaintenance}
+            >
+              {inspectChecklist.length > 0 && (
+                <div className="rounded-xl border border-sky-200 bg-sky-50/70 p-3">
+                  <p className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-sky-700">
+                    <Icon.Shield className="h-3.5 w-3.5" /> {t('workflow.field.inspectChecklistTitle')}
+                  </p>
+                  <p className="mb-2 text-xs text-sky-800/80">{t('workflow.field.inspectChecklistHint')}</p>
+                  <ul className="flex flex-wrap gap-1.5">
+                    {inspectChecklist.map((item) => (
+                      <li key={item} className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1 text-xs font-medium text-sky-800 ring-1 ring-sky-200">
+                        <Icon.Search className="h-3 w-3 text-sky-500" /> {item}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               <FindingsPicker catalog={findingsCatalog} keywordMeta={keywordMeta} value={symptoms} onChange={setSymptoms} locked={lockedFindings} suggested={dataSuggested} statusConditions={diagConditions} />
-            </div>
-            {/* Symptom → Root-Cause — the mandatory diagnostic step: name the probable cause per symptom */}
-            {symptoms.length > 0 && (
-              <div>
-                <span className="mb-1.5 block text-sm font-medium text-slate-700">Probable root cause<Req /></span>
-                <RootCausePicker symptoms={symptoms} catalog={faultCausesCatalog} value={causes} onChange={setCauses} />
-              </div>
-            )}
-            {/* Chronic Fault Watchdog — warns instantly if any picked fault was repaired before */}
-            <FaultHistoryInsight
-              vehicleId={ticket?.vehicle_id}
-              tags={Array.from(new Set([...lockedFindings, ...symptoms]))}
-              excludeTicketId={ticket?.id}
-            />
-            {/* Previous Similar Repairs + Recommendation — live PREVIEW as the inspector picks a symptom
-                (before the fault exists). Same reusable panel + frozen contract as the drawer/checkpoint. */}
-            {symptoms.length > 0 && ticket?.vehicle_id && (
-              <RepairIntelligencePanel preview={{ vehicleId: ticket.vehicle_id, symptom: symptoms[symptoms.length - 1] }} />
-            )}
-            <Input label={t('workflow.field.recommendedAction')} value={recommended} onChange={(e) => setRecommended(e.target.value)} placeholder={t('workflow.ph.replacePads')} />
-            <Textarea label={t('common.notes')} value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} placeholder={t('workflow.ph.testDriveNotes')} />
+            </Step>
 
-            {/* Inspector's official classification — the authoritative source; Driver's request carries none.
-                Only relevant when the car actually needs work: hidden once "No maintenance needed" is chosen. */}
-            {requiresMaintenance && (
-              <div>
-                <span className="mb-1.5 block text-sm font-medium text-slate-700">
-                  {t('workflow.type.label')}<Req />
-                </span>
-                <MaintenanceTypeCards types={visibleTypes} value={maintType} onChange={setMaintType} t={t} />
-              </div>
-            )}
+            {/* STEP 3 — diagnosis: probable cause per symptom, the chronic-fault + prior-repair intelligence
+                that reacts to those picks, and the inspector's own recommendation. */}
+            <Step
+              n={3}
+              title={t('workflow.decideStep.diagnosisTitle')}
+              hint={t('workflow.decideStep.diagnosisHint')}
+              done={symptoms.length > 0 && rootCausesComplete(symptoms, faultCausesCatalog, causes)}
+            >
+              {symptoms.length > 0 ? (
+                <div>
+                  <span className="mb-1.5 block text-sm font-medium text-slate-700">Probable root cause<Req /></span>
+                  <RootCausePicker symptoms={symptoms} catalog={faultCausesCatalog} value={causes} onChange={setCauses} />
+                </div>
+              ) : (
+                <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-400 ring-1 ring-inset ring-slate-100">
+                  {t('workflow.decideStep.noFindings')}
+                </p>
+              )}
+              {/* Chronic Fault Watchdog — warns instantly if any picked fault was repaired before */}
+              <FaultHistoryInsight
+                vehicleId={ticket?.vehicle_id}
+                tags={Array.from(new Set([...lockedFindings, ...symptoms]))}
+                excludeTicketId={ticket?.id}
+              />
+              {/* Previous Similar Repairs + Recommendation — live PREVIEW as the inspector picks a symptom
+                  (before the fault exists). Same reusable panel + frozen contract as the drawer/checkpoint. */}
+              {symptoms.length > 0 && ticket?.vehicle_id && (
+                <RepairIntelligencePanel preview={{ vehicleId: ticket.vehicle_id, symptom: symptoms[symptoms.length - 1] }} />
+              )}
+              <Input label={t('workflow.field.recommendedAction')} value={recommended} onChange={(e) => setRecommended(e.target.value)} placeholder={t('workflow.ph.replacePads')} />
+              <Textarea label={t('common.notes')} value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} placeholder={t('workflow.ph.testDriveNotes')} />
+              {/* "Requires Parts" — the technical requirement, still part of DIAGNOSIS. It creates no part
+                  request: the coordinator sources these once the garage is picked. Only offered when the
+                  car is actually going in for work — a cleared diagnostic needs nothing. */}
+              {requiresMaintenance && (
+                <RequiredPartsEditor
+                  enabled={requiresParts}
+                  onToggle={setRequiresParts}
+                  value={requiredParts}
+                  onChange={setRequiredParts}
+                  findings={Array.from(new Set([...lockedFindings, ...symptoms]))}
+                />
+              )}
+            </Step>
 
-            {/* The decision — only this turns the diagnostic into a real ticket */}
-            <div className="border-t border-slate-100 pt-4">
-              <span className="mb-1.5 block text-sm font-medium text-slate-700">{t('workflow.decision.label')}</span>
-              <div className="flex gap-2">
+            {/* STEP 4 — the decision. It comes FIRST inside this step (it's the branch); the classification
+                only appears once the answer is "requires maintenance". */}
+            <Step n={4} title={t('workflow.decideStep.decisionTitle')} hint={t('workflow.decideStep.decisionHint')} done>
+              <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
                   onClick={() => setRequiresMaintenance(true)}
-                  className={`flex-1 rounded-xl px-4 py-3 text-sm font-semibold ring-1 transition ${requiresMaintenance ? 'bg-indigo-600 text-white ring-indigo-600' : 'bg-white text-slate-600 ring-slate-300 hover:bg-slate-50'}`}
+                  className={`rounded-xl px-4 py-3 text-sm font-semibold ring-1 transition ${requiresMaintenance ? 'bg-indigo-600 text-white ring-indigo-600' : 'bg-white text-slate-600 ring-slate-300 hover:bg-slate-50'}`}
                 >
                   {t('workflow.decision.requires')}
                 </button>
                 <button
                   type="button"
                   onClick={() => setRequiresMaintenance(false)}
-                  className={`flex-1 rounded-xl px-4 py-3 text-sm font-semibold ring-1 transition ${!requiresMaintenance ? 'bg-emerald-600 text-white ring-emerald-600' : 'bg-white text-slate-600 ring-slate-300 hover:bg-slate-50'}`}
+                  className={`rounded-xl px-4 py-3 text-sm font-semibold ring-1 transition ${!requiresMaintenance ? 'bg-emerald-600 text-white ring-emerald-600' : 'bg-white text-slate-600 ring-slate-300 hover:bg-slate-50'}`}
                 >
                   {t('workflow.decision.noNeed')}
                 </button>
               </div>
-              <p className="mt-1.5 text-xs text-slate-400">
+              <p className="text-xs text-slate-400">
                 {requiresMaintenance ? t('workflow.hint.requiresMaintenance') : t('workflow.hint.noMaintenance')}
               </p>
-            </div>
 
+              {/* Inspector's official classification — the authoritative source; Driver's request carries none.
+                  Only relevant when the car actually needs work: hidden once "No maintenance needed" is chosen. */}
+              {requiresMaintenance && (
+                <div className="border-t border-slate-100 pt-3">
+                  <span className="mb-1.5 block text-sm font-medium text-slate-700">
+                    {t('workflow.type.label')}<Req />
+                  </span>
+                  <MaintenanceTypeCards types={visibleTypes} value={maintType} onChange={setMaintType} t={t} />
+                </div>
+              )}
+            </Step>
+
+            {/* STEP 5 — routing: how urgent, where it's repaired, and whether the car may still be rented.
+                All three only exist once the car is actually going into maintenance. */}
+            {requiresMaintenance && (
+              <Step
+                n={5}
+                title={t('workflow.decideStep.routingTitle')}
+                hint={t('workflow.decideStep.routingHint')}
+                done={!!faultSeverity}
+              >
             {/* Fault Severity — the inspector's MANDATORY diagnostic grade, gating "Requires maintenance".
                 It becomes the headline urgency the supervisor reads first on the dispatch board. */}
-            {requiresMaintenance && (
               <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
                 <span className="mb-1.5 block text-sm font-semibold text-slate-700">{t('workflow.faultSeverity.label')}<Req /></span>
                 <FaultSeverityPicker value={faultSeverity} onChange={setFaultSeverity} t={t} locked={severityLocked} />
@@ -1448,12 +1558,10 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                   {severityLocked ? t('workflow.faultSeverity.breakdownLocked') : t('workflow.faultSeverity.hint')}
                 </p>
               </div>
-            )}
 
             {/* Repair Location — where does this repair happen? On-Site (mobile — car stays available) or
                 In-Shop (goes to a garage → Waleed & Abdullah are alerted to assign one). A breakdown is
                 locked to In-Shop (it grounds the car). */}
-            {requiresMaintenance && (
               <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
                 <span className="mb-1.5 block text-sm font-semibold text-slate-700">{t('workflow.repairLocation.label')}<Req /></span>
                 <div className="flex gap-2">
@@ -1485,13 +1593,11 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                     : (repairLocation === 'in_shop' ? t('workflow.repairLocation.inShopHint') : t('workflow.repairLocation.onSiteHint'))}
                 </p>
               </div>
-            )}
 
             {/* Rental Eligibility — the inspector's ONE-TIME call, decided here right after the faults are
                 identified and then respected by every later rental decision. Deferrable = a customer may
                 still take the car (the rental pauses this ticket, it resumes on return); Mandatory = the
                 car is grounded until the workshop finishes. A breakdown is locked to Mandatory (grounded). */}
-            {requiresMaintenance && (
               <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
                 <span className="mb-1.5 block text-sm font-semibold text-slate-700">{t('workflow.rentalEligibility.label')}<Req /></span>
                 <div className="flex gap-2">
@@ -1524,6 +1630,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                     : (deferrableForRental ? t('workflow.rentalEligibility.deferrableHint') : t('workflow.rentalEligibility.mandatoryHint'))}
                 </p>
               </div>
+              </Step>
             )}
           </>
         )}
@@ -1964,7 +2071,6 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
             ) : null}
           </div>
         )}
-
         {/* UC-5a — Supervisor Video-Review: REQUEST A RE-FIX. Not satisfied → back to the same garage,
             with a reason the garage acts on (logged to the follow-up trail). */}
         {action === 'requestRefix' && (
@@ -2211,25 +2317,34 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
             <div>
               <span className="mb-1 block text-sm font-medium text-slate-700">{t('workflow.field.vehicle')}<Req /></span>
               {/* A car already in maintenance is being handled — hide it from the picker so a driver
-                  can't open a duplicate diagnostic entry for it. Rented cars stay selectable. */}
+                  can't open a duplicate diagnostic entry for it. Rented cars stay selectable. An
+                  observation opens nothing, so every car stays notable in that mode. */}
               <VehicleStatusSelect
                 value={vehicleId}
                 onChange={setVehicleId}
-                vehicles={vehicles.filter((v) => !(v.under_maintenance || v.operational_status === 'maintenance'))}
+                vehicles={isObservation ? vehicles : vehicles.filter((v) => !(v.under_maintenance || v.operational_status === 'maintenance'))}
                 placeholder={t('workflow.ph.searchVehicle')}
               />
-              <p className="mt-1 text-xs text-slate-400">{t('workflow.hint.requestHideMaintenance')}</p>
+              {!isObservation && <p className="mt-1 text-xs text-slate-400">{t('workflow.hint.requestHideMaintenance')}</p>}
             </div>
             <div>
               <span className="mb-1.5 block text-sm font-medium text-slate-700">{t('workflow.reason.driverLabel')}</span>
               <div className="grid gap-2">
-                {INSPECTION_TRIGGER_REASONS.map((rv) => {
+                {DRIVER_REQUEST_CHOICES.map((rv) => {
                   const active = reason === rv;
                   return (
                     <button
                       key={rv}
                       type="button"
-                      onClick={() => setReason(rv)}
+                      onClick={() => {
+                        setReason(rv);
+                        // Observations carry no media — drop any pending attachment so it can't be
+                        // silently dropped at submit time.
+                        if (rv === OBSERVATION_CHOICE && requestMedia) {
+                          if (requestMedia.url) URL.revokeObjectURL(requestMedia.url);
+                          setRequestMedia(null);
+                        }
+                      }}
                       className={`flex items-start gap-3 rounded-xl border px-3 py-2.5 text-start transition ${active ? 'border-indigo-500 bg-indigo-50 ring-1 ring-indigo-500' : 'border-slate-200 bg-white hover:border-slate-300'}`}
                     >
                       <span className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${active ? 'border-indigo-600' : 'border-slate-300'}`}>
@@ -2243,15 +2358,49 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                   );
                 })}
               </div>
+              {/* Who may file this at all — advisory, not a hard gate: the Controller reviews every
+                  request before it reaches the workshop. */}
+              <p className="mt-2 rounded-lg bg-amber-50/70 px-3 py-2 text-[11px] leading-relaxed text-amber-800 ring-1 ring-inset ring-amber-500/20">
+                {t('workflow.hint.requestEligibility')}
+              </p>
               {/* A customer issue is NOT an inspection request — route it to the right entity. */}
               <p className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-[11px] leading-relaxed text-slate-500 ring-1 ring-inset ring-slate-100">
                 A customer reported a problem? Log it in the <a href="/complaints" className="font-semibold text-indigo-600 hover:underline">Complaints Center</a>. Just noticed something on return? Use <a href="/driver-observations" className="font-semibold text-indigo-600 hover:underline">Driver Observations</a>.
               </p>
             </div>
-            <Textarea label={t('workflow.field.notesForInspector')} value={complaint} onChange={(e) => setComplaint(e.target.value)} placeholder={t('workflow.ph.customerPullLeft')} />
+
+            {/* Observation mode — say plainly that this writes a note, not a ticket. */}
+            {isObservation && (
+              <div className="rounded-lg bg-sky-50/70 px-3 py-2 text-xs leading-relaxed text-sky-800 ring-1 ring-inset ring-sky-600/10">
+                {t('workflow.hint.observationBanner')}
+              </div>
+            )}
+
+            {isObservation ? (
+              <>
+                <Textarea
+                  label={t('workflow.field.observationNote')}
+                  required
+                  rows={4}
+                  maxLength={2000}
+                  value={complaint}
+                  onChange={(e) => setComplaint(e.target.value)}
+                  placeholder={t('workflow.ph.observationNote')}
+                />
+                <label className="flex items-start gap-2 rounded-lg bg-slate-50 px-3 py-2.5 text-sm text-slate-600 ring-1 ring-inset ring-slate-100">
+                  <input type="checkbox" checked={observationRaise} onChange={(e) => setObservationRaise(e.target.checked)} className="mt-0.5" />
+                  <span>{t('workflow.hint.observationRaise')}</span>
+                </label>
+                <p className="text-xs text-slate-400">{t('workflow.hint.observationNoMedia')}</p>
+              </>
+            ) : (
+              <Textarea label={t('workflow.field.notesForInspector')} value={complaint} onChange={(e) => setComplaint(e.target.value)} placeholder={t('workflow.ph.customerPullLeft')} />
+            )}
 
             {/* Optional photo/video — a still or clip of what the driver saw/heard, attached to the new
-                ticket as evidence the inspector reviews before the test drive. */}
+                ticket as evidence the inspector reviews before the test drive. Hidden in observation
+                mode: /driver-observations stores no upload, so offering one would promise more than it keeps. */}
+            {!isObservation && (
             <div>
               <span className="mb-1 block text-sm font-medium text-slate-700">{t('workflow.field.attachEvidence')}</span>
               {requestMedia ? (
@@ -2297,6 +2446,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
               />
               <p className="mt-1 text-xs text-slate-400">{t('workflow.field.attachHint')}</p>
             </div>
+            )}
           </>
         )}
 
@@ -2309,8 +2459,27 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
             {ticket?.requested_by_name && (
               <p className="text-sm text-slate-600">{t('workflow.hint.requestedBy')} <span className="font-semibold text-slate-800">{ticket.requested_by_name}</span></p>
             )}
+            {/* What was reported — the reason this car is in front of him. Labelled by WHERE it came
+                from (request_origin) so the inspector reads a driver's observation as an observation,
+                not as an anonymous quote he has to guess the weight of. */}
             {ticket?.customer_complaint && (
-              <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">“{ticket.customer_complaint}”</p>
+              <div className="rounded-lg bg-slate-50 px-3 py-2 ring-1 ring-inset ring-slate-100">
+                <p className="mb-0.5 flex flex-wrap items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                  <Icon.Flag className="h-3 w-3" />
+                  {t(ticket.trigger_reason === 'customer_reported'
+                    ? 'workflow.detail.complaint'
+                    : ticket.request_origin === 'system_schedule'
+                      ? 'workflow.detail.agenda'
+                      : 'workflow.detail.driverNote')}
+                  {(ticket.request_origin_label || ORIGIN_LABEL[ticket.request_origin]) && (
+                    <span className="font-normal normal-case text-slate-400">
+                      · {ticket.request_origin_label || ORIGIN_LABEL[ticket.request_origin]}
+                      {ticket.requested_by_name ? ` — ${ticket.requested_by_name}` : ''}
+                    </span>
+                  )}
+                </p>
+                <p className="text-sm text-slate-600">“{ticket.customer_complaint}”</p>
+              </div>
             )}
 
             {/* Reviewer's hand-off note — the office's optional message typed when the request was

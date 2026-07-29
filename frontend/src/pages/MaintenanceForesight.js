@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import ForesightAnalytics from '../components/analytics/ForesightAnalytics';
 import { Link, useLocation } from 'react-router-dom';
 import api from '../api/client';
 import useFetch from '../hooks/useFetch';
@@ -731,6 +732,9 @@ export default function MaintenanceForesight() {
                 </button>
               ))}
             </div>
+
+            {/* Analytics — the flagged fleet's shape, before the per-car cards. */}
+            {cars.length > 0 && <ForesightAnalytics cars={cars} />}
 
             {/* Cards */}
             {cars.length === 0 ? (

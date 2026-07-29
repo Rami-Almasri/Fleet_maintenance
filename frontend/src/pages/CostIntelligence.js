@@ -9,6 +9,7 @@ import DataTable, { SectionCard } from '../components/ui/Table';
 import { MetricGridSkeleton } from '../components/ui/Skeleton';
 import Icon from '../components/ui/Icon';
 import FinancialBreakdownDrawer from '../components/FinancialBreakdownDrawer';
+import CostIntelligenceAnalytics from '../components/analytics/CostIntelligenceAnalytics';
 import { aed2, num } from '../lib/format';
 
 const STATUS_TONE = { ready: 'green', rented: 'blue', maintenance: 'amber', sold: 'gray', disposed: 'gray' };
@@ -271,6 +272,11 @@ export default function CostIntelligence() {
           )}
           <span className="ml-auto text-xs text-slate-400">{num(rows.length)} of {num(s.vehicles)} cars</span>
         </div>
+
+        {/* Analytics — same filtered rows as the table below. */}
+        {!loading && !error && rows.length > 0 && (
+          <CostIntelligenceAnalytics rows={rows} windowed={windowed} />
+        )}
 
         <SectionCard
           title="Fleet — running cost per car"

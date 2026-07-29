@@ -26,7 +26,6 @@ use App\Http\Controllers\ReconciliationController;
 use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\SimulationController;
 use App\Http\Controllers\LogisticsDispatchController;
-use App\Http\Controllers\TeamPresenceController;
 use App\Http\Controllers\PartRequestController;
 use App\Http\Controllers\PartPurchaseController;
 use App\Http\Controllers\PartInvestigationController;
@@ -269,18 +268,14 @@ Route::middleware('auth:sanctum')->prefix('logistics')->controller(LogisticsDisp
     Route::post('/{logisticsTask}/status', 'respondStatus')->middleware('permission:logistics.view'); // assignee: one-click status reply
 });
 
-// Team Presence — the whole-team "who's where / who's free & why" board. Generalises the driver
-// roster above to every active staff member (drivers, inspectors, supervisors …), deriving each
-// person's live activity from their open moves + maintenance jobs. Read-only oversight → logistics.view.
-Route::middleware(['auth:sanctum', 'permission:logistics.view'])
-    ->get('/team/presence', [TeamPresenceController::class, 'roster']);
-
 // Parts Purchase + Repair Intelligence — the part-request lifecycle (Requested → … → Completed), the
 // purchase ledger + install cost-bridge, and the admin duplicate/recurrence investigation inbox. Reads
 // are parts.view; requests parts.request; buying/installing parts.purchase; adjudication parts.investigate.
 Route::middleware('auth:sanctum')->prefix('part-requests')->controller(PartRequestController::class)->group(function () {
     Route::get('/', 'index')->middleware('permission:parts.view');
     Route::post('/', 'store')->middleware('permission:parts.request');
+    // Static path BEFORE /{partRequest} so "spend" is never swallowed as an id.
+    Route::get('/spend', 'spend')->middleware('permission:parts.view');
     Route::get('/{partRequest}', 'show')->middleware('permission:parts.view');
     Route::post('/{partRequest}/approve', 'approve')->middleware('permission:parts.investigate|maintenance.manage');
     Route::post('/{partRequest}/reject', 'reject')->middleware('permission:parts.investigate|maintenance.manage');
@@ -325,9 +320,6 @@ Route::middleware('auth:sanctum')->prefix('maintenance-tickets')->controller(Mai
     Route::get('/vehicle/{vehicle}/idle', 'vehicleIdle')->middleware('permission:maintenance.view');
     // Awaiting-Invoice tracker: signed-off-but-uninvoiced tickets (STATIC — must precede /{ticket}).
     Route::get('/pending-invoices', 'pendingInvoices')->middleware('permission:maintenance.view');
-    // Pre-Maintenance Recommendation queue — the inspection recommendations awaiting the Supervisor's
-    // triage (pending + waiting-for-parts). STATIC — must precede /{ticket}.
-    Route::get('/recommendations', 'recommendations')->middleware('permission:maintenance.view');
     // Inspection Request Review Gate — Controllers' (Lin & Marwa) queue. STATIC — must precede /{ticket}.
     Route::get('/pending-review', 'reviewQueue')->middleware('permission:maintenance.manage');
     // Repair Quality Tracking — fleet-wide per-garage success rate + Possible Part Failure signals.
@@ -387,15 +379,12 @@ Route::middleware('auth:sanctum')->prefix('maintenance-tickets')->controller(Mai
     // UC-1 / UC-2 — Inspector (Abu Maroof). `start` picks up an existing task → diagnostic.
     Route::post('/{ticket}/start', 'startDiagnostic')->middleware('permission:maintenance.initiate');
     Route::post('/{ticket}/report', 'submitReport')->middleware('permission:maintenance.initiate');
-    // PRE-MAINTENANCE RECOMMENDATION QUEUE — the Supervisor (maintenance.delegate) triages an inspection
-    // recommendation BEFORE it becomes an active maintenance job. "Start Maintenance" (approve) is the only
-    // action that promotes it into the existing dispatch pipeline (inspection_pending); the rest keep it in,
-    // or remove it from, the queue. Shared with managers (maintenance.manage) who oversee the queue.
-    Route::post('/{ticket}/recommendation/start', 'approveRecommendation')->middleware('permission:maintenance.delegate|maintenance.manage');
-    Route::post('/{ticket}/recommendation/reject', 'dismissRecommendation')->middleware('permission:maintenance.delegate|maintenance.manage');
-    Route::post('/{ticket}/recommendation/schedule', 'scheduleRecommendation')->middleware('permission:maintenance.delegate|maintenance.manage');
-    Route::post('/{ticket}/recommendation/order-parts', 'orderRecommendationParts')->middleware('permission:maintenance.delegate|maintenance.manage');
-    Route::post('/{ticket}/recommendation/parts-ready', 'recommendationPartsReady')->middleware('permission:maintenance.delegate|maintenance.manage');
+    // INSPECTION REQUIRED PARTS — the inspector's technical requirement, kept for traceability. Filing them
+    // with the report (POST /report) raises the Part Requests automatically; POST here covers the mid-repair
+    // case and does the same thing. There is NO convert/approve route: procurement owns every sourcing
+    // decision from the moment the request exists. See MaintenanceRequiredPartService.
+    Route::get('/{ticket}/required-parts', [\App\Http\Controllers\MaintenanceRequiredPartController::class, 'index'])->middleware('permission:maintenance.view');
+    Route::post('/{ticket}/required-parts', [\App\Http\Controllers\MaintenanceRequiredPartController::class, 'store'])->middleware('permission:maintenance.initiate');
     // Supervisor Delegation — a supervisor delegates a specific driver to pickup/dropoff
     // (→ "Driver Assigned"). Fault severity itself is set by the inspector at /report, not here.
     Route::post('/{ticket}/delegate', 'delegate')->middleware('permission:maintenance.delegate');
@@ -684,6 +673,8 @@ Route::middleware('auth:sanctum')->prefix('InspectionSchedules')->controller(Ins
 Route::middleware('auth:sanctum')->prefix('ServiceReminders')->controller(ServiceReminderController::class)->group(function () {
     Route::get('/', 'index')->middleware('permission:reminders.view');                         // ?vehicle_id / ?source / ?status / ?active
     Route::post('/', 'store')->middleware('permission:reminders.manage');
+    // Literal path — MUST stay above /{serviceReminder} or the binding swallows it.
+    Route::get('/due-by-vehicle', 'dueByVehicle')->middleware('permission:reminders.view');  // dashboard: cars needing a check, folded per car
     Route::get('/{serviceReminder}', 'show')->middleware('permission:reminders.view');
     Route::post('/{serviceReminder}/complete', 'complete')->middleware('permission:reminders.manage'); // log the service, roll next-due
     Route::post('/{serviceReminder}/notify', 'notify')->middleware('permission:reminders.manage');     // alert drivers/technicians this car needs service

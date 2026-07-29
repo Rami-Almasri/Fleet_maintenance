@@ -14,6 +14,7 @@ import CreateMoveModal from './logistics/CreateMoveModal';
 import { useI18n } from '../i18n/I18nContext';
 import { evaluateContinuity, needsNote, STAGE } from '../lib/odometerContinuity';
 import OdometerContinuityHint, { odoGateBlocked } from '../components/workflow/OdometerContinuityHint';
+import LogisticsAnalytics from '../components/analytics/LogisticsAnalytics';
 
 // Relative "x ago" for a timestamp (kept tiny — no date lib).
 function ago(iso) {
@@ -531,6 +532,9 @@ export default function LogisticsDispatch() {
         {error && (
           <div style={{ borderRadius: 12, border: '1px solid rgba(251,113,133,.3)', background: 'rgba(251,113,133,.08)', color: '#fb7185', padding: '12px 16px', fontSize: 13 }}>{error}</div>
         )}
+
+        {/* Analytics — the movement pipeline and driver load, before the roster. */}
+        {!loading && <LogisticsAnalytics tasks={all} pool={pool} />}
 
         {/* Driver availability — who's free and what everyone else is doing right now. */}
         <CommandPanel

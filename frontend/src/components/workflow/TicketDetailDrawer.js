@@ -10,11 +10,12 @@ import { Skeleton } from '../ui/Skeleton';
 import FindingsList from './FindingsList';
 import WhyThisGarage from './WhyThisGarage';
 import RepairQualityCheck from './RepairQualityCheck';
+import RequiredPartsPanel from './RequiredPartsPanel';
 import RepairIntelligencePanel from '../knowledge/RepairIntelligencePanel';
 import VideoEvidence from './VideoEvidence';
 import InvoicesPanel from './InvoicesPanel';
 import TicketParts from './TicketParts';
-import { resolveAction, allows, ctaLabel, ago, fmtDuration, fmtDateTime, SEVERITY_CHIP, custodyBlocked, custodyHolderName, isAtGarage, isPausable, isPaused, isPausedOut, isTempReleasable, isTemporarilyReleased, canOrderParts } from './meta';
+import { resolveAction, allows, ctaLabel, ago, fmtDuration, fmtDateTime, SEVERITY_CHIP, custodyBlocked, custodyHolderName, isAtGarage, isPausable, isPaused, isPausedOut, isTempReleasable, isTemporarilyReleased, canOrderParts, ORIGIN_LABEL } from './meta';
 import { SHOW_VIDEO_REVIEW } from '../../config/features';
 
 // workflow_status → the lane colour, reused for the status pill so the drawer reads as the
@@ -420,6 +421,8 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
           <Section title={t('workflow.detail.overview')} icon={<Icon.Info className="h-3.5 w-3.5 text-slate-400" />}>
             <dl className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
               <Fact label={t('workflow.detail.reason')} value={tk.trigger_reason && (REASON_LABEL(t, tk.trigger_reason))} />
+              {/* WHERE the request came from — kept next to, and independent of, the reason above. */}
+              <Fact label={t('workflow.detail.source')} value={tk.request_origin_label || ORIGIN_LABEL[tk.request_origin] || null} />
               <Fact label={t('workflow.detail.type')} value={tk.maintenance_type_label} />
               <Fact label={t('workflow.detail.severity')} value={tk.severity} />
               <Fact label={t('workflow.detail.garage')} value={tk.garage} />
@@ -555,6 +558,12 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
               </div>
             </Section>
           )}
+
+          {/* Required Parts — what the INSPECTOR said the repair would need. Sits directly above the Parts
+              board because it is the step before it: the coordinator turns these technical lines into real
+              part requests once the garage is chosen (or dismisses them with a reason). Self-fetches and
+              renders nothing when the inspection listed none. */}
+          <RequiredPartsPanel ticket={tk} />
 
           {/* Parts — every part requested against this ticket + a technician's in-context "Request Part".
               Approve/purchase/install still happen on the standalone /parts board. */}

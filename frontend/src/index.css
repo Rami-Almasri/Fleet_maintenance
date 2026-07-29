@@ -38,6 +38,11 @@
   --ink-2: 71 85 105;
   --ink-3: 148 163 184;
   --line: 226 232 240;
+  /* Gridlines / chart tracks. Deliberately a SEPARATE token from --line: the .opx
+     cockpit skin re-declares --line as a HEX inside its subtree, which would make
+     rgb(var(--line)) invalid for any chart rendered on an opx page. Nothing shadows
+     --chart-line, so charts resolve it identically everywhere. */
+  --chart-line: 226 232 240;
   --glow: var(--brand-500);
   /* Tell the browser to paint native controls (inputs, selects, date pickers,
      option lists, scrollbars) in the light scheme. */
@@ -52,6 +57,7 @@
   --ink-2: 170 182 205;
   --ink-3: 120 134 160;
   --line: 40 51 78;
+  --chart-line: 40 51 78;
   /* Flip native controls to the dark scheme so the UA-default white field
      background becomes dark — otherwise our light ink renders invisibly on it. */
   color-scheme: dark;

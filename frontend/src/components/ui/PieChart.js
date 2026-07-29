@@ -9,6 +9,11 @@
 //     ]}
 //     size={210}
 //   />
+//
+// `stacked` puts the legend BELOW the pie at every width. The default side-by-side
+// layout flips on the viewport's sm: breakpoint, which is wrong inside a narrow card
+// (a third-width panel leaves the legend ~180px and its labels/numbers get squeezed) —
+// pass stacked whenever the chart lives in a column rather than a full-width card.
 
 import { useState } from 'react';
 import { palette, useMounted } from './chartUtils';
@@ -22,7 +27,7 @@ const pt = (cx, cy, r, deg) => {
   return [cx + r * Math.cos(a), cy + r * Math.sin(a)];
 };
 
-export default function PieChart({ segments = [], size = 210, className = '' }) {
+export default function PieChart({ segments = [], size = 210, stacked = false, className = '' }) {
   const mounted = useMounted();
   const [hover, setHover] = useState(null);
   const [tip, setTip] = useState(null);
@@ -61,7 +66,9 @@ export default function PieChart({ segments = [], size = 210, className = '' }) 
   });
 
   return (
-    <div className={`flex flex-col items-center gap-5 sm:flex-row sm:gap-7 ${className}`}>
+    <div
+      className={`flex flex-col items-center gap-5 ${stacked ? '' : 'sm:flex-row sm:gap-7'} ${className}`}
+    >
       <div className="shrink-0" style={{ width: size, height: size }}>
         <svg
           width={size} height={size} viewBox={`0 0 ${size} ${size}`}
@@ -93,7 +100,13 @@ export default function PieChart({ segments = [], size = 210, className = '' }) 
       </div>
 
       {/* legend */}
-      <div className="grid w-full grid-cols-2 gap-x-6 gap-y-2.5 sm:flex sm:flex-col">
+      <div
+        className={
+          stacked
+            ? 'flex w-full flex-col gap-2'
+            : 'grid w-full grid-cols-2 gap-x-6 gap-y-2.5 sm:flex sm:flex-col'
+        }
+      >
         {arcs.map((a, i) => (
           <div
             key={i}
@@ -104,8 +117,9 @@ export default function PieChart({ segments = [], size = 210, className = '' }) 
           >
             <span className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: a.color }} />
             <span className="flex-1 truncate text-sm font-medium text-slate-600">{a.label}</span>
-            <span className="text-sm font-bold text-slate-900 tabular-nums">{a.value}</span>
-            <span className="w-9 text-right text-xs font-medium text-slate-400 tabular-nums">{Math.round(a.frac * 100)}%</span>
+            {/* min-w keeps the count and the % from collapsing into each other in a narrow card */}
+            <span className="min-w-[2ch] shrink-0 text-right text-sm font-bold text-slate-900 tabular-nums">{a.value}</span>
+            <span className="w-10 shrink-0 text-right text-xs font-semibold text-slate-500 tabular-nums">{Math.round(a.frac * 100)}%</span>
           </div>
         ))}
       </div>

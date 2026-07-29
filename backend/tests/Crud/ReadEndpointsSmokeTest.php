@@ -52,7 +52,7 @@ class ReadEndpointsSmokeTest extends CrudTestCase
             '/api/Registration', '/api/Registration/coverage',
             '/api/simulation/status', '/api/StatusMismatch',
             '/api/Sync/audit',
-            '/api/team/presence', '/api/TripDashboard',
+            '/api/TripDashboard',
             '/api/vehicle-status', '/api/vehicle-status/history',
             '/api/notifications', '/api/notifications/poll',
         ];

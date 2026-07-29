@@ -39,7 +39,6 @@ class MaintenanceOperationsService
     private const IN_MAINTENANCE_STATES = [
         Maintenance::WF_INSPECTION_PENDING,
         Maintenance::WF_ON_SITE_PENDING,
-        Maintenance::WF_AWAITING_PARTS,
         Maintenance::WF_AWAITING_DISPATCH,
         Maintenance::WF_IN_TRANSIT,
         Maintenance::WF_UNDER_REPAIR,
@@ -157,8 +156,9 @@ class MaintenanceOperationsService
             Maintenance::FAULT_SEVERITY_CRITICAL, Maintenance::FAULT_SEVERITY_HIGH,
         ])->count();
 
-        $waitingParts    = $t->workflow_status === Maintenance::WF_AWAITING_PARTS
-            || collect($faults)->contains(fn ($f) => $f['waiting_parts']);
+        // One source for "waiting on a part": the faults' own open part requests. The recommendation
+        // queue's parallel awaiting_parts state is gone — see [[inspection-required-parts-split]].
+        $waitingParts    = collect($faults)->contains(fn ($f) => $f['waiting_parts']);
         $waitingApproval = in_array($t->workflow_status, self::WAITING_APPROVAL_STATES, true);
         $readyForPickup  = $t->workflow_status === Maintenance::WF_READY_FOR_PICKUP;
         $noRecentUpdate  = (bool) ($monitor['needs_update'] ?? false);
@@ -472,6 +472,10 @@ class MaintenanceOperationsService
         }
         if (in_array($t->trigger_reason, [Maintenance::TRIGGER_TEST_DRIVE, Maintenance::TRIGGER_PICKUP], true)) {
             return 'Inspection';
+        }
+        // A driver reported an actual fault — corrective work, never preventive.
+        if ($t->trigger_reason === Maintenance::TRIGGER_DRIVER_REPORTED) {
+            return 'Corrective';
         }
 
         return 'Corrective';

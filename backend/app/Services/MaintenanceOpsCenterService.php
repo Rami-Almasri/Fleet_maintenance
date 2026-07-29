@@ -257,10 +257,6 @@ class MaintenanceOpsCenterService
 
         // 2/3) The car is already an active maintenance job — don't offer to open another.
         if ($active) {
-            if (($active['workflow_status'] ?? null) === Maintenance::WF_AWAITING_PARTS) {
-                return $make('waiting_parts', 'Waiting for Parts', 'violet', true, $active['ticket_id']);
-            }
-
             return $make('in_workshop', 'Already in Workshop', 'blue', true, $active['ticket_id']);
         }
 

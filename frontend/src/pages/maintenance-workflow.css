@@ -8,6 +8,34 @@
 .mwf .mwf-error{margin-bottom:14px;padding:11px 14px;border-radius:11px;font-size:13px;
   color:var(--crit);background:rgba(251,113,133,.08);border:1px solid rgba(251,113,133,.3)}
 
+/* ---- command header — live pipeline title + running clock ---- */
+.mwf-hero{display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin-bottom:16px;
+  padding:16px 18px;border-radius:16px;border:1px solid var(--line);
+  background:linear-gradient(135deg,var(--panel),var(--deep));position:relative;overflow:hidden}
+.mwf-hero::before{content:"";position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(60% 140% at 0% 0%,rgba(34,211,238,.10),transparent 60%),
+            radial-gradient(50% 130% at 100% 100%,rgba(139,123,251,.08),transparent 60%)}
+.mwf-hero-id{display:flex;align-items:center;gap:14px;min-width:0;position:relative}
+.mwf-hero-ic{flex:none;display:grid;place-items:center;width:46px;height:46px;border-radius:13px;
+  color:#fff;background:linear-gradient(135deg,var(--brand),var(--cyan));
+  box-shadow:0 12px 26px -12px var(--cyan)}
+.mwf-hero-copy{min-width:0}
+.mwf-hero-copy h1{margin:0;font-size:21px;font-weight:800;letter-spacing:-.02em;color:var(--ink);
+  display:flex;align-items:center;gap:11px;line-height:1.15}
+.mwf-hero-copy p{margin:3px 0 0;font-size:12.5px;color:var(--ink-3);letter-spacing:.01em}
+.mwf-hero-clock{margin-left:auto;font-family:var(--mono);font-size:13px;color:var(--ink-2);position:relative}
+.mwf-hero-clock .clock b{color:var(--ink);font-weight:600}
+@media(max-width:640px){.mwf-hero-clock{margin-left:0;width:100%}}
+
+.mwf-live{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10px;
+  letter-spacing:.14em;font-weight:700;color:var(--avail);text-transform:uppercase;
+  padding:2px 9px;border-radius:999px;background:rgba(52,211,153,.1);border:1px solid rgba(52,211,153,.3)}
+.mwf-live .d{width:7px;height:7px;border-radius:50%;background:var(--avail);position:relative;flex:none}
+.mwf-live .d::after{content:"";position:absolute;inset:-4px;border-radius:50%;border:1px solid var(--avail);
+  opacity:.5;animation:mwf-ping 1.8s ease-out infinite}
+@keyframes mwf-ping{0%{transform:scale(.6);opacity:.7}100%{transform:scale(1.9);opacity:0}}
+
+
 /* ---- toolbar — the single control strip (search/filter · view toggle · actions) ---- */
 .mwf-toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:16px}
 .mwf-search{position:relative;display:flex;align-items:center}
@@ -77,15 +105,35 @@
 .mwf-card.sev-crit{border-color:rgba(251,113,133,.34)}
 .mwf-card.sev-paused{border-color:rgba(245,165,36,.3)}
 .mwf-card.sel{border-color:var(--cyan);box-shadow:0 0 0 1px var(--cyan),0 0 26px -12px rgba(34,211,238,.7)}
-.mwf-rail{width:3px;flex:none}
-.mwf-card-bd{flex:1;min-width:0;padding:10px 11px;display:flex;flex-direction:column;gap:8px}
+.mwf-rail{width:3px;flex:none;position:relative;z-index:1}
+.mwf-card-bd{position:relative;z-index:1;flex:1;min-width:0;padding:11px 12px;display:flex;flex-direction:column;gap:9px}
+/* tone aura — a soft stage-colored wash at the top of each card, so a lane reads by feel not just label */
+.mwf-card::before{content:"";position:absolute;inset:0 0 auto 0;height:66px;pointer-events:none;z-index:0;
+  background:linear-gradient(180deg,color-mix(in srgb,var(--tone,transparent) 15%,transparent),transparent)}
+.mwf-card:hover::before{background:linear-gradient(180deg,color-mix(in srgb,var(--tone,transparent) 22%,transparent),transparent)}
+
+/* ---- pipeline journey spine — the card's "where is this car" at a glance ---- */
+.mwf-stage{display:flex;flex-direction:column;gap:6px}
+.mwf-stage-hd{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.mwf-stage-nm{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-1);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mwf-stage-step{flex:none;font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.05em;color:var(--ink-3)}
+.mwf-stage-step.exc{font-weight:800}
+.mwf-pipe{display:flex;gap:3px;align-items:center}
+.mwf-pipe-seg{flex:1;height:5px;border-radius:3px;background:var(--line-2);
+  transition:background .3s,height .3s,box-shadow .3s}
+.mwf-pipe-seg.now{height:7px;animation:mwf-seg-pulse 1.9s ease-in-out infinite}
+.mwf-pipe-seg.exc{height:6px;background-image:repeating-linear-gradient(45deg,rgba(255,255,255,.16) 0 4px,transparent 4px 8px)}
+@keyframes mwf-seg-pulse{0%,100%{filter:brightness(1)}50%{filter:brightness(1.4)}}
 
 .mwf-card-top{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
 .mwf-id{display:flex;flex-direction:column;min-width:0;gap:2px}
 .mwf-plate{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:13px;font-weight:800;
-  letter-spacing:.05em;color:var(--ink)}
-.mwf-plate svg{color:var(--ink-3);flex:none}
-.mwf-car{font-size:11px;font-weight:500;color:var(--ink-3);padding-left:20px;line-height:1.4;overflow-wrap:anywhere;word-break:break-word}
+  letter-spacing:.06em;color:var(--ink);background:var(--ov2);border:1px solid var(--line-2);
+  padding:3px 9px;border-radius:8px;line-height:1}
+.mwf-plate svg{color:var(--cyan);flex:none}
+.mwf-car{font-size:11.5px;font-weight:600;color:var(--ink-2);padding-left:2px;margin-top:6px;line-height:1.35;
+  overflow-wrap:anywhere;word-break:break-word}
 .mwf-id-right{display:flex;align-items:center;gap:5px;flex:none}
 .mwf-age{display:inline-flex;align-items:center;gap:3px;font-family:var(--mono);font-size:10px;font-weight:600;color:var(--ink-3)}
 .mwf-age.over{color:var(--crit)}
@@ -137,6 +185,20 @@
 .mwf-cta{width:100%;justify-content:center}
 .mwf-cta:disabled{opacity:.5;cursor:not-allowed}
 .mwf-warn{margin:0;text-align:center;font-size:10.5px;color:var(--paused)}
+
+/* ---- action footer — icon tools (route / follow-up) + primary CTA on one tidy row ---- */
+.mwf-foot{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:auto;padding-top:10px;border-top:1px solid var(--line)}
+.mwf-foot-tools{display:flex;gap:6px;flex-wrap:wrap;flex:none}
+.mwf-foot-tools:empty{display:none}
+.mwf-tool{display:inline-flex;align-items:center;gap:5px;height:32px;padding:0 11px;border-radius:9px;
+  border:1px solid var(--line-2);background:var(--panel);color:var(--ink-2);cursor:pointer;transition:.15s;
+  font-size:11px;font-weight:600;white-space:nowrap}
+.mwf-tool svg{flex:none;color:var(--ink-3);transition:.15s}
+.mwf-tool:hover{color:var(--cyan);border-color:var(--cyan);background:var(--ov2);transform:translateY(-1px)}
+.mwf-tool:hover svg{color:var(--cyan)}
+.mwf-tool:active{transform:none}
+/* CTA takes the remaining row; drops to its own line when the tools already fill the width */
+.mwf-foot .mwf-cta{flex:1 1 130px;width:auto}
 
 /* ---- cycle guide — inline "how the cycle works" flow map ---- */
 .mwf-cycle{background:linear-gradient(180deg,var(--panel),var(--deep));border:1px solid var(--line);

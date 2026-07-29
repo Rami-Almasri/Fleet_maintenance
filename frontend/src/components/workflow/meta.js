@@ -136,7 +136,28 @@ export function ctaLabel(t, tk) {
 }
 
 // Reason → badge tone. The visible label comes from workflow.reasonShort.<value>.
-export const REASON_TONE = { test_drive: 'violet', customer_reported: 'amber', periodic: 'blue' };
+export const REASON_TONE = { test_drive: 'violet', customer_reported: 'amber', periodic: 'blue', driver_reported: 'emerald' };
+
+// request_origin → human label + tone. WHERE the ticket came from, a separate axis from the reason
+// above. CONTRACT with Maintenance::REQUEST_ORIGIN_LABELS.
+export const ORIGIN_LABEL = {
+  driver_observation: 'Driver Observation',
+  driver_request: 'Driver Request',
+  controller: 'Controller',
+  inspector: 'Inspector',
+  system_schedule: 'System Schedule',
+  workshop: 'Workshop',
+  customer: 'Customer Report',
+};
+export const ORIGIN_TONE = {
+  driver_observation: 'emerald',
+  driver_request: 'cyan',
+  controller: 'blue',
+  inspector: 'violet',
+  system_schedule: 'indigo',
+  workshop: 'red',
+  customer: 'amber',
+};
 
 // Fault Severity tone (from the resource's fault_severity_tone) → chip classes. The inspector's
 // mandatory diagnostic grade is shown FIRST on every ticket surface, so a supervisor reads how

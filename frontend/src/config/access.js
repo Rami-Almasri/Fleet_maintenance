@@ -25,7 +25,6 @@ export const ROLE_BLOCKED_PATHS = {
     '/finding-keywords',             // Keyword Risk
     '/maintenance-foresight',        // Foresight
     '/damage-accidents',             // Damage & Accidents
-    '/maintenance-recommendations',  // Recommendations
   ],
   // The Supervisor / Coordinator (dispatcher). Works the maintenance + logistics
   // boards; walled off from the fleet-wide command dashboards.

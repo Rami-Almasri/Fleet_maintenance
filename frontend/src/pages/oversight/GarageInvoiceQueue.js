@@ -5,6 +5,7 @@
 // Backed by GET /Oversight/left-garage.
 
 import { useEffect, useMemo, useState } from 'react';
+import AuditAnalytics from '../../components/analytics/AuditAnalytics';
 import { Link } from 'react-router-dom';
 import api from '../../api/client';
 import { useI18n } from '../../i18n/I18nContext';
@@ -87,6 +88,16 @@ export default function GarageInvoiceQueue() {
             <p className="text-xs text-slate-400">{t('oversight.common.emptyBody')}</p>
           </div>
         ) : (
+          <>
+          <AuditAnalytics
+            rows={rows}
+            title="Cars left the garage longest ago"
+            subtitle="How long each car has been out while its maintenance contract stayed open — the oldest are the most likely to be forgotten"
+            magnitude={(r) => r.days_since}
+            magnitudeLabel="Days out"
+            magnitudeFormat={(n) => `${Math.round(n)}d`}
+            color="orange"
+          />
           <div className="overflow-x-auto rounded-2xl border border-slate-200/60 bg-white shadow-soft">
             <table className="w-full min-w-[760px] border-separate border-spacing-0 text-sm">
               <thead>
@@ -131,6 +142,7 @@ export default function GarageInvoiceQueue() {
               </tbody>
             </table>
           </div>
+          </>
         )}
       </div>
     </div>

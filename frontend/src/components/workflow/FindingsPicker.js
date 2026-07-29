@@ -16,8 +16,15 @@
 // seen by the Garage user) is rendered "Already reported" — selected-looking, disabled and un-clickable —
 // so the same issue can never be added twice. Locking is computed from whatever `locked` the caller
 // passes, so it reflects the live ticket the moment the picker opens.
+//
+// PRESENTATION — the catalog is long (13 categories × ~7 keywords), so it is NOT dumped as one endless
+// wall of chips. Each category is a COLLAPSED accordion row showing its name + how many of its issues are
+// picked; the inspector opens only the systems they actually looked at. A search box across the top
+// filters every keyword (English + Arabic + category name) at once and auto-opens whatever matches, so a
+// known fault is one type away instead of a scroll hunt. A pinned "selected" tray keeps every pick visible
+// (and removable) no matter which categories are closed.
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Icon from '../ui/Icon';
 import { useI18n } from '../../i18n/I18nContext';
 
@@ -71,6 +78,11 @@ function Chip({ label, tone, active, locked, lockedTitle, onClick }) {
 export default function FindingsPicker({ catalog, keywordMeta = {}, value = [], onChange, locked = [], onSiteOnly = false, onSiteKeywords = [], suggested = [], statusConditions = [] }) {
   const { t, lang } = useI18n();
   const [custom, setCustom] = useState('');
+  const [query, setQuery] = useState('');
+  // Which category accordions are open. Everything starts CLOSED — the inspector opens the systems they
+  // actually inspected. A category holding a pick auto-opens once (see the effect below) so a selection
+  // is never hidden behind a closed row.
+  const [openCats, setOpenCats] = useState(() => new Set());
   const allCategories = catalog?.length ? catalog : FALLBACK;
 
   // Reality-check lookup by condition key ('oil' | 'battery' | 'tyres') → its live status entry.
@@ -117,10 +129,6 @@ export default function FindingsPicker({ catalog, keywordMeta = {}, value = [], 
     () => new Set(allCategories.flatMap((c) => c.keywords.map((k) => k.toLowerCase()))),
     [allCategories],
   );
-  const customTags = useMemo(
-    () => value.filter((v) => !known.has(v.toLowerCase())),
-    [value, known],
-  );
   // Locked findings that aren't in the catalog (e.g. an inspector's custom note) — surfaced in their
   // own row so the Garage user sees the full "already reported" picture, not just the preset chips.
   const lockedCustoms = useMemo(
@@ -133,6 +141,55 @@ export default function FindingsPicker({ catalog, keywordMeta = {}, value = [], 
     if (isLocked(k)) return; // already reported — never selectable
     onChange(has(k) ? value.filter((v) => v.toLowerCase() !== k.toLowerCase()) : [...value, k]);
   };
+
+  // ── Search ────────────────────────────────────────────────────────────────────
+  // One box over the WHOLE catalog: matches the English keyword (the saved value), its Arabic label, and
+  // the category name — so "brake" / "فرامل" / "Brakes" all land. A category whose NAME matches keeps all
+  // of its keywords (you asked for the system, you get the system); otherwise only the matching keywords
+  // survive. While searching, every surviving category renders open regardless of the accordion state.
+  const q = query.trim().toLowerCase();
+  const kwMatches = (k) => k.toLowerCase().includes(q) || String(keywordMeta[k]?.ar || '').toLowerCase().includes(q);
+  const visibleCategories = useMemo(() => {
+    if (!q) return categories;
+    return categories
+      .map((c) => {
+        const catHit = String(c.label || '').toLowerCase().includes(q) || String(c.label_ar || '').toLowerCase().includes(q);
+        return catHit ? c : { ...c, keywords: c.keywords.filter(kwMatches) };
+      })
+      .filter((c) => c.keywords.length > 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [categories, q, keywordMeta]);
+  const searching = q.length > 0;
+  const matchCount = useMemo(
+    () => visibleCategories.reduce((n, c) => n + c.keywords.length, 0),
+    [visibleCategories],
+  );
+
+  // How many of a category's issues are currently picked — the badge that lets a closed row still report
+  // what's inside it.
+  const pickedIn = (cat) => cat.keywords.filter((k) => has(k) || isLocked(k)).length;
+
+  const isOpen = (cat) => searching || openCats.has(cat.key);
+  const toggleCat = (key) =>
+    setOpenCats((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  const setAllOpen = (open) => setOpenCats(open ? new Set(categories.map((c) => c.key)) : new Set());
+
+  // Auto-open any category that already carries a pick (a resumed draft, or the Garage user seeing the
+  // inspector's locked findings). Runs once per catalog load — after that the inspector owns the state.
+  const autoOpened = useRef(false);
+  useEffect(() => {
+    if (autoOpened.current || !allCategories.length) return;
+    autoOpened.current = true;
+    const preset = allCategories
+      .filter((c) => c.keywords.some((k) => selectedSet.has(k.toLowerCase()) || lockedSet.has(k.toLowerCase())))
+      .map((c) => c.key);
+    if (preset.length) setOpenCats(new Set(preset));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allCategories]);
 
   // Ready-entry-point row — the exact keyword(s) this ticket was system-flagged for (an oil change /
   // battery / tyre service the car's data says is DUE), from DiagnosticGateService. One tap confirms it
@@ -214,24 +271,121 @@ export default function FindingsPicker({ catalog, keywordMeta = {}, value = [], 
         </p>
       )}
 
-      {categories.map((cat) => (
-        <div key={cat.key}>
-          <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">{catLabel(cat)}</p>
+      {/* Search — one box across the entire catalog, so a known fault never needs a category hunt. */}
+      <div className="space-y-2">
+        <div className="relative">
+          <Icon.Search className="pointer-events-none absolute inset-y-0 start-3 my-auto h-4 w-4 text-slate-400" />
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={t('findingsPicker.searchPlaceholder')}
+            className="w-full rounded-xl border border-slate-300 bg-white py-2 pe-9 ps-9 text-sm text-slate-700 placeholder:text-slate-400 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+          />
+          {query && (
+            <button
+              type="button"
+              onClick={() => setQuery('')}
+              aria-label={t('findingsPicker.clearSearch')}
+              className="absolute inset-y-0 end-2 my-auto flex h-6 w-6 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+            >
+              <Icon.X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between gap-2 text-[11px]">
+          <span className="font-medium text-slate-500">
+            {searching
+              ? t('findingsPicker.searchResults', { count: matchCount })
+              : t('findingsPicker.selectedCount', { count: value.length })}
+          </span>
+          {!searching && (
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => setAllOpen(true)} className="font-semibold text-indigo-600 transition hover:underline">
+                {t('findingsPicker.expandAll')}
+              </button>
+              <span className="text-slate-300">·</span>
+              <button type="button" onClick={() => setAllOpen(false)} className="font-semibold text-slate-500 transition hover:underline">
+                {t('findingsPicker.collapseAll')}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Pinned selection tray — every pick stays visible (and removable) with all categories closed. */}
+      {value.length > 0 && (
+        <div className="rounded-xl bg-indigo-50/60 p-2.5 ring-1 ring-inset ring-indigo-200">
+          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-700">
+            {t('findingsPicker.selectedTitle')}
+          </p>
           <div className="flex flex-wrap gap-1.5">
-            {cat.keywords.map((k) => (
-              <Chip
-                key={k}
-                label={kwLabel(k)}
-                tone={kwTone(k)}
-                active={has(k)}
-                locked={isLocked(k)}
-                lockedTitle={t('findingsPicker.alreadyReported')}
-                onClick={() => toggle(k)}
-              />
+            {value.map((k) => (
+              <span key={`sel-${k}`} className="inline-flex items-center gap-1 rounded-full bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white">
+                {kwLabel(k)}
+                <button
+                  type="button"
+                  onClick={() => toggle(k)}
+                  aria-label={t('findingsPicker.remove', { label: kwLabel(k) })}
+                  className="text-indigo-200 transition hover:text-white"
+                >
+                  ×
+                </button>
+              </span>
             ))}
           </div>
         </div>
-      ))}
+      )}
+
+      {/* Categories — collapsed accordions. The header reports what's inside so a closed row is never a
+          black box; the chips only render once it's open (or while a search is filtering). */}
+      <div className="divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white">
+        {visibleCategories.map((cat) => {
+          const open = isOpen(cat);
+          const picked = pickedIn(cat);
+          return (
+            <div key={cat.key}>
+              <button
+                type="button"
+                onClick={() => toggleCat(cat.key)}
+                aria-expanded={open}
+                className={`flex w-full items-center gap-2 px-3 py-2.5 text-start transition ${open ? 'bg-slate-50/80' : 'hover:bg-slate-50'}`}
+              >
+                <Icon.ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${open ? '' : '-rotate-90 rtl:rotate-90'}`} />
+                <span className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-700">{catLabel(cat)}</span>
+                {picked > 0 && (
+                  <span className="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-indigo-600 px-1.5 text-[10px] font-bold text-white">
+                    {picked}
+                  </span>
+                )}
+                <span className="text-[11px] tabular-nums text-slate-400">{cat.keywords.length}</span>
+              </button>
+              {open && (
+                <div className="flex flex-wrap gap-1.5 border-t border-slate-100 bg-white px-3 pb-3 pt-2.5">
+                  {cat.keywords.map((k) => (
+                    <Chip
+                      key={k}
+                      label={kwLabel(k)}
+                      tone={kwTone(k)}
+                      active={has(k)}
+                      locked={isLocked(k)}
+                      lockedTitle={t('findingsPicker.alreadyReported')}
+                      onClick={() => toggle(k)}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {visibleCategories.length === 0 && (
+          <p className="px-3 py-6 text-center text-xs text-slate-400">
+            {t('findingsPicker.noMatches', { query })}
+          </p>
+        )}
+      </div>
 
       {/* Custom issue — captured as a tag like any other, so it stays searchable/reportable. */}
       <div className="border-t border-slate-100 pt-3">
@@ -246,16 +400,8 @@ export default function FindingsPicker({ catalog, keywordMeta = {}, value = [], 
           </div>
         )}
 
-        {customTags.length > 0 && (
-          <div className="mb-2 flex flex-wrap gap-1.5">
-            {customTags.map((tag) => (
-              <span key={tag} className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700 ring-1 ring-amber-200">
-                {tag}
-                <button type="button" onClick={() => toggle(tag)} className="text-amber-500 hover:text-amber-700" aria-label={t('findingsPicker.remove', { label: tag })}>×</button>
-              </span>
-            ))}
-          </div>
-        )}
+        {/* Free-typed tags aren't echoed here — the pinned selection tray above already lists (and
+            removes) every pick, preset or custom, so this stays a pure entry box. */}
         <div className="flex gap-2">
           <input
             value={custom}

@@ -108,7 +108,48 @@ class MaintenanceTaskService
             }
         }
 
+        // The inspector's required parts were recorded against FINDINGS (the fault rows did not exist yet).
+        // Now that they do, bind each line to its fault. Hooked here rather than at the call sites so every
+        // path that promotes findings closes the traceability loop automatically.
+        $this->bindRequiredParts($ticket);
+
         return $created;
+    }
+
+    /**
+     * Resolve the ticket's still-unbound {@see MaintenanceRequiredPart} lines to the faults they belong to,
+     * matching on the same normalised symptom key this service promotes findings by. Idempotent, and
+     * best-effort: a failure here must never break fault promotion.
+     *
+     * @return int how many lines were newly bound
+     */
+    public function bindRequiredParts(Maintenance $ticket): int
+    {
+        try {
+            $unbound = $ticket->requiredParts()
+                ->whereNull('maintenance_task_id')->whereNotNull('finding_key')->get();
+            if ($unbound->isEmpty()) {
+                return 0;
+            }
+
+            $tasks = $ticket->tasks()->get()
+                ->keyBy(fn (MaintenanceTask $t) => \App\Models\MaintenanceRequiredPart::findingKey($t->symptom));
+
+            $bound = 0;
+            foreach ($unbound as $line) {
+                if ($task = $tasks->get($line->finding_key)) {
+                    $line->maintenance_task_id = $task->id;
+                    $line->save();
+                    $bound++;
+                }
+            }
+
+            return $bound;
+        } catch (\Throwable $e) {
+            report($e);
+
+            return 0;
+        }
     }
 
     /**

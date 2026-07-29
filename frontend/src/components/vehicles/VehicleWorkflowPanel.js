@@ -25,7 +25,7 @@ const STAGE = {
   closed:                 { label: 'Closed',            tone: 'green' },
   diagnostic_cleared:     { label: 'No Maintenance',    tone: 'slate' },
 };
-const REASON = { test_drive: 'Test Drive', customer_reported: 'Complaint', periodic: 'Routine' };
+const REASON = { test_drive: 'Test Drive', customer_reported: 'Complaint', periodic: 'Routine', driver_reported: 'Driver reported' };
 
 const odo = (n) => (n ? `${num(n)} km` : '—');
 

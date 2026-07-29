@@ -6,6 +6,16 @@ export const aed = (n) =>
 export const aed2 = (n) =>
   'AED ' + Number(n || 0).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+// Chart-friendly money: "AED 1.4M" / "AED 320k" / "AED 940". Keeps axis ticks and
+// ranked-bar value columns narrow enough to read at a glance. Always unsigned —
+// callers that show polarity (RankedBar diverging) render the sign themselves.
+export const aedCompact = (n) => {
+  const v = Math.abs(Number(n) || 0);
+  if (v >= 1e6) return `AED ${(v / 1e6).toFixed(v >= 1e7 ? 0 : 1)}M`;
+  if (v >= 1e3) return `AED ${Math.round(v / 1e3)}k`;
+  return `AED ${Math.round(v)}`;
+};
+
 export const num = (n) => Number(n || 0).toLocaleString();
 
 // "2025-05-07T00:00:00.000000Z" | "2025-05-07" -> "07 May 2025"

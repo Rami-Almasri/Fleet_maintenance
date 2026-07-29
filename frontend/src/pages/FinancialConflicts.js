@@ -1,4 +1,5 @@
 import { useCallback } from 'react';
+import IssueGroupsAnalytics from '../components/analytics/IssueGroupsAnalytics';
 import { Link } from 'react-router-dom';
 import api from '../api/client';
 import useFetch from '../hooks/useFetch';
@@ -189,7 +190,20 @@ export default function FinancialConflicts() {
             />
           </SectionCard>
         ) : (
-          groups.map((g) => <Group key={g.key} g={g} />)
+          <>
+            {/* Analytics — which conflict types dominate, before the per-group tables. */}
+            <IssueGroupsAnalytics
+              groups={groups}
+              criticalLabel="Money at risk"
+              warningLabel="Needs checking"
+              infoLabel="Informational"
+              rankTitle="Biggest accounting problems"
+              rankSubtitle="Conflict types ranked by how many invoices they affect"
+              centerLabel="Conflicts"
+              criticalNote="where money is actually exposed"
+            />
+            {groups.map((g) => <Group key={g.key} g={g} />)}
+          </>
         )}
       </div>
     </div>

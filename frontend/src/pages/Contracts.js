@@ -10,6 +10,7 @@ import DataTable, { SectionCard } from '../components/ui/Table';
 import { InfoTip } from '../components/ui/Tooltip';
 import Icon from '../components/ui/Icon';
 import { Select } from '../components/ui/Field';
+import ContractsAnalytics from '../components/analytics/ContractsAnalytics';
 import { aed2, fmtDate, num } from '../lib/format';
 import { SHOW_FINANCIALS } from '../config/features';
 
@@ -147,6 +148,11 @@ export default function Contracts() {
 
         {error && (
           <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error}</div>
+        )}
+
+        {/* Analytics — describes THIS page of results (the list paginates server-side). */}
+        {!loading && !error && rows.length > 0 && (
+          <ContractsAnalytics rows={rows} showFinancials={SHOW_FINANCIALS} />
         )}
 
         <SectionCard

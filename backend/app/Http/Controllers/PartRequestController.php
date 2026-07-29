@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Helpers\ResponseHelper;
 use App\Http\Resources\PartRequestResource;
 use App\Models\PartRequest;
+use App\Services\PartSpendService;
 use App\Services\PartWorkflowService;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -47,6 +48,29 @@ class PartRequestController extends Controller
                 'requests' => PartRequestResource::collection($rows),
                 'meta'     => ['total' => $rows->total(), 'per_page' => $rows->perPage(), 'current_page' => $rows->currentPage()],
             ], 'Part requests retrieved');
+        } catch (\Throwable $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
+     * Fleet-wide parts spend for the board's "Where parts money goes" chart. Deliberately NOT derived
+     * from the request list: most parts money is itemised on garage invoices and never passes through
+     * a part request, so the chart reads the unified ledger (see PartSpendService).
+     */
+    public function spend(Request $request, PartSpendService $spend)
+    {
+        try {
+            $data = $request->validate([
+                'by'         => ['nullable', Rule::in(['part', 'car'])],
+                'limit'      => ['nullable', 'integer', 'min:1', 'max:50'],
+                'vehicle_id' => ['nullable', 'exists:vehicles,id'],
+            ]);
+
+            return ResponseHelper::SuccessResponse(
+                $spend->ranked($data['by'] ?? 'part', (int) ($data['limit'] ?? 10), $data['vehicle_id'] ?? null),
+                'Parts spend retrieved'
+            );
         } catch (\Throwable $e) {
             return ResponseHelper::fromException($e);
         }

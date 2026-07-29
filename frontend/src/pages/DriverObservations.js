@@ -14,6 +14,7 @@ import Badge from '../components/ui/Badge';
 import Button from '../components/ui/Button';
 import Icon from '../components/ui/Icon';
 import DriverObservationModal from '../components/workflow/DriverObservationModal';
+import DriverObservationsAnalytics from '../components/analytics/DriverObservationsAnalytics';
 
 const STATUS_META = {
   open:                  { label: 'Open', tone: 'amber' },
@@ -144,6 +145,9 @@ export default function DriverObservations() {
         </div>
 
         {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>}
+
+        {/* Analytics — the whole observation log, before the table. */}
+        {!loading && rows.length > 0 && <DriverObservationsAnalytics rows={rows} />}
 
         <SectionCard title="Observations" subtitle={`${rows.length} logged`}>
           <DataTable columns={columns} rows={rows} rowKey={(r) => r.id} loading={loading} empty="No observations logged yet." />

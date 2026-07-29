@@ -24,7 +24,11 @@ export const PALETTES = {
 export const palette = (key) => PALETTES[key] || PALETTES.indigo;
 
 // Theme tokens — resolve to the right colour in both Platinum (light) and Cockpit (dark).
-export const LINE = 'rgb(var(--line))';
+// Uses --chart-line rather than --line on purpose: the .opx cockpit skin re-declares
+// --line as a HEX inside its subtree, which would make rgb(var(--line)) invalid for any
+// chart rendered on an opx page (Vehicles, the Maintenance Cycle board). Nothing shadows
+// --chart-line, so gridlines and tracks resolve identically on every page.
+export const LINE = 'rgb(var(--chart-line))';
 
 let UID = 0;
 // A stable unique id (for <defs> gradient ids that must not collide across charts).

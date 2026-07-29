@@ -55,6 +55,9 @@ return [
         'fallback_permission' => env('MAINT_CHECKPOINT_FALLBACK_PERMISSION', 'maintenance.delegate'),
         // Days before the expected completion date the first "checkpoint required" reminder fires.
         'reminder_lead_days'  => (int) env('MAINT_CHECKPOINT_LEAD_DAYS', 1),
+        // Days without a progress update before the Operations board flags a car as neglected
+        // ("No checkpoint updates for N days"). Drives MaintenanceOpsCardService's stale alert.
+        'stale_days'          => (int) env('MAINT_CHECKPOINT_STALE_DAYS', 3),
     ],
 
 ];

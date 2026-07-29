@@ -14,7 +14,7 @@ import TicketParts from './TicketParts';
 import CheckpointModal from '../maintenance/CheckpointModal';
 import CheckpointTimeline from '../maintenance/CheckpointTimeline';
 import { getTicketCheckpoints, isCheckpointStage } from '../../lib/maintenanceCheckpoints';
-import { resolveAction, allows, ctaLabel, ago, fmtDuration, fmtDateTime, REASON_TONE, custodyBlocked, custodyHolderName, isAtGarage, canOrderParts } from './meta';
+import { resolveAction, allows, ctaLabel, ago, fmtDuration, fmtDateTime, REASON_TONE, ORIGIN_LABEL, ORIGIN_TONE, custodyBlocked, custodyHolderName, isAtGarage, canOrderParts } from './meta';
 import { fmtDate } from '../../lib/format';
 import { SHOW_FINANCIALS } from '../../config/features';
 
@@ -546,6 +546,12 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
                     {tk.trigger_reason && (
                       <Badge tone={REASON_TONE[tk.trigger_reason] || 'slate'}>{REASON_LABEL(t, tk.trigger_reason)}</Badge>
                     )}
+                    {/* Source — who found this. Independent of the reason chip beside it. */}
+                    {tk.request_origin && (
+                      <Badge tone={ORIGIN_TONE[tk.request_origin] || 'slate'}>
+                        {tk.request_origin_label || ORIGIN_LABEL[tk.request_origin]}
+                      </Badge>
+                    )}
                   </div>
                 </div>
               </div>
@@ -610,6 +616,7 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
             >
               <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <Fact icon={<Icon.Spark className="h-4 w-4" />} label={t('workflow.detail.reason')} value={tk.trigger_reason && REASON_LABEL(t, tk.trigger_reason)} />
+                <Fact icon={<Icon.Flag className="h-4 w-4" />} label={t('workflow.detail.source')} value={tk.request_origin_label || ORIGIN_LABEL[tk.request_origin] || null} />
                 <Fact icon={<Icon.Wrench className="h-4 w-4" />} label={t('workflow.detail.type')} value={tk.maintenance_type_label} />
                 <Fact icon={<Icon.Alert className="h-4 w-4" />} label={t('workflow.detail.severity')} value={tk.severity} />
                 <Fact icon={<Icon.Shield className="h-4 w-4" />} label={t('workflow.detail.garage')} value={tk.garage} />

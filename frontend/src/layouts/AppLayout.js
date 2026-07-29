@@ -88,7 +88,7 @@ const NAV_SECTIONS = [
       { name: 'Maintenance Cycle', to: '/maintenance-workflow', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-3 7-3 3 3 3m6-6 3 3-3 3', desc: 'The live maintenance ticket pipeline (Inspector → Supervisor → Driver → Garage → Re-inspection). Open a ticket and advance it through the stages; the board updates in real time.' },
       { name: 'My Queue', to: '/my-maintenance-queue', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-3 9 2 2 4-4', desc: 'Your role-scoped maintenance work in one place: Abu Maroof (Inspector) sees pending inspections and final re-inspections; a Supervisor (Dispatcher) sees tickets awaiting a garage + driver assignment; a Driver sees active trips/dispatches and cars waiting on a follow-up.' },
       { name: 'Inspection Review', to: '/inspection-review', icon: 'M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Controllers (Lin & Marwa) review inspection requests before they reach Abu Maroof — approve to send it on, or reject with a reason.' },
-      { name: 'Recommendations', to: '/maintenance-recommendations', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-3 8h.01M9 11h6m-6 3h4', desc: 'Inspection recommendations awaiting a supervisor’s review, before any maintenance starts. Approve to begin work, order parts first, schedule for later, or dismiss — a recommendation-only car never clutters the active board.' },
+      { name: 'Service Reminders', to: '/service-reminders', icon: 'M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Every car’s recurring service due points — oil change, filters, brakes, tires, battery — with how far each is from due in km or days. Oil and tire reminders are seeded per car from the Oil Change intervals; add or edit any of them. Notify alerts the drivers and technicians; Schedule opens the maintenance ticket that performs the work.' },
     ],
   },
   {
@@ -124,7 +124,6 @@ const NAV_SECTIONS = [
     title: 'Fleet Operations',
     items: [
       { name: 'Driver Dispatch', to: '/driver-dispatch', icon: 'M3 7h11v8H3zM14 10h3.5L21 13v2h-7M6.5 18.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM17.5 18.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z', desc: 'Driver Dispatch: send a vehicle between locations (to Deals on Wheels, the garage, …) and track which driver has it and where. Dispatching a car flips it to “In Transit to …” on the grid and drops an Action Required task into the assignee’s My Queue.' },
-      { name: "Who's Where", to: '/team-presence', icon: 'M17 20h5v-2a4 4 0 0 0-3-3.87M9 20H4v-2a4 4 0 0 1 3-3.87m10-5.13a4 4 0 1 0-4-4 4 4 0 0 0 4 4zM9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6z', desc: 'Live team availability — everyone on the team and whether they’re free or busy right now, and if busy, exactly why (driving a move, on a maintenance pickup, or inspecting a car), which car and for how long.' },
       { name: 'Fleet Health', to: '/inspections/schedules', icon: 'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM9 15l2 2 4-4', desc: 'The fleet\'s neural center — a unified hub with tabs for Service Due (odometer-based) and Registration & Insurance expiry, consolidating the live per-car health surfaces in one place.' },
       { name: 'Car Status', to: '/car-status', icon: 'M5 17h14M5 17a2 2 0 0 1-2-2v-3l2-5a2 2 0 0 1 2-1.4h8A2 2 0 0 1 19 7l2 5v3a2 2 0 0 1-2 2M7 17v1a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-1m14 0v1a1 1 0 0 1-1 1h0a1 1 0 0 1-1-1v-1M9 12l2 2 4-4', desc: 'The live stage board — every car in the maintenance workflow laid out by the exact stage it\'s in right now (Needs Test Drive → Being Inspected → Needs Dispatch → Awaiting Pickup → En Route → In Workshop → Ready for Pickup → Final QA), each showing who is responsible for it at that stage: the inspector, the supervisor who must dispatch, the driver who holds the car, or the garage. A stage reads “Waiting” until someone takes it, then shows their name. Click any car to open its ticket.' },
     ],
@@ -145,7 +144,6 @@ const NAV_SECTIONS = [
     title: 'Fleet Intelligence',
     items: [
       { name: 'Cost Intelligence', to: '/cost-intelligence', intel: true, icon: 'M3 12h4l2-7 4 14 2-7h4', desc: 'Maintenance cost per kilometre, per day and per rental for every car — the true running cost of each asset. Numerator is the same logged repair spend as the Profit Bridge; denominators are validated distance, in-service days and rental count. Cars with no measured distance show “—”, never a misleading zero.' },
-      { name: 'Service Due', to: '/service-due', intel: true, icon: 'M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Cars overdue for service or approaching it — by odometer interval and projected from each car’s own usage rate. Overdue first, then soonest. Built on the same km service rule the whole platform uses; cars with no interval or reading are never guessed.' },
       // Reuses the existing utilization board (/fleet-utilization) — no rebuild. When the intelligence
       // layer is on it lives here; when off it stays in Analytics & Admin (see hideWhenIntel below).
       { name: 'Fleet Utilization', to: '/fleet-utilization', intel: true, icon: 'M3 3v18h18M7 15l3-3 3 3 5-5M8 21V9m4 12V5m4 16v-7', desc: 'Per-car split of owned time into rented, in-maintenance, and idle days — utilization and downtime % against how long you have owned each car, with rent lost to downtime.' },
@@ -194,7 +192,6 @@ const NAV_PERMISSIONS = {
   '/dashboard': 'dashboard.view',
   '/notifications': null,
   '/settings': null,
-  '/team-presence': 'logistics.view',
   '/completed-repairs': 'maintenance.view',
   '/maintenance-history': 'dashboard.view',
   '/finding-keywords': 'maintenance.view',
@@ -209,12 +206,12 @@ const NAV_PERMISSIONS = {
   '/contracts': 'contracts.view',
   '/inspections/schedules': 'inspections.view',
   '/reminders/service': 'reminders.view',
+  '/service-reminders': 'reminders.view',
   '/registrations': 'registration.view',
   '/maintenance': 'maintenance.view',
   '/maintenance-hub': 'maintenance.view',
   '/car-status': 'maintenance.view',
   '/maintenance-workflow': 'maintenance.view',
-  '/maintenance-recommendations': 'maintenance.view',
   '/my-maintenance-queue': 'maintenance.view',
   '/maintenance-foresight': 'maintenance.view',
   '/cost-capture': 'maintenance.manage',
@@ -225,7 +222,6 @@ const NAV_PERMISSIONS = {
   '/damage-accidents': 'maintenance.view',
   '/profitability': 'insights.view',
   '/cost-intelligence': 'insights.view',
-  '/service-due': 'insights.view',
   '/mileage': 'insights.view',
   '/fleet-utilization': 'insights.view',
   '/maintenance-swap': 'insights.view',

@@ -47,7 +47,6 @@ class CarStatusService
         Maintenance::WF_TRIAGE_APPROVAL_PENDING  => ['supervisor', 'Awaiting routing approval',               'Waiting Approval'],
         Maintenance::WF_INSPECTION_DIAGNOSTIC    => ['inspector',  'Test-drive diagnostic in progress',       'With Inspector'],
         Maintenance::WF_RECOMMENDATION_PENDING   => ['supervisor', 'Awaiting recommendation approval',        'Waiting Approval'],
-        Maintenance::WF_AWAITING_PARTS           => ['vendor',     'Waiting for parts',                       'Waiting Parts'],
         Maintenance::WF_INSPECTION_PENDING       => ['supervisor', 'Awaiting dispatch decision',              'Ready for Dispatch'],
         Maintenance::WF_ON_SITE_PENDING          => ['garage',     'Pending on-site service',                 'On-Site Service'],
         Maintenance::WF_AWAITING_DISPATCH        => ['driver',     'Awaiting driver pickup',                  'Ready for Dispatch'],
@@ -71,7 +70,6 @@ class CarStatusService
         Maintenance::WF_RECOMMENDATION_PENDING   => 22,
         Maintenance::WF_INSPECTION_PENDING       => 25,
         Maintenance::WF_ON_SITE_PENDING          => 28,
-        Maintenance::WF_AWAITING_PARTS           => 30,
         Maintenance::WF_AWAITING_DISPATCH        => 40,
         Maintenance::WF_IN_TRANSIT               => 50,
         Maintenance::WF_UNDER_REPAIR             => 65,
@@ -93,7 +91,7 @@ class CarStatusService
      */
     private const LIVE_PIPELINE = [
         ['Inspection',   [Maintenance::WF_INSPECTION_REQUESTED, Maintenance::WF_INSPECTION_DIAGNOSTIC]],
-        ['Decision',     [Maintenance::WF_PENDING_REVIEW, Maintenance::WF_COMPLAINT_TRIAGE, Maintenance::WF_TRIAGE_APPROVAL_PENDING, Maintenance::WF_RECOMMENDATION_PENDING, Maintenance::WF_INSPECTION_PENDING, Maintenance::WF_ON_SITE_PENDING, Maintenance::WF_AWAITING_PARTS]],
+        ['Decision',     [Maintenance::WF_PENDING_REVIEW, Maintenance::WF_COMPLAINT_TRIAGE, Maintenance::WF_TRIAGE_APPROVAL_PENDING, Maintenance::WF_RECOMMENDATION_PENDING, Maintenance::WF_INSPECTION_PENDING, Maintenance::WF_ON_SITE_PENDING]],
         ['Dispatch',     [Maintenance::WF_AWAITING_DISPATCH]],
         ['In Transit',   [Maintenance::WF_IN_TRANSIT]],
         ['Under Repair', [Maintenance::WF_UNDER_REPAIR, Maintenance::WF_REPAIR_REVIEW]],
@@ -103,7 +101,7 @@ class CarStatusService
     ];
 
     /** States that mean the ticket is BLOCKED (not progressing) — surfaced on the row + stage tracker. */
-    private const BLOCKED_STATES = [Maintenance::WF_AWAITING_PARTS, Maintenance::WF_REINSPECTION_FAILED];
+    private const BLOCKED_STATES = [Maintenance::WF_REINSPECTION_FAILED];
 
     /** "In Workshop" = the car is physically at a garage right now (being repaired / reviewed / awaiting pickup). */
     private const IN_WORKSHOP = [Maintenance::WF_UNDER_REPAIR, Maintenance::WF_REPAIR_REVIEW, Maintenance::WF_READY_FOR_PICKUP];
@@ -179,8 +177,9 @@ class CarStatusService
             ->reject(fn (PartRequest $r) => in_array($r->status, PartRequest::TERMINAL, true))
             ->pluck('part_name')->filter()->unique()->values()->all();
 
-        // waiting_parts: resolver owns the mid-repair block; keep the pre-ticket lane fact (WF_AWAITING_PARTS).
-        $waitingParts = $t->workflow_status === Maintenance::WF_AWAITING_PARTS || $repair->isWaitingForParts();
+        // waiting_parts: now a single source — the mid-repair resolver, which reads the ticket's open part
+        // requests. The old pre-ticket awaiting_parts lane is gone; see [[inspection-required-parts-split]].
+        $waitingParts = $repair->isWaitingForParts();
 
         // Days the car has been inside maintenance (since the ticket opened).
         $openedAt        = $t->created_at ?? $t->requested_at;
@@ -287,9 +286,14 @@ class CarStatusService
         $isRoutine    = $type === Maintenance::TYPE_ROUTINE || $trigger === Maintenance::TRIGGER_PERIODIC || $t->visit_context === Maintenance::CONTEXT_ROUTINE;
         $isCustomer   = $trigger === Maintenance::TRIGGER_CUSTOMER;
         $isInspection = in_array($trigger, [Maintenance::TRIGGER_TEST_DRIVE, Maintenance::TRIGGER_PICKUP], true);
+        // A fault someone who drove the car reported — checked BEFORE the routine test, so a ticket the
+        // inspector later classifies as routine work still reads as a driver-reported issue here.
+        $isDriverReported = $trigger === Maintenance::TRIGGER_DRIVER_REPORTED;
 
         if ($isBreakdown) {
             [$label, $source, $key] = [$complaint ?: $faultLabel ?: 'Breakdown', 'Breakdown Report', 'breakdown'];
+        } elseif ($isDriverReported) {
+            [$label, $source, $key] = [$complaint ?: $faultLabel ?: 'Driver-reported issue', 'Driver Observation', 'driver'];
         } elseif ($isRoutine) {
             [$label, $source, $key] = [$faultLabel ?: 'Scheduled Service', 'Scheduled Maintenance', 'scheduled'];
         } elseif ($isCustomer) {

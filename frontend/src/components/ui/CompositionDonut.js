@@ -13,7 +13,7 @@
 //   />
 
 import { useEffect, useState } from 'react';
-import { palette } from './chartUtils';
+import { palette, LINE } from './chartUtils';
 import { useCountUp } from './Gauge';
 import { ChartTooltip } from './Tooltip';
 
@@ -80,7 +80,7 @@ export default function CompositionDonut({
     <div className={`flex flex-col items-center gap-6 sm:flex-row sm:gap-7 ${className}`}>
       <div className="relative shrink-0" style={{ width: size, height: size }}>
         <svg width={size} height={size} className="-rotate-90">
-          <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgb(var(--line))" strokeWidth={stroke} />
+          <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={LINE} strokeWidth={stroke} />
           {arcs.map((a) => {
             const len = c * a.frac * grow;
             const dim = active != null && active !== a.i;

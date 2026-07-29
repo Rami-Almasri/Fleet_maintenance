@@ -9,6 +9,7 @@ import DataTable, { SectionCard } from '../components/ui/Table';
 import { MetricGridSkeleton, Skeleton } from '../components/ui/Skeleton';
 import Icon from '../components/ui/Icon';
 import ProfitBridge from '../components/ProfitBridge';
+import ProfitabilityAnalytics from '../components/analytics/ProfitabilityAnalytics';
 import FinancialBreakdownDrawer from '../components/FinancialBreakdownDrawer';
 import { aed2, num } from '../lib/format';
 import { SHOW_FLEET_INTELLIGENCE } from '../config/features';
@@ -274,6 +275,10 @@ export default function Profitability() {
               </label>
               <span className="ml-auto text-xs text-slate-400">{num(rows.length)} of {num(s.vehicles)} cars</span>
             </div>
+
+            {/* Analytics — reads the filtered rows above, so the charts and the table
+                below always describe the same set of cars. */}
+            <ProfitabilityAnalytics rows={rows} isPending={isPending} />
 
             <SectionCard
               title="Fleet — lifetime net profit per car"

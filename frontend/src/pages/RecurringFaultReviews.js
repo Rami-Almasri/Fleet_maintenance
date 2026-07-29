@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
+import RecurringFaultsAnalytics from '../components/analytics/RecurringFaultsAnalytics';
 import api from '../api/client';
 import useFetch from '../hooks/useFetch';
 import { useToast } from '../components/ui/Toast';
@@ -266,6 +267,8 @@ export default function RecurringFaultReviews() {
         {error && (
           <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error}</div>
         )}
+        {/* Analytics — the filtered set, matching the table below. */}
+        {!loading && reviews.length > 0 && <RecurringFaultsAnalytics reviews={reviews} />}
 
         <Card>
           <div className="overflow-x-auto">
@@ -287,6 +290,7 @@ export default function RecurringFaultReviews() {
               ) : (
                 <tbody>
                   {reviews.map((r) => (
+
                     <tr key={r.id} className="cursor-pointer bg-white transition-colors even:bg-slate-50/40 hover:bg-indigo-50/40" onClick={() => setDetail(r)}>
                       <td className="border-b border-slate-100 px-5 py-3.5">
                         <div className="font-medium text-slate-900">{plate(r.vehicle)}</div>
