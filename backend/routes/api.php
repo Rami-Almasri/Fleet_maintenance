@@ -549,6 +549,25 @@ Route::middleware(['auth:sanctum', 'permission:maintenance.delegate'])->prefix('
     // In-Workshop confirmation — `confirmed` is the only verdict; it opens a recurring-fault review
     // (the gate against false duplicate alerts). "Not a real fault" is the /incorrect path above.
     Route::post('/{task}/confirm', 'confirmTask');
+
+    // Tier 1 repair capture — what was done, did it work, how do we know. The one place the fleet
+    // records the repair itself; everything downstream (effectiveness, supplier quality, technician
+    // accuracy, recommendation validation) is blocked without it. Same authority as the rest of the
+    // workshop actions, because it is filled in by whoever is closing the fault out.
+    Route::get('/{task}/capture', 'captureOptions');
+    Route::post('/{task}/capture/start', 'captureStart');       // opens a friction session
+    Route::post('/{task}/capture/abandon', 'captureAbandon');   // closes it unfinished
+    Route::post('/{task}/capture', 'captureRepair');
+});
+
+// INDEPENDENT VERIFICATION — the inspector's separate act, deliberately behind a DIFFERENT
+// permission from the repair capture above. The party performing a repair must never be the only
+// party confirming it, so `inspections.manage` gates this and `maintenance.delegate` gates the
+// capture. The permission split is necessary but NOT sufficient (the `maintenance` role holds both),
+// so RepairVerificationService additionally blocks the claimant from verifying their own work.
+Route::middleware(['auth:sanctum', 'permission:inspections.manage'])->prefix('maintenance-tasks')->controller(MaintenanceWorkflowController::class)->group(function () {
+    Route::get('/{task}/verification', 'verificationOptions');
+    Route::post('/{task}/verification', 'verifyRepair');
 });
 
 // Recurring-fault REPAIR GATE approval — a manager clears (or rejects) the repair of a fault that recurred

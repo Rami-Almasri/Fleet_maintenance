@@ -149,6 +149,10 @@ class MaintenanceWorkflowController extends Controller
         private \App\Services\MaintenanceForecastService $forecast,
         private \App\Services\RepairInspectionService $inspections,
         private \App\Services\MaintenanceRequiredPartService $requiredParts,
+        // Turns the workflow steps below into immutable domain events. The technician never sees it,
+        // never enters anything extra for it, and a failure inside it can never fail their work —
+        // see [[CaptureTranslator]].
+        private \App\Evidence\Capture\CaptureTranslator $capture,
     ) {
     }
 
@@ -1637,6 +1641,12 @@ class MaintenanceWorkflowController extends Controller
 
             $partsRaised = count($partRequests);
 
+            // Translate the step the inspector just completed into the canonical log. Deliberately
+            // AFTER the transaction has committed and after findings were promoted, so the events
+            // describe what was actually saved rather than what was attempted — and so a rollback
+            // can never leave facts recorded about work that did not happen.
+            $this->capture->inspectionSubmitted($ticket, $data, $request->user(), $requires);
+
             return ResponseHelper::SuccessResponse(
                 [
                     'ticket'                => MaintenanceWorkflowResource::make($ticket),
@@ -1681,9 +1691,15 @@ class MaintenanceWorkflowController extends Controller
                 'recommendation.accepted'              => ['nullable', 'boolean'],
                 'recommendation.rank'                  => ['nullable', 'integer'],
                 'recommendation.score'                 => ['nullable', 'numeric'],
+                'recommendation.match_score'           => ['nullable', 'integer', 'between:0,100'],
                 'recommendation.confidence'            => ['nullable', 'string', 'max:12'],
                 'recommendation.reason'                => ['nullable', 'string', 'max:500'],
                 'recommendation.reasons'               => ['nullable', 'array'],
+                'recommendation.breakdown'             => ['nullable', 'array'],
+                'recommendation.strategy'              => ['nullable', 'array'],
+                'recommendation.expected_outcomes'     => ['nullable', 'array'],
+                'recommendation.fault_criticality'     => ['nullable', 'array'],
+                'recommendation.provenance'            => ['nullable', 'array'],
                 'recommendation.criteria'              => ['nullable', 'array'],
                 'recommendation.source'                => ['nullable', 'string', 'max:60'],
             ]);
@@ -2997,6 +3013,174 @@ class MaintenanceWorkflowController extends Controller
 
             $this->tasks->confirmFault($task, $data['confirmation_status'], $request->user(), $data['note'] ?? null);
             return $this->ticketFor($task, 'Fault review recorded');
+        });
+    }
+
+    /**
+     * What the capture form should offer for THIS fault — the suggested actions for its system, plus
+     * the outcome and verification vocabularies and whatever was captured before.
+     *
+     * Served from the server so the picker opens on the right handful of actions rather than the full
+     * ninety-entry catalogue. A picker that requires scrolling is a picker people route around.
+     */
+    public function captureOptions(\App\Models\MaintenanceTask $task, \App\Services\RepairCaptureService $capture)
+    {
+        return $this->run(function () use ($task, $capture) {
+            $existing = \App\Models\MaintenanceTaskAction::with('action')
+                ->where('maintenance_task_id', $task->id)
+                ->orderBy('sequence')
+                ->get();
+
+            return ResponseHelper::SuccessResponse([
+                'fault' => [
+                    'id'         => $task->id,
+                    'symptom'    => $task->symptom,
+                    'category'   => $task->category_key,
+                    'root_cause' => $task->root_cause,
+                    'status'     => $task->status,
+                ],
+                'suggested_actions' => $capture->suggestedActions($task)->map(fn ($a) => [
+                    'id'              => $a->id,
+                    'label'           => $a->label,
+                    'verb'            => $a->verb,
+                    'target'          => $a->target,
+                    'requires_part'   => $a->requires_part,
+                    'is_verification' => $a->is_verification,
+                    'default_hours'   => $a->default_labor_hours,
+                ])->values(),
+                'outcomes' => \App\Services\RepairCaptureService::OUTCOMES,
+                // Verification methods are deliberately NOT offered here — verification is the
+                // inspector's act, served by verificationOptions().
+                'captured' => [
+                    'actions'             => $existing->map(fn ($a) => [
+                        'action_catalog_id' => $a->action_catalog_id,
+                        'label'             => $a->action?->label,
+                        'sequence'          => $a->sequence,
+                        'note'              => $a->note,
+                    ])->values(),
+                    'claimed_outcome'     => $task->claimed_outcome,
+                    'no_fault_found'      => $task->no_fault_found,
+                    // Null here means UNKNOWN, never "complete" — the UI must render it that way.
+                    'captured_at'         => optional($task->claimed_outcome_at)->toIso8601String(),
+                ],
+            ], 'Capture options', 200);
+        });
+    }
+
+    /**
+     * Record Tier 1 repair capture. See [[RepairCaptureService]] for why it is only four questions.
+     */
+    public function captureRepair(Request $request, \App\Models\MaintenanceTask $task, \App\Services\RepairCaptureService $capture)
+    {
+        return $this->run(function () use ($request, $task, $capture) {
+            $data = $request->validate([
+                'actions'                     => ['nullable', 'array', 'max:30'],
+                'actions.*.action_catalog_id' => ['required_with:actions', 'integer', Rule::exists('action_catalog', 'id')],
+                'actions.*.note'              => ['nullable', 'string', 'max:500'],
+                'actions.*.line_item_id'      => ['nullable', 'integer', Rule::exists('maintenance_line_items', 'id')],
+
+                'claimed_outcome' => ['nullable', Rule::in(\App\Services\RepairCaptureService::OUTCOMES)],
+                'no_fault_found'  => ['nullable', 'boolean'],
+                'note'            => ['nullable', 'string', 'max:2000'],
+
+                // Rollout instrumentation, supplied by the client. Never required — telemetry must
+                // not be able to block the work it is measuring.
+                'session_id'       => ['nullable', 'uuid'],
+                'duration_ms'      => ['nullable', 'integer', 'min:0'],
+                'last_step'        => ['nullable', 'integer', 'min:0', 'max:10'],
+                'skipped_fields'   => ['nullable', 'array', 'max:20'],
+                'skipped_fields.*' => ['string', 'max:48'],
+            ]);
+
+            $capture->capture($task, $data, $request->user());
+
+            return $this->ticketFor($task, 'Repair recorded');
+        });
+    }
+
+    /** Opens a friction session when the capture form opens — see [[CaptureFrictionService]]. */
+    public function captureStart(Request $request, \App\Models\MaintenanceTask $task, \App\Services\CaptureFrictionService $friction)
+    {
+        return $this->run(function () use ($request, $task, $friction) {
+            return ResponseHelper::SuccessResponse([
+                'session_id' => $friction->start('repair_capture', $task->id, $task->maintenance_id, $request->user(), 4),
+            ], 'Capture started', 200);
+        });
+    }
+
+    /**
+     * Closes a friction session that was never completed.
+     *
+     * Without this the abandonment rate is unmeasurable: rows only ever existed for people who
+     * finished, so the population that would prove abandonment was exactly the one missing.
+     */
+    public function captureAbandon(Request $request, \App\Models\MaintenanceTask $task, \App\Services\CaptureFrictionService $friction)
+    {
+        return $this->run(function () use ($request, $friction) {
+            $data = $request->validate([
+                'session_id'  => ['required', 'uuid'],
+                'duration_ms' => ['nullable', 'integer', 'min:0'],
+                'last_step'   => ['nullable', 'integer', 'min:0', 'max:10'],
+            ]);
+
+            $friction->resolve($data['session_id'], \App\Services\CaptureFrictionService::STATUS_ABANDONED, $data);
+
+            return ResponseHelper::SuccessResponse(null, 'Capture abandoned', 200);
+        });
+    }
+
+    /**
+     * What the inspector's verification form should offer — and whether this user may verify at all.
+     */
+    public function verificationOptions(Request $request, \App\Models\MaintenanceTask $task, \App\Services\RepairVerificationService $verification)
+    {
+        return $this->run(function () use ($request, $task, $verification) {
+            $eligibility = $verification->eligibility($task, $request->user());
+
+            return ResponseHelper::SuccessResponse(array_merge($eligibility, [
+                'fault' => [
+                    'id'         => $task->id,
+                    'symptom'    => $task->symptom,
+                    'root_cause' => $task->root_cause,
+                ],
+                // What the workshop claimed, shown so the inspector checks against a stated claim
+                // rather than forming an impression from scratch.
+                'workshop_claim' => [
+                    'claimed_outcome' => $task->claimed_outcome,
+                    'claimed_at'      => optional($task->claimed_outcome_at)->toIso8601String(),
+                    'no_fault_found'  => $task->no_fault_found,
+                    'actions'         => \App\Models\MaintenanceTaskAction::with('action')
+                        ->where('maintenance_task_id', $task->id)
+                        ->orderBy('sequence')
+                        ->get()
+                        ->map(fn ($a) => ['sequence' => $a->sequence, 'label' => $a->action?->label, 'note' => $a->note])
+                        ->values(),
+                ],
+                'results' => \App\Services\RepairVerificationService::RESULTS,
+                'methods' => \App\Services\RepairCaptureService::VERIFICATION_METHODS,
+                'verified' => $task->verified_at ? [
+                    'result'      => $task->verification_result,
+                    'method'      => $task->verification_method,
+                    'note'        => $task->verification_note,
+                    'verified_at' => optional($task->verified_at)->toIso8601String(),
+                ] : null,
+            ]), 'Verification options', 200);
+        });
+    }
+
+    /** Record an independent verification. See [[RepairVerificationService]]. */
+    public function verifyRepair(Request $request, \App\Models\MaintenanceTask $task, \App\Services\RepairVerificationService $verification)
+    {
+        return $this->run(function () use ($request, $task, $verification) {
+            $data = $request->validate([
+                'result' => ['required', Rule::in(\App\Services\RepairVerificationService::RESULTS)],
+                'method' => ['required', Rule::in(\App\Services\RepairCaptureService::VERIFICATION_METHODS)],
+                'note'   => ['nullable', 'string', 'max:2000'],
+            ]);
+
+            $verification->verify($task, $data, $request->user());
+
+            return $this->ticketFor($task, 'Verification recorded');
         });
     }
 

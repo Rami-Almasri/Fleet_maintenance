@@ -27,6 +27,8 @@ import { Input, Textarea } from '../ui/Field';
 import Icon from '../ui/Icon';
 import Tooltip from '../ui/Tooltip';
 import { TASK_STATUS, SERVICE_CONFIRM, isAtGarage } from './meta';
+import RepairCaptureModal from '../maintenance/RepairCaptureModal';
+import RepairVerifyModal from '../maintenance/RepairVerifyModal';
 import { evaluateContinuity, needsNote, stageIgnoresTolerance, STAGE } from '../../lib/odometerContinuity';
 import OdometerContinuityHint, { odoGateBlocked } from './OdometerContinuityHint';
 import { uploadRepairVideo } from '../../lib/maintenanceMedia';
@@ -80,6 +82,18 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
 
   // "Mark fixed" fix-evidence panel — the fault being resolved + its note/video.
   const [fixTask, setFixTask] = useState(null);
+
+  // Repair capture opens immediately after a fault is marked fixed. Making it part of finishing the
+  // job — rather than a separate button someone remembers later — is the whole reason this dataset
+  // has any chance of existing: the correct path has to be the easy one.
+  const [captureTaskId, setCaptureTaskId] = useState(null);
+
+  // Independent verification — a DIFFERENT permission from the capture above, because the party
+  // performing a repair must never be the only party confirming it. The server additionally refuses
+  // a verifier who recorded the repair, which is the guarantee a permission alone cannot give (the
+  // `maintenance` role holds both).
+  const canVerify = can('inspections.manage');
+  const [verifyTaskId, setVerifyTaskId] = useState(null);
   const [fixNote, setFixNote] = useState('');
   const [fixOdometer, setFixOdometer] = useState(''); // routine service: odometer at the moment of change
   const [fixVideo, setFixVideo] = useState(null);   // a File
@@ -237,7 +251,12 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
       const payload = { status: 'completed', note: fixNote || null };
       if (fixTask.routine_service_type && Number(fixOdometer) > 0) payload.odometer = Number(fixOdometer);
       apply(await api.post(`/maintenance-tasks/${fixTask.id}/status`, payload));
+
+      // Hand straight into capture while the technician still has the repair in mind. Read the id
+      // before closeFix() clears it.
+      const justFixed = fixTask.id;
       closeFix();
+      setCaptureTaskId(justFixed);
     } catch (e) {
       setFixError(e?.response?.data?.message || t('workflow.error.generic'));
     } finally {
@@ -813,6 +832,18 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
                   </div>
                 )}
 
+                {/* Independent verification — offered on a completed fault to anyone with
+                    inspection responsibility. Whether THIS user may actually verify (they cannot if
+                    they recorded the repair) is decided by the server and explained inside the
+                    modal, so the rule is stated once, where it is enforced. */}
+                {!isFixing && terminal && !task.is_incorrect && canVerify && (
+                  <div className="mt-2 border-t border-slate-100 pt-2">
+                    <Button size="sm" variant="secondary" onClick={() => setVerifyTaskId(task.id)}>
+                      Verify repair
+                    </Button>
+                  </div>
+                )}
+
                 {/* Resolution note + video evidence on a fixed fault. */}
                 {!isFixing && terminal && !task.is_incorrect && (task.resolution_note || (task.media && task.media.length > 0)) && (
                   <div className="mt-2 space-y-1.5 border-t border-slate-100 pt-2">
@@ -832,6 +863,23 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
           })}
         </ul>
       )}
+
+      {/* Rendered last so it stacks above this panel. Closing it without saving is allowed — a
+          capture that blocks the workflow would get worked around within a week, and a technician
+          held hostage by a form produces worse data than one who fills it in willingly. */}
+      <RepairCaptureModal
+        open={Boolean(captureTaskId)}
+        taskId={captureTaskId}
+        onClose={() => setCaptureTaskId(null)}
+        onSaved={() => onDone?.()}
+      />
+
+      <RepairVerifyModal
+        open={Boolean(verifyTaskId)}
+        taskId={verifyTaskId}
+        onClose={() => setVerifyTaskId(null)}
+        onSaved={() => onDone?.()}
+      />
     </Modal>
   );
 }
