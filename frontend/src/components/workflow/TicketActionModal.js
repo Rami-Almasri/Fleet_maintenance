@@ -41,6 +41,7 @@ import OdometerContinuityHint from './OdometerContinuityHint';
 import SignaturePad from './SignaturePad';
 import { isPaused, ORIGIN_LABEL } from './meta';
 import { useAuth } from '../../auth/AuthContext';
+import { usePermissions } from '../../hooks/usePermissions';
 
 // Enterprise Handover Workflow — CONTRACT with backend/config/maintenance_handover.php. Small, fixed
 // enums, so hardcoded client-side rather than fetched.
@@ -88,6 +89,11 @@ const INSPECTION_TRIGGER_REASONS = ['test_drive', 'periodic'];
 // is captured as an internal note instead of inflating the inspection queue. See [[driver-observation-entity]].
 const OBSERVATION_CHOICE = 'observation';
 const DRIVER_REQUEST_CHOICES = [...INSPECTION_TRIGGER_REASONS, OBSERVATION_CHOICE];
+// "It's due for routine service" is a SCHEDULING call, not something a driver observes: routine
+// service is driven by the mileage/time interval the Service Reminders own, so only the roles that
+// plan upkeep may raise it from the driver-voice request form. Everyone else files what they
+// actually saw (test drive) or logs an observation. The `open` form (UC-1) is unaffected.
+const PERIODIC_REQUEST_ROLES = ['admin', 'super-admin', 'maintenance'];
 const MAINTENANCE_TYPES = [
   { value: 'breakdown', icon: '⚠️' },
 ]; // App\Models\Maintenance::MAINTENANCE_TYPES
@@ -463,6 +469,14 @@ function HandoverFields({
 export default function TicketActionModal({ action, ticket, vehicles = [], garages = [], findingsCatalog = [], keywordMeta = {}, faultCausesCatalog = {}, assignableDrivers = [], allowedTypes = null, onClose, onDone }) {
   const { t } = useI18n();
   const { user: currentUser } = useAuth();
+  const { roles } = usePermissions();
+  // Driver-voice "What happened?" choices this user may pick — see PERIODIC_REQUEST_ROLES.
+  const driverRequestChoices = useMemo(
+    () => (roles.some((r) => PERIODIC_REQUEST_ROLES.includes(r))
+      ? DRIVER_REQUEST_CHOICES
+      : DRIVER_REQUEST_CHOICES.filter((rv) => rv !== 'periodic')),
+    [roles],
+  );
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [stale, setStale] = useState(false); // the ticket moved on under us (concurrent edit) → offer a refresh, not a red error
@@ -2330,7 +2344,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
             <div>
               <span className="mb-1.5 block text-sm font-medium text-slate-700">{t('workflow.reason.driverLabel')}</span>
               <div className="grid gap-2">
-                {DRIVER_REQUEST_CHOICES.map((rv) => {
+                {driverRequestChoices.map((rv) => {
                   const active = reason === rv;
                   return (
                     <button
