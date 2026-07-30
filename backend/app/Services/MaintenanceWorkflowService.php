@@ -3518,7 +3518,8 @@ class MaintenanceWorkflowService
 
         return DB::transaction(function () use ($ticket, $clean, $actor) {
             $vehicle = $ticket->loadMissing('vehicle')->vehicle;
-            $added = $clean->map(function ($f) use ($actor, $vehicle) {
+            $garage  = $ticket->garage; // the workshop that DISCOVERED the fault — stamped per finding
+            $added = $clean->map(function ($f) use ($actor, $vehicle, $garage) {
                 [$cause, $causeId] = $this->resolveFaultCause($f['text'], $f['root_cause'], $f['root_cause_id'], $actor);
 
                 return [
@@ -3531,7 +3532,7 @@ class MaintenanceWorkflowService
                     // Stamp the garage that DISCOVERED the fault (the ticket's current workshop) onto the
                     // finding, so "Garage-Identified" can name where it was found — not just that it came
                     // from a garage. Immutable on the finding even if the car later transfers garages.
-                    'garage'        => $ticket->garage,
+                    'garage'        => $garage,
                     'at'            => Carbon::now()->toIso8601String(),
                     'status_check'  => $this->statusConflictFor($f['text'], $vehicle),
                 ];
