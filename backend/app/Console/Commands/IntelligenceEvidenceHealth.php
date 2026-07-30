@@ -7,6 +7,7 @@ use App\Models\Maintenance;
 use App\Services\Intelligence\Readiness\EvidenceLedger;
 use App\Services\Intelligence\Readiness\EvidenceRequirement;
 use App\Services\Intelligence\Readiness\PromotionGate;
+use App\Services\NotificationScanner;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 
@@ -33,12 +34,14 @@ class IntelligenceEvidenceHealth extends Command
                             {--gaps : list the closed tickets missing a QC verdict}
                             {--promote : run the proxy→measured promotion gate}
                             {--force : run the comparison even below the evidence threshold}
-                            {--dry-run : with --promote, compare but record nothing}';
+                            {--dry-run : with --promote, compare but record nothing}
+                            {--alert : notify the maintenance managers if verdict capture has stalled}';
 
     protected $description = 'Evidence readiness KPI for every intelligence capability, and the promotion gate';
 
-    public function handle(EvidenceLedger $ledger, PromotionGate $gate): int
+    public function handle(EvidenceLedger $ledger, PromotionGate $gate, NotificationScanner $notifier): int
     {
+        $this->verdictPipeline($ledger, $notifier);
         $this->healthScores($ledger);
         $this->qcCoverage($ledger);
         $this->readiness($ledger);
@@ -54,6 +57,72 @@ class IntelligenceEvidenceHealth extends Command
         }
 
         return self::SUCCESS;
+    }
+
+    /**
+     * THE ONE ALERT THIS PLATFORM NEEDS.
+     *
+     * Everything else here is a dashboard someone chooses to read. This is the thing that has to
+     * reach a person unprompted, because the failure it catches is silent: verdict capture stopping.
+     * The intelligence layer does not break when that happens — it keeps producing cards from proxy
+     * evidence, looking exactly as healthy as before, while the dataset that would let it improve
+     * quietly stops growing.
+     *
+     * Only fires with --alert (the scheduled run) so an operator checking the dashboard by hand never
+     * pages the whole management team by accident.
+     */
+    private function verdictPipeline(EvidenceLedger $ledger, NotificationScanner $notifier): void
+    {
+        $alert = $ledger->verdictPipelineAlert();
+
+        if ($alert === null) {
+            if ($this->option('alert')) {
+                $this->info('QC verdict capture is healthy — no alert raised.');
+            }
+
+            return;
+        }
+
+        $this->newLine();
+        $critical = $alert['severity'] === 'critical';
+        $render = $critical ? fn ($m) => $this->error($m) : fn ($m) => $this->warn($m);
+
+        $render('  '.strtoupper($alert['severity']).' — '.$alert['headline']);
+        $this->line('  '.$alert['detail']);
+        $this->line(sprintf(
+            '  <fg=gray>%.1f/week now vs %.1f/week before · %d closed without a verdict in 14 days · gate %s</>',
+            $alert['recent_rate'], $alert['prior_rate'], $alert['closed_without_verdict'],
+            $alert['gate_enabled'] ? 'ON' : 'OFF',
+        ));
+
+        if (! $this->option('alert')) {
+            $this->line('  <fg=gray>(run with --alert to notify the maintenance managers)</>');
+
+            return;
+        }
+
+        // Managers, not inspectors: the fix is a scheduling or configuration decision, and paging the
+        // people already doing the work would be noise to them.
+        $sent = $notifier->notifyByPermission('maintenance.manage', [
+            'type'     => 'intel_verdict_capture',
+            'category' => 'maintenance',
+            'severity' => $critical ? 'critical' : 'warning',
+            'title'    => $alert['headline'],
+            'body'     => $alert['detail'],
+            'url'      => '/maintenance-workflow',
+            // Keyed by severity and week so a persistent problem re-raises weekly rather than either
+            // spamming daily or being deduplicated into silence forever.
+            'key'      => 'intel:verdict-capture:'.$alert['severity'].':'.now()->format('o-W'),
+            'icon'     => 'alert',
+            'meta'     => [
+                'recent_rate'            => round($alert['recent_rate'], 2),
+                'prior_rate'             => round($alert['prior_rate'], 2),
+                'closed_without_verdict' => $alert['closed_without_verdict'],
+                'gate_enabled'           => $alert['gate_enabled'],
+            ],
+        ]);
+
+        $this->line(sprintf('  <fg=gray>notified %d manager%s</>', $sent, $sent === 1 ? '' : 's'));
     }
 
     /**

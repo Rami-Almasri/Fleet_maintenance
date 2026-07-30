@@ -54,6 +54,113 @@ class EvidenceLedger
     }
 
     /**
+     * Is the QC verdict pipeline actually running?
+     *
+     * The whole intelligence layer now depends on one habit: an inspector recording an outcome before
+     * a repaired car closes. That habit can stop for two very different reasons which look IDENTICAL
+     * from a verdict count — the queue is being skipped, or the rule was switched off under workload
+     * pressure. Distinguishing them is the entire point of this check: one is a conversation with the
+     * workshop, the other is a configuration change nobody announced.
+     *
+     * Deliberately compares the trailing fortnight against the four weeks before it, rather than
+     * against a fixed target. A fleet's repair volume moves for legitimate reasons, and an alert that
+     * fires every quiet week is one nobody reads by the second month.
+     *
+     * @return array{severity:string, headline:string, detail:string, recent:int, prior_rate:float,
+     *               recent_rate:float, closed_without_verdict:int, gate_enabled:bool}|null
+     */
+    public function verdictPipelineAlert(): ?array
+    {
+        $gateOn = (bool) config('features.maintenance.require_qc_verdict', true);
+
+        $recent = DB::table('repair_inspections')->where('created_at', '>=', now()->subDays(14))->count();
+        $prior  = DB::table('repair_inspections')
+            ->where('created_at', '>=', now()->subDays(42))
+            ->where('created_at', '<', now()->subDays(14))
+            ->count();
+
+        $recentRate = $recent / 2;          // per week over the trailing fortnight
+        $priorRate  = $prior / 4;           // per week over the four weeks before that
+
+        // Repaired cars that closed in the window with nothing recorded — evidence already lost.
+        $missed = Maintenance::whereNotNull('workflow_status')
+            ->whereIn('workflow_status', [Maintenance::WF_CLOSED, Maintenance::WF_AWAITING_INVOICE])
+            ->where('updated_at', '>=', now()->subDays(14))
+            ->whereNotExists(fn ($q) => $q->select(DB::raw(1))->from('repair_inspections')
+                ->whereColumn('repair_inspections.maintenance_id', 'maintenances.id'))
+            ->count();
+
+        return self::judgePipeline([
+            'recent'                 => $recent,
+            'prior_rate'             => $priorRate,
+            'recent_rate'            => $recentRate,
+            'closed_without_verdict' => $missed,
+            'gate_enabled'           => $gateOn,
+        ]);
+    }
+
+    /**
+     * The alert decision itself — pure, so it can be exercised at any pipeline state without a
+     * database, including states this fleet has not reached yet.
+     *
+     * @param  array{recent:int, prior_rate:float, recent_rate:float, closed_without_verdict:int, gate_enabled:bool} $s
+     * @return array{severity:string, headline:string, detail:string}|null
+     */
+    public static function judgePipeline(array $s): ?array
+    {
+        $base    = $s;
+        $gateOn  = $s['gate_enabled'];
+        $recent  = $s['recent'];
+        $missed  = $s['closed_without_verdict'];
+        $recentRate = $s['recent_rate'];
+        $priorRate  = $s['prior_rate'];
+
+        // THE SMOKING GUN, checked first. A disabled gate explains a falling rate completely, and
+        // reporting it as "capture has slowed" would send someone to talk to inspectors who are doing
+        // nothing wrong.
+        if (! $gateOn) {
+            return $base + [
+                'severity' => 'critical',
+                'headline' => 'QC verdict capture is DISABLED',
+                'detail'   => 'MAINT_REQUIRE_QC_VERDICT is off, so repaired cars close without a verdict. '
+                    .'Every ticket that closes this way is a repair outcome nobody can reconstruct — the car has gone. '
+                    .'The comeback card cannot be promoted off proxy evidence while this is off.',
+            ];
+        }
+
+        if ($recent === 0 && $missed > 0) {
+            return $base + [
+                'severity' => 'critical',
+                'headline' => 'No QC verdicts recorded in 14 days',
+                'detail'   => sprintf(
+                    '%d repaired ticket%s closed in that window with no verdict. The gate is enabled, so the '
+                    .'queue is being passed over rather than bypassed in config.',
+                    $missed, $missed === 1 ? '' : 's',
+                ),
+            ];
+        }
+
+        // Nothing arrived AND nothing closed: the fleet simply had a quiet fortnight. Warning here
+        // would page someone about the absence of work rather than the absence of capture, and an
+        // alert that fires when nothing is wrong is one nobody reads by the second month.
+        $somethingClosed = $recent > 0 || $missed > 0;
+
+        // A halving is the threshold: smaller swings are ordinary repair-volume noise.
+        if ($somethingClosed && $priorRate > 0 && $recentRate < $priorRate * 0.5) {
+            return $base + [
+                'severity' => 'warning',
+                'headline' => 'QC verdict capture is slowing',
+                'detail'   => sprintf(
+                    'Down to %.1f/week from %.1f/week. %d repaired ticket%s closed without a verdict in the last 14 days.',
+                    $recentRate, $priorRate, $missed, $missed === 1 ? '' : 's',
+                ),
+            ];
+        }
+
+        return null;
+    }
+
+    /**
      * The capability someone should actually act on today.
      *
      * NOT simply the lowest score. A capability blocked by data — parts that are not recorded,

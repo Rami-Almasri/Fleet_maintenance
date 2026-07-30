@@ -145,6 +145,10 @@ Schedule::command('intelligence:record-outcomes')
 // this schedule only decides how often the question is ASKED; the answer comes from a backtest that
 // compares the measured outcome against the proxy it would replace, and refuses if it predicts worse.
 // Every decision, including every refusal, is recorded append-only.
-Schedule::command('intelligence:evidence-health --promote')
+// `--alert` notifies the maintenance managers when QC verdict capture stalls. That is the one
+// failure this platform cannot see from the outside: the intelligence layer does not break when
+// verdicts stop arriving, it keeps producing cards from proxy evidence and looks exactly as healthy
+// as before, while the dataset that would let it improve quietly stops growing.
+Schedule::command('intelligence:evidence-health --promote --alert')
     ->weeklyOn(1, '04:00')
     ->withoutOverlapping();
