@@ -1,0 +1,143 @@
+<?php
+
+/** Transmission fault concepts. 1,340 recorded events; low volume, high cost per event. */
+
+return [
+    [
+        'name' => 'Hard / jerky shifting', 'name_ar' => 'خشونة في نقل السرعات',
+        'category' => 'transmission', 'category_label' => 'Transmission', 'category_label_ar' => 'ناقل الحركة',
+        'system' => 'Transmission', 'subsystem' => 'Shift control', 'discipline' => 'mechanical', 'risk' => 'moderate',
+        'description' => 'Gear changes are harsh, delayed or jerky.',
+        'en' => [
+            'syn'      => ['harsh shifting', 'jerky gear change', 'rough shifting', 'gearbox jerking', 'shift shock'],
+            'workshop' => ['banging into gear', 'harsh 1-2 shift', 'needs an adaptation reset'],
+            'customer' => ['gears change roughly', 'jerks when changing gear', 'transmission is harsh',
+                           'car jumps when changing gear', 'kick when it changes gear'],
+            'miss'     => ['jerky shiffting', 'hard shifiting'],
+        ],
+        'ar' => [
+            'formal'   => ['خشونة في نقل السرعات'],
+            'workshop' => ['القير يخبط', 'يقفز عند تبديل السرعة', 'القير خشن', 'يضرب عند التبديل'],
+        ],
+        'components' => ['Transmission fluid', 'Valve body', 'Solenoids', 'Gearbox mounts', 'TCU'],
+        'causes' => ['Low / degraded transmission fluid', 'Faulty shift solenoid', 'Worn gearbox mount', 'Valve body wear'],
+        'inspection' => ['Check fluid level and colour', 'Scan transmission codes', 'Road test through all gears'],
+        'actions' => ['replace_transmission_oil', 'replace_gearbox_mount', 'scan_diagnostics', 'road_test'],
+    ],
+    [
+        'name' => 'Gear slipping', 'name_ar' => 'انزلاق ناقل الحركة',
+        'category' => 'transmission', 'system' => 'Transmission', 'subsystem' => 'Clutch packs', 'discipline' => 'mechanical', 'risk' => 'critical',
+        'description' => 'Engine revs rise without corresponding acceleration — the transmission is not holding drive.',
+        'en' => [
+            'syn'      => ['transmission slipping', 'slipping gears', 'loss of drive', 'gearbox slipping'],
+            'workshop' => ['slipping under load', 'flaring on the shift', 'clutch packs worn'],
+            'customer' => ['gears slip', 'revs go up but car does not move', 'loses drive', 'engine races but car is slow'],
+            'miss'     => ['gear sliping', 'transmition slipping'],
+        ],
+        'ar' => [
+            'formal'   => ['انزلاق ناقل الحركة'],
+            'workshop' => ['القير يفلت', 'الدوران يزيد والموتر ما يمشي', 'القير يزحلق', 'ما يسحب'],
+        ],
+        'components' => ['Clutch packs', 'Transmission fluid', 'Torque converter', 'Valve body'],
+        'causes' => ['Low transmission fluid', 'Worn clutch packs', 'Failing torque converter', 'Valve body pressure loss'],
+        'inspection' => ['Check fluid level and smell', 'Scan for codes', 'Stall test if applicable', 'Road test under load'],
+        'actions' => ['replace_transmission_oil', 'scan_diagnostics', 'road_test'],
+    ],
+    [
+        'name' => 'Delayed engagement', 'name_ar' => 'تأخر في استجابة ناقل الحركة',
+        'category' => 'transmission', 'system' => 'Transmission', 'subsystem' => 'Hydraulics', 'discipline' => 'mechanical', 'risk' => 'moderate',
+        'description' => 'Noticeable pause before the vehicle moves after selecting a gear.',
+        'en' => [
+            'syn'      => ['delayed engagement', 'slow to engage', 'lag when selecting drive', 'delay going into gear'],
+            'workshop' => ['long delay into D', 'pump pressure low on start-up'],
+            'customer' => ['car waits before moving', 'takes time to go into gear', 'delay when i put it in drive'],
+            'miss'     => ['delayd engagement'],
+        ],
+        'ar' => [
+            'formal'   => ['تأخر في استجابة ناقل الحركة'],
+            'workshop' => ['القير يتأخر', 'ياخذ وقت لين يمشي', 'يتأخر لما أحط دي'],
+        ],
+        'components' => ['Transmission fluid', 'Oil pump', 'Valve body', 'Seals'],
+        'causes' => ['Low transmission fluid', 'Worn oil pump', 'Internal seal leak', 'Valve body wear'],
+        'inspection' => ['Check fluid level cold and hot', 'Measure line pressure', 'Scan codes'],
+        'actions' => ['replace_transmission_oil', 'scan_diagnostics', 'road_test'],
+    ],
+    [
+        'name' => 'Whining / grinding noise', 'name_ar' => 'صوت من ناقل الحركة',
+        'category' => 'transmission', 'system' => 'Transmission', 'subsystem' => 'Gear train', 'discipline' => 'mechanical', 'risk' => 'moderate',
+        'description' => 'Whine, hum or grinding from the transmission, often changing with speed or gear.',
+        'en' => [
+            'syn'      => ['transmission noise', 'gearbox whine', 'grinding gears', 'humming from gearbox'],
+            'workshop' => ['bearing whine', 'noisy in one gear', 'diff whine'],
+            'customer' => ['whining sound when driving', 'grinding when changing gear', 'humming noise that changes with speed'],
+            'miss'     => ['transmition noise', 'wining noise'],
+        ],
+        'ar' => [
+            'formal'   => ['صوت من ناقل الحركة'],
+            'workshop' => ['صوت من القير', 'القير يصفر', 'صوت طحن عند التبديل'],
+        ],
+        'components' => ['Gearbox bearings', 'Transmission fluid', 'Differential', 'CV joints'],
+        'causes' => ['Low transmission fluid', 'Worn gearbox bearing', 'Worn differential', 'Failing CV joint'],
+        'inspection' => ['Note noise vs gear and speed', 'Check fluid condition', 'Road test to isolate'],
+        'actions' => ['replace_transmission_oil', 'replace_cv_joint', 'road_test'],
+    ],
+    [
+        'name' => 'Clutch issue', 'name_ar' => 'عطل في الدبرياج',
+        'category' => 'transmission', 'system' => 'Transmission', 'subsystem' => 'Clutch', 'discipline' => 'mechanical', 'risk' => 'moderate',
+        'description' => 'Clutch slipping, dragging, or biting at the wrong point.',
+        'en' => [
+            'syn'      => ['clutch slipping', 'clutch dragging', 'worn clutch', 'clutch not engaging', 'high clutch bite'],
+            'workshop' => ['clutch is slipping', 'bite point at the top', 'clutch burning smell'],
+            'customer' => ['clutch feels strange', 'burning smell when driving', 'pedal feels different',
+                           'car does not move properly when i release the clutch'],
+            'miss'     => ['clutch sliping', 'cluch issue'],
+        ],
+        'ar' => [
+            'formal'   => ['عطل في القابض'],
+            'workshop' => ['الدبرياج يفلت', 'الدبرياج محروق', 'الكلتش ضعيف', 'ريحة حريق من الدبرياج'],
+        ],
+        'components' => ['Clutch disc', 'Pressure plate', 'Release bearing', 'Clutch hydraulics'],
+        'causes' => ['Worn clutch disc', 'Failing pressure plate', 'Hydraulic leak', 'Contaminated clutch from oil leak'],
+        'inspection' => ['Slip test in high gear', 'Check bite point', 'Inspect hydraulics for leaks'],
+        'actions' => ['replace_clutch', 'adjust_clutch', 'road_test'],
+    ],
+    [
+        'name' => 'Cannot select gear', 'name_ar' => 'تعذر إدخال السرعة',
+        'category' => 'transmission', 'system' => 'Transmission', 'subsystem' => 'Shift linkage', 'discipline' => 'mechanical', 'risk' => 'critical',
+        'description' => 'A gear cannot be selected at all — the vehicle may be immobile.',
+        'en' => [
+            'syn'      => ['cannot select gear', 'stuck in gear', 'will not go into gear', 'gear lever stuck', 'no gears'],
+            'workshop' => ['shifter cable stretched', 'stuck in park', 'interlock fault'],
+            'customer' => ['gear lever will not move', 'car is stuck in park', 'cannot put it in reverse', 'gears will not go in'],
+            'miss'     => ['cant select gear', 'stuck in par'],
+        ],
+        'ar' => [
+            'formal'   => ['تعذر إدخال السرعة'],
+            'workshop' => ['القير ما يدخل', 'العصا ما تتحرك', 'ما يطلع من البارك', 'ما يدخل رجوع'],
+        ],
+        'components' => ['Shift cable', 'Shift interlock', 'Brake light switch', 'Transmission range sensor'],
+        'causes' => ['Stretched / broken shift cable', 'Faulty shift interlock', 'Failed brake light switch',
+                     'Range sensor fault'],
+        'inspection' => ['Check shifter cable travel', 'Test brake light switch', 'Scan for range sensor codes'],
+        'actions' => ['repair_wiring', 'scan_diagnostics', 'visual_inspection'],
+    ],
+    [
+        'name' => 'Transmission fluid leak', 'name_ar' => 'تسريب زيت ناقل الحركة',
+        'category' => 'transmission', 'system' => 'Transmission', 'subsystem' => 'Seals', 'discipline' => 'mechanical', 'risk' => 'moderate',
+        'description' => 'Transmission fluid escaping — red or brown fluid under the middle of the vehicle.',
+        'en' => [
+            'syn'      => ['gearbox oil leak', 'transmission leak', 'ATF leak', 'leaking gearbox'],
+            'workshop' => ['pan gasket weeping', 'output seal leaking'],
+            'customer' => ['red fluid under the car', 'oil leaking from the middle', 'brown liquid on the floor'],
+            'miss'     => ['transmition leak', 'gearbox oil leek'],
+        ],
+        'ar' => [
+            'formal'   => ['تسريب زيت ناقل الحركة'],
+            'workshop' => ['القير يسرب زيت', 'زيت أحمر تحت السيارة', 'تسريب من القير'],
+        ],
+        'components' => ['Pan gasket', 'Output shaft seal', 'Cooler lines', 'Transmission pan'],
+        'causes' => ['Failed pan gasket', 'Worn output shaft seal', 'Damaged cooler line', 'Overfilled transmission'],
+        'inspection' => ['Clean and re-inspect to find source', 'Check fluid level', 'Inspect cooler lines'],
+        'actions' => ['replace_transmission_oil', 'repair_oil_leak', 'visual_inspection'],
+    ],
+];

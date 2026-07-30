@@ -29,6 +29,12 @@ class KeywordProfile extends Model
         'repair_actions'   => 'array',
         'related_faults'   => 'array',
         'evidence_sources' => 'array',
+        // JSON columns that were missing their cast — writing an array to any of these threw
+        // "Array to string conversion" at the driver, which is a confusing way to learn about a
+        // missing cast. The columns were always JSON; only the model did not know it.
+        'inspection_order' => 'array',
+        'required_tools'   => 'array',
+        'required_skills'  => 'array',
         'confidence'       => 'integer',
         'enriched_at'      => 'datetime',
     ];

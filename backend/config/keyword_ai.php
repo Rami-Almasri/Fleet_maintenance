@@ -163,7 +163,16 @@ return [
             'workshop_phrase' => 0.95,
             'abbreviation'    => 0.92,
             'spelling_variant'=> 0.92,
-            'misspelling'     => 0.85,
+            // Raised from 0.85 after a safety-relevant misranking: "breaks making a grinding noise"
+            // put Engine noise (68) above Brake noise (67), because Engine noise matched the single
+            // generic token "noise" at full weight while the far more specific misspelling
+            // "grinding breaks" was docked 15%.
+            //
+            // A misspelling is not weak evidence of intent — someone typing "grinding breaks" means
+            // brakes, unambiguously. The small remaining discount only breaks ties in favour of
+            // correctly-spelled vocabulary; it must never let a generic partial match outrank a
+            // specific one, least of all on a braking fault.
+            'misspelling'     => 0.96,
 
             // Customer wording is real evidence but weaker evidence: "it feels heavy" genuinely
             // indicates a fault, and genuinely indicates several. Ranking it below the technical
