@@ -31,6 +31,17 @@ class OntologyEdge extends Model
     public const REL_INSPECTED_BY    = 'inspected_by';      // fault  → procedure
     public const REL_RELATED_TO      = 'related_to';        // fault  → fault
 
+    /**
+     * Two concepts a person genuinely mixes up — not merely related.
+     *
+     * "Brake vibration" and "Wheel imbalance" describe the same sensation from different causes, and
+     * a technician who picks the wrong one wastes a diagnosis. Distinct from RELATED_TO on purpose:
+     * related means "these often occur together", confused means "these often get mistaken for each
+     * other", and the correct response differs — one is a hint to look wider, the other is a prompt
+     * to disambiguate before acting.
+     */
+    public const REL_CONFUSED_WITH   = 'confused_with';     // fault  ↔ fault
+
     // --- Execution relations: what carrying out the work needs -----------------------------------
     public const REL_REQUIRES_PART   = 'requires_part';     // repair → part
     public const REL_REQUIRES_TOOL   = 'requires_tool';     // repair → tool
@@ -40,8 +51,9 @@ class OntologyEdge extends Model
 
     public const RELATIONS = [
         self::REL_PRESENTS_AS, self::REL_AFFECTS, self::REL_CAUSED_BY, self::REL_FIXED_BY,
-        self::REL_INSPECTED_BY, self::REL_RELATED_TO, self::REL_REQUIRES_PART,
-        self::REL_REQUIRES_TOOL, self::REL_REQUIRES_SKILL, self::REL_PRECEDES, self::REL_PART_OF,
+        self::REL_INSPECTED_BY, self::REL_RELATED_TO, self::REL_CONFUSED_WITH,
+        self::REL_REQUIRES_PART, self::REL_REQUIRES_TOOL, self::REL_REQUIRES_SKILL,
+        self::REL_PRECEDES, self::REL_PART_OF,
     ];
 
     /** Human phrasing per relation, used by explanations and the graph view. */
@@ -52,6 +64,7 @@ class OntologyEdge extends Model
         self::REL_FIXED_BY       => ['label' => 'is fixed by',      'inverse' => 'fixes'],
         self::REL_INSPECTED_BY   => ['label' => 'is checked by',    'inverse' => 'checks for'],
         self::REL_RELATED_TO     => ['label' => 'is related to',    'inverse' => 'is related to'],
+        self::REL_CONFUSED_WITH  => ['label' => 'is often confused with', 'inverse' => 'is often confused with'],
         self::REL_REQUIRES_PART  => ['label' => 'requires part',    'inverse' => 'is used in'],
         self::REL_REQUIRES_TOOL  => ['label' => 'requires tool',    'inverse' => 'is used for'],
         self::REL_REQUIRES_SKILL => ['label' => 'requires skill',   'inverse' => 'is needed for'],
