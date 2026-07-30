@@ -204,12 +204,25 @@ class IntelligenceEvidenceHealth extends Command
 
         $this->newLine();
         $this->line('<comment>QC VERDICT COVERAGE — the platform\'s only ground truth</comment>');
+        $conclusive = $qc['with_verdict'] - ($qc['unverifiable'] ?? 0);
+
         $this->table(['Metric', 'Value'], [
             ['repaired tickets closed',   number_format($qc['closed'])],
             ['…with a human QC verdict',  number_format($qc['with_verdict'])],
+            ['   of which conclusive',    number_format($conclusive).'  (usable for statistics)'],
+            ['   could not verify',       number_format($qc['unverifiable'] ?? 0).'  (honest, counts as covered)'],
             ['coverage',                  sprintf('%.0f%%', $qc['coverage'] * 100)],
             ['evidence permanently lost', number_format($qc['lost'])],
         ]);
+
+        // A climbing unverifiable share is its own problem: the queue is being worked, but cars are
+        // leaving before anyone can check them. That is a scheduling fix, not a workshop one.
+        if ($qc['with_verdict'] > 0 && ($qc['unverifiable'] ?? 0) / $qc['with_verdict'] > 0.25) {
+            $this->warn(sprintf(
+                '  ⚠ %.0f%% of inspections could not verify the repair — cars are leaving before QC can reach them.',
+                ($qc['unverifiable'] / $qc['with_verdict']) * 100,
+            ));
+        }
 
         if ($qc['coverage'] < 0.8 && $qc['closed'] > 0) {
             $this->warn('  ⚠ Below 80%. A verdict missed at close cannot be recovered later.');

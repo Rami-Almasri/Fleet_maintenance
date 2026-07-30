@@ -719,6 +719,18 @@ const en = {
       stillBrokenCount: '{n} still broken',
       markFixed: '✓ Fixed',
       markBroken: '✕ Still broken',
+      // The honest third verdict — recorded as evidence that we looked, and excluded from every
+      // quality statistic. It must never blame a garage.
+      markUnverifiable: '? Can\'t verify',
+      unverifiableLabel: 'Why could it not be verified?',
+      unverifiablePlaceholder: 'Why could it not be verified?',
+      unverifiable: {
+        vehicle_unavailable: 'Vehicle already out / with the customer',
+        not_reproducible: 'Fault would not reproduce',
+        needs_road_test: 'Needs a road test — not possible now',
+        no_access: 'Could not access the component',
+        unverifiable_other: 'Other',
+      },
       faultNotePh: 'What is still wrong? (the supervisor will read this)',
       // Post-Repair Inspection — structured failure reason (Case B).
       reasonLabel: 'Why did the repair fail?',
@@ -2762,6 +2774,16 @@ const ar = {
       stillBrokenCount: '{n} لا تزال معطلة',
       markFixed: '✓ أُصلح',
       markBroken: '✕ لا يزال معطلاً',
+      markUnverifiable: '؟ تعذّر التحقق',
+      unverifiableLabel: 'لماذا تعذّر التحقق؟',
+      unverifiablePlaceholder: 'لماذا تعذّر التحقق؟',
+      unverifiable: {
+        vehicle_unavailable: 'السيارة خرجت / مع العميل',
+        not_reproducible: 'العطل لم يظهر عند الفحص',
+        needs_road_test: 'يحتاج تجربة قيادة — غير ممكن الآن',
+        no_access: 'تعذّر الوصول إلى القطعة',
+        unverifiable_other: 'أخرى',
+      },
       faultNotePh: 'ما الذي لا يزال معطلاً؟ (سيقرأه المشرف)',
       // فحص ما بعد الإصلاح — سبب فشل الإصلاح المُنظّم.
       reasonLabel: 'لماذا فشل الإصلاح؟',

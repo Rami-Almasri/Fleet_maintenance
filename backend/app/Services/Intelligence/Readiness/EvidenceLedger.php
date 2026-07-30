@@ -3,6 +3,7 @@
 namespace App\Services\Intelligence\Readiness;
 
 use App\Models\Maintenance;
+use App\Models\RepairInspection;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -225,11 +226,19 @@ class EvidenceLedger
             ->whereIn('workflow_status', [Maintenance::WF_CLOSED, Maintenance::WF_AWAITING_INVOICE])
             ->count();
 
+        // COVERAGE counts every inspection, including `unable_to_verify`: the inspector attended and
+        // recorded an honest answer, so the workflow step is complete and the evidence is not "lost".
+        // It is simply not usable as a statistic — which the threshold, not this number, enforces.
         $withVerdict = DB::table('repair_inspections')->distinct()->count('maintenance_id');
+
+        $unverifiable = DB::table('repair_inspections')
+            ->where('result', RepairInspection::RESULT_UNABLE_TO_VERIFY)
+            ->distinct()->count('maintenance_id');
 
         return [
             'closed'       => $closed,
             'with_verdict' => $withVerdict,
+            'unverifiable' => $unverifiable,
             'coverage'     => $closed > 0 ? $withVerdict / $closed : 0.0,
             'lost'         => max($closed - $withVerdict, 0),
         ];
@@ -237,7 +246,12 @@ class EvidenceLedger
 
     private function comeback(): EvidenceRequirement
     {
-        $total = DB::table('repair_inspections')->count();
+        // The THRESHOLD counts conclusive verdicts only — those are what a model can learn from.
+        // Coverage below counts every inspection, including "could not verify", because the workflow
+        // step genuinely happened. Two different questions, two different denominators.
+        $total = DB::table('repair_inspections')
+            ->whereIn('result', RepairInspection::CONCLUSIVE_RESULTS)
+            ->count();
         $qc    = $this->qcCoverage();
         $age   = $this->ageStats('repair_inspections');
         $last  = $this->lastEvaluation('comeback-warning');

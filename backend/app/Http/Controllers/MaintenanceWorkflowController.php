@@ -2253,6 +2253,14 @@ class MaintenanceWorkflowController extends Controller
                 // Deferred-invoice: sign off + return the car to service now, but park in awaiting_invoice
                 // (invoice outstanding) instead of a full close, so the workflow never gets stuck.
                 'defer_invoice'  => ['nullable', 'boolean'],
+                // Case D — the inspector attended but genuinely could not verify these faults (car already
+                // gone, fault would not reproduce, needed a road test). Recorded as `unable_to_verify`
+                // rather than being quietly signed off as fixed: a guessed PASS is a false positive in the
+                // only trustworthy dataset the platform has.
+                'unverifiable_task_ids'   => ['nullable', 'array'],
+                'unverifiable_task_ids.*' => ['integer'],
+                'unverifiable_reasons'    => ['nullable', 'array'], // { "<task_id>": "vehicle_unavailable" }
+                'unverifiable_reasons.*'  => [Rule::in(\App\Models\RepairInspection::UNVERIFIABLE_REASONS)],
             ]);
 
             // Post-Repair Inspection (PASS) — a close coming off the final QC gate is a "Fixed
@@ -2275,11 +2283,36 @@ class MaintenanceWorkflowController extends Controller
 
             $ticket = $this->workflow->close($ticket, $data, $request->user());
 
+            // A PASS records "fixed" for every fault EXCEPT those the inspector flagged as unverifiable —
+            // those carry the honest verdict and their own reason. Both count as coverage; only the
+            // conclusive ones ever reach a statistic or a model (RepairInspection::CONCLUSIVE_RESULTS).
+            $unverifiable = array_map('intval', $data['unverifiable_task_ids'] ?? []);
+            $reasons      = $data['unverifiable_reasons'] ?? [];
+
             foreach ($verifiedFaults as $fault) {
+                $couldNotVerify = in_array((int) $fault->id, $unverifiable, true);
+
                 $this->inspections->recordForFault(
-                    $ticket, $fault, \App\Models\RepairInspection::RESULT_FIXED, null, $data['notes'] ?? null, $request->user()
+                    $ticket,
+                    $fault,
+                    $couldNotVerify
+                        ? \App\Models\RepairInspection::RESULT_UNABLE_TO_VERIFY
+                        : \App\Models\RepairInspection::RESULT_FIXED,
+                    $couldNotVerify
+                        ? ($reasons[$fault->id] ?? \App\Models\RepairInspection::UNVERIFIABLE_OTHER)
+                        : null,
+                    $data['notes'] ?? null,
+                    $request->user(),
                 );
             }
+
+            // One user action — "close" — produces several distinct statements: a verification per
+            // fault the QC gate passed, the release itself, and the garage's implicit completion
+            // claim. The technician files none of them; they pressed one button.
+            if ($wasReinspection) {
+                $this->capture->repairVerified($ticket, $request->user(), \App\Models\RepairInspection::RESULT_FIXED);
+            }
+            $this->capture->ticketClosed($ticket, $request->user());
 
             $msg = $ticket->workflow_status === Maintenance::WF_AWAITING_INVOICE
                 ? 'Vehicle back in service — invoice pending'

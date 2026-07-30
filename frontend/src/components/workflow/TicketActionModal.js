@@ -76,6 +76,16 @@ function lastKnownOdometer(tk) {
 // Post-Repair Inspection — the structured reasons a repair did not hold (Case B). CONTRACT with
 // App\Models\RepairInspection::REASONS; visible labels resolve from the i18n catalog at render time.
 const FAILURE_REASONS = ['wrong_diagnosis', 'part_failed', 'repair_incomplete', 'wrong_part', 'customer_complaint', 'unknown'];
+// Why a repair could not be verified. Kept distinct from FAILURE_REASONS because an unverifiable
+// inspection is not a failed one — it must never blame a garage or reach a quality statistic.
+const UNVERIFIABLE_REASONS = ['vehicle_unavailable', 'not_reproducible', 'needs_road_test', 'no_access', 'unverifiable_other'];
+const UNVERIFIABLE_FALLBACK = {
+  vehicle_unavailable: 'Vehicle already out / with the customer',
+  not_reproducible: 'Fault would not reproduce',
+  needs_road_test: 'Needs a road test — not possible now',
+  no_access: 'Could not access the component',
+  unverifiable_other: 'Other',
+};
 
 // Persisted enum values — these are CONTRACT with the backend and never localize.
 // Their visible labels are resolved from the i18n catalog at render time.
@@ -468,7 +478,7 @@ function HandoverFields({
 }
 
 export default function TicketActionModal({ action, ticket, vehicles = [], garages = [], findingsCatalog = [], keywordMeta = {}, faultCausesCatalog = {}, assignableDrivers = [], allowedTypes = null, onClose, onDone }) {
-  const { t } = useI18n();
+  const { t, tf } = useI18n();
   const { user: currentUser } = useAuth();
   const { roles } = usePermissions();
   // Driver-voice "What happened?" choices this user may pick — see PERIODIC_REQUEST_ROLES.
@@ -600,6 +610,12 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   const [broken, setBroken] = useState({});        // { [taskId]: true } → this fault is not fixed
   const [brokenNote, setBrokenNote] = useState({}); // { [taskId]: 'what is still wrong' }
   const [brokenReason, setBrokenReason] = useState({}); // { [taskId]: 'wrong_diagnosis' } → structured failure reason (Case B)
+  // Case D — the inspector attended but genuinely could not tell (car gone, fault would not reproduce,
+  // needed a road test). Kept separate from `broken` because it is NOT a failure: it must never blame a
+  // garage. Recording it honestly beats guessing "fixed", which would put a false positive into the only
+  // trustworthy dataset the platform has.
+  const [unverifiable, setUnverifiable] = useState({});       // { [taskId]: true }
+  const [unverifiableReason, setUnverifiableReason] = useState({}); // { [taskId]: 'vehicle_unavailable' }
   const [requiresMaintenance, setRequiresMaintenance] = useState(true); // decide: open ticket | clear diagnostic
   const [faultSeverity, setFaultSeverity] = useState(() => ticket?.fault_severity || ''); // decide: mandatory fault-severity grade
   // decide: Repair Location — 'in_shop' (garage → alerts Waleed & Abdullah) | 'on_site' (mobile; car stays free).
@@ -801,6 +817,14 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   );
   const perFault = action === 'reinspect' && openFaults.length > 0;
   const brokenIds = openFaults.filter((tk) => broken[tk.id]).map((tk) => tk.id);
+  const unverifiableIds = openFaults.filter((tk) => unverifiable[tk.id]).map((tk) => tk.id);
+  // Sent on BOTH branches: a ticket can have some faults still broken and others unverifiable.
+  const unverifiablePayload = () => ({
+    unverifiable_task_ids: unverifiableIds,
+    unverifiable_reasons: Object.fromEntries(
+      unverifiableIds.map((id) => [id, unverifiableReason[id] || 'unverifiable_other']),
+    ),
+  });
   const reFail = perFault ? brokenIds.length > 0 : outcome === 'fail';
   // On a FAILED re-inspection the inspector sees the garage the car came back broken from and may
   // re-route it to a DIFFERENT garage for the supervisor's re-dispatch — changing it warns and
@@ -947,7 +971,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
         if (!reFail) {
           // PASS — every fault verified fixed → car returns to service. If the invoice isn't ready, defer
           // it: the car still goes back, the ticket parks in awaiting_invoice (never blocks on paperwork).
-          return { url: `${base}/${ticket.id}/close`, body: { cost: cost === '' ? null : Number(cost), vendor_id: vendorId ? Number(vendorId) : null, actual_in_date: inDate || null, notes: notes || null, defer_invoice: deferInvoice, final_odometer: odometer ? Number(odometer) : null, odometer_note: odoNote.trim() || null, odometer_confirmed: odoAckRequired ? odoConfirmed : null } };
+          return { url: `${base}/${ticket.id}/close`, body: { cost: cost === '' ? null : Number(cost), vendor_id: vendorId ? Number(vendorId) : null, actual_in_date: inDate || null, notes: notes || null, defer_invoice: deferInvoice, final_odometer: odometer ? Number(odometer) : null, odometer_note: odoNote.trim() || null, odometer_confirmed: odoAckRequired ? odoConfirmed : null, ...unverifiablePayload() } };
         }
         // FAIL — some faults still broken → back to the supervisor for re-dispatch, with per-fault blame.
         // Each still-broken fault carries a STRUCTURED failure reason (Case B) so a failed repair is
@@ -958,7 +982,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
           if (brokenNote[id]?.trim()) failed_notes[id] = brokenNote[id].trim();
           failure_reasons[id] = brokenReason[id] || 'unknown';
         });
-        return { url: `${base}/${ticket.id}/reopen`, body: { reason: notes || null, failed_task_ids: brokenIds, failed_notes, failure_reasons, redispatch_vendor_id: reFailGarageChanged ? Number(vendorId) : null } };
+        return { url: `${base}/${ticket.id}/reopen`, body: { reason: notes || null, failed_task_ids: brokenIds, failed_notes, failure_reasons, redispatch_vendor_id: reFailGarageChanged ? Number(vendorId) : null, ...unverifiablePayload() } };
       }
       default:
         return null;
@@ -979,8 +1003,13 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
         // Every still-broken fault needs a structured failure reason (Case B). Re-routing to a different
         // garage additionally needs a written reason (same-garage fail is unaffected).
         const missingReason = perFault && brokenIds.some((id) => !brokenReason[id]);
-        return missingReason || (reFailGarageChanged && !notes.trim());
+        // An unverifiable fault without a stated reason is the same hole in the data as no verdict at
+        // all — "we could not check" is only useful evidence when it says why.
+        const missingUnverifiable = unverifiableIds.some((id) => !unverifiableReason[id]);
+        return missingReason || missingUnverifiable || (reFailGarageChanged && !notes.trim());
       }
+      // Same rule on the PASS branch: some faults may be signed off while others could not be checked.
+      if (unverifiableIds.some((id) => !unverifiableReason[id])) return true;
       return !odometer || Number(odometer) < 1 || odoGateBlocked;
     }
     // Open & Start: the inspector captures the odometer reading + photo BEFORE the test drive (both mandatory).
@@ -2171,6 +2200,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                 <div className="space-y-1.5">
                   {openFaults.map((task) => {
                     const isBroken = !!broken[task.id];
+                    const isUnverifiable = !!unverifiable[task.id];
                     const failCount = Number(task.reinspection_failures) || 0;
                     return (
                       <div key={task.id} className={`rounded-xl border px-3 py-2.5 transition ${isBroken ? 'border-red-300 bg-red-50/60' : 'border-slate-200 bg-white'}`}>
@@ -2194,13 +2224,40 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                             </button>
                             <button
                               type="button"
-                              onClick={() => setBroken((p) => ({ ...p, [task.id]: true }))}
+                              onClick={() => { setBroken((p) => ({ ...p, [task.id]: true })); setUnverifiable((p) => ({ ...p, [task.id]: false })); }}
                               className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold ring-1 transition ${isBroken ? 'bg-red-600 text-white ring-red-600' : 'bg-white text-slate-500 ring-slate-300 hover:bg-slate-50'}`}
                             >
                               {t('workflow.reinspect.markBroken')}
                             </button>
+                            {/* The honest third option. Without it an inspector who cannot check the car
+                                must either guess "fixed" — a false positive in the platform's only
+                                trustworthy dataset — or record nothing at all, which looks identical to
+                                a skipped queue. */}
+                            <button
+                              type="button"
+                              onClick={() => { setUnverifiable((p) => ({ ...p, [task.id]: !p[task.id] })); setBroken((p) => ({ ...p, [task.id]: false })); }}
+                              className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold ring-1 transition ${isUnverifiable ? 'bg-slate-600 text-white ring-slate-600' : 'bg-white text-slate-500 ring-slate-300 hover:bg-slate-50'}`}
+                            >
+                              {tf('workflow.reinspect.markUnverifiable', "Can't verify")}
+                            </button>
                           </div>
                         </div>
+                        {isUnverifiable && (
+                          // Why it could not be checked, because "no usable verdict" is not one problem:
+                          // a car the customer drove away in is a scheduling failure, a fault that will
+                          // not reproduce is a diagnostic one, and they need different fixes.
+                          <select
+                            value={unverifiableReason[task.id] || ''}
+                            onChange={(e) => setUnverifiableReason((p) => ({ ...p, [task.id]: e.target.value }))}
+                            aria-label={tf('workflow.reinspect.unverifiableLabel', 'Why could it not be verified?')}
+                            className={`mt-2 w-full rounded-lg border bg-white px-2.5 py-1.5 text-sm outline-none transition focus:ring-2 focus:ring-slate-400/20 ${unverifiableReason[task.id] ? 'border-slate-200 text-slate-700' : 'border-slate-300 text-slate-400'}`}
+                          >
+                            <option value="">{tf('workflow.reinspect.unverifiablePlaceholder', 'Why could it not be verified?')}</option>
+                            {UNVERIFIABLE_REASONS.map((r) => (
+                              <option key={r} value={r}>{tf(`workflow.reinspect.unverifiable.${r}`, UNVERIFIABLE_FALLBACK[r])}</option>
+                            ))}
+                          </select>
+                        )}
                         {isBroken && (
                           <>
                             {/* Structured failure reason (Case B) — mandatory so a failed repair is never

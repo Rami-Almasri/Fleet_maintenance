@@ -50,6 +50,11 @@ class RepairInspectionService
         $result = in_array($result, RepairInspection::RESULTS, true) ? $result : RepairInspection::RESULT_FIXED;
         $isFail = $result === RepairInspection::RESULT_STILL_EXISTS;
 
+        // "Could not verify" is not a failure — it must never blame a garage, raise a repair-failure
+        // alert, or count as a recurrence. It is recorded so we know WHY there is no usable verdict,
+        // and excluded from every statistic downstream (RepairInspection::CONCLUSIVE_RESULTS).
+        $unverifiable = $result === RepairInspection::RESULT_UNABLE_TO_VERIFY;
+
         // The repair THIS ticket's garage just performed on the fault — the default "previous repair" for
         // the failure card (garage + when it reported done).
         $vendorId   = $fault->current_vendor_id ?: $ticket->vendor_id;
@@ -72,7 +77,11 @@ class RepairInspectionService
             'fault_id'             => $fault->id,
             'inspector_id'         => $actor->id,
             'result'               => $result,
-            'failure_reason'       => $isFail ? $this->normReason($failureReason) : null,
+            'failure_reason'       => match (true) {
+                $isFail       => $this->normReason($failureReason),
+                $unverifiable => $this->normUnverifiableReason($failureReason),
+                default       => null,
+            },
             'notes'                => $this->clean($notes),
             'previous_vendor_id'   => $vendorId,
             'previous_repaired_at' => $repairedAt,
@@ -289,6 +298,19 @@ class RepairInspectionService
     {
         $reason = $reason ? trim($reason) : '';
         return in_array($reason, RepairInspection::REASONS, true) ? $reason : RepairInspection::REASON_UNKNOWN;
+    }
+
+    /**
+     * Why the repair could not be checked. Falls back to `unverifiable_other` rather than `unknown`,
+     * so an unverifiable inspection can never be mistaken for a failed one when reading the column.
+     */
+    private function normUnverifiableReason(?string $reason): string
+    {
+        $reason = $reason ? trim($reason) : '';
+
+        return in_array($reason, RepairInspection::UNVERIFIABLE_REASONS, true)
+            ? $reason
+            : RepairInspection::UNVERIFIABLE_OTHER;
     }
 
     private function reasonLabel(?string $reason): string

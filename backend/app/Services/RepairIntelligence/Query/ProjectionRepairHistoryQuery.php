@@ -3,6 +3,7 @@
 namespace App\Services\RepairIntelligence\Query;
 
 use App\Models\MaintenanceSignature;
+use App\Models\RepairInspection;
 use App\Services\Intelligence\Evidence;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -133,7 +134,11 @@ class ProjectionRepairHistoryQuery implements RepairHistoryQuery
         $key = 'repair-intel:verified-failure:'.($signature ?? '_all');
 
         $stats = Cache::remember($key, now()->addHours(6), function () use ($signature) {
-            $q = DB::table('repair_inspections as ri');
+            $q = DB::table('repair_inspections as ri')
+                // CONCLUSIVE ONLY. An `unable_to_verify` inspection says the workflow ran, not whether
+                // the repair held — counting it as a success would inflate quality, and as a failure
+                // would defame a garage. It belongs in coverage and nowhere near a rate.
+                ->whereIn('ri.result', RepairInspection::CONCLUSIVE_RESULTS);
 
             if ($signature !== null) {
                 $q->join('maintenance_signatures as s', function ($j) use ($signature) {
@@ -174,6 +179,9 @@ class ProjectionRepairHistoryQuery implements RepairHistoryQuery
 
         $rows = DB::table('repair_inspections')
             ->whereIn('maintenance_id', $ticketIds)
+            // Same rule: "we could not check" is not a claim about the prior repair, so it must not
+            // become "the last repair was signed off as fixed" in a card's observation.
+            ->whereIn('result', RepairInspection::CONCLUSIVE_RESULTS)
             ->orderBy('inspection_date')
             ->get(['maintenance_id', 'result', 'inspection_date']);
 

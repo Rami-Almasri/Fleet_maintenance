@@ -175,6 +175,10 @@ class ComebackBacktest
         // Verdict outcome: only tickets an inspector actually judged are opportunities at all.
         $verdicts = $outcome === self::OUTCOME_VERDICT
             ? DB::table('repair_inspections')
+                // Training data must be conclusive. An `unable_to_verify` row means the inspector
+                // could not tell — treating it as "did not fail" would score the platform as right
+                // for every car nobody could actually check.
+                ->whereIn('result', \App\Models\RepairInspection::CONCLUSIVE_RESULTS)
                 ->select('maintenance_id', DB::raw("MAX(result = 'still_exists') AS failed"))
                 ->groupBy('maintenance_id')
                 ->pluck('failed', 'maintenance_id')
