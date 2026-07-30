@@ -26,6 +26,9 @@ export const TYPE_META = {
   recommendation: { label: 'Recommendation', tone: 'orange', Icon: Icon.Flag },
   followup:       { label: 'Follow-up',     tone: 'cyan',    Icon: Icon.Clock },
   accident:       { label: 'Accident',      tone: 'red',     Icon: Icon.XCircle },
+  // Reported ABOUT the car rather than performed on it — what the customer said, what the driver noticed.
+  complaint:      { label: 'Complaint',     tone: 'red',     Icon: Icon.Users },
+  observation:    { label: 'Driver Note',   tone: 'yellow',  Icon: Icon.Info },
   system:         { label: 'System',        tone: 'gray',    Icon: Icon.Activity },
 };
 
@@ -41,13 +44,15 @@ const EVENT_KIND = {
   // Inspection / readiness / condition
   pre_inspection: 'inspection', post_inspection: 'inspection', condition_graded: 'inspection',
   readiness_confirmed: 'inspection', readiness_override: 'inspection',
-  // Faults
+  // Faults — including the severity-review outcomes, which are decisions ABOUT a fault's grade.
   report_filed: 'fault', task_identified: 'fault', task_transferred: 'fault', task_resolved: 'fault',
   task_reinspection_failed: 'fault', task_marked_incorrect: 'fault', part_recurrence_flagged: 'fault',
+  severity_upgraded: 'fault', severity_review_kept: 'fault',
   // Routine service
   service_logged: 'routine',
-  // Dispatch / movement
-  dispatched: 'dispatch', garage_assigned: 'dispatch', transport_assigned: 'dispatch',
+  // Dispatch / movement — `task_assigned` is the per-fault twin of `garage_assigned` and only survives
+  // the feed's collapse when its ticket-level twin is outside the window, so it files with its parent.
+  dispatched: 'dispatch', garage_assigned: 'dispatch', task_assigned: 'dispatch', transport_assigned: 'dispatch',
   reassigned: 'dispatch', delegated: 'dispatch', status_update: 'dispatch',
   claimed: 'dispatch', picked_up: 'dispatch', delivered: 'dispatch', returned: 'dispatch', cancelled: 'dispatch',
   // Garage / invoice
@@ -57,7 +62,10 @@ const EVENT_KIND = {
   // Parts
   parts_ordered: 'parts', parts_ready: 'parts', part_requested: 'parts', part_approved: 'parts',
   part_rejected: 'parts', part_purchased: 'parts', part_installed: 'parts', part_completed: 'parts',
-  part_duplicate_flagged: 'parts',
+  part_duplicate_flagged: 'parts', part_required: 'parts', part_delivered: 'parts',
+  // Asset layer — a component fitted to / pulled off / moved between cars is a parts event on the car.
+  component_installed: 'parts', component_removed: 'parts',
+  component_transferred: 'parts', component_disposed: 'parts',
   // Approvals
   review_approved: 'approval', review_rejected: 'approval', incident_acknowledged: 'approval',
   // Recommendations
@@ -68,6 +76,8 @@ const EVENT_KIND = {
   temp_released: 'followup', temp_returned: 'followup', follow_up: 'followup',
   // Accident / incident
   handover_incident: 'accident', accident_visit: 'accident',
+  // Reported by people (complaints entity + driver handover notes)
+  complaint_logged: 'complaint', driver_observation: 'observation',
   // Workflow lifecycle
   closed: 'workflow', reopened: 'workflow', type_changed: 'workflow', prioritized: 'workflow',
   // Legacy sheet workshop visit (no granular event) — a completed garage visit.
@@ -204,8 +214,13 @@ function normalizeLegacyRow(row) {
       flagged: Boolean(row.damage),
       photo_url: null,
       transition: null,
+      // Left null on purpose: the row itself is a button, so it must not nest a contract <Link>.
+      // The contract is reachable from the workshop-event drawer this row opens.
       contract_id: null, contract_no: null,
       details: joinTruthy([row.type, row.damage]) ? { type: row.type, damage: row.damage, notes: row.notes } : { notes: row.notes },
+      // Keep the untouched sheet row: the timeline opens it in the workshop-event detail drawer
+      // (garage, cost, issues, full notes) — the one thing the retired Maintenance Log tab could do.
+      raw: row,
     };
   }
 

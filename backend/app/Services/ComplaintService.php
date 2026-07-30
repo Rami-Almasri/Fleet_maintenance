@@ -161,15 +161,36 @@ class ComplaintService
 
     /**
      * The customer's live contact details so the inspector can call. Prefers the denormalised snapshot
-     * captured at intake, but re-resolves from the linked contract (or the car's current open rental) so
-     * a corrected phone number surfaces.
+     * captured at intake, but re-resolves from the linked contract (or the car's rental at the time the
+     * complaint was logged, else its current open rental) so a corrected phone number surfaces.
+     *
+     * The historic lookup matters: a complaint logged weeks ago about a car that has since been returned
+     * still has a knowable renter — without it the drawer wrongly read "no customer on record".
+     * `source` is reported back so the UI can state where the name came from.
      */
     public function resolveContact(Complaint $complaint): ?array
     {
         $contract = null;
+        $source   = null;
+
         if ($complaint->contract_id) {
             $contract = Contract::with('customer')->find($complaint->contract_id);
+            $source   = $contract ? 'linked_contract' : null;
         }
+
+        // The rental that covered the car on the day the complaint was logged (may be closed by now).
+        if (! $contract && $complaint->vehicle_id && $complaint->created_at) {
+            $on = $complaint->created_at->toDateString();
+            $contract = Contract::with('customer')
+                ->where('vehicle_id', $complaint->vehicle_id)
+                ->where('contract_type', 'C')
+                ->whereDate('out_date', '<=', $on)
+                ->where(fn ($q) => $q->whereNull('in_date')->orWhereDate('in_date', '>=', $on))
+                ->latest('out_date')
+                ->first();
+            $source = $contract ? 'rental_at_complaint_time' : null;
+        }
+
         if (! $contract && $complaint->vehicle_id) {
             $contract = Contract::with('customer')
                 ->where('vehicle_id', $complaint->vehicle_id)
@@ -177,7 +198,9 @@ class ComplaintService
                 ->currentlyOpen()
                 ->latest('id')
                 ->first();
+            $source = $contract ? 'current_rental' : null;
         }
+
         $customer = $contract?->customer;
 
         // Fall back to the intake snapshot when the contract is gone.
@@ -186,11 +209,16 @@ class ComplaintService
         if (! $name && ! $mobile) {
             return null;
         }
+        if (! $customer) {
+            $source = 'intake_snapshot';
+        }
         return [
             'name'        => $name ?: null,
             'mobile'      => $mobile ?: null,
             'whatsapp'    => $customer?->whatsapp ?: null,
             'contract_no' => $contract?->contract_no ?: $complaint->contract_no,
+            'customer_id' => $customer?->id,
+            'source'      => $source,
         ];
     }
 

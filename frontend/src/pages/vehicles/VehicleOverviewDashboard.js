@@ -6,10 +6,14 @@
 // cadence) always render.
 //
 // Sections: Quick KPIs · Vehicle health + Snapshot · Revenue/Expense architecture ·
-// Repair trends + Fault distribution · Maintenance summary.
+// Repair trends + Repeat faults + Fault distribution · Maintenance summary.
+//
+// The one exception to "no extra fetch" is the Repeat Faults panel, which loads its own
+// episode chains from /Vehicle/{id}/repeat-faults — that analysis is not in the profile payload.
 
 import { useMemo, useState } from 'react';
 import { SectionCard } from '../../components/ui/Table';
+import VehicleRepeatFaults from '../../components/vehicles/VehicleRepeatFaults';
 import { RadialGauge } from '../../components/ui/Gauge';
 import CompositionDonut from '../../components/ui/CompositionDonut';
 import LeaderDonut from '../../components/ui/LeaderDonut';
@@ -416,6 +420,11 @@ export default function VehicleOverviewDashboard({
           </div>
         )}
       </SectionCard>
+
+      {/* ── 1a · "Keeps breaking down" — the faults that returned AFTER they were repaired, each
+              drawn as a chain of repair episodes with the gap the car held in between. Sits directly
+              under the trend chart: the chart says HOW MUCH shop time, this says WHY. ── */}
+      <VehicleRepeatFaults vehicleId={v.id} showFinancials={showFinancials} />
 
       {/* ── 1b · Contract portfolio band (stat column · by-type bars · donut) ── */}
       <ContractPortfolio contracts={contracts} onNavigate={onNavigate} />

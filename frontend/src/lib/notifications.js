@@ -135,7 +135,7 @@ export const GROUPS = [
     blurb: 'Service-due cars, garage overruns & approvals',
     icon: 'wrench',
     tone: 'info',
-    types: ['overdue_maintenance', 'maint_checkpoint', 'maintenance_back_open', 'service_inspection', 'approval_pending'],
+    types: ['overdue_maintenance', 'maint_checkpoint', 'maintenance_back_open', 'service_inspection', 'approval_pending', 'maint_recurring_fault_review'],
   },
   {
     key: 'finance',
@@ -183,7 +183,7 @@ export const TABS = [
     icon: 'wrench',
     blurb: 'Service-due cars, repairs, diagnostics & approvals',
     empty: 'No maintenance notifications found',
-    types: ['overdue_maintenance', 'maint_checkpoint', 'maintenance_back_open', 'service_inspection', 'approval_pending', 'high_maintenance_cost'],
+    types: ['overdue_maintenance', 'maint_checkpoint', 'maintenance_back_open', 'service_inspection', 'approval_pending', 'high_maintenance_cost', 'maint_recurring_fault_review'],
   },
   {
     key: 'incidents',

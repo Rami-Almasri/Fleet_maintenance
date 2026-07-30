@@ -3,10 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../api/client';
 import useFetch from '../hooks/useFetch';
 import { Card, Spinner } from '../components/ui/Misc';
-import MetricCard, { MetricGrid } from '../components/ui/MetricCard';
 import DataTable, { SectionCard } from '../components/ui/Table';
-import { MetricGridSkeleton, Skeleton } from '../components/ui/Skeleton';
-import { Tooltip } from '../components/ui/Tooltip';
 import FleetUtilizationAnalytics from '../components/analytics/FleetUtilizationAnalytics';
 import Icon from '../components/ui/Icon';
 import { aed2, num, fmtDate } from '../lib/format';
@@ -54,23 +51,6 @@ function SplitBar({ rented, maintenance, idle }) {
 
 const pct = (v) => (v == null ? '—' : `${v}%`);
 const days = (v) => (v == null ? '—' : `${num(v)}d`);
-
-// Compact pill for the header's "scope" row (window + fleet counts).
-function ScopeChip({ icon, children, tone = 'slate', tip }) {
-  const tones = {
-    slate:  'bg-white text-slate-600 ring-slate-200',
-    indigo: 'bg-indigo-50 text-indigo-700 ring-indigo-200',
-    red:    'bg-red-50 text-red-700 ring-red-200',
-    amber:  'bg-amber-50 text-amber-700 ring-amber-200',
-  };
-  const body = (
-    <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium ring-1 ring-inset ${tones[tone] || tones.slate} ${tip ? 'cursor-help' : ''}`}>
-      {icon}
-      {children}
-    </span>
-  );
-  return tip ? <Tooltip content={tip}>{body}</Tooltip> : body;
-}
 
 // Local "today" as YYYY-MM-DD (timezone-correct, unlike toISOString which is UTC).
 const todayISO = () => {
@@ -376,13 +356,10 @@ export default function FleetUtilization() {
     [data],
   );
 
-  const s = data?.summary || {};
-  const win = data?.window || {};
-
   return (
     <div className="py-8">
       <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
-        {/* Hero header — title, a tight colour-coded subtitle, and scannable scope chips. */}
+        {/* Hero header — title and a tight colour-coded subtitle. */}
         <div className="animate-fade-in-up space-y-4">
           <div className="min-w-0">
             <div className="flex items-center gap-2.5">
@@ -394,91 +371,7 @@ export default function FleetUtilization() {
               measured from each car's first rental, so new cars aren't branded as downtime.
             </p>
           </div>
-
-          {/* Scope chips — fleet coverage for the selected window */}
-          {loading ? (
-            <Skeleton className="h-9 w-full max-w-xl rounded-full sm:ml-4" />
-          ) : (
-            <div className="flex flex-wrap items-center gap-2 sm:pl-4">
-              <ScopeChip
-                icon={<Icon.Calendar className="h-4 w-4 text-slate-400" />}
-                tip="Performance is anchored on each car's In-Service Date (first rental). Time owned before the first rental is excluded so new cars aren't penalized as downtime."
-              >
-                {win.lifetime
-                  ? 'Lifetime · since first rental'
-                  : <>{fmtDate(win.from)} <span className="text-slate-300">→</span> {fmtDate(win.to)}</>}
-              </ScopeChip>
-              <ScopeChip icon={<Icon.Car className="h-4 w-4 text-slate-400" />}>
-                <span className="font-bold text-slate-900">{num(s.cars || 0)}</span> cars
-              </ScopeChip>
-              <ScopeChip icon={<Icon.Wrench className="h-4 w-4 text-slate-400" />}>
-                <span className="font-bold text-slate-900">{num(s.cars_in_maintenance || 0)}</span> saw the workshop
-              </ScopeChip>
-              {s.pending_service > 0 && (
-                <ScopeChip
-                  tone="amber"
-                  icon={<Icon.Clock className="h-4 w-4" />}
-                  tip="Purchased but not yet rented — no performance metrics until the first rental contract."
-                >
-                  <span className="font-bold">{num(s.pending_service)}</span> pending service
-                </ScopeChip>
-              )}
-            </div>
-          )}
         </div>
-
-        {/* Hero KPIs */}
-        {loading ? (
-          <MetricGridSkeleton count={5} />
-        ) : (
-          <MetricGrid cols={5}>
-            <MetricCard
-              className="hover-lift"
-              label="Avg utilization"
-              value={pct(s.avg_utilization_pct == null ? null : Math.round(s.avg_utilization_pct))}
-              tone="emerald"
-              icon={<Icon.Percent className="h-5 w-5" />}
-              hint="of in-service days on rent"
-              tooltip="Utilization %: share of each car's in-service days that were on a paid rental, averaged across the fleet. Higher is better."
-            />
-            <MetricCard
-              className="hover-lift"
-              label="Avg downtime"
-              value={pct(s.avg_downtime_pct == null ? null : Math.round(s.avg_downtime_pct))}
-              tone="red"
-              icon={<Icon.Wrench className="h-5 w-5" />}
-              hint="of in-service days in workshop"
-              tooltip="Downtime %: share of in-service days spent in the workshop with no active rental (true downtime), averaged across the fleet."
-            />
-            <MetricCard
-              className="hover-lift"
-              label="Maintenance days"
-              value={num(Math.round(s.total_days_maintenance || 0))}
-              tone="slate"
-              icon={<Icon.Clock className="h-5 w-5" />}
-              hint="fleet total in window"
-              tooltip="Total workshop days across the fleet in this window (days with no active rental)."
-            />
-            <MetricCard
-              className="hover-lift"
-              label="Idle days"
-              value={num(Math.round(s.total_days_idle || 0))}
-              tone="amber"
-              icon={<Icon.Activity className="h-5 w-5" />}
-              hint="available, not earning"
-              tooltip="Days a car was available (not rented, not in the workshop) — capacity that earned nothing."
-            />
-            <MetricCard
-              className="hover-lift"
-              label="Rent lost to downtime"
-              value={aed2(s.revenue_lost_downtime || 0)}
-              tone="red"
-              icon={<Icon.Cash className="h-5 w-5" />}
-              hint="downtime × daily rate"
-              tooltip="Estimated rent foregone while cars sat in the workshop: downtime days × each car's daily rate."
-            />
-          </MetricGrid>
-        )}
 
         {/* Controls */}
         <Card className="p-4 animate-fade-in-up">

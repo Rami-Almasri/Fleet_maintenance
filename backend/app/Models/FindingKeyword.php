@@ -4,6 +4,8 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 /**
  * One entry in the maintenance findings keyword library, with its baseline RISK grade.
@@ -14,6 +16,16 @@ use Illuminate\Database\Eloquent\Model;
  * severity vocabulary (critical / moderate / routine, see Maintenance::FAULT_SEVERITY_META) so a
  * keyword's default risk maps straight onto a ticket's fault_severity. See the
  * create_finding_keywords_table migration for the full design.
+ *
+ * AI KNOWLEDGE BASE. A keyword row is no longer just a string — it is the CONCEPT at the centre of
+ * an automotive ontology:
+ *  - [[KeywordTerm]] (many) — every surface form a human might type: synonyms, workshop slang,
+ *    abbreviations, spelling variants, misspellings, Arabic. This is what free-text search matches.
+ *  - [[KeywordProfile]] (one) — the engineering metadata: system, components, causes, repairs.
+ *  - [[KeywordEnrichmentRun]] (many) — the audit trail of every AI call that wrote the above.
+ *
+ * The keyword string itself is untouched by all of this: it remains the stable analytics key that
+ * persists onto `maintenances.findings`. The ontology is the *input* surface, never the stored one.
  */
 class FindingKeyword extends Model
 {
@@ -43,6 +55,77 @@ class FindingKeyword extends Model
         'is_active'  => 'boolean',
         'sort_order' => 'integer',
     ];
+
+    /** Every way a human might write this fault — the searchable surface. See [[KeywordTerm]]. */
+    public function terms(): HasMany
+    {
+        return $this->hasMany(KeywordTerm::class)->orderByDesc('search_rank');
+    }
+
+    /** The structured engineering knowledge behind the fault. See [[KeywordProfile]]. */
+    public function profile(): HasOne
+    {
+        return $this->hasOne(KeywordProfile::class);
+    }
+
+    /** Audit trail of AI enrichment attempts, newest first. */
+    public function enrichmentRuns(): HasMany
+    {
+        return $this->hasMany(KeywordEnrichmentRun::class)->latest();
+    }
+
+    /**
+     * This fault's entry point into the knowledge graph — the universal (unscoped) fault node.
+     * Make-specific nodes hang off the same keyword but are reached through [[OntologyGraphService]],
+     * which knows how to prefer the narrowest scope that applies to the vehicle being asked about.
+     */
+    public function ontologyNode(): HasOne
+    {
+        return $this->hasOne(OntologyNode::class)
+            ->where('type', OntologyNode::TYPE_FAULT)
+            ->where('ontology_nodes.scope_key', \App\Support\VehicleScope::UNIVERSAL);
+    }
+
+    /** Human corrections recorded against this fault — the continuous-learning signal. */
+    public function feedback(): HasMany
+    {
+        return $this->hasMany(OntologyFeedback::class);
+    }
+
+    /** Documentation cited for this fault as a whole. */
+    public function evidence(): \Illuminate\Database\Eloquent\Relations\MorphMany
+    {
+        return $this->morphMany(EvidenceLink::class, 'evidenceable');
+    }
+
+    /**
+     * The canonical English string is always a term in its own right, so a search for the exact
+     * keyword matches even before any AI enrichment has run. Called on keyword create/update so a
+     * hand-added keyword is immediately findable.
+     */
+    public function syncCanonicalTerms(): void
+    {
+        foreach ([['term' => $this->keyword, 'lang' => 'en', 'kind' => KeywordTerm::KIND_CANONICAL],
+                  ['term' => $this->keyword_ar, 'lang' => 'ar', 'kind' => KeywordTerm::KIND_TRANSLATION]] as $spec) {
+            if (blank($spec['term'])) {
+                continue;
+            }
+
+            $this->terms()->updateOrCreate(
+                ['normalized' => \App\Support\TextNormalizer::key($spec['term'])],
+                [
+                    'term'               => $spec['term'],
+                    'lang'               => $spec['lang'],
+                    'kind'               => $spec['kind'],
+                    'confidence'         => 100,
+                    'source'             => KeywordTerm::SOURCE_SEED,
+                    'source_quality'     => 'workshop',
+                    'workshop_frequency' => 'high',
+                    'is_active'          => true,
+                ]
+            );
+        }
+    }
 
     /** Metadata for a given risk, falling back to Moderate for anything unexpected. */
     public static function riskMeta(?string $risk): array

@@ -35,6 +35,14 @@ const DECISIONS = [
 
 const OPEN_STATUSES = ['new', 'notified', 'contacted', 'in_maintenance'];
 
+// Where the customer on screen came from — no black boxes (see the traceability rule).
+const CONTACT_SOURCE = {
+  linked_contract: 'the contract linked to this complaint',
+  rental_at_complaint_time: 'the rental this car was on when the complaint was logged',
+  current_rental: "the car's current open rental",
+  intake_snapshot: 'what was typed in at intake',
+};
+
 export default function ComplaintDetailDrawer({ id, open, onClose, onChanged }) {
   const { can } = usePermissions();
   const toast = useToast();
@@ -140,7 +148,13 @@ export default function ComplaintDetailDrawer({ id, open, onClose, onChanged }) 
             </p>
             {contact?.name || data.customer ? (
               <div className="space-y-2">
-                <p className="text-sm font-semibold text-slate-800">{contact?.name || data.customer}</p>
+                {contact?.customer_id ? (
+                  <Link to={`/customers/${contact.customer_id}`} className="text-sm font-semibold text-slate-800 underline decoration-slate-300 underline-offset-2 hover:text-slate-900">
+                    {contact.name || data.customer}
+                  </Link>
+                ) : (
+                  <p className="text-sm font-semibold text-slate-800">{contact?.name || data.customer}</p>
+                )}
                 <div className="flex flex-wrap gap-2">
                   {contact?.mobile && (
                     <a href={`tel:${contact.mobile}`} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200 transition hover:bg-emerald-100" dir="ltr">
@@ -161,9 +175,14 @@ export default function ComplaintDetailDrawer({ id, open, onClose, onChanged }) 
                 {!contact?.mobile && !contact?.whatsapp && (
                   <p className="text-xs text-slate-400">No phone on file for this customer.</p>
                 )}
+                {CONTACT_SOURCE[contact?.source] && (
+                  <p className="text-[11px] text-slate-400">Source: {CONTACT_SOURCE[contact.source]}</p>
+                )}
               </div>
             ) : (
-              <p className="text-sm text-slate-400">Not linked to a rental — no customer on record.</p>
+              <p className="text-sm text-slate-400">
+                No rental covered this car when the complaint was logged, and no customer was entered at intake.
+              </p>
             )}
           </div>
 

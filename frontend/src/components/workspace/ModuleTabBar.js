@@ -18,7 +18,8 @@ import { createPortal } from 'react-dom';
 import { Link, useLocation } from 'react-router-dom';
 import api from '../../api/client';
 import { usePermissions } from '../../hooks/usePermissions';
-import { visibleSections, OVERVIEW_ROUTE } from '../../config/moduleRegistry';
+import { visibleSections, OVERVIEW_ROUTE, moduleNameKey, sectionNameKey, menuLabelKey } from '../../config/moduleRegistry';
+import { useI18n } from '../../i18n/I18nContext';
 import Icon from '../ui/Icon';
 
 const BUBBLE = {
@@ -32,8 +33,10 @@ const BUBBLE = {
 
 export default function ModuleTabBar({ module }) {
   const { can, roles } = usePermissions();
+  const { t, tf, dir, isRTL } = useI18n();
   const { pathname } = useLocation();
   const ModuleIcon = module.icon;
+  const moduleName = tf(moduleNameKey(module), module.name);
 
   // The open dropdown: { name, left, top } (viewport coords of the tab that owns it), or null.
   const [menu, setMenu] = useState(null);
@@ -118,9 +121,11 @@ export default function ModuleTabBar({ module }) {
     if (e.deltaY !== 0 && e.deltaX === 0) { nav.scrollLeft += e.deltaY; }
   };
 
+  // `name` stays the English identity (it keys the open-dropdown state and the
+  // React list); `label` is what the user actually reads.
   const tabs = [
-    { name: 'Overview', route: OVERVIEW_ROUTE(module.id), icon: module.icon },
-    ...visibleSections(module, can, roles),
+    { name: 'Overview', label: t('modules.overview'), route: OVERVIEW_ROUTE(module.id), icon: module.icon },
+    ...visibleSections(module, can, roles).map((s) => ({ ...s, label: tf(sectionNameKey(module, s), s.name) })),
   ];
 
   const isActive = (tab) => {
@@ -136,7 +141,14 @@ export default function ModuleTabBar({ module }) {
   const toggleMenu = (tab, e) => {
     if (menu?.name === tab.name) { closeMenu(); return; }
     const r = e.currentTarget.getBoundingClientRect();
-    setMenu({ name: tab.name, left: r.left, top: r.bottom + 4 });
+    // The panel is portaled to <body> and fixed-positioned, so it can't inherit
+    // the bar's direction — anchor it to the tab's leading edge explicitly, which
+    // is the right edge under RTL.
+    setMenu({
+      name: tab.name,
+      top: r.bottom + 4,
+      ...(isRTL ? { right: window.innerWidth - r.right } : { left: r.left }),
+    });
   };
 
   const openTab = tabs.find((t) => t.menu && menu?.name === t.name);
@@ -169,13 +181,13 @@ export default function ModuleTabBar({ module }) {
           <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${BUBBLE[module.tone] || BUBBLE.slate}`}>
             <ModuleIcon className="h-5 w-5" />
           </span>
-          <span className="font-display text-sm font-bold text-slate-900">{module.name}</span>
+          <span className="font-display text-sm font-bold text-slate-900">{moduleName}</span>
         </div>
 
         <nav
           ref={navRef}
           className="tabbar-scroll flex min-w-0 flex-1 items-stretch gap-1"
-          aria-label={`${module.name} sections`}
+          aria-label={t('modules.sectionsOf', { module: moduleName })}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={endDrag}
@@ -191,12 +203,12 @@ export default function ModuleTabBar({ module }) {
               return (
                 <span
                   key={tab.name}
-                  title={`${tab.name} — coming soon`}
+                  title={t('modules.comingSoonTitle', { name: tab.label })}
                   className="flex cursor-not-allowed items-center gap-1.5 whitespace-nowrap border-b-2 border-transparent px-3 py-3 text-sm font-medium text-slate-300"
                 >
                   {TabIcon && <TabIcon className="h-4 w-4" />}
-                  {tab.name}
-                  <span className="rounded bg-slate-100 px-1 text-[9px] font-bold uppercase text-slate-400">Soon</span>
+                  {tab.label}
+                  <span className="rounded bg-slate-100 px-1 text-[9px] font-bold uppercase text-slate-400">{t('modules.soon')}</span>
                 </span>
               );
             }
@@ -215,7 +227,7 @@ export default function ModuleTabBar({ module }) {
                   className={`${baseTab} ${active ? activeTab : idleTab}`}
                 >
                   {TabIcon && <TabIcon className="h-4 w-4" />}
-                  {tab.name}
+                  {tab.label}
                   <Icon.ChevronDown className={`h-3.5 w-3.5 transition-transform ${open ? 'rotate-180' : ''}`} />
                 </button>
               );
@@ -230,7 +242,7 @@ export default function ModuleTabBar({ module }) {
                 draggable={false}
               >
                 {TabIcon && <TabIcon className="h-4 w-4" />}
-                {tab.name}
+                {tab.label}
               </Link>
             );
           })}
@@ -243,7 +255,8 @@ export default function ModuleTabBar({ module }) {
         <div
           ref={menuRef}
           role="menu"
-          style={{ position: 'fixed', left: menu.left, top: menu.top, zIndex: 1000 }}
+          dir={dir}
+          style={{ position: 'fixed', left: menu.left, right: menu.right, top: menu.top, zIndex: 1000 }}
           className="min-w-[13rem] overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-xl shadow-slate-900/10"
         >
           {openTab.menu.map((item) => (
@@ -252,7 +265,7 @@ export default function ModuleTabBar({ module }) {
                 key={`h-${item.heading}`}
                 className="mt-1 border-t border-slate-100 px-4 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400"
               >
-                {item.heading}
+                {tf(menuLabelKey(module, item), item.heading)}
               </p>
             ) : (
               <Link
@@ -263,7 +276,7 @@ export default function ModuleTabBar({ module }) {
                 className="flex items-center gap-2.5 px-4 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-50 hover:text-slate-900"
               >
                 {item.tone && <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: item.tone }} />}
-                <span className="flex-1 whitespace-nowrap">{item.name}</span>
+                <span className="flex-1 whitespace-nowrap">{tf(menuLabelKey(module, item), item.name)}</span>
                 {item.key && counts && (
                   <span
                     className={`ms-auto inline-flex min-w-[1.5rem] items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-bold tabular-nums ${

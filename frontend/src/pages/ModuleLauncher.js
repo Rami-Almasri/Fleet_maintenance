@@ -10,16 +10,20 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { usePermissions } from '../hooks/usePermissions';
 import { useAuth } from '../auth/AuthContext';
-import { visibleModules, moduleForPath, isModuleVisible, OVERVIEW_ROUTE } from '../config/moduleRegistry';
+import {
+  visibleModules, moduleForPath, isModuleVisible, OVERVIEW_ROUTE,
+  moduleNameKey, moduleTaglineKey, sectionNameKey,
+} from '../config/moduleRegistry';
 import { SearchInput, EmptyState } from '../components/ui/Misc';
 import Icon from '../components/ui/Icon';
 import ModuleCard from '../components/workspace/ModuleCard';
+import { useI18n } from '../i18n/I18nContext';
 
-const greeting = () => {
+const greetKey = () => {
   const h = new Date().getHours();
-  if (h < 12) return 'Good morning';
-  if (h < 18) return 'Good afternoon';
-  return 'Good evening';
+  if (h < 12) return 'morning';
+  if (h < 18) return 'afternoon';
+  return 'evening';
 };
 
 // Recently visited modules, derived from the paths AppLayout already records.
@@ -45,6 +49,7 @@ function useRecentModules(can, roles) {
 export default function ModuleLauncher() {
   const { can, roles, permissions } = usePermissions();
   const { user } = useAuth();
+  const { t, tf, lang } = useI18n();
   const [query, setQuery] = useState('');
   const recent = useRecentModules(can, roles);
   const first = user?.name ? String(user.name).trim().split(/\s+/)[0] : '';
@@ -53,14 +58,17 @@ export default function ModuleLauncher() {
     const all = visibleModules(can, roles);
     const q = query.trim().toLowerCase();
     if (!q) return all;
-    return all.filter(
-      (m) =>
-        m.name.toLowerCase().includes(q) ||
-        m.tagline.toLowerCase().includes(q) ||
-        m.sections.some((s) => s.name.toLowerCase().includes(q)),
-    );
+    // Match the English source AND the active translation, so a user typing
+    // Arabic finds the module and one typing English still does too.
+    const haystack = (m) =>
+      [
+        m.name, m.tagline,
+        tf(moduleNameKey(m), ''), tf(moduleTaglineKey(m), ''),
+        ...m.sections.flatMap((s) => [s.name, tf(sectionNameKey(m, s), '')]),
+      ].join(' ').toLowerCase();
+    return all.filter((m) => haystack(m).includes(q));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [permissions, roles, query]);
+  }, [permissions, roles, query, lang]);
 
   return (
     <div className="py-8">
@@ -69,19 +77,19 @@ export default function ModuleLauncher() {
         <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <h1 className="font-display text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
-              {greeting()}{first ? <>, <span className="text-gradient">{first}</span></> : ''}
+              {t(`shell.greet.${greetKey()}`)}{first ? <>{t('launcher.nameSeparator')}<span className="text-gradient">{first}</span></> : ''}
             </h1>
-            <p className="mt-1 text-sm text-slate-500">Choose an application to get started.</p>
+            <p className="mt-1 text-sm text-slate-500">{t('launcher.subtitle')}</p>
           </div>
           <div className="w-full sm:w-72">
-            <SearchInput value={query} onChange={setQuery} placeholder="Search applications…" />
+            <SearchInput value={query} onChange={setQuery} placeholder={t('launcher.searchPlaceholder')} />
           </div>
         </div>
 
         {/* Recent apps (optional). */}
         {!query && recent.length > 0 && (
           <div>
-            <h2 className="mb-3 font-display text-xs font-bold uppercase tracking-wide text-slate-400">Recent</h2>
+            <h2 className="mb-3 font-display text-xs font-bold uppercase tracking-wide text-slate-400">{t('launcher.recent')}</h2>
             <div className="flex flex-wrap gap-2">
               {recent.map((m) => {
                 const MIcon = m.icon;
@@ -92,7 +100,7 @@ export default function ModuleLauncher() {
                     className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3.5 py-1.5 text-sm font-medium text-slate-700 shadow-soft outline-none transition hover:border-indigo-300 hover:text-indigo-600 focus-visible:ring-2 focus-visible:ring-indigo-500/50"
                   >
                     <MIcon className="h-4 w-4 text-slate-400" />
-                    {m.name}
+                    {tf(moduleNameKey(m), m.name)}
                   </Link>
                 );
               })}
@@ -111,12 +119,8 @@ export default function ModuleLauncher() {
           <div className="rounded-2xl border border-slate-200/60 bg-white shadow-soft">
             <EmptyState
               icon={<Icon.Search className="h-6 w-6" />}
-              title={query ? 'No matching applications' : 'No applications available'}
-              message={
-                query
-                  ? `Nothing matches “${query}”. Try a different search.`
-                  : 'You don’t have access to any modules yet. Ask an administrator to grant permissions.'
-              }
+              title={query ? t('launcher.noMatchTitle') : t('launcher.noAccessTitle')}
+              message={query ? t('launcher.noMatchBody', { query }) : t('launcher.noAccessBody')}
             />
           </div>
         )}

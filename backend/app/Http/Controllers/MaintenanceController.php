@@ -8,7 +8,6 @@ use App\Models\Maintenance;
 use App\Models\MaintenanceReason;
 use App\Models\Vehicle;
 use App\Services\MaintenanceAnalyticsService;
-use App\Services\MaintenanceForesightService;
 use App\Services\MaintenanceIncidentService;
 use App\Services\OperationsService;
 use App\Services\RealProfitService;
@@ -536,46 +535,10 @@ class MaintenanceController extends Controller
         }
     }
 
-    /**
-     * Maintenance Foresight: catch cars BEFORE they break (service overdue, chronic faults,
-     * aging battery) and simulate the cost of inaction — predicted downtime, parts-wait risk,
-     * lost rental revenue, and the saving from acting early. The "be ready" board.
-     */
-    public function foresight(MaintenanceForesightService $foresight)
-    {
-        try {
-            return ResponseHelper::SuccessResponse(
-                $foresight->report(),
-                "Maintenance foresight retrieved successfully",
-                200
-            );
-        } catch (\Exception $e) {
-            return ResponseHelper::fromException($e);
-        }
-    }
-
-    /**
-     * Drill-down behind a Foresight cost line: every workshop repair across the WHOLE
-     * fleet that fixed a given issue, with its all-in cost — "show me where we fixed
-     * this, on any car, and what it cost". Reconciles with the card's "avg · n repairs".
-     */
-    public function issueHistory(\Illuminate\Http\Request $request, MaintenanceForesightService $foresight)
-    {
-        try {
-            $issue = trim((string) $request->query('issue', ''));
-            if ($issue === '') {
-                return ResponseHelper::FailureResponse(null, 'An issue is required.', 422);
-            }
-
-            return ResponseHelper::SuccessResponse(
-                $foresight->issueHistory($issue),
-                "Issue repair history retrieved successfully",
-                200
-            );
-        } catch (\Exception $e) {
-            return ResponseHelper::fromException($e);
-        }
-    }
+    // NOTE: foresight() and issueHistory() were removed with the /maintenance-foresight page. Their
+    // engine, MaintenanceForesightService, is still live — MaintenanceSwapController and
+    // MaintenanceOpsCenterService call it directly — and the per-car recurrence story it used to show
+    // now lives on the vehicle profile (VehicleController::repeatFaults).
 
     /**
      * Fleet-wide maintenance cost intelligence: average cost per service and a

@@ -1,5 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import KeywordRiskAnalytics from '../components/analytics/KeywordRiskAnalytics';
+import KeywordKnowledgeDrawer from '../components/keywords/KeywordKnowledgeDrawer';
+import KeywordMatchTester from '../components/keywords/KeywordMatchTester';
 import api from '../api/client';
 import useFetch from '../hooks/useFetch';
 import { useToast } from '../components/ui/Toast';
@@ -40,6 +42,8 @@ export default function FindingKeywords() {
   const keywords = useMemo(() => data?.keywords || [], [data]);
   const categories = useMemo(() => data?.categories || [], [data]);
   const counts = data?.counts || { total: 0, critical: 0, moderate: 0, routine: 0 };
+  // AI knowledge-base coverage: how many concepts are described, and whether enrichment can run.
+  const knowledge = data?.knowledge || { ai_available: false, enriched: 0, term_total: 0 };
 
   // Localised getters — Arabic when the UI is Arabic, English otherwise (with graceful fallback).
   const riskLabel = (r) => t(`findingKeywords.risk.${r}`);
@@ -68,6 +72,9 @@ export default function FindingKeywords() {
   // delete confirm
   const [toDelete, setToDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
+
+  // AI knowledge drawer — the ontology behind one keyword (terms + profile + run log).
+  const [knowledgeFor, setKnowledgeFor] = useState(null);
 
   const openCreate = () => {
     setEditing(null);
@@ -220,6 +227,29 @@ export default function FindingKeywords() {
           <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error}</div>
         )}
 
+        {/* AI knowledge base. The coverage strip answers "how much of my library does the system
+            actually understand?", and the tester proves it on real sentences — the honest way to
+            find the under-described keywords rather than trusting a green tick. */}
+        {!loading && (
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+            <div className="rounded-2xl border border-slate-200/60 bg-white px-5 py-4 shadow-soft">
+              <p className="text-xs font-medium text-slate-500">{t('keywordAi.coverage')}</p>
+              <p className="mt-1 font-display text-2xl font-bold tracking-tight text-slate-900">
+                {num(knowledge.enriched)}<span className="text-base font-medium text-slate-400"> / {num(counts.total)}</span>
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                {t('keywordAi.coverageHint', { terms: num(knowledge.term_total) })}
+              </p>
+              {!knowledge.ai_available && (
+                <p className="mt-2 text-xs text-amber-600">{t('keywordAi.notConfiguredShort')}</p>
+              )}
+            </div>
+            <div className="lg:col-span-2">
+              <KeywordMatchTester />
+            </div>
+          </div>
+        )}
+
         {/* Analytics — the filtered set, matching the table below. */}
         {!loading && filtered.length > 0 && <KeywordRiskAnalytics keywords={filtered} />}
 
@@ -232,13 +262,14 @@ export default function FindingKeywords() {
                   <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-start">{t('findingKeywords.colCategory')}</th>
                   <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-start">{t('findingKeywords.colRisk')}</th>
                   <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-start">{t('findingKeywords.colDetail')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-start">{t('keywordAi.colKnowledge')}</th>
                   <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-start">{t('findingKeywords.colStatus')}</th>
-                  {canManage && <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-end">{t('findingKeywords.colActions')}</th>}
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-end">{t('findingKeywords.colActions')}</th>
                 </tr>
               </thead>
 
               {loading ? (
-                <TableSkeleton cols={canManage ? 6 : 5} />
+                <TableSkeleton cols={7} />
               ) : (
                 <tbody>
                   {paged.map((k) => {
@@ -254,17 +285,33 @@ export default function FindingKeywords() {
                           <Badge tone={RISK_TONE[k.risk] || 'amber'}>{RISK_EMOJI[k.risk]} {riskLabel(k.risk)}</Badge>
                         </td>
                         <td className="border-b border-slate-100 px-5 py-3.5 max-w-md text-slate-600">{k.description || <span className="text-slate-300">—</span>}</td>
+                        {/* How well the AI knows this fault: how many ways it can be written, and
+                            whether the engineering profile has been generated at all. */}
+                        <td className="border-b border-slate-100 px-5 py-3.5">
+                          <div className="flex items-center gap-2">
+                            <span className={`text-sm font-medium ${(k.term_count || 0) > 3 ? 'text-slate-700' : 'text-slate-400'}`}>
+                              {num(k.term_count || 0)}
+                            </span>
+                            <span className="text-xs text-slate-400">{t('keywordAi.termsShort')}</span>
+                            {k.is_enriched
+                              ? <Badge tone="violet" dot>{t('keywordAi.described')}</Badge>
+                              : <Badge tone="gray">{t('keywordAi.basic')}</Badge>}
+                          </div>
+                        </td>
                         <td className="border-b border-slate-100 px-5 py-3.5">
                           {k.is_active ? <Badge tone="green">{t('findingKeywords.active')}</Badge> : <Badge tone="gray">{t('findingKeywords.hidden')}</Badge>}
                         </td>
-                        {canManage && (
-                          <td className="border-b border-slate-100 px-5 py-3.5">
-                            <div className="flex justify-end gap-2">
-                              <Button variant="secondary" size="sm" onClick={() => openEdit(k)}>{t('common.edit')}</Button>
-                              <Button variant="ghost" size="sm" className="text-red-600 hover:bg-red-50" onClick={() => setToDelete(k)}>{t('findingKeywords.remove')}</Button>
-                            </div>
-                          </td>
-                        )}
+                        <td className="border-b border-slate-100 px-5 py-3.5">
+                          <div className="flex justify-end gap-2">
+                            <Button variant="secondary" size="sm" onClick={() => setKnowledgeFor(k)}>{t('keywordAi.open')}</Button>
+                            {canManage && (
+                              <>
+                                <Button variant="secondary" size="sm" onClick={() => openEdit(k)}>{t('common.edit')}</Button>
+                                <Button variant="ghost" size="sm" className="text-red-600 hover:bg-red-50" onClick={() => setToDelete(k)}>{t('findingKeywords.remove')}</Button>
+                              </>
+                            )}
+                          </div>
+                        </td>
                       </tr>
                     );
                   })}
@@ -362,6 +409,15 @@ export default function FindingKeywords() {
           </label>
         </div>
       </Modal>
+
+      {/* AI knowledge base for one keyword — every surface form + the engineering profile. */}
+      <KeywordKnowledgeDrawer
+        keywordId={knowledgeFor?.id}
+        open={!!knowledgeFor}
+        onClose={() => setKnowledgeFor(null)}
+        canManage={canManage}
+        onChanged={reload}
+      />
 
       {/* Delete confirm */}
       <ConfirmDialog

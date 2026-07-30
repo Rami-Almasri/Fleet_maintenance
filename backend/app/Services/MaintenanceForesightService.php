@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Contract;
 use App\Models\Maintenance;
 use App\Models\Vehicle;
+use App\Support\FaultVocabulary;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -1283,40 +1284,14 @@ class MaintenanceForesightService
     // ---- small helpers ---------------------------------------------------------------
 
     /**
-     * Cosmetic / appearance work — excluded from breakdown prediction (deny-first).
-     * The workshop log is dominated by rental-return cosmetics; these are not failures.
+     * True when an issue label is a mechanical / safety fault (not cosmetic). Cosmetic / appearance
+     * work is excluded from breakdown prediction (deny-first) — the workshop log is dominated by
+     * rental-return cosmetics and those are not failures. The keyword lists are shared with the
+     * per-car recurrence engine via FaultVocabulary so the two views can never disagree.
      */
-    private const COSMETIC_KEYWORDS = [
-        'scratch', 'dent', 'body & exterior', 'exterior', 'interior', 'upholstery', 'trim',
-        'panel', 'paint', 'sticker', 'rim', 'mirror', 'lip', 'diffuser', 'accessor',
-        'cleaning', 'wash', 'glass chip', 'fading', 'peeling', 'cosmetic', 'misalign',
-    ];
-
-    /** Mechanical / safety systems — the faults that actually strand a car. */
-    private const MECHANICAL_KEYWORDS = [
-        'engine', 'brake', 'suspension', 'steer', 'transmission', 'gearbox', 'gear', 'clutch',
-        'cooling', 'coolant', 'radiator', 'overheat', 'air condition', 'ac ', 'a/c', 'electric',
-        'battery', 'alternator', 'starter', 'ignition', 'exhaust', 'fuel', 'airbag', 'abs',
-        'tire', 'tyre', 'wheel', 'align', 'oil', 'fluid', 'dashboard', 'warning light',
-        'headlight', 'taillight', 'tail light', 'sensor', 'camera', 'belt', 'leak', 'noise',
-        'grind', 'squeak', 'vibrat', 'flat',
-    ];
-
-    /** True when an issue label is a mechanical / safety fault (not cosmetic). */
     private function isMechanical(string $issue): bool
     {
-        $k = ' ' . $this->normalise($issue) . ' ';
-        foreach (self::COSMETIC_KEYWORDS as $w) {
-            if (str_contains($k, $w)) {
-                return false;   // cosmetic wins
-            }
-        }
-        foreach (self::MECHANICAL_KEYWORDS as $w) {
-            if (str_contains($k, trim($w))) {
-                return true;
-            }
-        }
-        return false;           // unknown → don't predict on it
+        return FaultVocabulary::isMechanical($issue);
     }
 
     private function outOfWarranty(Vehicle $v): bool
@@ -1355,23 +1330,12 @@ class MaintenanceForesightService
     /** @return array<int,string> */
     private function splitIssues(?string $main, ?string $sup): array
     {
-        $tags = [];
-        foreach ([$main, $sup] as $field) {
-            foreach (preg_split('/\s*,\s*/', (string) $field, -1, PREG_SPLIT_NO_EMPTY) as $t) {
-                $t = trim($t);
-                if ($t !== '') {
-                    $tags[$t] = true;
-                }
-            }
-        }
-        return array_keys($tags);
+        return FaultVocabulary::splitIssues($main, $sup);
     }
 
     private function normalise(string $s): string
     {
-        $s = strtolower(trim($s));
-        $s = preg_replace('/[^a-z0-9]+/', ' ', $s);
-        return trim(preg_replace('/\s+/', ' ', $s));
+        return FaultVocabulary::normalise($s);
     }
 
     /** @param  array<int,array<string,mixed>>  $cars */

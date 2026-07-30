@@ -257,7 +257,7 @@ class RecurringFaultService
             ],
         ];
 
-        return RecurringFaultReview::create([
+        $review = RecurringFaultReview::create([
             'status'                  => RecurringFaultReview::STATUS_OPEN,
             'vehicle_id'              => $fault->vehicle_id,
             'maintenance_id'          => $fault->maintenance_id,
@@ -282,5 +282,71 @@ class RecurringFaultService
             'opened_by_name'          => $actor->name ?: $actor->email,
             'opened_at'               => Carbon::now(),
         ]);
+
+        $this->announceReview($review, $fault, $actor, $match);
+
+        return $review;
+    }
+
+    /**
+     * Tell management a repeat-fault case just opened. The audience is by ROLE (super-admin + admin), not by
+     * permission: this is an oversight alert — the people accountable for a garage's rework must hear about it
+     * even if `maintenance.recurring.view` was never re-synced onto their role. The actor (the technician who
+     * confirmed the fault) is excluded — they already know; they just did it.
+     *
+     * Deliberately non-fatal: a mail/DB hiccup must never roll back a review case that the workshop's
+     * confirmation already justified. NotificationScanner is resolved lazily so the fault-write path
+     * (flagPossibleRecurrence runs on EVERY reported fault) does not eagerly build the scanner's whole
+     * dependency chain.
+     */
+    private function announceReview(RecurringFaultReview $review, MaintenanceTask $fault, User $actor, array $match): void
+    {
+        try {
+            $vehicle = $fault->vehicle_id ? Vehicle::find($fault->vehicle_id) : null;
+            $label   = $vehicle
+                ? trim($vehicle->plate_no . ' · ' . trim($vehicle->make . ' ' . $vehicle->model))
+                : 'Vehicle #' . $fault->vehicle_id;
+
+            // The three numbers that decide whether this is rework or bad luck.
+            $facts = [];
+            if ($match['days_since_repair'] !== null) {
+                $facts[] = $match['days_since_repair'] . ' days after the last repair';
+            }
+            if ($match['distance_since_repair'] !== null) {
+                $facts[] = number_format($match['distance_since_repair']) . ' km driven since';
+            }
+            if ($match['previous_garage_name']) {
+                $facts[] = 'previously repaired by ' . $match['previous_garage_name'];
+            }
+            $facts[] = 'occurrence #' . $match['occurrence_count'];
+
+            app(\App\Services\NotificationScanner::class)->notifyByRole(['super-admin', 'admin'], [
+                'type'     => 'maint_recurring_fault_review',
+                'category' => 'maintenance',
+                'severity' => 'warning',
+                'title'    => '🔁 Same fault came back · ' . $label,
+                'body'     => trim('"' . $fault->symptom . '" was confirmed again on ' . $label . ' — '
+                                . implode(', ', $facts) . '. The repair is blocked pending a management ruling.'),
+                'url'      => '/recurring-fault-reviews',
+                'key'      => 'recurring_fault_review:' . $review->id,
+                'icon'     => 'wrench',
+                'meta'     => [
+                    'review_id'             => $review->id,
+                    'ticket_id'             => $fault->maintenance_id,
+                    'task_id'               => $fault->id,
+                    'vehicle_id'            => $fault->vehicle_id,
+                    'plate'                 => $vehicle?->plate_no,
+                    'symptom'               => $fault->symptom,
+                    'previous_ticket_id'    => $match['previous_task']->maintenance_id,
+                    'previous_garage'       => $match['previous_garage_name'],
+                    'days_since_repair'     => $match['days_since_repair'],
+                    'distance_since_repair' => $match['distance_since_repair'],
+                    'occurrence_count'      => $match['occurrence_count'],
+                    'confirmed_by'          => $actor->name ?: $actor->email,
+                ],
+            ], $actor->id);
+        } catch (\Throwable $e) {
+            report($e);
+        }
     }
 }

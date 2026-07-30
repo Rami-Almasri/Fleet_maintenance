@@ -284,6 +284,19 @@ class MaintenanceWorkflowResource extends JsonResource
             'waiting_parts'  => count($this->pendingPartNames($t)) > 0,
             'parts_pending'  => $this->pendingPartNames($t),
 
+            // Every part request raised against the ticket, fault-linked or not. A request raised at the
+            // ticket level (no maintenance_task_id — e.g. an ad-hoc procurement request) is invisible to
+            // the per-fault `tasks[].parts` list, so the card reads THIS to show it. Present only when the
+            // ticket's own partRequests relation is eager-loaded.
+            'parts' => $this->whenLoaded('partRequests', fn () => $t->partRequests->map(fn (PartRequest $p) => [
+                'id'          => $p->id,
+                'part_name'   => $p->part_name,
+                'part_number' => $p->part_number,
+                'quantity'    => $p->quantity,
+                'status'      => $p->status,
+                'task_id'     => $p->maintenance_task_id,
+            ])->values()),
+
             // OPERATIONS CARD — the "what is happening to this car right now" block the Car Status
             // Operations Dashboard renders: the primary maintenance reason, the real operational state,
             // the latest checkpoint, the blocker, the parts owed, the clock, who's accountable, the repair
@@ -548,12 +561,15 @@ class MaintenanceWorkflowResource extends JsonResource
      */
     private function pendingPartNames(Maintenance $t): array
     {
-        if (! $t->relationLoaded('tasks')) {
-            return [];
-        }
+        // Prefer the ticket's own requests — they cover BOTH the fault-linked ones and any raised against
+        // the ticket with no fault (maintenance_task_id null), which the per-fault walk below misses.
+        $requests = $t->relationLoaded('partRequests')
+            ? $t->partRequests
+            : ($t->relationLoaded('tasks')
+                ? $t->tasks->flatMap(fn ($task) => $task->relationLoaded('partRequests') ? $task->partRequests : collect())
+                : collect());
 
-        return $t->tasks
-            ->flatMap(fn ($task) => $task->relationLoaded('partRequests') ? $task->partRequests : collect())
+        return $requests
             ->reject(fn (PartRequest $r) => in_array($r->status, PartRequest::TERMINAL, true))
             ->pluck('part_name')
             ->filter()

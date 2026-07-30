@@ -8,6 +8,14 @@
 //
 // RULE: never hardcode a visible string in a component. If you need a new one,
 // add it to BOTH `en` and `ar` below.
+//
+// EXCEPTION — `nav` and `modules`. Their English lives in the tables that define
+// them (layouts/AppLayout.js and config/moduleRegistry.js), because those entries
+// are structural (route, icon, permission, feature flag) and their `desc` text
+// doubles as the documentation for each destination. Those two namespaces
+// therefore appear under `ar` only; the consuming components resolve them with
+// tf(key, englishFromTheTable), so English comes from the table and Arabic from
+// here. Everything else follows the RULE above.
 
 const en = {
   classReview: {
@@ -52,6 +60,53 @@ const en = {
     saved: 'Saved ✓',
     running: 'running',
   },
+  // The application shell: header chrome shown on every page (AppLayout).
+  shell: {
+    back: 'Back',
+    backHint: 'Back to previous page',
+    home: 'Home',
+    homeHint: 'Home — main page',
+    search: 'Search',
+    searchHint: 'Search (Ctrl / ⌘ K)',
+    shortcuts: 'Keyboard shortcuts',
+    shortcutsHint: 'Keyboard shortcuts ( ? )',
+    logout: 'Log out',
+    backToTop: 'Back to top',
+    greet: {
+      morning: 'Good morning', afternoon: 'Good afternoon', evening: 'Good evening', night: 'Good night',
+      morningNamed: 'Good morning, {name}', afternoonNamed: 'Good afternoon, {name}',
+      eveningNamed: 'Good evening, {name}', nightNamed: 'Good night, {name}',
+    },
+    quickActions: { 'new-contract': 'New contract', 'data-health': 'Check data health', reload: 'Reload app' },
+    quickActionKeywords: { 'new-contract': '', 'data-health': '', reload: '' },
+  },
+  // Generic module-shell chrome (launcher tiles, tab bar, overview hero). The
+  // per-module names/taglines/section labels are Arabic-only — see the note below.
+  modules: {
+    overview: 'Overview',
+    soon: 'Soon',
+    comingSoonTitle: '{name} — coming soon',
+    sectionsOf: '{module} sections',
+    explore: 'Explore {module}',
+    sectionCount: { one: '1 section', other: '{n} sections' },
+    activeSectionCount: { one: '1 active section', other: '{n} active sections' },
+  },
+  launcher: {
+    nameSeparator: ', ',
+    subtitle: 'Choose an application to get started.',
+    searchPlaceholder: 'Search applications…',
+    recent: 'Recent',
+    noMatchTitle: 'No matching applications',
+    noMatchBody: 'Nothing matches “{query}”. Try a different search.',
+    noAccessTitle: 'No applications available',
+    noAccessBody: 'You don’t have access to any modules yet. Ask an administrator to grant permissions.',
+  },
+  // NOTE: there is deliberately no `nav` block here. The nav table in
+  // layouts/AppLayout.js carries the English name + desc for every destination
+  // (35 long `desc` paragraphs that also document each page), so mirroring them
+  // here would duplicate them and invite drift. AppLayout resolves nav labels
+  // with tf(), which falls back to that table for English and picks up `ar.nav`
+  // below for Arabic. Same arrangement for `modules` (config/moduleRegistry.js).
   workflow: {
     // Live-position badge extras (garage→garage transfer marker).
     position: { transfer: 'Transfer' },
@@ -586,6 +641,7 @@ const en = {
       qty: 'Qty',
       add: 'Add another part',
       noFault: 'For this job (no specific fault)',
+      selectAll: 'Select all pending',
       priority: {
         urgent: 'Urgent',
         high: 'High',
@@ -730,6 +786,9 @@ const en = {
       noPermission: 'No permission',
       finding: 'finding',
       sentBack: 'Sent back',
+      partsWaiting: 'Waiting for parts · {n}',
+      partsWaitingTip: 'Parts still owed on this ticket: {names}',
+      partsHd: 'Parts',
       expectedReturn: 'Back {date}',
       expectedOverdue: 'Due {date}',
       expectedReturnTip: 'Expected return date — when the garage promised the car back.',
@@ -1161,6 +1220,127 @@ const en = {
     },
   },
 
+  // AI Keyword Intelligence — the automotive ontology behind the keyword library. Every fault is a
+  // CONCEPT with many surface forms (synonyms, workshop wording, abbreviations, spellings,
+  // misspellings, Arabic) plus an engineering profile, all generated and all traceable.
+  keywordAi: {
+    title: 'Fault Knowledge',
+    open: 'Knowledge',
+    colKnowledge: 'Knowledge',
+    termsShort: 'terms',
+    described: 'Described',
+    basic: 'Basic',
+    coverage: 'AI knowledge coverage',
+    coverageHint: 'faults fully described · {terms} searchable terms',
+    notConfiguredShort: 'AI enrichment is not configured',
+    notConfigured: 'AI enrichment is unavailable — no API key is configured on the server. Terms can still be added and edited by hand.',
+    notEnriched: 'This fault has not been described yet. Run enrichment to generate its synonyms, workshop wording, abbreviations, spelling variants, common misspellings, Arabic terms and engineering profile.',
+    enrich: 'Build knowledge',
+    refresh: 'Refresh knowledge',
+    enriched: 'Knowledge base updated',
+    enrichError: 'Enrichment failed',
+    loadError: 'Could not load this fault’s knowledge',
+
+    aiSeverity: 'AI severity',
+    confidence: 'Confidence',
+    rank: 'Rank',
+    severityConflict: 'You graded this {yours}; professional documentation reads it as {ai}. Your grade is what the system uses — this is only a second opinion.',
+    symptoms: 'Symptoms',
+    components: 'Components',
+    causes: 'Likely causes',
+    repairs: 'Typical repairs',
+    related: 'Related faults',
+    sources: 'Evidence sources',
+
+    terms: 'Search terms',
+    allLangs: 'All languages',
+    noTerms: 'No terms yet.',
+    addTerm: 'Add term',
+    editTerm: 'Edit term',
+    termAdded: 'Term added',
+    termUpdated: 'Term updated',
+    termRemoved: 'Term removed',
+    termSaveError: 'Could not save term',
+    termRemoveError: 'Could not remove term',
+    removeTermTitle: 'Remove term?',
+    removeTermMsg: '“{term}” will no longer match searches for this fault.',
+    humanOwnedHint: 'Terms you edit are marked as yours and are never overwritten by a future AI run.',
+    fieldTerm: 'Term',
+    fieldKind: 'Type',
+    fieldLang: 'Language',
+    fieldFrequency: 'Workshop frequency',
+    runs: 'Enrichment history',
+
+    kind: {
+      canonical: 'Canonical',
+      synonym: 'Synonyms',
+      workshop_phrase: 'Workshop wording',
+      customer_phrase: 'Customer wording',
+      abbreviation: 'Abbreviations',
+      spelling_variant: 'Spelling variants',
+      misspelling: 'Common misspellings',
+      translation: 'Arabic',
+    },
+    source: { seed: 'Built in', ai: 'AI generated', human: 'Edited by staff' },
+    frequency: { very_high: 'Very common', high: 'Common', medium: 'Occasional', low: 'Rare', rare: 'Very rare' },
+    discipline: {
+      mechanical: 'Mechanical',
+      electrical: 'Electrical',
+      bodywork: 'Bodywork',
+      air_conditioning: 'A/C',
+      tyres: 'Tyres',
+      diagnostics: 'Diagnostics',
+      routine_service: 'Routine service',
+    },
+
+    testerTitle: 'What fault is this?',
+    testerHint: 'Type what a technician would actually write — the system finds the fault without needing the exact keyword.',
+    testerPlaceholder: 'e.g. the car makes a strange metallic sound when braking',
+    match: 'Find fault',
+    matchError: 'Could not run the match',
+    noMatch: 'No fault matched. That usually means the keyword needs richer terms — open it and build its knowledge.',
+    normalizedAs: 'Matched as:',
+    strong: 'Strong match',
+    possible: 'Possible match',
+    how: { exact: 'exact', phrase: 'phrase', tokens: 'wording', fuzzy: 'typo' },
+    examples: 'strange metallic sound when braking|engine running hot and temp gauge high|الموتر يسخن|break noise|ac not blowing cold',
+
+    // --- Knowledge engine: graph, evidence, learning loop ---
+    relationships: 'Knowledge graph',
+    rel: {
+      causes: 'Likely causes', repairs: 'Repairs that fix it', components: 'Components affected',
+      inspection: 'Diagnostic checks', symptoms: 'Presents as', related: 'Related faults',
+    },
+    ofCases: 'of {n} cases',
+    evidence: 'Evidence',
+    noEvidence: 'No citations recorded yet. Run enrichment with a corpus or web grounding to attach sources.',
+    grounding: 'Grounded',
+    groundingHint: 'How much of this answer rests on retrieved documentation or measured fleet history, rather than the model’s own training.',
+    method: {
+      corpus: 'from corpus', web_search: 'from the web', fleet: 'from our history',
+      human: 'stated by staff', model_prior: 'model knowledge only',
+    },
+    viewSource: 'source',
+
+    repairIntel: 'What the job takes',
+    complexity: {
+      trivial: 'Trivial', routine: 'Routine', moderate: 'Moderate',
+      complex: 'Complex', specialist: 'Specialist — outsource',
+    },
+    bookTime: 'Book time',
+    inspectionOrder: 'Check in this order',
+    tools: 'Tools',
+    skills: 'Skills',
+    predictionNote: 'Actual duration and cost come from Repair Intelligence, which predicts from real repair history.',
+
+    wasThisRight: 'Was this right?',
+    yes: 'Yes',
+    no: 'No',
+    thanksCorrect: 'Recorded as a good match — thanks.',
+    thanksWrong: 'Recorded. This fault will be tightened on its next enrichment.',
+    feedbackError: 'Could not record that',
+  },
+
   findingKeywords: {
     title: 'Keyword Risk Library',
     subtitle: '{shown} of {total} fault keywords',
@@ -1281,7 +1461,8 @@ const en = {
   completedRepairs: {
     title: 'Completed repairs',
     subtitle: 'Every car whose repair is done and signed off — who requested it, who drove it, where it was fixed, and what it cost.',
-    fixed: 'Fixed',
+    repeatCars: 'Cars returned',
+    repeatBadge: 'Returned {n}×',
     totalSpend: 'Total spend',
     searchPlaceholder: 'Search plate, car, garage, person…',
     vehicle: 'Vehicle',
@@ -1673,6 +1854,310 @@ const ar = {
     saved: 'تم الحفظ ✓',
     running: 'جارٍ',
   },
+  shell: {
+    back: 'رجوع',
+    backHint: 'العودة إلى الصفحة السابقة',
+    home: 'الرئيسية',
+    homeHint: 'الرئيسية — الصفحة الأساسية',
+    search: 'بحث',
+    searchHint: 'بحث (Ctrl / ⌘ K)',
+    shortcuts: 'اختصارات لوحة المفاتيح',
+    shortcutsHint: 'اختصارات لوحة المفاتيح ( ? )',
+    logout: 'تسجيل الخروج',
+    backToTop: 'العودة إلى الأعلى',
+    greet: {
+      morning: 'صباح الخير', afternoon: 'طاب يومك', evening: 'مساء الخير', night: 'طابت ليلتك',
+      morningNamed: 'صباح الخير، {name}', afternoonNamed: 'طاب يومك، {name}',
+      eveningNamed: 'مساء الخير، {name}', nightNamed: 'طابت ليلتك، {name}',
+    },
+    quickActions: { 'new-contract': 'عقد جديد', 'data-health': 'فحص سلامة البيانات', reload: 'إعادة تحميل التطبيق' },
+    // Arabic search terms appended to the palette's English keywords so ⌘K matches either language.
+    quickActionKeywords: { 'new-contract': 'إنشاء إضافة إيجار', 'data-health': 'مشاكل جودة تنظيف', reload: 'تحديث تصفير' },
+  },
+  modules: {
+    overview: 'نظرة عامة',
+    soon: 'قريبًا',
+    comingSoonTitle: '{name} — قريبًا',
+    sectionsOf: 'أقسام {module}',
+    explore: 'استكشف {module}',
+    // Arabic has six plural categories; Intl.PluralRules picks the right one (see tp()).
+    sectionCount: { zero: 'لا أقسام', one: 'قسم واحد', two: 'قسمان', few: '{n} أقسام', many: '{n} قسمًا', other: '{n} قسم' },
+    activeSectionCount: {
+      zero: 'لا أقسام نشطة', one: 'قسم نشط واحد', two: 'قسمان نشطان',
+      few: '{n} أقسام نشطة', many: '{n} قسمًا نشطًا', other: '{n} قسم نشط',
+    },
+    // ── Per-module labels (Arabic only; English lives in config/moduleRegistry.js).
+    dashboard: {
+      name: 'لوحة المعلومات',
+      tagline: 'نظرة شاملة على الأسطول — التوفر والتركيبة والإجماليات الرئيسية',
+      sections: {},
+    },
+    maintenance: {
+      name: 'الصيانة',
+      tagline: 'خط الإصلاح والقوائم وقطع الغيار والموردون والسجل',
+      sections: {
+        'car-status': { name: 'حالة السيارات', desc: 'لوحة المراحل الحيّة — كل سيارة حسب المرحلة التي هي فيها بالضبط ومن المسؤول عنها الآن.' },
+        'maintenance-cycle': { name: 'دورة الصيانة', desc: 'خط سير تذاكر الإصلاح — حرّك كل تذكرة من طلب تجربة القيادة حتى الفحص النهائي.' },
+        'maintenance-progress': { name: 'تقدّم الصيانة', desc: 'تابع التقدّم داخل الورشة مقابل تاريخ الإنجاز الموعود لكل سيارة، مع تذكيرات تصاعدية.' },
+        'my-queue': { name: 'قائمتي', desc: 'عملك في الصيانة حسب دورك في مكان واحد — ما يحتاجك، الآن.' },
+        'inspection-review': { name: 'مراجعة الفحص', desc: 'المراقبون يدقّقون طلبات الفحص — الموافقة تمرّرها، أو الرفض مع ذكر السبب.' },
+        complaints: { name: 'الشكاوى', desc: 'كل شكوى عميل وخط زمن متابعتها، في عرض إداري واحد.' },
+        'driver-observations': { name: 'ملاحظات السائقين', desc: 'ملاحظات تسليم داخلية من السائقين — تُصعَّد إلى فحص عند الحاجة فقط.' },
+        'completed-repairs': { name: 'الإصلاحات المكتملة', desc: 'السجل المعتمَد — من وأين وما الذي اكتُشف وأُصلح وكم كلّف.' },
+        'service-reminders': { name: 'تذكيرات الخدمة', desc: 'مواعيد الخدمة الدورية لكل سيارة — الزيت والفلاتر والفرامل والإطارات — مع الإشعار والجدولة.' },
+        parts: { name: 'قطع الغيار', desc: 'اطلب ووافق واشترِ وركّب القطع — مع كشف الإنفاق المكرّر وتكرار الأعطال.' },
+        garages: { name: 'الورش', desc: 'الورش التي تخدم الأسطول، والأعمال المحوّلة إلى كل منها.' },
+        history: { name: 'السجل', desc: 'كل زيارة ورشة لكل سيارة — كم مرة وكم استغرقت، زيارة بزيارة.' },
+      },
+      menu: {
+        'all-stages': 'كل المراحل',
+        'needs-test-drive': 'تحتاج تجربة قيادة',
+        'being-inspected': 'قيد الفحص',
+        'needs-dispatch': 'تحتاج توجيهًا',
+        'awaiting-pickup': 'بانتظار الاستلام',
+        'en-route-to-garage': 'في الطريق إلى الكراج',
+        'in-workshop': 'في الورشة',
+        'ready-for-pickup': 'جاهزة للاستلام',
+        'final-qa': 'الفحص النهائي',
+        exceptions: 'الاستثناءات',
+        'sent-back-qa-failed': 'أُعيدت — رسبت في الفحص',
+        paused: 'موقوفة مؤقتًا',
+        'returned-resume-due': 'عادت — تستأنف',
+        'on-site-service': 'خدمة في الموقع',
+      },
+    },
+    'fleet-operations': {
+      name: 'عمليات الأسطول',
+      tagline: 'المركبات والإيجارات وحركة الأسطول اليومية',
+      sections: {
+        vehicles: { name: 'المركبات', desc: 'كل سيارة في الأسطول — افتح صفًا لعرض ملفه الكامل وسجله ومستنداته.' },
+        contracts: { name: 'العقود', desc: 'عقود الإيجار المزامنة من OfficeManager — كل المفتوحة، إضافة إلى المغلقة حديثًا.' },
+        customers: { name: 'العملاء', desc: 'بيانات تواصل العملاء وعقودهم ورصيد المحفظة المتاح (الرصيد المُرحّل).' },
+        drivers: { name: 'السائقون', desc: 'سائقو الأسطول مع رقم الرخصة وتاريخ انتهائها والحالة — وتُعلَّم الرخص المنتهية قريبًا.' },
+        'driver-dispatch': { name: 'توجيه السائقين', desc: 'أرسل مركبة بين المواقع وتابع أي سائق يحملها وأين.' },
+        'fleet-health': { name: 'صحة الأسطول', desc: 'أسطح الخدمة المستحقة وانتهاء التسجيل والتأمين، مجمّعة في مركز واحد.' },
+        'damage-accidents': { name: 'الأضرار والحوادث', desc: 'سجلات الأضرار والحوادث لكل مركبة، ملوّنة حسب الطرف المسؤول والتأمين.' },
+        'maintenance-swap': { name: 'تبديل الصيانة', desc: 'أبقِ العميل على الطريق — عيّن سيارة بديلة أثناء إصلاح سيارته.' },
+        vendors: { name: 'الموردون', desc: 'الموردون ومقدّمو الخدمات المشار إليهم في الصيانة والعقود.' },
+        'odometer-approvals': { name: 'موافقات العدّاد', desc: 'قائمة مراجعة التعديلات اليدوية المؤثرة على العدّاد — وافق أو ارفض كلًا منها.' },
+        reports: { name: 'التقارير', desc: 'التقارير التشغيلية وسجلات التدقيق وأسطح جودة البيانات في مكان واحد.' },
+      },
+    },
+    'fleet-intelligence': {
+      name: 'ذكاء الأسطول',
+      tagline: 'تحليلات تشغيلية — التكلفة والتنبؤ والأعطال والاستغلال',
+      sections: {
+        'fleet-analytics': { name: 'تحليلات الأسطول', desc: 'تفصيل مدة الملكية لكل سيارة إلى أيام مؤجّرة وأيام صيانة وأيام خمول.' },
+        'keyword-risk': { name: 'مخاطر الكلمات المفتاحية', desc: 'مكتبة كلمات الأعطال، كل منها مصنّفة حرجة أو متوسطة أو روتينية.' },
+        'recurring-faults': { name: 'الأعطال المتكررة', desc: 'سيارات عادت بنفس العطل المؤكّد بعد إصلاح — لاتخاذ قرار إداري.' },
+        'part-investigations': { name: 'تحقيقات القطع', desc: 'حالات الإنفاق المكرّر وتكرار الأعطال المُعلَّمة لمراجعة الإدارة.' },
+        'maintenance-analytics': { name: 'تحليلات الصيانة', desc: 'اتجاهات أعمق عبر الإصلاحات والتكلفة ومدة الإنجاز — قريبًا.' },
+        'health-scores': { name: 'درجات الصحة', desc: 'درجة حالة واحدة لكل سيارة مجمّعة من كل المؤشرات — قريبًا.' },
+      },
+    },
+    finance: {
+      name: 'المالية',
+      tagline: 'الربحية والتسوية وسلامة البيانات المالية',
+      sections: {
+        profitability: { name: 'الربحية', desc: 'الربح التشغيلي لكل سيارة — دخل الإيجار ناقص تكلفة الصيانة المسجّلة.' },
+        'cost-intelligence': { name: 'ذكاء التكلفة', desc: 'التكلفة التشغيلية الحقيقية لكل أصل — لكل كيلومتر ولكل يوم ولكل إيجار.' },
+        'financial-conflicts': { name: 'التعارضات المالية', desc: 'مركز تنظيف الحسابات — الفواتير المعطوبة والفوترة المزدوجة فقط.' },
+        reconciliation: { name: 'التسوية', desc: 'اربط عقدًا بالنظام المحاسبي — الدفتر مقابل النقد المحصّل فعليًا.' },
+        'accounting-data': { name: 'بيانات المحاسبة', desc: 'تغذية مباشرة من النظام المحاسبي — قريبًا.' },
+        reports: { name: 'التقارير', desc: 'التقارير التشغيلية وسجلات التدقيق وأسطح جودة البيانات في مكان واحد.' },
+      },
+    },
+    reports: {
+      name: 'التقارير',
+      tagline: 'التقارير التشغيلية وسجلات التدقيق وجودة البيانات',
+      sections: {
+        'mileage-discrepancies': { name: 'فروقات العدّاد', desc: 'قراءات عدّاد لا تتّسق عبر العقود — مُعلَّمة للمراجعة.' },
+        'left-the-garage-invoices': { name: 'فواتير مغادرة الكراج', desc: 'سيارات غادرت الكراج بينما بقي عقد صيانتها مفتوحًا.' },
+        'diagnostic-review': { name: 'المراجعة التشخيصية', desc: 'بوابة جودة لخطورة الأعطال — أبقِ التقييم أو ارفعه، مع عرض المبرّرات.' },
+        'mis-diagnosis': { name: 'التشخيص الخاطئ', desc: 'أعطال وُسمت لاحقًا بأنها غير صحيحة — أثر التشخيص الخاطئ المدقَّق.' },
+        'transferred-faults-fixed': { name: 'محوَّلة — والأعطال مُصلَحة', desc: 'سيارات نُقلت وكل أعطالها مُصلَحة — كل تحويل موثَّق ومسجَّل.' },
+        'data-health': { name: 'سلامة البيانات', desc: 'جودة البيانات الإجمالية — السجلات الناقصة وتعارضات الحالة.' },
+        'mileage-fuel': { name: 'المسافات والوقود', desc: 'كل أدوات العدّاد والوقود — المسافة مقابل كيلومترات العقد، والتسرّب، وتدقيق السلسلة.' },
+      },
+    },
+    administration: {
+      name: 'الإدارة',
+      tagline: 'الأشخاص والصلاحيات وإعدادات النظام',
+      sections: {
+        users: { name: 'المستخدمون', desc: 'كل حساب وحالته وأدواره — لوحة القوى العاملة الحيّة.' },
+        'sync-audit': { name: 'تدقيق المزامنة', desc: 'سجل كل عملية مزامنة — ما فحصته وحدّثته وصحّحته تلقائيًا.' },
+        settings: { name: 'الإعدادات', desc: 'حسابك وتفضيلاتك — المظهر واللغة والأدوار والاختصارات.' },
+        notifications: { name: 'الإشعارات', desc: 'تنبيهات الأسطول الحيّة، منظّمة في مسارات إجراءات حسب الدور.' },
+        simulation: { name: 'المحاكاة', desc: 'وحدة عرض للمشرفين — افتعل تنبيهًا حقيقيًا من طرف إلى طرف، ثم تراجع عنه.' },
+        'roles-permissions': { name: 'الأدوار والصلاحيات', desc: 'أدر الأدوار ومنح الصلاحيات من شاشة واحدة — قريبًا.' },
+        'audit-logs': { name: 'سجلات التدقيق', desc: 'أثر قابل للبحث لكل إجراء في النظام — قريبًا.' },
+      },
+    },
+  },
+  launcher: {
+    // Arabic vocative comma (U+060C) — the Latin ',' reads wrong in RTL text.
+    nameSeparator: '، ',
+    subtitle: 'اختر تطبيقًا للبدء.',
+    searchPlaceholder: 'ابحث في التطبيقات…',
+    recent: 'الأخيرة',
+    noMatchTitle: 'لا توجد تطبيقات مطابقة',
+    noMatchBody: 'لا شيء يطابق «{query}». جرّب بحثًا آخر.',
+    noAccessTitle: 'لا توجد تطبيقات متاحة',
+    noAccessBody: 'ليس لديك وصول إلى أي وحدات بعد. اطلب من المشرف منحك الصلاحيات.',
+  },
+  // Navigation destinations — Arabic only; English comes from the nav table in
+  // layouts/AppLayout.js (see the EXCEPTION note at the top of this file). Keys
+  // are derived from the route by navKey()/sectionKey(), e.g.
+  // '/inspections/schedules' → 'inspections-schedules', '/' → 'home'. Renaming a
+  // route means renaming its key here.
+  nav: {
+    sections: {
+      overview: 'نظرة عامة',
+      'maintenance-operations': 'عمليات الصيانة',
+      'maintenance-control': 'ضبط الصيانة',
+      'maintenance-intelligence': 'ذكاء الصيانة',
+      'parts-suppliers': 'قطع الغيار والموردون',
+      'damage-management': 'إدارة الأضرار',
+      'fleet-operations': 'عمليات الأسطول',
+      records: 'السجلات',
+      'fleet-intelligence': 'ذكاء الأسطول',
+      'analytics-finance': 'التحليلات والمالية',
+      administration: 'الإدارة',
+    },
+    items: {
+      home: {
+        name: 'مساحة العمل',
+        desc: 'مركز قيادة الأسطول — وصول سريع إلى كل وحدة متاحة لك، وشريط مؤشرات تشغيلية حيّ، ومركز إجراءات لما يحتاج انتباهك اليوم.',
+      },
+      dashboard: {
+        name: 'لوحة المعلومات',
+        desc: 'نظرة شاملة على الأسطول: كم سيارة متاحة أو مؤجّرة أو في الصيانة، مع الإجماليات الرئيسية. التوفر والتركيبة مصدرهما حالة دورة الحياة في OfficeManager.',
+      },
+      notifications: {
+        name: 'الإشعارات',
+        desc: 'تنبيهات الأسطول الحيّة — إيجارات متأخرة، وتجاوزات في مدة الصيانة، ومستندات على وشك الانتهاء، وسيارات مستحقة للخدمة، وموافقات. الجرس في الشريط العلوي يتحدّث لحظيًا.',
+      },
+      'maintenance-workflow': {
+        name: 'دورة الصيانة',
+        desc: 'خط سير تذاكر الصيانة الحيّ (الفاحص ← المشرف ← السائق ← الورشة ← إعادة الفحص). افتح تذكرة وحرّكها عبر المراحل؛ اللوحة تتحدّث لحظيًا.',
+      },
+      'my-maintenance-queue': {
+        name: 'قائمتي',
+        desc: 'عملك في الصيانة حسب دورك في مكان واحد: أبو معروف (الفاحص) يرى الفحوصات المعلّقة وإعادات الفحص النهائية؛ المشرف (الموزّع) يرى التذاكر بانتظار تعيين ورشة وسائق؛ السائق يرى الرحلات والمهام النشطة والسيارات التي تنتظر متابعة.',
+      },
+      'inspection-review': {
+        name: 'مراجعة الفحص',
+        desc: 'المراقبتان (لين ومروة) تراجعان طلبات الفحص قبل وصولها إلى أبو معروف — الموافقة تُمرّر الطلب، أو الرفض مع ذكر السبب.',
+      },
+      'service-reminders': {
+        name: 'تذكيرات الخدمة',
+        desc: 'مواعيد الخدمة الدورية لكل سيارة — تغيير الزيت، الفلاتر، الفرامل، الإطارات، البطارية — مع المتبقّي لكل منها بالكيلومترات أو الأيام. تذكيرات الزيت والإطارات تُنشأ تلقائيًا لكل سيارة من فترات تغيير الزيت؛ ويمكنك إضافة أو تعديل أي منها. «إشعار» ينبّه السائقين والفنيين، و«جدولة» تفتح تذكرة الصيانة التي تنفّذ العمل.',
+      },
+      'completed-repairs': {
+        name: 'الإصلاحات المكتملة',
+        desc: 'سجل كل سيارة اكتمل إصلاحها واعتُمد — من طلبها، ومن قادها، وأين أُصلحت، وما الذي اكتُشف وأُصلح، وكم كلّف. وسّع أي صف لعرض سلسلة العهدة كاملة والأعطال المعالجة وقراءات العدّاد.',
+      },
+      'maintenance-history': {
+        name: 'سجل الصيانة',
+        desc: 'كل سيارة دخلت الورشة خلال الفترة المختارة — كم مرة دخلت (الزيارات) وكم قضت فيها (إجمالي أيام الورشة)، قابلة للفرز والبحث. افتح قائمة زيارات سيارة لترى كل زيارة على حدة: التاريخ، والورشة، وما أُنجز، والتكلفة.',
+      },
+      'finding-keywords': {
+        name: 'مخاطر الكلمات المفتاحية',
+        desc: 'مكتبة كلمات الأعطال التي يعرضها منتقي الفحص، مصنّفة حسب الخطورة (🔴 حرجة / 🟡 متوسطة / 🟢 روتينية). أضف أو عدّل أو أوقف الكلمات، وحدّد مدى خطورة كل نوع عطل.',
+      },
+      'recurring-fault-reviews': {
+        name: 'مراجعات الأعطال المتكررة',
+        desc: 'سيارات عادت بنفس العطل المؤكّد بعد إصلاح مكتمل. تعرض كل حالة التذكرة السابقة، والورشة، وقطع الغيار المستخدمة، والأيام والمسافة منذ الإصلاح، وعدد مرات التكرار — ليقرّر الإدارة ما إذا كان الإصلاح السابق قد فشل، أم أنه عطل جديد، أم مسؤولية الورشة، أم سوء استخدام من العميل، أم يحتاج تحقيقًا.',
+      },
+      parts: {
+        name: 'شراء قطع الغيار',
+        desc: 'لوحة شراء القطع وذكاء الإصلاح: اطلب قطعة (من العميل أو الورشة)، ووافق، واشترِ (من الورشة أو المورّد)، وركّبها — مع كشف الشراء المكرّر وسجل الإصلاحات.',
+      },
+      garages: { name: 'الورش', desc: 'الورش التي تُصان فيها سيارات الأسطول، مع الأعمال المحوّلة إلى كل منها.' },
+      vendors: { name: 'الموردون', desc: 'الموردون ومقدّمو الخدمات المشار إليهم في الصيانة والعقود.' },
+      'damage-accidents': {
+        name: 'الأضرار والحوادث',
+        desc: 'سجلات الأضرار والحوادث معروضة كما هي لكل مركبة. تُلوَّن المسؤولية بالأحمر أو الأخضر بناءً على الطرف المسؤول والتأمين.',
+      },
+      'driver-dispatch': {
+        name: 'توجيه السائقين',
+        desc: 'توجيه السائقين: أرسل مركبة بين المواقع (إلى Deals on Wheels، أو الورشة، …) وتابع أي سائق يحملها وأين هي. توجيه سيارة يحوّلها إلى «في الطريق إلى …» على الشبكة، ويُسقط مهمة «إجراء مطلوب» في قائمة المكلّف.',
+      },
+      'inspections-schedules': {
+        name: 'صحة الأسطول',
+        desc: 'المركز العصبي للأسطول — مركز موحّد بتبويبات لـ«الخدمة المستحقة» (حسب العدّاد) و«انتهاء التسجيل والتأمين»، يجمع أسطح صحة السيارات الحيّة في مكان واحد.',
+      },
+      'car-status': {
+        name: 'حالة السيارات',
+        desc: 'لوحة المراحل الحيّة — كل سيارة في دورة الصيانة موزّعة حسب المرحلة التي هي فيها الآن (تحتاج تجربة قيادة ← قيد الفحص ← تحتاج توجيهًا ← بانتظار الاستلام ← في الطريق ← في الورشة ← جاهزة للاستلام ← الفحص النهائي)، مع بيان المسؤول عنها في تلك المرحلة: الفاحص، أو المشرف الذي عليه التوجيه، أو السائق الذي يحمل السيارة، أو الورشة. تظهر المرحلة «بالانتظار» حتى يتسلّمها أحد، ثم يظهر اسمه. انقر أي سيارة لفتح تذكرتها.',
+      },
+      vehicles: {
+        name: 'المركبات',
+        desc: 'كل سيارة في الأسطول. واجهة OfficeManager هي المصدر الوحيد لتحديد السيارات الموجودة؛ وجدول البيانات يُثري السيارات المطابَقة فقط. انقر أي صف لفتح ملفه الكامل.',
+      },
+      customers: {
+        name: 'العملاء',
+        desc: 'كل العملاء مع بيانات التواصل والرصيد المتاح في المحفظة (الرصيد المُرحّل). افتح عميلًا لعرض عقوده وسجل رصيده.',
+      },
+      contracts: {
+        name: 'العقود',
+        desc: 'عقود الإيجار المزامنة من OfficeManager — كل العقود المفتوحة إضافة إلى المغلقة خلال آخر ٣ أشهر. تُكتشف حالة الفتح أو الإغلاق في كل مزامنة.',
+      },
+      drivers: {
+        name: 'السائقون',
+        desc: 'سائقو الأسطول مع أرقام رخصهم وتواريخ انتهائها وحالتهم. أضف أو عدّل أو أوقف السائقين؛ وتُعلَّم الرخص المنتهية قريبًا.',
+      },
+      'odometer-approvals': {
+        name: 'موافقات العدّاد',
+        desc: 'قائمة مراجعة التعديلات اليدوية المؤثرة على العدّاد (أكثر من ١٠ كم عن القراءة الحالية للسيارة) — يحمل كل طلب ملاحظة سبب من المُعدِّل ومرحلة السيارة في حينه. الموافقة تطبّق القراءة الجديدة، والرفض يتركها كما هي.',
+      },
+      'cost-intelligence': {
+        name: 'ذكاء التكلفة',
+        desc: 'تكلفة الصيانة لكل كيلومتر ولكل يوم ولكل إيجار لكل سيارة — التكلفة التشغيلية الحقيقية لكل أصل. البسط هو نفس إنفاق الإصلاح المسجّل في «جسر الأرباح»؛ والمقامات هي المسافة المتحقّق منها وأيام الخدمة وعدد الإيجارات. السيارات بلا مسافة مقاسة تعرض «—» لا صفرًا مضلّلًا.',
+      },
+      'fleet-utilization': {
+        name: 'استغلال الأسطول',
+        desc: 'تفصيل مدة الملكية لكل سيارة إلى أيام مؤجّرة وأيام صيانة وأيام خمول — نسبة الاستغلال والتعطّل مقابل مدة امتلاكك لكل سيارة، مع الإيجار الضائع بسبب التعطّل.',
+      },
+      profitability: {
+        name: 'الربحية',
+        desc: 'الربح التشغيلي لكل سيارة على مستوى الأسطول — دخل الإيجار (نوع R، بدون ضريبة القيمة المضافة) ناقص تكلفة الصيانة المسجّلة. مرتّبة من الأفضل إلى الأسوأ لرصد الأصول الرابحة والخاسرة.',
+      },
+      mileage: {
+        name: 'الوقود والمسافات',
+        desc: 'مركز واحد لكل أدوات العدّاد والوقود، في ثلاث تبويبات: الوقود والمسافات (المسافة الفعلية مقابل كيلومترات العقد، والتسرّب خارج العقد، وخصومات الوقود)، والتسوية (العدّاد المخزَّن مقابل خط الأساس من الماسح، مع التبنّي بنقرة)، وتدقيق السلسلة (تسليم العدّاد من عقد إلى عقد مع «إصلاح سريع» غير مُتلِف).',
+      },
+      'maintenance-swap': {
+        name: 'تبديل الصيانة',
+        desc: 'فرز حيّ للأسطول في ثلاثة أعمدة — إجراء مطلوب / في الورشة / المتاح — مع محرّك «تبديل وتجديد» يبقي العميل على الطريق أثناء إصلاح سيارته.',
+      },
+      'financial-conflicts': {
+        name: 'التعارضات المالية',
+        desc: 'مركز تنظيف الحسابات: الفواتير المعطوبة فقط — ضريبة قيمة مضافة غير متطابقة، وفواتير تخالف عقدها، وفوترة متداخلة (مزدوجة).',
+      },
+      'financial-reconciliation': {
+        name: 'التسوية',
+        desc: 'ربط عقد واحد بالنظام المحاسبي الرسمي: دفتر الأسطول جنبًا إلى جنب مع النقد المحصّل فعليًا (إيصالات المحاسبة) والسندات المقيَّدة عليه. هامش تسامح للرسوم والتقريب يمنع الضجيج، فلا تُنبَّه إلا على الفجوات المؤثرة. نسخة أولية للقراءة فقط.',
+      },
+      'data-health': {
+        name: 'سلامة البيانات',
+        desc: 'جودة البيانات الإجمالية في تبويبين: جودة البيانات (سجلات ناقصة أو معطوبة — أرقام هيكل مفقودة، ومسافات، وعقود غير مرتبطة) وتعارضات الحالة (سيارات حالتها تخالف عقودها).',
+      },
+      'sync-audit': {
+        name: 'تدقيق المزامنة',
+        desc: 'سجل للقراءة فقط لعمليات مزامنة CMD: كم عقدًا فحصته كل عملية، وكم حدّثت، وكم صحّحت تلقائيًا (مثل مسح التواريخ القديمة).',
+      },
+      simulation: {
+        name: 'المحاكاة',
+        desc: 'وحدة عرض توضيحي للمشرفين فقط (تظهر في وضع العرض فقط): افتعل تنبيه «خدمة مستحقة» حقيقيًا للزيت أو تذكرة اكتشاف عطل على سيارة حقيقية، وراقب تفاعل النظام من طرف إلى طرف، ثم تراجع عن كل ذلك بنقرة واحدة.',
+      },
+      users: { name: 'المستخدمون', desc: 'كل حساب وحالته وأدواره — للمشرفين فقط.' },
+      settings: {
+        name: 'الإعدادات',
+        desc: 'حسابك وتفضيلاتك في مكان واحد: المظهر (السمة / اللغة)، والأدوار والصلاحيات الممنوحة لك، واختصارات لوحة المفاتيح، وتسجيل الخروج.',
+      },
+    },
+  },
   workflow: {
     position: { transfer: 'نقل' },
     garageRec: {
@@ -1864,6 +2349,7 @@ const ar = {
       onSiteHint: 'يخدمها فنّي حيث هي متوقفة؛ تبقى السيارة متاحة مع وسم «صيانة معلّقة».',
       inShopHint: 'تذهب السيارة إلى كراج — يُنبَّه وليد وعبدالله لإسناد كراج.',
       breakdownLocked: 'يجب إصلاح التعطّل في الورشة — فهو يُعطّل السيارة.',
+      autoSuggested: 'مقترح: في الموقع — تتضمّن هذه التذكرة بندًا للبطارية أو الزيت. ولا يزال بإمكانك التحويل إلى «في الورشة».',
     },
     // أهلية التأجير — قرار خطوة «القرار»: هل يمكن تأجير السيارة قبل انتهاء الصيانة؟
     rentalEligibility: {
@@ -2138,6 +2624,7 @@ const ar = {
       collectFromGarage: 'أكّد أنك استلمت السيارة من الكراج. الصورة مطلوبة — هذا لا يغيّر مرحلة التذكرة، بل يسجّل التسليم قبل رحلة العودة.',
       arriveAtPark: 'أكّد عودة السيارة إلى المقر. الصورة مطلوبة. الإصلاحات البسيطة تُغلَق تلقائيًا وتعود السيارة مباشرة للأسطول؛ الإصلاحات الكبرى (حرجة/متوسطة) تُرسَل إلى المفتش لفحص جودة نهائي أولًا.',
       requestBanner: 'أبلغ عن سيارة تظن أنها تحتاج فحصًا — يُشعَر المفتش ليجرّبها ويقرّر.',
+      requestHideMaintenance: 'السيارات التي في الصيانة أصلًا مخفيّة — يجري التعامل معها، فلا يمكنك الإبلاغ عنها مرة أخرى من هنا.',
       // سطر إرشادي للأهلية (ليس منعًا صارمًا — يراجع المشرف كل طلب).
       requestEligibility: 'سجّل فقط عن سيارة كنت فيها فعلًا — قدتها أو جرّبتها أو ركبت فيها. إن كنت رأيتها من الخارج فقط، فالرجاء عدم الإرسال من هنا.',
       observationBanner: 'يُسجَّل هذا كـ«ملاحظة سائق» — ملاحظة داخلية على السيارة، وليست طلب إصلاح. لن يُفتح أمر صيانة إلا إذا طلبت فحصًا بالأسفل.',
@@ -2318,6 +2805,16 @@ const ar = {
     },
     board: {
       title: 'سير عمل الصيانة',
+      tab: {
+        on_site: 'في الموقع',
+        in_shop: 'في الورشة',
+        completed: 'مكتملة',
+      },
+      onSiteEmpty: 'لا أعمال ميدانية معلّقة — المهام البسيطة (البطارية، الزيت، الإطارات) التي لا تحتاج كراجًا تظهر هنا.',
+      completedLoading: 'جارٍ تحميل التذاكر المكتملة…',
+      completedEmpty: 'لا توجد تذاكر مكتملة بعد.',
+      completedError: 'تعذّر تحميل التذاكر المكتملة.',
+      closedOn: 'أُغلقت في {date}',
       subtitle: 'يتحوّل فحص تجربة القيادة إلى تذكرة فقط عندما يحدّده المفتش "تحتاج صيانة". ثم المشرف (يختار الكراج، ويُشعَر جميع السائقين) ← السائق (الاستلام) ← الكراج ← السائق (الإعادة) ← إعادة الفحص. تتحدّث اللوحة تلقائيًا.',
       live: 'مباشر · تحديث تلقائي',
       requestInspection: 'طلب فحص',
@@ -2334,6 +2831,9 @@ const ar = {
       noPermission: 'لا صلاحية',
       finding: 'ملاحظة',
       sentBack: 'أُعيدت',
+      partsWaiting: 'بانتظار قطع · {n}',
+      partsWaitingTip: 'القطع المطلوبة لهذه التذكرة: {names}',
+      partsHd: 'القطع',
       expectedReturn: 'العودة {date}',
       expectedOverdue: 'مستحقة {date}',
       expectedReturnTip: 'تاريخ العودة المتوقع — الموعد الذي وعد به الكراج بإعادة السيارة.',
@@ -2418,6 +2918,8 @@ const ar = {
     // توجيه الأعطال متعدد الكراجات — كل عطل يُوجَّه إلى كراجه الخاص.
     task: {
       route: 'إدارة الأعطال',
+      transferReasonRequired: 'سبب التحويل — مطلوب (كل الأعطال مُصلَحة بالفعل)',
+      allFixedTransferWarning: 'كل الأعطال في هذه التذكرة مُصلَحة بالفعل. يلزم إدخال ملاحظة لنقل السيارة، وسيُسجَّل هذا التحويل للمراجعة في «الرقابة».',
       panelTitle: 'الأعطال والكراج الحالي',
       panelSubtitle: 'تُعالَج كل الأعطال في الكراج الحالي للسيارة. حوِّل السيارة لنقل العمل المتبقّي.',
       noTasks: 'لا توجد أعطال مسجّلة على هذه التذكرة بعد.',
@@ -2746,6 +3248,123 @@ const ar = {
     },
   },
 
+  keywordAi: {
+    title: 'معرفة الأعطال',
+    open: 'المعرفة',
+    colKnowledge: 'المعرفة',
+    termsShort: 'مصطلح',
+    described: 'موصوف',
+    basic: 'أساسي',
+    coverage: 'تغطية المعرفة الذكية',
+    coverageHint: 'عطل موصوف بالكامل · {terms} مصطلح قابل للبحث',
+    notConfiguredShort: 'الإثراء الذكي غير مُهيّأ',
+    notConfigured: 'الإثراء الذكي غير متاح — لا يوجد مفتاح API على الخادم. لا يزال بالإمكان إضافة المصطلحات وتعديلها يدويًا.',
+    notEnriched: 'لم يتم وصف هذا العطل بعد. شغّل الإثراء لتوليد المرادفات ومصطلحات الورشة والاختصارات والأخطاء الإملائية الشائعة والمصطلحات العربية والملف الهندسي.',
+    enrich: 'بناء المعرفة',
+    refresh: 'تحديث المعرفة',
+    enriched: 'تم تحديث قاعدة المعرفة',
+    enrichError: 'فشل الإثراء',
+    loadError: 'تعذّر تحميل معرفة هذا العطل',
+
+    aiSeverity: 'خطورة حسب الذكاء الاصطناعي',
+    confidence: 'الثقة',
+    rank: 'الترتيب',
+    severityConflict: 'صنّفتها {yours}، بينما تعتبرها المراجع المهنية {ai}. تصنيفك هو المعتمد في النظام — هذا مجرد رأي ثانٍ.',
+    symptoms: 'الأعراض',
+    components: 'القطع المتعلقة',
+    causes: 'الأسباب المحتملة',
+    repairs: 'الإصلاحات المعتادة',
+    related: 'أعطال ذات صلة',
+    sources: 'مصادر المعرفة',
+
+    terms: 'مصطلحات البحث',
+    allLangs: 'كل اللغات',
+    noTerms: 'لا توجد مصطلحات بعد.',
+    addTerm: 'إضافة مصطلح',
+    editTerm: 'تعديل المصطلح',
+    termAdded: 'تمت إضافة المصطلح',
+    termUpdated: 'تم تحديث المصطلح',
+    termRemoved: 'تم حذف المصطلح',
+    termSaveError: 'تعذّر حفظ المصطلح',
+    termRemoveError: 'تعذّر حذف المصطلح',
+    removeTermTitle: 'حذف المصطلح؟',
+    removeTermMsg: '«{term}» لن يطابق البحث عن هذا العطل بعد الآن.',
+    humanOwnedHint: 'المصطلحات التي تعدّلها تُسجَّل باسمك ولا يستبدلها أي إثراء ذكي لاحق.',
+    fieldTerm: 'المصطلح',
+    fieldKind: 'النوع',
+    fieldLang: 'اللغة',
+    fieldFrequency: 'تكرار الاستخدام في الورشة',
+    runs: 'سجل الإثراء',
+
+    kind: {
+      canonical: 'الاسم الأساسي',
+      synonym: 'المرادفات',
+      workshop_phrase: 'لغة الورشة',
+      customer_phrase: 'لغة العميل',
+      abbreviation: 'الاختصارات',
+      spelling_variant: 'اختلافات الكتابة',
+      misspelling: 'الأخطاء الإملائية الشائعة',
+      translation: 'العربية',
+    },
+    source: { seed: 'مدمج', ai: 'مولّد بالذكاء الاصطناعي', human: 'تعديل الموظفين' },
+    frequency: { very_high: 'شائع جدًا', high: 'شائع', medium: 'أحيانًا', low: 'نادر', rare: 'نادر جدًا' },
+    discipline: {
+      mechanical: 'ميكانيكا',
+      electrical: 'كهرباء',
+      bodywork: 'هيكل',
+      air_conditioning: 'تكييف',
+      tyres: 'إطارات',
+      diagnostics: 'فحص وتشخيص',
+      routine_service: 'صيانة دورية',
+    },
+
+    testerTitle: 'ما هو العطل؟',
+    testerHint: 'اكتب ما يكتبه الفني فعليًا — يجد النظام العطل دون الحاجة إلى الكلمة الدقيقة.',
+    testerPlaceholder: 'مثال: صوت معدني غريب عند الفرملة',
+    match: 'ابحث عن العطل',
+    matchError: 'تعذّر تنفيذ المطابقة',
+    noMatch: 'لم يُطابق أي عطل. غالبًا يحتاج العطل إلى مصطلحات أغنى — افتحه وابنِ معرفته.',
+    normalizedAs: 'تمت المطابقة كـ:',
+    strong: 'مطابقة قوية',
+    possible: 'مطابقة محتملة',
+    how: { exact: 'تطابق تام', phrase: 'عبارة', tokens: 'صياغة', fuzzy: 'خطأ إملائي' },
+    examples: 'صوت معدني غريب عند الفرملة|الموتر يسخن|حرارة المحرك مرتفعة|التكييف ما يبرد|صوت في الفرامل',
+
+    relationships: 'شبكة المعرفة',
+    rel: {
+      causes: 'الأسباب المرجّحة', repairs: 'الإصلاحات التي تعالجه', components: 'القطع المتأثرة',
+      inspection: 'خطوات الفحص', symptoms: 'يظهر على شكل', related: 'أعطال ذات صلة',
+    },
+    ofCases: 'من {n} حالة',
+    evidence: 'الأدلة',
+    noEvidence: 'لا توجد مصادر مسجّلة بعد. شغّل الإثراء مع مكتبة مستندات أو بحث الويب لإرفاق المصادر.',
+    grounding: 'موثّق',
+    groundingHint: 'كم من هذه الإجابة يستند إلى مستندات مُسترجَعة أو سجل صيانتنا الفعلي، بدلًا من معرفة النموذج وحدها.',
+    method: {
+      corpus: 'من المكتبة', web_search: 'من الويب', fleet: 'من سجلّنا',
+      human: 'من الموظفين', model_prior: 'معرفة النموذج فقط',
+    },
+    viewSource: 'المصدر',
+
+    repairIntel: 'ما يتطلبه الإصلاح',
+    complexity: {
+      trivial: 'بسيط جدًا', routine: 'روتيني', moderate: 'متوسط',
+      complex: 'معقّد', specialist: 'تخصصي — يحتاج جهة خارجية',
+    },
+    bookTime: 'الوقت المعياري',
+    inspectionOrder: 'افحص بهذا الترتيب',
+    tools: 'الأدوات',
+    skills: 'المهارات',
+    predictionNote: 'المدة والتكلفة الفعلية تأتي من وحدة ذكاء الإصلاح التي تتنبأ من سجل الإصلاحات الحقيقي.',
+
+    wasThisRight: 'هل كانت النتيجة صحيحة؟',
+    yes: 'نعم',
+    no: 'لا',
+    thanksCorrect: 'تم التسجيل كمطابقة صحيحة — شكرًا.',
+    thanksWrong: 'تم التسجيل. سيتم تحسين هذا العطل في الإثراء القادم.',
+    feedbackError: 'تعذّر تسجيل ذلك',
+  },
+
   findingKeywords: {
     title: 'مكتبة مخاطر الأعطال',
     subtitle: '{shown} من {total} عطل',
@@ -2866,7 +3485,8 @@ const ar = {
   completedRepairs: {
     title: 'الإصلاحات المكتملة',
     subtitle: 'كل سيارة اكتمل إصلاحها واعتُمد — من طلبه، ومن قادها، وأين أُصلحت، وكم كلّفت.',
-    fixed: 'مُصلَحة',
+    repeatCars: 'سيارات عادت',
+    repeatBadge: 'عادت {n}×',
     totalSpend: 'إجمالي الإنفاق',
     searchPlaceholder: 'ابحث برقم اللوحة أو السيارة أو الكراج أو الشخص…',
     vehicle: 'المركبة',
@@ -2981,6 +3601,17 @@ const ar = {
       severityDesc: 'تذاكر صُنّفت أدنى مما يجب — «روتيني/متوسط» بينما تشير المؤشرات إلى «حرِج».',
       misdiagCard: 'تشخيص خاطئ',
       misdiagDesc: 'أعطال شخّصها الفاحص وألغاها المشرف لاحقًا كخطأ — العَرَض ومن ألغاه ولماذا.',
+      resolvedCard: 'محوَّلة — والأعطال مُصلَحة',
+      resolvedDesc: 'سيارات نُقلت إلى كراج آخر رغم أن كل أعطالها كانت مُصلَحة — مع ملاحظة التبرير المتروكة للنقل.',
+    },
+    resolvedTransfers: {
+      title: 'محوَّلة — والأعطال مُصلَحة بالفعل',
+      subtitle: 'سيارات نُقلت إلى كراج مختلف رغم أن كل عطل في التذكرة كان مُصلَحًا بالفعل. استلزم كل نقل ملاحظة تبرير — تُراجَع هنا لالتقاط أي تحويل غير ضروري أو بالخطأ.',
+      flagged: 'التحويلات المُعلَّمة',
+      move: 'النقل',
+      odometer: 'العدّاد',
+      note: 'السبب المذكور',
+      by: 'حوّلها',
     },
     common: {
       all: 'الكل',

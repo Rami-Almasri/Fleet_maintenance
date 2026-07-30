@@ -80,6 +80,10 @@ const faultsOf = (tk) => {
 
 const faultLabel = (f, t) => f.symptom || f.text || f.keyword || t('completedRepairs.fault');
 
+// Which car a closed ticket belongs to. vehicle_id when we have it, plate as the legacy fallback —
+// this is the key the repeat-visit counter groups on.
+const carKey = (tk) => tk.vehicle_id || tk.plate || null;
+
 // Date presets → an inclusive [from, to] pair of yyyy-mm-dd strings (or nulls for "all time").
 const isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const presetRange = (key) => {
@@ -102,6 +106,7 @@ export default function CompletedRepairs() {
   const [search, setSearch] = useState('');
   const [origin, setOrigin] = useState('all'); // all | system | sheet — the DATA ORIGIN filter
   const [preset, setPreset] = useState('all');
+  const [repeatOnly, setRepeatOnly] = useState(false); // only cars that came back more than once
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [open, setOpen] = useState(() => new Set()); // expanded ticket ids
@@ -130,7 +135,7 @@ export default function CompletedRepairs() {
     }
   };
 
-  const resetFilters = () => { setPreset('all'); setFrom(''); setTo(''); setSearch(''); setOrigin('all'); };
+  const resetFilters = () => { setPreset('all'); setFrom(''); setTo(''); setSearch(''); setOrigin('all'); setRepeatOnly(false); };
 
   // How the loaded ledger splits by data origin — drives the counts on the Sheet / System tabs.
   const originCounts = useMemo(() => ({
@@ -142,7 +147,7 @@ export default function CompletedRepairs() {
   // Client-side filter over the loaded set (the endpoint also supports ?search=, but the fleet's
   // closed set is capped at 500 so filtering in-memory keeps the box instant). Date filtering is on
   // the CLOSING date — the day the repair was signed off — inclusive on both ends.
-  const filtered = useMemo(() => {
+  const scoped = useMemo(() => {
     const q = search.trim().toLowerCase();
     return tickets.filter((tk) => {
       if (origin === 'sheet' && tk.source !== 'sheet') return false;
@@ -164,14 +169,38 @@ export default function CompletedRepairs() {
     });
   }, [tickets, search, from, to, origin, t]);
 
+  // How many closed repairs each car racked up inside the current scope. This is what turns a flat
+  // ledger into a signal: a car with 3 closed tickets in 90 days is a problem car, not 3 successes.
+  const carVisits = useMemo(() => {
+    const map = new Map();
+    scoped.forEach((tk) => {
+      const key = carKey(tk);
+      if (key == null) return;
+      map.set(key, (map.get(key) || 0) + 1);
+    });
+    return map;
+  }, [scoped]);
+
+  const isRepeat = useCallback((tk) => (carVisits.get(carKey(tk)) || 0) > 1, [carVisits]);
+
+  // The repeat filter narrows the FEED but never the counters — otherwise clicking the tile would
+  // rewrite the very number you just clicked.
+  const filtered = useMemo(
+    () => (repeatOnly ? scoped.filter(isRepeat) : scoped),
+    [scoped, repeatOnly, isRepeat],
+  );
+
   const stats = useMemo(() => {
-    const totalCost = filtered.reduce((sum, tk) => sum + Number(tk.cost || 0), 0);
-    const cars = new Set(filtered.map((tk) => tk.vehicle_id || tk.plate).filter(Boolean)).size;
-    const spans = filtered.map(repairDays).filter((d) => d != null);
+    const totalCost = scoped.reduce((sum, tk) => sum + Number(tk.cost || 0), 0);
+    const cars = carVisits.size;
+    const spans = scoped.map(repairDays).filter((d) => d != null);
     const avgDays = spans.length ? Math.round(spans.reduce((a, b) => a + b, 0) / spans.length) : null;
-    const faults = filtered.reduce((sum, tk) => sum + faultsOf(tk).length, 0);
-    return { totalCost, cars, avgDays, faults };
-  }, [filtered]);
+    const faults = scoped.reduce((sum, tk) => sum + faultsOf(tk).length, 0);
+    // Cars that came back — repaired, signed off, and in the ledger again.
+    let repeatCars = 0;
+    carVisits.forEach((n) => { if (n > 1) repeatCars += 1; });
+    return { totalCost, cars, avgDays, faults, repeatCars };
+  }, [scoped, carVisits]);
 
   const toggle = (id) => setOpen((prev) => {
     const next = new Set(prev);
@@ -179,7 +208,7 @@ export default function CompletedRepairs() {
     return next;
   });
 
-  const filtersActive = Boolean(search || from || to || origin !== 'all');
+  const filtersActive = Boolean(search || from || to || origin !== 'all' || repeatOnly);
 
   return (
     <div className="py-8">
@@ -188,17 +217,21 @@ export default function CompletedRepairs() {
 
         {/* KPI strip — the dashboard read of the filtered ledger. */}
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {/* Cars fixed — how many CARS were repaired, not how many tickets were written. */}
           <StatTile
             icon={<Icon.Check className="h-5 w-5" />}
             tone="emerald"
-            value={filtered.length}
-            label={t('completedRepairs.fixed')}
-          />
-          <StatTile
-            icon={<Icon.Car className="h-5 w-5" />}
-            tone="indigo"
             value={stats.cars}
             label={t('completedRepairs.carsFixed')}
+          />
+          {/* Cars returned — of those, the ones that came back for another repair. Click to see them. */}
+          <StatTile
+            icon={<Icon.Refresh className="h-5 w-5" />}
+            tone={stats.repeatCars ? 'rose' : 'indigo'}
+            value={stats.repeatCars}
+            label={t('completedRepairs.repeatCars')}
+            active={repeatOnly}
+            onClick={stats.repeatCars ? () => setRepeatOnly((v) => !v) : undefined}
           />
           <StatTile
             icon={<Icon.Clock className="h-5 w-5" />}
@@ -359,7 +392,14 @@ export default function CompletedRepairs() {
         ) : (
           <div className="space-y-4">
             {filtered.map((tk) => (
-              <RepairCard key={tk.id} tk={tk} t={t} isOpen={open.has(tk.id)} onToggle={() => toggle(tk.id)} />
+              <RepairCard
+                key={tk.id}
+                tk={tk}
+                t={t}
+                visits={isRepeat(tk) ? carVisits.get(carKey(tk)) : null}
+                isOpen={open.has(tk.id)}
+                onToggle={() => toggle(tk.id)}
+              />
             ))}
           </div>
         )}
@@ -374,23 +414,32 @@ const TONES = {
   emerald: 'bg-emerald-50 text-emerald-600',
   indigo:  'bg-indigo-50 text-indigo-600',
   amber:   'bg-amber-50 text-amber-600',
+  rose:    'bg-rose-50 text-rose-600',
   slate:   'bg-slate-100 text-slate-600',
 };
 
-function StatTile({ icon, tone = 'slate', value, label, small }) {
+// A KPI tile. Pass `onClick` and the tile becomes a filter toggle for the feed.
+function StatTile({ icon, tone = 'slate', value, label, small, active, onClick }) {
+  const Tag = onClick ? 'button' : 'div';
   return (
-    <div className="flex items-center gap-3 rounded-2xl border border-slate-200/60 bg-white px-4 py-3.5 shadow-soft">
+    <Tag
+      type={onClick ? 'button' : undefined}
+      onClick={onClick}
+      className={`flex items-center gap-3 rounded-2xl border bg-white px-4 py-3.5 text-left shadow-soft transition ${
+        active ? 'border-rose-300 ring-2 ring-rose-100' : 'border-slate-200/60'
+      } ${onClick ? 'cursor-pointer hover:border-slate-300 hover:shadow-md' : ''}`}
+    >
       <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${TONES[tone]}`}>{icon}</span>
       <div className="min-w-0">
         <p className={`truncate font-bold tabular-nums text-slate-900 ${small ? 'text-lg' : 'text-2xl'}`}>{value}</p>
         <p className="truncate text-[11px] uppercase tracking-wide text-slate-400">{label}</p>
       </div>
-    </div>
+    </Tag>
   );
 }
 
 // One finished repair, told as a card: what broke, what was fixed, where, how long, what it cost.
-function RepairCard({ tk, t, isOpen, onToggle }) {
+function RepairCard({ tk, t, visits, isOpen, onToggle }) {
   const faults = faultsOf(tk);
   const problem = problemOf(tk);
   const span = repairSpan(tk);
@@ -421,6 +470,14 @@ function RepairCard({ tk, t, isOpen, onToggle }) {
                       <Icon.Check className="h-3 w-3" />
                       {t('completedRepairs.fixedBadge')}
                     </span>
+                    {/* This car is in the ledger more than once — the repair was "done", and it came
+                        back anyway. Surfaced right next to the plate so the pattern can't hide. */}
+                    {visits > 1 && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-semibold text-rose-700 ring-1 ring-rose-200">
+                        <Icon.Refresh className="h-3 w-3" />
+                        {t('completedRepairs.repeatBadge', { n: visits })}
+                      </span>
+                    )}
                     {tk.fault_severity_label && (
                       <span className="inline-flex items-center gap-1 rounded-full bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200">
                         {tk.fault_severity_emoji} {tk.fault_severity_label}

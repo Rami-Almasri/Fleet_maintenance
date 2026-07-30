@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Models\Complaint;
+use App\Models\DriverObservation;
 use App\Models\InspectionRecord;
 use App\Models\LogisticsTaskEvent;
 use App\Models\VehicleLogEvent;
@@ -12,13 +14,18 @@ use Illuminate\Support\Str;
  * The Activity Audit Trail read layer — the single normaliser behind the Vehicle History Timeline
  * and the Global Activity Feed.
  *
- * It does NOT introduce a new store. The codebase already keeps the events; they simply live in three
+ * It does NOT introduce a new store. The codebase already keeps the events; they simply live in several
  * append-only tables, each owning its own domain:
  *   - vehicle_log_events    → the workflow / readiness / condition / cleaning / task audit trail
  *   - logistics_task_events → every vehicle MOVEMENT (dispatch, pickup, delivery, return)
  *   - inspection_records    → pre-rental / post-return condition captures + damage findings
+ *   - complaints            → what the CUSTOMER reported about the car (vehicle timeline only)
+ *   - driver_observations   → what the DRIVER noticed at handover (vehicle timeline only)
  *
- * This service reads all three, maps each row onto ONE common shape, and merges them newest-first so
+ * The last two are read by forVehicle() alone: they are reports ABOUT a car rather than fleet-wide
+ * actions, and the manager feed's category filter is deliberately kept to the action vocabulary.
+ *
+ * This service reads them all, maps each row onto ONE common shape, and merges them newest-first so
  * the UI can render a single unbroken timeline. Nothing here writes — it is purely the read side of
  * "total transparency: no gaps, no hidden actions".
  */
@@ -45,6 +52,9 @@ class ActivityFeedService
         'readiness'   => 'administrative',
         'condition'   => 'administrative',
         'cleaning'    => 'administrative',
+        // What the CUSTOMER and the DRIVER said about the car — reported, not performed on it.
+        'complaint'   => 'operational',
+        'observation' => 'operational',
     ];
 
     /** vehicle_log_events event_type → category. Anything unlisted falls through to 'maintenance'. */
@@ -196,6 +206,8 @@ class ActivityFeedService
         'readiness'   => 'emerald',
         'maintenance' => 'indigo',
         'movement'    => 'violet',
+        'complaint'   => 'red',
+        'observation' => 'yellow',
     ];
 
     /**
@@ -208,6 +220,10 @@ class ActivityFeedService
             $this->fromVehicleLog(fn ($q) => $q->where('vehicle_id', $vehicleId), $limit),
             $this->fromLogistics(fn ($q) => $q->where('vehicle_id', $vehicleId), $limit),
             $this->fromInspections(fn ($q) => $q->where('vehicle_id', $vehicleId), $limit),
+            // What was REPORTED about the car, beside what was DONE to it. Both are first-class entities
+            // with their own lifecycle, so they're read here rather than mirrored into vehicle_log_events.
+            $this->fromComplaints(fn ($q) => $q->where('vehicle_id', $vehicleId), $limit),
+            $this->fromObservations(fn ($q) => $q->where('vehicle_id', $vehicleId), $limit),
         );
 
         return $this->sortAndSlice($events, $limit);
@@ -571,6 +587,96 @@ class ActivityFeedService
                 'photo_url'   => $r->viewUrl(),
                 'flagged'     => (bool) $r->damage_flagged,
                 'category_hint' => 'inspection',
+            ]);
+        })->all();
+    }
+
+    /**
+     * Customer complaints. ONE row per complaint, stamped at the moment it was logged — that is when the
+     * thing happened TO THE CAR. The complaint's own status/decision lifecycle lives in complaint_events
+     * and stays on the Complaints surface; here it rides along in `details` so the timeline can state
+     * where it ended up without turning one complaint into five rows.
+     */
+    private function fromComplaints(callable $scope, int $limit): array
+    {
+        $q = Complaint::query()->with(['vehicle:id,plate_no,make,model', 'creator:id,name'])
+            ->whereNotNull('vehicle_id');
+        $scope($q);
+        $rows = $q->orderByDesc('created_at')->limit($limit)->get();
+
+        return $rows->map(function (Complaint $c) {
+            $relayed = $c->source === Complaint::SOURCE_DRIVER_RELAY;
+            $open = in_array($c->status, Complaint::OPEN_STATUSES, true);
+
+            return $this->shape([
+                'id'          => 'cmp-' . $c->id,
+                'source'      => 'complaint',
+                'event_type'  => 'complaint_logged',
+                'maintenance_id' => $c->maintenance_id,
+                'category'    => 'complaint',
+                'action'      => $relayed ? 'Complaint relayed by driver' : 'Customer complaint logged',
+                'stage'       => 'Complaint',
+                'actor_name'  => $c->creator?->name ?? 'System',
+                'actor_role'  => 'ops',
+                'severity'    => $c->severity,
+                'occurred_at' => optional($c->created_at)->toIso8601String(),
+                'vehicle'     => $c->vehicle,
+                'description' => $c->description,
+                // An unresolved complaint is the investigation signal — flag it the way damage is flagged.
+                'flagged'     => $open,
+                'details'     => array_filter([
+                    'complaint_id'   => $c->id,
+                    'status'         => $c->status,
+                    'decision'       => $c->decision,
+                    'complaint_source' => $c->source,
+                    'customer_name'  => $c->customer_name,
+                    'customer_phone' => $c->customer_phone,
+                    'resolved_at'    => optional($c->resolved_at)->toIso8601String(),
+                    'closed_at'      => optional($c->closed_at)->toIso8601String(),
+                ], fn ($v) => $v !== null && $v !== ''),
+                'contract_id' => $c->contract_id,
+                'contract_no' => $c->contract_no,
+                'category_hint' => 'complaint',
+            ]);
+        })->all();
+    }
+
+    /**
+     * Driver handover observations — the lightweight internal note a driver files when a car comes back
+     * and something looks off. NOT a complaint (no customer contact, no escalation), so it keeps its own
+     * category and tone rather than being folded in with them.
+     */
+    private function fromObservations(callable $scope, int $limit): array
+    {
+        $q = DriverObservation::query()->with(['vehicle:id,plate_no,make,model', 'driver:id,name'])
+            ->whereNotNull('vehicle_id');
+        $scope($q);
+        $rows = $q->orderByDesc('created_at')->limit($limit)->get();
+
+        return $rows->map(function (DriverObservation $o) {
+            return $this->shape([
+                'id'          => 'obs-' . $o->id,
+                'source'      => 'observation',
+                'event_type'  => 'driver_observation',
+                // The inspection ticket it spawned, so the row groups with that ticket's work.
+                'maintenance_id' => $o->inspection_request_id,
+                'category'    => 'observation',
+                'action'      => 'Driver observation',
+                'stage'       => 'Handover Note',
+                'actor_name'  => $o->driver?->name ?? 'Driver',
+                'actor_role'  => 'driver',
+                'occurred_at' => optional($o->created_at)->toIso8601String(),
+                'vehicle'     => $o->vehicle,
+                'description' => $o->note,
+                'flagged'     => $o->status === DriverObservation::STATUS_OPEN,
+                'photo_url'   => $o->photo ?: null,
+                'details'     => array_filter([
+                    'observation_id'        => $o->id,
+                    'status'                => $o->status,
+                    'inspection_request_id' => $o->inspection_request_id,
+                ], fn ($v) => $v !== null && $v !== ''),
+                'contract_id' => $o->contract_id,
+                'category_hint' => 'observation',
             ]);
         })->all();
     }

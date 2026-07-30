@@ -15,6 +15,13 @@ import { SHOW_FINANCIALS, DEMO_MODE, SHOW_FLEET_INTELLIGENCE } from '../config/f
 import { pathBlockedForRoles } from '../config/access';
 import { moduleForPath } from '../config/moduleRegistry';
 import ModuleTabBar from '../components/workspace/ModuleTabBar';
+import { useI18n } from '../i18n/I18nContext';
+
+// Stable i18n key for a nav destination, derived from its route so the label
+// catalog and the nav table can never drift apart: '/inspections/schedules' →
+// 'inspections-schedules', '/' → 'home'.
+const navKey = (to) => (to || '/').replace(/^\//, '').replace(/\//g, '-') || 'home';
+const sectionKey = (title) => title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
 
 // Thin gradient bar at the very top that fills as you scroll the page.
 function ScrollProgress() {
@@ -36,22 +43,29 @@ function ScrollProgress() {
   return <div className="scroll-progress" style={{ width: `${pct}%`, opacity: pct > 0.5 ? 1 : 0 }} />;
 }
 
-const greet = (h) => (h < 5 ? 'Good night' : h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : h < 22 ? 'Good evening' : 'Good night');
+const greetKey = (h) => (h < 5 ? 'night' : h < 12 ? 'morning' : h < 17 ? 'afternoon' : h < 22 ? 'evening' : 'night');
 
 // Live clock + time-of-day greeting chip for the header.
 function LiveClock({ name }) {
+  const { t, lang } = useI18n();
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 1000 * 30);
     return () => clearInterval(id);
   }, []);
-  const time = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  const date = now.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+  // Arabic uses the Gregorian calendar with Arabic month/day names (ar-u-ca-gregory)
+  // rather than the default Hijri, so the date still matches every other date in
+  // the app; Latin digits keep it aligned with the tabular-nums clock.
+  const locale = lang === 'ar' ? 'ar-AE-u-ca-gregory-nu-latn' : 'en-GB';
+  const time = now.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
+  const date = now.toLocaleDateString(locale, { weekday: 'short', month: 'short', day: 'numeric' });
   const first = (name || '').trim().split(/\s+/)[0];
   return (
     <div className="hidden items-center gap-3 rounded-xl border border-slate-200/70 bg-white/60 px-3 py-1.5 lg:flex">
       <div className="leading-tight">
-        <p className="text-[11px] font-semibold text-slate-700">{greet(now.getHours())}{first ? `, ${first}` : ''}</p>
+        <p className="text-[11px] font-semibold text-slate-700">
+          {first ? t(`shell.greet.${greetKey(now.getHours())}Named`, { name: first }) : t(`shell.greet.${greetKey(now.getHours())}`)}
+        </p>
         <p className="text-[10px] font-medium text-slate-400">{date}</p>
       </div>
       <div className="h-7 w-px bg-slate-200" />
@@ -101,7 +115,6 @@ const NAV_SECTIONS = [
   {
     title: 'Maintenance Intelligence',
     items: [
-      { name: 'Foresight', to: '/maintenance-foresight', icon: 'M9.66 17h4.68M12 3v1m6.36 1.64-.7.7M21 12h-1M4 12H3m3.34-5.66-.7-.7M7 17a5 5 0 1 1 10 0', desc: 'Predictive maintenance: cars showing early mechanical warning signs (service overdue, chronic faults, aging battery) caught before they fail — with the downtime, parts-wait risk and lost rental revenue estimated from the fleet’s own repair history.' },
       { name: 'Keyword Risk', to: '/finding-keywords', icon: 'M20.59 13.41 13.42 20.6a2 2 0 0 1-2.83 0l-7-7A2 2 0 0 1 3 12V5a2 2 0 0 1 2-2h7a2 2 0 0 1 1.42.59l7.17 7.17a2 2 0 0 1 0 2.83zM7.5 7.5h.01', desc: 'The fault-keyword library the inspection picker offers, each graded by risk (🔴 critical / 🟡 moderate / 🟢 routine). Add, edit or retire keywords and set how serious each fault type is.' },
       { name: 'Recurring Fault Reviews', to: '/recurring-fault-reviews', icon: 'M3 2v6h6M3 8a9 9 0 1 0 2.6-4.36L3 8', desc: 'Cars that came back with the SAME confirmed fault after a completed repair. Each case shows the previous ticket, garage, parts used, days and distance since the repair, and how many times it recurred — so management can decide whether the earlier repair failed, it is a new failure, workshop responsibility, customer misuse, or needs investigation.' },
     ],
@@ -213,7 +226,6 @@ const NAV_PERMISSIONS = {
   '/car-status': 'maintenance.view',
   '/maintenance-workflow': 'maintenance.view',
   '/my-maintenance-queue': 'maintenance.view',
-  '/maintenance-foresight': 'maintenance.view',
   '/cost-capture': 'maintenance.manage',
   '/inspection-review': 'maintenance.manage',
   '/garages': 'maintenance.view',
@@ -255,6 +267,7 @@ const QUICK_ACTION_PERMISSIONS = {
 
 // Floating "back to top" button that appears once you scroll down a long page.
 function ScrollTop() {
+  const { t } = useI18n();
   const [show, setShow] = useState(false);
   useEffect(() => {
     const onScroll = () => setShow(document.documentElement.scrollTop > 400);
@@ -267,8 +280,8 @@ function ScrollTop() {
     <button
       onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
       className="fixed bottom-[11rem] end-6 z-30 flex h-11 w-11 items-center justify-center rounded-full bg-slate-900/90 text-white shadow-lg ring-1 ring-white/10 backdrop-blur transition hover:bg-slate-900 active:scale-90"
-      title="Back to top"
-      aria-label="Back to top"
+      title={t('shell.backToTop')}
+      aria-label={t('shell.backToTop')}
     >
       <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
     </button>
@@ -278,6 +291,7 @@ function ScrollTop() {
 export default function AppLayout() {
   const { user, logout } = useAuth();
   const { can, roles } = usePermissions();
+  const { t, tf } = useI18n();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -296,8 +310,15 @@ export default function AppLayout() {
     (!i.hideWhenIntel || !SHOW_FLEET_INTELLIGENCE) &&
     (!i.demoOnly || DEMO_MODE);
   // Feeds the ⌘K command palette — the sidebar is gone, so search + the launcher
-  // (/) + the per-module tab bar are the navigation surfaces.
-  const visibleSearch = SEARCH_ITEMS.filter(navVisible);
+  // (/) + the per-module tab bar are the navigation surfaces. Names, sections and
+  // descriptions resolve through the label catalog so the palette is searchable
+  // in whichever language is active.
+  const visibleSearch = SEARCH_ITEMS.filter(navVisible).map((i) => ({
+    ...i,
+    name: tf(`nav.items.${navKey(i.to)}.name`, i.name),
+    desc: tf(`nav.items.${navKey(i.to)}.desc`, i.desc),
+    section: tf(`nav.sections.${sectionKey(i.section)}`, i.section),
+  }));
 
   const [cmdOpen, setCmdOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -353,7 +374,9 @@ export default function AppLayout() {
   const activeModule = moduleForPath(location.pathname);
 
   const initial = (user?.name || '?').charAt(0).toUpperCase();
-  const pageName = current?.name;
+  // Note: resolveModuleLabel above deliberately stays English — it is reported to
+  // the backend activity tracker as data, not shown to this user.
+  const pageName = current ? tf(`nav.items.${navKey(current.to)}.name`, current.name) : undefined;
 
   // Reflect the current page in the browser tab title.
   useEffect(() => {
@@ -396,29 +419,31 @@ export default function AppLayout() {
                 <button
                   onClick={() => navigate(-1)}
                   className="flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-100 hover:text-slate-900"
-                  title="Back to previous page"
-                  aria-label="Back to previous page"
+                  title={t('shell.backHint')}
+                  aria-label={t('shell.backHint')}
                 >
-                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  {/* Chevron mirrors with the document direction so "back" always points
+                      away from the reading direction. */}
+                  <svg className="h-4 w-4 rtl:-scale-x-100" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M15 18l-6-6 6-6" />
                   </svg>
-                  <span className="hidden sm:inline">Back</span>
+                  <span className="hidden sm:inline">{t('shell.back')}</span>
                 </button>
                 <span className="h-5 w-px bg-slate-200" />
                 <button
                   onClick={() => navigate('/')}
                   className="flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-100 hover:text-slate-900"
-                  title="Home — main page"
-                  aria-label="Home — main page"
+                  title={t('shell.homeHint')}
+                  aria-label={t('shell.homeHint')}
                 >
                   <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M3 12l9-9 9 9M5 10v10a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V10" />
                   </svg>
-                  <span className="hidden sm:inline">Home</span>
+                  <span className="hidden sm:inline">{t('shell.home')}</span>
                 </button>
               </div>
               <span className="hidden h-6 w-px bg-slate-200 sm:block" />
-              <h2 className="truncate text-[15px] font-semibold text-slate-800">{current?.name || 'Faster'}</h2>
+              <h2 className="truncate text-[15px] font-semibold text-slate-800">{pageName || 'Faster'}</h2>
             </div>
           )}
 
@@ -432,8 +457,8 @@ export default function AppLayout() {
             <button
               onClick={() => setHelpOpen(true)}
               className="hidden h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-400 shadow-sm transition hover:text-slate-600 hover:ring-1 hover:ring-slate-200 lg:inline-flex"
-              title="Keyboard shortcuts ( ? )"
-              aria-label="Keyboard shortcuts"
+              title={t('shell.shortcutsHint')}
+              aria-label={t('shell.shortcuts')}
             >
               <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path strokeLinecap="round" strokeLinejoin="round" d="M9.1 9a3 3 0 1 1 5.8 1c0 2-3 3-3 3M12 17h.01" /></svg>
             </button>
@@ -441,10 +466,10 @@ export default function AppLayout() {
             <button
               onClick={() => setCmdOpen(true)}
               className="hidden items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-400 shadow-sm transition hover:text-slate-600 hover:ring-1 hover:ring-slate-200 sm:flex"
-              title="Search (Ctrl / ⌘ K)"
+              title={t('shell.searchHint')}
             >
               <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.3-4.3M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z" /></svg>
-              Search
+              {t('shell.search')}
               <kbd className="rounded border border-slate-200 bg-slate-50 px-1 text-[10px] font-semibold text-slate-400">⌘K</kbd>
             </button>
 
@@ -463,9 +488,10 @@ export default function AppLayout() {
             <button
               onClick={handleLogout}
               className="rounded-lg p-2 text-slate-400 transition hover:bg-red-50 hover:text-red-600"
-              title="Log out"
+              title={t('shell.logout')}
+              aria-label={t('shell.logout')}
             >
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+              <svg className="h-5 w-5 rtl:-scale-x-100" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M16 17l5-5-5-5M21 12H9M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
               </svg>
             </button>
@@ -490,7 +516,14 @@ export default function AppLayout() {
         open={cmdOpen}
         onClose={() => setCmdOpen(false)}
         items={visibleSearch}
-        actions={QUICK_ACTIONS.filter((a) => can(QUICK_ACTION_PERMISSIONS[a.id])).map((a) => ({ ...a, run: () => runAction(a) }))}
+        actions={QUICK_ACTIONS.filter((a) => can(QUICK_ACTION_PERMISSIONS[a.id])).map((a) => ({
+          ...a,
+          label: tf(`shell.quickActions.${a.id}`, a.label),
+          // Keep the English keywords appended so ⌘K still matches typed English
+          // even while the UI is in Arabic.
+          keywords: `${a.keywords} ${a.label} ${tf(`shell.quickActionKeywords.${a.id}`, '')}`,
+          run: () => runAction(a),
+        }))}
         recents={recents}
       />
       <ShortcutsHelp open={helpOpen} onClose={() => setHelpOpen(false)} />

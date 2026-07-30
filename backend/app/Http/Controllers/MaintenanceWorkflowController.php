@@ -84,7 +84,8 @@ class MaintenanceWorkflowController extends Controller
         // lastFailedVendor drives the "Unresolved at Garage X" blame badge on a re-inspection failure.
         'tasks.assignments.vendor:id,name', 'tasks.currentVendor:id,name', 'tasks.lastFailedVendor:id,name', 'tasks.media', 'tasks.markedIncorrectBy:id,name',
         // Per-fault parts (Parts Purchase workflow) — drawer/command only, so opening a fault lists its parts.
-        'tasks.partRequests',
+        // `partRequests` (ticket-level) additionally catches requests raised with no fault attached.
+        'tasks.partRequests', 'partRequests',
         // Execution layer: the ticket's currently-open MOVE (transit) — drives the unified live position.
         'activeMove',
         // Garage Invoice Portal: the one submission awaiting audit — drives the "Awaiting Audit" flag.
@@ -135,6 +136,9 @@ class MaintenanceWorkflowController extends Controller
         // MaintenanceDelayResolver are pure readers that never eager-load themselves. See
         // MaintenanceOpsCardService.
         'tasks.partRequests', 'tasks.partRequests.purchases', 'tasks.partRequests.purchases.sourceVendor:id,name',
+        // Ticket-level requests too — a part raised against the ticket with no fault attached would
+        // otherwise never reach the card (the per-fault walk above can't see it).
+        'partRequests',
         'checkpoints', 'responsibles:id,name',
         'activeMove',
     ];

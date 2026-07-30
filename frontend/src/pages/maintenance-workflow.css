@@ -147,6 +147,7 @@
 .mwf-pill.crit{color:var(--crit);background:rgba(251,113,133,.12);border-color:rgba(251,113,133,.34)}
 .mwf-pill.paused{color:var(--paused);background:rgba(245,165,36,.12);border-color:rgba(245,165,36,.32)}
 /* expected-return day: calm neutral chip; turns red (.over) once the promised day has passed */
+.mwf-pill.parts{color:var(--reserved);background:rgba(167,139,250,.12);border-color:rgba(167,139,250,.32)}
 .mwf-pill.due{color:var(--ink-2);background:var(--ov);border-color:var(--line)}
 .mwf-pill.due.over{color:var(--crit);background:rgba(251,113,133,.12);border-color:rgba(251,113,133,.34)}
 .opx-chip.moving{animation:mwf-pulse 1.6s ease-in-out infinite}
@@ -170,6 +171,17 @@
 .mwf-task{display:flex;align-items:flex-start;gap:6px;font-size:11px;line-height:1.45;color:var(--ink-2);min-width:0}
 .mwf-task>span:not(.mwf-dot):not(.mwf-fail){overflow-wrap:anywhere;word-break:break-word}
 .mwf-dot{width:6px;height:6px;border-radius:50%;flex:none;margin-top:5px}
+/* Parts raised against one fault — an indented sub-list under its symptom row. */
+.mwf-parts{display:flex;flex-direction:column;gap:3px;margin:3px 0 1px;padding-inline-start:8px;
+  border-inline-start:1px solid var(--line)}
+.mwf-parts .hd{font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3)}
+.mwf-part{display:flex;align-items:flex-start;gap:5px;font-size:10.5px;line-height:1.45;color:var(--ink-2);min-width:0}
+.mwf-part .ok{flex:none;font-weight:700;color:var(--avail);line-height:1.35}
+.mwf-part .mwf-dot{width:5px;height:5px;margin-top:4px}
+.mwf-part .nm{font-weight:600;overflow-wrap:anywhere;word-break:break-word}
+.mwf-part .qt{flex:none;font-family:var(--mono);color:var(--ink-3)}
+.mwf-part .st{flex:none;margin-inline-start:auto;color:var(--ink-3)}
+.mwf-part.muted .nm{color:var(--ink-3);text-decoration:line-through}
 .mwf-fail{margin-left:auto;font-family:var(--mono);font-size:9px;font-weight:700;color:var(--crit);
   background:rgba(251,113,133,.14);border-radius:999px;padding:1px 5px;flex:none}
 

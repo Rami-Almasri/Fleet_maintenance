@@ -87,9 +87,11 @@ export default function RecurringFaultsAnalytics({ reviews = [] }) {
       <SectionCard
         title="Where responsibility lands"
         subtitle="Management rulings across these reviews"
-        bodyClass="flex items-center justify-center p-5"
+        bodyClass="p-5"
       >
-        <PieChart segments={decisions} size={150} />
+        {/* stacked: this card is a third of the row, so a side-by-side legend
+            squeezes the labels into ellipses. Pie on top, full-width legend under. */}
+        <PieChart segments={decisions} size={168} stacked />
       </SectionCard>
     </div>
   );

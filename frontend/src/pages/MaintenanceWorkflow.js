@@ -93,6 +93,38 @@ const SEV_OPX = { red: 'crit', orange: 'paused', amber: 'paused', green: 'avail'
 const POS_OPX = { blue: 'rented', red: 'crit', amber: 'paused', violet: 'reserved', green: 'avail', cyan: 'rented', teal: 'avail', slate: 'blocked' };
 const POSITION_ICON = { in_transit: '🚚', in_workshop: '🔧', repair_review: '🎬', awaiting_pickup: '📦', awaiting_dispatch: '📋', awaiting_reinspection: '✅', under_diagnosis: '🔍', inspection_requested: '🚩', reinspection_failed: '⛔', complaint_triage: '📣', ready_for_pickup: '🧳', in_our_park: '🏁', paused: '⏸️', temporarily_released: '🚗' };
 
+// Part-request lifecycle → the marker shown next to a part listed under its fault on the board card.
+// Mirrors the drawer's FindingsList map (same vocabulary, dark-board tones): a fitted part reads as a
+// green ✓, the in-flight stages get a coloured dot, and the off-ramps read muted + struck-through.
+const PART_STATUS = {
+  requested:    { dot: 'var(--ink-3)',  label: 'Requested' },
+  under_review: { dot: 'var(--rented)', label: 'Under review' },
+  approved:     { dot: 'var(--rented)', label: 'Approved' },
+  purchased:    { dot: 'var(--reserved)', label: 'Purchased' },
+  installed:    { check: true,          label: 'Installed' },
+  completed:    { check: true,          label: 'Installed' },
+  rejected:     { dot: 'var(--ink-3)',  label: 'Rejected',  muted: true },
+  cancelled:    { dot: 'var(--ink-3)',  label: 'Cancelled', muted: true },
+};
+
+// One part line — the status marker, the name (+ qty) and where it is in its lifecycle.
+function PartRow({ part }) {
+  const ps = PART_STATUS[part.status] || { dot: 'var(--ink-3)', label: part.status };
+  return (
+    <div
+      className={`mwf-part ${ps.muted ? 'muted' : ''}`}
+      title={`${part.part_name}${part.part_number ? ` · ${part.part_number}` : ''} — ${ps.label}`}
+    >
+      {ps.check
+        ? <span className="ok" aria-hidden="true">✓</span>
+        : <span className="mwf-dot" style={{ background: ps.dot }} />}
+      <span className="nm">{part.part_name}</span>
+      {part.quantity > 1 && <span className="qt">×{Math.round(part.quantity)}</span>}
+      <span className="st">{ps.label}</span>
+    </div>
+  );
+}
+
 const SEV_FILTERS = [
   { value: '', label: 'All' },
   { value: 'critical', label: '🔴 Critical' },
@@ -131,6 +163,12 @@ function TicketCard({ tk, tone, laneKey, laneName, can, userId, active, onSelect
   const isDisabled = tk.maintenance_type === 'breakdown' || tk.is_recovery;
   const age = stageAge(tk, t);
   const expected = expectedReturn(tk.expected_return_date);
+  // Parts still owed on the ticket (any non-terminal part request across its faults) — the board eager-
+  // loads tasks.partRequests, so this is free. Drives the header pill; the per-fault list renders below.
+  const partsPending = tk.parts_pending || [];
+  // Requests raised against the TICKET with no fault attached — they never show up in tasks[].parts, so
+  // they get their own block under the fault list (otherwise they'd be invisible on the board).
+  const looseParts = (tk.parts || []).filter((p) => !p.task_id);
   const sevCls = SEV_OPX[tk.fault_severity_tone] || 'paused';
 
   const railCls = active ? 'sel' : critical ? 'sev-crit' : isComplaint ? 'sev-paused' : '';
@@ -188,6 +226,13 @@ function TicketCard({ tk, tone, laneKey, laneName, can, userId, active, onSelect
           {tk.fault_severity && (
             <span className={`opx-chip ${sevCls}`}><span className="cd" />{tk.fault_severity_emoji} {t(`workflow.faultSeverity.${tk.fault_severity}`)}</span>
           )}
+          {/* Parts blocker — the car is sitting on an outstanding part request. Names them in the tooltip
+              so a supervisor knows WHAT is owed without opening the ticket. */}
+          {partsPending.length > 0 && (
+            <span className="mwf-pill parts" title={t('workflow.board.partsWaitingTip', { names: partsPending.join(', ') })}>
+              🧩 {t('workflow.board.partsWaiting', { n: partsPending.length })}
+            </span>
+          )}
           {tk.sent_back && (
             <span className="mwf-pill crit">⛔ {t('workflow.board.sentBack')}{tk.sent_back.count > 1 ? ` ×${tk.sent_back.count}` : ''}</span>
           )}
@@ -227,14 +272,36 @@ function TicketCard({ tk, tone, laneKey, laneName, can, userId, active, onSelect
             {tasks.map((task) => {
               const st = TASK_STATUS[task.status] || TASK_STATUS.pending;
               const failCount = Number(task.reinspection_failures) || 0;
+              const parts = task.parts || [];
               return (
-                <div key={task.id} className="mwf-task" title={task.symptom}>
-                  <span className={`mwf-dot ${st.dot}`} />
-                  <span>{task.symptom}</span>
-                  {failCount > 0 && <span className="mwf-fail" title={t('workflow.reinspect.unresolvedBadge', { n: failCount, garage: task.last_failed_garage || t('workflow.task.unassigned') })}>⛔{failCount > 1 ? `×${failCount}` : ''}</span>}
+                <div key={task.id}>
+                  <div className="mwf-task" title={task.symptom}>
+                    <span className={`mwf-dot ${st.dot}`} />
+                    <span>{task.symptom}</span>
+                    {failCount > 0 && <span className="mwf-fail" title={t('workflow.reinspect.unresolvedBadge', { n: failCount, garage: task.last_failed_garage || t('workflow.task.unassigned') })}>⛔{failCount > 1 ? `×${failCount}` : ''}</span>}
+                  </div>
+                  {/* The parts raised against THIS fault — what was requested / bought / fitted for it. */}
+                  {parts.length > 0 && (
+                    <div className="mwf-parts">
+                      <span className="hd">{t('workflow.board.partsHd')}</span>
+                      {parts.map((p) => <PartRow key={p.id} part={p} />)}
+                    </div>
+                  )}
                 </div>
               );
             })}
+          </div>
+        )}
+
+        {/* Parts raised on the ticket itself (no fault attached) — same block, its own header. */}
+        {looseParts.length > 0 && (
+          <div className="mwf-tasks">
+            <div className="mwf-tasks-hd">
+              <span aria-hidden="true">🧩</span>
+              <span className="gn">{t('workflow.board.partsHd')}</span>
+              <span className="ct">{looseParts.length}</span>
+            </div>
+            {looseParts.map((p) => <PartRow key={p.id} part={p} />)}
           </div>
         )}
 

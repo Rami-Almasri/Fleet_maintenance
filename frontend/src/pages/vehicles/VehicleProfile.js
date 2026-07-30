@@ -119,141 +119,6 @@ const WF_STATUS_META = {
   complaint_resolved:     { label: 'Complaint Resolved', tone: 'green',  icon: 'IN' },
 };
 
-// A workflow / follow-up entry in the unified timeline. Rendered with the SAME legacy stage
-// vocabulary + colours as the sheet workshop rows (OUT / IN / Follow up / Test), so the manual
-// workflow trail reads identically to the old log — no "Inspector / Garage / Dispatched…" wording.
-function WorkflowLogItem({ m }) {
-  // Prefer the exact Maintenance-Workflow board stage name (from workflow_status); fall back to the
-  // legacy OUT/IN/Test vocabulary for events with no workflow_status (sheet rows, follow-up notes).
-  const wf = m.workflow_status ? WF_STATUS_META[m.workflow_status] : null;
-  const legacyStage = wfStage(m.event_type);
-  const stage = wf?.label || legacyStage;
-  const tone = wf?.tone || EVENT_TONE[legacyStage] || 'gray';
-  const st = EVENT_STYLE[tone] || EVENT_STYLE.gray;
-  const icon = EVENT_ICON[wf?.icon || legacyStage] || DEFAULT_EVENT_ICON;
-
-  // Expandable sections — collapsed by default so a 6-fault ticket stays a one-line card, not a
-  // paragraph. Each only renders its toggle when it actually has something to show.
-  const [showFaults, setShowFaults] = useState(false);
-  const [showPhotos, setShowPhotos] = useState(false);
-  const [showNotes, setShowNotes] = useState(false);
-  const faults = Array.isArray(m.faults) ? m.faults.filter(Boolean) : [];
-  const photos = m.media || [];
-  const notes = String(m.notes || '').trim();
-
-  return (
-    <li className="relative flex gap-4">
-      {/* timeline marker — coloured by the legacy stage, exactly like the sheet rows */}
-      <span className={`relative z-10 mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full ring-4 ring-white ${st.soft} ${st.text}`}>
-        <svg className="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={icon} /></svg>
-      </span>
-
-      <div className="min-w-0 flex-1 rounded-2xl border border-slate-200/60 bg-white p-4 shadow-soft">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <Badge tone={tone}>{stage}</Badge>
-          <span className="text-xs font-medium text-slate-400">
-            {m.date ? fmtDate(m.date) : 'No date'}
-            {m.ts && <span className="text-slate-400"> · {fmtClock(m.ts)}</span>}
-          </span>
-        </div>
-
-        {/* the note: a single fixed-length line — faults/odometer/actor are chips below, never inlined here */}
-        {m.description && <p className="mt-2 text-sm leading-relaxed text-slate-600">{m.description}</p>}
-
-        {/* Small info chips: garage, odometer, cost, actor, linked contract */}
-        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
-          {m.garage && (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-600">
-              🏭 {m.garage}
-            </span>
-          )}
-          {m.odometer != null && (
-            <span className="inline-flex items-center gap-1.5 font-medium text-slate-600">
-              <Icon.Gauge className="h-3.5 w-3.5 text-slate-400" /> {num(m.odometer)} km
-            </span>
-          )}
-          {SHOW_FINANCIALS && m.cost != null && Number(m.cost) > 0 && <span className="font-semibold text-slate-700">{aed2(m.cost)}</span>}
-          {m.actor && <span className="text-slate-400">👤 {m.actor}</span>}
-          {m.contract_id && (
-            <Link to={`/contracts/${m.contract_id}`} className="font-medium text-indigo-600 hover:text-indigo-700">#{m.contract_no || m.contract_id}</Link>
-          )}
-        </div>
-
-        {/* Actions — expand-in-place instead of spelling everything into the description */}
-        {(faults.length > 0 || photos.length > 0 || notes || m.ticket_id) && (
-          <div className="mt-3 flex flex-wrap gap-2 border-t border-slate-100 pt-3">
-            {notes && (
-              <button
-                type="button"
-                onClick={() => setShowNotes((v) => !v)}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600 ring-1 ring-inset ring-slate-300 hover:bg-slate-200"
-              >
-                {showNotes ? 'Hide Workshop Notes' : 'Show Workshop Notes'}
-              </button>
-            )}
-            {m.ticket_id && (
-              <Link
-                to={`/maintenance-workflow/${m.ticket_id}`}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700 ring-1 ring-inset ring-amber-600/20 hover:bg-amber-100"
-              >
-                <Icon.Wrench className="h-3.5 w-3.5" /> Show Fault
-              </Link>
-            )}
-            {faults.length > 0 && (
-              <button
-                type="button"
-                onClick={() => setShowFaults((v) => !v)}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-700 ring-1 ring-inset ring-red-600/20 hover:bg-red-100"
-              >
-                {showFaults ? 'Hide Faults' : 'Show Faults'} ({faults.length})
-              </button>
-            )}
-            {photos.length > 0 && (
-              <button
-                type="button"
-                onClick={() => setShowPhotos((v) => !v)}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700 ring-1 ring-inset ring-indigo-600/20 hover:bg-indigo-100"
-              >
-                {showPhotos ? 'Hide Photos' : 'Show Photos'} ({photos.length})
-              </button>
-            )}
-          </div>
-        )}
-
-        {showNotes && notes && (
-          <div className="mt-2 rounded-xl bg-slate-50/70 p-3 ring-1 ring-inset ring-slate-100">
-            <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">Workshop Notes</p>
-            <NotesList text={notes} />
-          </div>
-        )}
-
-        {showFaults && faults.length > 0 && (
-          <ul className="mt-2 space-y-1 rounded-xl bg-red-50/60 px-3 py-2 text-sm text-red-800">
-            {faults.map((f, i) => <li key={i}>• {f}</li>)}
-          </ul>
-        )}
-
-        {showPhotos && photos.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-2">
-            {photos.map((med, i) => (
-              <a
-                key={med.id}
-                href={med.url}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1.5 rounded-lg bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-600 ring-1 ring-inset ring-slate-200 hover:bg-slate-100"
-                title={med.name || undefined}
-              >
-                {med.kind === 'image' ? 'Photo' : 'Video'} {i + 1}
-              </a>
-            ))}
-          </div>
-        )}
-      </div>
-    </li>
-  );
-}
-
 // Humanise a stage duration (seconds) into the two most significant units: "2d 3h", "4h 12m",
 // "35m", "48s". A running/open stage passes null and renders as a live ticking-style "so far" label
 // upstream, so here we only format finished spans.
@@ -421,7 +286,11 @@ const PRIO = {
 };
 
 // Top-level tabs for the profile. Keys are also the ?tab= URL value (deep-linkable / shareable).
-const TAB_KEYS = ['overview', 'plate', 'visits', 'timeline', 'journey', 'activity', 'checkpoints', 'complaints', 'financials', 'media'];
+// 'timeline' (the old Maintenance Log feed) was merged into 'activity' — the one Timeline tab. It stays
+// in the key list so old ?tab=timeline links still resolve; changeTab() redirects them to 'activity'.
+const TAB_KEYS = ['overview', 'plate', 'visits', 'journey', 'activity', 'checkpoints', 'complaints', 'financials', 'media'];
+const TAB_ALIASES = { timeline: 'activity' };
+const resolveTab = (key) => TAB_ALIASES[key] || key;
 
 // Per-tab "Data Origin" line — the standing traceability rule: every surface names where its
 // numbers come from, so a manager on any tab still sees the source (no black boxes).
@@ -429,10 +298,9 @@ const TAB_ORIGIN = {
   overview: 'Live figures derived from OfficeManager contracts via RealProfitService. Outstanding fines from the F RTA source. Cost of Ownership adds the purchase price from the FASTER Asset sheet.',
   maintenance: 'Health, findings & workflow tickets from the in-app maintenance workflow. Service log & tyre brand/DOT/tread/warranty from the ticket line items.',
   visits: 'Each maintenance visit is an OfficeManager type-U contract, enriched with its workshop events from the N-Maintenance sheet log (garage, issues, priority, cost).',
-  timeline: 'The N-Maintenance sheet workshop log interleaved with the manual maintenance-workflow audit trail (transitions & follow-ups) logged in-app, newest first.',
   journey: 'The same in-app maintenance-workflow audit trail (vehicle event log), reshaped per ticket: each workflow_status transition marks a stage, timed to the next transition — so you see every stage the car went through and how long it sat in each.',
   checkpoints: 'Workshop progress updates filed by the responsible follow-up owners (Waleed/Abdullah, or a ticket’s assigned users): the revised completion date, the reason it moved, a progress note and photos/videos. The On Schedule / Overdue status is derived automatically from the promised date; reminders escalate before a job goes overdue.',
-  activity: 'The car’s whole history as an investigation tool — search, filters, KPIs, grouping and sorting over every source unified: the N-Maintenance sheet workshop visits, the maintenance-workflow audit trail (inspections, dispatch, repair, re-inspection, parts, approvals & follow-ups), the logistics movement log, and inspection records. Every row carries who acted and when; nothing is editable, and the exact filtered view is captured in the URL to share.',
+  activity: 'The car’s whole history as an investigation tool — search, filters, KPIs, grouping and sorting over every source unified: the N-Maintenance sheet workshop visits (click one for its full record — garage, cost, issues, notes), the maintenance-workflow audit trail (inspections, dispatch, repair, re-inspection, parts, approvals & follow-ups), the logistics movement log, and inspection records. Every row carries who acted and when; nothing is editable, and the exact filtered view is captured in the URL to share.',
   financials: 'Reverse-engineered from OfficeManager billing via RealProfitService: rent − discount + realized usage − operating − car-level maintenance.',
   media: 'Pre/post condition & odometer photos captured during the maintenance workflow (inspection & garage steps).',
 };
@@ -521,13 +389,11 @@ export default function VehicleProfile() {
   const [openVisits, setOpenVisits] = useState({}); // expanded maintenance-history rows (by visit id)
   const [logEvent, setLogEvent] = useState(null); // maintenance-log event opened in the detail modal
   const [showAllVisits, setShowAllVisits] = useState(false); // collapse the Maintenance History table by default
-  const [showAllLog, setShowAllLog] = useState(false); // collapse the Maintenance Log timeline by default
   const [showAllContracts, setShowAllContracts] = useState(false); // collapse the Contract History table by default
   const [contractType, setContractType] = useState('all'); // Contract History type filter: all | C | U | R
   const [bridgeOpen, setBridgeOpen] = useState(false); // "how is Lifetime Net Profit calculated" drill-down
 
   const VISITS_PREVIEW = 5;    // rows shown before "Show all"
-  const LOG_PREVIEW = 4;       // timeline events shown before "Show all"
   const CONTRACTS_PREVIEW = 5; // contract rows shown before "Show all"
 
   const toggleVisit = (vid) => setOpenVisits((o) => ({ ...o, [vid]: !o[vid] }));
@@ -536,24 +402,25 @@ export default function VehicleProfile() {
   // workshop event (the worst-case offender) so the user can see what actually happened.
   const [searchParams, setSearchParams] = useSearchParams();
   const highlightEventId = searchParams.get('event');
-  // Arriving from Fleet Utilization with ?focus=maintenance jumps straight to the Maintenance Log.
+  // Arriving from Fleet Utilization with ?focus=maintenance jumps straight to the Timeline.
   const focus = searchParams.get('focus');
 
   // Which tab is showing. Deep-links win: an ?event= (Foresight) or ?focus=maintenance (Fleet
-  // Utilization) link lands on the Timeline tab — where the workshop/workflow log now lives — so the
-  // existing scroll-into-view still finds its target; otherwise honour ?tab=, else default to Overview.
+  // Utilization) link lands on the Timeline tab — the single unified history — so the existing
+  // scroll-into-view still finds its target; otherwise honour ?tab=, else default to Overview.
   const deepLinksTimeline = !!highlightEventId || focus === 'maintenance';
-  const tabParam = searchParams.get('tab');
+  const tabParam = resolveTab(searchParams.get('tab'));
   const [activeTab, setActiveTab] = useState(
-    deepLinksTimeline ? 'timeline' : (TAB_KEYS.includes(tabParam) ? tabParam : 'overview')
+    deepLinksTimeline ? 'activity' : (TAB_KEYS.includes(tabParam) ? tabParam : 'overview')
   );
 
   // Switch tab + reflect it in the URL (shareable/back-button), preserving any other params.
   const changeTab = (key) => {
-    setActiveTab(key);
+    const tab = resolveTab(key);
+    setActiveTab(tab);
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
-      next.set('tab', key);
+      next.set('tab', tab);
       return next;
     }, { replace: true });
   };
@@ -572,28 +439,45 @@ export default function VehicleProfile() {
 
   useEffect(() => { api.get('/Vendor').then((r) => setVendors(r.data.data || [])).catch(() => {}); }, []);
 
-  // When deep-diving to a specific event, make sure the Maintenance tab is showing, expand the
-  // full log, and scroll it into view once its panel is mounted.
+  // Scroll a deep-linked anchor into view and KEEP it there. Two races make a one-shot setTimeout
+  // unreliable here: the Timeline renders the legacy rows immediately but only fetches its own activity
+  // feed afterwards, and that second render rebuilds the whole list — throwing away any scroll we'd
+  // already done. So poll: re-scroll whenever the anchor is off-screen, and only stop once it has
+  // stayed put for a few ticks. Gives up after ~10s rather than spinning on an id this car lacks.
+  const scrollToAnchor = useCallback((elementId, block) => {
+    let tries = 0;
+    let settled = 0;
+    const tick = setInterval(() => {
+      const el = document.getElementById(elementId);
+      if (el) {
+        const { top } = el.getBoundingClientRect();
+        if (top > 0 && top < window.innerHeight * 0.8) {
+          if (++settled >= 3) clearInterval(tick);
+        } else {
+          settled = 0;
+          // 'auto', NOT 'smooth': re-issuing a smooth scroll each tick cancels and restarts the
+          // in-flight animation, so a long jump never actually advances. Instant lands every time.
+          el.scrollIntoView({ block });
+        }
+      }
+      if (++tries > 40) clearInterval(tick);
+    }, 250);
+    return () => clearInterval(tick);
+  }, []);
+
+  // When deep-diving to a specific event, make sure the Timeline tab is showing and scroll the row
+  // into view. The row itself renders the red "investigate" highlight.
   useEffect(() => {
     if (!highlightEventId || !data) return undefined;
-    setActiveTab('timeline');
-    setShowAllLog(true);
-    const t = setTimeout(() => {
-      const el = document.getElementById(`log-event-${highlightEventId}`);
-      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }, 300);
-    return () => clearTimeout(t);
-  }, [highlightEventId, data]);
+    setActiveTab('activity');
+    return scrollToAnchor(`log-event-${highlightEventId}`, 'center');
+  }, [highlightEventId, data, scrollToAnchor]);
 
   useEffect(() => {
     if (focus !== 'maintenance' || !data) return undefined;
-    setActiveTab('timeline');
-    setShowAllLog(true);
-    const t = setTimeout(() => {
-      document.getElementById('maintenance-log')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 300);
-    return () => clearTimeout(t);
-  }, [focus, data]);
+    setActiveTab('activity');
+    return scrollToAnchor('maintenance-log', 'start');
+  }, [focus, data, scrollToAnchor]);
 
   // Keep the active tab in sync with the URL when it changes underneath us (browser back/forward,
   // or a shared ?tab= link). changeTab already updates both, so this is a no-op for normal clicks.
@@ -869,8 +753,10 @@ export default function VehicleProfile() {
               ...(plateReused ? [{ key: 'plate', label: 'Plate History' }] : []),
               { key: 'financials', label: 'Rent', badge: num(contracts.length) },
               { key: 'visits', label: 'Visits', badge: num(maintenance.length) },
+              // One unified history: the sheet Maintenance Log and the workflow audit trail live here.
+              // No badge — the profile only knows the legacy row count; the panel itself reports the
+              // true merged total ("Showing N of M events") once the activity feed lands.
               { key: 'activity', label: 'Timeline' },
-              { key: 'timeline', label: 'Maintenance Log', badge: num(timeline.length) },
               { key: 'journey', label: 'Journey', badge: num(journeys.length) },
               { key: 'checkpoints', label: 'Progress' },
               { key: 'complaints', label: 'Complaints' },
@@ -1042,120 +928,6 @@ export default function VehicleProfile() {
         </div>
         )}
 
-        {/* ── TIMELINE ──────────── unified sheet workshop history + the manual workflow trail */}
-        {activeTab === 'timeline' && (
-        <div role="tabpanel" id="panel-timeline" aria-labelledby="tab-timeline" className="space-y-6">
-        {/* Vehicle Timeline — one unified history: legacy sheet workshop events AND the manual
-            workflow trail (test drives, follow-ups, dispatch/repair/re-inspection), newest first. */}
-        {timeline.length === 0 && (
-          <p className="rounded-2xl border border-dashed border-slate-200 py-12 text-center text-sm text-slate-400">
-            No workshop or workflow events recorded for this car yet.
-          </p>
-        )}
-        {timeline.length > 0 && (
-          <Card id="maintenance-log" className="scroll-mt-28">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-6 py-4">
-              <div>
-                <h3 className="text-base font-semibold text-slate-900">Vehicle Timeline</h3>
-                <p className="mt-0.5 text-xs text-slate-400">Sheet workshop history and the maintenance workflow you log by hand, newest first · tap a workshop event for the full record.</p>
-              </div>
-              <Badge tone="gray">{num(timeline.length)} {timeline.length === 1 ? 'event' : 'events'}</Badge>
-            </div>
-
-            <div className="relative px-6 py-6">
-              {/* the connecting line behind the markers */}
-              <span aria-hidden className="pointer-events-none absolute bottom-8 left-[2.625rem] top-8 w-px bg-gradient-to-b from-slate-200 via-slate-200 to-transparent" />
-              <ol className="stagger space-y-3">
-                {(showAllLog ? timeline : timeline.slice(0, LOG_PREVIEW)).map((m) => {
-                  // Manual workflow / follow-up entries render in the same timeline, styled like the board.
-                  if (m.kind === 'workflow') return <WorkflowLogItem key={`wf-${m.id}`} m={m} />;
-                  const tone = EVENT_TONE[m.event] || 'gray';
-                  const st = EVENT_STYLE[tone] || EVENT_STYLE.gray;
-                  const icon = EVENT_ICON[m.event] || DEFAULT_EVENT_ICON;
-                  const isHit = String(m.id) === String(highlightEventId);
-                  return (
-                    <li key={`ws-${m.id}`} id={`log-event-${m.id}`} className="relative flex scroll-mt-28 gap-4">
-                      {/* timeline marker — now an icon chip */}
-                      <span className={`relative z-10 mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full ring-4 ring-white ${st.soft} ${st.text}`}>
-                        <svg className="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={icon} /></svg>
-                      </span>
-
-                      {/* event card — a button so the whole row is clickable & keyboard-accessible */}
-                      <button
-                        type="button"
-                        onClick={() => setLogEvent(m)}
-                        className={`group min-w-0 flex-1 rounded-2xl border bg-white p-4 text-left shadow-soft transition-all duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-card hover:ring-2 ${st.ring} focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${isHit ? 'border-red-300 bg-red-50/40 ring-2 ring-red-400' : 'border-slate-200/60'}`}
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <Badge tone={tone}>{m.event || '—'}</Badge>
-                            {isHit && <Badge tone="red" dot>Worst-case downtime — investigate</Badge>}
-                            {(m.type || m.severity) && (
-                              <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">{m.type || m.severity}</span>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-medium text-slate-400">
-                              {m.date ? fmtDate(m.date) : 'No date'}
-                              {m.actual_in && m.actual_in !== m.date && <span className="text-emerald-500"> → back {fmtDate(m.actual_in)}</span>}
-                            </span>
-                            <svg className="h-4 w-4 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 5l7 7-7 7" /></svg>
-                          </div>
-                        </div>
-
-                        {/* the real fault — MAIN area(s) recorded for the visit (the "problem", not just the type) */}
-                        {m.main && (
-                          <p className="mt-2 text-sm font-semibold text-slate-800">{m.main}</p>
-                        )}
-                        {m.sup && (
-                          <p className="mt-0.5 line-clamp-1 text-xs text-slate-500">{m.sup}</p>
-                        )}
-
-                        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
-                          {m.garage && (
-                            <span className="inline-flex items-center gap-1.5">
-                              <svg className="h-3.5 w-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-6 9 6v11a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z" /></svg>
-                              <span className="font-medium text-slate-600">{m.garage}</span>
-                            </span>
-                          )}
-                          {SHOW_FINANCIALS && m.cost != null && (
-                            <span className="font-semibold text-slate-700">{aed2(m.cost)}</span>
-                          )}
-                        </div>
-
-                        {m.notes && (
-                          <div className="mt-3 rounded-xl bg-slate-50/70 p-3 ring-1 ring-inset ring-slate-100">
-                            <p className="line-clamp-2 text-sm leading-relaxed text-slate-600">
-                              {String(m.notes).split(/\r?\n/).map((l) => l.trim()).filter(Boolean).join(' · ')}
-                            </p>
-                            <span className="mt-1.5 inline-block text-[11px] font-medium text-indigo-500 opacity-0 transition group-hover:opacity-100">Read full notes →</span>
-                          </div>
-                        )}
-                      </button>
-                    </li>
-                  );
-                })}
-              </ol>
-
-              {timeline.length > LOG_PREVIEW && (
-                <div className="mt-4 flex justify-center">
-                  <button
-                    type="button"
-                    onClick={() => setShowAllLog((s) => !s)}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 py-1.5 text-sm font-medium text-indigo-600 shadow-soft transition hover:border-slate-300 hover:text-indigo-700"
-                  >
-                    {showAllLog ? 'Show less' : `Show all ${num(timeline.length)} events`}
-                    <svg className={`h-4 w-4 transition-transform ${showAllLog ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 9l-7 7-7-7" /></svg>
-                  </button>
-                </div>
-              )}
-            </div>
-          </Card>
-        )}
-
-        <DataOrigin tab="timeline" />
-        </div>
-        )}
 
         {/* ── JOURNEY ─────────── per-ticket stage meter: every stage the car went through + time in each */}
         {activeTab === 'journey' && (
@@ -1165,10 +937,17 @@ export default function VehicleProfile() {
         </div>
         )}
 
-        {/* ── TIMELINE ─────────── the car's full audit trail as an investigation tool (search / filter / KPI / group) */}
+        {/* ── TIMELINE ─── the car's FULL history in one place: the sheet workshop log (the old separate
+            "Maintenance Log" tab) folded into the workflow/logistics/inspection audit trail, with search,
+            filters, KPIs and grouping over the lot. Clicking a workshop row opens its detail drawer. */}
         {activeTab === 'activity' && (
         <div role="tabpanel" id="panel-activity" aria-labelledby="tab-activity" className="space-y-6">
-          <VehicleInvestigationTimeline vehicleId={id} legacyTimeline={timeline} />
+          <VehicleInvestigationTimeline
+            vehicleId={id}
+            legacyTimeline={timeline}
+            onOpenEvent={setLogEvent}
+            highlightEventId={highlightEventId}
+          />
           <DataOrigin tab="activity" />
         </div>
         )}

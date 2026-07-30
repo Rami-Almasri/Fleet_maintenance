@@ -8,8 +8,12 @@
 
 import { useParams, Navigate } from 'react-router-dom';
 import { usePermissions } from '../hooks/usePermissions';
-import { getModule, isModuleVisible, visibleSections } from '../config/moduleRegistry';
+import {
+  getModule, isModuleVisible, visibleSections,
+  moduleNameKey, moduleTaglineKey, sectionNameKey, sectionDescKey,
+} from '../config/moduleRegistry';
 import AppCard from '../components/workspace/AppCard';
+import { useI18n } from '../i18n/I18nContext';
 
 // Per-tone hero styling — a soft gradient wash behind the module identity, plus
 // the icon chip colour. Mirrors the registry `tone` keys.
@@ -23,12 +27,13 @@ const HERO = {
 };
 
 function Band({ title, count, children }) {
+  const { tp } = useI18n();
   return (
     <section aria-label={title}>
       <div className="mb-4 flex items-baseline justify-between gap-3">
         <h2 className="font-display text-xs font-bold uppercase tracking-[0.14em] text-slate-500">{title}</h2>
         {count != null && (
-          <span className="text-xs font-medium text-slate-400">{count} {count === 1 ? 'section' : 'sections'}</span>
+          <span className="text-xs font-medium text-slate-400">{tp('modules.sectionCount', count)}</span>
         )}
       </div>
       {children}
@@ -40,16 +45,18 @@ export default function ModuleOverview() {
   const { moduleId } = useParams();
   const module = getModule(moduleId);
   const { can, roles } = usePermissions();
+  const { t, tf, tp } = useI18n();
 
   if (!module) return <Navigate to="/" replace />;
   if (!isModuleVisible(module, can, roles)) return <Navigate to="/" replace />;
 
+  const moduleName = tf(moduleNameKey(module), module.name);
   const sections = visibleSections(module, can, roles);
   const liveCount = sections.filter((s) => s.status !== 'soon').length;
   const sectionApps = sections.map((s) => ({
-    key: s.name,
-    name: s.name,
-    desc: s.desc,
+    key: s.name, // English identity — stable React key across languages
+    name: tf(sectionNameKey(module, s), s.name),
+    desc: tf(sectionDescKey(module, s), s.desc),
     to: s.route,
     icon: s.icon,
     tone: module.tone,
@@ -69,17 +76,17 @@ export default function ModuleOverview() {
               <ModuleIcon className="h-7 w-7 sm:h-8 sm:w-8" />
             </span>
             <div className="min-w-0 pt-0.5">
-              <h1 className="font-display text-2xl font-bold text-slate-900 sm:text-3xl">{module.name}</h1>
-              <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-slate-500 sm:text-base">{module.tagline}</p>
+              <h1 className="font-display text-2xl font-bold text-slate-900 sm:text-3xl">{moduleName}</h1>
+              <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-slate-500 sm:text-base">{tf(moduleTaglineKey(module), module.tagline)}</p>
               <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-white/70 px-3 py-1 text-xs font-medium text-slate-500 ring-1 ring-slate-200/70">
                 <span className={`h-1.5 w-1.5 rounded-full ${hero.dot}`} />
-                {liveCount} active {liveCount === 1 ? 'section' : 'sections'}
+                {tp('modules.activeSectionCount', liveCount)}
               </div>
             </div>
           </div>
         </header>
 
-        <Band title={`Explore ${module.name}`} count={liveCount}>
+        <Band title={t('modules.explore', { module: moduleName })} count={liveCount}>
           <div className="stagger grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {sectionApps.map((app) => (
               <AppCard key={app.key} app={app} />

@@ -32,7 +32,6 @@ import MyMaintenanceQueue from './pages/MyMaintenanceQueue';
 import InspectionReviewQueue from './pages/InspectionReviewQueue';
 import ComplaintsCenter from './pages/ComplaintsCenter';
 import DriverObservations from './pages/DriverObservations';
-import MaintenanceForesight from './pages/MaintenanceForesight';
 import FleetUtilization from './pages/FleetUtilization';
 import MaintenanceSwap from './pages/MaintenanceSwap';
 import LogisticsDispatch from './pages/LogisticsDispatch';
@@ -221,7 +220,10 @@ export default function App() {
                   <Route path="/maintenance-progress" element={<MaintenanceCheckpoints />} />
                   {/* Fixed & Completed Repairs ledger — every closed ticket with its full story */}
                   <Route path="/completed-repairs" element={<CompletedRepairs />} />
-                  <Route path="/maintenance-foresight" element={<MaintenanceForesight />} />
+                  {/* /maintenance-foresight is retired — its "keeps breaking down" evidence now
+                      lives on each car's own profile (Overview → Repeat faults). Old links land
+                      on the fleet list rather than a dead route. */}
+                  <Route path="/maintenance-foresight" element={<Navigate to="/vehicles" replace />} />
                   <Route path="/garages" element={<Garages />} />
                   <Route path="/finding-keywords" element={<FindingKeywords />} />
                   {/* Maintenance Analytics is marked "Coming Soon" in the module registry —

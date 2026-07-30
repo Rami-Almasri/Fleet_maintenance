@@ -31,6 +31,7 @@ use App\Http\Controllers\PartPurchaseController;
 use App\Http\Controllers\PartInvestigationController;
 use App\Http\Controllers\RecurringFaultReviewController;
 use App\Http\Controllers\MaintenanceSwapController;
+use App\Http\Controllers\MaintenanceIntelligenceController;
 use App\Http\Controllers\MaintenanceWorkflowController;
 use App\Http\Controllers\MaintenanceCheckpointController;
 use App\Http\Controllers\InspectorPadController;
@@ -95,6 +96,7 @@ Route::middleware('auth:sanctum')->prefix('Vehicle')->controller(VehicleControll
     Route::get('/{vehicle}/service-history', 'serviceHistory')->middleware('permission:maintenance.view'); // technical service log (parts/services done, searchable)
     Route::get('/{vehicle}/tire-history', 'tireHistory')->middleware('permission:maintenance.view');       // tyre details (brand/DOT/tread/warranty) from maintenance line items
     Route::get('/{vehicle}/plate-history', 'plateHistory')->middleware('permission:vehicles.view');        // every car that shared this plate (reuse timeline) — history discoverable, never merged
+    Route::get('/{vehicle}/repeat-faults', 'repeatFaults')->middleware('permission:maintenance.view');     // "keeps breaking down": faults that returned after a repair, as a chain of episodes
     Route::get('/{vehicle}/profile', 'profile')->middleware('permission:vehicles.view');   // full car profile: registration, insurance, fines, contracts
     Route::get('/{vehicle}', 'show')->middleware('permission:vehicles.view');
     Route::post('/', 'store')->middleware('permission:vehicles.manage');
@@ -340,6 +342,12 @@ Route::middleware('auth:sanctum')->prefix('maintenance-tickets')->controller(Mai
     Route::get('/{ticket}/mileage', 'mileage')->middleware('permission:maintenance.view');
     // Diagnostic context — idle duration, last check (+ link), and live oil/battery/tyre status vs. limits.
     Route::get('/{ticket}/diagnostic-context', 'diagnosticContext')->middleware('permission:maintenance.view');
+    // Decision Cards — what the intelligence platform thinks the user should know BEFORE deciding, at
+    // this ticket's current workflow state. Each card is frozen into an append-only Recommendation as
+    // it is served, and /respond records what the human actually did about it. Those two calls are the
+    // whole learning loop; without the second the platform recommends but never learns.
+    Route::get('/{ticket}/decision-cards', [MaintenanceIntelligenceController::class, 'cards'])->middleware('permission:maintenance.view');
+    Route::post('/{ticket}/decision-cards/{recommendation}/respond', [MaintenanceIntelligenceController::class, 'respond'])->middleware('permission:maintenance.view');
     // Complaint Intake — Operations (Marwa & Leen) log a customer complaint → ticket born in Abu Maroof's
     // TRIAGE lane (complaint_triage); he decides how to handle it before any garage is involved.
     Route::post('/complaint', 'storeComplaint')->middleware('permission:maintenance.manage');
@@ -592,9 +600,28 @@ Route::middleware(['auth:sanctum', 'permission:maintenance.manage'])->prefix('fa
 // delete are curation actions gated to maintenance.manage, matching cost / type / fault-cause admin.
 Route::middleware('auth:sanctum')->prefix('finding-keywords')->controller(FindingKeywordController::class)->group(function () {
     Route::get('/', 'index')->middleware('permission:maintenance.view');                  // whole library + risk legend + counts
+
+    // AI knowledge base — free text → fault concept. Read-level: everyone who works tickets may
+    // ask "which fault is this describing?", the same bar as seeing the keyword library at all.
+    // Declared before /{findingKeyword} so "resolve" is never swallowed as a model binding.
+    Route::post('/resolve', 'resolve')->middleware('permission:maintenance.view');
+
+    // Continuous learning: a human's verdict on a match. Read-level on purpose — the people best
+    // placed to say "that's the wrong fault" are the inspectors and workshop staff using it, not
+    // the admins who curate the library, and gating it to managers would starve the loop.
+    Route::post('/match-feedback', 'matchFeedback')->middleware('permission:maintenance.view');
+
     Route::post('/', 'store')->middleware('permission:maintenance.initiate');             // add a keyword (inspectors contribute)
+    Route::get('/{findingKeyword}', 'show')->middleware('permission:maintenance.view');   // full concept: terms + profile + run log
     Route::post('/{findingKeyword}', 'update')->middleware('permission:maintenance.manage');  // edit / re-grade risk (POST, like Vendor)
     Route::delete('/{findingKeyword}', 'destroy')->middleware('permission:maintenance.manage'); // retire a keyword
+
+    // Curating the ontology itself — generating it, and correcting what was generated. Both are
+    // library curation, so both sit at maintenance.manage alongside re-grading a keyword's risk.
+    Route::post('/{findingKeyword}/enrich', 'enrich')->middleware('permission:maintenance.manage');
+    Route::post('/{findingKeyword}/terms', 'storeTerm')->middleware('permission:maintenance.manage');
+    Route::post('/{findingKeyword}/terms/{term}', 'updateTerm')->middleware('permission:maintenance.manage');
+    Route::delete('/{findingKeyword}/terms/{term}', 'destroyTerm')->middleware('permission:maintenance.manage');
 });
 
 // Booking Readiness — the pickup-prep board. Lists upcoming bookings (type-R reservations) inside the
@@ -705,10 +732,9 @@ Route::middleware(['auth:sanctum', 'permission:sync.run'])->controller(SyncAudit
     Route::get('Sync/audit/{syncRun}', 'show');
 });
 
-// Maintenance Foresight: predict failures before they happen + simulate the cost of inaction
-Route::middleware(['auth:sanctum', 'permission:maintenance.view'])->get('Maintenance/foresight', [MaintenanceController::class, 'foresight']);
-// Drill-down behind a Foresight cost line: every priced repair of one issue across the fleet
-Route::middleware(['auth:sanctum', 'permission:maintenance.view'])->get('Maintenance/issue-history', [MaintenanceController::class, 'issueHistory']);
+// Maintenance/foresight + Maintenance/issue-history were retired with the /maintenance-foresight page.
+// MaintenanceForesightService still runs behind the Swap board and the Ops Center; the per-car "keeps
+// breaking down" evidence moved to Vehicle/{vehicle}/repeat-faults.
 // Maintenance cost intelligence (service averages + vendor price comparison)
 Route::middleware(['auth:sanctum', 'permission:maintenance.view'])->get('Maintenance/analytics', [MaintenanceController::class, 'analytics']);
 // Recurring faults: cars repeatedly in for the same issue (scenario step 8)

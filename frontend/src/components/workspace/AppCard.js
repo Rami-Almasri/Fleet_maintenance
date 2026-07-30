@@ -8,6 +8,7 @@
 import { Link } from 'react-router-dom';
 import Icon from '../ui/Icon';
 import Badge from '../ui/Badge';
+import { useI18n } from '../../i18n/I18nContext';
 
 // Per-tone styling. `bubble` colours the icon chip; `glow` is the soft radial
 // wash that fades in on hover; `edge` is the left accent rail that grows in. All
@@ -25,8 +26,10 @@ const TONES = {
 };
 
 export default function AppCard({ app }) {
+  const { t } = useI18n();
   const IconCmp = app.icon || Icon.Spark;
-  const t = TONES[app.tone] || TONES.slate;
+  // `app.name`/`app.desc` arrive already localized from the caller (ModuleOverview).
+  const styles = TONES[app.tone] || TONES.slate;
   const soon = app.status === 'soon';
 
   if (soon) {
@@ -35,14 +38,14 @@ export default function AppCard({ app }) {
         aria-disabled="true"
         data-app-key={app.key}
         data-app-status="soon"
-        title={`${app.name} — coming soon`}
+        title={t('modules.comingSoonTitle', { name: app.name })}
         className="relative flex h-full flex-col rounded-2xl border border-dashed border-slate-300 bg-slate-50/60 p-5"
       >
         <div className="flex items-start justify-between">
           <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-100 text-slate-400">
             <IconCmp className="h-5 w-5" />
           </span>
-          <Badge tone="slate">Soon</Badge>
+          <Badge tone="slate">{t('modules.soon')}</Badge>
         </div>
         <h3 className="mt-4 font-display text-base font-semibold text-slate-500">{app.name}</h3>
         <p className="mt-1 text-sm leading-relaxed text-slate-400">{app.desc}</p>
@@ -57,13 +60,14 @@ export default function AppCard({ app }) {
       data-app-status="ready"
       className="hover-lift group relative flex h-full flex-col overflow-hidden rounded-2xl border border-slate-200/70 bg-white p-5 shadow-soft outline-none transition duration-200 active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-indigo-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-[rgb(var(--bg))]"
     >
-      {/* Left accent rail — grows from a hairline to a full edge on hover. */}
-      <span className={`absolute inset-y-0 left-0 w-1 origin-top scale-y-0 rounded-r ${t.edge} opacity-0 transition-all duration-200 group-hover:scale-y-100 group-hover:opacity-100`} />
-      {/* Soft tone-tinted glow that blooms from the top-right on hover. */}
-      <span className={`pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full bg-gradient-to-br ${t.glow} to-transparent opacity-0 blur-2xl transition-opacity duration-300 group-hover:opacity-100`} />
+      {/* Leading accent rail — grows from a hairline to a full edge on hover.
+          Logical inset so it sits on the right in RTL. */}
+      <span className={`absolute inset-y-0 start-0 w-1 origin-top scale-y-0 rounded-e ${styles.edge} opacity-0 transition-all duration-200 group-hover:scale-y-100 group-hover:opacity-100`} />
+      {/* Soft tone-tinted glow that blooms from the trailing top corner on hover. */}
+      <span className={`pointer-events-none absolute -top-10 -end-10 h-32 w-32 rounded-full bg-gradient-to-br ${styles.glow} to-transparent opacity-0 blur-2xl transition-opacity duration-300 group-hover:opacity-100`} />
 
       <div className="relative flex items-start justify-between">
-        <span className={`flex h-11 w-11 items-center justify-center rounded-xl ring-1 transition-transform duration-200 group-hover:scale-105 ${t.bubble} ${t.ring}`}>
+        <span className={`flex h-11 w-11 items-center justify-center rounded-xl ring-1 transition-transform duration-200 group-hover:scale-105 ${styles.bubble} ${styles.ring}`}>
           <IconCmp className="h-5 w-5" />
         </span>
         <span className="flex items-center gap-2">
@@ -72,8 +76,8 @@ export default function AppCard({ app }) {
               {app.badge}
             </span>
           )}
-          <span className={`flex h-7 w-7 items-center justify-center rounded-full text-slate-300 transition-all duration-200 group-hover:bg-slate-50 ${t.arrow}`}>
-            <Icon.ArrowRight className="h-4 w-4 -translate-x-0.5 transition-transform duration-200 group-hover:translate-x-0" />
+          <span className={`flex h-7 w-7 items-center justify-center rounded-full text-slate-300 transition-all duration-200 group-hover:bg-slate-50 ${styles.arrow}`}>
+            <Icon.ArrowRight className="h-4 w-4 -translate-x-0.5 transition-transform duration-200 group-hover:translate-x-0 rtl:translate-x-0.5 rtl:-scale-x-100 rtl:group-hover:translate-x-0" />
           </span>
         </span>
       </div>

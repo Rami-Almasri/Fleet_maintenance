@@ -618,7 +618,9 @@ class NotificationScanner
                                 . ' — earned AED ' . number_format((float) $r['real_net_profit'])
                                 . ' but cost AED ' . number_format((float) $r['maintenance_spend'])
                                 . ' to maintain over ' . $r['window_months'] . ' mo.'),
-                'url'      => '/maintenance-foresight',
+                // Straight to the car itself — its profile carries the spend, the repeat faults and
+                // the repair history behind the negative yield (the old Foresight list is retired).
+                'url'      => '/vehicles/' . $r['vehicle_id'],
                 'key'      => 'negative_yield:' . $r['vehicle_id'],
                 'icon'     => 'trend-down',
                 'meta'     => ['plate' => $r['plate'], 'net_yield' => $r['net_yield']],

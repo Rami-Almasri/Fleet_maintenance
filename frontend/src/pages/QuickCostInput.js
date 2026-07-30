@@ -70,9 +70,7 @@ export default function QuickCostInput() {
         <PageHeader
           title="Quick Cost Input"
           subtitle={`Recent repairs (last ${windowMonths} months) with no cost recorded. Enter the amount to fix each vehicle's repair spend and re-check its Negative-Yield flag.`}
-        >
-          <Link to="/maintenance-foresight" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">View Foresight →</Link>
-        </PageHeader>
+        />
 
         <MetricGrid cols={2}>
           <MetricCard

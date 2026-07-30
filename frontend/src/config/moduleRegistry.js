@@ -114,7 +114,6 @@ export const MODULES = [
     tone: 'violet',
     tagline: 'Operational analytics — cost, prediction, faults and utilization',
     sections: [
-      { name: 'Predictive Maintenance', route: '/maintenance-foresight', permission: 'maintenance.view', icon: Icon.Spark, desc: 'Catch cars showing early warning signs before they break down, with cost of inaction.' },
       { name: 'Fleet Analytics', route: '/fleet-utilization', permission: 'insights.view', icon: Icon.Gauge, desc: 'Per-car split of owned time into rented, in-maintenance and idle days.' },
       { name: 'Keyword Risk', route: '/finding-keywords', permission: 'maintenance.view', icon: Icon.Flag, desc: 'The fault-keyword library, each graded critical, moderate or routine.' },
       { name: 'Recurring Faults', route: '/recurring-fault-reviews', permission: 'maintenance.recurring.view', icon: Icon.Refresh, desc: 'Cars back with the same confirmed fault after a repair — for a management ruling.' },
@@ -173,6 +172,28 @@ export const MODULES = [
 ];
 
 export const OVERVIEW_ROUTE = (id) => `/apps/${id}`;
+
+// ── Localization ────────────────────────────────────────────────────────────
+// The `name`/`tagline`/`desc` above are the ENGLISH source (see the EXCEPTION
+// note in i18n/labels.js). Arabic lives under `ar.modules.*` and is resolved by
+// the consuming components with tf(key, englishFromHere), so English never
+// depends on the catalog and Arabic layers on top.
+//
+//   modules.<moduleId>.name | .tagline
+//   modules.<moduleId>.sections.<sectionSlug>.name | .desc
+//   modules.<moduleId>.menu.<menuSlug>
+//
+// Section/menu slugs come from the English name, so renaming one means renaming
+// its key in labels.js too — scripts/check-i18n reports any mismatch.
+export const slugifyLabel = (name) =>
+  (name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+export const moduleNameKey = (m) => `modules.${m.id}.name`;
+export const moduleTaglineKey = (m) => `modules.${m.id}.tagline`;
+export const sectionNameKey = (m, s) => `modules.${m.id}.sections.${slugifyLabel(s.name)}.name`;
+export const sectionDescKey = (m, s) => `modules.${m.id}.sections.${slugifyLabel(s.name)}.desc`;
+export const menuLabelKey = (m, entry) =>
+  `modules.${m.id}.menu.${slugifyLabel(entry.name || entry.heading)}`;
 
 export const getModule = (id) => MODULES.find((m) => m.id === id) || null;
 

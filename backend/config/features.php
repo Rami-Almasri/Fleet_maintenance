@@ -163,4 +163,30 @@ return [
     */
     'event_kind' => env('EVENT_KIND_MODE', 'off'),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Maintenance Intelligence — Decision Cards
+    |--------------------------------------------------------------------------
+    |
+    | Each capability on the intelligence pipeline is flagged INDEPENDENTLY, so the
+    | workflow can be run with and without a given recommendation and the two
+    | compared on real operations. That comparison is the point: a recommendation
+    | earns the right to become part of the default workflow by demonstrably
+    | improving outcomes, not by being built.
+    |
+    | Everything defaults to FALSE. A card that has never been observed against a
+    | measured baseline should not be steering a supervisor's decision.
+    |
+    |   comeback_detection — "this fault already happened on this car recently."
+    |     Reads the `maintenance_signatures` projection only; needs no cost
+    |     reconstruction. Baseline it moves: mechanical first-time-fix 53.3%,
+    |     second-comeback rate 56.9%. See docs/Maintenance-Intelligence-Success-Framework.md.
+    |
+    | Rollback is a config flip, not a deploy.
+    |
+    */
+    'intelligence' => [
+        'comeback_detection' => env('FEATURE_INTEL_COMEBACK', false),
+    ],
+
 ];

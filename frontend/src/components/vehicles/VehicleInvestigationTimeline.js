@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import api from '../../api/client';
 import useFetch from '../../hooks/useFetch';
@@ -7,7 +7,7 @@ import Icon from '../ui/Icon';
 import WhyThisGarage from '../workflow/WhyThisGarage';
 import { num, fmtDate, fmtClock, fmtAgo } from '../../lib/format';
 import {
-  TYPE_META, TYPE_KEYS, typeMeta, eventKind, QUICK_JUMPS,
+  TYPE_META, TYPE_KEYS, typeMeta, eventKind,
   severityMeta, stageLabel, buildFacets, countByKind,
   applyFilters, sortEvents, groupEvents, computeKpis, SORTS, GROUPS,
   normalizeLegacyTimeline,
@@ -43,6 +43,10 @@ const FLAG_OPTIONS = [
   { key: 'recommendations', label: 'Has recommendations', Icon: Icon.Flag },
 ];
 
+// Matches the server's own hard cap on GET /Vehicle/{id}/activity — hitting it means the trail is
+// truncated to the newest FEED_LIMIT rows, which the UI has to say out loud.
+const FEED_LIMIT = 500;
+
 // ── URL param helpers (source of truth for shareable state) ─────────────────────────────
 const P = 'tl.'; // namespace so we never collide with the profile's ?tab= / ?event= params.
 
@@ -53,19 +57,36 @@ function Chip({ on, tone = 'slate', onClick, children, count }) {
     <button
       type="button"
       onClick={onClick}
-      className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition ${
-        on ? `${st.soft} ${st.text} ring-1 ring-inset ring-black/5` : 'bg-slate-100 text-slate-500 hover:text-slate-700'
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold transition ${
+        on
+          ? `${st.soft} ${st.text} border-transparent ring-1 ring-inset ring-black/5`
+          : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-700'
       }`}
     >
       {children}
-      {count != null && <span className={`rounded-full px-1.5 text-[10px] ${on ? 'bg-white/60' : 'bg-white'}`}>{num(count)}</span>}
+      {count != null && (
+        <span className={`rounded-full px-1.5 text-[10px] tabular-nums ${on ? 'bg-white/70' : 'bg-slate-100 text-slate-500'}`}>{num(count)}</span>
+      )}
     </button>
+  );
+}
+
+// A removable summary of one active filter — shown in the toolbar so a collapsed panel never hides state.
+function ActivePill({ label, value, onClear }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 py-1 pl-2.5 pr-1.5 text-xs font-medium text-indigo-700 ring-1 ring-inset ring-indigo-100">
+      <span className="text-indigo-400">{label}</span>
+      <span className="font-semibold">{value}</span>
+      <button type="button" onClick={onClear} aria-label={`Clear ${label} filter`} className="text-indigo-300 transition hover:text-indigo-600">
+        <Icon.XCircle className="h-3.5 w-3.5" />
+      </button>
+    </span>
   );
 }
 
 function Field({ label, children }) {
   return (
-    <label className="flex min-w-[9rem] flex-1 flex-col gap-1">
+    <label className="flex min-w-[10rem] flex-1 flex-col gap-1">
       <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</span>
       {children}
     </label>
@@ -78,14 +99,33 @@ function Select({ value, onChange, children }) {
   return <select value={value} onChange={(e) => onChange(e.target.value)} className={selectCls}>{children}</select>;
 }
 
-// ── KPI strip ──────────────────────────────────────────────────────────────────────────
-function KpiStrip({ kpis }) {
+// Toolbar-sized select: the label sits inline so sort/group cost one line, not a whole form row.
+function InlineSelect({ label, value, onChange, children }) {
   return (
-    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+    <label className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white pl-2.5 text-xs shadow-soft focus-within:border-indigo-300 focus-within:ring-2 focus-within:ring-indigo-100">
+      <span className="font-semibold uppercase tracking-wide text-slate-400">{label}</span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="cursor-pointer rounded-r-lg border-0 bg-transparent py-1.5 pl-0 pr-2 text-xs font-semibold text-slate-700 focus:outline-none"
+      >
+        {children}
+      </select>
+    </label>
+  );
+}
+
+// ── Stat rail ──────────────────────────────────────────────────────────────────────────
+// One quiet row instead of a wall of tiles: empty measures are dropped, so the rail only ever states
+// what this car actually has. Recomputes against the filtered set.
+function StatRail({ kpis }) {
+  if (!kpis.length) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-x-7 gap-y-3 rounded-2xl border border-slate-200/70 bg-white px-4 py-3 shadow-soft">
       {kpis.map((k) => (
-        <div key={k.key} className="rounded-xl border border-slate-200/70 bg-white px-3 py-2.5 shadow-soft">
-          <div className="text-[11px] font-medium uppercase tracking-wide text-slate-400">{k.label}</div>
-          <div className="mt-0.5 text-lg font-semibold tabular-nums text-slate-900">{k.text ? k.value : num(k.value)}</div>
+        <div key={k.key} className="flex items-baseline gap-2">
+          <span className="text-lg font-semibold tabular-nums text-slate-900">{k.text ? k.value : num(k.value)}</span>
+          <span className="text-[11px] font-medium uppercase tracking-wide text-slate-400">{k.label}</span>
         </div>
       ))}
     </div>
@@ -93,7 +133,9 @@ function KpiStrip({ kpis }) {
 }
 
 // ── One event row ────────────────────────────────────────────────────────────────────────
-function EventRow({ e }) {
+// A sheet workshop row carries its untouched source record (`raw`); those rows are clickable and open
+// the full workshop-event drawer. Everything else renders as a static card.
+function EventRow({ e, onOpen, highlighted, showDate }) {
   const kind = eventKind(e);
   const tm = typeMeta(kind);
   const st = styleFor(tm.tone);
@@ -104,27 +146,51 @@ function EventRow({ e }) {
   const roleLabel = e.actor_role && e.actor_role !== 'system'
     ? e.actor_role.charAt(0).toUpperCase() + e.actor_role.slice(1) : null;
 
+  const openable = Boolean(e.raw && onOpen);
+  const Card = openable ? 'button' : 'div';
+  const cardProps = openable
+    ? { type: 'button', onClick: () => onOpen(e.raw), className: 'group text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-card focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400' }
+    : {};
+
   return (
-    <li className="relative flex gap-4">
-      <span className={`relative z-10 mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full ring-4 ring-white ${st.soft} ${st.text}`}>
-        <Glyph className="h-[18px] w-[18px]" />
+    // The `log-event-<id>` anchor keeps the ?event=<id> deep-link (Foresight / Fleet Utilization) working.
+    <li id={e.raw?.id != null ? `log-event-${e.raw.id}` : undefined} className="relative flex scroll-mt-28 gap-3.5">
+      <span className={`relative z-10 mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full ring-4 ring-slate-50 ${st.soft} ${st.text}`}>
+        <Glyph className="h-4 w-4" />
       </span>
-      <div className={`min-w-0 flex-1 rounded-2xl border bg-white p-4 shadow-soft ${e.flagged ? 'border-red-200 bg-red-50/30' : 'border-slate-200/60'}`}>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge tone={tm.tone}>{tm.label}</Badge>
+      <Card
+        {...cardProps}
+        className={`min-w-0 flex-1 rounded-xl border bg-white p-3.5 shadow-soft ${cardProps.className || ''} ${
+          highlighted ? 'border-red-300 bg-red-50/40 ring-2 ring-red-400' : e.flagged ? 'border-red-200 bg-red-50/30' : 'border-slate-200/60'
+        }`}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
             <span className="text-sm font-semibold text-slate-800">{headline}</span>
+            <Badge tone={tm.tone}>{tm.label}</Badge>
             {sev && <Badge tone={sev.tone} dot>{sev.label}</Badge>}
-            {e.flagged && <Badge tone="red">Damage</Badge>}
+            {/* `flagged` means damage on an inspection row, but "still unresolved" on a complaint or a
+                driver note — same signal, different word, so it must not be labelled "Damage" there. */}
+            {e.flagged && (
+              kind === 'complaint' || kind === 'observation'
+                ? <Badge tone="amber" dot>Open</Badge>
+                : <Badge tone="red">Damage</Badge>
+            )}
+            {highlighted && <Badge tone="red" dot>Worst-case downtime — investigate</Badge>}
           </div>
-          <span className="whitespace-nowrap text-xs font-medium text-slate-400" title={e.occurred_at ? `${fmtDate(e.occurred_at)} · ${fmtClock(e.occurred_at)}` : ''}>
-            {e.occurred_at ? fmtAgo(e.occurred_at) : 'No date'}
+          {/* The day divider carries the date in a chronological view, so the row only needs the clock;
+              under severity/mileage sorts there is no divider, so it states the full date instead. */}
+          <span
+            className="shrink-0 whitespace-nowrap text-right text-[11px] font-medium tabular-nums text-slate-400"
+            title={e.occurred_at ? `${fmtDate(e.occurred_at)} · ${fmtClock(e.occurred_at)} · ${fmtAgo(e.occurred_at)}` : ''}
+          >
+            {!e.occurred_at ? 'No date' : showDate ? fmtDate(e.occurred_at) : fmtClock(e.occurred_at) || fmtAgo(e.occurred_at)}
           </span>
         </div>
 
         {subAction && <p className="mt-0.5 text-xs font-medium text-slate-400">{subAction}</p>}
         {e.transition && <p className="mt-1 inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">{e.transition}</p>}
-        {e.description && <p className="mt-1.5 text-sm leading-relaxed text-slate-600">{e.description}</p>}
+        {e.description && <p className="mt-1.5 line-clamp-3 text-sm leading-relaxed text-slate-600">{e.description}</p>}
 
         {/* "Why this garage?" — the data-driven decision behind a garage assignment (from meta.recommendation) */}
         {e.event_type === 'garage_assigned' && e.details?.recommendation && (
@@ -147,37 +213,101 @@ function EventRow({ e }) {
             <span className={e.actor_name === 'System' || !e.actor_name ? 'italic text-slate-400' : 'font-medium text-slate-600'}>{e.actor_name || 'System'}</span>
             {roleLabel && <span className="text-[11px] text-slate-400">· {roleLabel}</span>}
           </span>
-          {e.photo_url && (
+          {/* Links only on static cards — an <a>/<Link> inside the clickable <button> variant is invalid
+              HTML and would swallow the row's own click. Openable rows expose these in the drawer. */}
+          {!openable && e.photo_url && (
             <a href={e.photo_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-semibold text-indigo-600 hover:text-indigo-700">
               <Icon.Camera className="h-3.5 w-3.5" /> Photo
             </a>
           )}
-          {e.contract_id && (
+          {!openable && e.contract_id && (
             <Link to={`/contracts/${e.contract_id}`} className="font-medium text-indigo-600 hover:text-indigo-700">#{e.contract_no || e.contract_id}</Link>
           )}
+          {/* Jump to the ticket behind a workflow event — carried over from the retired Maintenance Log. */}
+          {!openable && e.maintenance_id && (
+            <Link to={`/maintenance-workflow/${e.maintenance_id}`} className="inline-flex items-center gap-1 font-semibold text-amber-700 hover:text-amber-800">
+              <Icon.Wrench className="h-3.5 w-3.5" /> Ticket
+            </Link>
+          )}
+          {openable && (
+            <span className="font-medium text-indigo-500 opacity-0 transition group-hover:opacity-100">Open full record →</span>
+          )}
         </div>
-      </div>
+      </Card>
     </li>
   );
 }
 
-function EventList({ events }) {
+// A day heading on the rail. Only rendered under a chronological sort, where "the next row is the next
+// day" is true — under severity/mileage sorts the rows would jump between dates and the divider would lie.
+function DayDivider({ label }) {
+  return (
+    <li className="relative flex items-center gap-3.5 pt-1">
+      <span aria-hidden className="relative z-10 flex h-8 w-8 shrink-0 items-center justify-center">
+        <span className="h-2 w-2 rounded-full bg-slate-300 ring-4 ring-slate-50" />
+      </span>
+      <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</span>
+      <span aria-hidden className="h-px flex-1 bg-slate-200/70" />
+    </li>
+  );
+}
+
+function EventList({ events, onOpen, highlightEventId, chronological }) {
+  let lastDay = null;
   return (
     <div className="relative">
-      <span aria-hidden className="pointer-events-none absolute bottom-4 left-[1.125rem] top-4 w-px bg-gradient-to-b from-slate-200 via-slate-200 to-transparent" />
-      <ol className="space-y-3">
-        {events.map((e) => <EventRow key={e.id} e={e} />)}
+      <span aria-hidden className="pointer-events-none absolute bottom-4 left-4 top-4 w-px bg-gradient-to-b from-slate-200 via-slate-200 to-transparent" />
+      <ol className="space-y-2.5">
+        {events.map((e) => {
+          const day = e.occurred_at ? String(e.occurred_at).slice(0, 10) : null;
+          const newDay = chronological && day !== lastDay;
+          if (chronological) lastDay = day;
+          return (
+            <Fragment key={e.id}>
+              {newDay && <DayDivider label={day ? fmtDate(e.occurred_at) : 'Undated'} />}
+              <EventRow
+                e={e}
+                onOpen={onOpen}
+                showDate={!chronological}
+                highlighted={highlightEventId != null && e.raw?.id != null && String(e.raw.id) === String(highlightEventId)}
+              />
+            </Fragment>
+          );
+        })}
       </ol>
     </div>
   );
 }
 
+// First paint on a cold load — the shape of the rail, so the page doesn't jump when the data lands.
+function ListSkeleton() {
+  return (
+    <div className="relative rounded-2xl border border-slate-200/70 bg-slate-50/60 p-3">
+      <span aria-hidden className="pointer-events-none absolute bottom-7 left-7 top-7 w-px bg-slate-200" />
+      <ul className="space-y-2.5">
+        {[0, 1, 2, 3, 4].map((i) => (
+          <li key={i} className="flex animate-pulse gap-3.5">
+            <span className="mt-1 h-8 w-8 shrink-0 rounded-full bg-slate-200 ring-4 ring-slate-50" />
+            <div className="flex-1 rounded-xl border border-slate-200/60 bg-white p-3.5">
+              <div className="h-3.5 w-1/3 rounded bg-slate-200" />
+              <div className="mt-2.5 h-3 w-2/3 rounded bg-slate-100" />
+              <div className="mt-2 h-3 w-1/4 rounded bg-slate-100" />
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────────────────
-export default function VehicleInvestigationTimeline({ vehicleId, legacyTimeline }) {
+export default function VehicleInvestigationTimeline({ vehicleId, legacyTimeline, onOpenEvent, highlightEventId }) {
   const [searchParams, setSearchParams] = useSearchParams();
 
+  // The API caps a car's activity trail (server max = FEED_LIMIT, newest first). A car that hits the cap
+  // has OLDER events the feed silently dropped — we surface that rather than let the list imply "all".
   const fetcher = useCallback(async () => {
-    const { data } = await api.get(`/Vehicle/${vehicleId}/activity`, { params: { limit: 500 } });
+    const { data } = await api.get(`/Vehicle/${vehicleId}/activity`, { params: { limit: FEED_LIMIT } });
     return data.data;
   }, [vehicleId]);
   const { data, loading, error } = useFetch(fetcher, [vehicleId], { refreshInterval: 60000 });
@@ -186,6 +316,7 @@ export default function VehicleInvestigationTimeline({ vehicleId, legacyTimeline
   // (vehicle_log_events + logistics + inspections, when present) plus the sheet workshop visits &
   // follow-ups the feed can't supply, lifted from the profile's own `data.timeline`. normalizeLegacy
   // drops the workflow rows the activity feed already owns, so nothing double-counts.
+  const feedCapped = (data?.events?.length || 0) >= FEED_LIMIT;
   const legacy = useMemo(() => normalizeLegacyTimeline(legacyTimeline), [legacyTimeline]);
   const allEvents = useMemo(() => [...(data?.events || []), ...legacy], [data, legacy]);
 
@@ -224,6 +355,11 @@ export default function VehicleInvestigationTimeline({ vehicleId, legacyTimeline
   // Search: local state drives filtering instantly; a debounced effect mirrors it into the URL so a
   // shared link reproduces the query, without a parent re-render on every keystroke.
   const [search, setSearch] = useState(get('q'));
+  // The advanced panel starts collapsed — unless a shared link already carries one of its refinements,
+  // in which case it opens so the recipient sees why the view is narrowed.
+  const [showFilters, setShowFilters] = useState(
+    () => Boolean(get('sev') || get('flags') || get('garage') || get('insp') || get('driver') || get('stage') || get('status') || get('from') || get('to')),
+  );
   const firstSync = useRef(true);
   useEffect(() => {
     if (firstSync.current) { firstSync.current = false; return; }
@@ -243,79 +379,129 @@ export default function VehicleInvestigationTimeline({ vehicleId, legacyTimeline
   const grouped = useMemo(() => groupEvents(sorted, group), [sorted, group]);
   const kpis = useMemo(() => computeKpis(filtered), [filtered]);
 
-  const activeQuick = QUICK_JUMPS.find((qj) => qj.types.length === types.size && qj.types.every((t) => types.has(t)));
-  const anyFilter = Boolean(
-    search || types.size || severities.size || flags.size || garage || inspector || driver || stage
-    || status !== 'all' || from || to,
-  );
   const resetAll = () => { setSearch(''); patch({ q: '', type: '', sev: '', flags: '', garage: '', insp: '', driver: '', stage: '', status: '', from: '', to: '' }); };
 
-  const availTypes = TYPE_KEYS.filter((k) => kindCounts[k]);
+  // Event types are the primary lens, so they live in the toolbar — busiest kinds first.
+  const availTypes = useMemo(
+    () => TYPE_KEYS.filter((k) => kindCounts[k]).sort((a, b) => kindCounts[b] - kindCounts[a]),
+    [kindCounts],
+  );
+
+  // Everything the advanced panel owns, summarised as removable pills so a collapsed panel hides no state.
+  const refinements = [
+    garage && { key: 'garage', label: 'Garage', value: garage, clear: () => patch({ garage: '' }) },
+    inspector && { key: 'insp', label: 'Inspector', value: inspector, clear: () => patch({ insp: '' }) },
+    driver && { key: 'driver', label: 'Driver', value: driver, clear: () => patch({ driver: '' }) },
+    stage && { key: 'stage', label: 'Stage', value: stage, clear: () => patch({ stage: '' }) },
+    status !== 'all' && { key: 'status', label: 'Status', value: status === 'open' ? 'Open only' : 'Closed only', clear: () => patch({ status: '' }) },
+    from && { key: 'from', label: 'From', value: from, clear: () => patch({ from: '' }) },
+    to && { key: 'to', label: 'To', value: to, clear: () => patch({ to: '' }) },
+    ...[...severities].map((s) => ({ key: `sev-${s}`, label: 'Severity', value: severityMeta(s).label, clear: () => toggle('sev', s) })),
+    ...[...flags].map((f) => ({ key: `flag-${f}`, label: 'Has', value: (FLAG_OPTIONS.find((o) => o.key === f)?.label || f).replace(/^Has /, ''), clear: () => toggle('flags', f) })),
+  ].filter(Boolean);
+
+  const anyFilter = Boolean(search || types.size || refinements.length);
+  const refineCount = refinements.length;
+
+  // Day dividers only make sense while the list actually runs in date order.
+  const chronological = sort === 'newest' || sort === 'oldest';
+
+  // Drop the measures this car has nothing to say about — a wall of zeros reads as noise, not data.
+  const shownKpis = kpis.filter((k) => k.key === 'total' || (k.text ? k.value && k.value !== '—' : k.value > 0));
 
   return (
-    <div className="space-y-5">
+    // `maintenance-log` is the legacy anchor the ?focus=maintenance deep-link scrolls to.
+    <div id="maintenance-log" className="scroll-mt-28 space-y-5">
       {error && <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error}</div>}
 
-      {/* ── Search + quick jumps ── */}
-      <div className="rounded-2xl border border-slate-200/70 bg-white p-4 shadow-soft">
-        <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2 focus-within:border-indigo-300 focus-within:bg-white focus-within:ring-2 focus-within:ring-indigo-100">
-          <Icon.Search className="h-4 w-4 shrink-0 text-slate-400" />
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search faults, garage, vendor, inspector, driver, stage, parts, mileage, notes…"
-            className="w-full bg-transparent text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none"
-          />
-          {search && (
-            <button type="button" onClick={() => setSearch('')} className="text-slate-400 hover:text-slate-600"><Icon.XCircle className="h-4 w-4" /></button>
-          )}
+      {/* Traceability: never let a truncated trail read as a complete one. */}
+      {feedCapped && (
+        <div className="flex items-start gap-2 rounded-lg bg-amber-50 px-4 py-2.5 text-xs text-amber-800 ring-1 ring-inset ring-amber-600/20">
+          <Icon.Alert className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+          <span>
+            <span className="font-semibold">Trail truncated.</span> This car has more workflow activity than the
+            feed returns — only the newest {num(FEED_LIMIT)} events are loaded. Older workshop history from the
+            maintenance sheet is still shown in full below.
+          </span>
         </div>
+      )}
 
-        <div className="mt-3 flex flex-wrap gap-2">
-          {QUICK_JUMPS.filter((qj) => qj.types.some((t) => kindCounts[t])).map((qj) => {
-            const on = activeQuick?.key === qj.key;
-            const QIcon = qj.Icon;
-            const cnt = qj.types.reduce((n, t) => n + (kindCounts[t] || 0), 0);
-            return (
-              <Chip key={qj.key} on={on} tone={on ? typeMeta(qj.types[0]).tone : 'slate'} count={cnt}
-                onClick={() => setTypes(on ? new Set() : new Set(qj.types))}>
-                <QIcon className="h-3.5 w-3.5" />{qj.label}
-              </Chip>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* ── KPI summary (recomputes as filters change) ── */}
-      <KpiStrip kpis={kpis} />
-
-      {/* ── Filters ── */}
-      <div className="space-y-4 rounded-2xl border border-slate-200/70 bg-white p-4 shadow-soft">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
-            <Icon.Filter className="h-4 w-4" /> Filters
+      {/* ── Toolbar: search · type lens · sort/group · advanced-filter toggle ──
+          Sticky, because on a 143-event car the controls are otherwise scrolled far out of reach. It parks
+          just below the profile's own sticky chrome (app header 4rem + tab strip 2.5rem) and stays UNDER
+          them in z-order (header z-20, tab strip z-10). */}
+      <div className="sticky top-[6.5rem] z-[9] space-y-3 rounded-2xl border border-slate-200/70 bg-white/95 p-3 shadow-soft backdrop-blur supports-[backdrop-filter]:bg-white/85">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex min-w-[16rem] flex-1 items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-1.5 focus-within:border-indigo-300 focus-within:bg-white focus-within:ring-2 focus-within:ring-indigo-100">
+            <Icon.Search className="h-4 w-4 shrink-0 text-slate-400" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search faults, garages, people, stages, notes…"
+              className="w-full bg-transparent text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none"
+            />
+            {search && (
+              <button type="button" onClick={() => setSearch('')} aria-label="Clear search" className="text-slate-400 hover:text-slate-600"><Icon.XCircle className="h-4 w-4" /></button>
+            )}
           </div>
-          {anyFilter && (
-            <button type="button" onClick={resetAll} className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-700">
-              <Icon.XCircle className="h-3.5 w-3.5" /> Clear all
-            </button>
-          )}
+
+          <InlineSelect label="Sort" value={sort} onChange={(v) => patch({ sort: v })}>
+            {Object.entries(SORTS).map(([k, m]) => <option key={k} value={k}>{m.label}</option>)}
+          </InlineSelect>
+          <InlineSelect label="Group" value={group} onChange={(v) => patch({ group: v })}>
+            {Object.entries(GROUPS).map(([k, m]) => <option key={k} value={k}>{m.label}</option>)}
+          </InlineSelect>
+
+          <button
+            type="button"
+            onClick={() => setShowFilters((v) => !v)}
+            aria-expanded={showFilters}
+            className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold shadow-soft transition ${
+              showFilters || refineCount
+                ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
+                : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+            }`}
+          >
+            <Icon.Filter className="h-3.5 w-3.5" /> Filters
+            {refineCount > 0 && <span className="rounded-full bg-indigo-600 px-1.5 text-[10px] font-bold tabular-nums text-white">{refineCount}</span>}
+            <Icon.ChevronDown className={`h-3.5 w-3.5 transition-transform ${showFilters ? 'rotate-180' : ''}`} />
+          </button>
         </div>
 
-        {/* Event type chips */}
+        {/* Event type — the primary lens, always visible. "All" clears it. */}
         {availTypes.length > 0 && (
-          <div>
-            <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Event type</div>
-            <div className="flex flex-wrap gap-2">
-              {availTypes.map((k) => (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Chip on={types.size === 0} tone="indigo" count={allEvents.length} onClick={() => setTypes(new Set())}>All</Chip>
+            <span aria-hidden className="mx-0.5 h-4 w-px bg-slate-200" />
+            {availTypes.map((k) => {
+              const TIcon = TYPE_META[k].Icon;
+              return (
                 <Chip key={k} on={types.has(k)} tone={TYPE_META[k].tone} count={kindCounts[k]} onClick={() => toggle('type', k)}>
-                  {TYPE_META[k].label}
+                  {TIcon && <TIcon className="h-3.5 w-3.5" />}{TYPE_META[k].label}
                 </Chip>
-              ))}
-            </div>
+              );
+            })}
           </div>
         )}
 
+        {/* Active refinements — visible even while the panel is collapsed. */}
+        {(refineCount > 0 || search) && (
+          <div className="flex flex-wrap items-center gap-1.5 border-t border-slate-100 pt-2.5">
+            {search && (
+              <ActivePill label="Search" value={`“${search}”`} onClear={() => setSearch('')} />
+            )}
+            {refinements.map((r) => <ActivePill key={r.key} label={r.label} value={r.value} onClear={r.clear} />)}
+            {anyFilter && (
+              <button type="button" onClick={resetAll} className="ml-1 text-xs font-semibold text-slate-400 underline-offset-2 hover:text-slate-600 hover:underline">
+                Clear all
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* ── Advanced filters (collapsed by default — the panel, not the page, holds the complexity) ── */}
+        {showFilters && (
+        <div className="max-h-[55vh] space-y-4 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50/50 p-3">
         {/* Severity chips */}
         {facets.severities.length > 0 && (
           <div>
@@ -380,60 +566,77 @@ export default function VehicleInvestigationTimeline({ vehicleId, legacyTimeline
         </div>
 
         {/* Boolean flags */}
-        <div className="flex flex-wrap gap-2">
-          {FLAG_OPTIONS.map((f) => {
-            const FIcon = f.Icon;
-            return (
-              <Chip key={f.key} on={flags.has(f.key)} tone="indigo" onClick={() => toggle('flags', f.key)}>
-                <FIcon className="h-3.5 w-3.5" />{f.label}
-              </Chip>
-            );
-          })}
+        <div>
+          <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Only events that have</div>
+          <div className="flex flex-wrap gap-2">
+            {FLAG_OPTIONS.map((f) => {
+              const FIcon = f.Icon;
+              return (
+                <Chip key={f.key} on={flags.has(f.key)} tone="indigo" onClick={() => toggle('flags', f.key)}>
+                  <FIcon className="h-3.5 w-3.5" />{f.label.replace(/^Has /, '')}
+                </Chip>
+              );
+            })}
+          </div>
         </div>
-
-        {/* Sort + group */}
-        <div className="flex flex-wrap gap-3 border-t border-slate-100 pt-3">
-          <Field label="Sort by">
-            <Select value={sort} onChange={(v) => patch({ sort: v })}>
-              {Object.entries(SORTS).map(([k, m]) => <option key={k} value={k}>{m.label}</option>)}
-            </Select>
-          </Field>
-          <Field label="Group by">
-            <Select value={group} onChange={(v) => patch({ group: v })}>
-              {Object.entries(GROUPS).map(([k, m]) => <option key={k} value={k}>{m.label}</option>)}
-            </Select>
-          </Field>
         </div>
+        )}
       </div>
 
+      {/* ── Stat rail (recomputes as filters change) ── */}
+      <StatRail kpis={shownKpis} />
+
       {/* ── Results ── */}
-      <div className="flex items-center justify-between px-1">
-        <span className="text-sm text-slate-500">
-          Showing <span className="font-semibold text-slate-800">{num(filtered.length)}</span> of {num(allEvents.length)} events
+      <div className="flex items-center justify-between gap-3 px-1">
+        <span className="text-xs font-medium text-slate-500">
+          {anyFilter
+            ? <>Showing <span className="font-semibold text-slate-700">{num(filtered.length)}</span> of {num(allEvents.length)} events</>
+            : <><span className="font-semibold text-slate-700">{num(allEvents.length)}</span> events</>}
+          {grouped && <span className="text-slate-400"> · {grouped.length} {GROUPS[group].label.toLowerCase()} groups</span>}
         </span>
+        {loading && allEvents.length > 0 && (
+          <Icon.Refresh className="h-3.5 w-3.5 animate-spin text-slate-300" aria-label="Refreshing" />
+        )}
       </div>
 
       {loading && !allEvents.length ? (
-        <div className="flex justify-center py-16"><Icon.Refresh className="h-6 w-6 animate-spin text-slate-300" /></div>
+        <ListSkeleton />
       ) : filtered.length === 0 ? (
-        <p className="rounded-2xl border border-dashed border-slate-200 py-12 text-center text-sm text-slate-400">
-          {allEvents.length ? 'No events match these filters.' : 'No activity recorded for this car yet.'}
-        </p>
+        <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/40 px-6 py-14 text-center">
+          <Icon.Search className="mx-auto h-6 w-6 text-slate-300" />
+          <p className="mt-3 text-sm font-semibold text-slate-600">
+            {allEvents.length ? 'No events match these filters' : 'No activity recorded for this car yet'}
+          </p>
+          <p className="mt-1 text-xs text-slate-400">
+            {allEvents.length
+              ? `${num(allEvents.length)} events are hidden by the current filters.`
+              : 'Events appear here as the car moves through inspections, garages and tickets.'}
+          </p>
+          {allEvents.length > 0 && anyFilter && (
+            <button type="button" onClick={resetAll} className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white shadow-soft transition hover:bg-indigo-700">
+              <Icon.XCircle className="h-3.5 w-3.5" /> Clear all filters
+            </button>
+          )}
+        </div>
       ) : grouped ? (
-        <div className="space-y-6">
+        <div className="space-y-5">
           {grouped.map((g) => (
-            <section key={g.key}>
-              <div className="mb-3 flex items-center gap-3">
+            <section key={g.key} className="overflow-hidden rounded-2xl border border-slate-200/70 bg-slate-50/60">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-slate-200/70 bg-white px-4 py-2.5">
                 <h4 className="text-sm font-semibold text-slate-800">{g.label}</h4>
-                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">{num(g.count)} {g.count === 1 ? 'event' : 'events'}</span>
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold tabular-nums text-slate-500">{num(g.count)}</span>
                 {g.sublabel && <span className="text-[11px] font-medium text-slate-400">{g.sublabel}</span>}
               </div>
-              <EventList events={g.events} />
+              <div className="p-3">
+                <EventList events={g.events} onOpen={onOpenEvent} highlightEventId={highlightEventId} chronological={chronological} />
+              </div>
             </section>
           ))}
         </div>
       ) : (
-        <EventList events={sorted} />
+        <div className="rounded-2xl border border-slate-200/70 bg-slate-50/60 p-3">
+          <EventList events={sorted} onOpen={onOpenEvent} highlightEventId={highlightEventId} chronological={chronological} />
+        </div>
       )}
     </div>
   );

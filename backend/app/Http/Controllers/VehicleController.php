@@ -259,6 +259,25 @@ class VehicleController extends Controller
     }
 
     /**
+     * Repeat Faults — the car's "keeps breaking down" story: which faults returned AFTER they were
+     * repaired, how many separate times, the gap the car held between each return, and where/what it
+     * cost each time. Pure read over the workshop log via VehicleFaultRecurrenceService; the same
+     * episode rules as the fleet engine, so this can never contradict the fleet view.
+     */
+    public function repeatFaults(Vehicle $vehicle, \App\Services\VehicleFaultRecurrenceService $recurrence)
+    {
+        try {
+            return ResponseHelper::SuccessResponse(
+                $recurrence->forVehicle($vehicle),
+                'Repeat faults retrieved',
+                200
+            );
+        } catch (\Exception $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
      * "Time machine": what one car was doing — either on a single calendar day (?date=YYYY-MM-DD, or
      * ?from= alone; rented to whom / in the workshop for what / idle / onboarding / not yet owned), OR
      * over a date range (?from=&to=) returning how many days it was rented / in the workshop / available.

@@ -154,13 +154,14 @@ function ActionCard({ car, onProcess }) {
         <Icon.Wrench className="h-3.5 w-3.5 text-slate-400" /> <span className="capitalize">{car.reason}</span>
       </p>
 
-      {/* Jump to this car's full breakdown on the Maintenance Foresight page (scrolls to + highlights it). */}
+      {/* Jump to the car's own profile — its Overview carries the full breakdown: health, service
+          status and the repeat-fault chains that put it on this board. */}
       {car.vehicle_id != null && (
         <Link
-          to={`/maintenance-foresight#car-${car.vehicle_id}`}
+          to={`/vehicles/${car.vehicle_id}`}
           className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-indigo-600 transition hover:text-indigo-700"
         >
-          <Icon.Activity className="h-3.5 w-3.5" /> See details in Foresight
+          <Icon.Activity className="h-3.5 w-3.5" /> See this car’s history
           <Icon.ArrowRight className="h-3.5 w-3.5" />
         </Link>
       )}
