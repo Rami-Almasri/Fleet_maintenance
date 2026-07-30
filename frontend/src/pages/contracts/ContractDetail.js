@@ -39,19 +39,17 @@ const money = (v) => (v === null || v === undefined || v === '' ? null : aed2(v)
 const RECON_STATUS = {
   reconciled: { label: 'Reconciled', tone: 'green', ring: 'ring-emerald-200', sub: 'Net cash collected matches the amount billed, within tolerance.' },
   review: { label: 'Needs review', tone: 'amber', ring: 'ring-amber-200', sub: 'Gap is beyond the 2% fee/rounding tolerance — worth a look.' },
-  exception: { label: 'Exception', tone: 'red', ring: 'ring-red-200', sub: 'A reconciliation problem was found — open the audit.' },
-  error: { label: 'Unavailable', tone: 'gray', ring: 'ring-slate-200', sub: 'Could not read the accounting feed (the server may be slow). Open Reconcile to retry.' },
+  exception: { label: 'Exception', tone: 'red', ring: 'ring-red-200', sub: 'A reconciliation problem was found on this contract.' },
+  error: { label: 'Unavailable', tone: 'gray', ring: 'ring-slate-200', sub: 'Could not read the accounting feed (the server may be slow). Reload to retry.' },
 };
-
-const ICON_RECONCILE = 'M8 7h12m0 0-4-4m4 4-4 4M16 17H4m0 0 4 4m-4-4 4-4';
 
 /**
  * Daily-glance Net Profit for one contract = Net Collected − Billed, reconciled live against the
- * accounting system. Shows the headline figure + a Reconciled / Needs Review / Exception badge, with
- * the full audit one click away (the Reconcile button). The live call is async so the rest of the
- * page stays instantly usable; a slow/again-fragile OfficeManager server degrades to "Unavailable".
+ * accounting system. Shows the headline figure + a Reconciled / Needs Review / Exception badge. The
+ * live call is async so the rest of the page stays instantly usable; a slow/again-fragile
+ * OfficeManager server degrades to "Unavailable".
  */
-function NetProfitCard({ contractId, contractNo }) {
+function NetProfitCard({ contractId }) {
   const [state, setState] = useState({ loading: true, error: '', data: null });
 
   useEffect(() => {
@@ -92,14 +90,6 @@ function NetProfitCard({ contractId, contractNo }) {
             </>
           )}
         </div>
-        <Link
-          to={`/financial-reconciliation?contract_no=${contractNo}`}
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-white px-4 py-2 text-sm font-semibold text-indigo-600 shadow-sm ring-1 ring-inset ring-slate-200 transition hover:bg-slate-50 hover:ring-slate-300"
-          title="Open the full reconciliation audit for this contract"
-        >
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d={ICON_RECONCILE} /></svg>
-          Reconcile
-        </Link>
       </div>
     </Card>
   );
@@ -340,7 +330,7 @@ export default function ContractDetail() {
         </div>
 
         {/* Net Profit — the daily-glance figure (Net Collected − Billed). Financials only. */}
-        {SHOW_FINANCIALS && c.contract_no && !isMaintenance && <NetProfitCard contractId={id} contractNo={c.contract_no} />}
+        {SHOW_FINANCIALS && c.contract_no && !isMaintenance && <NetProfitCard contractId={id} />}
 
         {/* Stat tiles (money tiles hidden while financials are off; non-money maintenance tiles remain) */}
         {stats.length > 0 && (

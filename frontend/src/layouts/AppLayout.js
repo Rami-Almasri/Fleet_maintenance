@@ -165,12 +165,9 @@ const NAV_SECTIONS = [
   {
     title: 'Analytics & Finance',
     items: [
-      { name: 'Profitability', to: '/profitability', financial: true, icon: 'M12 8c-1.7 0-3 .9-3 2s1.3 2 3 2 3 .9 3 2-1.3 2-3 2m0-8V6m0 12v-2m9-4a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Operational profit per car across the whole fleet — rental income (type-R, ex-VAT) minus logged maintenance cost. Sorted best-to-worst to spot top assets and liabilities.' },
       { name: 'Fleet Utilization', to: '/fleet-utilization', hideWhenIntel: true, icon: 'M3 3v18h18M7 15l3-3 3 3 5-5M8 21V9m4 12V5m4 16v-7', desc: 'Per-car split of owned time into rented, in-maintenance, and idle days — utilization and downtime % against how long you have owned each car, with rent lost to downtime. Filter by period (e.g. last month) and sort to find the cars stuck in the workshop.' },
       { name: 'Fuel & Mileage', to: '/mileage', icon: 'M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'One home for every odometer/fuel tool, in three tabs: Fuel & Mileage (real travel vs. contract km, off-contract leakage, fuel debits), Reconciliation (stored odometer vs. the scanner baseline, adopt with one click) and Chain Audit (contract-to-contract odometer handoffs with a non-destructive Quick Fix).' },
       { name: 'Maintenance Swap', to: '/maintenance-swap', icon: 'M4 5h16M4 12h16M4 19h16M9 5v14', desc: 'Live triage of the fleet in three columns — Action Required / In Workshop / Available Pool — with a Swap & Renew engine that keeps a customer on the road while their car is repaired.' },
-      { name: 'Financial Conflicts', to: '/financial-conflicts', financial: true, icon: 'M12 8c-1.7 0-3 .9-3 2s1.3 2 3 2 3 .9 3 2-1.3 2-3 2m0-8V6m0 12v-2M5 21h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2z', desc: 'Accounting clean-up hub: only the broken invoices — VAT that does not add up, invoices that disagree with their contract, and overlapping (double) billing.' },
-      { name: 'Reconciliation', to: '/financial-reconciliation', financial: true, icon: 'M8 7h12m0 0-4-4m4 4-4 4M16 17H4m0 0 4 4m-4-4 4-4', desc: 'Bridge one contract to the official accounting system: its Fleet ledger side-by-side with the real cash collected (accounting receipts) and the vouchers booked against it. A fee/rounding tolerance keeps the noise out, so you’re only alerted on significant gaps. Read-only MVP.' },
       { name: 'Data Health', to: '/data-health', icon: 'M3 12h4l2 5 4-12 2 7h6', desc: 'Overall data quality in two tabs: Data Quality (incomplete/broken records — missing VINs, mileage, unlinked contracts) and Status Mismatches (cars whose status disagrees with their contracts).' },
       { name: 'Sync Audit', to: '/sync-audit', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-6 9 2 2 4-4', desc: 'Read-only history of CMD sync runs: how many contracts each execution scanned, updated, and auto-corrected (e.g. stale dates cleared).' },
       { name: 'Simulation', to: '/simulation', demoOnly: true, icon: 'M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z', desc: 'Admin-only demo console (only shown in Demo Mode): force a real "Service Due" oil alert or a fault-discovery ticket on a real car, watch the system react end-to-end, then roll it all back with one click.' },
@@ -209,7 +206,6 @@ const NAV_PERMISSIONS = {
   '/maintenance-history': 'dashboard.view',
   '/finding-keywords': 'maintenance.view',
   '/parts': 'parts.view',
-  '/part-investigations': 'parts.investigate',
   '/recurring-fault-reviews': 'maintenance.recurring.view',
   '/vehicles': 'vehicles.view',
   '/odometer-approvals': 'vehicles.approve_odometer',
@@ -232,14 +228,11 @@ const NAV_PERMISSIONS = {
   '/vendors': 'vendors.view',
   '/maintenance-analytics': 'maintenance.view',
   '/damage-accidents': 'maintenance.view',
-  '/profitability': 'insights.view',
   '/cost-intelligence': 'insights.view',
   '/mileage': 'insights.view',
   '/fleet-utilization': 'insights.view',
   '/maintenance-swap': 'insights.view',
   '/data-health': 'insights.view',
-  '/financial-conflicts': 'insights.view',
-  '/financial-reconciliation': 'insights.view',
   '/oversight/mileage': 'insights.view',
   '/oversight/left-garage': 'insights.view',
   '/oversight/severity': 'insights.view',
@@ -300,8 +293,8 @@ export default function AppLayout() {
 
   // Hide nav items the user can't open, and drop sections left empty. While
   // SHOW_FINANCIALS is off (Financial Decoupling), the money-rollup destinations
-  // (Cost Analytics, Profitability, Financial Conflicts, Reconciliation, Net
-  // Profit) are also hidden so no financial page is reachable from the UI.
+  // (Cost Analytics, Net Profit) are also hidden so no financial page is
+  // reachable from the UI.
   const navVisible = (i) =>
     can(NAV_PERMISSIONS[i.to]) &&
     !pathBlockedForRoles(i.to, roles) &&

@@ -39,17 +39,13 @@ import QuickCostInput from './pages/QuickCostInput';
 import Garages from './pages/Garages';
 import FindingKeywords from './pages/FindingKeywords';
 import Parts from './pages/Parts';
-import PartInvestigations from './pages/PartInvestigations';
 import RecurringFaultReviews from './pages/RecurringFaultReviews';
 import DamageAccidents from './pages/DamageAccidents';
-import Profitability from './pages/Profitability';
 import CostIntelligence from './pages/CostIntelligence';
 import ServiceReminders from './pages/reminders/ServiceReminders';
 import EventClassificationReview from './pages/EventClassificationReview';
 import MileageCenter from './pages/MileageCenter';
 import DataHealth from './pages/DataHealth';
-import FinancialConflicts from './pages/FinancialConflicts';
-import FinancialReconciliation from './pages/FinancialReconciliation';
 import SyncAudit from './pages/SyncAudit';
 import Notifications from './pages/Notifications';
 import Settings from './pages/Settings';
@@ -238,9 +234,6 @@ export default function App() {
                 <Route element={<RequirePermission permission="parts.view" />}>
                   <Route path="/parts" element={<Parts />} />
                 </Route>
-                <Route element={<RequirePermission permission="parts.investigate" />}>
-                  <Route path="/part-investigations" element={<PartInvestigations />} />
-                </Route>
                 {/* Recurring Fault Reviews — management inbox for confirmed faults that came back after a fix. */}
                 <Route element={<RequirePermission permission="maintenance.recurring.view" />}>
                   <Route path="/recurring-fault-reviews" element={<RecurringFaultReviews />} />
@@ -257,7 +250,6 @@ export default function App() {
                   <Route path="/inspections/history" element={<Navigate to="/maintenance-workflow" replace />} />
                   <Route path="/activity" element={<Navigate to="/maintenance-workflow" replace />} />
                   <Route path="/vehicle-status" element={<Navigate to="/maintenance-workflow" replace />} />
-                  <Route path="/profitability" element={<Profitability />} />
                   <Route path="/cost-intelligence" element={<CostIntelligence />} />
                   {/* Service Due board retired — Service Reminders is the one service surface now. */}
                   <Route path="/service-due" element={<Navigate to="/service-reminders" replace />} />
@@ -271,8 +263,6 @@ export default function App() {
                   {/* Data Health absorbed Status Mismatch as its second tab — keep the old path alive. */}
                   <Route path="/data-health" element={<DataHealth />} />
                   <Route path="/status-mismatch" element={<Navigate to="/data-health?tab=status" replace />} />
-                  <Route path="/financial-conflicts" element={<FinancialConflicts />} />
-                  <Route path="/financial-reconciliation" element={<FinancialReconciliation />} />
                   {/* Workflow Oversight — accountability & data-integrity suite over the maintenance workflow. */}
                   <Route path="/oversight/mileage" element={<MileageDiscrepancies />} />
                   <Route path="/oversight/left-garage" element={<GarageInvoiceQueue />} />
