@@ -33,6 +33,18 @@ use App\Services\Intelligence\DecisionCard;
  *    Enforced by tests/Unit/CapabilityIsolationTest.
  *
  * 2. A CAPABILITY NEVER COMPOSES SQL. It asks [[RepairHistoryQuery]] questions. See that interface.
+ *
+ * 3. A CAPABILITY NEVER DECIDES WHETHER ITS OWN EVIDENCE IS TRUSTWORTHY ENOUGH TO SHIP. It states
+ *    what history says and how that answer was obtained; the platform decides whether to believe it.
+ *    Concretely: no capability compares a sample size to a threshold and upgrades itself from proxy
+ *    reasoning to measured reasoning. That belongs to [[PromotionGate]], which runs a backtest of the
+ *    measured outcome against the proxy it would replace and REFUSES if it predicts worse.
+ *
+ *    This one was learned by getting it wrong. The comeback card originally promoted itself once QC
+ *    verdicts crossed a floor — which quietly assumes more data means better predictions. It does not
+ *    follow: the QC verdict is scarcer, arrives later, and covers a different slice of tickets, so it
+ *    may well predict worse. Crossing a threshold buys the right to be EVALUATED, never the right to
+ *    be promoted.
  */
 interface IntelligenceCapability
 {

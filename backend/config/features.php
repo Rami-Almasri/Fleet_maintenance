@@ -185,8 +185,86 @@ return [
     | Rollback is a config flip, not a deploy.
     |
     */
+    /*
+    |--------------------------------------------------------------------------
+    | Maintenance workflow rules
+    |--------------------------------------------------------------------------
+    */
+
+    'maintenance' => [
+        /*
+         | Require a QC verdict before a repaired car closes.
+         |
+         | ON by default, unlike everything below it, because this one is not a recommendation — it is
+         | an evidence-capture rule, and the evidence is unrecoverable. A routine-graded ticket used to
+         | auto-close from in_our_park and skip the re-inspection gate entirely; measured, that meant
+         | 12 of 16 closed tickets had no verdict, all of them with a garage and real faults.
+         |
+         | The cost is real: jobs that previously closed themselves now wait for an inspector. Turn it
+         | off if that queue becomes the bottleneck — but know that every ticket closing without a
+         | verdict is a repair outcome nobody will ever be able to reconstruct.
+         */
+        'require_qc_verdict' => env('MAINT_REQUIRE_QC_VERDICT', true),
+    ],
+
     'intelligence' => [
         'comeback_detection' => env('FEATURE_INTEL_COMEBACK', false),
+
+        /*
+         | Comeback card OPERATING POINT — set by backtest, not by taste.
+         |
+         | Measured over 26,705 outcome-verified opportunities (every (ticket, signature) pair whose
+         | forward 90-day window is fully observed). Base rate: a repair comes back 39.5% of the
+         | time. That is the number the card has to beat to be worth an interruption.
+         |
+         |   90d / ≥1 (the original)  219 cards/mo  precision 47.6%  lift 1.20×
+         |   THIS SETTING              52 cards/mo  precision 55.5%  lift 1.40×  recall 12.4%
+         |
+         | The trade is deliberate and precision-first. We miss roughly seven comebacks in eight.
+         | A card firing seven times a day is ignored inside a fortnight, and an ignored card
+         | catches none of them. Two visits for the same fault within a fortnight is also a pattern
+         | nobody needs persuading is abnormal — the card's first job is to be obviously right when
+         | it fires.
+         |
+         | Re-derive rather than adjust by feel: the backtest re-runs in about a minute.
+         */
+        'comeback' => [
+            'window_days' => env('INTEL_COMEBACK_WINDOW_DAYS', 14),
+            'min_priors'  => env('INTEL_COMEBACK_MIN_PRIORS', 1),
+
+            /*
+             | Signatures the card stays silent on, each for a measured reason. "Lift" is precision
+             | divided by that signature's own recurrence rate; below 1.00 the card is worse than
+             | knowing nothing.
+             |
+             |   OIL_SERVICE   1.05×  recurrence is a service interval, not a failed repair
+             |   BATTERY       0.91×  consumable
+             |   CHECK_ENGINE  1.04×  a symptom, not a fault
+             |   LEAK_OTHER    0.52×  the classifier's fallback bucket — semantically incoherent
+             |   TRANSMISSION  0.89×  measured anti-predictive
+             |   ACCESSORY     0.80×  measured anti-predictive
+             |   KEY           0.94×  measured anti-predictive
+             |   FUEL_SYS      0.47×  measured anti-predictive
+             |
+             | BODY and RIM are absent because they never reach here at all — exposure damage is
+             | excluded in the projection itself (customers damage cars; repairs did not fail).
+             */
+            'excluded_signatures' => [
+                'OIL_SERVICE', 'BATTERY', 'CHECK_ENGINE', 'LEAK_OTHER',
+                'TRANSMISSION', 'ACCESSORY', 'KEY', 'FUEL_SYS',
+            ],
+
+            /*
+             | Verified verdicts needed before the card stops calling itself a proxy.
+             |
+             | `repair_inspections` records a real per-fault QC verdict (fixed | still_exists) at the
+             | re-inspection gate. Once enough have accumulated, the card can say "the last repair
+             | was signed off as fixed and the fault is back" — a MEASURED repair failure rather
+             | than a return rate standing in for one. Below this floor it keeps the proxy caveat and
+             | stays capped at moderate confidence. It flips itself; nobody has to remember to.
+             */
+            'verdict_floor' => env('INTEL_COMEBACK_VERDICT_FLOOR', 30),
+        ],
     ],
 
 ];

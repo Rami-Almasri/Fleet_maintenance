@@ -24,8 +24,12 @@ final readonly class Evidence
      * json on old recommendations is then still readable, because it says which rules produced it.
      * Without this, changing the "strong" threshold from 30 to 50 would silently reinterpret every
      * recommendation the platform has ever made.
+     *
+     * v2 — `facts` added to toArray(). v1 rows are still readable; they simply have no facts block,
+     * and their stamp says so. This is the versioning mechanism doing exactly its job on the first
+     * real schema change, rather than the change being made silently.
      */
-    public const SCHEMA_VERSION = 'v1';
+    public const SCHEMA_VERSION = 'v2';
 
     public const LABEL_HUMAN   = 'human';
     public const LABEL_DERIVED = 'derived';
@@ -129,6 +133,11 @@ final readonly class Evidence
             'proxy_note'   => $this->proxyNote,
             'confidence'   => $this->confidence()->value,
             'as_of'        => $this->asOf?->toIso8601String(),
+            // THE SPECIFICS — which signature, which prior cases, what rate. Omitting these was a
+            // real bug: a frozen recommendation could say "this is a comeback" without recording
+            // WHAT of, so ninety days later nothing could check whether it came true. A card that
+            // cannot be judged later cannot teach the platform anything.
+            'facts'        => $this->facts,
         ];
     }
 }

@@ -131,3 +131,20 @@ Schedule::command('events:sync-sheet')
     ->everyTenMinutes()
     ->withoutOverlapping()
     ->runInBackground();
+
+// Nightly: judge past recommendations against what actually happened — the step that turns a
+// recommendation engine into a learning one. It runs ninety days after the fact, long after anyone
+// has stopped thinking about the case, which is precisely why it must be automatic: nobody is ever
+// going to come back and record this by hand. Idempotent (already-judged rows are skipped) and
+// append-only, so a re-run can never rewrite a verdict.
+Schedule::command('intelligence:record-outcomes')
+    ->dailyAt('03:15')
+    ->withoutOverlapping();
+
+// Weekly: run the proxy→measured promotion gate. Promotion is EVIDENCE-DRIVEN, NOT CALENDAR-DRIVEN —
+// this schedule only decides how often the question is ASKED; the answer comes from a backtest that
+// compares the measured outcome against the proxy it would replace, and refuses if it predicts worse.
+// Every decision, including every refusal, is recorded append-only.
+Schedule::command('intelligence:evidence-health --promote')
+    ->weeklyOn(1, '04:00')
+    ->withoutOverlapping();

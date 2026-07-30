@@ -3983,10 +3983,10 @@ class MaintenanceWorkflowService
                 'meta'        => ['garage' => $ticket->garage, 'odometer' => $odometer >= 1 ? $odometer : null],
             ]);
 
-            if (! $ticket->isMajorRepair() && ! $this->needsServiceReinspection($ticket)) {
-                // Minor repair (routine) that performed NO routine service — nothing to confirm to the
-                // vehicle, so auto-close straight away; close() owns the cascade that frees the car and
-                // the closing summary/notifications.
+            if (! $ticket->isMajorRepair() && ! $this->needsServiceReinspection($ticket) && ! $this->needsQualityVerdict($ticket)) {
+                // Minor repair (routine) that performed NO routine service and NO garage repair work —
+                // nothing to confirm to the vehicle and nothing for QC to judge, so auto-close straight
+                // away; close() owns the cascade that frees the car and the closing summary/notifications.
                 return $this->close($ticket, $data, $actor);
             }
 
@@ -5821,6 +5821,43 @@ class MaintenanceWorkflowService
      * re-inspection so the service data updates ONLY on a PASS, never on a bare return-to-park. Matches the
      * same resolver confirmRoutineServices() uses at close, so routing and confirmation stay in lock-step.
      */
+    /**
+     * Did a garage actually repair something on this ticket? If so it must pass the QC gate before it
+     * closes, whatever its severity grading.
+     *
+     * WHY THIS EXISTS. A routine-graded ticket used to auto-close from in_our_park, skipping
+     * ready_for_reinspection entirely — and the QC verdict is only written by a close that comes OFF
+     * that gate. Measured effect: 12 of 16 closed tickets carried no verdict (38% coverage), and every
+     * one of them had a vendor and at least one fault. They were real garage repairs whose outcome
+     * nobody recorded. Severity was the wrong test: "routine" describes how urgent the fault was, not
+     * whether a workshop took the car apart.
+     *
+     * The verdict is the platform's ONLY non-proxy evidence about repair quality — the difference
+     * between "the fault came back" and "a repair a human passed has failed". Every ticket that closed
+     * without one is evidence that cannot be recovered later, because the car has gone.
+     *
+     * WHAT THIS DELIBERATELY DOES NOT DO: auto-write a "fixed" verdict on the closing path. That would
+     * lift coverage to 100% overnight and destroy the very thing being measured — a verdict is worth
+     * something precisely because a human looked at the car. Asserted verdicts would poison the only
+     * honest dataset the platform has.
+     *
+     * Flagged so it can be switched off if it overloads the inspector queue: the cost of this rule is
+     * a real QC step on jobs that previously closed themselves.
+     */
+    private function needsQualityVerdict(Maintenance $ticket): bool
+    {
+        if (! config('features.maintenance.require_qc_verdict', true)) {
+            return false;
+        }
+
+        // A garage was involved AND there was something for it to fix. Both halves matter: a ticket with
+        // no vendor never reached a workshop, and one with no faults has no outcome to judge.
+        return $ticket->vendor_id !== null
+            && $ticket->tasks()
+                ->whereNotIn('status', \App\Models\MaintenanceTask::NON_REPAIR_TERMINAL)
+                ->exists();
+    }
+
     private function needsServiceReinspection(Maintenance $ticket): bool
     {
         return $ticket->tasks()

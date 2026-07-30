@@ -121,6 +121,118 @@ class ProjectionRepairHistoryQuery implements RepairHistoryQuery
         );
     }
 
+    /**
+     * The measured verdict, not the proxy. Reads `repair_inspections` — the per-fault QC result
+     * recorded at the re-inspection gate.
+     *
+     * Signature filtering goes through the projection, because the verdict table stores a fault id
+     * rather than a signature; joining via `maintenance_signatures` keeps one vocabulary across both.
+     */
+    public function verifiedFailureRate(?string $signature = null): HistoricalAnswer
+    {
+        $key = 'repair-intel:verified-failure:'.($signature ?? '_all');
+
+        $stats = Cache::remember($key, now()->addHours(6), function () use ($signature) {
+            $q = DB::table('repair_inspections as ri');
+
+            if ($signature !== null) {
+                $q->join('maintenance_signatures as s', function ($j) use ($signature) {
+                    $j->on('s.maintenance_id', '=', 'ri.maintenance_id')
+                      ->where('s.signature', '=', $signature);
+                });
+            }
+
+            $row = $q->selectRaw("COUNT(*) n, SUM(CASE WHEN ri.result = 'still_exists' THEN 1 ELSE 0 END) failed")
+                ->first();
+
+            $n = (int) ($row->n ?? 0);
+            $failed = (int) ($row->failed ?? 0);
+
+            return ['n' => $n, 'failed' => $failed, 'rate' => $n > 0 ? $failed / $n : 0.0];
+        });
+
+        return new HistoricalAnswer(
+            value: $stats,
+            sampleSize: $stats['n'],
+            // A human inspected the car and wrote the verdict down. This is the strongest label the
+            // platform has, and the only place isProxy is false.
+            labelSource: Evidence::LABEL_HUMAN,
+            reconstructionTier: HistoricalAnswer::TIER_DIRECT,
+            isProxy: false,
+            facts: ['signature' => $signature, 'basis' => 'post-repair QC verdict'],
+            asOf: now(),
+        );
+    }
+
+    public function repairVerdictsFor(array $ticketIds): HistoricalAnswer
+    {
+        $ticketIds = array_values(array_filter($ticketIds));
+
+        if ($ticketIds === []) {
+            return HistoricalAnswer::empty();
+        }
+
+        $rows = DB::table('repair_inspections')
+            ->whereIn('maintenance_id', $ticketIds)
+            ->orderBy('inspection_date')
+            ->get(['maintenance_id', 'result', 'inspection_date']);
+
+        if ($rows->isEmpty()) {
+            return HistoricalAnswer::empty();
+        }
+
+        return new HistoricalAnswer(
+            value: $rows->pluck('result', 'maintenance_id')->all(),
+            sampleSize: $rows->count(),
+            sourceIds: $rows->pluck('maintenance_id')->all(),
+            labelSource: Evidence::LABEL_HUMAN,
+            reconstructionTier: HistoricalAnswer::TIER_DIRECT,
+            isProxy: false,
+            asOf: now(),
+        );
+    }
+
+    public function occurrencesBetween(
+        int $vehicleId,
+        array $signatures,
+        string $from,
+        string $to,
+        ?int $excludeTicketId = null,
+    ): HistoricalAnswer {
+        $signatures = array_values(array_filter($signatures));
+
+        if ($signatures === []) {
+            return HistoricalAnswer::empty();
+        }
+
+        $rows = MaintenanceSignature::query()
+            ->qualityRelevant()
+            ->where('vehicle_id', $vehicleId)
+            ->whereIn('signature', $signatures)
+            ->whereNotNull('occurred_at')
+            // Strictly after `from`, for the same reason findPreviousEpisodes() is strictly before its
+            // pivot: same-date rows are one event on two tickets, not a repair that failed same-day.
+            ->where('occurred_at', '>', Carbon::parse($from)->toDateString())
+            ->where('occurred_at', '<=', Carbon::parse($to)->toDateString())
+            ->when($excludeTicketId, fn ($q) => $q->where('maintenance_id', '!=', $excludeTicketId))
+            ->orderBy('occurred_at')
+            ->get(['id', 'maintenance_id', 'signature', 'occurred_at', 'source']);
+
+        if ($rows->isEmpty()) {
+            return HistoricalAnswer::empty();
+        }
+
+        return new HistoricalAnswer(
+            value: $rows,
+            sampleSize: $rows->count(),
+            sourceIds: $rows->pluck('maintenance_id')->all(),
+            labelSource: $this->labelSourceFor($rows),
+            reconstructionTier: HistoricalAnswer::TIER_DIRECT,
+            facts: ['from' => $from, 'to' => $to],
+            asOf: now(),
+        );
+    }
+
     public function vehicleHistory(int $vehicleId, ?string $asOf = null, int $limit = 100): HistoricalAnswer
     {
         $pivot = $asOf ? Carbon::parse($asOf) : now();

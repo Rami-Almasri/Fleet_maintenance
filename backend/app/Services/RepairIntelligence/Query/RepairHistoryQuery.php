@@ -84,6 +84,52 @@ interface RepairHistoryQuery
     public function signatureReturnRate(string $signature, ?int $windowDays = null): HistoricalAnswer;
 
     /**
+     * "Of the repairs a human signed off as FIXED, how many were actually fixed?"
+     *
+     * THE ONLY NON-PROXY ANSWER IN THIS INTERFACE. Everything else infers repair quality from cars
+     * coming back, which conflates a botched repair with an unrelated second fault in the same
+     * system. This reads the real per-fault QC verdict recorded at the re-inspection gate
+     * (`repair_inspections`: fixed | still_exists) and therefore measures what the others estimate.
+     *
+     * It will be thin for a long time — the gate is new. The answer carries its own sample size, so
+     * a capability can prefer it when it is strong enough and fall back automatically when it is
+     * not, without anyone deciding the switchover date.
+     *
+     * @return HistoricalAnswer value: array{n:int, failed:int, rate:float}
+     */
+    public function verifiedFailureRate(?string $signature = null): HistoricalAnswer;
+
+    /**
+     * The QC verdicts recorded against specific past tickets.
+     *
+     * Turns "the fault appeared again" into "the fault appeared again AFTER a human signed the
+     * repair off as fixed", which is a materially stronger claim and a different conversation with
+     * the garage.
+     *
+     * @param  int[] $ticketIds
+     * @return HistoricalAnswer value: array{ticket_id: string result} keyed by maintenance_id
+     */
+    public function repairVerdictsFor(array $ticketIds): HistoricalAnswer;
+
+    /**
+     * "Did this fault happen again between these two dates?"
+     *
+     * The mirror of findPreviousEpisodes(), looking FORWARD instead of back. It is what makes an
+     * outcome knowable: a warning issued in March can only be judged by what happened in the ninety
+     * days after it, and that is a question about the future of a past decision.
+     *
+     * @param  string[] $signatures
+     * @return HistoricalAnswer value: \Illuminate\Support\Collection of signature rows, oldest first
+     */
+    public function occurrencesBetween(
+        int $vehicleId,
+        array $signatures,
+        string $from,
+        string $to,
+        ?int $excludeTicketId = null,
+    ): HistoricalAnswer;
+
+    /**
      * Everything known to have happened to one vehicle, newest first — the raw material for chronic
      * vehicle detection and repair-vs-replace.
      *
