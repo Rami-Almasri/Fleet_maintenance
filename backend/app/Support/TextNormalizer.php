@@ -75,6 +75,15 @@ final class TextNormalizer
         // Arabic filler
         'في', 'من', 'على', 'الى', 'إلى', 'عن', 'مع', 'ان', 'أن', 'هذا', 'هذه', 'يوجد', 'فيه',
         'السياره', 'السيارة', 'سياره', 'سيارة', 'العربيه', 'العربية', 'الزبون', 'مشكله', 'مشكلة',
+
+        // Gulf/Levantine words for "the car". Same defect as English "car" and "under": a generic
+        // word carrying no fault meaning was scoring real matches. "الموتر يسخن" was pulling in
+        // Stalling ("الموتر يطفي") and Pulling/drifting ("الموتر يميل") at 48 each, purely because
+        // all three contain "الموتر".
+        //
+        // NOT stopworded: المكينة / الماتور / المحرك — those mean the ENGINE and genuinely locate a
+        // fault. Only the words that mean "the vehicle" are dropped.
+        'الموتر', 'موتر', 'الموتور', 'موتور', 'الترك', 'المركبه', 'المركبة',
     ];
 
     /** The comparison key for a term or a whole sentence. Empty string for anything meaningless. */

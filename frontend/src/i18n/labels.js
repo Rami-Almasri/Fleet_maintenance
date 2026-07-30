@@ -1473,7 +1473,13 @@ const en = {
     normalizedAs: 'Matched as:',
     strong: 'Strong match',
     possible: 'Possible match',
-    how: { exact: 'exact', phrase: 'phrase', tokens: 'wording', fuzzy: 'typo' },
+    // One entry per stage in the matching pipeline. `alias`, `token` and `semantic` were missing —
+    // the labels predate the staged pipeline and still used the old plural `tokens` — so the UI
+    // printed raw keys like "keywordAi.how.alias" next to every matched term.
+    how: {
+      exact: 'exact', alias: 'known wording', phrase: 'phrase',
+      token: 'wording', tokens: 'wording', fuzzy: 'typo', semantic: 'meaning',
+    },
     examples: 'strange metallic sound when braking|engine running hot and temp gauge high|الموتر يسخن|break noise|ac not blowing cold',
 
     // --- Knowledge engine: graph, evidence, learning loop ---
@@ -3648,7 +3654,10 @@ const ar = {
     normalizedAs: 'تمت المطابقة كـ:',
     strong: 'مطابقة قوية',
     possible: 'مطابقة محتملة',
-    how: { exact: 'تطابق تام', phrase: 'عبارة', tokens: 'صياغة', fuzzy: 'خطأ إملائي' },
+    how: {
+      exact: 'تطابق تام', alias: 'صيغة معروفة', phrase: 'عبارة',
+      token: 'صياغة', tokens: 'صياغة', fuzzy: 'خطأ إملائي', semantic: 'المعنى',
+    },
     examples: 'صوت معدني غريب عند الفرملة|الموتر يسخن|حرارة المحرك مرتفعة|التكييف ما يبرد|صوت في الفرامل',
 
     relationships: 'شبكة المعرفة',
