@@ -31,6 +31,7 @@ import FindingsList from './FindingsList';
 import FindingsPicker from './FindingsPicker';
 import RequiredPartsEditor, { cleanRequiredParts } from './RequiredPartsEditor';
 import GarageRecommendations from './GarageRecommendations';
+import DecisionCards from './DecisionCards';
 import RootCausePicker, { rootCausesComplete } from './RootCausePicker';
 import FaultHistoryInsight from './FaultHistoryInsight';
 import RepairIntelligencePanel from '../knowledge/RepairIntelligencePanel';
@@ -631,11 +632,6 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   }, [locationLocked, deferrableForRental]);
   const [photo, setPhoto] = useState(null);       // dispatch odometer: compressed { blob, url, width, height, compressedSize }
   const [compressing, setCompressing] = useState(false);
-  // 'request': the driver's optional photo/video of what they saw — attached to the new ticket as
-  // evidence so the inspector sees it before the test drive. Holds { file, url, kind } (raw File, not
-  // compressed: a video can't be, and the still is small enough for the inspector's glance).
-  const [requestMedia, setRequestMedia] = useState(null);
-  const requestMediaRef = useRef(null);
   const [findingTags, setFindingTags] = useState([]); // 'finding': selected garage-finding tags
   const [findingSeverity, setFindingSeverity] = useState('');
   // 'lineitems': the structured Parts + Labor breakdown (auto-sums into the ticket cost).
@@ -1104,15 +1100,6 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
         resp = await api.patch(r.url, r.body);
       } else if (r.method === 'put') {
         resp = await api.put(r.url, r.body);
-      } else if (action === 'request' && !isObservation && requestMedia?.file) {
-        // Driver's inspection request WITH an attached photo/video — go multipart so the evidence rides
-        // along and is stored on the new ticket (see requestInspection server-side). No odometer here.
-        const fd = new FormData();
-        fd.append('vehicle_id', String(Number(vehicleId)));
-        fd.append('trigger_reason', reason);
-        if (complaint) fd.append('customer_complaint', complaint);
-        fd.append('media', requestMedia.file, requestMedia.file.name || 'evidence');
-        resp = await api.post(r.url, fd);
       } else if ((action === 'dispatch' && photo?.blob) || (action === 'recovery' && photo?.blob) || (action === 'receive' && photo?.blob) || action === 'ready' || (isTestStart && photo?.blob) || (action === 'collectFromGarage' && photo?.blob) || (action === 'arriveAtPark' && photo?.blob) || (action === 'decide' && photo?.blob) || ((action === 'pause' || action === 'resume') && photo?.blob)) {
         const fd = new FormData();
         if (action === 'dispatch') {
@@ -1655,6 +1642,12 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
             <div className="rounded-lg bg-amber-50/70 px-3 py-2 text-xs text-amber-700 ring-1 ring-inset ring-amber-600/10">
               {t('workflow.hint.assignBanner')}
             </div>
+            {/* DECISION CARDS — the intelligence platform, at the one moment it can still change the
+                outcome: the car has not been committed to a garage yet. Deliberately ABOVE the garage
+                picker, because the comeback card's whole argument is that re-dispatching without
+                re-diagnosing is what produces a third visit — advice that arrives after the garage is
+                chosen is a report, not a recommendation. Renders nothing when history is quiet. */}
+            <DecisionCards ticketId={ticket?.id} />
             {/* Re-dispatch after a failed re-inspection ("came back broken"): the last garage is kept and
                 pre-selected, since a botched repair usually goes back to the same shop — but the supervisor
                 can still send it elsewhere (and the failure badge shows who to blame). */}
@@ -2350,15 +2343,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                     <button
                       key={rv}
                       type="button"
-                      onClick={() => {
-                        setReason(rv);
-                        // Observations carry no media — drop any pending attachment so it can't be
-                        // silently dropped at submit time.
-                        if (rv === OBSERVATION_CHOICE && requestMedia) {
-                          if (requestMedia.url) URL.revokeObjectURL(requestMedia.url);
-                          setRequestMedia(null);
-                        }
-                      }}
+                      onClick={() => setReason(rv)}
                       className={`flex items-start gap-3 rounded-xl border px-3 py-2.5 text-start transition ${active ? 'border-indigo-500 bg-indigo-50 ring-1 ring-indigo-500' : 'border-slate-200 bg-white hover:border-slate-300'}`}
                     >
                       <span className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${active ? 'border-indigo-600' : 'border-slate-300'}`}>
@@ -2405,62 +2390,13 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                   <input type="checkbox" checked={observationRaise} onChange={(e) => setObservationRaise(e.target.checked)} className="mt-0.5" />
                   <span>{t('workflow.hint.observationRaise')}</span>
                 </label>
-                <p className="text-xs text-slate-400">{t('workflow.hint.observationNoMedia')}</p>
               </>
             ) : (
               <Textarea label={t('workflow.field.notesForInspector')} value={complaint} onChange={(e) => setComplaint(e.target.value)} placeholder={t('workflow.ph.customerPullLeft')} />
             )}
 
-            {/* Optional photo/video — a still or clip of what the driver saw/heard, attached to the new
-                ticket as evidence the inspector reviews before the test drive. Hidden in observation
-                mode: /driver-observations stores no upload, so offering one would promise more than it keeps. */}
-            {!isObservation && (
-            <div>
-              <span className="mb-1 block text-sm font-medium text-slate-700">{t('workflow.field.attachEvidence')}</span>
-              {requestMedia ? (
-                <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
-                  {requestMedia.kind === 'image' ? (
-                    <img src={requestMedia.url} alt={t('workflow.field.attachEvidence')} className="h-14 w-14 shrink-0 rounded-lg object-cover ring-1 ring-slate-200" />
-                  ) : (
-                    <span aria-hidden className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-slate-200 text-2xl">🎬</span>
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-slate-700">{requestMedia.file.name}</p>
-                    <p className="text-[11px] text-slate-400">{formatBytes(requestMedia.file.size)}</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => { if (requestMedia?.url) URL.revokeObjectURL(requestMedia.url); setRequestMedia(null); }}
-                    className="shrink-0 rounded-lg px-2 py-1 text-xs font-medium text-red-500 hover:bg-red-50"
-                  >
-                    {t('workflow.field.attachRemove')}
-                  </button>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => requestMediaRef.current?.click()}
-                  className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 bg-white px-3 py-3 text-sm font-semibold text-slate-500 transition hover:border-indigo-400 hover:text-indigo-600"
-                >
-                  <Icon.Plus className="h-4 w-4" /> {t('workflow.field.attachAdd')}
-                </button>
-              )}
-              <input
-                ref={requestMediaRef}
-                type="file"
-                accept="video/*,image/*"
-                className="hidden"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (requestMediaRef.current) requestMediaRef.current.value = ''; // allow re-picking the same file
-                  if (!file) return;
-                  if (requestMedia?.url) URL.revokeObjectURL(requestMedia.url);
-                  setRequestMedia({ file, url: URL.createObjectURL(file), kind: file.type.startsWith('image/') ? 'image' : 'video' });
-                }}
-              />
-              <p className="mt-1 text-xs text-slate-400">{t('workflow.field.attachHint')}</p>
-            </div>
-            )}
+            {/* No attachment here by design — the driver describes it in the note and the inspector
+                photographs the car on the test drive, which is the evidence that actually counts. */}
           </>
         )}
 
