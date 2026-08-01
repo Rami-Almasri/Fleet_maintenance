@@ -80,6 +80,7 @@ function PurchaseModal({ open, request, onClose, onDone, vendors }) {
     purchase_price: '',
     currency: 'AED',
     quantity: 1,
+    po_number: '',
     notes: '',
     duplicate_reason_code: '',
     duplicate_reason_note: '',
@@ -102,6 +103,7 @@ function PurchaseModal({ open, request, onClose, onDone, vendors }) {
       purchase_price: request.estimated_price ?? '',
       currency: request.currency || 'AED',
       quantity: request.quantity || 1,
+      po_number: '',
       notes: '',
       duplicate_reason_code: '',
       duplicate_reason_note: '',
@@ -149,6 +151,7 @@ function PurchaseModal({ open, request, onClose, onDone, vendors }) {
         purchase_price: Number(form.purchase_price),
         currency: form.currency || 'AED',
         quantity: Number(form.quantity) || 1,
+        po_number: form.po_number.trim() || null,
         notes: form.notes.trim() || null,
       };
       if (isDuplicate) {
@@ -287,6 +290,16 @@ function PurchaseModal({ open, request, onClose, onDone, vendors }) {
             error={errors.quantity?.[0]}
             onChange={(e) => set('quantity', e.target.value)}
           />
+          {/* The supplier's PO / invoice reference. Carried onto the component when the part is
+              fitted, so the Installed Components dossier can link a part back to the paperwork
+              that bought it. Optional — a cash counter buy legitimately has none. */}
+          <Input
+            label="PO / invoice reference"
+            placeholder="Optional — e.g. PO-2026-0481"
+            value={form.po_number}
+            error={errors.po_number?.[0]}
+            onChange={(e) => set('po_number', e.target.value)}
+          />
           <Select
             label="Repair location"
             value={form.repair_location}
@@ -315,13 +328,54 @@ function PurchaseModal({ open, request, onClose, onDone, vendors }) {
 function InstallModal({ open, request, onClose, onDone }) {
   const toast = useToast();
   const purchase = request?.purchases?.find((p) => !p.installed_at) || request?.purchases?.[request.purchases.length - 1];
-  const [form, setForm] = useState({ installed_odometer: '', warranty_months: '', result: 'success', notes: '' });
+  // The Asset Layer fields ride along with the install: this step is the ONLY moment the system can
+  // learn what physically went on the car and what happened to the part it displaced. Asking here is
+  // why no "Add Component" screen has to exist anywhere else.
+  const BLANK = {
+    installed_odometer: '', warranty_months: '', result: 'success', notes: '',
+    component_catalog_id: '', brand: '', serial_no: '', position: '',
+    removal_reason: '', disposition: '',
+  };
+  const [form, setForm] = useState(BLANK);
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
+  const [catalog, setCatalog] = useState([]);
+
+  // The component TYPE dictionary. Without an explicit pick here the asset write fails: a free-text
+  // part name ("Radiator") cannot be resolved to a catalog entry, and a ticket-raised request carries
+  // no category at all. Under shadow mode that failure is swallowed — the part installs and bills
+  // correctly while the vehicle's configuration silently never updates.
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    api.get('/components/catalog')
+      .then((r) => { if (alive) setCatalog(r.data.data || []); })
+      .catch(() => { if (alive) setCatalog([]); });
+    return () => { alive = false; };
+  }, [open]);
 
   useEffect(() => {
-    if (open) { setForm({ installed_odometer: '', warranty_months: '', result: 'success', notes: '' }); setErrors({}); }
+    if (open) { setForm(BLANK); setErrors({}); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  // Best-guess the type from the part name so the common case is one confirming glance, not a hunt
+  // through 30 options. Longest catalog name that appears in the part name wins ("Brake Discs (set)"
+  // beats "Brake Pads (set)" for "front brake discs"), so a partial match can't shadow a fuller one.
+  useEffect(() => {
+    if (!open || !catalog.length || form.component_catalog_id) return;
+    const name = `${request?.part_name || ''} ${purchase?.part_name || ''}`.toLowerCase();
+    const hit = catalog
+      .filter((c) => name.includes(c.name.toLowerCase().replace(/\s*\(set\)\s*/, '').trim()))
+      .sort((a, b) => b.name.length - a.name.length)[0];
+    if (hit) setForm((f) => ({ ...f, component_catalog_id: String(hit.id) }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, catalog, request?.part_name, purchase?.part_name]);
+
+  const selectedType = catalog.find((c) => String(c.id) === String(form.component_catalog_id)) || null;
+  // Positions are per type: a radiator takes none, a tyre takes four corners. Offering all of them
+  // always invites a 422 ("… does not take a position") that shadow mode would swallow.
+  const positions = selectedType?.positions || [];
 
   const set = (field, value) => setForm((f) => ({ ...f, [field]: value }));
 
@@ -335,6 +389,20 @@ function InstallModal({ open, request, onClose, onDone }) {
         warranty_months: form.warranty_months === '' ? null : Number(form.warranty_months),
         result: form.result,
         notes: form.notes.trim() || null,
+
+        // Asset Layer. Blank fields are omitted rather than sent as empty strings so the backend's
+        // "nullable" rules see a genuinely absent value and its own defaults apply.
+        component: {
+          component_catalog_id: form.component_catalog_id ? Number(form.component_catalog_id) : null,
+          brand: form.brand.trim() || null,
+          serial_no: form.serial_no.trim() || null,
+          position: form.position || null,
+        },
+        // Only claim a removal when the fitter actually told us what happened to the old part.
+        // Sending a half-filled block would trip the "no disposition, no removal" guard.
+        predecessor: form.removal_reason && form.disposition
+          ? { removal_reason: form.removal_reason, disposition: form.disposition }
+          : null,
       });
       toast.success('Part marked installed');
       onDone();
@@ -396,6 +464,106 @@ function InstallModal({ open, request, onClose, onDone }) {
           error={errors.notes?.[0]}
           onChange={(e) => set('notes', e.target.value)}
         />
+
+        {/* ── Vehicle configuration ─────────────────────────────────────────────────────────────
+            Recording the install here is what puts the part on the vehicle's Installed Components
+            tab — there is no separate screen to add it, and no list to keep in sync afterwards. */}
+        <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+          <h4 className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Vehicle configuration</h4>
+          <p className="mt-0.5 text-xs text-slate-400">
+            Fitting this part updates the vehicle's installed components automatically. Nothing else needs updating.
+          </p>
+
+          {/* The type is what turns a free-text part name into a tracked asset. Without it the
+              vehicle's configuration cannot be updated at all. */}
+          <div className="mt-3">
+            <Select
+              label="Component type *"
+              value={form.component_catalog_id}
+              error={errors['component.component_catalog_id']?.[0]}
+              onChange={(e) => set('component_catalog_id', e.target.value)}
+            >
+              <option value="">Select what kind of part this is…</option>
+              {catalog.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </Select>
+            {!form.component_catalog_id && (
+              <p className="mt-1 text-xs text-amber-600">
+                Pick a type, or this part will be billed but won’t appear on the vehicle’s Installed Components tab.
+              </p>
+            )}
+          </div>
+
+          <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <Input
+              label="Brand"
+              placeholder="e.g. Bosch"
+              value={form.brand}
+              error={errors['component.brand']?.[0]}
+              onChange={(e) => set('brand', e.target.value)}
+            />
+            <Input
+              label={selectedType?.requires_serial ? 'Serial number *' : 'Serial number'}
+              placeholder={selectedType?.requires_serial ? 'Required for this type' : 'If the part has one'}
+              value={form.serial_no}
+              error={errors['component.serial_no']?.[0]}
+              onChange={(e) => set('serial_no', e.target.value)}
+            />
+            {/* Only offered when the chosen type actually has slots — sending a position to a
+                positionless type is rejected outright. */}
+            <Select
+              label="Position"
+              value={form.position}
+              disabled={positions.length === 0}
+              error={errors['component.position']?.[0]}
+              onChange={(e) => set('position', e.target.value)}
+            >
+              <option value="">{positions.length ? 'Select a position…' : 'Not applicable'}</option>
+              {positions.map((p) => (
+                <option key={p} value={p}>
+                  {{ front_left: 'Front left', front_right: 'Front right', rear_left: 'Rear left', rear_right: 'Rear right', front: 'Front axle', rear: 'Rear axle' }[p] || p}
+                </option>
+              ))}
+            </Select>
+          </div>
+
+          {/* The old part is never allowed to just vanish: if this fitting replaces something, the
+              system needs a reason AND a destination before it will retire the previous record. */}
+          <div className="mt-4 border-t border-slate-200 pt-3">
+            <p className="text-xs font-medium text-slate-600">Replacing an existing part?</p>
+            <p className="mt-0.5 text-xs text-slate-400">
+              Answer both and the old part is retired automatically, linked to this one as its successor. Leave blank if nothing was removed.
+            </p>
+            <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Select
+                label="Why it came off"
+                value={form.removal_reason}
+                error={errors['predecessor.removal_reason']?.[0]}
+                onChange={(e) => set('removal_reason', e.target.value)}
+              >
+                <option value="">Nothing was removed</option>
+                <option value="worn_out">Worn out</option>
+                <option value="failed">Failed</option>
+                <option value="accident">Accident damage</option>
+                <option value="upgrade">Upgraded</option>
+                <option value="recall">Recall</option>
+              </Select>
+              <Select
+                label="Where the old part went"
+                value={form.disposition}
+                error={errors['predecessor.disposition']?.[0]}
+                onChange={(e) => set('disposition', e.target.value)}
+              >
+                <option value="">—</option>
+                <option value="scrapped">Scrapped</option>
+                <option value="stored">Kept as a spare</option>
+                <option value="returned_supplier">Returned to supplier</option>
+                <option value="warranty_return">Returned under warranty</option>
+              </Select>
+            </div>
+          </div>
+        </div>
       </div>
     </Modal>
   );

@@ -129,6 +129,7 @@ Route::middleware('auth:sanctum')->controller(VehicleActivityController::class)-
 // the physical car. See VehicleComponentController's docblock.
 Route::middleware(['auth:sanctum', 'permission:components.view'])->controller(\App\Http\Controllers\VehicleComponentController::class)->group(function () {
     Route::get('components/dashboard', 'dashboard');            // fleet cards (static — must precede /{component})
+    Route::get('components/catalog', 'catalog');                // component TYPE list for the install step (static — must precede /{component})
     Route::get('components/{component}', 'show');               // one component's dossier + replacement chain
     Route::get('Vehicle/{vehicle}/components', 'forVehicle');    // one car's current configuration + history
 });

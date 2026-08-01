@@ -154,6 +154,11 @@ class PartRequestController extends Controller
                 'purchase_source'       => ['required', Rule::in(\App\Models\PartPurchase::PURCHASE_SOURCES)],
                 'source_vendor_id'      => ['nullable', 'exists:vendors,id'],
                 'source_name'           => ['nullable', 'string', 'max:255'],
+                // The supplier's PO / invoice reference for a DIRECT buy. PartWorkflowService already
+                // reads it (it was only ever populated from an RFQ award), but it was missing here, so
+                // anything the purchaser typed was silently dropped — leaving the Purchase Order link
+                // on the component dossier permanently empty for every non-RFQ purchase.
+                'po_number'             => ['nullable', 'string', 'max:40'],
                 'repair_location'       => ['nullable', Rule::in(PartRequest::LOCATIONS)],
                 'purchase_price'        => ['required', 'numeric', 'gt:0'],
                 'currency'              => ['nullable', 'string', 'size:3'],

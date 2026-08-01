@@ -133,8 +133,18 @@ return [
     |
     | Rollback at any point = set ASSET_LAYER_MODE=off (config flip, no deploy).
     |
+    | DEFAULT IS NOW 'shadow'. Vehicle Installed Components (the per-vehicle configuration tab and the
+    | fleet Component Intelligence board) READ these tables, so leaving writes off would ship a feature
+    | whose surfaces are permanently empty. 'shadow' is the safe way to have it live: every workflow
+    | install populates the asset ledger, but a component-write failure is reported and swallowed, so
+    | it can never block or roll back a part install or its billing line. Reads ignore the mode.
+    |
+    | Promote to 'enforced' once `php artisan components:verify` has run clean over real installs for
+    | a while. Enforced makes the asset write atomic with the workflow write, and turns the disposition
+    | prompt ("what happened to the old part?") and serial validation into blocking requirements.
+    |
     */
-    'asset_layer' => env('ASSET_LAYER_MODE', 'off'),
+    'asset_layer' => env('ASSET_LAYER_MODE', 'shadow'),
 
     /*
     |--------------------------------------------------------------------------

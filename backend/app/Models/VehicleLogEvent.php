@@ -164,6 +164,12 @@ class VehicleLogEvent extends Model
         // Severity Review is a supervisory grading decision → inspector-side audit bucket.
         self::EVENT_SEVERITY_UPGRADED        => Maintenance::FINDING_INSPECTOR,
         self::EVENT_SEVERITY_REVIEW_KEPT     => Maintenance::FINDING_INSPECTOR,
+        // Asset Layer — fitting or stripping a part is hands-on-the-car work performed at the
+        // workshop bench, so the whole component lifecycle sits in the garage audit bucket.
+        self::EVENT_COMPONENT_INSTALLED      => Maintenance::FINDING_GARAGE,
+        self::EVENT_COMPONENT_REMOVED        => Maintenance::FINDING_GARAGE,
+        self::EVENT_COMPONENT_TRANSFERRED    => Maintenance::FINDING_GARAGE,
+        self::EVENT_COMPONENT_DISPOSED       => Maintenance::FINDING_GARAGE,
     ];
 
     protected $fillable = [

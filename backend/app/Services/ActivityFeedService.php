@@ -133,6 +133,14 @@ class ActivityFeedService
         VehicleLogEvent::EVENT_TEMP_RELEASED        => 'Temporarily released',
         VehicleLogEvent::EVENT_TEMP_RETURNED        => 'Returned from release',
         VehicleLogEvent::EVENT_ODOMETER_CORRECTED   => 'Odometer corrected',
+        // Asset Layer — the physical configuration of the car changing. Without these four the
+        // component_events mirror written by ComponentService lands in vehicle_log_events but is
+        // filtered straight back out of the feed (logEventTypesFor('maintenance') derives its list
+        // from LABELS), so "Battery installed" would never reach the Vehicle Timeline.
+        VehicleLogEvent::EVENT_COMPONENT_INSTALLED   => 'Component installed',
+        VehicleLogEvent::EVENT_COMPONENT_REMOVED     => 'Component removed',
+        VehicleLogEvent::EVENT_COMPONENT_TRANSFERRED => 'Component transferred',
+        VehicleLogEvent::EVENT_COMPONENT_DISPOSED    => 'Component disposed',
     ];
 
     /**

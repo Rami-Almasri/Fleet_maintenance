@@ -18,6 +18,7 @@ import VehicleWorkflowPanel from '../../components/vehicles/VehicleWorkflowPanel
 import VehicleCheckpointsPanel from '../../components/vehicles/VehicleCheckpointsPanel';
 import VehicleComplaintsPanel from '../../components/vehicles/VehicleComplaintsPanel';
 import VehicleInvestigationTimeline from '../../components/vehicles/VehicleInvestigationTimeline';
+import VehicleComponentsPanel from '../../components/vehicles/VehicleComponentsPanel';
 import { aed2, fmtDate, fmtClock, num } from '../../lib/format';
 import CompositionDonut from '../../components/ui/CompositionDonut';
 import { faultTagSegments } from '../../lib/faultCategories';
@@ -288,7 +289,7 @@ const PRIO = {
 // Top-level tabs for the profile. Keys are also the ?tab= URL value (deep-linkable / shareable).
 // 'timeline' (the old Maintenance Log feed) was merged into 'activity' — the one Timeline tab. It stays
 // in the key list so old ?tab=timeline links still resolve; changeTab() redirects them to 'activity'.
-const TAB_KEYS = ['overview', 'plate', 'visits', 'journey', 'activity', 'checkpoints', 'complaints', 'financials', 'media'];
+const TAB_KEYS = ['overview', 'plate', 'visits', 'components', 'journey', 'activity', 'checkpoints', 'complaints', 'financials', 'media'];
 const TAB_ALIASES = { timeline: 'activity' };
 const resolveTab = (key) => TAB_ALIASES[key] || key;
 
@@ -303,6 +304,7 @@ const TAB_ORIGIN = {
   activity: 'The car’s whole history as an investigation tool — search, filters, KPIs, grouping and sorting over every source unified: the N-Maintenance sheet workshop visits (click one for its full record — garage, cost, issues, notes), the maintenance-workflow audit trail (inspections, dispatch, repair, re-inspection, parts, approvals & follow-ups), the logistics movement log, and inspection records. Every row carries who acted and when; nothing is editable, and the exact filtered view is captured in the URL to share.',
   financials: 'Reverse-engineered from OfficeManager billing via RealProfitService: rent − discount + realized usage − operating − car-level maintenance.',
   media: 'Pre/post condition & odometer photos captured during the maintenance workflow (inspection & garage steps).',
+  components: 'The vehicle’s physical configuration, DERIVED from the maintenance workflow — never typed in. A component appears here only when a ticket reaches its install step (part purchased → received → installed), which also retires the part it replaced and writes both to the timeline. Identity, supplier, cost, warranty and odometer are FACTS copied from the purchase order; age, life-used, warranty standing and cost/km are DERIVED at read time. Consumables refreshed by routine servicing (oil, filters bundled with an oil change) are merged in from the service log and tagged “Service”, because they are performed work rather than tracked assets.',
 };
 
 // A muted provenance caption shown at the foot of each tab.
@@ -753,6 +755,9 @@ export default function VehicleProfile() {
               ...(plateReused ? [{ key: 'plate', label: 'Plate History' }] : []),
               { key: 'financials', label: 'Rent', badge: num(contracts.length) },
               { key: 'visits', label: 'Visits', badge: num(maintenance.length) },
+              // The rolling-asset view: what is physically fitted to this car right now. No badge —
+              // the count comes from the components API, which the profile payload does not carry.
+              { key: 'components', label: 'Installed Components' },
               // One unified history: the sheet Maintenance Log and the workflow audit trail live here.
               // No badge — the profile only knows the legacy row count; the panel itself reports the
               // true merged total ("Showing N of M events") once the activity feed lands.
@@ -934,6 +939,16 @@ export default function VehicleProfile() {
         <div role="tabpanel" id="panel-journey" aria-labelledby="tab-journey" className="space-y-6">
           <WorkflowJourneys journeys={journeys} />
           <DataOrigin tab="journey" />
+        </div>
+        )}
+
+        {/* ── INSTALLED COMPONENTS ─── the car as a ROLLING ASSET: every part fitted to it today, plus
+            the full replacement history of each slot. Read-only by design — the maintenance workflow is
+            the only thing that can put a component on a car, so there is no "Add Component" control. */}
+        {activeTab === 'components' && (
+        <div role="tabpanel" id="panel-components" aria-labelledby="tab-components" className="space-y-6">
+          <VehicleComponentsPanel vehicleId={id} />
+          <DataOrigin tab="components" />
         </div>
         )}
 

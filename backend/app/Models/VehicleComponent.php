@@ -98,12 +98,18 @@ class VehicleComponent extends Model
     ];
 
     /**
-     * NOTE: status, location, and the entire removal leg (removed_*, removal_*, disposition,
-     * replaced_by_component_id) are deliberately ABSENT — they may only be set by explicit
-     * assignment inside ComponentService, never by mass assignment from a request.
+     * NOTE: status, location, `vehicle_id`, and the entire removal leg (removed_*, removal_*,
+     * disposition, replaced_by_component_id) are deliberately ABSENT — they may only be set by
+     * explicit assignment inside ComponentService, never by mass assignment from a request.
+     *
+     * `vehicle_id` belongs on that list because WHICH CAR a part sits on is the single fact this
+     * whole layer exists to be right about. Every legitimate change of it (install, transfer,
+     * removal) also writes a ComponentEvent, which is what lets `components:verify` replay the log
+     * and prove the stored configuration. A mass-assigned vehicle_id would move a part between cars
+     * with no event behind it — silently breaking that guarantee.
      */
     protected $fillable = [
-        'component_catalog_id', 'vehicle_id',
+        'component_catalog_id',
         'serial_no', 'part_number', 'brand', 'model', 'label', 'quantity', 'position',
         'installed_at', 'installed_odometer', 'installed_by', 'installed_by_name',
         'technician_name', 'installer_vendor_id', 'supplier_vendor_id',

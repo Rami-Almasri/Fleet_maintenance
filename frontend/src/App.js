@@ -27,6 +27,7 @@ import MaintenanceHistory from './pages/MaintenanceHistory';
 import MaintenanceWorkflow from './pages/MaintenanceWorkflow';
 import MaintenanceCheckpoints from './pages/MaintenanceCheckpoints';
 import CarStatus from './pages/CarStatus';
+import ComponentsDashboard from './pages/ComponentsDashboard';
 import CarStatusVehicle from './pages/CarStatusVehicle';
 import MyMaintenanceQueue from './pages/MyMaintenanceQueue';
 import InspectionReviewQueue from './pages/InspectionReviewQueue';
@@ -186,6 +187,13 @@ export default function App() {
 
                 <Route element={<RequirePermission permission="vendors.view" />}>
                   <Route path="/vendors" element={<Vendors />} />
+                </Route>
+
+                {/* Component Intelligence — the fleet-wide asset layer: warranty exposure, expected
+                    service life, replacement churn and installed value. Read-only: a component only
+                    ever reaches this data by the maintenance workflow installing it. */}
+                <Route element={<RequirePermission permission="components.view" />}>
+                  <Route path="/components" element={<ComponentsDashboard />} />
                 </Route>
 
                 <Route element={<RequirePermission permission="maintenance.view" />}>

@@ -84,6 +84,7 @@ class ComponentService
                     maintenanceId: $purchase->maintenance_id,
                     taskId: $purchase->maintenance_task_id,
                     fallbackOdometer: $payload['installed_odometer'] ?? null,
+                    beingReplaced: true,
                 );
             }
 
@@ -92,7 +93,10 @@ class ComponentService
                 'part_number' => $purchase->part_number,
                 'brand'       => $identity['brand'] ?? null,
                 'model'       => $identity['model'] ?? null,
-                'label'       => trim(($identity['brand'] ?? '') . ' ' . ($identity['model'] ?? '')) ?: $purchase->part_name,
+                // "Varta Battery 12V" reads as a part; a bare "Varta" reads as a supplier. When no
+                // model code is given, the catalog type carries the noun so the label is always a
+                // thing rather than a brand.
+                'label'       => trim(($identity['brand'] ?? '') . ' ' . ($identity['model'] ?? $catalog->name)) ?: $purchase->part_name,
                 'quantity'    => $purchase->quantity ?: 1,
                 'position'    => $position,
 
@@ -152,6 +156,7 @@ class ComponentService
                     maintenanceId: $data['maintenance_id'] ?? null,
                     taskId: $data['maintenance_task_id'] ?? null,
                     fallbackOdometer: $data['odometer'] ?? null,
+                    beingReplaced: true,
                 );
                 $predecessor->replaced_by_component_id = $component->id;
                 $predecessor->save();
@@ -361,7 +366,7 @@ class ComponentService
      * disposition outcome map, fires the removed (+ terminal / warranty_claimed) events. Throws 422
      * when reason or disposition is missing: no disposition, no removal.
      */
-    private function closeOut(VehicleComponent $component, array $removal, User $actor, ?int $maintenanceId, ?int $taskId, ?int $fallbackOdometer): void
+    private function closeOut(VehicleComponent $component, array $removal, User $actor, ?int $maintenanceId, ?int $taskId, ?int $fallbackOdometer, bool $beingReplaced = false): void
     {
         $reason      = $removal['removal_reason'] ?? null;
         $disposition = $removal['disposition'] ?? null;
@@ -407,6 +412,10 @@ class ComponentService
             'maintenance_id'      => $maintenanceId,
             'maintenance_task_id' => $taskId,
             'note'                => $removal['removal_note'] ?? null,
+            // `replaced` is a HINT for the timeline sentence only: the successor row does not exist
+            // yet at this point (the install writes it after this close-out returns), so the phrase
+            // builder cannot read replaced_by_component_id and must be told.
+            'replaced'            => $beingReplaced,
             'meta'                => ['removal_reason' => $reason, 'disposition' => $disposition],
         ]);
 
@@ -576,6 +585,39 @@ class ComponentService
         return $catalogs->isNotEmpty() && $catalogs->every(fn ($c) => $c->isConsumable());
     }
 
+    /**
+     * The one-line sentence the Vehicle Timeline shows. Reads as plain English about the CAR
+     * ("Battery installed — Bosch S5", "Brake Pads (set) removed — worn out"), because the timeline
+     * is a vehicle biography, not a component log: the catalog type is what an operator scans for,
+     * the brand/serial is the detail underneath it.
+     */
+    private function timelinePhrase(VehicleComponent $component, string $event, array $data): string
+    {
+        $type   = $component->catalog?->name ?: 'Component';
+        $detail = $component->label && $component->label !== $type ? $component->label : null;
+
+        $headline = match ($event) {
+            ComponentEvent::EVENT_INSTALLED         => "{$type} installed",
+            // "replaced" is the honest word only when this removal has a named successor; a plain
+            // strip-and-store is a removal, and calling it a replacement would invent a part.
+            ComponentEvent::EVENT_REMOVED           => ($data['replaced'] ?? false) ? "{$type} replaced" : "{$type} removed",
+            ComponentEvent::EVENT_TRANSFERRED       => "{$type} transferred to another vehicle",
+            ComponentEvent::EVENT_RETURNED_SUPPLIER => "{$type} returned to supplier",
+            ComponentEvent::EVENT_WARRANTY_CLAIMED  => "{$type} returned under warranty",
+            ComponentEvent::EVENT_SOLD              => "{$type} sold",
+            ComponentEvent::EVENT_DISPOSED          => "{$type} scrapped",
+            default                                 => "{$type} {$event}",
+        };
+
+        $suffix = $detail;
+        if ($event === ComponentEvent::EVENT_REMOVED && ($reason = $data['meta']['removal_reason'] ?? null)) {
+            $reasonText = str_replace('_', ' ', $reason);
+            $suffix = $detail ? "{$detail} · {$reasonText}" : $reasonText;
+        }
+
+        return $suffix ? "{$headline} — {$suffix}" : $headline;
+    }
+
     private function terminalEventFor(string $disposition): string
     {
         return match ($disposition) {
@@ -608,23 +650,27 @@ class ComponentService
         ]);
 
         $logEvent = match ($event) {
-            ComponentEvent::EVENT_INSTALLED         => VehicleLogEvent::EVENT_COMPONENT_INSTALLED,
-            ComponentEvent::EVENT_REMOVED           => VehicleLogEvent::EVENT_COMPONENT_REMOVED,
-            ComponentEvent::EVENT_TRANSFERRED       => VehicleLogEvent::EVENT_COMPONENT_TRANSFERRED,
-            ComponentEvent::EVENT_DISPOSED,
-            ComponentEvent::EVENT_RETURNED_SUPPLIER,
-            ComponentEvent::EVENT_WARRANTY_CLAIMED,
-            ComponentEvent::EVENT_SOLD              => VehicleLogEvent::EVENT_COMPONENT_DISPOSED,
-            default                                 => null, // purchased/stored: warehouse noise, not vehicle history
+            ComponentEvent::EVENT_INSTALLED   => VehicleLogEvent::EVENT_COMPONENT_INSTALLED,
+            ComponentEvent::EVENT_REMOVED     => VehicleLogEvent::EVENT_COMPONENT_REMOVED,
+            ComponentEvent::EVENT_TRANSFERRED => VehicleLogEvent::EVENT_COMPONENT_TRANSFERRED,
+            // purchased/stored: warehouse noise, not vehicle history.
+            //
+            // The TERMINAL dispositions (disposed / returned_supplier / warranty_claimed / sold) are
+            // also deliberately absent. They fire in the same instant as the removal that produced
+            // them, so mirroring both put two lines on the car's timeline for one physical act. What
+            // the vehicle's biography records is "the part came off" — the removal line already
+            // names the reason and the disposition. Where the part went afterwards is warehouse and
+            // finance history, and it stays where it belongs: on the component's own dossier, which
+            // keeps every one of these events in full.
+            default                           => null,
         };
 
         if ($logEvent) {
-            $label = $component->label ?: $component->catalog?->name ?: 'Component';
             foreach (array_unique(array_filter([$data['from_vehicle_id'] ?? null, $data['to_vehicle_id'] ?? null])) as $vehicleId) {
                 if ($vehicle = Vehicle::find($vehicleId)) {
                     $this->log->recordVehicle($vehicle, $logEvent, $actor, [
                         'source_tag'  => 'components',
-                        'description' => "{$label}: {$event}",
+                        'description' => $this->timelinePhrase($component, $event, $data),
                         'meta'        => ['component_id' => $component->id, 'component_event_id' => $row->id] + ($data['meta'] ?? []),
                     ]);
                 }

@@ -139,6 +139,7 @@ const NAV_SECTIONS = [
       { name: 'Driver Dispatch', to: '/driver-dispatch', icon: 'M3 7h11v8H3zM14 10h3.5L21 13v2h-7M6.5 18.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM17.5 18.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z', desc: 'Driver Dispatch: send a vehicle between locations (to Deals on Wheels, the garage, …) and track which driver has it and where. Dispatching a car flips it to “In Transit to …” on the grid and drops an Action Required task into the assignee’s My Queue.' },
       { name: 'Fleet Health', to: '/inspections/schedules', icon: 'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM9 15l2 2 4-4', desc: 'The fleet\'s neural center — a unified hub with tabs for Service Due (odometer-based) and Registration & Insurance expiry, consolidating the live per-car health surfaces in one place.' },
       { name: 'Car Status', to: '/car-status', icon: 'M5 17h14M5 17a2 2 0 0 1-2-2v-3l2-5a2 2 0 0 1 2-1.4h8A2 2 0 0 1 19 7l2 5v3a2 2 0 0 1-2 2M7 17v1a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-1m14 0v1a1 1 0 0 1-1 1h0a1 1 0 0 1-1-1v-1M9 12l2 2 4-4', desc: 'The live stage board — every car in the maintenance workflow laid out by the exact stage it\'s in right now (Needs Test Drive → Being Inspected → Needs Dispatch → Awaiting Pickup → En Route → In Workshop → Ready for Pickup → Final QA), each showing who is responsible for it at that stage: the inspector, the supervisor who must dispatch, the driver who holds the car, or the garage. A stage reads “Waiting” until someone takes it, then shows their name. Click any car to open its ticket.' },
+      { name: 'Component Intelligence', to: '/components', icon: 'M12 2l8 4v6c0 5-3.4 8.7-8 10-4.6-1.3-8-5-8-10V6l8-4zM9.5 12l1.8 1.8L15 10', desc: 'The fleet as rolling assets — every part currently installed on every car, with what is about to fall out of warranty, what is running past its expected service life, what has been replaced lately, and which component types churn hardest (the buying signal). Built entirely from the maintenance workflow: a part appears only when a ticket installs it, so there is nothing to keep in sync and no "Add Component" button anywhere.' },
     ],
   },
   {
@@ -221,6 +222,7 @@ const NAV_PERMISSIONS = {
   '/maintenance': 'maintenance.view',
   '/maintenance-hub': 'maintenance.view',
   '/car-status': 'maintenance.view',
+  '/components': 'components.view',
   '/maintenance-workflow': 'maintenance.view',
   '/my-maintenance-queue': 'maintenance.view',
   '/cost-capture': 'maintenance.manage',
