@@ -19,7 +19,7 @@ const SNAPSHOT = {
   alert: null,
   qc: {
     closed: 17, with_verdict: 8, conclusive: 8, unverifiable: 0,
-    coverage: 0.47, lost: 9, unverifiable_share: 0,
+    coverage: 0.47, lost: 9, lost_recently: 0, leaking: false, unverifiable_share: 0,
     throughput: [
       { week: '2026-06-08', count: 0, conclusive: 0 },
       { week: '2026-07-27', count: 6, conclusive: 6 },
@@ -149,10 +149,34 @@ test('refused promotions appear in the history with their provenance', async () 
   expect(screen.getByText('proj/v1:49501:2026-07-30')).toBeInTheDocument();
 });
 
-/** Evidence lost at close is unrecoverable, so it is reported as a number and never as a queue. */
-test('lost evidence is reported with the reason it cannot be recovered', async () => {
+/**
+ * A DEBT AND A LEAK NEED OPPOSITE RESPONSES, and lifetime coverage cannot tell them apart.
+ *
+ * Every ticket that closed before the verdict gate existed drags the lifetime figure down for good.
+ * Showing that in alarm colours forever means showing the same number whether the leak was stopped
+ * yesterday or is still running — and after a month of a number that never moves, nobody reads it.
+ */
+test('historical debt is reported as debt, not as an ongoing leak', async () => {
   await load();
-  expect(screen.getByText(/closed unverified — unrecoverable/)).toBeInTheDocument();
+  expect(screen.getByText('Evidence lost (historical)')).toBeInTheDocument();
+  expect(screen.getByText(/the gap has stopped growing/)).toBeInTheDocument();
+});
+
+test('a gap that is still growing is reported as a live leak instead', async () => {
+  api.get.mockResolvedValue({
+    data: { ...SNAPSHOT, qc: { ...SNAPSHOT.qc, leaking: true, lost_recently: 4 } },
+  });
+  await load();
+
+  expect(screen.getByText('Still leaking')).toBeInTheDocument();
+  expect(screen.getByText(/closed unverified in 14 days/)).toBeInTheDocument();
+});
+
+/** The denominator is what a verdict was possible for — not every ticket that closed. */
+test('coverage is measured against verifiable closes, not all closes', async () => {
+  await load();
+  expect(screen.getByText('Closed & verifiable')).toBeInTheDocument();
+  expect(screen.getByText('reached a garage, had faults to fix')).toBeInTheDocument();
 });
 
 /**

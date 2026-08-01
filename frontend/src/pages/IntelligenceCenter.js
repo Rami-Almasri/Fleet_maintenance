@@ -211,10 +211,25 @@ function Throughput({ qc }) {
       </div>
 
       <dl className="mt-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-        <Stat label="Repaired & closed" value={num(qc?.closed)} />
+        {/*
+          The denominator is tickets a verdict COULD have been recorded for, not every closed ticket:
+          one that never reached a workshop has no repair outcome to judge. Counting those understated
+          coverage and made a working gate look like it was leaking.
+        */}
+        <Stat label="Closed & verifiable" value={num(qc?.closed)} hint="reached a garage, had faults to fix" />
         <Stat label="With a verdict" value={`${num(qc?.with_verdict)} · ${pct(qc?.coverage)}`} />
         <Stat label="Usable for statistics" value={num(qc?.conclusive)} hint="conclusive verdicts only" />
-        <Stat label="Evidence lost" value={num(qc?.lost)} hint="closed unverified — unrecoverable" tone="rose" />
+        {/*
+          Lifetime "lost" can never recover, so showing it in alarm colours forever teaches people to
+          ignore it. The colour tracks whether the gap is STILL GROWING, which is the only part
+          anyone can act on.
+        */}
+        <Stat
+          label={qc?.leaking ? 'Still leaking' : 'Evidence lost (historical)'}
+          value={qc?.leaking ? num(qc.lost_recently) : num(qc?.lost)}
+          hint={qc?.leaking ? 'closed unverified in 14 days' : 'pre-gate — the gap has stopped growing'}
+          tone={qc?.leaking ? 'rose' : undefined}
+        />
       </dl>
 
       {qc?.unverifiable > 0 && (

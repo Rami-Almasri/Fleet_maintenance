@@ -1061,6 +1061,48 @@ class Maintenance extends Model
         return $q->where('workflow_status', self::WF_AWAITING_INVOICE);
     }
 
+    /**
+     * Tickets a repair outcome could be recorded for — THE denominator for QC verdict coverage.
+     *
+     * Both halves matter, and the same two are checked by the gate that stops a ticket closing
+     * without a verdict (`MaintenanceWorkflowService::needsQualityVerdict`): a ticket with no vendor
+     * never reached a workshop, and one whose faults were all cancelled or not-found has no outcome
+     * to judge. Neither is a missing verdict, and counting them as one understates coverage and makes
+     * a gate that is working correctly look like it is leaking.
+     *
+     * DEFINED HERE, ONCE, precisely because it is asked in two places for two different reasons — the
+     * workflow asks "must this ticket be verified before it closes?" and the evidence ledger asks
+     * "should this ticket have produced evidence?". Those must be the same population or the platform
+     * measures itself against a rule it does not enforce.
+     */
+    public function scopeVerdictEligible(Builder $q): Builder
+    {
+        return $q->whereNotNull('vendor_id')
+            ->whereHas('tasks', fn ($t) => $t->whereNotIn('status', MaintenanceTask::NON_REPAIR_TERMINAL));
+    }
+
+    /**
+     * The same rule for ONE ticket — what the close gate asks.
+     *
+     * Deliberately not `whereKey($this)->verdictEligible()->exists()`. That would be one expression
+     * instead of two, and it would put a database round trip on the close path and make the gate
+     * impossible to exercise without a schema. The scope above and this method must stay in step;
+     * `QualityVerdictRoutingTest` pins the behaviour, and the two were verified to agree
+     * ticket-for-ticket across the whole closed population when this was written.
+     */
+    public function needsVerdictEvidence(): bool
+    {
+        return $this->vendor_id !== null
+            && $this->tasks()->whereNotIn('status', MaintenanceTask::NON_REPAIR_TERMINAL)->exists();
+    }
+
+    /** Terminal workflow states — the car is back in service, verified or not. */
+    public function scopeClosedOut(Builder $q): Builder
+    {
+        return $q->whereNotNull('workflow_status')
+            ->whereIn('workflow_status', [self::WF_CLOSED, self::WF_AWAITING_INVOICE]);
+    }
+
     /** Days the ticket has been waiting on its invoice (null unless it's in awaiting_invoice). */
     public function invoiceDaysWaiting(): ?int
     {

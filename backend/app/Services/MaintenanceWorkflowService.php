@@ -5852,10 +5852,11 @@ class MaintenanceWorkflowService
 
         // A garage was involved AND there was something for it to fix. Both halves matter: a ticket with
         // no vendor never reached a workshop, and one with no faults has no outcome to judge.
-        return $ticket->vendor_id !== null
-            && $ticket->tasks()
-                ->whereNotIn('status', \App\Models\MaintenanceTask::NON_REPAIR_TERMINAL)
-                ->exists();
+        // Owned by the model, alongside its set-based twin `Maintenance::verdictEligible()`. The
+        // evidence ledger asks the same question for a different reason — "should this ticket have
+        // produced evidence?" — and if the two ever drifted, the platform would be measuring its QC
+        // coverage against a rule it does not actually enforce.
+        return $ticket->needsVerdictEvidence();
     }
 
     private function needsServiceReinspection(Maintenance $ticket): bool

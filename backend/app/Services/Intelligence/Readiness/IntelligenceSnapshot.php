@@ -458,14 +458,38 @@ class IntelligenceSnapshot
         // Evidence already lost. Not recoverable, which is why it is reported as a count and not a queue.
         $qc = $this->ledger->qcCoverage();
 
-        if ($qc['lost'] > 0) {
+        // A LEAK AND A DEBT ARE DIFFERENT PROBLEMS, and lifetime coverage cannot tell them apart.
+        //
+        // Every ticket that closed before the verdict gate existed drags the lifetime figure down
+        // permanently — it can never recover, no matter how well the process runs from now on. So
+        // reporting the lifetime number as a live problem means showing the same alarming line
+        // forever, whether the leak was stopped yesterday or is still running. After a month of a
+        // number that never moves, nobody reads it.
+        if ($qc['leaking'] ?? false) {
             $issues[] = [
-                'key'      => 'verdicts-lost',
-                'severity' => $qc['coverage'] < 0.5 ? 'high' : 'medium',
-                'title'    => 'Repaired tickets that closed with no verdict',
+                'key'      => 'verdicts-leaking',
+                'severity' => 'high',
+                'title'    => 'Repaired tickets are still closing with no verdict',
+                'count'    => $qc['lost_recently'],
+                'detail'   => sprintf(
+                    '%d closed unverified in the last 14 days. This evidence is gone — the car has left, and no '
+                    .'later inspection can reconstruct whether the repair held.',
+                    $qc['lost_recently'],
+                ),
+                'remedy'   => 'Check MAINT_REQUIRE_QC_VERDICT is on, then find out which close path is bypassing it.',
+            ];
+        } elseif ($qc['lost'] > 0) {
+            $issues[] = [
+                'key'      => 'verdicts-debt',
+                'severity' => 'low',
+                'title'    => 'Historical tickets with no verdict (the gap has stopped growing)',
                 'count'    => $qc['lost'],
-                'detail'   => sprintf('QC coverage is %.0f%%. A verdict missed at close cannot be recovered later.', $qc['coverage'] * 100),
-                'remedy'   => 'Keep MAINT_REQUIRE_QC_VERDICT on. The gate is what stops this number growing.',
+                'detail'   => sprintf(
+                    'Lifetime QC coverage is %.0f%% and will never fully recover — these closed before the verdict '
+                    .'gate existed. Nothing has closed unverified in the last 14 days, so the process is holding.',
+                    $qc['coverage'] * 100,
+                ),
+                'remedy'   => 'Nothing to do. Read the throughput chart, not this number, to judge whether capture is working.',
             ];
         }
 
@@ -478,6 +502,29 @@ class IntelligenceSnapshot
                 'count'    => $qc['unverifiable'],
                 'detail'   => 'The queue is being worked, but cars are leaving before anyone can check them.',
                 'remedy'   => 'A scheduling fix — hold the car until re-inspection, or re-inspect before release.',
+            ];
+        }
+
+        // The platform cannot date a close, which is what stops it distinguishing a leak from a debt.
+        $closedTickets = Maintenance::whereNotNull('workflow_status')
+            ->whereIn('workflow_status', [Maintenance::WF_CLOSED, Maintenance::WF_AWAITING_INVOICE])->count();
+        $stamped = Maintenance::whereNotNull('workflow_status')
+            ->whereIn('workflow_status', [Maintenance::WF_CLOSED, Maintenance::WF_AWAITING_INVOICE])
+            ->whereNotNull('wf_closed_at')->count();
+
+        if ($closedTickets > 0 && $stamped < $closedTickets) {
+            $issues[] = [
+                'key'      => 'close-timestamp-missing',
+                'severity' => 'medium',
+                'title'    => 'Closed tickets with no close timestamp',
+                'count'    => $closedTickets - $stamped,
+                'detail'   => sprintf(
+                    'Only %d of %d closed tickets carry wf_closed_at — the `awaiting_invoice` transition never '
+                    .'stamps it. Without a reliable close date, "is the verdict gap still growing?" has to be '
+                    .'answered from last_state_change_at instead, which is a weaker signal.',
+                    $stamped, $closedTickets,
+                ),
+                'remedy'   => 'Stamp wf_closed_at on every terminal transition, not just the direct close path.',
             ];
         }
 

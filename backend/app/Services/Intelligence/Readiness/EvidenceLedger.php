@@ -128,12 +128,9 @@ class EvidenceLedger
         $priorRate  = $prior / 4;           // per week over the four weeks before that
 
         // Repaired cars that closed in the window with nothing recorded — evidence already lost.
-        $missed = Maintenance::whereNotNull('workflow_status')
-            ->whereIn('workflow_status', [Maintenance::WF_CLOSED, Maintenance::WF_AWAITING_INVOICE])
-            ->where('updated_at', '>=', now()->subDays(14))
-            ->whereNotExists(fn ($q) => $q->select(DB::raw(1))->from('repair_inspections')
-                ->whereColumn('repair_inspections.maintenance_id', 'maintenances.id'))
-            ->count();
+        // The same measure the coverage section calls "leaking", read from one place so the alert and
+        // the dashboard can never disagree about whether the gap is still growing.
+        $missed = $this->lostSince(now()->subDays(14));
 
         return self::judgePipeline([
             'recent'                 => $recent,
@@ -272,26 +269,113 @@ class EvidenceLedger
     /** @return array{closed:int, with_verdict:int, unverifiable:int, coverage:float, lost:int} */
     private function computeQcCoverage(): array
     {
-        $closed = Maintenance::whereNotNull('workflow_status')
-            ->whereIn('workflow_status', [Maintenance::WF_CLOSED, Maintenance::WF_AWAITING_INVOICE])
-            ->count();
+        // The denominator is tickets a verdict COULD have been recorded for — not every closed
+        // ticket. A ticket that never reached a workshop, or whose faults were all cancelled, has no
+        // repair outcome to judge; counting it as a missing verdict understates coverage and makes a
+        // gate that is working correctly look like it is leaking. Same scope the gate itself applies.
+        $closed = Maintenance::closedOut()->verdictEligible()->count();
+
+        // NUMERATOR AND DENOMINATOR MUST DESCRIBE THE SAME TICKETS.
+        //
+        // This counted every inspection ever recorded, against a denominator of eligible closed
+        // tickets — so inspections on tickets that were still open, or not verdict-eligible, inflated
+        // coverage and deflated the loss. It produced the arithmetically impossible result of losing
+        // more evidence in the last fortnight (6) than in all of history (5), which is what exposed
+        // it. A ratio whose halves are drawn from different populations is not a low-quality
+        // measurement; it is not a measurement.
+        $hasInspection = fn ($q) => $q->select(DB::raw(1))->from('repair_inspections')
+            ->whereColumn('repair_inspections.maintenance_id', 'maintenances.id');
 
         // COVERAGE counts every inspection, including `unable_to_verify`: the inspector attended and
         // recorded an honest answer, so the workflow step is complete and the evidence is not "lost".
         // It is simply not usable as a statistic — which the threshold, not this number, enforces.
-        $withVerdict = DB::table('repair_inspections')->distinct()->count('maintenance_id');
+        $withVerdict = Maintenance::closedOut()->verdictEligible()
+            ->whereExists($hasInspection)->count();
 
-        $unverifiable = DB::table('repair_inspections')
-            ->where('result', RepairInspection::RESULT_UNABLE_TO_VERIFY)
-            ->distinct()->count('maintenance_id');
+        $unverifiable = Maintenance::closedOut()->verdictEligible()
+            ->whereExists(fn ($q) => $hasInspection($q)
+                ->where('repair_inspections.result', RepairInspection::RESULT_UNABLE_TO_VERIFY))
+            ->count();
 
-        return [
-            'closed'       => $closed,
-            'with_verdict' => $withVerdict,
-            'unverifiable' => $unverifiable,
-            'coverage'     => $closed > 0 ? $withVerdict / $closed : 0.0,
-            'lost'         => max($closed - $withVerdict, 0),
-        ];
+        // IS THE GAP STILL GROWING? The single most important distinction on this page, and the one
+        // a lifetime percentage cannot make.
+        //
+        // Lifetime coverage can never recover. Every ticket that closed before the verdict gate
+        // existed — and every seeded row that never passed through the workflow at all — drags it
+        // down permanently. So a platform reporting only the lifetime figure shows the same alarming
+        // number forever, whether the process was fixed yesterday or is still haemorrhaging evidence.
+        // Those need opposite responses, and after a month of the number never moving, nobody reads
+        // it at all.
+        //
+        // Debt is a fact to state once. A leak is something to go and stop.
+        $lostRecently = $this->lostSince(now()->subDays(14));
+
+        return self::assertCoherent([
+            'closed'        => $closed,
+            'with_verdict'  => $withVerdict,
+            'unverifiable'  => $unverifiable,
+            'coverage'      => $closed > 0 ? $withVerdict / $closed : 0.0,
+            'lost'          => max($closed - $withVerdict, 0),
+            'lost_recently' => $lostRecently,
+            'leaking'       => $lostRecently > 0,
+        ]);
+    }
+
+    /**
+     * A coverage ratio whose halves are drawn from different populations is not a low-quality
+     * measurement — it is not a measurement, and it is worse than no number because it looks like one.
+     *
+     * This is a guard rather than a test because the failure was invisible by inspection: the code
+     * read perfectly sensibly, and the only thing that gave it away was `lost_recently` exceeding
+     * `lost` — losing more evidence in a fortnight than in all of history. Four cheap invariants catch
+     * every version of that mistake, including the ones nobody has made yet.
+     *
+     * It THROWS. The snapshot catches it and shows "this section could not be read", which is an
+     * honest answer. A plausible wrong percentage is not, and a QC coverage figure is exactly the kind
+     * of number people quote in meetings without re-deriving.
+     *
+     * @param  array<string, mixed> $qc
+     * @return array<string, mixed>
+     */
+    public static function assertCoherent(array $qc): array
+    {
+        $violations = array_keys(array_filter([
+            'with_verdict exceeds the eligible population' => $qc['with_verdict'] > $qc['closed'],
+            'unverifiable exceeds with_verdict'            => $qc['unverifiable'] > $qc['with_verdict'],
+            'recent loss exceeds lifetime loss'            => $qc['lost_recently'] > $qc['lost'],
+            'lost does not reconcile'                      => $qc['lost'] !== max($qc['closed'] - $qc['with_verdict'], 0),
+        ]));
+
+        if ($violations !== []) {
+            throw new \RuntimeException(
+                'QC coverage is incoherent — its numerator and denominator describe different tickets: '
+                .implode('; ', $violations).'. Refusing to report a ratio that cannot be true.'
+            );
+        }
+
+        return $qc;
+    }
+
+    /**
+     * Repaired tickets that closed in the window with nothing recorded — evidence lost since then.
+     *
+     * Dated by `last_state_change_at`, not `updated_at`. For a terminal state the last state change
+     * IS the close, whereas `updated_at` moves for any reason at all — an invoice attached, a note
+     * edited, a nightly sync touching the row. Dating a close by `updated_at` makes old unverified
+     * tickets keep re-entering the recent window every time anything touches them, so a gap that
+     * stopped growing months ago reports itself as today's leak.
+     *
+     * `wf_closed_at` would be the exact field and is not usable: it is stamped on only 4 of 17 closed
+     * tickets, because the `awaiting_invoice` transition never sets it. That gap is reported as its
+     * own data-quality issue rather than papered over here.
+     */
+    private function lostSince(Carbon $since): int
+    {
+        return Maintenance::closedOut()->verdictEligible()
+            ->where('last_state_change_at', '>=', $since)
+            ->whereNotExists(fn ($q) => $q->select(DB::raw(1))->from('repair_inspections')
+                ->whereColumn('repair_inspections.maintenance_id', 'maintenances.id'))
+            ->count();
     }
 
     private function comeback(): EvidenceRequirement
