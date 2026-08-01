@@ -132,6 +132,18 @@ Schedule::command('events:sync-sheet')
     ->withoutOverlapping()
     ->runInBackground();
 
+// Nightly: rebuild the repair-signature projection — the corpus EVERY intelligence capability reads
+// from. It was previously only ever run by hand, which is a failure with no symptom: the platform
+// keeps answering, confidently, out of a history that stopped at whenever someone last remembered.
+// Cheap (~4s over 26k tickets) and idempotent by construction — the projection is derived data with
+// no authority of its own, so rebuilding is always the safe operation.
+//
+// Placed after the sheet import (02:30) and reason linking (02:50) so it reads the day's new rows,
+// and before record-outcomes (03:15), which judges recommendations against it.
+Schedule::command('intelligence:rebuild-signatures')
+    ->dailyAt('03:05')
+    ->withoutOverlapping();
+
 // Nightly: judge past recommendations against what actually happened — the step that turns a
 // recommendation engine into a learning one. It runs ninety days after the fact, long after anyone
 // has stopped thinking about the case, which is precisely why it must be automatic: nobody is ever

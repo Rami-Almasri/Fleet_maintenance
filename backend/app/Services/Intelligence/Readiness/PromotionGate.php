@@ -3,6 +3,7 @@
 namespace App\Services\Intelligence\Readiness;
 
 use App\Models\CapabilityPromotion;
+use App\Services\Intelligence\DecisionEngine;
 use App\Services\RepairIntelligence\Backtest\ComebackBacktest;
 use App\Services\RepairIntelligence\Query\ProjectionRepairHistoryQuery;
 use Illuminate\Support\Facades\Cache;
@@ -122,16 +123,33 @@ class PromotionGate
      *
      * @return array<string, string>
      */
-    public function provenance(): array
+    public function provenance(string $capabilityId = 'comeback-warning'): array
     {
         return [
             'proxy_model_version'    => $this->backtest->modelVersion(ComebackBacktest::OUTCOME_RECURRENCE),
             'measured_model_version' => $this->backtest->modelVersion(ComebackBacktest::OUTCOME_VERDICT),
             'dataset_version'        => $this->backtest->datasetVersion(),
             'backtest_version'       => ComebackBacktest::VERSION,
-            'capability_version'     => 'v2',
+            'capability_version'     => $this->capabilityVersion($capabilityId),
             'query_layer_version'    => ProjectionRepairHistoryQuery::VERSION,
         ];
+    }
+
+    /**
+     * The capability's own declared version, asked of the capability.
+     *
+     * This was a hardcoded 'v2' string. That is a quiet way to destroy the entire point of recording
+     * provenance: bump ComebackCapability to v3 and every decision from then on claims to have
+     * evaluated v2, so a future reader comparing two decisions sees no methodology change where there
+     * was one — and the promotion history becomes confidently wrong rather than merely incomplete.
+     *
+     * Resolved through the container at CALL time rather than injected, on purpose. The engine holds
+     * the capabilities and the capabilities hold this gate, so constructor injection would be a cycle.
+     * Reading it late is the cost of keeping one source of truth for a version.
+     */
+    private function capabilityVersion(string $capabilityId): string
+    {
+        return (app(DecisionEngine::class)->capabilities()[$capabilityId] ?? null)?->version() ?? 'unregistered';
     }
 
     /**
@@ -151,7 +169,7 @@ class PromotionGate
         bool $persist,
         ?string $decision = null,
     ): array {
-        $provenance = $this->provenance();
+        $provenance = $this->provenance($capabilityId);
 
         if ($persist) {
             CapabilityPromotion::create($provenance + [

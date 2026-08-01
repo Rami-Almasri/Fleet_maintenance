@@ -119,6 +119,20 @@ Route::middleware('auth:sanctum')->controller(VehicleActivityController::class)-
     Route::get('Activity', 'feed')->middleware('permission:insights.view');                       // fleet-wide activity feed (manager view)
 });
 
+// Vehicle Installed Components — the "rolling asset" read layer: exactly what is fitted to a car
+// TODAY, the full replacement history of every slot, and the fleet-wide component dashboard
+// (warranty expiring / past expected life / recently + frequently replaced / installed value / age).
+//
+// READ-ONLY BY DESIGN — there is no create route here and there must never be one. A component
+// appears on a vehicle only when the maintenance workflow reaches its install step
+// (PartWorkflowService::installPurchase → ComponentService), which is what keeps the record equal to
+// the physical car. See VehicleComponentController's docblock.
+Route::middleware(['auth:sanctum', 'permission:components.view'])->controller(\App\Http\Controllers\VehicleComponentController::class)->group(function () {
+    Route::get('components/dashboard', 'dashboard');            // fleet cards (static — must precede /{component})
+    Route::get('components/{component}', 'show');               // one component's dossier + replacement chain
+    Route::get('Vehicle/{vehicle}/components', 'forVehicle');    // one car's current configuration + history
+});
+
 // Vehicle Status Dashboard — the team's all-day follow-up board (one derived row per car: status,
 // current owner, last/next action, days-in-status, blocked). Read-only aggregation (insights.view);
 // the Supervisor's "Set to Ready" sign-off reuses the same authority that closes a workflow ticket.
@@ -863,6 +877,20 @@ Route::middleware(['auth:sanctum', 'permission:insights.view'])->get('DataHealth
 
 // Fleet-wide operational profitability per car: rental income (type-R, ex-VAT) − maintenance cost
 Route::middleware(['auth:sanctum', 'permission:insights.view'])->get('Profitability', [ProfitabilityController::class, 'index']);
+
+// Intelligence Center — the platform's own operating state: evidence readiness, capability health,
+// promotion history, QC throughput, feature flags, background-job health and data-quality problems.
+// This was reachable only through `php artisan intelligence:evidence-health`, which was defensible
+// while the audience was one engineer and stopped being defensible the moment the platform started
+// making claims inside a supervisor's workflow.
+//
+// `evaluate` runs the promotion gate. It is DRY-RUN unless persist=1, and appending to an immutable
+// decision history is a manage-level act, not a viewing one — hence the stricter permission.
+Route::middleware(['auth:sanctum'])->prefix('intelligence/center')
+    ->controller(\App\Http\Controllers\IntelligenceCenterController::class)->group(function () {
+        Route::get('/', 'show')->middleware('permission:insights.view');
+        Route::post('/evaluate', 'evaluate')->middleware('permission:maintenance.manage');
+    });
 
 // Fleet Intelligence (Phase 1) — read-only analytics surfaces. Pure reads → insights.view.
 // Static prefix, no wildcards. Frontend visibility is gated by SHOW_FLEET_INTELLIGENCE.

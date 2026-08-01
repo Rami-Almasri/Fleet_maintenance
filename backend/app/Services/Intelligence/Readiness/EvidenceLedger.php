@@ -23,15 +23,59 @@ class EvidenceLedger
     /** Verdicts needed before the comeback card's outcome measure can be reconsidered. */
     public const COMEBACK_VERDICT_FLOOR = 30;
 
+    /**
+     * Per-instance memo.
+     *
+     * Not an optimisation detail — a correctness one as much as a speed one. Every consumer treats
+     * this ledger as a SNAPSHOT: the health table, the readiness table and the freshness table are
+     * read as three views of one moment. Recomputing between them would let a row arrive mid-report
+     * and produce a page whose sections disagree with each other by one observation.
+     *
+     * It also stops the report costing what it used to. `all()` was called four times per run and
+     * every call re-counted `maintenances` (26k), `maintenance_signatures` (49k) and every median —
+     * roughly 160 queries to render one screen. That was survivable in a nightly command and is not
+     * survivable on a page load.
+     *
+     * @var array<string, mixed>
+     */
+    private array $memo = [];
+
     /** @return EvidenceRequirement[] */
     public function all(): array
     {
-        return [
+        return $this->remember('all', fn () => [
             $this->comeback(),
             $this->garageRecommendation(),
             $this->partsRecommendation(),
             $this->etaPrediction(),
-        ];
+        ]);
+    }
+
+    /**
+     * Drop the snapshot and read the world again.
+     *
+     * Exists for the one caller that legitimately needs it: a long-running process that has just
+     * written evidence and wants to see its own effect.
+     */
+    public function refresh(): static
+    {
+        $this->memo = [];
+
+        return $this;
+    }
+
+    /** @template T @param callable():T $compute @return T */
+    private function remember(string $key, callable $compute): mixed
+    {
+        return array_key_exists($key, $this->memo)
+            ? $this->memo[$key]
+            : $this->memo[$key] = $compute();
+    }
+
+    /** `hasTable` is itself a round trip, and it is asked a dozen times per report. */
+    private function hasTable(string $table): bool
+    {
+        return $this->remember("has:{$table}", fn () => DB::getSchemaBuilder()->hasTable($table));
     }
 
     /**
@@ -191,7 +235,7 @@ class EvidenceLedger
      */
     private function promotionState(string $capabilityId): ?bool
     {
-        if (! DB::getSchemaBuilder()->hasTable('capability_promotions')) {
+        if (! $this->hasTable('capability_promotions')) {
             return null;
         }
 
@@ -221,6 +265,12 @@ class EvidenceLedger
      * @return array{closed:int, with_verdict:int, coverage:float, lost:int}
      */
     public function qcCoverage(): array
+    {
+        return $this->remember('qc', fn () => $this->computeQcCoverage());
+    }
+
+    /** @return array{closed:int, with_verdict:int, unverifiable:int, coverage:float, lost:int} */
+    private function computeQcCoverage(): array
     {
         $closed = Maintenance::whereNotNull('workflow_status')
             ->whereIn('workflow_status', [Maintenance::WF_CLOSED, Maintenance::WF_AWAITING_INVOICE])
@@ -313,9 +363,11 @@ class EvidenceLedger
     {
         $parts = DB::table('part_purchases')->count()
             + DB::table('part_requests')->count()
-            + (DB::getSchemaBuilder()->hasTable('maintenance_line_items')
+            + ($this->hasTable('maintenance_line_items')
                 ? DB::table('maintenance_line_items')->where('kind', 'part')->count()
                 : 0);
+
+        $age = $this->ageStats('part_purchases');
 
         return new EvidenceRequirement(
             capabilityId: 'parts-recommendation',
@@ -326,9 +378,9 @@ class EvidenceLedger
             weeklyRate: $this->weeklyRate('part_purchases'),
             quality: EvidenceRequirement::QUALITY_MEASURED,
             blocker: $parts < 200 ? 'parts are not recorded against repairs at all yet' : null,
-            medianAgeDays: $this->ageStats('part_purchases')['median_days'],
-            oldestAt: $this->ageStats('part_purchases')['oldest'],
-            newestAt: $this->ageStats('part_purchases')['newest'],
+            medianAgeDays: $age['median_days'],
+            oldestAt: $age['oldest'],
+            newestAt: $age['newest'],
             datasetAgeDays: $this->datasetAgeDays(),
         );
     }
@@ -343,6 +395,9 @@ class EvidenceLedger
 
         $usable  = (int) ($d->usable ?? 0);
         $invalid = (int) ($d->invalid ?? 0);
+
+        $age = $this->ageStats('maintenances', 'out_date',
+            fn ($q) => $q->whereNotNull('actual_in_date'), 'with_in_date');
 
         return new EvidenceRequirement(
             capabilityId: 'eta-prediction',
@@ -359,12 +414,9 @@ class EvidenceLedger
                 : null,
             coverage: $usable > 0 ? ($usable - $invalid) / $usable : 0.0,
             // Duration evidence is dated by the repair itself, not by when the row was written.
-            medianAgeDays: $this->ageStats('maintenances', 'out_date',
-                fn ($q) => $q->whereNotNull('actual_in_date'))['median_days'],
-            oldestAt: $this->ageStats('maintenances', 'out_date',
-                fn ($q) => $q->whereNotNull('actual_in_date'))['oldest'],
-            newestAt: $this->ageStats('maintenances', 'out_date',
-                fn ($q) => $q->whereNotNull('actual_in_date'))['newest'],
+            medianAgeDays: $age['median_days'],
+            oldestAt: $age['oldest'],
+            newestAt: $age['newest'],
             datasetAgeDays: $this->datasetAgeDays(),
         );
     }
@@ -378,9 +430,16 @@ class EvidenceLedger
      *
      * @return array{median_days:?int, oldest:?Carbon, newest:?Carbon}
      */
-    private function ageStats(string $table, string $column = 'created_at', ?callable $constrain = null): array
+    private function ageStats(string $table, string $column = 'created_at', ?callable $constrain = null, string $variant = ''): array
     {
-        if (! DB::getSchemaBuilder()->hasTable($table)) {
+        return $this->remember("age:{$table}:{$column}:{$variant}",
+            fn () => $this->computeAgeStats($table, $column, $constrain));
+    }
+
+    /** @return array{median_days:?int, oldest:?Carbon, newest:?Carbon} */
+    private function computeAgeStats(string $table, string $column, ?callable $constrain): array
+    {
+        if (! $this->hasTable($table)) {
             return ['median_days' => null, 'oldest' => null, 'newest' => null];
         }
 
@@ -407,9 +466,11 @@ class EvidenceLedger
     /** Days since the corpus last observed anything at all. */
     private function datasetAgeDays(): ?int
     {
-        $last = DB::table('maintenance_signatures')->max('occurred_at');
+        return $this->remember('dataset_age', function () {
+            $last = DB::table('maintenance_signatures')->max('occurred_at');
 
-        return $last !== null ? (int) Carbon::parse($last)->diffInDays(now()) : null;
+            return $last !== null ? (int) Carbon::parse($last)->diffInDays(now()) : null;
+        });
     }
 
     /**
@@ -422,7 +483,7 @@ class EvidenceLedger
      */
     private function lastEvaluation(string $capabilityId): array
     {
-        if (! DB::getSchemaBuilder()->hasTable('capability_promotions')) {
+        if (! $this->hasTable('capability_promotions')) {
             return ['at' => null, 'evidence' => null, 'dataset' => null];
         }
 
@@ -442,6 +503,11 @@ class EvidenceLedger
     /** The corpus fingerprint as it stands — compared against what an evaluation was run on. */
     public function datasetVersion(): string
     {
+        return $this->remember('dataset_version', fn () => $this->computeDatasetVersion());
+    }
+
+    private function computeDatasetVersion(): string
+    {
         $row = DB::selectOne(
             'SELECT COUNT(*) n, MAX(occurred_at) last_at, MIN(classifier_version) cv FROM maintenance_signatures'
         );
@@ -459,7 +525,12 @@ class EvidenceLedger
      */
     private function weeklyRate(string $table, string $column = 'created_at'): float
     {
-        if (! DB::getSchemaBuilder()->hasTable($table)) {
+        return $this->remember("rate:{$table}:{$column}", fn () => $this->computeWeeklyRate($table, $column));
+    }
+
+    private function computeWeeklyRate(string $table, string $column): float
+    {
+        if (! $this->hasTable($table)) {
             return 0.0;
         }
 

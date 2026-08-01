@@ -46,6 +46,7 @@ import ServiceReminders from './pages/reminders/ServiceReminders';
 import EventClassificationReview from './pages/EventClassificationReview';
 import MileageCenter from './pages/MileageCenter';
 import DataHealth from './pages/DataHealth';
+import IntelligenceCenter from './pages/IntelligenceCenter';
 import SyncAudit from './pages/SyncAudit';
 import Notifications from './pages/Notifications';
 import Settings from './pages/Settings';
@@ -262,6 +263,8 @@ export default function App() {
                   <Route path="/maintenance-swap" element={<MaintenanceSwap />} />
                   {/* Data Health absorbed Status Mismatch as its second tab — keep the old path alive. */}
                   <Route path="/data-health" element={<DataHealth />} />
+                  {/* The platform's own operating state — previously reachable only via artisan. */}
+                  <Route path="/intelligence-center" element={<IntelligenceCenter />} />
                   <Route path="/status-mismatch" element={<Navigate to="/data-health?tab=status" replace />} />
                   {/* Workflow Oversight — accountability & data-integrity suite over the maintenance workflow. */}
                   <Route path="/oversight/mileage" element={<MileageDiscrepancies />} />

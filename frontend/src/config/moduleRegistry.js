@@ -146,6 +146,7 @@ export const MODULES = [
       { name: 'Mis-Diagnosis', route: '/oversight/misdiagnoses', permission: 'insights.view', icon: Icon.XCircle, desc: 'Faults later marked incorrect — the audited mis-diagnosis trail.' },
       { name: 'Transferred — Faults Fixed', route: '/oversight/resolved-transfers', permission: 'insights.view', icon: Icon.ArrowRight, desc: 'Cars moved on with all faults fixed — each transfer noted and logged.' },
       { name: 'Data Health', route: '/data-health', permission: 'insights.view', icon: Icon.Activity, desc: 'Overall data quality — incomplete records and status mismatches.' },
+      { name: 'Intelligence Center', route: '/intelligence-center', permission: 'insights.view', icon: Icon.Activity, desc: 'What the platform knows and how sure it is — evidence readiness, QC throughput, promotion decisions and what is blocking each capability.' },
       { name: 'Mileage & Fuel', route: '/mileage', permission: 'insights.view', icon: Icon.Gauge, desc: 'Every odometer and fuel tool — travel vs. contract km, leakage and chain audit.' },
     ],
   },
