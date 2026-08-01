@@ -264,6 +264,25 @@ export default function IntelligenceCenter() {
         subtitle="What the platform knows, how sure it is, and what is stopping it from knowing more."
       />
 
+      {/*
+        A section that crashed says so. Rendering it empty would be worse than the 500 this replaced:
+        "no data-quality problems" and "the data-quality check failed" look identical and mean the
+        opposite. Everything else on the page is still readable.
+      */}
+      {Object.keys(data.failed_sections || {}).length > 0 && (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-5 py-4 text-rose-900">
+          <p className="font-semibold">Part of this page could not be read.</p>
+          <ul className="mt-2 space-y-1 text-sm">
+            {Object.entries(data.failed_sections).map(([key, message]) => (
+              <li key={key}><span className="font-mono text-xs">{key}</span> — {message}</li>
+            ))}
+          </ul>
+          <p className="mt-2 text-xs opacity-80">
+            The rest of the page is accurate. Nothing here is cached while a section is failing.
+          </p>
+        </div>
+      )}
+
       <Headline
         headline={data.headline}
         alert={data.alert}

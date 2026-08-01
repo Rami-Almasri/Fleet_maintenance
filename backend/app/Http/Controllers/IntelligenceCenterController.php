@@ -34,6 +34,14 @@ class IntelligenceCenterController extends Controller
 
         $payload = Cache::remember(self::CACHE_KEY, self::TTL_SECONDS, fn () => $snapshot->build());
 
+        // A degraded read is never cached. Sections fail for transient reasons — a migration in
+        // flight, a lock, a table briefly absent — and freezing that for five minutes would turn a
+        // momentary fault into a page that stays wrong long after the cause has gone.
+        if (! empty($payload['failed_sections'])) {
+            Cache::forget(self::CACHE_KEY);
+            $cached = false;
+        }
+
         // The page states its own age. A dashboard that cannot say how old it is invites being read
         // as live, which is precisely the failure it is meant to catch in everything else.
         return response()->json($payload + [

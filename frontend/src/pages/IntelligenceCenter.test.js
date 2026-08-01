@@ -155,6 +155,27 @@ test('lost evidence is reported with the reason it cannot be recovered', async (
   expect(screen.getByText(/closed unverified — unrecoverable/)).toBeInTheDocument();
 });
 
+/**
+ * A section that crashed must say so. Rendering it empty is worse than the 500 it replaced: "no
+ * data-quality problems" and "the data-quality check failed" look identical and mean the opposite.
+ */
+test('a section that failed to read is named, and the rest of the page still renders', async () => {
+  api.get.mockResolvedValue({
+    data: { ...SNAPSHOT, data_quality: [], failed_sections: { data_quality: 'Base table not found' } },
+  });
+  await load();
+
+  expect(screen.getByText('Part of this page could not be read.')).toBeInTheDocument();
+  expect(screen.getByText(/Base table not found/)).toBeInTheDocument();
+  // The rest is untouched and still accurate.
+  expect(screen.getByText('Comeback Warning (shipped)')).toBeInTheDocument();
+});
+
+test('a healthy read shows no failure banner', async () => {
+  await load();
+  expect(screen.queryByText('Part of this page could not be read.')).not.toBeInTheDocument();
+});
+
 test('re-reading bypasses the cache rather than re-serving it', async () => {
   await load();
   fireEvent.click(screen.getByText('Re-read now'));

@@ -45,16 +45,51 @@ class IntelligenceSnapshot
     {
         return [
             'generated_at' => now()->toIso8601String(),
-            'alert'        => $this->ledger->verdictPipelineAlert(),
-            'headline'     => $this->headline(),
-            'qc'           => $this->qc(),
-            'capabilities' => $this->capabilities(),
-            'promotions'   => $this->promotions(),
-            'flags'        => $this->flags(),
-            'jobs'         => $this->jobs(),
-            'data_quality' => $this->dataQuality(),
-            'versions'     => $this->versions(),
+            'alert'        => $this->section('alert', fn () => $this->ledger->verdictPipelineAlert()),
+            'headline'     => $this->section('headline', fn () => $this->headline()),
+            'qc'           => $this->section('qc', fn () => $this->qc()),
+            'capabilities' => $this->section('capabilities', fn () => $this->capabilities(), []),
+            'promotions'   => $this->section('promotions', fn () => $this->promotions(), []),
+            'flags'        => $this->section('flags', fn () => $this->flags(), []),
+            'jobs'         => $this->section('jobs', fn () => $this->jobs(), []),
+            'data_quality' => $this->section('data_quality', fn () => $this->dataQuality(), []),
+            'versions'     => $this->section('versions', fn () => $this->versions()),
+            'failed_sections' => $this->failures,
         ];
+    }
+
+    /** @var array<string, string> section key → the error that stopped it */
+    private array $failures = [];
+
+    /**
+     * Each section stands or falls alone.
+     *
+     * The platform's standing rule is that intelligence is advisory and must never break the thing it
+     * advises. That rule applies to this page too, and rather more sharply than it looks: the reader
+     * who most needs the Intelligence Center is the one investigating something that is already going
+     * wrong, and a page that returns 500 because one table is mid-migration tells them nothing at the
+     * exact moment it is supposed to tell them everything.
+     *
+     * The failure is REPORTED, never swallowed. A section quietly rendering empty would be worse than
+     * the 500 it replaced — "no data-quality problems" and "the data-quality check crashed" look
+     * identical on screen and mean opposite things.
+     *
+     * @template T
+     * @param  callable():T $compute
+     * @param  T|null       $fallback
+     * @return T|null
+     */
+    private function section(string $key, callable $compute, mixed $fallback = null): mixed
+    {
+        try {
+            return $compute();
+        } catch (\Throwable $e) {
+            report($e);
+
+            $this->failures[$key] = $e->getMessage();
+
+            return $fallback;
+        }
     }
 
     /**
