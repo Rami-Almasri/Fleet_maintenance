@@ -6,6 +6,11 @@
 **Supersedes nothing.** Consumes: `Historical-Maintenance-Knowledge-Opportunities.md` (what is reconstructable), `Maintenance-Intelligence-Capability-Design.md` (capability catalogue), `Fleet-Knowledge-Engine-Discovery-Log.md` (validated discoveries).
 **This document is a build spec, not an analysis.** Every entry is anchored to a real workflow state (`Maintenance::WF_*`) and a real screen or endpoint.
 
+> **⚠ This is the design record, not a description of what runs.** Most of what is specified here was
+> deliberately not built — three of the four capabilities are blocked by measured facts about the
+> fleet's data. For what actually exists, the rules it obeys and the runbook, read
+> **[`Intelligence-Platform-As-Built.md`](./Intelligence-Platform-As-Built.md)**.
+
 ---
 
 ## 0. The capability test
