@@ -223,6 +223,8 @@ class IntelligenceSnapshot
                 'reevaluation_reason' => $r->reevaluationReason(),
                 'evidence_stale' => $r->isEvidenceStale(),
                 'feed_quiet'  => $r->feedIsQuiet() && $r->current > 0,
+                'bulk_loaded' => $r->wasBulkLoaded(),
+                'single_day_share' => $r->singleDayShare,
             ];
         }
 
@@ -525,6 +527,27 @@ class IntelligenceSnapshot
                     $stamped, $closedTickets,
                 ),
                 'remedy'   => 'Stamp wf_closed_at on every terminal transition, not just the direct close path.',
+            ];
+        }
+
+        // Evidence that arrived in one go. Not a fault — imported history is real history — but it is
+        // not proof the fleet produces this data, which is what readiness actually claims.
+        foreach ($this->ledger->all() as $r) {
+            if (! $r->wasBulkLoaded()) {
+                continue;
+            }
+
+            $issues[] = [
+                'key'      => 'bulk-loaded-'.$r->capabilityId,
+                'severity' => 'medium',
+                'title'    => $r->label.': evidence arrived in one import',
+                'count'    => $r->current,
+                'detail'   => sprintf(
+                    '%.0f%% of it landed on a single day. Volume, freshness and arrival rate all read well because '
+                    .'they are all describing that one day.',
+                    $r->singleDayShare * 100,
+                ),
+                'remedy'   => 'Confirm the fleet keeps producing this data before treating the threshold as met.',
             ];
         }
 

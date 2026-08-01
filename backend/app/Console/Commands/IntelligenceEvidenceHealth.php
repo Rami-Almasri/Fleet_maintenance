@@ -207,13 +207,26 @@ class IntelligenceEvidenceHealth extends Command
         $conclusive = $qc['with_verdict'] - ($qc['unverifiable'] ?? 0);
 
         $this->table(['Metric', 'Value'], [
-            ['repaired tickets closed',   number_format($qc['closed'])],
+            ['closed AND verifiable',     number_format($qc['closed']).'  (reached a garage, had faults to fix)'],
             ['…with a human QC verdict',  number_format($qc['with_verdict'])],
             ['   of which conclusive',    number_format($conclusive).'  (usable for statistics)'],
             ['   could not verify',       number_format($qc['unverifiable'] ?? 0).'  (honest, counts as covered)'],
             ['coverage',                  sprintf('%.0f%%', $qc['coverage'] * 100)],
-            ['evidence permanently lost', number_format($qc['lost'])],
+            ['evidence permanently lost', number_format($qc['lost']).'  (lifetime — cannot recover)'],
+            ['…lost in the last 14 days', number_format($qc['lost_recently'] ?? 0)
+                .($qc['leaking'] ?? false ? '  ← STILL LEAKING' : '  (the gap has stopped growing)')],
         ]);
+
+        // A DEBT AND A LEAK NEED OPPOSITE RESPONSES. The lifetime figure can never recover — pre-gate
+        // closes drag it down permanently — so warning on it forever means printing the same line
+        // whether the leak stopped yesterday or is still running, and nobody reads it by the second
+        // month. The warning below fires only on the part somebody can act on.
+        if ($qc['leaking'] ?? false) {
+            $this->error(sprintf(
+                '  ✗ %d repaired ticket%s closed unverified in the last 14 days. That evidence is gone.',
+                $qc['lost_recently'], $qc['lost_recently'] === 1 ? '' : 's',
+            ));
+        }
 
         // A climbing unverifiable share is its own problem: the queue is being worked, but cars are
         // leaving before anyone can check them. That is a scheduling fix, not a workshop one.
@@ -224,8 +237,9 @@ class IntelligenceEvidenceHealth extends Command
             ));
         }
 
-        if ($qc['coverage'] < 0.8 && $qc['closed'] > 0) {
-            $this->warn('  ⚠ Below 80%. A verdict missed at close cannot be recovered later.');
+        if ($qc['coverage'] < 0.8 && $qc['closed'] > 0 && ! ($qc['leaking'] ?? false)) {
+            $this->line('  <fg=gray>Lifetime coverage is below 80%, but nothing has closed unverified recently — '
+                .'that is historical debt, not a live problem. Judge capture by the trend, not this number.</>');
         }
     }
 
@@ -321,12 +335,22 @@ class IntelligenceEvidenceHealth extends Command
         };
     }
 
+    /**
+     * Colour only — the WORDS always come from `readinessLabel()`.
+     *
+     * This used to re-derive the text from `status()` and print a bare "READY", which quietly
+     * discarded the qualifier the requirement had attached to it: a capability whose evidence all
+     * arrived in one import reported itself as plainly READY on this table while the health line two
+     * inches above said it was an import and not a feed. One of the two had to be lying.
+     */
     private function tint(EvidenceRequirement $r): string
     {
+        $label = $r->readinessLabel();
+
         return match ($r->status()) {
-            EvidenceRequirement::STATUS_READY   => '<fg=green>READY</>',
-            EvidenceRequirement::STATUS_BLOCKED => '<fg=red>BLOCKED</>',
-            default                             => $r->readinessLabel(),
+            EvidenceRequirement::STATUS_READY   => "<fg=green>{$label}</>",
+            EvidenceRequirement::STATUS_BLOCKED => "<fg=red>{$label}</>",
+            default                             => $label,
         };
     }
 
@@ -420,11 +444,17 @@ class IntelligenceEvidenceHealth extends Command
         ];
     }
 
-    /** The chase list — closed tickets whose verdict was never recorded. */
+    /**
+     * The chase list — closed tickets whose verdict was never recorded.
+     *
+     * Scoped to `verdictEligible()`, the same rule the close gate enforces and the same population
+     * the coverage percentage is measured against. Without it this list included tickets that never
+     * reached a workshop, which sends someone to chase a verdict that was never owed and quietly
+     * disagrees with the number printed six lines above it.
+     */
     private function gapList(): void
     {
-        $rows = Maintenance::whereNotNull('workflow_status')
-            ->whereIn('workflow_status', [Maintenance::WF_CLOSED, Maintenance::WF_AWAITING_INVOICE])
+        $rows = Maintenance::closedOut()->verdictEligible()
             ->whereNotExists(fn ($q) => $q->select(DB::raw(1))->from('repair_inspections')
                 ->whereColumn('repair_inspections.maintenance_id', 'maintenances.id'))
             ->orderByDesc('id')->limit(50)

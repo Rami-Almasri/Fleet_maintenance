@@ -150,7 +150,15 @@ function Capability({ c }) {
           <dl className="grid gap-x-8 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
             <Fact label="Evidence counted">{c.evidence}</Fact>
             <Fact label="Still needed">{c.remaining > 0 ? `${num(c.remaining)} more` : 'threshold met'}</Fact>
-            <Fact label="Arriving at">{c.weekly_rate > 0 ? `${c.weekly_rate}/week` : 'nothing arriving'}</Fact>
+            <Fact label="Arriving at">
+              {c.weekly_rate > 0 ? `${c.weekly_rate}/week` : 'nothing arriving'}
+              {/* Without this the rate reads as a habit when it is really one afternoon's import. */}
+              {c.bulk_loaded && (
+                <span className="ml-1 text-amber-600">
+                  · {Math.round(c.single_day_share * 100)}% on one day
+                </span>
+              )}
+            </Fact>
             <Fact label="Coverage">{pct(c.coverage)}</Fact>
             <Fact label="Median evidence age">
               {c.median_age_days === null ? '—' : `${num(c.median_age_days)} days`}

@@ -55,7 +55,11 @@ final readonly class CapabilityHealth
     {
         $dimensions = [
             'coverage'   => $r->coverage ?? 0.0,
-            'volume'     => $r->threshold > 0 ? min($r->current / $r->threshold, 1.0) : 1.0,
+            // A pile handed over in one afternoon is not the same asset as the same count accumulated
+            // by a running process, because volume is being used as a proxy for "this will keep
+            // coming". Halved rather than zeroed: the rows are real and usable, the guarantee is not.
+            'volume'     => ($r->threshold > 0 ? min($r->current / $r->threshold, 1.0) : 1.0)
+                * ($r->wasBulkLoaded() ? 0.5 : 1.0),
             'freshness'  => self::freshnessScore($r),
             'evaluation' => self::evaluationScore($r),
             'trust'      => self::trustScore($r, $promoted),
@@ -140,6 +144,16 @@ final readonly class CapabilityHealth
     {
         if ($r->blocker !== null) {
             return 'Blocked by data, not by build: '.$r->blocker;
+        }
+
+        // CHECKED BEFORE RE-EVALUATION, deliberately. A capability whose evidence arrived in one
+        // import reads as "threshold met, nobody has evaluated it" — which invites exactly the wrong
+        // action, running a backtest on a corpus that will not grow. Say what actually happened first.
+        if ($r->wasBulkLoaded()) {
+            return sprintf(
+                '%.0f%% of this evidence arrived on one day — an import, not a feed. Confirm the fleet keeps producing it.',
+                $r->singleDayShare * 100,
+            );
         }
 
         if ($reason = $r->reevaluationReason()) {

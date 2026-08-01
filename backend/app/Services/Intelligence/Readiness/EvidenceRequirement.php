@@ -61,7 +61,42 @@ final readonly class EvidenceRequirement
         public ?Carbon $lastEvaluatedAt = null,
         public ?int $evidenceAtLastEvaluation = null,
         public bool $datasetMoved = false,
+        /** 0..1 share of the evidence that arrived on its single busiest day */
+        public ?float $singleDayShare = null,
     ) {}
+
+    /** Above this, the evidence is a file somebody loaded rather than a feed the fleet produced. */
+    private const BULK_LOAD_SHARE = 0.5;
+
+    /**
+     * Below this many observations, a busy day is just a busy day.
+     *
+     * Without the floor the check fired on the comeback card at nine verdicts — five of which
+     * happened to land on the same Thursday — and announced that its evidence was "an import, not a
+     * feed". It is neither; it is nine rows. The platform's sample-size discipline applies to its own
+     * diagnostics as much as to its cards, and a warning that fires on noise is one nobody reads.
+     */
+    private const BULK_LOAD_MIN_ROWS = 100;
+
+    /**
+     * Did most of this evidence arrive in one go?
+     *
+     * The distinction volume cannot make, and the one that nearly let a capability be declared ready
+     * on nothing: 468 of 478 part purchases appeared in a single afternoon's backfill. Count, median
+     * age, freshness and arrival rate all read as excellent in that state — every one of them is
+     * describing the same afternoon.
+     *
+     * It is not a data-quality fault. Imported history is real history, and it is often exactly what
+     * a capability needs. What it is not is EVIDENCE THAT THE FLEET IS PRODUCING THIS DATA, and
+     * readiness is a claim about the future: that the feed will keep running, and that a model
+     * trained today will still have inputs next month.
+     */
+    public function wasBulkLoaded(): bool
+    {
+        return $this->singleDayShare !== null
+            && $this->current >= self::BULK_LOAD_MIN_ROWS
+            && $this->singleDayShare >= self::BULK_LOAD_SHARE;
+    }
 
     public function isReady(): bool
     {
@@ -95,6 +130,13 @@ final readonly class EvidenceRequirement
         }
 
         if ($this->weeklyRate <= 0) {
+            return null;
+        }
+
+        // Projecting from a rate that is really one import gives a confident date days away that
+        // will never arrive, because the thing being extrapolated already happened and will not
+        // happen again tomorrow.
+        if ($this->wasBulkLoaded()) {
             return null;
         }
 
@@ -171,10 +213,17 @@ final readonly class EvidenceRequirement
 
     public function readinessLabel(): string
     {
+        // "READY (imported)" rather than "READY". The threshold IS met and saying otherwise would be
+        // a different lie; what is not established is that the fleet produces this data on its own.
+        if ($this->wasBulkLoaded() && $this->status() === self::STATUS_READY) {
+            return 'READY (imported)';
+        }
+
         return match ($this->status()) {
             self::STATUS_READY   => 'READY',
             self::STATUS_BLOCKED => 'BLOCKED',
-            default              => $this->readyAt()?->toDateString() ?? 'never at this rate',
+            default              => $this->readyAt()?->toDateString()
+                ?? ($this->wasBulkLoaded() ? 'one import, no ongoing feed' : 'never at this rate'),
         };
     }
 }

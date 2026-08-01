@@ -405,6 +405,7 @@ class EvidenceLedger
             oldestAt: $age['oldest'],
             newestAt: $age['newest'],
             datasetAgeDays: $this->datasetAgeDays(),
+            singleDayShare: $this->singleDayShare('repair_inspections'),
             lastEvaluatedAt: $last['at'],
             evidenceAtLastEvaluation: $last['evidence'],
             datasetMoved: $last['dataset'] !== null && $last['dataset'] !== $this->datasetVersion(),
@@ -440,6 +441,7 @@ class EvidenceLedger
             oldestAt: $age['oldest'],
             newestAt: $age['newest'],
             datasetAgeDays: $this->datasetAgeDays(),
+            singleDayShare: $this->singleDayShare('repair_inspections'),
         );
     }
 
@@ -466,6 +468,7 @@ class EvidenceLedger
             oldestAt: $age['oldest'],
             newestAt: $age['newest'],
             datasetAgeDays: $this->datasetAgeDays(),
+            singleDayShare: $this->singleDayShare('part_purchases'),
         );
     }
 
@@ -502,6 +505,7 @@ class EvidenceLedger
             oldestAt: $age['oldest'],
             newestAt: $age['newest'],
             datasetAgeDays: $this->datasetAgeDays(),
+            singleDayShare: $this->singleDayShare('maintenances', 'out_date'),
         );
     }
 
@@ -612,21 +616,71 @@ class EvidenceLedger
         return $this->remember("rate:{$table}:{$column}", fn () => $this->computeWeeklyRate($table, $column));
     }
 
+    /** How far back an arrival rate is measured. Long enough to smooth a quiet fortnight, short
+     *  enough that last year's volume cannot vouch for this month's. */
+    private const RATE_WINDOW_WEEKS = 8;
+
     private function computeWeeklyRate(string $table, string $column): float
     {
         if (! $this->hasTable($table)) {
             return 0.0;
         }
 
-        $total = DB::table($table)->count();
+        // MEASURED OVER A TRAILING WINDOW, NOT OVER ALL TIME.
+        //
+        // A lifetime average answers "how fast has evidence arrived since records began", which is
+        // not the question. Readiness needs "how fast is it arriving NOW", and the two diverge
+        // violently on exactly the data that matters: 468 of 478 part purchases landed in a single
+        // afternoon's backfill, and the lifetime figure turned that one event into "1,397 per week",
+        // an arrival rate no fleet has ever had. That projected a readiness date days away and moved
+        // a capability from BLOCKED to READY without a single new repair being recorded.
+        $since = now()->subWeeks(self::RATE_WINDOW_WEEKS);
         $first = DB::table($table)->min($column);
 
-        if ($total === 0 || $first === null) {
+        if ($first === null) {
             return 0.0;
         }
 
-        $days = max(Carbon::parse($first)->diffInDays(now()), 1);
+        // A feed younger than the window is measured over its own life, so a genuinely new and
+        // healthy feed is not punished for having no history.
+        $from  = Carbon::parse($first)->max($since);
+        $count = DB::table($table)->where($column, '>=', $from)->count();
+        $days  = max(Carbon::parse($from)->diffInDays(now()), 1);
 
-        return $total / $days * 7;
+        return $count / $days * 7;
+    }
+
+    /**
+     * The share of evidence that arrived on its single busiest day.
+     *
+     * The number that distinguishes a feed from an import. A capability sitting on thousands of rows
+     * that all appeared in one afternoon is not well-evidenced; it has been handed a file. Volume,
+     * freshness and arrival rate all look excellent in that state — this is the only measure that
+     * does not.
+     */
+    private function singleDayShare(string $table, string $column = 'created_at'): ?float
+    {
+        return $this->remember("burst:{$table}:{$column}", function () use ($table, $column) {
+            if (! $this->hasTable($table)) {
+                return null;
+            }
+
+            $total = DB::table($table)->count();
+
+            if ($total === 0) {
+                return null;
+            }
+
+            // `->value('n')` is wrong here and fails silently: on a query whose select is already set
+            // it hands back the row's FIRST column, so this returned the DATE. `(int) '2026-07-30'`
+            // is 2026, and a nine-row table reported that 22,511% of its evidence arrived in one day.
+            // Read the row and name the field.
+            $busiest = DB::table($table)
+                ->selectRaw("DATE({$column}) d, COUNT(*) n")
+                ->whereNotNull($column)
+                ->groupBy('d')->orderByDesc('n')->limit(1)->first();
+
+            return $busiest === null ? null : min((int) $busiest->n / $total, 1.0);
+        });
     }
 }
