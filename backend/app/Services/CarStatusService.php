@@ -195,7 +195,12 @@ class CarStatusService
 
         $isOverdue = ($daysRemaining !== null && $daysRemaining < 0) || ($slaRemainingHrs !== null && $slaRemainingHrs < 0);
         $atRisk    = ! $isOverdue && $slaRemainingHrs !== null && $slaRemainingHrs <= 24;
-        $delay     = $isOverdue ? 'overdue' : ($atRisk ? 'at_risk' : 'on_track');
+
+        // SLA tone for the card's badge. Deliberately NOT named $delay: that name already holds the
+        // resolver's DelayStatus object (line ~171), and reusing it here silently turned every
+        // ->isDelayed read below into a property access on a string — a fatal that killed the whole
+        // board. Two different concepts, two different names.
+        $delayTone = $isOverdue ? 'overdue' : ($atRisk ? 'at_risk' : 'on_track');
 
         // The two questions a manager asks in the first 2 seconds: WHY is it here, and WHERE is it in the
         // pipeline. Both derived from data that already exists — no new columns, no guessing.
@@ -254,7 +259,7 @@ class CarStatusService
             'expected_completion' => optional($due)->toIso8601String(),
             'sla_remaining_hours' => $slaRemainingHrs,
             'days_remaining'     => $daysRemaining,
-            'delay_status'       => $delay,
+            'delay_status'       => $delayTone,
             'is_overdue'         => $isOverdue,
             'days_overdue'       => $isOverdue && $daysRemaining !== null ? abs($daysRemaining) : ($isOverdue && $slaRemainingHrs !== null ? (int) ceil(abs($slaRemainingHrs) / 24) : 0),
             'last_update'        => optional($t->last_state_change_at ?? $t->updated_at)->toIso8601String(),
