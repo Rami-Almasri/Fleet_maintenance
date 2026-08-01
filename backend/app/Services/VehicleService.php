@@ -36,7 +36,10 @@ class VehicleService
         ])
         // The car's own plate-history row (one per vehicle) so the list can flag the current
         // plate holder and let the frontend group reused plates — no per-row query.
-        ->with('plateAssignment')
+        // openMaintenanceContract / openMaintenanceTicket answer WHERE a garage visit came from:
+        // an OfficeManager contract (show it, with its number) or our own workflow (no OM contract
+        // exists — say so, so nobody goes looking for one). Both are hasOne, so still no N+1.
+        ->with(['plateAssignment', 'openContracts.maintenance', 'openMaintenanceTicket'])
         ->get();
     }
     public function store(array $data)

@@ -9,7 +9,7 @@ import ConfirmDialog from '../components/ui/ConfirmDialog';
 import { usePageStat } from '../components/PageStat';
 import { usePermissions } from '../hooks/usePermissions';
 import VehicleForm, { VEHICLE_STATUSES, vehicleToForm, cleanPayload } from './vehicles/VehicleForm';
-import DualState from '../components/ops/DualState';
+import DualState, { ContractLines } from '../components/ops/DualState';
 import { CommandPanel, StatGaugeTile } from '../components/ops';
 import VehiclesAnalytics from '../components/analytics/VehiclesAnalytics';
 
@@ -135,6 +135,14 @@ export default function Vehicles() {
   const rentedCount = useMemo(() => active.filter((v) => v.rented).length, [active]);
   const reservedCount = useMemo(() => active.filter((v) => v.reserved).length, [active]);
   const availableCount = useMemo(() => active.filter((v) => v.available).length, [active]);
+  // The chart strip describes the cars that are actually in service — ready to rent or
+  // out on a contract. Cars parked in maintenance, out of order, suspended, office use or
+  // returned would distort what the fleet is made of, so they're excluded from the charts
+  // (the KPI tiles above still count the whole active fleet).
+  const inService = useMemo(
+    () => list.filter((v) => v.status === 'ready' || v.status === 'rented'),
+    [list],
+  );
   const resetFilters = (fn) => { fn(); setPage(1); };
   const toggleFlag = (f) => resetFilters(() => setFlag((cur) => (cur === f ? '' : f)));
 
@@ -267,8 +275,8 @@ export default function Vehicles() {
           ))}
         </div>
 
-        {/* Analytics — the active fleet (sold/disposed excluded), matching the KPI tiles. */}
-        {!loading && <VehiclesAnalytics vehicles={active} />}
+        {/* Analytics — the in-service fleet only (status ready or rented). */}
+        {!loading && <VehiclesAnalytics vehicles={inService} />}
 
         {/* Fleet Registry — the mission-control telemetry table. */}
         <CommandPanel
@@ -328,7 +336,8 @@ export default function Vehicles() {
                   <th>Vehicle</th>
                   <th>Year · VIN</th>
                   <th className="r">Odometer</th>
-                  <th>Rental · Maintenance</th>
+                  {/* Status chips + the live paperwork underneath — no longer maintenance-only. */}
+                  <th>Status · Contracts</th>
                   <th>Condition</th>
                   <th className="r">Actions</th>
                 </tr>
@@ -350,7 +359,15 @@ export default function Vehicles() {
                       <div className="opx-sub" style={{ fontFamily: 'var(--mono)' }}>{v.vin || '—'}</div>
                     </td>
                     <td className="r opx-mono2">{fmtKm(v.odometer)}</td>
-                    <td><DualState vehicle={v} /></td>
+                    <td>
+                      <DualState vehicle={v} />
+                      {/* The live paperwork: every open contract (linked), plus a note wherever
+                          our own workflow raised the repair and no OM contract exists. */}
+                      <ContractLines
+                        vehicle={v}
+                        linkTo={(id, node) => <Link to={`/contracts/${id}`}>{node}</Link>}
+                      />
+                    </td>
                     <td>{condChip(v)}</td>
                     <td>
                       <div className="opx-actions">

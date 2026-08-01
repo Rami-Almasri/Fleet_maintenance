@@ -40,6 +40,32 @@
 .ds-none    {color:#94a3b8;background:rgba(148,163,184,.10);border-color:rgba(148,163,184,.24)}
 .ds-none .ds-dot{background:#94a3b8}
 
+/* -------- the paperwork lines under the chips: contracts, and the note --------
+   One row per live contract. The system-raised note is deliberately styled apart
+   (amber, dashed border, no hover) so "no contract number" reads as a statement
+   rather than as data that failed to load. */
+.ds-docs{display:flex;flex-direction:column;gap:2px;margin-top:4px}
+.ds-doc-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.ds-doc-row a{text-decoration:none}
+.ds-doc{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:600;
+  line-height:1.2;padding:2px 7px;border-radius:6px;border:1px solid transparent;white-space:nowrap}
+.ds-doc b{font-weight:800;font-variant-numeric:tabular-nums}
+/* The type leads the chip, so it's set as a label — uppercase and tracked out, the way the
+   column headers read — with the contract number following in the chip's own colour. */
+.ds-doc-kind{font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;opacity:.9}
+.ds-doc.rent {color:#1d4ed8;background:rgba(59,130,246,.10);border-color:rgba(59,130,246,.26)}
+.ds-doc.maint{color:#0f766e;background:rgba(13,148,136,.11);border-color:rgba(13,148,136,.28)}
+.ds-doc.book {color:#6d28d9;background:rgba(139,92,246,.10);border-color:rgba(139,92,246,.26)}
+.ds-doc-row a:hover .ds-doc{filter:brightness(.95);border-style:solid}
+.ds-doc.note{color:#b45309;background:rgba(245,158,11,.12);border-color:rgba(245,158,11,.42);
+  border-style:dashed;cursor:default}
+.ds-doc-note{font-weight:700;font-style:italic}
+.ds-doc-dates{font-size:10px;color:var(--ink-2,#94a3b8);white-space:nowrap}
+[data-theme='dark'] .ds-doc.rent {color:#60a5fa}
+[data-theme='dark'] .ds-doc.maint{color:#2dd4bf}
+[data-theme='dark'] .ds-doc.book {color:#a78bfa}
+[data-theme='dark'] .ds-doc.note {color:#fbbf24}
+
 /* -------- paused ribbon: the fixed full-width "returned to service" strip -------- */
 .ds-ribbon{display:flex;align-items:center;gap:12px;border-radius:12px;padding:11px 15px;
   border:1px solid rgba(245,158,11,.34);

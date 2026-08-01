@@ -445,6 +445,39 @@ class Vehicle extends Model
     }
 
     /**
+     * EVERY live contract on the car, of any type — the rental it's out on (C), the garage visit
+     * it's in (U) and the reservation held against it (R), which can all be true at once. Unlike
+     * openContract() (which picks one) this is the full picture the fleet list prints under the
+     * status chips, so a reader sees each piece of paperwork that actually exists.
+     *
+     * A booking is "live" on its own terms (see scopeUpcomingReservation): its in_date is the END
+     * of the reserved window, not a return, so currentlyOpen() would call every booking closed.
+     *
+     * Every contract in the DB came from the OfficeManager sync (they all carry an `external_id`),
+     * so anything listed here is by definition an OM document a user can go and open. Maintenance
+     * our own workflow raised has NO row here at all — see openMaintenanceTicket().
+     */
+    public function openContracts(): HasMany
+    {
+        return $this->hasMany(Contract::class)
+            ->where(fn ($q) => $q->currentlyOpen()->orWhere(fn ($r) => $r->upcomingReservation()))
+            ->orderBy('id');
+    }
+
+    /**
+     * The car's live maintenance TICKET — a row our own workflow created (origin 'manual', no OM
+     * contract behind it). Only committed ticket states count, so a pre-ticket diagnostic or a
+     * fenced recommendation never claims the car is in the workshop.
+     */
+    public function openMaintenanceTicket(): HasOne
+    {
+        return $this->hasOne(Maintenance::class)->ofMany(
+            ['id' => 'max'],
+            fn ($q) => $q->openWorkflow()->whereIn('workflow_status', Maintenance::WF_TICKET_STATES)
+        );
+    }
+
+    /**
      * Service-due status, computed STRICTLY in km from a single set of sources:
      *   - current mileage     = odometer               (API)
      *   - last service km     = last_service_odometer  ("Oil Change" sheet)

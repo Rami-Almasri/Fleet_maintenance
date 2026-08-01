@@ -91,6 +91,61 @@ export default function DualState({ vehicle = {}, size = 'sm', stack = false, sh
   );
 }
 
+/* -----------------------------------------------------------------------
+   <ContractLines> — the paperwork that sits under the status chips: one line
+   per live contract on the car (Rental / Maintenance / Booking), each with its
+   number and dates, linking straight to the contract.
+
+   The one that matters most is the line that ISN'T a contract. When our own
+   workflow raises a repair, no OfficeManager contract is ever opened for it —
+   so that line renders as a NOTE ("Created by System — no OM contract"), in a
+   different colour and deliberately not clickable. Leaving the slot blank would
+   read as a number that failed to load and send someone hunting in OM for a
+   document that never existed.
+
+   Renders nothing when the car has no live paperwork, so it can be dropped in
+   unconditionally. Fed by VehicleResource's `contract_lines`.
+   ----------------------------------------------------------------------- */
+const TYPE_TONE = { C: 'rent', U: 'maint', R: 'book' };
+
+export function ContractLines({ vehicle = {}, linkTo }) {
+  const lines = vehicle.contract_lines || [];
+  if (!lines.length) return null;
+
+  return (
+    <div className="ds-docs">
+      {lines.map((l, i) => {
+        const note = l.kind === 'note';
+        const dates = [l.since ? `since ${l.since}` : '', l.due ? `due ${l.due}` : '']
+          .filter(Boolean).join(' · ');
+
+        // The TYPE leads — it's the thing being asked of the row ("what kind of contract is
+        // this?"). The number follows as the lookup key.
+        const chip = (
+          <span
+            className={`ds-doc ${note ? 'note' : TYPE_TONE[l.type] || 'rent'}`}
+            title={note
+              ? 'Raised by the Fleet maintenance workflow. No OfficeManager contract was opened for it — there is nothing to look up in OM.'
+              : `${l.label} contract ${l.contract_no ? `#${l.contract_no}` : ''} — from OfficeManager. Click to open it.`}
+          >
+            <span className="ds-doc-kind">{l.label}</span>
+            {note
+              ? <span className="ds-doc-note">{l.note}</span>
+              : <b>{l.contract_no ? `#${l.contract_no}` : `#${l.contract_id}`}</b>}
+          </span>
+        );
+
+        return (
+          <div className="ds-doc-row" key={`${l.kind}-${l.contract_id || l.type}-${i}`}>
+            {!note && l.contract_id && linkTo ? linkTo(l.contract_id, chip) : chip}
+            {dates && <span className="ds-doc-dates">{dates}</span>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /* Full-width "Paused — Returned to Service" ribbon for headers & drawers.
    Renders nothing unless the vehicle is actually paused, so it can be
    dropped in unconditionally. */

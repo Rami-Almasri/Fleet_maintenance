@@ -25,6 +25,76 @@ class VehicleResource extends JsonResource
         return $letter ? trim($letter . ' ' . $digits) : $digits;
     }
 
+    /** contract_type code → the human name used across the app (mirrors Badge.js CONTRACT_TYPE). */
+    private const CONTRACT_TYPES = ['C' => 'Rental', 'U' => 'Maintenance', 'R' => 'Booking'];
+
+    /** Print Rental before Maintenance before Booking, whatever order the rows came back in. */
+    private const TYPE_ORDER = ['C' => 0, 'U' => 1, 'R' => 2];
+
+    /**
+     * Everything currently ON this car, in the order a reader wants it — one entry per live piece of
+     * paperwork, plus a NOTE where paperwork deliberately does not exist. Two kinds:
+     *
+     *   kind 'contract' — a real contract (Rental / Maintenance / Booking) synced from OfficeManager.
+     *                     Carries its number, id and dates, so the UI can link straight to it.
+     *   kind 'note'     — our own maintenance workflow raised this repair. NO OM contract was ever
+     *                     opened for it, so instead of a number we state that in words. Without this
+     *                     the row would look like a contract whose number simply failed to load, and
+     *                     someone would go hunting in OM for a document that never existed.
+     *
+     * A car can legitimately have several at once (out on rent AND in the garage), hence a list.
+     * Returns [] unless the list eager-loaded the relations, so single-vehicle reads never lazy-load.
+     */
+    private function contractLines(): array
+    {
+        if (! $this->relationLoaded('openContracts') && ! $this->relationLoaded('openMaintenanceTicket')) {
+            return [];
+        }
+
+        $contracts = $this->relationLoaded('openContracts') ? $this->openContracts : collect();
+        $ticket    = $this->relationLoaded('openMaintenanceTicket') ? $this->openMaintenanceTicket : null;
+
+        // Every open contract is shown, whatever the car's status says — if a contract exists, the
+        // reader wants to see it AND what type it is. A car reading "Office Use" while still holding
+        // an open rental is exactly the kind of thing worth surfacing, not hiding.
+        //
+        // The only thinning is one line per TYPE, newest first: two simultaneously-open rentals on
+        // one car is a data fault, not two rentals to read, and the latest is the live one.
+        $contracts = $contracts->sortByDesc('id')->unique('contract_type');
+
+        $lines = $contracts->map(fn ($c) => [
+            'kind'        => 'contract',
+            'type'        => $c->contract_type,
+            'label'       => self::CONTRACT_TYPES[$c->contract_type] ?? $c->contract_type,
+            'source'      => 'om',
+            'contract_id' => $c->id,
+            'contract_no' => $c->contract_no,
+            'since'       => optional($c->out_date)->toDateString(),
+            'due'         => optional(optional($c->maintenance)->effectiveExpectedCompletion())->toDateString(),
+            'note'        => null,
+        ])->sortBy(fn ($l) => self::TYPE_ORDER[$l['type']] ?? 9)->values()->all();
+
+        // The system-raised repair. Only a note when NO maintenance contract covers it — if an OM
+        // type-U contract is already listed, that contract is the document of record and the ticket
+        // only contributes its workflow stage (see maintenance_state).
+        $hasMaintenanceContract = $contracts->contains(fn ($c) => $c->contract_type === 'U');
+        if ($ticket && ! $hasMaintenanceContract) {
+            array_splice($lines, min(1, count($lines)), 0, [[
+                'kind'        => 'note',
+                'type'        => 'U',
+                'label'       => 'Maintenance',
+                'source'      => 'system',
+                'contract_id' => null,
+                'contract_no' => null,
+                'since'       => optional($ticket->created_at)->toDateString(),
+                'due'         => optional($ticket->effectiveExpectedCompletion())->toDateString(),
+                'note'        => 'Created by System — no OM contract',
+            ]]);
+        }
+
+        return $lines;
+    }
+
     /**
      * Transform the resource into an array.
      *
@@ -32,6 +102,9 @@ class VehicleResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
+        $lines = $this->contractLines();
+        $maintLine = collect($lines)->firstWhere('type', 'U');
+
         return [
             "id" => $this->id,
             "code" => $this->code,
@@ -82,6 +155,18 @@ class VehicleResource extends JsonResource
             "deferred_maintenance_flagged_by" => $this->deferred_maintenance_flagged_by,
             // true when the car has a currently-open maintenance contract (in the garage now)
             "under_maintenance" => (bool) ($this->open_maintenance_count ?? 0),
+            // Every live contract on the car (Rental / Maintenance / Booking) plus a NOTE wherever
+            // our own workflow raised the repair and no OM contract exists. See contractLines().
+            // List-only: an empty array when the relations weren't eager-loaded.
+            "contract_lines" => $lines,
+            // WHERE the current garage visit came from — 'om' (a real OM contract) or 'system'
+            // (our workflow raised it; nothing to look up in OM). Null when the car isn't in a shop.
+            "maintenance_source" => $maintLine['source'] ?? null,
+            // The live workflow stage ('under_repair', 'awaiting_dispatch', …) so the shared
+            // <DualState> chip can name the actual stage instead of a generic "In Workshop".
+            "maintenance_state" => $this->relationLoaded('openMaintenanceTicket')
+                ? optional($this->openMaintenanceTicket)->workflow_status
+                : null,
             // MANDATORY maintenance — an open committed ticket the inspector marked NON-deferrable. The car
             // cannot be rented until the workshop finishes; the rental form blocks the pull-out outright.
             "maintenance_mandatory" => (bool) ($this->mandatory_maintenance_count ?? 0),
