@@ -101,6 +101,12 @@ class RolesAndPermissionsSeeder extends Seeder
             'registration.view', 'maintenance.view', 'dashboard.view',
             'parts.view', 'parts.request', 'parts.purchase',
             'components.view', // Asset Layer: read-only (desk role — no asset custody)
+            // Fleet analytics: utilization, maintenance↔rental overlaps, active shop stays, the swap
+            // board, mileage-chain audit and the oversight surfaces. Operations was the ONLY senior role
+            // without this — maintenance, finance and even the read-only viewer all had it — so an ops
+            // manager holding billing.manage could not open the utilisation board a viewer could see.
+            // That inverted ladder was an oversight in this list, not a policy.
+            'insights.view',
         ],
         // Garage / workshop coordination and bill approvals.
         'maintenance' => [
