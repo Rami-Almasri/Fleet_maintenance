@@ -145,6 +145,51 @@ class SnapshotMaintenanceTicket extends Command
         return self::SUCCESS;
     }
 
+    /**
+     * Every table that references `maintenances` but is NOT in CHILD_TABLES, together with the live rows
+     * it holds for this ticket — i.e. exactly what a restore would destroy without being able to replace.
+     *
+     * The list is written out rather than read from information_schema so it stays readable and reviewable
+     * alongside the migrations; a table missing from the environment is skipped, never fatal. Keep it in
+     * sync when a new table gains a `maintenance_id`.
+     *
+     * @return array<string,int> table => live rows not covered by the snapshot (zero-counts dropped)
+     */
+    private function uncoveredRows(int $ticketId): array
+    {
+        // Cascade-deleted or nulled by the header delete, and absent from CHILD_TABLES.
+        $related = [
+            'maintenance_signatures', 'repair_inspections', 'recurring_fault_reviews',
+            'garage_recommendation_decisions', 'maintenance_required_parts',
+            'garage_invoice_submissions', 'resolved_transfer_flags',
+            'maintenance_checkpoints', 'maintenance_handovers', 'maintenance_handover_comparisons',
+            'maintenance_incidents', 'maintenance_temporary_releases', 'maintenance_responsibles',
+            'maintenance_task_actions', 'part_requests', 'part_purchases',
+            'odometer_block_events', 'contact_reminders', 'component_events', 'service_records',
+            'complaints', 'complaint_events', 'capture_friction', 'domain_events',
+        ];
+
+        $uncovered = [];
+
+        foreach ($related as $table) {
+            if (array_key_exists($table, self::CHILD_TABLES)) {
+                continue; // the snapshot carries it
+            }
+            try {
+                $n = DB::table($table)->where('maintenance_id', $ticketId)->count();
+            } catch (\Throwable) {
+                continue; // table or column not present in this environment
+            }
+            if ($n > 0) {
+                $uncovered[$table] = $n;
+            }
+        }
+
+        arsort($uncovered);
+
+        return $uncovered;
+    }
+
     private function restore(int $ticketId): int
     {
         $path = $this->filePath($ticketId);
@@ -162,6 +207,27 @@ class SnapshotMaintenanceTicket extends Command
         $dryRun = (bool) $this->option('dry-run');
         $this->line("Restoring ticket #{$ticketId} from snapshot taken {$snapshot['captured_at']}"
             . ($dryRun ? ' [DRY RUN]' : '') . '…');
+
+        // ── COVERAGE GATE ────────────────────────────────────────────────────────────────────────────
+        // Restore deletes the header row, and that delete cascades through EVERY table that references
+        // `maintenances` — not merely the ones in CHILD_TABLES. Any related table this command does not
+        // know about is therefore destroyed and never put back: a "safety net" that quietly eats data it
+        // was never taught to carry. So before touching anything, look for live rows in the related
+        // tables that are NOT covered by the snapshot, and refuse if any exist.
+        $uncovered = $this->uncoveredRows($ticketId);
+
+        if ($uncovered !== []) {
+            $this->newLine();
+            $this->error('REFUSING TO RESTORE — this ticket has rows in tables the snapshot does not carry.');
+            $this->error('Deleting the header would cascade these away with no copy to restore from:');
+            $this->table(
+                ['Uncovered table', 'Live rows that would be lost'],
+                array_map(fn ($t, $n) => [$t, number_format($n)], array_keys($uncovered), $uncovered)
+            );
+            $this->line('Fix: add the table to CHILD_TABLES (and re-take the snapshot), or clear those rows deliberately.');
+
+            return self::FAILURE;
+        }
 
         try {
             DB::transaction(function () use ($ticketId, $snapshot, $dryRun) {

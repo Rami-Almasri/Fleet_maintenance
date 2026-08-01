@@ -45,6 +45,7 @@ class VehicleLogService
             return VehicleLogEvent::create([
                 'vehicle_id'         => $ticket->vehicle_id,
                 'maintenance_id'     => $ticket->id,
+                'maintenance_ref'    => $ticket->id,   // FK-free twin: survives the ticket's deletion
                 'linked_contract_id' => $this->activeMaintenanceContractId($ticket->vehicle_id),
                 'event_type'         => $eventType,
                 'source_tag'         => $opts['source_tag']
@@ -81,6 +82,7 @@ class VehicleLogService
             return VehicleLogEvent::create([
                 'vehicle_id'          => $vehicleId,
                 'maintenance_id'      => $task->maintenance_id,
+                'maintenance_ref'     => $task->maintenance_id,   // FK-free twin (see record())
                 'maintenance_task_id' => $task->id,
                 'linked_contract_id'  => $this->activeMaintenanceContractId($vehicleId),
                 'event_type'          => $eventType,

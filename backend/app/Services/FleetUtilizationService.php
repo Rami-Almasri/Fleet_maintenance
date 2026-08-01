@@ -597,7 +597,12 @@ class FleetUtilizationService
         //    if that most recent event is NOT an 'IN' (it never came back), and the visit started within
         //    the lookback window (so ancient unclosed OUTs don't haunt the list forever).
         $latestEvent = [];
+        // LIVE VIEW — retired tickets excluded. This answers "is the car STILL in the shop today", a
+        // current-state question: a soft-deleted event must not hold a car off the road. (The historical
+        // day-by-day reconstructions elsewhere in this file deliberately do the opposite — see the
+        // deleted_at note on each.)
         foreach (DB::table('maintenances')->whereIn('origin', Maintenance::WORKSHOP_LOG_ORIGINS)
+            ->whereNull('deleted_at')
             ->whereIn('vehicle_id', $vehIds)->whereNotNull('out_date')
             ->whereDate('out_date', '<=', $todayStr)
             ->orderBy('out_date')->orderBy('id')   // ascending → last write per vehicle is its latest event

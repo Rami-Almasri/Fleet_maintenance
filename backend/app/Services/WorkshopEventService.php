@@ -105,37 +105,137 @@ class WorkshopEventService
         });
     }
 
-    public function destroy(Maintenance $event): void
+    /**
+     * @deprecated Use tombstone() — the single deletion path. Kept only so any caller outside this
+     *             codebase's own controller does not silently change behaviour; it now delegates.
+     *
+     * This used to be the "hand-entered events are ours to destroy" branch. It was the wrong half of
+     * the system to treat as disposable: a sheet event can be re-imported from Google Sheets, a manual
+     * one exists nowhere else. Two deletion paths also meant two behaviours to keep in step, which is
+     * how one of them ended up nulling the vehicle timeline while the other did not.
+     */
+    public function destroy(Maintenance $event, ?int $userId = null): void
     {
-        $vehicleId = $event->vehicle_id;
-        DB::transaction(function () use ($event, $vehicleId) {
-            $event->delete();
-            // Cascade: removing the last open garage event may free the car.
-            $this->cascadeOperationalStatus($vehicleId);
-        });
+        $this->tombstone($event, $userId);
     }
 
     /**
-     * "Delete" a SHEET-synced event. Its source is the Google Sheet, so we can't truly
-     * remove it — instead we record a TOMBSTONE keyed by the importer's row_hash and
-     * hard-delete the local row. The row leaving means it drops off the board, cost and
-     * utilization at once; the tombstone makes every future sync skip it. The full
-     * attributes are stashed so Restore can recreate the row verbatim.
+     * Write the "this ticket was destroyed" marker onto the vehicle's trail.
+     *
+     * Runs INSIDE the caller's transaction and BEFORE the delete, for the obvious reason that a row
+     * cannot be inspected once it is gone — the child counts below are the last chance to record what
+     * the cascade is about to take. The ticket's identity goes into `meta` because this event row's own
+     * `maintenance_id` is nulled by that same cascade (see VehicleLogEvent::EVENT_TICKET_DELETED).
+     *
+     * Deliberately NOT best-effort. Everywhere else an audit write is swallowed so it can never break a
+     * real workflow transition; here the audit row IS the point — losing it silently would recreate the
+     * exact blind spot this event exists to close, so a failure aborts the enclosing transaction and the
+     * delete does not happen.
+     *
+     * PUBLIC because every path that destroys a ticket must produce the SAME record: the UI delete and
+     * the tombstone below, plus the bulk `maintenance:reset-workflow` reset. One definition of what a
+     * deletion looks like is what lets a completeness check read them all the same way.
+     *
+     * @param  string  $mode  hard_delete | tombstone | bulk_reset — which path destroyed it
+     */
+    public function logDestruction(Maintenance $event, string $mode, ?int $userId = null): void
+    {
+        if (! $event->vehicle_id) {
+            return; // nothing to hang the trail on
+        }
+
+        \App\Models\VehicleLogEvent::create([
+            'vehicle_id'      => $event->vehicle_id,
+            'maintenance_id'  => $event->id,   // nulled by the cascade — meta.ticket_id is the durable copy
+            'event_type'      => \App\Models\VehicleLogEvent::EVENT_TICKET_DELETED,
+            'source_tag'      => Maintenance::FINDING_INSPECTOR,
+            'workflow_status' => $event->workflow_status,
+            'description'     => $mode === 'tombstone'
+                ? 'Sheet-synced workshop event removed (tombstoned — future syncs will skip it).'
+                : 'Workshop event permanently deleted.',
+            'meta'            => [
+                'ticket_id'       => $event->id,
+                'mode'            => $mode,
+                'origin'          => $event->origin,
+                'workflow_status' => $event->workflow_status,
+                'out_date'        => optional($event->out_date)->toDateString(),
+                'garage'          => $event->garage,
+                'row_hash'        => $event->row_hash,
+                // What the ON DELETE CASCADE is about to destroy. Recorded so a later integrity audit
+                // can tell "this ticket never had faults" from "its faults were deleted with it".
+                'cascade_lost'    => $this->cascadeCounts($event->id),
+            ],
+            'actor_id'        => $userId,
+            'occurred_at'     => Carbon::now(),
+        ]);
+    }
+
+    /**
+     * Child rows that will die with this ticket, table => count (zero-counts omitted).
+     * Mirrors the ON DELETE CASCADE constraints; a table absent in this environment is skipped rather
+     * than fataling, so an older migration set can never block a delete.
+     *
+     * @return array<string,int>
+     */
+    private function cascadeCounts(int $ticketId): array
+    {
+        $lost = [];
+
+        foreach ([
+            'maintenance_tasks', 'maintenance_line_items', 'maintenance_invoices',
+            'repair_inspections', 'maintenance_signatures', 'recurring_fault_reviews',
+            'garage_recommendation_decisions', 'maintenance_required_parts',
+            'garage_invoice_submissions', 'resolved_transfer_flags', 'maintenance_watchers',
+        ] as $table) {
+            try {
+                $n = DB::table($table)->where('maintenance_id', $ticketId)->count();
+            } catch (\Throwable) {
+                continue;
+            }
+            if ($n > 0) {
+                $lost[$table] = $n;
+            }
+        }
+
+        // Grandchildren — the per-garage stints hang off the faults, so they die two levels down.
+        try {
+            $taskIds = DB::table('maintenance_tasks')->where('maintenance_id', $ticketId)->pluck('id');
+            if ($taskIds->isNotEmpty()) {
+                $n = DB::table('maintenance_task_assignments')->whereIn('maintenance_task_id', $taskIds)->count();
+                if ($n > 0) {
+                    $lost['maintenance_task_assignments'] = $n;
+                }
+            }
+        } catch (\Throwable) {
+            // nothing to add
+        }
+
+        return $lost;
+    }
+
+    /**
+     * THE ONE DELETION PATH. Retire a workshop event — sheet-synced or hand-entered alike.
+     *
+     * Two things happen, and they answer two different questions:
+     *   · the row is SOFT-deleted — "stop showing this". No cascade fires, no `vehicle_log_events`
+     *     link is nulled, every fault / stint / inspection / signature stays attached to it.
+     *   · a TOMBSTONE is written — "and stop re-importing it". This half only means anything for a
+     *     sheet row (the importer checks the hash); for a manual event it is simply the restore record.
+     *
+     * The payload snapshot is kept for the display ghost and as a belt-and-braces copy of the row's
+     * columns. It is no longer what restore() reads the ticket back FROM — the ticket itself is still
+     * there. See restore().
      */
     public function tombstone(Maintenance $event, ?int $userId = null, ?string $note = null): MaintenanceTombstone
     {
-        if (! $event->row_hash) {
-            // No stable sheet identity to skip on re-import — refuse rather than leak a
-            // ghost the sync would immediately resurrect.
-            throw new RuntimeException('This event has no sheet identity and cannot be tombstoned.');
-        }
+        $key = $this->tombstoneKey($event);
 
-        return DB::transaction(function () use ($event, $userId, $note) {
+        return DB::transaction(function () use ($event, $userId, $note, $key) {
             $event->loadMissing(['vendor', 'reason', 'vehicle:id,plate_no,make,model']);
             $vehicleId = $event->vehicle_id;
 
             $tombstone = MaintenanceTombstone::updateOrCreate(
-                ['row_hash' => $event->row_hash],
+                ['row_hash' => $key],
                 [
                     'vehicle_id' => $vehicleId,
                     'origin'     => $event->origin,
@@ -147,6 +247,7 @@ class WorkshopEventService
                 ]
             );
 
+            $this->logDestruction($event, 'tombstone', $userId);
             $event->delete();
             // Cascade: removing an open garage event may free the car.
             $this->cascadeOperationalStatus($vehicleId);
@@ -156,21 +257,97 @@ class WorkshopEventService
     }
 
     /**
+     * The identity a tombstone is filed under.
+     *
+     * Sheet-synced events already have one — `row_hash` — and it does double duty: it is both the
+     * tombstone's key and the token every future import checks before re-inserting the row.
+     *
+     * Hand-entered events have no `row_hash`, and that used to mean they could not be tombstoned at all,
+     * so the controller hard-deleted them instead. The effect was exactly backwards: the ONE class of
+     * event that can be re-synced from Google Sheets was preserved, and the one that exists nowhere else
+     * was destroyed — taking its `vehicle_log_events` linkage with it via `nullOnDelete`.
+     *
+     * A synthetic `manual:{id}` key fixes that. It cannot collide with a real hash (those are hex
+     * digests), and the "skip on future sync" half of the contract is simply inert for a row the
+     * importer has never heard of. What matters is the other half: the payload is kept and the event is
+     * restorable.
+     */
+    private function tombstoneKey(Maintenance $event): string
+    {
+        return $event->row_hash ?: 'manual:' . $event->id;
+    }
+
+    /**
      * Bring a tombstoned sheet event back: recreate its `maintenances` row from the stored
      * attributes (a raw insert, so casts can't double-encode the JSON columns) and drop the
      * tombstone so the sync resumes owning it.
+     *
+     * ── THIS IS NOW A REAL UNDO, AND THE HISTORY EXPLAINS THE SECOND BRANCH ───────────────────────
+     * Since `maintenances` is soft-deleted, a retired ticket was never destroyed: restoring it clears
+     * `deleted_at` and the whole graph — faults, garage stints, repair inspections, line items,
+     * signatures, timeline events — is still attached, because no cascade ever fired and no link was
+     * ever nulled. Identity is unchanged, so nothing needs re-associating.
+     *
+     * Tombstones created BEFORE that change have no row to un-trash: the delete really did destroy the
+     * children and null the links. Those fall to the payload branch, which recovers the ticket's own
+     * columns (and its primary key, so newer `maintenance_ref` rows still resolve) and nothing more.
+     * `restored_from_payload` marks that case so the caller can say so rather than implying a clean undo.
+     *
+     * @return Maintenance the restored row; check `restored_from_payload` / `restored_with_new_id`
      */
     public function restore(MaintenanceTombstone $tombstone): Maintenance
     {
         return DB::transaction(function () use ($tombstone) {
-            $attrs = $tombstone->payload ?? [];
-            unset($attrs['id'], $attrs['created_at'], $attrs['updated_at']);
+            $attrs      = $tombstone->payload ?? [];
+            $originalId = $attrs['id'] ?? null;
 
-            $id = DB::table('maintenances')->insertGetId($attrs);
+            // THE HAPPY PATH, and now the only one that should ever occur: the ticket was soft-deleted,
+            // so it is still sitting there with every fault, stint, inspection and timeline event
+            // attached. Restoring is un-setting `deleted_at` — the identity never changed, so nothing
+            // has to be re-associated. This is what makes the operation an undo rather than a re-entry.
+            $trashed = $originalId !== null
+                ? Maintenance::onlyTrashed()->find($originalId)
+                : null;
+
+            if ($trashed) {
+                $trashed->restore();
+                $tombstone->delete();
+                $this->cascadeOperationalStatus($trashed->vehicle_id);
+                $trashed->restored_with_new_id = false;
+                $trashed->restored_from_payload = false;
+
+                return $trashed->load(['vendor', 'reason', 'vehicle:id,plate_no,make,model']);
+            }
+
+            // ── LEGACY / DEGRADED PATH ────────────────────────────────────────────────────────────
+            // Tombstones written BEFORE soft delete hard-deleted their row, so there is nothing to
+            // un-trash and the payload is all that survives. Re-inserting it recovers the ticket's own
+            // columns and nothing else: whatever cascaded away at delete time (faults, stints,
+            // signatures) is gone, and the `vehicle_log_events` links nulled back then stay nulled.
+            // Reusing the primary key at least restores the ticket's IDENTITY, so `maintenance_ref`
+            // rows written since can still point at it. Flagged so the caller can say all this out loud
+            // instead of reporting a clean "restored".
+            unset($attrs['created_at'], $attrs['updated_at']);
+
+            $idAvailable = $originalId !== null
+                && ! DB::table('maintenances')->where('id', $originalId)->exists();
+
+            if ($idAvailable) {
+                DB::table('maintenances')->insert($attrs);
+                $id = (int) $originalId;
+            } else {
+                unset($attrs['id']);
+                $id = DB::table('maintenances')->insertGetId($attrs);
+            }
+
             $tombstone->delete();
 
             $event = Maintenance::findOrFail($id);
             $this->cascadeOperationalStatus($event->vehicle_id);
+
+            // Transient markers (not columns) so the controller can describe what actually came back.
+            $event->restored_with_new_id  = ! $idAvailable;
+            $event->restored_from_payload = true;
 
             return $event->load(['vendor', 'reason', 'vehicle:id,plate_no,make,model']);
         });

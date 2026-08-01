@@ -36,6 +36,12 @@ use Illuminate\Support\Facades\Log;
  * 11.4% — on the 54 that were comparable. Published with `sample` and `basis` for that reason.
  *
  * See [[garage-recommendation-engine]], [[vehicle-expense-provider]], [[historical-knowledge-mining]].
+ *
+ * RETIRED TICKETS ARE INCLUDED, DELIBERATELY. `maintenances` is soft-deleted; the raw queries below do
+ * not inherit the model's scope and are not meant to. This class measures WHAT HAPPENED, and a retired
+ * ticket is still a repair that occurred — excluding it would let history change whenever somebody
+ * tidied the board, and would move a denominator without its numerator. Live operational surfaces take
+ * the opposite rule and filter `deleted_at` explicitly. See docs/Maintenance-Deletion-Model.md.
  */
 class RepairCostEstimator
 {

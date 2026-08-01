@@ -29,6 +29,12 @@ use Illuminate\Support\Facades\DB;
  * the ledger, the promotion table, the policy registry or Laravel's own schedule. This class arranges
  * facts; it does not create them. If a figure on the Intelligence Center is wrong, it is wrong at its
  * source, and there is exactly one source to go and fix.
+ *
+ * RETIRED TICKETS ARE INCLUDED, DELIBERATELY. `maintenances` is soft-deleted; the raw queries below do
+ * not inherit the model's scope and are not meant to. This class measures WHAT HAPPENED, and a retired
+ * ticket is still a repair that occurred — excluding it would let history change whenever somebody
+ * tidied the board, and would move a denominator without its numerator. Live operational surfaces take
+ * the opposite rule and filter `deleted_at` explicitly. See docs/Maintenance-Deletion-Model.md.
  */
 class IntelligenceSnapshot
 {

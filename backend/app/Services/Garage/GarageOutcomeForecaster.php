@@ -38,6 +38,12 @@ use Illuminate\Support\Facades\DB;
  * and is reported as unavailable rather than invented.
  *
  * READ-ONLY and cached. See [[garage-recommendation-engine]] and [[operational-kpi-baseline]].
+ *
+ * RETIRED TICKETS ARE INCLUDED, DELIBERATELY. `maintenances` is soft-deleted; the raw queries below do
+ * not inherit the model's scope and are not meant to. This class measures WHAT HAPPENED, and a retired
+ * ticket is still a repair that occurred — excluding it would let history change whenever somebody
+ * tidied the board, and would move a denominator without its numerator. Live operational surfaces take
+ * the opposite rule and filter `deleted_at` explicitly. See docs/Maintenance-Deletion-Model.md.
  */
 class GarageOutcomeForecaster
 {

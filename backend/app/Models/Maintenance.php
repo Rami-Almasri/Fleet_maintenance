@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 /**
  * A row in `maintenances` plays one of two roles, told apart by `origin`:
@@ -22,6 +23,38 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 class Maintenance extends Model
 {
     use HasFactory;
+
+    /**
+     * ── DELETION MODEL: a ticket is RETIRED, never destroyed ─────────────────────────────────────
+     *
+     * A `maintenances` row is the anchor of an evidence graph: eleven tables cascade off it (faults and
+     * their garage stints, line items, invoices, repair inspections, recommendation decisions,
+     * `maintenance_signatures`) and ten more null their link to it (`vehicle_log_events` above all).
+     * Hard-deleting one therefore destroyed its faults and detached its timeline in a single statement,
+     * and left nothing behind to say it had happened — which is how 79% of the vehicle timeline came to
+     * be orphaned while still reading as complete.
+     *
+     * SoftDeletes fires neither path: the row stays, so no cascade runs and no link is nulled. A
+     * restored ticket comes back with its faults, stints, inspections and timeline still attached.
+     *
+     * THE RULES THAT FOLLOW FROM THIS, for anyone adding code here:
+     *
+     *  1. Eloquent reads are scoped automatically — a retired ticket vanishes from every board, list,
+     *     count and relation with no change at the call site. That is the desired default.
+     *  2. RAW QUERIES ARE NOT SCOPED. `DB::table('maintenances')` and any hand-written JOIN sees trashed
+     *     rows unless it says otherwise. Each such site has been reviewed and carries an explicit
+     *     comment stating whether it is a LIVE view (filters `deleted_at`) or a HISTORICAL one
+     *     (deliberately includes them, because a retired ticket still happened). Never add a raw query
+     *     against this table without making that choice in writing.
+     *  3. `row_hash` and `contract_id` are UNIQUE and a trashed row keeps occupying them. Anything that
+     *     inserts by either key must look through the trash first — see MaintenanceSheetImporter.
+     *  4. There is ONE sanctioned hard delete: `maintenance:reload`, which exists to make the table an
+     *     exact mirror of the sheet and is gated behind --accept-cascade-loss. Everything else routes
+     *     through WorkshopEventService::tombstone().
+     *
+     * See [[repair-duration-audit-gaps]] and docs/Maintenance-Deletion-Model.md.
+     */
+    use SoftDeletes;
 
     protected $table = 'maintenances';
 

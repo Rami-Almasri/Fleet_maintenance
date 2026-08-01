@@ -17,6 +17,12 @@ use Illuminate\Support\Facades\DB;
  * Planned capabilities appear alongside shipped ones. A capability blocked by data is not a gap in
  * the roadmap; it is a fact about the fleet's record-keeping, and it belongs on the same page as the
  * ones that work.
+ *
+ * RETIRED TICKETS ARE INCLUDED, DELIBERATELY. `maintenances` is soft-deleted; the raw queries below do
+ * not inherit the model's scope and are not meant to. This class measures WHAT HAPPENED, and a retired
+ * ticket is still a repair that occurred — excluding it would let history change whenever somebody
+ * tidied the board, and would move a denominator without its numerator. Live operational surfaces take
+ * the opposite rule and filter `deleted_at` explicitly. See docs/Maintenance-Deletion-Model.md.
  */
 class EvidenceLedger
 {

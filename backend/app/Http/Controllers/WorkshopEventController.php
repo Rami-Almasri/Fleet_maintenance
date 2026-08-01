@@ -135,20 +135,21 @@ class WorkshopEventController extends Controller
     public function destroy(Request $request, Maintenance $workshopEvent)
     {
         try {
-            // Hand-entered events are app-owned → truly removed. Sheet-synced events are
-            // owned by the Google Sheet → we tombstone them (hide + skip on future syncs),
-            // and they can be restored from the list.
-            if ($workshopEvent->isManual()) {
-                $this->service->destroy($workshopEvent);
-
-                return ResponseHelper::SuccessResponse(null, 'Workshop event deleted successfully', 200);
-            }
-
+            // EVERY delete is a tombstone now — hand-entered events included.
+            //
+            // This used to hard-delete manual events on the reasoning that they are "app-owned" and so
+            // ours to destroy. That had it backwards: a sheet event can be re-imported from Google
+            // Sheets, a hand-entered one exists nowhere else. Destroying it also NULLed
+            // `vehicle_log_events.maintenance_id` for every event it owned (`nullOnDelete`) — which is
+            // how 78.8% of the vehicle timeline ended up detached from any ticket while the rows stayed
+            // present, so the history still read as complete. See the maintenance_ref migration.
             $this->service->tombstone($workshopEvent, $request->user()?->id);
 
             return ResponseHelper::SuccessResponse(
                 null,
-                'Workshop event removed. It will stay hidden on future syncs — you can restore it from the events list.',
+                $workshopEvent->isManual()
+                    ? 'Workshop event removed. Nothing was destroyed — restore it any time from the events list.'
+                    : 'Workshop event removed and future syncs will skip it. Nothing was destroyed — restore it any time from the events list.',
                 200
             );
         } catch (\Exception $e) {
@@ -162,9 +163,18 @@ class WorkshopEventController extends Controller
         try {
             $event = $this->service->restore($tombstone);
 
+            // Only the event row itself comes back — anything that cascaded away at delete time is
+            // rebuilt from its own projection, never from the tombstone. Say so, rather than letting
+            // "restored successfully" imply the ticket's full history returned with it.
             return ResponseHelper::SuccessResponse(
                 WorkshopEventResource::make($event),
-                'Workshop event restored successfully',
+                match (true) {
+                    // Pre-soft-delete tombstone: the row really was destroyed back then, so only its
+                    // own columns come back. Say so — the user must not assume the faults returned.
+                    $event->restored_with_new_id  => 'Workshop event restored under a NEW id (the original was taken). Its faults, costs and timeline links were destroyed when it was deleted and could not be recovered.',
+                    $event->restored_from_payload => 'Workshop event restored from a pre-soft-delete backup — the row is back, but its faults, costs and timeline links were destroyed at delete time.',
+                    default                       => 'Workshop event restored with its faults, costs and timeline intact.',
+                },
                 200
             );
         } catch (\Exception $e) {

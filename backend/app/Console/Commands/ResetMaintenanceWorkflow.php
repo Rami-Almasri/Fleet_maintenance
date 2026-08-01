@@ -19,7 +19,20 @@ use Illuminate\Support\Facades\DB;
  * Why a command and not raw SQL: a `maintenances` row has children WITHOUT a cascading FK —
  * open `logistics_tasks` (+ their events) keep the car reading `in_transit`, and `maintenance_media`
  * rows orphan. This clears those first, deletes the ticket (tasks / line_items / watchers cascade;
- * vehicle_log_events links auto-null, preserving the audit trail), then reconciles the car.
+ * vehicle_log_events links auto-null), then reconciles the car.
+ *
+ * ── THIS COMMAND NO LONGER DESTROYS ANYTHING ─────────────────────────────────────────────────────
+ * It was the measured source of 1,559 orphaned `vehicle_log_events` (79% of the whole log): the rows
+ * survived but `maintenance_id` was nulled, so a ticket-level timeline — every stage duration, repair
+ * cycle and waiting period — was gone for good, while the vehicle history still read as complete.
+ *
+ * `maintenances` is now soft-deleted, so `->delete()` below RETIRES each ticket instead. No cascade
+ * fires, no link is nulled: the faults, garage stints, inspections and timeline stay attached, and the
+ * board clears because every Eloquent read is scoped. Reversing a reset is `restore()` on the rows.
+ *
+ * Each retirement still writes a VehicleLogEvent::EVENT_TICKET_DELETED marker. It is no longer a
+ * record of destruction but of INTENT — who took these tickets off the board and when — which is what
+ * a later completeness check reads to explain a gap in the live view.
  *
  * Safety:
  *   --dry-run           run inside a rolled-back transaction and print the plan, writing nothing
@@ -91,17 +104,28 @@ class ResetMaintenanceWorkflow extends Command
                 $this->line('  · cleared ' . count($logisticsIds) . ' logistics task(s)');
             }
 
-            // 2) Ticket media (no cascading FK).
-            $media = DB::table('maintenance_media')->whereIn('maintenance_id', $ticketIds)->delete();
+            // 2) Ticket media is KEPT. It used to be deleted here because a hard-deleted ticket left it
+            //    orphaned (no cascading FK) — but the ticket is only retired now, so the photos and
+            //    videos stay attached and come back with it. They are evidence of the car's condition,
+            //    the least reversible thing on the ticket, and nothing surfaces them once the ticket is
+            //    scoped out. Deleting them would be the only truly destructive step left in a command
+            //    that no longer destroys anything.
+            $media = DB::table('maintenance_media')->whereIn('maintenance_id', $ticketIds)->count();
             if ($media) {
-                $this->line("  · cleared {$media} media row(s)");
+                $this->line("  · kept {$media} media row(s) — they return with the ticket");
             }
 
-            // 3) The tickets. Cascades: maintenance_tasks (+ assignments), maintenance_line_items,
-            //    maintenance_watchers. Nulls: vehicle_log_events.maintenance_id (audit kept).
+            // 3) Mark each destruction on the vehicle trail BEFORE deleting — once the rows are gone
+            //    there is nothing left to describe them, and the nulled event links (below) make the
+            //    loss otherwise indistinguishable from a ticket that never had any history.
+            $this->logDestructions($ticketIds);
+
+            // 4) Retire the tickets. SOFT delete (see Maintenance::$dates / SoftDeletes): no cascade
+            //    fires and no `vehicle_log_events` link is nulled, so the evidence graph stays whole
+            //    and the board clears purely because Eloquent reads are scoped.
             Maintenance::whereIn('id', $ticketIds)->delete();
 
-            // 4) Re-derive each car's live status now the ticket is gone.
+            // 5) Re-derive each car's live status now the ticket is gone.
             foreach ($vehicleIds as $vid) {
                 if ($vehicle = Vehicle::find($vid)) {
                     $status = $this->operations->reconcileVehicleOperationalStatus($vehicle);
@@ -124,6 +148,28 @@ class ResetMaintenanceWorkflow extends Command
         }
 
         return self::SUCCESS;
+    }
+
+    /**
+     * Write one EVENT_TICKET_DELETED marker per ticket about to be destroyed.
+     *
+     * Delegates to WorkshopEventService so a deletion record has ONE definition regardless of which
+     * path destroys the ticket — the UI delete, the tombstone, or this bulk reset. Duplicating the
+     * meta shape here would guarantee the three drift apart, and a completeness check reading them
+     * would have to know which path wrote which fields.
+     *
+     * @param  list<int>  $ticketIds
+     */
+    private function logDestructions(array $ticketIds): void
+    {
+        $service = app(\App\Services\WorkshopEventService::class);
+
+        // A CLI reset has no authenticated user — actor_id stays null and reads as "System".
+        foreach (Maintenance::whereIn('id', $ticketIds)->get() as $ticket) {
+            $service->logDestruction($ticket, 'bulk_reset', null);
+        }
+
+        $this->line('  · recorded ' . count($ticketIds) . ' ticket-deleted audit event(s)');
     }
 }
 

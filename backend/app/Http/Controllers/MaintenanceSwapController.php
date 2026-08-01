@@ -115,7 +115,11 @@ class MaintenanceSwapController extends Controller
             // Best-effort "why it's in" from the latest sheet workshop event for those cars.
             $reasonByVeh = [];
             if ($workshopRows->isNotEmpty()) {
+                // LIVE VIEW — retired tickets excluded. This labels why a car is in the shop RIGHT NOW
+                // on the swap board; a deleted event must not be the reason shown. Raw query, so the
+                // SoftDeletes scope does not apply on its own.
                 foreach (DB::table('maintenances')->whereIn('origin', \App\Models\Maintenance::WORKSHOP_LOG_ORIGINS)
+                    ->whereNull('deleted_at')
                     ->whereIn('vehicle_id', $workshopRows->pluck('id')->all())->whereNotNull('out_date')
                     ->orderBy('out_date')->orderBy('id')
                     ->get(['vehicle_id', 'service_main', 'maintenance_type']) as $m) {

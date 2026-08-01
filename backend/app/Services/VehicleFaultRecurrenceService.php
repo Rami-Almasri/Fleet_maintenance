@@ -52,6 +52,12 @@ use Illuminate\Support\Facades\DB;
  * The SAME garage taking the car 3× for the same fault inside 10 days is a slow workshop, not a car
  * that keeps failing. That is surfaced on the fault as `stalling` so the panel can say so out loud
  * instead of blaming the vehicle.
+ *
+ * RETIRED TICKETS ARE INCLUDED, DELIBERATELY. `maintenances` is soft-deleted; the raw queries below do
+ * not inherit the model's scope and are not meant to. This class measures WHAT HAPPENED, and a retired
+ * ticket is still a repair that occurred — excluding it would let history change whenever somebody
+ * tidied the board, and would move a denominator without its numerator. Live operational surfaces take
+ * the opposite rule and filter `deleted_at` explicitly. See docs/Maintenance-Deletion-Model.md.
  */
 class VehicleFaultRecurrenceService
 {

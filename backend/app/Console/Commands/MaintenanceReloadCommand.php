@@ -21,15 +21,52 @@ use Throwable;
  *
  * HARD safety gate: a full database backup runs first and the reload aborts if it
  * fails. Reasons are re-categorized inline by the importer (MAIN → reason vocabulary).
+ *
+ * ── THE CASCADE NOBODY SEES (read before running this) ──────────────────────────────────────────
+ * "ONLY the maintenances table is touched" is true of the DELETE statement and false of its effect.
+ * Eleven tables hang off `maintenances` with ON DELETE CASCADE, and the biggest of them is
+ * `maintenance_signatures` — the projection the ENTIRE intelligence layer reads (comeback rate,
+ * first-time-fix, garage scoring, repair history). Effectively all of it hangs off sheet-origin rows,
+ * so this command silently destroys the corpus it never mentions.
+ *
+ * Re-import does NOT undo that. Rows come back with NEW primary keys, so every child that survived
+ * elsewhere is orphaned and every cascaded child is simply gone until its projection is rebuilt
+ * (`intelligence:rebuild-signatures`). The backup gate is a way to recover AFTERWARDS, not a safeguard.
+ *
+ * So the cascade is now COUNTED and shown, and a run that would destroy child rows requires
+ * --accept-cascade-loss. That flag is deliberately separate from --force: --force is what ends up in
+ * a script, and "don't prompt me" must never silently mean "and wipe the intelligence corpus".
  */
 class MaintenanceReloadCommand extends Command
 {
     protected $signature = 'maintenance:reload
         {--skip-backup : Skip the pre-flight db:backup (NOT recommended)}
         {--force : Don\'t ask for confirmation}
-        {--dry-run : Preview the sheet counts only — no backup, no delete, no write}';
+        {--accept-cascade-loss : Required when child rows (signatures, faults, invoices…) would be cascade-deleted}
+        {--dry-run : Preview the sheet counts + the full cascade blast radius — no backup, no delete, no write}';
 
     protected $description = 'Wipe ONLY the maintenances table and re-import it exactly from the sheet (backup-gated).';
+
+    /**
+     * Every table that is DESTROYED by deleting a `maintenances` row, as table => foreign key.
+     * Mirrors the ON DELETE CASCADE constraints in the migrations; kept here so the operator sees the
+     * true blast radius rather than the one-table story the command used to tell. `nullOnDelete`
+     * relations (vehicle_log_events and friends) are not listed: those rows survive — they only lose
+     * their linkage — which is its own problem, not this command's to report.
+     */
+    private const CASCADE_TABLES = [
+        'maintenance_signatures'          => 'maintenance_id',
+        'maintenance_tasks'               => 'maintenance_id',
+        'maintenance_line_items'          => 'maintenance_id',
+        'maintenance_invoices'            => 'maintenance_id',
+        'repair_inspections'              => 'maintenance_id',
+        'recurring_fault_reviews'         => 'maintenance_id',
+        'garage_recommendation_decisions' => 'maintenance_id',
+        'garage_invoice_submissions'      => 'maintenance_id',
+        'maintenance_required_parts'      => 'maintenance_id',
+        'resolved_transfer_flags'         => 'maintenance_id',
+        'maintenance_watchers'            => 'maintenance_id',
+    ];
 
     public function handle(DatabaseBackup $backup, MaintenanceSheetImporter $importer): int
     {
@@ -48,6 +85,11 @@ class MaintenanceReloadCommand extends Command
         $before    = Maintenance::whereIn('origin', Maintenance::SHEET_ORIGINS)->count();
         $protected = Maintenance::count() - $before;
 
+        // What the DELETE really takes with it. Counted BEFORE anything is touched, and shown in both
+        // the dry run and the confirmation, so the cascade can never again be discovered afterwards.
+        $cascade      = $this->cascadeImpact();
+        $cascadeTotal = array_sum($cascade);
+
         // --- DRY RUN: preview what the sheet currently holds, change nothing. ---
         if ($this->option('dry-run')) {
             $this->info("DRY RUN — {$before} sheet rows would be replaced; {$protected} hand-entered/contract rows kept. Previewing the sheet (no writes)…");
@@ -59,12 +101,29 @@ class MaintenanceReloadCommand extends Command
                 return self::FAILURE;
             }
             $this->previewTable($log, $cases);
+            $this->cascadeTable($cascade, $cascadeTotal);
             return self::SUCCESS;
+        }
+
+        // --- CASCADE GATE: refuse outright unless the operator has acknowledged the child-row loss. ---
+        // Checked BEFORE --force is honoured: --force means "don't prompt", never "destroy silently".
+        if ($cascadeTotal > 0) {
+            $this->cascadeTable($cascade, $cascadeTotal);
+
+            if (! $this->option('accept-cascade-loss')) {
+                $this->error("REFUSING TO RUN — this would cascade-delete {$cascadeTotal} child row(s) (see above).");
+                $this->line('Re-importing does NOT bring them back: rows return with new primary keys.');
+                $this->line('Rebuild the projection afterwards with `php artisan intelligence:rebuild-signatures`.');
+                $this->line('If that is genuinely what you want, re-run with --accept-cascade-loss.');
+                return self::FAILURE;
+            }
+
+            $this->warn("--accept-cascade-loss given: {$cascadeTotal} child row(s) WILL be destroyed.");
         }
 
         // --- Confirm (skipped with --force or in non-interactive shells). ---
         if (! $this->option('force')
-            && ! $this->confirm("This DELETES the {$before} sheet-sourced maintenance rows (keeping {$protected} hand-entered/contract rows) and re-imports them from the sheet. Continue?")) {
+            && ! $this->confirm("This DELETES the {$before} sheet-sourced maintenance rows (keeping {$protected} hand-entered/contract rows), cascade-deletes {$cascadeTotal} child row(s), and re-imports from the sheet. Continue?")) {
             $this->warn('Aborted — nothing changed.');
             return self::SUCCESS;
         }
@@ -120,6 +179,79 @@ class MaintenanceReloadCommand extends Command
 
         $this->info('Maintenance reloaded — the table now mirrors the sheet exactly.');
         return self::SUCCESS;
+    }
+
+    /**
+     * Count, per table, the child rows that hang off the sheet-origin `maintenances` rows this command
+     * deletes — i.e. exactly what ON DELETE CASCADE will destroy. A missing table (an environment on an
+     * older migration set) is reported as 0 rather than fataling: the gate must never itself become the
+     * reason a reload can't run.
+     *
+     * @return array<string,int> table => rows that would be destroyed (zero-counts dropped)
+     */
+    private function cascadeImpact(): array
+    {
+        $sheetIds = DB::table('maintenances')
+            ->whereIn('origin', Maintenance::SHEET_ORIGINS)
+            ->pluck('id');
+
+        if ($sheetIds->isEmpty()) {
+            return [];
+        }
+
+        $impact = [];
+
+        foreach (self::CASCADE_TABLES as $table => $fk) {
+            try {
+                $n = DB::table($table)->whereIn($fk, $sheetIds)->count();
+            } catch (Throwable) {
+                continue; // table not present in this environment — nothing to warn about
+            }
+            if ($n > 0) {
+                $impact[$table] = $n;
+            }
+        }
+
+        // Grandchildren: the per-garage stints hang off maintenance_tasks, not off the ticket, so they
+        // die two levels down and would otherwise be invisible in this report.
+        try {
+            $taskIds = DB::table('maintenance_tasks')->whereIn('maintenance_id', $sheetIds)->pluck('id');
+            if ($taskIds->isNotEmpty()) {
+                $n = DB::table('maintenance_task_assignments')->whereIn('maintenance_task_id', $taskIds)->count();
+                if ($n > 0) {
+                    $impact['maintenance_task_assignments'] = $n;
+                }
+            }
+        } catch (Throwable) {
+            // no tasks table / no assignments table — nothing to add
+        }
+
+        arsort($impact);
+
+        return $impact;
+    }
+
+    /** @param array<string,int> $cascade */
+    private function cascadeTable(array $cascade, int $total): void
+    {
+        $this->newLine();
+
+        if ($total === 0) {
+            $this->info('Cascade impact: none — no child rows hang off the sheet-sourced tickets.');
+            return;
+        }
+
+        $this->warn('CASCADE IMPACT — these rows are DESTROYED by the delete, not just unlinked:');
+        $this->table(
+            ['Table', 'Rows destroyed'],
+            array_map(fn ($t, $n) => [$t, number_format($n)], array_keys($cascade), $cascade)
+        );
+        $this->warn('Total: ' . number_format($total) . ' child row(s).');
+
+        if (isset($cascade['maintenance_signatures'])) {
+            $this->error('`maintenance_signatures` is the projection the intelligence layer reads '
+                . '(comeback rate, first-time fix, garage scoring). Rebuild it after the reload.');
+        }
     }
 
     private function previewTable(array $log, array $cases): void

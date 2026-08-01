@@ -20,6 +20,18 @@ use Illuminate\Support\Facades\DB;
  *
  * THE BASELINE IS THE POINT. Snapshotting these now is what makes every later change arguable: the
  * one measurement that cannot be taken retroactively is the one from before the change.
+ *
+ * ── RETIRED TICKETS ARE COUNTED HERE, DELIBERATELY ───────────────────────────────────────────────
+ * `maintenances` is soft-deleted, and every query in this class is raw SQL, so none of them inherit
+ * the model's scope: they all see soft-deleted rows and are MEANT to. A retired ticket is a repair
+ * that really happened — the car really was off the road, the garage really did the work — and
+ * dropping it would silently rewrite history each time somebody tidied the board. Worse, the
+ * denominator would move without the numerator, so a comeback rate could improve simply because a
+ * ticket was deleted.
+ *
+ * That is the opposite of the rule for operational surfaces (a retired ticket must vanish from the
+ * board at once). The split is the point: LIVE reads ask "what is true now", these ask "what happened".
+ * If a metric here ever needs the live-only population instead, it must say so and filter explicitly.
  */
 class OperationalKpiService
 {

@@ -23,6 +23,12 @@ use Illuminate\Support\Facades\DB;
  *
  * The percentile math is reused from RepairCohortStats (the recommendation engine's aggregator) so there
  * is ONE percentile implementation across the Knowledge layer. `summarize()` is pure and DB-free.
+ *
+ * RETIRED TICKETS ARE INCLUDED, DELIBERATELY. `maintenances` is soft-deleted; the raw queries below do
+ * not inherit the model's scope and are not meant to. This class measures WHAT HAPPENED, and a retired
+ * ticket is still a repair that occurred — excluding it would let history change whenever somebody
+ * tidied the board, and would move a denominator without its numerator. Live operational surfaces take
+ * the opposite rule and filter `deleted_at` explicitly. See docs/Maintenance-Deletion-Model.md.
  */
 class RepairDurationQueryService
 {

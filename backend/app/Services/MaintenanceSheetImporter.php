@@ -103,6 +103,9 @@ class MaintenanceSheetImporter
         $this->preloadCaches();
 
         $imported = 0; $updated = 0; $skipped = 0; $ignored = 0; $unmatched = 0; $ambiguous = 0; $vendorsMade = 0;
+        // Rows that were soft-deleted locally and have been brought back because the sheet still
+        // publishes them. Counted separately so a revival is never mistaken for a routine update.
+        $revived = 0;
         $samples = []; $unmatchedSamples = []; $ambiguousSamples = [];
         $seen = [];   // (plate|event|out_date) => running occurrence count, for a stable identity key
 
@@ -213,8 +216,21 @@ class MaintenanceSheetImporter
                     continue;
                 }
 
-                $existing = Maintenance::where('row_hash', $hash)->first();
+                // withTrashed() IS LOad-BEARING, not defensive tidiness. `row_hash` is UNIQUE and a
+                // soft-deleted row keeps occupying it while being invisible to a normal query — so a
+                // scoped lookup would miss it, fall through to create(), and blow up on the unique
+                // index. This job runs unattended at 02:30; that failure would be a nightly outage.
+                $existing = Maintenance::withTrashed()->where('row_hash', $hash)->first();
+
                 if ($existing) {
+                    // A trashed row here means the sheet still publishes an event somebody retired
+                    // locally WITHOUT tombstoning it (a tombstoned hash never reaches this line — it is
+                    // skipped above). The sheet is the source of truth for its own rows, so its
+                    // re-appearance revives ours; the tombstone remains the ONLY way to say "stay gone".
+                    if ($existing->trashed()) {
+                        $existing->restore();
+                        $revived++;
+                    }
                     $existing->fill($data)->save();   // edits (return date, follow date, notes) UPDATE in place
                     $updated++;
                 } else {
@@ -244,6 +260,7 @@ class MaintenanceSheetImporter
         return [
             'imported'          => $imported,
             'updated'           => $updated,
+            'revived'           => $revived,
             'skipped'           => $skipped,
             'ignored'           => $ignored,
             'unmatched_cars'    => $unmatched,

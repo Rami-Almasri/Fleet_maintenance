@@ -583,11 +583,17 @@ class OperationsService
             ->where('origin', Maintenance::ORIGIN_MANUAL)
             ->whereNotNull('vehicle_id')
             ->when($vehicleIds, fn ($q) => $q->whereIn('vehicle_id', $vehicleIds))
+            // LIVE VIEW — retired tickets excluded. This drives `vehicles.operational_status`, so a
+            // soft-deleted event must release the car immediately; leaving it in would strand a vehicle
+            // as "In Maintenance" against a ticket nobody can see or action. Raw SQL does not inherit
+            // the model's SoftDeletes scope, hence the explicit filters (outer + subquery).
+            ->whereNull('maintenances.deleted_at')
             // keep only each car's latest manual event …
             ->whereRaw('maintenances.id = (
                 select m2.id from maintenances m2
                 where m2.vehicle_id = maintenances.vehicle_id
                   and m2.origin = ?
+                  and m2.deleted_at is null
                 order by m2.out_date desc, m2.id desc
                 limit 1
             )', [Maintenance::ORIGIN_MANUAL])

@@ -42,6 +42,12 @@ use Illuminate\Support\Facades\DB;
  * [[OntologyEdge::rank()]] and are never overwritten by enrichment, but they are also honestly
  * counted: `observed_count` and `observed_rate` travel with the edge so a 3-case pattern is never
  * presented as a 300-case one.
+ *
+ * RETIRED TICKETS ARE INCLUDED, DELIBERATELY. `maintenances` is soft-deleted; the raw queries below do
+ * not inherit the model's scope and are not meant to. This class measures WHAT HAPPENED, and a retired
+ * ticket is still a repair that occurred — excluding it would let history change whenever somebody
+ * tidied the board, and would move a denominator without its numerator. Live operational surfaces take
+ * the opposite rule and filter `deleted_at` explicitly. See docs/Maintenance-Deletion-Model.md.
  */
 class FleetEvidenceService
 {

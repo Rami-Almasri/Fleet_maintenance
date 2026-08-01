@@ -50,6 +50,17 @@ class VehicleLogEvent extends Model
     // temporarilyReleaseVehicle() / returnTemporarilyReleasedVehicle().
     public const EVENT_TEMP_RELEASED        = 'temp_released';        // car temporarily taken out of the workshop, ticket stays open
     public const EVENT_TEMP_RETURNED        = 'temp_returned';        // car brought back to the workshop, distance recorded
+    // ── Ticket DESTRUCTION — the one event that must outlive its own subject ────────────────────────
+    // A deleted ticket used to leave no trace at all: its rows vanished (or, for `nullOnDelete` children
+    // like this table, quietly detached), so "no history" and "history destroyed" were indistinguishable
+    // afterwards. That ambiguity is what makes a completeness/confidence flag unable to tell the truth.
+    //
+    // NOTE THE SELF-REFERENCE PROBLEM: this row's own `maintenance_id` is nulled the instant the ticket
+    // it describes is deleted. The ticket's identity is therefore ALSO written into `meta` (ticket_id,
+    // origin, workflow_status, and the child rows lost), because meta is the only part of the row the
+    // cascade cannot reach. Always read the deleted ticket's id from meta, never from maintenance_id.
+    public const EVENT_TICKET_DELETED = 'ticket_deleted';   // a maintenance ticket was destroyed (hard delete / tombstone)
+
     // ── Readiness-gate events (not part of the maintenance workflow, but on the same vehicle trail) ──
     public const EVENT_READINESS_CONFIRMED = 'readiness_confirmed'; // setReady(): a clean car returned to service (no advisories were open)
     public const EVENT_READINESS_OVERRIDE  = 'readiness_override';  // setReady(): a user proceeded PAST open readiness advisories — logged with the reason
@@ -137,6 +148,8 @@ class VehicleLogEvent extends Model
         self::EVENT_COST_RECORDED      => Maintenance::FINDING_INSPECTOR,
         self::EVENT_SERVICE_LOGGED     => Maintenance::FINDING_GARAGE, // the service was physically performed at/by the workshop
         self::EVENT_INVOICE_REQUESTED  => Maintenance::FINDING_GARAGE, // a request aimed at the workshop
+        // Destroying a ticket is an administrative act on our own records, not workshop work.
+        self::EVENT_TICKET_DELETED      => Maintenance::FINDING_INSPECTOR,
         self::EVENT_READINESS_CONFIRMED => Maintenance::FINDING_INSPECTOR, // a readiness sign-off is an inspector-side act
         self::EVENT_READINESS_OVERRIDE  => Maintenance::FINDING_INSPECTOR, // a warning-override sign-off is likewise inspector-side
         self::EVENT_CONDITION_GRADED    => Maintenance::FINDING_INSPECTOR,
@@ -175,6 +188,10 @@ class VehicleLogEvent extends Model
     protected $fillable = [
         'vehicle_id',
         'maintenance_id',
+        // The archival twin of maintenance_id, carrying NO foreign key so no cascade can null it.
+        // maintenance_id is the live link; maintenance_ref is the permanent record of what it was.
+        // Read this one whenever you need the ticket a historical event belonged to.
+        'maintenance_ref',
         'maintenance_task_id',
         'linked_contract_id',
         'event_type',
