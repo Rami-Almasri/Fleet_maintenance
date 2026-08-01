@@ -38,8 +38,18 @@ class MaintenanceWorkflowController extends Controller
      * unsignedInteger (max ~4.29 billion); a real vehicle reading sits far below this, so we cap inputs
      * well under the column limit. This turns a fat-fingered / garbage value into a clean 422 validation
      * error instead of a raw "SQLSTATE[22003] Out of range value" 500 at write time.
+     *
+     * LOWERED from 9,999,999 (2026-08-01). That bound was three orders of magnitude above anything this
+     * fleet will ever read, so it caught nothing: 6,276,888 km and 10,002,122 km were both accepted and
+     * written through, and one vehicle ended up holding 9,999,999 — the cap itself, which is what a
+     * "type the biggest number you can" input looks like. The highest genuine reading in the fleet is
+     * ~113,000 km; 1,000,000 stays generous for a long-lived vehicle while making a digit slip visible.
+     *
+     * This is only the ABSOLUTE bound. The relative one — how far a reading may jump from the previous
+     * one — is OdometerContinuityService::MAX_JUMP_KM, and that is the guard that actually does the work,
+     * because a plausible-looking absolute value can still be an impossible journey.
      */
-    public const MAX_ODOMETER = 9_999_999;
+    public const MAX_ODOMETER = 1_000_000;
 
     /**
      * Live workflow rows grouped into the dashboard columns. The two-stage model adds a leading

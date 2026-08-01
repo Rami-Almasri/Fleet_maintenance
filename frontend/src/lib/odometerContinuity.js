@@ -10,6 +10,11 @@
 export const TOLERANCE_KM = 5;      // small realistic drift we never treat as an error
 export const PICKUP_WARN_KM = 50;   // a pickup jump beyond this earns a "double-check the dial" nudge
 export const NOTE_THRESHOLD_KM = 10; // a gap beyond this (in EITHER direction) from the previous reading demands a written note
+// The largest forward jump that can be true between two consecutive readings. Every other rule in this
+// file bounds how far a reading may run BACKWARDS; this is the only one bounding forwards. A garage-out
+// reading of 6,276,888 km against an intake of 62,769 was accepted as a "test drive" and corrupted three
+// vehicles' mileage — this is the typo guard that stops it. Mirrors MAX_JUMP_KM in the PHP service.
+export const MAX_JUMP_KM = 20000;
 
 // Which continuity rule applies at each capture step.
 export const STAGE = {
@@ -39,6 +44,7 @@ export const STATUS = {
   MUST_INCREASE: 'must_increase',            // strict-increase stage: reading is ≤ the previous one — a HARD block
   AUTHORIZED: 'authorized_deviation',        // strict-match stage: +1..TOLERANCE km — allowed WITH a note (audited on oversight)
   EXACT_MATCH: 'exact_required',             // strict-match stage: backward, or > TOLERANCE over — a HARD block
+  IMPLAUSIBLE: 'implausible',                // forward jump beyond MAX_JUMP_KM — a typo, not a journey. HARD block on EVERY stage.
 };
 
 // Strict-match stages — an internal spot-check at OUR OWN PARK where the car shouldn't have moved since the
@@ -114,6 +120,12 @@ function classifyContinuity(reading, previous, stage) {
 
   const p = Number(previous);
   const delta = r - p;
+
+  // UNIVERSAL forward guard, checked FIRST and on every stage — including the garage-transfer stages that
+  // waive the tolerance nag, because "the car was driven" explains 500 km, never 6 million. Mirrors the
+  // hard block in MaintenanceWorkflowService::recordOdometerFlag, so the modal refuses it before the
+  // request is ever sent.
+  if (delta > MAX_JUMP_KM) return { status: STATUS.IMPLAUSIBLE, previous: p, reading: r, delta };
 
   // Strict-match stage (internal park spot-check): the car shouldn't have moved since the previous reading.
   // Exact = clean; a +1..TOLERANCE drift is an authorized deviation that needs a note. A BACKWARD reading

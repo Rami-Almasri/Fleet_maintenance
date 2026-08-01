@@ -182,6 +182,25 @@ class MaintenanceWorkflowService
     private function recordOdometerFlag(Maintenance $ticket, string $flagKey, int $reading, ?int $previous, string $stage, ?string $note = null, ?User $actor = null, ?bool $confirmed = null): array
     {
         $flag  = $this->continuity->evaluate($reading, $previous, $stage);
+
+        // UNIVERSAL HARD BLOCK — a forward jump beyond MAX_JUMP_KM is a mis-typed dial, not a journey.
+        // Enforced here rather than in assertStrictMatch() because that gate only covers the three
+        // strict-match stages, and the reading that corrupted three vehicles' mileage (62,769 →
+        // 6,276,888 km) came in on garage_out, which deliberately waives the tolerance nag entirely.
+        // Every reading passes through this method, so this is the one place the rule cannot be bypassed.
+        // Audited before throwing, exactly like the strict-match block: the transition rolls back, so this
+        // log is the only record that someone tried to force the value.
+        if ($flag['status'] === OdometerContinuityService::STATUS_IMPLAUSIBLE) {
+            $delta = (int) $flag['delta'];
+            $this->logOdometerBlock($ticket, $actor, $flagKey, $reading, $previous, $delta, OdometerContinuityService::STATUS_IMPLAUSIBLE, $note);
+            throw new WorkflowTransitionException(
+                number_format($reading) . ' km is ' . number_format($delta) . ' km above the previous reading of '
+                . number_format((int) $previous) . ' km. A car cannot travel that far between two readings — '
+                . 'this is almost certainly a typo. Re-check the dial.',
+                ['field' => $flagKey]
+            );
+        }
+
         // The operator's tick of "I've checked — this reading is correct" on the continuity nag —
         // stamped alongside the note so the Mileage oversight board can show it was actively acked,
         // not just silently accepted.

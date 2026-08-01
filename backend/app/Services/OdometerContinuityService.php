@@ -31,6 +31,21 @@ class OdometerContinuityService
      */
     public const PICKUP_WARN_KM = 50;
 
+    /**
+     * The largest forward jump that can be true between two consecutive readings in one mileage chain.
+     *
+     * THE GAP THIS CLOSES. Every rule above bounded how far a reading could run BACKWARDS; nothing bounded
+     * how far it could run forwards. A garage-out reading of 6,276,888 km against an intake of 62,769 was
+     * therefore classified `test_drive` — "legitimate, confirm but never block" — and written straight
+     * through to `vehicles.odometer`. It was a two-digit typo, and it corrupted the mileage baseline,
+     * cost-per-km and service-due chains for that car.
+     *
+     * 20,000 km is deliberately generous: it comfortably clears the longest real hop in the chain (a car
+     * out on rental between two of our readings) while catching every transposition and repeated-digit
+     * slip, which land orders of magnitude above it. This is a TYPO guard, not a mileage policy.
+     */
+    public const MAX_JUMP_KM = 20_000;
+
     // ── Flag statuses (contract with the UI) ────────────────────────────────────
     public const STATUS_VERIFIED    = 'verified';    // within tolerance / normal forward travel — all good
     public const STATUS_DISCREPANCY = 'discrepancy'; // ran backwards beyond tolerance — can't be right
@@ -38,6 +53,7 @@ class OdometerContinuityService
     public const STATUS_CHECK       = 'check';       // pickup jumped a lot — probably fine, but re-read the dial
     public const STATUS_AUTHORIZED  = 'authorized_deviation'; // strict-match stage: 1..TOLERANCE km over — allowed WITH a note (audited on the oversight board)
     public const STATUS_EXACT       = 'exact_required';       // strict-match stage: backward, or > TOLERANCE over — a HARD block, not an overridable nudge
+    public const STATUS_IMPLAUSIBLE = 'implausible';          // forward jump beyond MAX_JUMP_KM — a typo, not a journey. HARD block on every stage.
 
     // ── Stages (which continuity rule applies) ──────────────────────────────────
     public const STAGE_TEST        = 'test';        // inspector's start-of-drive reading vs the car's current mileage
@@ -101,6 +117,14 @@ class OdometerContinuityService
         }
 
         $delta = $reading - $previous;
+
+        // Universal forward guard, checked FIRST and on every stage — including the garage-transfer stages
+        // that waive the tolerance nag, because "the car was driven" explains 500 km, never 6 million.
+        // This is the only rule here that bounds the UPWARD direction; everything below bounds the
+        // downward one. A jump this large is a mis-typed dial, and it must not reach vehicles.odometer.
+        if ($delta > self::MAX_JUMP_KM) {
+            return $this->flag(self::STATUS_IMPLAUSIBLE, $previous, $reading, $delta);
+        }
 
         // Strict-match stage (an internal spot-check at our own park): the car shouldn't have moved since
         // the previous reading. An exact match is clean; a 1..TOLERANCE forward drift is an "authorized

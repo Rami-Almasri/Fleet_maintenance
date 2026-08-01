@@ -141,4 +141,62 @@ class OdometerContinuityServiceTest extends TestCase
         $this->assertFalse($this->svc->stageIgnoresTolerance(OdometerContinuityService::STAGE_PICKUP));
         $this->assertFalse($this->svc->stageIgnoresTolerance(OdometerContinuityService::STAGE_RETURN));
     }
+
+    // ── The forward guard (MAX_JUMP_KM) ─────────────────────────────────────────────────────────────
+
+    /**
+     * THE REGRESSION TEST. The exact reading that corrupted three real vehicles: a garage-out capture of
+     * 6,276,888 km against an intake of 62,769. Every rule in this class bounded how far a reading could
+     * run BACKWARDS; nothing bounded forwards, so this was classified `test_drive` — "legitimate, confirm
+     * but never block" — and written straight through to vehicles.odometer.
+     */
+    public function test_the_six_million_km_typo_is_rejected(): void
+    {
+        $flag = $this->svc->evaluate(6_276_888, 62_769, OdometerContinuityService::STAGE_GARAGE_OUT);
+
+        $this->assertSame(OdometerContinuityService::STATUS_IMPLAUSIBLE, $flag['status']);
+        $this->assertSame(6_214_119, $flag['delta']);
+    }
+
+    public function test_an_implausible_jump_is_caught_on_every_stage(): void
+    {
+        // Including the garage-transfer stages that deliberately waive the tolerance nag — "the car was
+        // driven" explains 500 km, never 6 million.
+        foreach ([
+            OdometerContinuityService::STAGE_TEST,
+            OdometerContinuityService::STAGE_PICKUP,
+            OdometerContinuityService::STAGE_PARK_PICKUP,
+            OdometerContinuityService::STAGE_GARAGE_IN,
+            OdometerContinuityService::STAGE_GARAGE_OUT,
+            OdometerContinuityService::STAGE_RETURN,
+            OdometerContinuityService::STAGE_TRANSFER,
+            OdometerContinuityService::STAGE_TEST_END,
+            OdometerContinuityService::STAGE_REINSPECT,
+        ] as $stage) {
+            $this->assertSame(
+                OdometerContinuityService::STATUS_IMPLAUSIBLE,
+                $this->svc->evaluate(50_000 + OdometerContinuityService::MAX_JUMP_KM + 1, 50_000, $stage)['status'],
+                "stage {$stage} must reject a jump beyond MAX_JUMP_KM",
+            );
+        }
+    }
+
+    public function test_a_long_but_real_journey_still_passes(): void
+    {
+        // A car out on rental between two readings can legitimately cover thousands of km. The guard is a
+        // TYPO catcher, not a mileage policy — it must not start blocking honest long hops.
+        $flag = $this->svc->evaluate(50_000 + OdometerContinuityService::MAX_JUMP_KM, 50_000, OdometerContinuityService::STAGE_PICKUP);
+
+        $this->assertNotSame(OdometerContinuityService::STATUS_IMPLAUSIBLE, $flag['status']);
+        $this->assertSame(OdometerContinuityService::STATUS_CHECK, $flag['status'], 'a big-but-possible pickup jump stays a soft "re-read the dial" nudge');
+    }
+
+    public function test_the_guard_does_not_fire_without_a_previous_reading(): void
+    {
+        // An anchor reading has nothing to jump FROM — a high first reading is just a high-mileage car.
+        $this->assertSame(
+            OdometerContinuityService::STATUS_VERIFIED,
+            $this->svc->evaluate(900_000, null, OdometerContinuityService::STAGE_GARAGE_OUT)['status'],
+        );
+    }
 }
