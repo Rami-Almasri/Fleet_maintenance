@@ -55,24 +55,53 @@ class OdometerContinuityServiceTest extends TestCase
 
     public function test_strict_match_stages_enforce_exact_with_a_small_noted_tolerance(): void
     {
-        foreach ([
-            OdometerContinuityService::STAGE_TEST,
-            OdometerContinuityService::STAGE_PARK_PICKUP,
-        ] as $stage) {
-            // exact match → verified, no note needed
+        // Behaviour shared by EVERY strict-match stage: the car should not have moved since the last
+        // reading, so an exact match is clean, a small forward drift is allowed but must carry a note,
+        // and a backward reading is always a hard block (an odometer cannot go down — it is a typo).
+        foreach (OdometerContinuityService::STRICT_MATCH_STAGES as $stage) {
             $this->assertSame(OdometerContinuityService::STATUS_VERIFIED, $this->svc->evaluate(100, 100, $stage)['status'], "exact {$stage}");
-            // +1 and +5 (the buffer edge) → an authorized deviation that must carry a note
             $this->assertSame(OdometerContinuityService::STATUS_AUTHORIZED, $this->svc->evaluate(101, 100, $stage)['status'], "+1 {$stage}");
             $this->assertSame(OdometerContinuityService::STATUS_AUTHORIZED, $this->svc->evaluate(105, 100, $stage)['status'], "+5 {$stage}");
-            // +6 (beyond the buffer) → a hard block, NOT an ack-able nudge
-            $this->assertSame(OdometerContinuityService::STATUS_EXACT, $this->svc->evaluate(106, 100, $stage)['status'], "+6 {$stage}");
-            // any backward reading → a hard block, never a soft discrepancy
             $this->assertSame(OdometerContinuityService::STATUS_EXACT, $this->svc->evaluate(80, 100, $stage)['status'], "backward {$stage}");
         }
 
         $this->assertTrue($this->svc->stageRequiresExactMatch(OdometerContinuityService::STAGE_TEST));
         $this->assertTrue($this->svc->stageRequiresExactMatch(OdometerContinuityService::STAGE_PARK_PICKUP));
+        $this->assertTrue($this->svc->stageRequiresExactMatch(OdometerContinuityService::STAGE_REINSPECT));
         $this->assertFalse($this->svc->stageRequiresExactMatch(OdometerContinuityService::STAGE_PICKUP));
+    }
+
+    public function test_a_large_forward_drift_hard_blocks_the_anchor_stages_but_never_park_pickup(): void
+    {
+        // The one place the strict stages deliberately diverge, and the reason is operational rather
+        // than numerical: at PARK_PICKUP a driver is collecting a car from our own lot, where a real
+        // in-lot move of more than TOLERANCE_KM genuinely happens and CANNOT be resolved by re-reading
+        // the dial. Hard-blocking there would strand the driver with no legal way to proceed, so any
+        // forward amount is allowed through as an audited "authorized deviation" with a mandatory note.
+        $this->assertSame(
+            OdometerContinuityService::STATUS_AUTHORIZED,
+            $this->svc->evaluate(106, 100, OdometerContinuityService::STAGE_PARK_PICKUP)['status'],
+            '+6 at park pickup must stay unblockable',
+        );
+        $this->assertSame(
+            OdometerContinuityService::STATUS_AUTHORIZED,
+            $this->svc->evaluate(400, 100, OdometerContinuityService::STAGE_PARK_PICKUP)['status'],
+            'even a large in-lot move must not become an unresolvable wall',
+        );
+
+        // The other strict stages keep the tight cap: the inspector's start-of-drive anchor and the
+        // final QA sign-off both mean the car should not have moved at all, so a jump past the buffer
+        // is an unlogged drive or a typo — something the operator must correct, not acknowledge.
+        foreach ([OdometerContinuityService::STAGE_TEST, OdometerContinuityService::STAGE_REINSPECT] as $stage) {
+            $this->assertSame(OdometerContinuityService::STATUS_EXACT, $this->svc->evaluate(106, 100, $stage)['status'], "+6 {$stage}");
+        }
+
+        // Backward is a hard block everywhere, including the lenient stage.
+        $this->assertSame(
+            OdometerContinuityService::STATUS_EXACT,
+            $this->svc->evaluate(99, 100, OdometerContinuityService::STAGE_PARK_PICKUP)['status'],
+            'park pickup is lenient FORWARD only',
+        );
     }
 
     public function test_pickup_forward_movement_is_verified_until_the_warn_threshold(): void

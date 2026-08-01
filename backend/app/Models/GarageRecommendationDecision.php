@@ -15,16 +15,35 @@ class GarageRecommendationDecision extends Model
 {
     protected $fillable = [
         'maintenance_id', 'vehicle_id', 'recommended_vendor_id', 'chosen_vendor_id',
-        'accepted', 'followed', 'rank', 'score', 'confidence', 'reasons', 'criteria', 'actor_id',
+        'accepted', 'followed', 'rank', 'score', 'match_score', 'confidence',
+        'reasons', 'breakdown', 'strategy', 'expected_outcomes', 'fault_criticality', 'criteria', 'actor_id',
+        'actual_outcomes', 'forecast_accuracy', 'scored_at',
+        'engine_version', 'policy_version', 'config_fingerprint', 'data_snapshot',
+        // The feedback loop: why the supervisor differed, and where their pick actually stood.
+        'override_reason', 'override_note', 'chosen_rank', 'chosen_match_score', 'score_gap', 'chosen_advantages',
     ];
 
     protected $casts = [
-        'accepted' => 'boolean',
-        'followed' => 'boolean',
-        'rank'     => 'integer',
-        'score'    => 'float',
-        'reasons'  => 'array',
-        'criteria' => 'array',
+        'accepted'    => 'boolean',
+        'followed'    => 'boolean',
+        'rank'        => 'integer',
+        'score'       => 'float',
+        'match_score' => 'integer',
+        'reasons'     => 'array',
+        'breakdown'   => 'array',
+        'strategy'    => 'array',
+        // The forecast the operator acted on, kept so predicted-vs-actual can be scored after closure.
+        'expected_outcomes' => 'array',
+        'fault_criticality' => 'array',
+        // The verdict on the forecast — written by ForecastCalibration once the repair has concluded.
+        'actual_outcomes'   => 'array',
+        'forecast_accuracy' => 'array',
+        'scored_at'         => 'datetime',
+        'criteria'    => 'array',
+        'chosen_rank'        => 'integer',
+        'chosen_match_score' => 'integer',
+        'score_gap'          => 'integer',
+        'chosen_advantages'  => 'array',
     ];
 
     public function maintenance(): BelongsTo

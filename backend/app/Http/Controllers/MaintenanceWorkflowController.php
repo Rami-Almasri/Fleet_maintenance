@@ -1702,6 +1702,16 @@ class MaintenanceWorkflowController extends Controller
                 'recommendation.provenance'            => ['nullable', 'array'],
                 'recommendation.criteria'              => ['nullable', 'array'],
                 'recommendation.source'                => ['nullable', 'string', 'max:60'],
+                // The feedback loop. `override_reason` is validated against the configured taxonomy so
+                // the counts can never be polluted by a stale client value; the service degrades
+                // anything unrecognised to `other` as a second line of defence.
+                'recommendation.override_reason'          => ['nullable', 'string', Rule::in(array_keys((array) config('garage_recommendation.override_reasons', [])))],
+                'recommendation.override_note'            => ['nullable', 'string', 'max:500'],
+                'recommendation.recommended_match_score'  => ['nullable', 'integer', 'between:0,100'],
+                'recommendation.chosen_match_score'       => ['nullable', 'integer', 'between:0,100'],
+                'recommendation.chosen_rank'              => ['nullable', 'integer'],
+                'recommendation.chosen_advantages'        => ['nullable', 'array'],
+                'recommendation.chosen_advantages.*'      => ['string', 'max:20'],
             ]);
 
             $ticket = $this->workflow->assignDispatch($ticket, $data, $request->user());

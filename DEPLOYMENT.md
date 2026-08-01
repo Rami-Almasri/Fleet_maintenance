@@ -8,6 +8,46 @@
 
 ---
 
+# Pre-deployment gate (run this before every release)
+
+The schema is part of the product: the recommendation engine relies on unique constraints, provenance
+columns and indexes that fail *silently* when absent — the app keeps working and quietly returns worse
+answers. `fault_concept_actions` ran for weeks with no unique index because nothing checked.
+
+```bash
+cd backend && composer verify
+```
+
+which runs, in order — **stop and fix on the first failure, do not deploy past one**:
+
+| Step | Command | Fails when |
+|---|---|---|
+| 1. Fresh-build proof | `php artisan schema:verify-fresh --seed` | the migration set cannot build a correct schema from an **empty** database, or the seeders cannot run against it |
+| 2. Schema health | `php artisan schema:health --json` | a guarantee the code depends on is missing (index, provenance column, applied migration) |
+| 3. Test suite | `php artisan test` | anything else |
+
+All three exit non-zero on failure, so any CI runner can gate on them without extra glue.
+
+**Notes**
+
+- `schema:verify-fresh` builds and drops its **own** throwaway database and refuses to target the
+  application database — it is safe to run against a production host, but it does need `CREATE DATABASE`.
+  Pass `--database=<name>` to control where, `--keep` to leave it behind for inspection.
+- `schema:health --drift` additionally diffs the live schema against a clean migration run to catch
+  changes made by hand that never went through a migration. It is slow (~30s) and therefore not in the
+  gate; run it after any manual production intervention.
+- `schema:health` exits non-zero only on **fail**. A `warn` (e.g. the calibration loop still learning)
+  is informational and will not block a deploy.
+
+Example GitHub Actions step, if/when CI is added:
+
+```yaml
+- name: Schema & test gate
+  run: cd backend && composer verify
+```
+
+---
+
 # Docker Production Deployment
 
 ## Architecture

@@ -2787,7 +2787,33 @@ class MaintenanceWorkflowService
             'reason'                => isset($rec['reason']) ? $this->clean($rec['reason']) : null,
             'reasons'               => is_array($rec['reasons'] ?? null) ? array_slice($rec['reasons'], 0, 4) : null,
             'source'                => $rec['source'] ?? 'experience_engine',
+            // WHY the supervisor differed. Recorded as fact, never as fault — most overrides are sound
+            // operational judgement the engine has no way to see.
+            'override_reason'       => $this->overrideReason($rec, $recommendedId, $chosen->id),
+            'override_note'         => isset($rec['override_note']) ? $this->clean($rec['override_note']) : null,
         ];
+    }
+
+    /**
+     * The override reason, validated against the configured taxonomy.
+     *
+     * Only meaningful when the supervisor actually differed — a reason attached to a followed
+     * recommendation is a client bug, and storing it would corrupt every acceptance-rate figure that
+     * reads this column. An unrecognised key degrades to `other` rather than being stored raw, so the
+     * counts can never be polluted by a stale or misspelled client value.
+     */
+    private function overrideReason(array $rec, ?int $recommendedId, int $chosenId): ?string
+    {
+        if ($recommendedId === null || $recommendedId === $chosenId) {
+            return null;
+        }
+        $reason = $rec['override_reason'] ?? null;
+        if (! is_string($reason) || $reason === '') {
+            return null;
+        }
+        return array_key_exists($reason, (array) config('garage_recommendation.override_reasons', []))
+            ? $reason
+            : 'other';
     }
 
     /**
@@ -2799,9 +2825,14 @@ class MaintenanceWorkflowService
      */
     private function recordRecommendationDecision(Maintenance $ticket, ?array $rec, Vendor $chosen, User $actor): void
     {
-        if (empty($rec)) {
-            return;
-        }
+        // EVERY garage assignment is recorded, including ones made with no recommendation on screen
+        // (a re-dispatch back to the garage that botched the repair, an older client, a supervisor who
+        // never opened the panel). Those rows carry a null `recommended_vendor_id` and are excluded
+        // from the acceptance rate — you cannot accept advice that was never given — but they are the
+        // only way to know how often the engine is bypassed entirely. Recording nothing would make the
+        // acceptance rate look healthy precisely when nobody is using the recommendation at all.
+        $rec = is_array($rec) ? $rec : [];
+
         try {
             $recommendedId = isset($rec['recommended_vendor_id']) ? (int) $rec['recommended_vendor_id'] : null;
             GarageRecommendationDecision::create([
@@ -2810,13 +2841,46 @@ class MaintenanceWorkflowService
                 'recommended_vendor_id' => $recommendedId,
                 'chosen_vendor_id'      => $chosen->id,
                 'accepted'              => (bool) ($rec['accepted'] ?? false),
+                // NULL, not false, when no recommendation existed — "did not follow" and "there was
+                // nothing to follow" are different facts and must not collapse into one.
                 'followed'              => $recommendedId !== null ? ($recommendedId === $chosen->id) : null,
                 'rank'                  => isset($rec['rank']) ? (int) $rec['rank'] : null,
                 'score'                 => isset($rec['score']) ? (float) $rec['score'] : null,
+                // The 0–100 the Supervisor actually saw, with the factor breakdown behind it and the
+                // one-garage-vs-split call. Snapshotted because the engine's history dataset moves daily —
+                // re-running it later answers a different question than the one asked at dispatch.
+                'match_score'           => isset($rec['match_score']) ? (int) $rec['match_score'] : null,
                 'confidence'            => $rec['confidence'] ?? null,
                 'reasons'               => is_array($rec['reasons'] ?? null) ? array_slice($rec['reasons'], 0, 4) : null,
+                'breakdown'             => is_array($rec['breakdown'] ?? null) ? $rec['breakdown'] : null,
+                'strategy'              => is_array($rec['strategy'] ?? null) ? $rec['strategy'] : null,
+                // The FORECAST that was on screen — turnaround, comeback risk, cost, start date, each
+                // with its basis. Recorded so it can be scored against what actually happened.
+                'expected_outcomes'     => is_array($rec['expected_outcomes'] ?? null) ? $rec['expected_outcomes'] : null,
+                'fault_criticality'     => is_array($rec['fault_criticality'] ?? null) ? $rec['fault_criticality'] : null,
                 'criteria'              => is_array($rec['criteria'] ?? null) ? $rec['criteria'] : null,
+                // Which engine build, which policy, which tuning, which day's data. Without these an old
+                // decision cannot be explained — re-running today's engine answers a different question.
+                'engine_version'        => $rec['provenance']['engine_version'] ?? null,
+                'policy_version'        => $rec['provenance']['policy_version'] ?? null,
+                'config_fingerprint'    => $rec['provenance']['config_fingerprint'] ?? null,
+                'data_snapshot'         => $rec['provenance']['data_snapshot'] ?? null,
                 'actor_id'              => $actor->id,
+                // ── The feedback loop ─────────────────────────────────────────────────────────────
+                // `followed` alone says a human disagreed and nothing about whether we were wrong. The
+                // reason, the gap they were willing to accept, and what their pick was measurably
+                // better at are what turn "supervisors keep overriding us" into a testable claim.
+                'override_reason'       => $this->overrideReason($rec, $recommendedId, $chosen->id),
+                'override_note'         => isset($rec['override_note']) ? $this->clean($rec['override_note']) : null,
+                'chosen_rank'           => isset($rec['chosen_rank']) ? (int) $rec['chosen_rank'] : null,
+                'chosen_match_score'    => isset($rec['chosen_match_score']) ? (int) $rec['chosen_match_score'] : null,
+                // The recommended score is sent SEPARATELY from `match_score` above: that one is the
+                // chosen garage's (what the supervisor acted on), so computing the gap from it would
+                // return 0 on every override and make every disagreement look like a tie.
+                'score_gap'             => isset($rec['recommended_match_score'], $rec['chosen_match_score'])
+                    ? (int) $rec['recommended_match_score'] - (int) $rec['chosen_match_score'] : null,
+                // Measured, not claimed — so a stated reason can be checked against what the data says.
+                'chosen_advantages'     => is_array($rec['chosen_advantages'] ?? null) ? $rec['chosen_advantages'] : null,
             ]);
         } catch (\Throwable $e) {
             report($e); // the decision log must never sink a real dispatch
@@ -5852,6 +5916,7 @@ class MaintenanceWorkflowService
 
         // A garage was involved AND there was something for it to fix. Both halves matter: a ticket with
         // no vendor never reached a workshop, and one with no faults has no outcome to judge.
+        //
         // Owned by the model, alongside its set-based twin `Maintenance::verdictEligible()`. The
         // evidence ledger asks the same question for a different reason — "should this ticket have
         // produced evidence?" — and if the two ever drifted, the platform would be measuring its QC

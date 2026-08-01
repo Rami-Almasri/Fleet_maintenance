@@ -43,6 +43,7 @@ import Parts from './pages/Parts';
 import RecurringFaultReviews from './pages/RecurringFaultReviews';
 import DamageAccidents from './pages/DamageAccidents';
 import CostIntelligence from './pages/CostIntelligence';
+import RecommendationIntelligence from './pages/RecommendationIntelligence';
 import ServiceReminders from './pages/reminders/ServiceReminders';
 import EventClassificationReview from './pages/EventClassificationReview';
 import MileageCenter from './pages/MileageCenter';
@@ -260,6 +261,7 @@ export default function App() {
                   <Route path="/activity" element={<Navigate to="/maintenance-workflow" replace />} />
                   <Route path="/vehicle-status" element={<Navigate to="/maintenance-workflow" replace />} />
                   <Route path="/cost-intelligence" element={<CostIntelligence />} />
+                  <Route path="/recommendation-intelligence" element={<RecommendationIntelligence />} />
                   {/* Service Due board retired — Service Reminders is the one service surface now. */}
                   <Route path="/service-due" element={<Navigate to="/service-reminders" replace />} />
                   {/* Fuel & Mileage, Reconciliation and Chain Audit are unified into one tabbed page. */}

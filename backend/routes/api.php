@@ -897,6 +897,9 @@ Route::middleware(['auth:sanctum'])->prefix('intelligence/center')
 // Static prefix, no wildcards. Frontend visibility is gated by SHOW_FLEET_INTELLIGENCE.
 Route::middleware(['auth:sanctum', 'permission:insights.view'])->prefix('intelligence')->controller(\App\Http\Controllers\IntelligenceController::class)->group(function () {
     Route::get('/cost', 'cost');                 // maintenance cost per km / day / rental, per vehicle + fleet
+    // Is the garage recommendation actually being taken, and where is it overruled? Returns the
+    // engine-judgeable acceptance rate SEPARATELY from the raw one — see the controller note.
+    Route::get('/recommendation-learning', 'recommendationLearning');
     Route::get('/service-due', 'serviceDue');    // overdue + due-soon service board (reuses forecast engine)
     Route::get('/maintenance-ops', 'maintenanceOps');                    // Maintenance Operations Center board (priority score + recommended action)
     Route::get('/vehicle/{vehicle}/maintenance-detail', 'maintenanceOpsVehicle'); // one-car maintenance context drawer

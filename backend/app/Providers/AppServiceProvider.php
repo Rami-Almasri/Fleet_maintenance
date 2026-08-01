@@ -28,6 +28,14 @@ class AppServiceProvider extends ServiceProvider
             };
         });
 
+        // The override-learning analysis is a PURE class — it must never read config itself, or it
+        // stops being unit-testable without a container. The taxonomy and the evidence thresholds are
+        // injected here, at the one place that is allowed to know about config.
+        $this->app->bind(\App\Services\Garage\DecisionLearning::class, fn () => new \App\Services\Garage\DecisionLearning(
+            (array) config('garage_recommendation.override_reasons', []),
+            (array) config('garage_recommendation.learning', []),
+        ));
+
         // The intelligence platform's public API for historical knowledge. Capabilities depend on the
         // INTERFACE only, so swapping the projection for a materialised view, a warehouse or an
         // external analytics service is this one line and nothing else.

@@ -75,6 +75,44 @@ function lastKnownOdometer(tk) {
 
 // Post-Repair Inspection — the structured reasons a repair did not hold (Case B). CONTRACT with
 // App\Models\RepairInspection::REASONS; visible labels resolve from the i18n catalog at render time.
+// Why a supervisor sent the car somewhere other than the recommendation. Mirrors
+// config/garage_recommendation.php `override_reasons` — the backend validates against that list and
+// degrades anything unrecognised to `other`, so a stale entry here can never corrupt the counts.
+//
+// ⚠️ These are reasons, NOT excuses. Most overrides are sound operational judgement the engine has no
+// way to see, and the wording has to stay neutral: the moment supervisors feel logged-and-judged they
+// pick whichever option ends the conversation fastest and the data stops meaning anything.
+const OVERRIDE_REASONS = [
+  'lower_cost', 'faster_availability', 'faster_turnaround', 'customer_requested',
+  'existing_relation', 'special_expertise', 'warranty_or_contract', 'location', 'other',
+];
+
+/**
+ * Which axes the chosen garage was genuinely better on, from the same figures that were on screen.
+ *
+ * Recorded so a stated reason can be CHECKED later: "lower cost" against a garage our own data shows
+ * was cheaper is evidence our weights undervalue cost; the same claim against one that was not cheaper
+ * says something about perception or about our cost data — opposite problems, and only separable
+ * because the advantage was measured rather than taken on trust.
+ *
+ * Fleet-basis figures are ignored: a number every garage shares cannot make one of them better.
+ */
+function measuredAdvantages(chosen, recommended) {
+  const own = (s) => s && s.value != null && ['garage', 'garage_fault', 'garage_fault_model'].includes(s.basis);
+  const a = chosen.outcomes || {};
+  const b = recommended.outcomes || {};
+  const out = [];
+  if (own(a.cost_aed) && own(b.cost_aed) && b.cost_aed.value > 0
+      && (b.cost_aed.value - a.cost_aed.value) / b.cost_aed.value >= 0.15) out.push('cost');
+  if (own(a.duration_days) && own(b.duration_days)
+      && b.duration_days.value - a.duration_days.value >= 0.5) out.push('speed');
+  if (a.start_in_days != null && b.start_in_days != null
+      && b.start_in_days - a.start_in_days >= 1) out.push('availability');
+  if (own(a.success_pct) && own(b.success_pct)
+      && a.success_pct.value - b.success_pct.value >= 5) out.push('reliability');
+  return out;
+}
+
 const FAILURE_REASONS = ['wrong_diagnosis', 'part_failed', 'repair_incomplete', 'wrong_part', 'customer_complaint', 'unknown'];
 // Why a repair could not be verified. Kept distinct from FAILURE_REASONS because an unverifiable
 // inspection is not a failed one — it must never blame a garage or reach a quality statistic.
@@ -626,11 +664,22 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   const [deferrableForRental, setDeferrableForRental] = useState(() => !!ticket?.deferrable_for_rental);
   // assign: the data-driven garage recommendation result (for the audit trail — what was suggested vs chosen).
   const [recoResult, setRecoResult] = useState(null);
+  // assign: when the supervisor picks a different garage, WHY. Captured as structured data because free
+  // text cannot be counted, and an override with no reason teaches nothing except that someone disagreed.
+  const [overrideReason, setOverrideReason] = useState('');
+  const [overrideNote, setOverrideNote] = useState('');
 
   // Hard coupling (Rev. 11 Gate 1): a Breakdown is, by definition, 🔴 critical. The moment the inspector
   // classifies a ticket as Breakdown at the Decide step, force the grade to critical and lock the picker
   // so an undriveable car can never be filed as moderate/routine. The backend enforces the same rule in
   // applyBreakdownConsequences(), so this is purely the UX half of a two-sided, no-exceptions guard.
+  // The supervisor has picked a garage, an engine recommendation exists, and the two differ — the one
+  // situation where asking "why?" produces something learnable.
+  const overrideActive = action === 'assign'
+    && !!vendorId
+    && (recoResult?.primary?.length || 0) > 0
+    && String(recoResult.primary[0].vendor_id) !== String(vendorId);
+
   const severityLocked = action === 'decide' && maintType === 'breakdown';
   useEffect(() => {
     if (severityLocked && faultSeverity !== 'critical') setFaultSeverity('critical');
@@ -890,12 +939,44 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
         if (recPrimary.length) {
           const chosen = Number(vendorId);
           const match = recPrimary.find((p) => Number(p.vendor_id) === chosen);
-          const src = match || recPrimary[0];
+          const top = recPrimary[0];
+          const src = match || top;
+          const isOverride = Number(top.vendor_id) !== chosen;
           recommendation = {
-            recommended_vendor_id: recPrimary[0].vendor_id,
+            recommended_vendor_id: top.vendor_id,
             accepted: !!match,
             rank: match ? match.rank : null,
             score: src.score,
+            // ── Feedback loop ────────────────────────────────────────────────────────────────────
+            // An override is only learnable next to WHERE the chosen garage stood. Both scores are
+            // sent explicitly: `match_score` below is the chosen garage's (what the supervisor acted
+            // on), so the gap needs the recommended one stated separately or it computes to zero on
+            // every override — which would make every disagreement look like a tie.
+            recommended_match_score: top.match_score ?? null,
+            chosen_match_score: match ? (match.match_score ?? null) : null,
+            chosen_rank: match ? match.rank : null,
+            override_reason: isOverride ? (overrideReason || null) : null,
+            // The note is offered on ANY override, not only "Other". The taxonomy says which axis the
+            // supervisor traded on; the note is where the specific fact lives ("they had the part in
+            // stock"), and that is usually the thing worth acting on.
+            override_note: isOverride ? (overrideNote.trim() || null) : null,
+            // What the chosen garage was MEASURABLY better at, judged from the same figures on
+            // screen — so the stated reason can later be checked against the data rather than taken
+            // on trust. Only garage-grain figures count; a fleet fallback is the same number for
+            // everyone and can never make one garage better than another.
+            chosen_advantages: isOverride && match ? measuredAdvantages(match, top) : null,
+            // The number the supervisor actually saw, plus the factor breakdown behind it and the
+            // one-garage-vs-split call — so "why this garage?" stays answerable months later.
+            match_score: src.match_score ?? null,
+            breakdown: src.breakdown || null,
+            strategy: recoResult?.strategy || null,
+            // The forecast that was on screen when the call was made — recorded so it can later be
+            // scored against what actually happened.
+            expected_outcomes: src.outcomes || null,
+            fault_criticality: recoResult?.criteria?.fault_criticality || null,
+            // Engine build, policy version, tuning fingerprint and data date — so this decision stays
+            // explainable after all three have moved on.
+            provenance: recoResult?.provenance || null,
             confidence: src.confidence || null,
             reason: (src.reasons || []).map((r) => r.t).slice(0, 3).join('; ') || null,
             reasons: (src.reasons || []).slice(0, 4),
@@ -1707,6 +1788,50 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
               )}
               <p className="mt-1.5 text-xs text-slate-400">{t('workflow.hint.notifyAllDrivers')}</p>
             </div>
+
+            {/* OVERRIDE CAPTURE — the feedback loop. Shown only when the supervisor has actually chosen
+                a different garage from the one recommended.
+
+                Framed as a question, never as a challenge: the copy says the choice is recorded as a
+                decision, not questioned, because a supervisor who feels second-guessed picks whatever
+                option closes the dialog fastest and every number downstream becomes fiction. A reason is
+                asked for but never blocks the dispatch — a car waiting on a dropdown is a worse failure
+                than an unlabelled row, and "no reason captured" is itself reported as a gap. */}
+            {overrideActive && (
+              <div className="rounded-lg bg-indigo-50/60 p-3 ring-1 ring-inset ring-indigo-200">
+                <p className="text-sm font-semibold text-slate-700">{t('workflow.override.title')}</p>
+                <p className="mt-0.5 text-xs leading-snug text-slate-500">{t('workflow.override.intro')}</p>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {OVERRIDE_REASONS.map((r) => (
+                    <button
+                      key={r}
+                      type="button"
+                      onClick={() => setOverrideReason((v) => (v === r ? '' : r))}
+                      className={`rounded-lg px-2.5 py-1 text-xs font-medium transition ${
+                        overrideReason === r
+                          ? 'bg-indigo-600 text-white'
+                          : 'bg-white text-slate-600 ring-1 ring-inset ring-slate-300 hover:bg-slate-50'}`}
+                    >
+                      {t(`workflow.override.reason.${r}`)}
+                    </button>
+                  ))}
+                </div>
+                {/* Offered on ANY reason, not just "Other". The chip says which axis was traded; the
+                    note is where the specific fact lives ("they had the part in stock"), and that is
+                    usually the detail worth acting on. */}
+                <input
+                  type="text"
+                  value={overrideNote}
+                  onChange={(e) => setOverrideNote(e.target.value)}
+                  placeholder={t('workflow.override.notePlaceholder')}
+                  className="mt-2 w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
+                />
+                {overrideReason === 'other' && !overrideNote.trim() && (
+                  <p className="mt-1 text-[11px] text-amber-700">{t('workflow.override.otherNeedsNote')}</p>
+                )}
+                <p className="mt-2 text-[11px] leading-snug text-slate-400">{t('workflow.override.footnote')}</p>
+              </div>
+            )}
             {/* Note — ONLY offered when the supervisor is actually CHANGING the garage on a re-dispatch
                 (a different garage than the one the car came back broken from). Saved to the car's
                 maintenance history + the ticket's follow-up log. */}

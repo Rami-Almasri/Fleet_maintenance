@@ -53,9 +53,38 @@ interface VehicleExpenseProvider
     public function history(int $vehicleId, ?string $from = null, ?string $to = null): array;
 
     /**
+     * EVERY expense line, keyed by vehicle — the bulk form of {@see history()}.
+     *
+     * Repair-cost estimation has to read the whole ledger at once (tens of thousands of lines across
+     * hundreds of vehicles) and calling history() per vehicle would mean hundreds of queries. This
+     * exists so that work stays INSIDE the seam: nothing is allowed to reach past this contract to
+     * `vehicle_expenses` directly, and a future Odoo provider swaps in without touching the consumer.
+     *
+     * @param  array<int>|null  $vehicleIds  limit to these vehicles (null = all)
+     * @return array<int, array<int, array{date:?string, remarks:?string, amount:float}>>
+     */
+    public function linesByVehicle(?array $vehicleIds = null, ?string $from = null, ?string $to = null): array;
+
+    /**
      * Provenance for the surface UI: which source, as-of when, and whether any data is loaded.
      *
      * @return array{label:string,available:bool,as_of:?string,lines:int}
      */
     public function source(): array;
+
+    /**
+     * Is this source still being MAINTAINED?
+     *
+     * `source()` says where the data came from; this says whether anyone is still putting data in.
+     * The distinction matters because a frozen ledger fails silently: every figure derived from it
+     * keeps rendering, keeps looking precise, and quietly describes a fleet that stopped existing
+     * months ago. Anything leaning on expense data — repair cost estimation above all — needs to be
+     * able to say "this is current" or "this stopped in March" rather than just showing a number.
+     *
+     * @return array{
+     *   last_import:?string, last_entry:?string, days_since_entry:?int,
+     *   lines_30d:int, lines_90d:int, prior_90d:int, status:string, message:string
+     * }
+     */
+    public function freshness(): array;
 }

@@ -158,6 +158,7 @@ const NAV_SECTIONS = [
     title: 'Fleet Intelligence',
     items: [
       { name: 'Cost Intelligence', to: '/cost-intelligence', intel: true, icon: 'M3 12h4l2-7 4 14 2-7h4', desc: 'Maintenance cost per kilometre, per day and per rental for every car — the true running cost of each asset. Numerator is the same logged repair spend as the Profit Bridge; denominators are validated distance, in-service days and rental count. Cars with no measured distance show “—”, never a misleading zero.' },
+      { name: 'Recommendation Intelligence', to: '/recommendation-intelligence', intel: true, icon: 'M9 12l2 2 4-4M12 3l7 4v5c0 4.4-3 8.3-7 9-4-.7-7-4.6-7-9V7z', desc: 'Whether supervisors actually take the garage recommendation, and what they overrule it for. Reports the engine-judgeable acceptance rate SEPARATELY from the raw one — an override because a customer asked for a specific workshop is not a model failure, and blending the two produces a number that worsens the better the operation serves its customers. Weight suggestions stay hidden until enough decisions exist to mean anything.' },
       // Reuses the existing utilization board (/fleet-utilization) — no rebuild. When the intelligence
       // layer is on it lives here; when off it stays in Analytics & Admin (see hideWhenIntel below).
       { name: 'Fleet Utilization', to: '/fleet-utilization', intel: true, icon: 'M3 3v18h18M7 15l3-3 3 3 5-5M8 21V9m4 12V5m4 16v-7', desc: 'Per-car split of owned time into rented, in-maintenance, and idle days — utilization and downtime % against how long you have owned each car, with rent lost to downtime.' },
@@ -232,6 +233,7 @@ const NAV_PERMISSIONS = {
   '/maintenance-analytics': 'maintenance.view',
   '/damage-accidents': 'maintenance.view',
   '/cost-intelligence': 'insights.view',
+  '/recommendation-intelligence': 'insights.view',
   '/mileage': 'insights.view',
   '/fleet-utilization': 'insights.view',
   '/maintenance-swap': 'insights.view',

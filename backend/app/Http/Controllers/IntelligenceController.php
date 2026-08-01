@@ -3,8 +3,10 @@
 namespace App\Http\Controllers;
 
 use App\Helpers\ResponseHelper;
+use App\Models\GarageRecommendationDecision;
 use App\Models\Vehicle;
 use App\Services\CostIntelligenceService;
+use App\Services\Garage\DecisionLearning;
 use App\Services\Explainability\ExplanationContext;
 use App\Services\Explainability\ExplanationEngine;
 use App\Services\FinancialExplanationService;
@@ -37,6 +39,58 @@ class IntelligenceController extends Controller
                 'Cost intelligence retrieved successfully',
                 200,
             );
+        } catch (\Throwable $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
+     * Recommendation Intelligence — is the garage engine's advice actually being taken, and where is it
+     * being overruled?
+     *
+     * ⚠️ Returns TWO acceptance figures and the UI must keep them apart. `adjusted_pct` excludes
+     * overrides on axes the engine deliberately does not model (a customer asking for a specific
+     * workshop, a standing relationship) and is the only one that judges the engine; `acceptance_pct`
+     * counts every override and exists to show the difference. Blending them produces a number that
+     * gets worse the better the operation serves its customers.
+     *
+     * Vendor names are resolved HERE rather than in the pure service, so the analysis stays DB-free.
+     */
+    public function recommendationLearning(Request $request, DecisionLearning $learning)
+    {
+        try {
+            $days = max(1, min(730, (int) ($request->query('days') ?: 180)));
+
+            $rows = GarageRecommendationDecision::query()
+                ->where('created_at', '>=', now()->subDays($days))
+                ->get(['recommended_vendor_id', 'chosen_vendor_id', 'followed', 'override_reason', 'override_note', 'score_gap', 'chosen_advantages', 'chosen_rank', 'created_at'])
+                ->map(fn ($d) => [
+                    'recommended_vendor_id' => $d->recommended_vendor_id,
+                    'chosen_vendor_id'      => $d->chosen_vendor_id,
+                    'followed'              => $d->followed,
+                    'override_reason'       => $d->override_reason,
+                    'score_gap'             => $d->score_gap,
+                    'chosen_advantages'     => $d->chosen_advantages,
+                    'chosen_rank'           => $d->chosen_rank,
+                ])
+                ->all();
+
+            $report = $learning->report($rows);
+
+            // Name the garages in the repeat-substitution list — vendor ids are unreadable in a UI.
+            $ids = collect($report['repeat_pairs'])->flatMap(fn ($p) => [$p['recommended_vendor_id'], $p['chosen_vendor_id']])->unique()->all();
+            $names = $ids ? \App\Models\Vendor::whereIn('id', $ids)->pluck('name', 'id') : collect();
+            $report['repeat_pairs'] = array_map(fn ($p) => $p + [
+                'recommended_garage' => $names[$p['recommended_vendor_id']] ?? null,
+                'chosen_garage'      => $names[$p['chosen_vendor_id']] ?? null,
+            ], $report['repeat_pairs']);
+
+            // The taxonomy travels with the report so the UI never hard-codes reason labels — the
+            // config is the single place a reason is named.
+            $report['taxonomy'] = (array) config('garage_recommendation.override_reasons', []);
+            $report['window_days'] = $days;
+
+            return ResponseHelper::SuccessResponse($report, 'Recommendation learning retrieved successfully', 200);
         } catch (\Throwable $e) {
             return ResponseHelper::fromException($e);
         }
