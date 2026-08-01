@@ -75,14 +75,34 @@ class MaintenanceReasonMatcher
         return self::LEVEL_RANK[$r->level] ?? 9;
     }
 
-    /** @return array<int,MaintenanceReason> reasons mapped from each MAIN area token */
+    /**
+     * @return array<int,MaintenanceReason> reasons mapped from each MAIN token
+     *
+     * MAIN carries TWO vocabularies, because the sheet has been filled both ways over the years:
+     *   - an AREA  ('Body & Exterior', 'Engine', 'Tires', …) → mapped via AREA_MAP, and
+     *   - a reason NAME verbatim ('Body Damage', 'Rims scratch', 'Check Engine Light', …).
+     *
+     * Area first (it's the controlled form), then an EXACT name match — the identical
+     * case-insensitive, trimmed, whole-token rule SUP already uses. Still no heuristics: a token
+     * either IS a reason name or it is ignored. Without the second pass ~23k rows whose MAIN holds
+     * a name that exists verbatim in the vocabulary could never link, and the nightly
+     * maintenance:link-reasons was a no-op on all of them.
+     */
     private function reasonsFromMain(?string $serviceMain): array
     {
         $out = [];
         foreach ($this->tokens($serviceMain) as $tok) {
-            $reasonEn = self::AREA_MAP[mb_strtolower($tok)] ?? null;
+            $key = mb_strtolower($tok);
+
+            $reasonEn = self::AREA_MAP[$key] ?? null;
             if ($reasonEn !== null && isset($this->byEn[mb_strtolower($reasonEn)])) {
                 $out[] = $this->byEn[mb_strtolower($reasonEn)];
+                continue;
+            }
+
+            // Not an area — accept it only if it is EXACTLY a reason name (en or ar).
+            if (isset($this->byName[$key])) {
+                $out[] = $this->byName[$key];
             }
         }
         return $out;
