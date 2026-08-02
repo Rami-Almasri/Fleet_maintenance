@@ -48,7 +48,8 @@ use Illuminate\Support\Facades\DB;
 class OntologyBuildGraph extends Command
 {
     protected $signature = 'ontology:build-graph
-                            {--skip-confused : Skip the derived confused-with pass (it runs the matcher per concept)}';
+                            {--skip-confused : Skip the derived confused-with pass (it runs the matcher per concept)}
+                            {--if-empty : Do nothing if the graph already has nodes — the bootstrap guard the container entrypoint uses}';
 
     protected $description = 'Project the fault vocabulary into a typed knowledge graph';
 
@@ -60,6 +61,18 @@ class OntologyBuildGraph extends Command
 
     public function handle(OntologyGraphService $graph, KeywordOntologyService $matcher): int
     {
+        // BOOTSTRAP GUARD. Seeding writes the vocabulary; only this command writes the graph, and
+        // nothing in DatabaseSeeder calls it — so a freshly seeded install reports 105/105 coverage,
+        // answers searches, and silently omits every "usually caused by / fixed by" line, because
+        // those read ontology_edges rather than the profile JSON. That is what production shipped
+        // as on 2026-08-02. The entrypoint now runs this on boot with --if-empty, which makes the
+        // gap impossible while costing an existing install one COUNT.
+        if ($this->option('if-empty') && OntologyNode::query()->exists()) {
+            $this->info('Ontology graph already built — nothing to do (--if-empty).');
+
+            return self::SUCCESS;
+        }
+
         $stats = ['faults' => 0, 'symptoms' => 0, 'components' => 0, 'causes' => 0,
                   'procedures' => 0, 'repairs' => 0, 'related' => 0, 'confused' => 0];
 

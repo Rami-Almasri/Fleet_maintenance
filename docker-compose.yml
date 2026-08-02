@@ -71,7 +71,13 @@ services:
       interval: 15s
       timeout: 5s
       retries: 5
-      start_period: 90s   # first boot runs migrations + cache before fpm answers
+      # First boot runs migrations + caches before fpm answers — and, on an install whose
+      # ontology graph has never been built, `ontology:build-graph --if-empty` too, which
+      # walks every concept through the matcher and takes a minute or two. Overrunning this
+      # window does not just mark backend unhealthy: nginx and scheduler depend on it and
+      # refuse to start at all, which reads as a total outage caused by a knowledge-graph
+      # build. Generous on purpose; it costs nothing on the boots that don't need it.
+      start_period: 240s
     depends_on:
       db:
         condition: service_healthy
