@@ -48,7 +48,6 @@ export const MODULES = [
     tagline: 'The repair pipeline, queues, parts, suppliers and history',
     sections: [
       { name: 'Car Status', route: '/car-status', permission: 'maintenance.view', icon: Icon.Wrench, desc: 'Live stage board — every car by the exact workflow stage it sits in and who is responsible right now.' },
-      { name: 'Component Intelligence', route: null, permission: 'components.view', icon: Icon.Shield, status: 'soon', desc: 'Every part installed across the fleet — warranty exposure, expected service life, replacement churn and total installed value. Built from the workflow; nothing is entered by hand — coming soon.' },
       {
         name: 'Maintenance Cycle',
         route: '/maintenance-workflow',
@@ -86,6 +85,8 @@ export const MODULES = [
       { name: 'Parts', route: '/parts', permission: 'parts.view', icon: Icon.Coins, desc: 'Request, approve, buy and install parts — with duplicate-spend and recurrence detection.' },
       { name: 'Garages', route: '/garages', permission: 'maintenance.view', icon: Icon.Wrench, desc: 'The garages that service the fleet, and the work routed to each.' },
       { name: 'History', route: '/maintenance-history', permission: 'maintenance.view', icon: Icon.Clock, desc: 'Every workshop visit per car — how often and how long, trip by trip.' },
+      // Coming Soon tabs sit last so the 12 live sections lead.
+      { name: 'Component Intelligence', route: null, permission: 'components.view', icon: Icon.Shield, status: 'soon', desc: 'Every part installed across the fleet — warranty exposure, expected service life, replacement churn and total installed value. Built from the workflow; nothing is entered by hand — coming soon.' },
     ],
   },
   {
@@ -130,8 +131,8 @@ export const MODULES = [
     tagline: 'Running cost, accounting data and reports',
     sections: [
       { name: 'Cost Intelligence', route: '/cost-intelligence', permission: 'insights.view', flag: 'intel', icon: Icon.Chart, desc: 'The true running cost of each asset — per kilometre, per day and per rental.' },
-      { name: 'Accounting Data', route: null, permission: 'insights.view', icon: Icon.Invoice, status: 'soon', desc: 'Direct feed from the accounting system — coming soon.' },
       { name: 'Reports', route: '/apps/reports', permission: 'insights.view', icon: Icon.Chart, desc: 'Operational reports, audit trails and data-quality surfaces in one place.' },
+      { name: 'Accounting Data', route: null, permission: 'insights.view', icon: Icon.Invoice, status: 'soon', desc: 'Direct feed from the accounting system — coming soon.' },
     ],
   },
   {
