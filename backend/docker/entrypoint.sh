@@ -35,6 +35,24 @@ if [ "$ROLE" = "app" ]; then
     # Public symlink for locally-stored media. Non-fatal: nginx also serves
     # /storage via a direct alias, so a failure here never blocks startup.
     php artisan storage:link 2>/dev/null || true
+
+    # ---- Knowledge graph bootstrap -----------------------------------------
+    # The fault ontology arrives in two halves and only one of them is seeded.
+    # `db:seed` writes the vocabulary (terms + keyword_profiles); the typed graph
+    # in ontology_nodes / ontology_edges is written ONLY by this command, which no
+    # seeder calls. Production ran for a day in exactly that state: full knowledge
+    # coverage on the admin page, working search, and every match card silently
+    # missing its "usually caused by / usually fixed by" lines, because those read
+    # the edges and not the profile JSON. Nothing surfaced it — the gap looked like
+    # a UI bug for as long as anyone was checking the seeded tables.
+    #
+    # --if-empty makes it a one-time bootstrap: an already-built graph costs one
+    # COUNT, and the full build only runs on an install that has never had one.
+    # Non-fatal deliberately — a knowledge-graph failure must not keep the whole
+    # site down — but it says so loudly rather than passing in silence.
+    echo "[entrypoint] ensuring the ontology graph exists ..."
+    php artisan ontology:build-graph --if-empty \
+        || echo "[entrypoint] WARNING: ontology:build-graph failed — search works, but match cards will omit causes/repairs. Run it by hand." >&2
 fi
 
 # ---- Production optimization caches (all roles) -----------------------------
