@@ -1008,3 +1008,16 @@ Route::middleware(['auth:sanctum', 'permission:maintenance.manage'])->prefix('od
     Route::get('/ticket/{ticket}', [\App\Http\Controllers\OdooExportController::class, 'ticket']);
     Route::get('/contract/{contract}', [\App\Http\Controllers\OdooExportController::class, 'contract']);
 });
+
+// Concept Bridge Review — the human benchmark that decides whether legacy maintenance text may be
+// enriched with ontology concepts. A reviewer answers what a real ticket segment says BEFORE the
+// matcher's prediction is revealed (the UI enforces that order); human labels are the benchmark and
+// the AI baseline is scored separately, never blended. See docs/gold-set/.
+Route::middleware(['auth:sanctum', 'permission:maintenance.manage'])
+    ->prefix('concept-bridge')
+    ->controller(\App\Http\Controllers\ConceptBridgeReviewController::class)
+    ->group(function () {
+        Route::get('/review', 'index');
+        Route::post('/review/{sample}', 'store');
+        Route::get('/results', 'results');
+    });
