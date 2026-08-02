@@ -131,6 +131,12 @@ class MatchExplanationService
     {
         return $keyword->terms()
             ->where('is_active', true)
+            // reorder() drops the relation's default `order by search_rank desc`. Counting by source
+            // groups the rows away, so ordering by a column that is neither grouped nor aggregated is
+            // meaningless here — and MySQL 8 REFUSES it outright under ONLY_FULL_GROUP_BY (error 1055),
+            // which is on by default there and off in the MariaDB we develop against. Every keyword
+            // search on the server threw a 500 from this line while passing locally.
+            ->reorder()
             ->selectRaw('source, count(*) as total')
             ->groupBy('source')
             ->pluck('total', 'source')

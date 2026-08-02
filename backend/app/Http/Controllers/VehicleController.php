@@ -279,6 +279,28 @@ class VehicleController extends Controller
     }
 
     /**
+     * Suggested Checks — what an inspector should actually look at on THIS car, derived from its own
+     * recurring faults and its live service forecast (VehicleSuggestedChecksService). Replaces the
+     * fixed Battery/Fluids/Brakes checklist that used to be offered as findings on every idle car;
+     * that list still comes back, as `checklist`, labelled as the inspection agenda it always was.
+     *
+     * Read-only and recomputed on every call — a stored suggestion goes stale the moment the car is
+     * repaired, so nothing here is persisted.
+     */
+    public function suggestedChecks(Vehicle $vehicle, \App\Services\VehicleSuggestedChecksService $checks)
+    {
+        try {
+            return ResponseHelper::SuccessResponse(
+                $checks->forVehicle($vehicle),
+                'Suggested checks retrieved',
+                200
+            );
+        } catch (\Exception $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
      * "Time machine": what one car was doing — either on a single calendar day (?date=YYYY-MM-DD, or
      * ?from= alone; rented to whom / in the workshop for what / idle / onboarding / not yet owned), OR
      * over a date range (?from=&to=) returning how many days it was rented / in the workshop / available.
