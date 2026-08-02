@@ -44,6 +44,21 @@ class RecurringFaultReviewController extends Controller
         }
     }
 
+    /**
+     * GET /recurring-fault-reviews/stats — fleet-wide analytics for the dashboard charts.
+     *
+     * Intentionally takes no filters: the table answers "what must I rule on now", these charts answer
+     * "how is rework trending across the fleet". See RecurringFaultService::stats().
+     */
+    public function stats()
+    {
+        try {
+            return ResponseHelper::SuccessResponse($this->service->stats(), 'Recurring fault stats retrieved');
+        } catch (\Throwable $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
     /** POST /recurring-fault-reviews/{recurringFaultReview}/decide — record the management decision. */
     public function decide(Request $request, RecurringFaultReview $recurringFaultReview)
     {

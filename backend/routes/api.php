@@ -595,6 +595,8 @@ Route::middleware(['auth:sanctum', 'permission:maintenance.recurring.manage'])->
 // repair. Cases open automatically at the workshop-confirmation step; here they are read + decided.
 Route::middleware('auth:sanctum')->prefix('recurring-fault-reviews')->controller(RecurringFaultReviewController::class)->group(function () {
     Route::get('/', 'index')->middleware('permission:maintenance.recurring.view');
+    // Declared before the {recurringFaultReview} bindings so "stats" is never read as a model key.
+    Route::get('/stats', 'stats')->middleware('permission:maintenance.recurring.view');
     Route::post('/{recurringFaultReview}/decide', 'decide')->middleware('permission:maintenance.recurring.manage');
 });
 

@@ -211,6 +211,15 @@ export default function RecurringFaultReviews() {
     paused: () => anyModal,
   });
 
+  // The charts run on FLEET-WIDE stats, not the filtered table: the table answers "what must I rule on
+  // now", the dashboard answers "how is rework trending". Fetched separately so changing a filter never
+  // reshapes the trend line under the reader.
+  const statsFetcher = useCallback(async () => payload(await api.get('/recurring-fault-reviews/stats')) || null, []);
+  const { data: stats, loading: statsLoading, reload: reloadStats } = useFetch(statsFetcher, [], {
+    refreshInterval: 60000,
+    paused: () => anyModal,
+  });
+
   const reviews = useMemo(() => data?.reviews || [], [data]);
   const openCount = useMemo(() => reviews.filter((r) => r.status === 'open').length, [reviews]);
 
@@ -221,6 +230,7 @@ export default function RecurringFaultReviews() {
       await api.post(`/maintenance-tasks/${r.maintenance_task_id}/repair-approval`, { decision });
       toast.success(decision === 'approve' ? 'Repair approved' : 'Repair rejected');
       reload({ silent: true });
+      reloadStats({ silent: true });
     } catch (err) {
       toast.error(err.response?.data?.message || err.response?.data?.msg || 'Could not update the repair gate');
     } finally {
@@ -249,7 +259,10 @@ export default function RecurringFaultReviews() {
           subtitle="Cars that returned with the SAME confirmed fault after a completed repair. Review the evidence and decide why it came back."
         />
 
-        {/* Filters */}
+        {/* Analytics — fleet-wide, deliberately independent of the table filters below. */}
+        <RecurringFaultsAnalytics stats={stats} loading={statsLoading} />
+
+        {/* Filters — scope the case list only. */}
         <div className="flex flex-col gap-3 sm:flex-row">
           <Select className="sm:w-52" value={status} onChange={(e) => setStatus(e.target.value)}>
             {STATUS_FILTERS.map((s) => <option key={s} value={s}>{STATUS_META[s].label}</option>)}
@@ -267,8 +280,6 @@ export default function RecurringFaultReviews() {
         {error && (
           <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error}</div>
         )}
-        {/* Analytics — the filtered set, matching the table below. */}
-        {!loading && reviews.length > 0 && <RecurringFaultsAnalytics reviews={reviews} />}
 
         <Card>
           <div className="overflow-x-auto">
@@ -350,7 +361,12 @@ export default function RecurringFaultReviews() {
         </Card>
       </div>
 
-      <DecisionModal open={!!decisionFor} review={decisionFor} onClose={() => setDecisionFor(null)} onDone={() => reload({ silent: true })} />
+      <DecisionModal
+        open={!!decisionFor}
+        review={decisionFor}
+        onClose={() => setDecisionFor(null)}
+        onDone={() => { reload({ silent: true }); reloadStats({ silent: true }); }}
+      />
       <DetailModal open={!!detail} review={detail} onClose={() => setDetail(null)} />
     </div>
   );

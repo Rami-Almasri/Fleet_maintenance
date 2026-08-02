@@ -1045,7 +1045,11 @@ const en = {
     // Decision Cards — the intelligence platform's user-facing wording. The strength verb and the
     // confidence label are derived from the evidence, never chosen, so the card cannot sound more
     // certain than what history supports.
-    decision: {
+    //
+    // NOT `decision`: that key already belongs to the inspector's test-drive verdict above. Sharing it
+    // made this block silently overwrite that one, leaving workflow.decision.requires / .noNeed
+    // undefined in TicketActionModal.
+    decisionCard: {
       strength: { must: 'Must', should: 'Should', consider: 'Consider' },
       confidence: { strong: 'Strong evidence', moderate: 'Moderate evidence', limited: 'Limited evidence' },
       why: 'Why this?',
@@ -3370,7 +3374,7 @@ const ar = {
       downtime: 'توقّف {dur}',
       faultTime: '{h}س على هذا العطل',
     },
-    decision: {
+    decisionCard: {
       strength: { must: 'يجب', should: 'يُفضّل', consider: 'للاعتبار' },
       confidence: { strong: 'أدلة قوية', moderate: 'أدلة متوسطة', limited: 'أدلة محدودة' },
       why: 'لماذا هذا؟',

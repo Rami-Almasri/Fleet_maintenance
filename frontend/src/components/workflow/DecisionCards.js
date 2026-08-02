@@ -106,7 +106,7 @@ function DecisionCard({ card, ticketId, t, tf, onAnswered }) {
     return (
       <div className="flex items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-500 ring-1 ring-inset ring-slate-200">
         <Icon.Check className="h-3.5 w-3.5 shrink-0 text-slate-400" />
-        <span>{tf(`workflow.decision.answered.${answered}`, ANSWERED_FALLBACK[answered] ?? 'Recorded')}</span>
+        <span>{tf(`workflow.decisionCard.answered.${answered}`, ANSWERED_FALLBACK[answered] ?? 'Recorded')}</span>
       </div>
     );
   }
@@ -117,10 +117,10 @@ function DecisionCard({ card, ticketId, t, tf, onAnswered }) {
       <div className="flex flex-wrap items-center gap-2">
         <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${tone.chip}`}>
           <Icon.Alert className="h-3 w-3" />
-          {tf(`workflow.decision.strength.${card.strength}`, STRENGTH_FALLBACK[card.strength] ?? card.strength)}
+          {tf(`workflow.decisionCard.strength.${card.strength}`, STRENGTH_FALLBACK[card.strength] ?? card.strength)}
         </span>
         <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-          {tf(`workflow.decision.confidence.${card.confidence}`, CONFIDENCE_FALLBACK[card.confidence] ?? card.confidence)}
+          {tf(`workflow.decisionCard.confidence.${card.confidence}`, CONFIDENCE_FALLBACK[card.confidence] ?? card.confidence)}
         </span>
       </div>
 
@@ -135,7 +135,7 @@ function DecisionCard({ card, ticketId, t, tf, onAnswered }) {
       {ev.is_proxy && ev.proxy_note && (
         <p className="mt-2 flex items-start gap-1.5 text-[11px] italic text-slate-500">
           <Icon.Info className="mt-px h-3 w-3 shrink-0" />
-          {tf('workflow.decision.proxy', 'Measured as {note}.', { note: ev.proxy_note })}
+          {tf('workflow.decisionCard.proxy', 'Measured as {note}.', { note: ev.proxy_note })}
         </p>
       )}
 
@@ -146,8 +146,8 @@ function DecisionCard({ card, ticketId, t, tf, onAnswered }) {
         className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-slate-500 underline-offset-2 hover:underline"
       >
         {showWhy
-          ? tf('workflow.decision.hideWhy', 'Hide the evidence')
-          : tf('workflow.decision.why', 'Why this?')}
+          ? tf('workflow.decisionCard.hideWhy', 'Hide the evidence')
+          : tf('workflow.decisionCard.why', 'Why this?')}
       </button>
 
       {showWhy && (
@@ -159,12 +159,12 @@ function DecisionCard({ card, ticketId, t, tf, onAnswered }) {
                 {card.show_cases_not_statistics
                   // Below the statistics floor the honest thing is to show the cases, not a rate
                   // computed from four of them.
-                  ? tf('workflow.decision.tooThin', 'Only {n} comparable cases — treat as anecdote, not a rate.', { n: ev.sample_size })
-                  : tf('workflow.decision.basedOn', 'Based on {n} historical cases', { n: ev.sample_size })}
+                  ? tf('workflow.decisionCard.tooThin', 'Only {n} comparable cases — treat as anecdote, not a rate.', { n: ev.sample_size })
+                  : tf('workflow.decisionCard.basedOn', 'Based on {n} historical cases', { n: ev.sample_size })}
               </span>
             )}
             {Array.isArray(ev.source_ids) && ev.source_ids.length > 0 && (
-              <span>{tf('workflow.decision.priorCases', 'Prior tickets: {ids}', { ids: ev.source_ids.slice(0, 5).join(', ') })}</span>
+              <span>{tf('workflow.decisionCard.priorCases', 'Prior tickets: {ids}', { ids: ev.source_ids.slice(0, 5).join(', ') })}</span>
             )}
           </p>
         </div>
@@ -174,19 +174,19 @@ function DecisionCard({ card, ticketId, t, tf, onAnswered }) {
       {overriding ? (
         <div className="mt-3 space-y-2">
           <label className="block text-xs font-semibold text-slate-600" htmlFor={`why-${card.recommendation_id}`}>
-            {tf('workflow.decision.reasonPrompt', 'What makes this case different?')}
+            {tf('workflow.decisionCard.reasonPrompt', 'What makes this case different?')}
           </label>
           <textarea
             id={`why-${card.recommendation_id}`}
             rows={2}
             value={reason}
             onChange={(e) => setReason(e.target.value)}
-            placeholder={tf('workflow.decision.reasonPh', 'e.g. the garage already re-diagnosed it on the last visit')}
+            placeholder={tf('workflow.decisionCard.reasonPh', 'e.g. the garage already re-diagnosed it on the last visit')}
             className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs outline-none focus:border-slate-400"
           />
           <div className="flex flex-wrap gap-2">
             <Button size="sm" disabled={!reason.trim() || saving} onClick={() => respond('overridden', reason.trim())}>
-              {tf('workflow.decision.submitOverride', 'Record and continue')}
+              {tf('workflow.decisionCard.submitOverride', 'Record and continue')}
             </Button>
             <Button size="sm" variant="ghost" disabled={saving} onClick={() => { setOverriding(false); setReason(''); }}>
               {t('common.cancel')}
@@ -203,18 +203,18 @@ function DecisionCard({ card, ticketId, t, tf, onAnswered }) {
               disabled={saving}
               onClick={() => (a.requires_reason ? setOverriding(true) : respond('accepted'))}
             >
-              {tf(`workflow.decision.action.${a.effect}`, a.label)}
+              {tf(`workflow.decisionCard.action.${a.effect}`, a.label)}
             </Button>
           ))}
           <Button size="sm" variant="ghost" disabled={saving} onClick={() => respond('dismissed')}>
-            {tf('workflow.decision.dismiss', 'Not relevant')}
+            {tf('workflow.decisionCard.dismiss', 'Not relevant')}
           </Button>
         </div>
       )}
 
       {failed && (
         <p className="mt-2 text-xs font-semibold text-rose-600">
-          {tf('workflow.decision.failed', 'Your response was not saved — please try again.')}
+          {tf('workflow.decisionCard.failed', 'Your response was not saved — please try again.')}
         </p>
       )}
     </div>

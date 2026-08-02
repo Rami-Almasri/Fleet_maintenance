@@ -224,6 +224,184 @@ class RecurringFaultService
             ->get();
     }
 
+    /**
+     * FLEET-WIDE analytics for the review dashboard. Deliberately NOT filtered by the table's status /
+     * decision selectors: the table answers "what must I rule on now", the charts answer "how is rework
+     * trending across the fleet". Running them off the filtered list would make the decision mix read as
+     * ~100% "awaiting a ruling" whenever the page sits on its default `open` filter.
+     *
+     * Every number here is a FACT counted from recurring_fault_reviews — no scoring, no inference.
+     */
+    public function stats(): array
+    {
+        $now         = Carbon::now();
+        $windowStart = $now->copy()->startOfMonth()->subMonths(11); // 12 calendar months inclusive
+
+        // One pass over the columns the charts need; the table is small (one row per recurrence) and this
+        // keeps the month/bucket/garage roll-ups consistent with each other.
+        $rows = RecurringFaultReview::query()
+            ->select([
+                'id', 'status', 'decision', 'vehicle_id', 'symptom', 'category_key',
+                'previous_garage_id', 'previous_garage_name', 'previous_result',
+                'days_since_repair', 'distance_since_repair', 'occurrence_count', 'opened_at',
+            ])
+            ->with(['vehicle:id,plate_no,make,model'])
+            ->get();
+
+        $total   = $rows->count();
+        $open    = $rows->where('status', RecurringFaultReview::STATUS_OPEN)->count();
+        $decided = $total - $open;
+
+        // Momentum: this 30 days vs the 30 before it. The delta is what an admin actually reacts to.
+        $last30 = $rows->filter(fn ($r) => $r->opened_at && $r->opened_at->gte($now->copy()->subDays(30)))->count();
+        $prev30 = $rows->filter(fn ($r) => $r->opened_at
+            && $r->opened_at->lt($now->copy()->subDays(30))
+            && $r->opened_at->gte($now->copy()->subDays(60)))->count();
+
+        // Median, not mean: one fault that came back after 89 days must not drag the headline.
+        $dayValues = $rows->pluck('days_since_repair')->filter(fn ($d) => $d !== null)->sort()->values();
+        $medianDays = $dayValues->isEmpty() ? null : (int) round(
+            $dayValues->count() % 2
+                ? $dayValues[intdiv($dayValues->count(), 2)]
+                : ($dayValues[$dayValues->count() / 2 - 1] + $dayValues[$dayValues->count() / 2]) / 2
+        );
+
+        // The damning subset: the previous repair was signed off by a post-repair inspection and the fault
+        // STILL came back. That is a QC failure, not bad luck.
+        $verified = $rows->where('previous_result', RecurringFaultReview::RESULT_VERIFIED_FIXED)->count();
+
+        // ── Trend: recurrences opened per calendar month (12 months, zero-filled) ──────────────────
+        $byMonth = $rows->filter(fn ($r) => $r->opened_at && $r->opened_at->gte($windowStart))
+            ->groupBy(fn ($r) => $r->opened_at->format('Y-m'));
+        $trend = [];
+        for ($i = 0; $i < 12; $i++) {
+            $m     = $windowStart->copy()->addMonths($i);
+            $bucket = $byMonth->get($m->format('Y-m'));
+            $trend[] = [
+                'key'      => $m->format('Y-m'),
+                'label'    => $m->format('M'),
+                'value'    => $bucket?->count() ?? 0,
+                'verified' => $bucket?->where('previous_result', RecurringFaultReview::RESULT_VERIFIED_FIXED)->count() ?? 0,
+            ];
+        }
+
+        // ── Decision mix (all-time) — where responsibility actually landed ─────────────────────────
+        $decisions = collect(RecurringFaultReview::DECISIONS)
+            ->map(fn ($d) => ['key' => $d, 'value' => $rows->where('decision', $d)->count()])
+            ->filter(fn ($d) => $d['value'] > 0)
+            ->sortByDesc('value')
+            ->values()
+            ->all();
+
+        // How a recurrence is named on the charts: the ontology category when it tagged the fault,
+        // otherwise the raw symptom the workshop typed. Keyed case-insensitively so "AC not cooling"
+        // and "ac not cooling" are one fault, not two.
+        $faultKey   = fn ($r) => $r->category_key ?: mb_strtolower(trim((string) $r->symptom));
+        $faultLabel = fn ($r) => $r->category_key
+            ? str_replace('_', ' ', (string) $r->category_key)
+            : (trim((string) $r->symptom) ?: 'Unspecified');
+
+        // ── How fast faults come back — the speed-of-failure histogram ─────────────────────────────
+        // Each bar also carries WHICH faults returned in that window: a bucket of 9 is a shrug until you
+        // see that 6 of them are the same brake noise.
+        $buckets = [
+            ['key' => '0-7',   'label' => '≤ 7 days',    'max' => 7],
+            ['key' => '8-30',  'label' => '8–30 days',   'max' => 30],
+            ['key' => '31-60', 'label' => '31–60 days',  'max' => 60],
+            ['key' => '61+',   'label' => '61+ days',    'max' => PHP_INT_MAX],
+        ];
+        $speed = [];
+        $floor = -1;
+        foreach ($buckets as $b) {
+            $in = $rows->filter(fn ($r) => $r->days_since_repair !== null
+                && $r->days_since_repair > $floor
+                && $r->days_since_repair <= $b['max']);
+
+            $topFaults = $in->groupBy($faultKey)
+                ->map(fn ($g) => ['label' => $faultLabel($g->first()), 'value' => $g->count()])
+                ->sortByDesc('value')
+                ->values();
+
+            $speed[] = [
+                'key'    => $b['key'],
+                'label'  => $b['label'],
+                'value'  => $in->count(),
+                'faults' => $topFaults->take(4)->all(),
+                // How many distinct faults did NOT make the top-4 cut, so the tooltip can say "+3 more"
+                // instead of silently truncating.
+                'more'   => max(0, $topFaults->count() - 4),
+            ];
+            $floor = $b['max'];
+        }
+
+        // ── Garages whose repairs came back. NOT a blame ranking: it is a count of returns after that
+        //    garage's repair. `workshop` is how often a human actually ruled it the workshop's fault. ──
+        $garages = $rows->filter(fn ($r) => $r->previous_garage_name)
+            ->groupBy('previous_garage_name')
+            ->map(fn ($g, $name) => [
+                'label'    => $name,
+                'value'    => $g->count(),
+                'open'     => $g->where('status', RecurringFaultReview::STATUS_OPEN)->count(),
+                'verified' => $g->where('previous_result', RecurringFaultReview::RESULT_VERIFIED_FIXED)->count(),
+                'workshop' => $g->where('decision', RecurringFaultReview::DECISION_WORKSHOP_RESPONSIBILITY)->count(),
+            ])
+            ->sortByDesc('value')
+            ->take(8)
+            ->values()
+            ->all();
+
+        // ── Cars that keep coming back ─────────────────────────────────────────────────────────────
+        $vehicles = $rows->filter(fn ($r) => $r->vehicle_id)
+            ->groupBy('vehicle_id')
+            ->map(function ($g, $vehicleId) {
+                $v = $g->first()->vehicle;
+                return [
+                    'vehicle_id' => (int) $vehicleId,
+                    'label'      => $v?->plate_no ?: '#' . $vehicleId,
+                    'sub'        => trim(($v?->make ?? '') . ' ' . ($v?->model ?? '')) ?: null,
+                    'value'      => $g->count(),
+                    'open'       => $g->where('status', RecurringFaultReview::STATUS_OPEN)->count(),
+                ];
+            })
+            ->sortByDesc('value')
+            ->take(8)
+            ->values()
+            ->all();
+
+        // ── Which faults recur — category_key when the ontology tagged it, else the raw symptom ────
+        $faults = $rows->groupBy($faultKey)
+            ->map(fn ($g) => [
+                'label' => $faultLabel($g->first()),
+                'value' => $g->count(),
+                'cars'  => $g->pluck('vehicle_id')->filter()->unique()->count(),
+            ])
+            ->sortByDesc('value')
+            ->take(8)
+            ->values()
+            ->all();
+
+        return [
+            'kpi' => [
+                'open'                 => $open,
+                'decided'              => $decided,
+                'total'                => $total,
+                'last_30_days'         => $last30,
+                'prev_30_days'         => $prev30,
+                'median_days'          => $medianDays,
+                'verified_fixed'       => $verified,
+                'verified_share'       => $total ? round($verified / $total * 100) : 0,
+                'repeat_vehicles'      => collect($vehicles)->where('value', '>', 1)->count(),
+                'window_days'          => $this->windowDays(),
+            ],
+            'trend'     => $trend,
+            'decisions' => $decisions,
+            'speed'     => $speed,
+            'garages'   => $garages,
+            'vehicles'  => $vehicles,
+            'faults'    => $faults,
+        ];
+    }
+
     // ── Internals ──────────────────────────────────────────────────────────────────────────────────
 
     /** Build + persist the review case from a detector match. */
