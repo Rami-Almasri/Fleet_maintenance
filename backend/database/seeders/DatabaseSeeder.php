@@ -26,6 +26,21 @@ class DatabaseSeeder extends Seeder
         // Findings keyword library (+ per-keyword risk grade), seeded from config. Idempotent.
         $this->call(FindingKeywordSeeder::class);
 
+        // The automotive knowledge base, and the reason a fresh install can read free-text findings
+        // before anyone configures an AI provider.
+        //
+        // ORDER IS LOAD-BEARING: the ontology links concepts to repair actions by slug, and warns
+        // about every slug the catalogue cannot express — so the catalogue has to exist first.
+        //
+        // These three were previously run by hand, which meant a fresh database had the keyword list
+        // but none of the vocabulary, none of the engineering profiles, and a knowledge-coverage
+        // figure of zero. The matching engine is pure PHP over exactly these rows: seed them and
+        // search works offline; skip them and it has nothing to match against. Idempotent, and
+        // anything an admin has edited (source = human) is left alone.
+        $this->call(ActionCatalogSeeder::class);
+        $this->call(FaultOntologySeeder::class);
+        $this->call(CustomerVocabularySeeder::class);
+
         // Smart Routing Engine — Garage Preference Rules matrix, seeded from config. Idempotent
         // (safe no-op until config('garage_routing.default_rules') names real garages).
         $this->call(GarageRoutingRuleSeeder::class);

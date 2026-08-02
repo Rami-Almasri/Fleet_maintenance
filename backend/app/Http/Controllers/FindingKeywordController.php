@@ -222,6 +222,15 @@ class FindingKeywordController extends Controller
             'limit'    => $data['limit'] ?? null,
         ]);
 
+        // Loaded once for the whole result set rather than per match — five matches would otherwise be
+        // ten extra queries on a keystroke-triggered endpoint.
+        $matches->each(fn (array $m) => $m['keyword']->loadMissing([
+            'profile:id,finding_keyword_id,likely_causes',
+            'repairActions:id,label,label_ar',
+        ]));
+
+        $selectable = $this->selectableKeywords();
+
         return ResponseHelper::SuccessResponse(
             [
                 'query'      => $data['text'],
@@ -232,6 +241,26 @@ class FindingKeywordController extends Controller
                     'score'      => $m['score'],
                     'confidence' => $m['confidence'],
                     'matches'    => $m['matches'],
+
+                    // CAN THE PERSON READING THIS ACT ON IT?
+                    //
+                    // The ontology understands more faults than the findings catalog offers (garage
+                    // diagnoses like "Water pump failure" arrive through repair capture, not the
+                    // picker — see `understanding_only` in config/maintenance_findings.php). Without
+                    // this flag the inspector's picker would render a confident suggestion with no
+                    // chip behind it. The engine still answers; the UI decides what to do about it.
+                    'selectable' => isset($selectable[TextNormalizer::key($m['keyword']->keyword)]),
+
+                    // The two lines a technician actually wants next to a fault name. Trimmed to
+                    // three: this renders on a phone in a yard, and the full profile is a tap away.
+                    'causes'     => array_slice((array) ($m['keyword']->profile?->likely_causes ?? []), 0, 3),
+                    'fixes'      => $m['keyword']->repairActions
+                        ->sortBy(fn ($a) => $a->pivot->relevance === 'typical' ? 0 : 1)
+                        ->take(3)
+                        ->map(fn ($a) => ['label' => $a->label, 'label_ar' => $a->label_ar])
+                        ->values()
+                        ->all(),
+
                     // Why this answer — lexical hit, documentation, fleet history, graph context.
                     // Assembled from the same rows the decision used, never reconstructed.
                     'explanation' => $explainer->explain($m, $scopeChain),
@@ -240,6 +269,28 @@ class FindingKeywordController extends Controller
             $matches->isEmpty() ? 'No matching fault found' : 'Matched '.$matches->count().' fault(s)',
             200
         );
+    }
+
+    /**
+     * The keywords an inspector can actually tap, normalised for comparison.
+     *
+     * Read from config rather than from `finding_keywords.is_active` because the catalog — not the
+     * table — is what the picker renders. A row can be active and matchable while its concept is
+     * declared understanding-only, and that is exactly the case this has to catch.
+     *
+     * @return array<string,true>
+     */
+    private function selectableKeywords(): array
+    {
+        $out = [];
+
+        foreach ((array) config('maintenance_findings.categories', []) as $category) {
+            foreach ((array) ($category['keywords'] ?? []) as $keyword) {
+                $out[TextNormalizer::key($keyword)] = true;
+            }
+        }
+
+        return $out;
     }
 
     /**
@@ -259,7 +310,16 @@ class FindingKeywordController extends Controller
             'correct'    => ['required', 'boolean'],
             'score'      => ['nullable', 'integer', 'min:0', 'max:100'],
             'reason'     => ['nullable', 'string', 'max:500'],
-            'context'    => ['nullable', 'string', 'max:40'],
+            // Constrained to the known surfaces rather than free text: this field decides whether a
+            // row counts as field-observed ground truth or an admin experiment, and a typo would
+            // silently drop a verdict out of whichever set someone later measures.
+            'context'    => ['nullable', 'string', Rule::in([
+                OntologyFeedback::CONTEXT_MATCH_TESTER,
+                OntologyFeedback::CONTEXT_TEST_FINDINGS,
+                OntologyFeedback::CONTEXT_GARAGE_FINDINGS,
+            ])],
+            'maintenance_id' => ['nullable', 'integer', 'exists:maintenances,id'],
+            'vehicle_id'     => ['nullable', 'integer', 'exists:vehicles,id'],
         ]);
 
         $keyword = FindingKeyword::findOrFail($data['keyword_id']);
@@ -269,10 +329,12 @@ class FindingKeywordController extends Controller
             $keyword,
             $keyword,
             [
-                'query_text'  => $data['text'],
-                'match_score' => $data['score'] ?? null,
-                'reason'      => $data['reason'] ?? null,
-                'context'     => $data['context'] ?? 'match_tester',
+                'query_text'     => $data['text'],
+                'match_score'    => $data['score'] ?? null,
+                'reason'         => $data['reason'] ?? null,
+                'context'        => $data['context'] ?? OntologyFeedback::CONTEXT_MATCH_TESTER,
+                'maintenance_id' => $data['maintenance_id'] ?? null,
+                'vehicle_id'     => $data['vehicle_id'] ?? null,
             ],
             $request->user()?->id,
         );

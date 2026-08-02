@@ -29,6 +29,7 @@ const REASON_STYLE = {
   fleet:      { dot: 'bg-emerald-500', text: 'text-emerald-800 font-medium' },
   graph:      { dot: 'bg-violet-500',  text: 'text-violet-800' },
   curated:    { dot: 'bg-indigo-500',  text: 'text-indigo-800' },
+  provenance: { dot: 'bg-sky-500',     text: 'text-sky-800' },
   ungrounded: { dot: 'bg-amber-500',   text: 'text-amber-800' },
 };
 

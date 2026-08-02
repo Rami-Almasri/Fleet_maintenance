@@ -44,17 +44,23 @@ use Illuminate\Support\Facades\DB;
  */
 class FaultOntologySeeder extends Seeder
 {
-    /** Loaded in this order; the order also sets sort_order within a category. */
+    /**
+     * Loaded in this order; the order also sets sort_order within a category.
+     *
+     * A concept may CLAIM wording from a concept described in an earlier file, so the order is not
+     * cosmetic — `fluids` takes the fuel-leak vocabulary that `safety` used to hold, and must be read
+     * after it.
+     */
     private const CATEGORIES = [
         'engine', 'cooling', 'transmission', 'brakes', 'steering', 'suspension',
-        'tyres', 'electrical', 'hvac', 'body', 'interior', 'lights', 'safety', 'fluids',
+        'tyres', 'electrical', 'hvac', 'body', 'interior', 'lights', 'safety', 'fluids', 'routine',
     ];
 
     public function run(): void
     {
         $actions = ActionCatalog::pluck('id', 'slug');
 
-        $stats = ['concepts' => 0, 'terms' => 0, 'causes' => 0, 'links' => 0, 'missing_actions' => []];
+        $stats = ['concepts' => 0, 'terms' => 0, 'claimed' => 0, 'causes' => 0, 'links' => 0, 'missing_actions' => []];
 
         foreach (self::CATEGORIES as $file) {
             $path = database_path("seeders/ontology/{$file}.php");
@@ -69,8 +75,8 @@ class FaultOntologySeeder extends Seeder
         }
 
         $this->command?->info(sprintf(
-            'Fault ontology: %d concepts · %d terms · %d causes · %d action links.',
-            $stats['concepts'], $stats['terms'], $stats['causes'], $stats['links'],
+            'Fault ontology: %d concepts · %d terms · %d causes · %d action links · %d wording claimed.',
+            $stats['concepts'], $stats['terms'], $stats['causes'], $stats['links'], $stats['claimed'],
         ));
 
         // Surfaced rather than swallowed: an action slug that does not exist means the concept
@@ -120,6 +126,7 @@ class FaultOntologySeeder extends Seeder
         $stats['concepts']++;
 
         $stats['terms']  += $this->seedTerms($keyword, $c);
+        $stats['claimed'] += $this->claimTerms($keyword, $c);
         $stats['causes'] += $this->seedCauses($keyword, $c);
         $stats['links']  += $this->seedActions($keyword, $c, $actions, $stats);
 
@@ -188,6 +195,41 @@ class FaultOntologySeeder extends Seeder
         ])->save();
 
         return true;
+    }
+
+    /**
+     * Take a surface form away from whatever other concept currently owns it.
+     *
+     * WHY THIS EXISTS. Seeding is additive — it writes terms and never removes them — which is right
+     * for growth and wrong for correction. When a concept is split in two, deleting the wording from
+     * the losing concept's file changes nothing on a database that has already been seeded: the row
+     * stays, both concepts answer to it, and `ontology:duplicates` reports a shared term forever. The
+     * only way to move wording is to say so explicitly, which is what `claim` does.
+     *
+     * DEACTIVATED, NOT DELETED. The row keeps its history and stops matching, so a claim made in
+     * error is one flag away from being undone. A term a person owns (source = human) is never
+     * touched — an admin who deliberately gave this wording to another concept outranks a seed file.
+     *
+     * @param array<string,mixed> $c
+     */
+    private function claimTerms(FindingKeyword $keyword, array $c): int
+    {
+        $normalized = collect($c['claim'] ?? [])
+            ->map(fn (string $t) => TextNormalizer::key($t))
+            ->filter()
+            ->unique()
+            ->all();
+
+        if ($normalized === []) {
+            return 0;
+        }
+
+        return KeywordTerm::query()
+            ->whereIn('normalized', $normalized)
+            ->where('finding_keyword_id', '!=', $keyword->id)
+            ->where('source', '!=', KeywordTerm::SOURCE_HUMAN)
+            ->where('is_active', true)
+            ->update(['is_active' => false, 'updated_at' => now()]);
     }
 
     /** @param array<string,mixed> $c */

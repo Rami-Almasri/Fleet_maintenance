@@ -42,9 +42,25 @@ class OntologyFeedback extends Model
     /** Signals that say the engine got something WRONG — the ones enrichment must learn from. */
     public const NEGATIVE_ACTIONS = [self::ACTION_REJECT, self::ACTION_DELETE, self::ACTION_REJECT_MATCH];
 
+    /**
+     * WHERE a verdict came from. Never averaged together, so never left as a loose string.
+     *
+     * `match_tester` is an admin probing the library from the keyword-admin page — deliberately hard
+     * cases, no vehicle behind them. `test_findings` and `garage_findings` are a real person naming a
+     * fault on a real car mid-workflow. The field-observed rows are the ones worth measuring the
+     * matcher against; the tester rows are adversarial by construction and would understate it.
+     */
+    public const CONTEXT_MATCH_TESTER   = 'match_tester';
+    public const CONTEXT_TEST_FINDINGS  = 'test_findings';
+    public const CONTEXT_GARAGE_FINDINGS = 'garage_findings';
+
+    /** Verdicts given on a real car, in the workflow — as opposed to typed into the admin tester. */
+    public const FIELD_CONTEXTS = [self::CONTEXT_TEST_FINDINGS, self::CONTEXT_GARAGE_FINDINGS];
+
     protected $fillable = [
         'action', 'subject_type', 'subject_id', 'finding_keyword_id',
         'before', 'after', 'query_text', 'match_score', 'reason', 'context', 'user_id', 'applied_at',
+        'maintenance_id', 'vehicle_id',
     ];
 
     protected $casts = [

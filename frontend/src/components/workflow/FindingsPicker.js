@@ -26,6 +26,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Icon from '../ui/Icon';
+import FindingsAiSuggestion from './FindingsAiSuggestion';
 import { useI18n } from '../../i18n/I18nContext';
 
 // Degrade gracefully if the catalog request fails: a small built-in set keeps the modal usable
@@ -75,7 +76,11 @@ function Chip({ label, tone, active, locked, lockedTitle, onClick }) {
   );
 }
 
-export default function FindingsPicker({ catalog, keywordMeta = {}, value = [], onChange, locked = [], onSiteOnly = false, onSiteKeywords = [], suggested = [], statusConditions = [] }) {
+// `ticketId` / `vehicleId` / `aiContext` are only used to ANCHOR the AI match verdicts (see
+// FindingsAiSuggestion): a Yes/No given on a real car during a real inspection is ground truth about
+// the vocabulary, and is filed apart from admin experiments on the keyword-library page. They are
+// optional — the picker works identically without them, the verdicts just lose their provenance.
+export default function FindingsPicker({ catalog, keywordMeta = {}, value = [], onChange, locked = [], onSiteOnly = false, onSiteKeywords = [], suggested = [], statusConditions = [], ticketId = null, vehicleId = null, aiContext = 'test_findings' }) {
   const { t, lang } = useI18n();
   const [custom, setCustom] = useState('');
   const [query, setQuery] = useState('');
@@ -381,9 +386,23 @@ export default function FindingsPicker({ catalog, keywordMeta = {}, value = [], 
         })}
 
         {visibleCategories.length === 0 && (
-          <p className="px-3 py-6 text-center text-xs text-slate-400">
-            {t('findingsPicker.noMatches', { query })}
-          </p>
+          <div className="space-y-2 px-1 py-3">
+            <p className="text-center text-xs text-slate-400">
+              {t('findingsPicker.noLiteralMatch', { query })}
+            </p>
+            {/* THE HANDOFF. The substring filter has given up; the ontology gets the same text before
+                the inspector is pushed toward a custom tag. One box, two strategies — see
+                [[FindingsAiSuggestion]] for why this is not a second search field. */}
+            <FindingsAiSuggestion
+              query={query}
+              onAdd={(k) => { if (!has(k) && !isLocked(k)) onChange([...value, k]); }}
+              isSelected={has}
+              isLocked={isLocked}
+              ticketId={ticketId}
+              vehicleId={vehicleId}
+              context={aiContext}
+            />
+          </div>
         )}
       </div>
 

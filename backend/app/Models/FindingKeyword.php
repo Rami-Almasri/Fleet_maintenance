@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 
@@ -66,6 +67,20 @@ class FindingKeyword extends Model
     public function profile(): HasOne
     {
         return $this->hasOne(KeywordProfile::class);
+    }
+
+    /**
+     * The repairs that address this fault, most typical first.
+     *
+     * Normalised [[ActionCatalog]] rows, never free text — `relevance` is 'typical' for the couple of
+     * repairs that usually fix it and 'possible' for the rest, set by position in the ontology files.
+     * This is what "usually fixed by" reads on the inspector's match card.
+     */
+    public function repairActions(): BelongsToMany
+    {
+        return $this->belongsToMany(ActionCatalog::class, 'fault_concept_actions')
+            ->withPivot(['relevance', 'sort_order'])
+            ->orderBy('fault_concept_actions.sort_order');
     }
 
     /** Audit trail of AI enrichment attempts, newest first. */

@@ -12,7 +12,11 @@
 return [
     [
         'name' => 'Airbag warning', 'name_ar' => 'إنذار الوسادة الهوائية',
-        'category' => 'electrical', 'category_label' => 'Electrical', 'category_label_ar' => 'الكهرباء',
+        // Category `safety`, not `electrical`. An airbag light is electrical in mechanism and
+        // occupant-protection in consequence, and the category is what the inspector navigates and what
+        // carries the on_site flag — so it follows the consequence. Must match the catalog category in
+        // config/maintenance_findings.php; `findings:vocabulary-check` fails if they drift apart.
+        'category' => 'safety', 'category_label' => 'Safety & Driver Assist', 'category_label_ar' => 'أنظمة السلامة والمساعدة',
         'system' => 'Safety', 'subsystem' => 'SRS', 'discipline' => 'electrical', 'risk' => 'critical',
         'description' => 'SRS warning lamp lit — airbags may not deploy in a collision.',
         'en' => [
@@ -34,7 +38,8 @@ return [
     ],
     [
         'name' => 'Parking sensor fault', 'name_ar' => 'عطل في حساسات الركن',
-        'category' => 'electrical', 'system' => 'ADAS', 'subsystem' => 'Parking aids', 'discipline' => 'electrical', 'risk' => 'moderate',
+        'category' => 'safety', 'category_label' => 'Safety & Driver Assist', 'category_label_ar' => 'أنظمة السلامة والمساعدة',
+        'system' => 'ADAS', 'subsystem' => 'Parking aids', 'discipline' => 'electrical', 'risk' => 'moderate',
         'description' => 'Parking sensors beeping constantly, silent, or reporting false obstacles.',
         'en' => [
             'syn'      => ['parking sensor fault', 'sensors not working', 'pdc fault', 'beeping constantly',
@@ -56,7 +61,8 @@ return [
     ],
     [
         'name' => 'Camera / ADAS fault', 'name_ar' => 'عطل في الكاميرا أو أنظمة المساعدة',
-        'category' => 'electrical', 'system' => 'ADAS', 'subsystem' => 'Cameras & radar', 'discipline' => 'electrical', 'risk' => 'moderate',
+        'category' => 'safety', 'category_label' => 'Safety & Driver Assist', 'category_label_ar' => 'أنظمة السلامة والمساعدة',
+        'system' => 'ADAS', 'subsystem' => 'Cameras & radar', 'discipline' => 'electrical', 'risk' => 'moderate',
         'description' => 'Reversing camera, 360 view, radar or driver-assist system not working.',
         'en' => [
             'syn'      => ['camera not working', 'reverse camera fault', 'radar issue', 'adas fault',
@@ -125,20 +131,23 @@ return [
         'actions' => ['visual_inspection', 'scan_diagnostics', 'road_test'],
     ],
     [
+        // NARROWED to fuel DELIVERY. The leak and smell wording moved to `Fuel smell / leak`
+        // (fluids.php): a car that will not run and a car that is leaking petrol are the same system
+        // and completely different urgencies, and one concept could not express both.
         'name' => 'Fuel system fault', 'name_ar' => 'عطل في نظام الوقود',
         'category' => 'engine', 'system' => 'Fuel system', 'subsystem' => 'Fuel delivery', 'discipline' => 'mechanical', 'risk' => 'critical',
-        'description' => 'Fuel pump, filter, injector or tank fault — including fuel smell or leak.',
+        'description' => 'Fuel pump, filter, injector or sender fault — the car runs badly or reads wrong.',
         'en' => [
-            'syn'      => ['fuel pump fault', 'fuel leak', 'fuel smell', 'petrol smell', 'fuel filter blocked',
-                           'fuel gauge not working', 'fuel system fault'],
+            'syn'      => ['fuel pump fault', 'fuel filter blocked', 'fuel gauge not working',
+                           'fuel system fault', 'fuel injector fault', 'fuel starvation'],
             'workshop' => ['low fuel pressure', 'fuel pump whining', 'injector leaking', 'sender unit faulty'],
-            'customer' => ['smell of petrol', 'fuel gauge is not correct', 'car cuts out when the tank is low',
-                           'petrol leaking under the car'],
-            'miss'     => ['fuel pmup', 'petrol smel', 'feul leak'],
+            'customer' => ['fuel gauge is not correct', 'car cuts out when the tank is low',
+                           'car struggles when the tank is nearly empty'],
+            'miss'     => ['fuel pmup', 'feul pump', 'fuel filtr blocked'],
         ],
         'ar' => [
             'formal'   => ['عطل في نظام الوقود'],
-            'workshop' => ['ريحة بنزين', 'طرمبة البنزين خربانة', 'عداد البنزين ما يشتغل', 'تسريب بنزين'],
+            'workshop' => ['طرمبة البنزين خربانة', 'عداد البنزين ما يشتغل', 'البخاخات خربانة'],
         ],
         'components' => ['Fuel pump', 'Fuel filter', 'Injectors', 'Fuel tank', 'Sender unit', 'Fuel lines'],
         'causes' => ['Failing fuel pump', 'Clogged fuel filter', 'Leaking injector seal',

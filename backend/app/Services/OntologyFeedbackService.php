@@ -59,6 +59,10 @@ class OntologyFeedbackService
             'match_score'        => $context['match_score'] ?? null,
             'reason'             => isset($context['reason']) ? mb_substr((string) $context['reason'], 0, 500) : null,
             'context'            => $context['context'] ?? null,
+            // Only ever set from the workflow surfaces — the admin tester has no car behind it, and a
+            // null anchor is the honest record of that rather than something to backfill.
+            'maintenance_id'     => $context['maintenance_id'] ?? null,
+            'vehicle_id'         => $context['vehicle_id'] ?? null,
             'user_id'            => $userId,
         ]);
     }

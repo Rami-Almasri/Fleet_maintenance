@@ -34,7 +34,8 @@ return [
     ],
     [
         'name' => 'Coolant service', 'name_ar' => 'تغيير سائل التبريد',
-        'category' => 'routine', 'category_label' => 'Routine service', 'category_label_ar' => 'الصيانة الدورية',
+        // Label matches config/maintenance_findings.php — one category key must not show two names.
+        'category' => 'routine', 'category_label' => 'Routine Maintenance', 'category_label_ar' => 'الصيانة الدورية',
         'system' => 'Cooling system', 'subsystem' => 'Coolant circuit', 'discipline' => 'mechanical', 'risk' => 'routine',
         'description' => 'Scheduled replacement or top-up of engine coolant.',
         'en' => [

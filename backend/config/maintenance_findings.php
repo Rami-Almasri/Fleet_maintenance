@@ -46,6 +46,7 @@ return [
                 'Battery Replacement',
                 'Oil Filter',
                 'Air Filter',
+                'Coolant service',
             ],
         ],
         [
@@ -62,6 +63,9 @@ return [
                 'Stalling',
                 'Hard starting',
                 'Check-engine light',
+                'Poor fuel economy',
+                'Exhaust fault',
+                'Fuel system fault',
             ],
         ],
         [
@@ -77,6 +81,13 @@ return [
                 'Worn pads / discs',
                 'Handbrake fault',
                 'ABS warning light',
+                // MOVED HERE FROM `fluids` — a correctness fix, not tidying. `fluids` is on_site:true
+                // (a top-up is a mobile job), so while this lived there a brake-fluid leak was offered
+                // in the On-Site checklist as something to handle where the car is parked. It is a
+                // hydraulic failure on a safety-critical system and belongs in the workshop, which is
+                // what `brakes` (on_site:false) says. The ontology always filed it under brakes; only
+                // the catalog disagreed, and nothing compared the two until now.
+                'Brake-fluid leak',
             ],
         ],
         [
@@ -93,6 +104,7 @@ return [
                 'Wheel alignment',
                 'Wheel balancing',
                 'TPMS / tyre-pressure warning',
+                'Damaged rim',
             ],
         ],
         [
@@ -107,6 +119,10 @@ return [
                 'Pulling / drifting',
                 'Worn shock / strut',
                 'Wheel-bearing noise',
+                'Loose steering',
+                'Steering noise',
+                'Vibration at speed',
+                'Steering warning light',
             ],
         ],
         [
@@ -120,6 +136,13 @@ return [
                 'Clutch issue',
                 'Whining / grinding noise',
                 'Delayed engagement',
+                'Cannot select gear',
+                // Filed under Transmission, NOT under "Fluids & Leaks" with the other leaks, and the
+                // category is doing real work: `fluids` is on_site (a top-up is a mobile job) while a
+                // gearbox seal is not. It must also match the ontology's own category for this concept —
+                // the two seeders key on that field and collide when they disagree. See
+                // `findings:vocabulary-check`.
+                'Transmission fluid leak',
             ],
         ],
         [
@@ -134,6 +157,7 @@ return [
                 'Power window / lock fault',
                 'Central locking / key fob',
                 'Wiring / fuse issue',
+                'Starter problem',
             ],
         ],
         [
@@ -162,6 +186,9 @@ return [
                 'Broken / loose mirror',
                 'Windscreen crack / chip',
                 'Door / panel misalignment',
+                'Accident damage',
+                'Bumper damage',
+                'Broken glass / window',
             ],
         ],
         [
@@ -174,6 +201,12 @@ return [
                 'Dashboard fault',
                 'Infotainment / screen issue',
                 'Broken trim',
+                'Interior trim damage',
+                'Seat adjustment fault',
+                'Water leakage into cabin',
+                // A dome / map light is cabin hardware, not driving visibility — "Lights & Visibility"
+                // is headlights, indicators and wipers. Matches the ontology's category for it.
+                'Interior light fault',
                 'Bad odour',
             ],
         ],
@@ -185,7 +218,6 @@ return [
             'keywords' => [
                 'Oil leak',
                 'Coolant leak',
-                'Brake-fluid leak',
                 'Power-steering leak',
                 'Fuel smell / leak',
                 'Low fluid level',
@@ -204,6 +236,24 @@ return [
                 'Foggy / dim lights',
             ],
         ],
+        [
+            // NEW CATEGORY. These four faults were describable by the ontology but not reportable by the
+            // inspector — they had no category to live in, so the matcher could name a fault ("Airbag
+            // warning") that the picker could not offer. They are grouped rather than scattered into
+            // `electrical` because what they share is that they are the car's OCCUPANT-PROTECTION and
+            // driver-assist systems: a warning here is never cosmetic, and a supervisor scanning a ticket
+            // should see them together.
+            'key'      => 'safety',
+            'label'    => 'Safety & Driver Assist',
+            'label_ar' => 'أنظمة السلامة والمساعدة',
+            'on_site'  => false, // airbag / belt / sensor work needs diagnostic equipment
+            'keywords' => [
+                'Airbag warning',
+                'Seat belt fault',
+                'Parking sensor fault',
+                'Camera / ADAS fault',
+            ],
+        ],
     ],
 
     /**
@@ -215,6 +265,50 @@ return [
      * only a suggested default — the Supervisor can always switch the ticket to In-Shop. One-line editable.
      */
     'on_site_keywords' => ['battery', 'oil'],
+
+    /**
+     * UNDERSTANDING-ONLY fault concepts — the ontology may name them, the inspector may not select them.
+     *
+     * The fault ontology (database/seeders/ontology/*.php) is deliberately WIDER than this catalog: it
+     * has to recognise the words people actually write, and people write about causes as readily as
+     * symptoms. Seeding a concept creates its `finding_keywords` row, so without this list every
+     * ontology concept silently became a fault the matcher could propose and the picker could not
+     * offer — a dead end for the inspector and an unanswerable suggestion on screen.
+     *
+     * The line is WHO OBSERVES IT. An inspector on a test drive reports what the car DID ("Overheating",
+     * "Vibration at speed"). A water pump failure is what a garage CONCLUDES after opening it up — it
+     * arrives through the repair-capture path, not the findings picker. Listing it here says "we know
+     * about this fault, we understand text that mentions it, and it is not a menu item" — which is a
+     * different and much more honest statement than the row simply being absent.
+     *
+     * Entries are matched normalised (TextNormalizer::key), like everything else in the vocabulary.
+     * `findings:vocabulary-check` fails if a `finding_keywords` row is neither selectable above nor
+     * declared here, so a new ontology concept cannot quietly reintroduce the dead end.
+     */
+    'understanding_only' => [
+        // Cooling — what a garage finds behind an Overheating report.
+        'Cooling fan fault',
+        'Water pump failure',
+        'Radiator damage',
+
+        // Climate — the diagnosis behind "A/C not cooling".
+        'A/C compressor fault',
+        'Refrigerant leak',
+
+        // Suspension — found on a lift, not on a drive. The inspector reports the knock; this is the part.
+        'Broken spring',
+        'Control arm / ball joint',
+
+        // Electrical — too broad to action as a finding on its own. "Sensor failure" names no system,
+        // so as a menu item it would collect the reports that belong on a specific fault.
+        'Sensor failure',
+
+        // Already selectable under a different name — kept as vocabulary so the wording still resolves,
+        // but not offered twice. Door locks → "Power window / lock fault"; immobiliser → "Central
+        // locking / key fob".
+        'Door lock fault',
+        'Key / immobiliser fault',
+    ],
 
     /**
      * Routine-service → Service-Reminder bridge. A finding whose text (normalised: trimmed + lower-cased)

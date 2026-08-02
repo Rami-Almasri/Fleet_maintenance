@@ -55,7 +55,10 @@ return [
     ],
     [
         'name' => 'Seat belt fault', 'name_ar' => 'عطل في حزام الأمان',
-        'category' => 'interior', 'system' => 'Safety', 'subsystem' => 'Restraints', 'discipline' => 'mechanical', 'risk' => 'critical',
+        // Described in this file because a belt is cabin hardware, filed under `safety` because that is
+        // what it protects. The file a concept is written in never has to match its category.
+        'category' => 'safety', 'category_label' => 'Safety & Driver Assist', 'category_label_ar' => 'أنظمة السلامة والمساعدة',
+        'system' => 'Safety', 'subsystem' => 'Restraints', 'discipline' => 'mechanical', 'risk' => 'critical',
         'description' => 'Seat belt not retracting, not latching, or its buckle damaged. Safety-critical.',
         'en' => [
             'syn'      => ['seat belt fault', 'seatbelt not working', 'belt not retracting', 'buckle broken',
@@ -120,24 +123,57 @@ return [
         'actions' => ['scan_diagnostics', 'repair_wiring', 'visual_inspection'],
     ],
     [
+        // NARROWED to MISSING and WORN items. The breakage wording moved to `Broken trim` below —
+        // see the note there. What is left is the inventory question: what should be in this car and
+        // is not, which is the one a rental fleet asks at every handover.
         'name' => 'Interior trim damage', 'name_ar' => 'تلف الأجزاء الداخلية',
         'category' => 'interior', 'system' => 'Interior', 'subsystem' => 'Trim', 'discipline' => 'bodywork', 'risk' => 'routine',
-        'description' => 'Interior panels, carpets or trim broken, missing or worn.',
+        'description' => 'Interior panels, carpets or mats missing, worn or damaged.',
         'en' => [
-            'syn'      => ['broken trim', 'interior trim damage', 'missing carpets', 'carpet damage',
-                           'door card damaged', 'interior parts', 'trim broken', 'panel clip broken'],
-            'workshop' => ['clips broken', 'refitted the trim', 'collecting interior parts'],
-            'customer' => ['piece of trim is broken', 'carpets are missing', 'plastic panel came off'],
+            'syn'      => ['interior trim damage', 'missing carpets', 'carpet damage',
+                           'door card damaged', 'interior parts', 'missing floor mats', 'worn trim'],
+            'workshop' => ['refitted the trim', 'collecting interior parts', 'mats not in the car'],
+            'customer' => ['carpets are missing', 'floor mats are gone', 'the trim looks worn out'],
             'miss'     => ['intirior trim', 'carpet missng', 'trim damge'],
         ],
         'ar' => [
             'formal'   => ['تلف في الأجزاء الداخلية'],
-            'workshop' => ['الفرش ناقص', 'التبليط مكسور', 'قطع داخلية مكسورة', 'الدواسات ناقصة'],
+            'workshop' => ['الفرش ناقص', 'الدواسات ناقصة', 'الفرش مستهلك'],
         ],
-        'components' => ['Door cards', 'Carpets', 'Trim panels', 'Clips'],
-        'causes' => ['Wear', 'Broken clips', 'Removed and not refitted', 'Customer damage'],
-        'inspection' => ['Inventory missing items', 'Check clip mounting points'],
+        'components' => ['Door cards', 'Carpets', 'Floor mats', 'Trim panels'],
+        'causes' => ['Wear', 'Removed and not refitted', 'Not returned with the vehicle', 'Customer damage'],
+        'inspection' => ['Inventory what is missing against the handover checklist', 'Grade wear on visible trim'],
         'actions' => ['clean_interior', 'visual_inspection'],
+    ],
+    [
+        // SPLIT from `Interior trim damage`, which had absorbed its wording and left the library's
+        // own `Broken trim` keyword unreachable by anything except its exact name.
+        //
+        // The two are close and the line between them is the ACTION they lead to: a broken clip or a
+        // cracked panel is a part to order and refit, while missing carpets are an inventory item to
+        // chase. If that distinction ever stops paying for itself, merge them — this is the pair most
+        // worth revisiting in `ontology:duplicates`.
+        'name' => 'Broken trim', 'name_ar' => 'تلف الزينة الداخلية',
+        'category' => 'interior', 'system' => 'Interior', 'subsystem' => 'Trim', 'discipline' => 'bodywork', 'risk' => 'routine',
+        'description' => 'A trim piece broken, cracked or hanging off — a part to refit or replace.',
+        'en' => [
+            'syn'      => ['broken trim', 'trim broken', 'panel clip broken', 'cracked trim panel',
+                           'trim hanging off', 'loose trim', 'broken plastic panel'],
+            'workshop' => ['clips broken', 'trim clipped back on', 'panel needs a new clip set'],
+            'customer' => ['piece of trim is broken', 'plastic panel came off', 'something is hanging inside'],
+            'miss'     => ['broken trm', 'trim brocken', 'panel clip brokn'],
+        ],
+        'ar' => [
+            'formal'   => ['تلف الزينة الداخلية'],
+            'workshop' => ['التبليط مكسور', 'قطع داخلية مكسورة', 'الزينة مكسورة', 'الزينة فاكة'],
+        ],
+        'claim' => ['broken trim', 'trim broken', 'panel clip broken', 'clips broken',
+                    'piece of trim is broken', 'plastic panel came off', 'التبليط مكسور', 'قطع داخلية مكسورة'],
+        'components' => ['Trim panels', 'Clips', 'Door cards', 'Pillar trim'],
+        'causes' => ['Broken clip', 'Impact or forced removal', 'UV-embrittled plastic', 'Refitted incorrectly'],
+        'inspection' => ['Press the panel to find the failed clip', 'Check mounting points before refitting',
+                         'Photograph before ordering the part'],
+        'actions' => ['visual_inspection', 'clean_interior'],
     ],
     [
         'name' => 'Bad odour', 'name_ar' => 'رائحة كريهة داخل السيارة',

@@ -44,6 +44,7 @@ export default function FindingKeywords() {
   const counts = data?.counts || { total: 0, critical: 0, moderate: 0, routine: 0 };
   // AI knowledge-base coverage: how many concepts are described, and whether enrichment can run.
   const knowledge = data?.knowledge || { ai_available: false, enriched: 0, term_total: 0 };
+  const fullyCovered = counts.total > 0 && knowledge.enriched >= counts.total;
 
   // Localised getters — Arabic when the UI is Arabic, English otherwise (with graceful fallback).
   const riskLabel = (r) => t(`findingKeywords.risk.${r}`);
@@ -240,8 +241,13 @@ export default function FindingKeywords() {
               <p className="mt-1 text-xs text-slate-500">
                 {t('keywordAi.coverageHint', { terms: num(knowledge.term_total) })}
               </p>
+              {/* No API key is a GAP only while something is still undescribed. At full coverage the
+                  seeded library already answers every fault, so the same fact is a footnote — amber
+                  there reads as "your install is broken" when nothing is. */}
               {!knowledge.ai_available && (
-                <p className="mt-2 text-xs text-amber-600">{t('keywordAi.notConfiguredShort')}</p>
+                fullyCovered
+                  ? <p className="mt-2 text-xs text-slate-500">{t('keywordAi.notConfiguredComplete')}</p>
+                  : <p className="mt-2 text-xs text-amber-600">{t('keywordAi.notConfiguredShort')}</p>
               )}
             </div>
             <div className="lg:col-span-2">

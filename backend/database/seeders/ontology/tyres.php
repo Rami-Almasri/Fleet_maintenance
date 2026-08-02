@@ -77,8 +77,11 @@ return [
         'category' => 'tyres', 'system' => 'Wheels & tyres', 'subsystem' => 'Tyre', 'discipline' => 'mechanical', 'risk' => 'critical',
         'description' => 'Tread depth at or below the legal limit.',
         'en' => [
+            // "all tires change" moved to `Tire Change`: it records work that was DONE, and this
+            // concept is the CONDITION that justifies it. Keeping it here made a completed job read
+            // as a car still running on bald tyres.
             'syn'      => ['worn tyre', 'bald tyre', 'tyre wear', 'low tread', 'tyres need changing',
-                           'tyre below limit', 'all tires change'],
+                           'tyre below limit'],
             'workshop' => ['down to the markers', 'canvas showing', 'tyres are finished', 'changed all four'],
             'customer' => ['tyres look worn', 'garage said tyres need changing', 'tyres are bald'],
             'miss'     => ['worn tyres', 'bald tires', 'tires worn out', 'tiers need to change'],
@@ -152,7 +155,39 @@ return [
         'actions' => ['balance_wheels', 'replace_tyre', 'paint_panel', 'visual_inspection'],
     ],
     [
-        'name' => 'Tyre rotation', 'name_ar' => 'تدوير الإطارات',
+        // The SERVICE, distinct from `Worn / bald tyre` (the condition that calls for it) — the same
+        // split as Tyre rotation. It is also named in config `routine_service_types` as 'tire change',
+        // so the name must stay exactly this for the reminder to roll forward when it is closed.
+        'name' => 'Tire Change', 'name_ar' => 'تغيير الإطارات',
+        'category' => 'tyres', 'system' => 'Wheels & tyres', 'subsystem' => 'Tyre', 'discipline' => 'mechanical', 'risk' => 'moderate',
+        'description' => 'New tyres fitted — the work itself, scheduled or after wear.',
+        'en' => [
+            'syn'      => ['tire change', 'tyre change', 'tyre replacement', 'new tyres fitted',
+                           'fitted new tyres', 'tyres replaced', 'all tires change'],
+            'workshop' => ['fitted four new tyres', 'mounted and balanced new tyres', 'changed two tyres'],
+            'customer' => ['they put new tyres', 'tyres were changed', 'new tyres on the car'],
+            'miss'     => ['tyre chnage', 'tire chang', 'tires changed', 'tyre chage'],
+        ],
+        'ar' => [
+            'formal'   => ['تغيير الإطارات'],
+            'workshop' => ['تغيير الكفرات', 'ركبنا كفرات جديدة', 'بدلنا الكفرات'],
+        ],
+        'claim' => ['all tires change'],
+        'components' => ['Tyres', 'Rims', 'Valves', 'Balance weights'],
+        'causes' => ['Tread at or below the limit', 'Sidewall damage', 'Tyre age', 'Scheduled fleet replacement'],
+        'inspection' => ['Confirm size and load rating against the plate', 'Balance after fitting',
+                         'Torque the wheel nuts', 'Set pressures and reset TPMS'],
+        'actions' => ['replace_tyre', 'balance_wheels', 'tighten_wheel_nuts', 'align_wheels', 'reset_tpms'],
+    ],
+    [
+        // NAMED 'Tire Rotation', NOT 'Tyre rotation', and the spelling is load-bearing.
+        //
+        // The concept is bound to its FindingKeyword by TextNormalizer::key($name), which lower-cases
+        // and strips punctuation but does NOT fold tyre→tire. While this said 'Tyre rotation' it keyed
+        // to `tyre rotation` and the catalog's selectable 'Tire Rotation' keyed to `tire rotation` —
+        // two rows, one enriched and unselectable, the other selectable with no vocabulary at all.
+        // The same trap is one letter away for every tyre concept; the catalog spelling always wins.
+        'name' => 'Tire Rotation', 'name_ar' => 'تدوير الإطارات',
         'category' => 'tyres', 'system' => 'Wheels & tyres', 'subsystem' => 'Maintenance', 'discipline' => 'mechanical', 'risk' => 'routine',
         'description' => 'Scheduled repositioning of tyres to even out wear.',
         'en' => [

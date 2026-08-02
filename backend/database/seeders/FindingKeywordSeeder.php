@@ -3,12 +3,14 @@
 namespace Database\Seeders;
 
 use App\Models\FindingKeyword;
+use App\Support\TextNormalizer;
 use Illuminate\Database\Seeder;
 
 /**
  * Seeds the findings keyword library from config/maintenance_findings.php, assigning each keyword a
- * sensible default RISK grade (by category) and its Arabic translation. Idempotent: it keys on
- * (category_key, keyword) so re-running never duplicates. It NEVER overwrites a `risk` an admin has
+ * sensible default RISK grade (by category) and its Arabic translation. Idempotent: it keys on the
+ * normalised KEYWORD (see run(), and FaultOntologySeeder which uses the same identity rule) so
+ * re-running never duplicates and a keyword can be recategorised in place. It NEVER overwrites a `risk` an admin has
  * tuned, and it only FILLS an Arabic label when one is missing — so a hand-edited translation stays.
  * This lets the migration + this seeder backfill Arabic onto the rows the first seeder already made.
  */
@@ -130,9 +132,24 @@ class FindingKeywordSeeder extends Seeder
             $defaultRisk = self::CATEGORY_DEFAULT_RISK[$key] ?? FindingKeyword::RISK_MODERATE;
 
             foreach (array_values($category['keywords'] ?? []) as $i => $keyword) {
-                // firstOrNew so we can backfill Arabic onto rows the first (English-only) seed created,
-                // without clobbering an admin-tuned risk / description / is_active.
-                $row = FindingKeyword::firstOrNew(['category_key' => $key, 'keyword' => $keyword]);
+                // IDENTIFIED BY THE KEYWORD ALONE, NOT (category_key, keyword).
+                //
+                // This used to key on the pair, which quietly made a fault's category part of its
+                // identity — so MOVING a keyword between categories did not move the row, it forked it.
+                // The old row kept every enriched term and the new empty one took its place in the
+                // picker, and because FaultOntologySeeder identifies concepts by NAME it would then try
+                // to drag the survivor back and die on the unique index mid-seed.
+                //
+                // Six keywords were already forked this way. A fault has one identity; its category is
+                // an attribute that can be corrected. This matches FaultOntologySeeder::seedConcept,
+                // and the two seeders must agree on identity or they fight over the same rows.
+                $existing = FindingKeyword::query()
+                    ->get(['id', 'keyword'])
+                    ->first(fn (FindingKeyword $k) => TextNormalizer::key($k->keyword) === TextNormalizer::key($keyword));
+
+                $row = $existing
+                    ? FindingKeyword::find($existing->id)
+                    : new FindingKeyword(['keyword' => $keyword]);
 
                 if (! $row->exists) {
                     $row->risk       = $defaultRisk;
@@ -140,6 +157,9 @@ class FindingKeywordSeeder extends Seeder
                     $row->sort_order = $i;
                 }
 
+                // The catalog owns which category a selectable keyword sits in — re-pointing an existing
+                // row here is the whole reason a recategorisation now works instead of forking.
+                $row->category_key      = $key;
                 // Labels are safe to keep in sync with the config (single source for the English text).
                 $row->category_label    = $label;
                 $row->category_label_ar = $labelAr;
