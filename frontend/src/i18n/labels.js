@@ -570,6 +570,77 @@ const en = {
   // here would duplicate them and invite drift. AppLayout resolves nav labels
   // with tf(), which falls back to that table for English and picks up `ar.nav`
   // below for Arabic. Same arrangement for `modules` (config/moduleRegistry.js).
+  // Suggested Checks — the per-vehicle "what should I look at on this car" panel
+  // (components/workflow/SuggestedChecks.js). The backend sends reason CODES + numbers and
+  // never a sentence, so every line below is the sentence for one code. Plural blocks use
+  // tp(), which is why they carry the full Arabic category set rather than one/other.
+  suggestedChecks: {
+    title: 'Suggested checks for this car',
+    origin: "From this car's own repair history and service forecast",
+    dueNow: 'Due now',
+    bothSources: 'history + forecast',
+    openCategory: 'Open {category} checks',
+    group: {
+      recurring: 'Recurring history',
+      forecast: 'Forecast',
+    },
+    condition: {
+      oilChange: 'Oil service',
+      battery: 'Battery',
+      tireRotation: 'Tyre rotation',
+      tireChange: 'Tyre change',
+    },
+    reason: {
+      returned: {
+        one: 'Returned once',
+        other: 'Returned {n} times',
+      },
+      lastSeen: {
+        one: 'Last seen yesterday',
+        other: 'Last seen {n} days ago',
+      },
+      usualGap: {
+        one: 'Usually returns the next day',
+        other: 'Usually returns every ~{n} days',
+      },
+      // Two episodes = one observed gap. Stated as the single event it was; saying "usually" here
+      // would claim a regularity a single observation cannot show.
+      singleGap: {
+        one: 'The two visits were a day apart',
+        other: 'The two visits were {n} days apart',
+      },
+      // Silent for several of its own intervals — evidence the fault stopped, not that it is overdue.
+      patternLapsed: {
+        one: 'No return in {n} day — the pattern appears to have stopped',
+        other: 'No return in {n} days — the pattern appears to have stopped',
+      },
+      pastUsualGap: {
+        one: '1 day past its usual return',
+        other: '{n} days past its usual return',
+      },
+      approachingGap: 'Coming up on its usual return window',
+      stalling: 'Same garage took it {visits}× within {days} days — likely a slow repair, not a failing car',
+      conditionDue: '{name} is due',
+      overdueKm: 'Overdue by {km} km',
+      remainingKm: '{km} km to go',
+      daysToDue: {
+        one: 'Due in about a day',
+        other: 'Due in about {n} days',
+      },
+      postIdle: {
+        one: 'Parked 1 day',
+        other: 'Parked {n} days',
+      },
+    },
+    checklist: {
+      title: 'Standard post-idle checklist',
+      note: 'a look-at list, not findings to confirm',
+    },
+    unplaceable: {
+      one: '1 more repeat fault has no catalog wording yet — see the full repeat-fault report.',
+      other: '{n} more repeat faults have no catalog wording yet — see the full repeat-fault report.',
+    },
+  },
   workflow: {
     // Live-position badge extras (garage→garage transfer marker).
     position: { transfer: 'Transfer' },
@@ -3686,6 +3757,100 @@ const ar = {
         name: 'الإعدادات',
         desc: 'حسابك وتفضيلاتك في مكان واحد: المظهر (السمة / اللغة)، والأدوار والصلاحيات الممنوحة لك، واختصارات لوحة المفاتيح، وتسجيل الخروج.',
       },
+    },
+  },
+  // فحوصات مقترحة — كل سطر هنا هو صياغة رمز سبب واحد يرسله المحرك (أرقام فقط، بلا جُمل).
+  // الصيغ الجمعية تمر عبر tp() فتحمل فئات العربية الست، لأن «٢ يوم» و«٣ أيام» و«١١ يومًا»
+  // لا تُصاغ بقاعدة واحدة.
+  suggestedChecks: {
+    title: 'الفحوصات المقترحة لهذه السيارة',
+    origin: 'مبني على سجل إصلاحات هذه السيارة وتوقّعات الصيانة',
+    dueNow: 'مستحق الآن',
+    bothSources: 'سجل + توقّع',
+    openCategory: 'افتح فحوصات {category}',
+    group: {
+      recurring: 'أعطال متكررة',
+      forecast: 'توقّعات الصيانة',
+    },
+    condition: {
+      oilChange: 'تغيير الزيت',
+      battery: 'البطارية',
+      tireRotation: 'تدوير الإطارات',
+      tireChange: 'تغيير الإطارات',
+    },
+    reason: {
+      returned: {
+        one: 'تكرر مرة واحدة',
+        two: 'تكرر مرتين',
+        few: 'تكرر {n} مرات',
+        many: 'تكرر {n} مرة',
+        other: 'تكرر {n} مرة',
+      },
+      lastSeen: {
+        one: 'آخر مرة أمس',
+        two: 'آخر مرة قبل يومين',
+        few: 'آخر مرة قبل {n} أيام',
+        many: 'آخر مرة قبل {n} يومًا',
+        other: 'آخر مرة قبل {n} يوم',
+      },
+      usualGap: {
+        one: 'يعود عادة في اليوم التالي',
+        two: 'يعود عادة كل يومين',
+        few: 'يعود عادة كل {n} أيام تقريبًا',
+        many: 'يعود عادة كل {n} يومًا تقريبًا',
+        other: 'يعود عادة كل {n} يوم تقريبًا',
+      },
+      singleGap: {
+        one: 'الزيارتان كانتا بفارق يوم واحد',
+        two: 'الزيارتان كانتا بفارق يومين',
+        few: 'الزيارتان كانتا بفارق {n} أيام',
+        many: 'الزيارتان كانتا بفارق {n} يومًا',
+        other: 'الزيارتان كانتا بفارق {n} يوم',
+      },
+      patternLapsed: {
+        one: 'لم يتكرر منذ يوم — يبدو أن التكرار توقف',
+        two: 'لم يتكرر منذ يومين — يبدو أن التكرار توقف',
+        few: 'لم يتكرر منذ {n} أيام — يبدو أن التكرار توقف',
+        many: 'لم يتكرر منذ {n} يومًا — يبدو أن التكرار توقف',
+        other: 'لم يتكرر منذ {n} يوم — يبدو أن التكرار توقف',
+      },
+      pastUsualGap: {
+        one: 'تجاوز موعد عودته المعتاد بيوم',
+        two: 'تجاوز موعد عودته المعتاد بيومين',
+        few: 'تجاوز موعد عودته المعتاد بـ{n} أيام',
+        many: 'تجاوز موعد عودته المعتاد بـ{n} يومًا',
+        other: 'تجاوز موعد عودته المعتاد بـ{n} يوم',
+      },
+      approachingGap: 'يقترب من موعد عودته المعتاد',
+      stalling: 'الكراج نفسه استلمها {visits} مرات خلال {days} يومًا — الأرجح أنه بطء في الإصلاح لا عطل متكرر',
+      conditionDue: '{name} مستحق',
+      overdueKm: 'متأخر بمقدار {km} كم',
+      remainingKm: 'متبقٍ {km} كم',
+      daysToDue: {
+        one: 'يستحق خلال يوم تقريبًا',
+        two: 'يستحق خلال يومين تقريبًا',
+        few: 'يستحق خلال {n} أيام تقريبًا',
+        many: 'يستحق خلال {n} يومًا تقريبًا',
+        other: 'يستحق خلال {n} يوم تقريبًا',
+      },
+      postIdle: {
+        one: 'متوقفة منذ يوم',
+        two: 'متوقفة منذ يومين',
+        few: 'متوقفة منذ {n} أيام',
+        many: 'متوقفة منذ {n} يومًا',
+        other: 'متوقفة منذ {n} يوم',
+      },
+    },
+    checklist: {
+      title: 'قائمة الفحص المعتادة بعد التوقف',
+      note: 'قائمة للنظر فيها، وليست أعطالًا مؤكدة',
+    },
+    unplaceable: {
+      one: 'هناك عطل متكرر إضافي لا توجد له صياغة في الدليل بعد — راجع تقرير الأعطال المتكررة.',
+      two: 'هناك عطلان متكرران إضافيان لا توجد لهما صياغة في الدليل بعد — راجع تقرير الأعطال المتكررة.',
+      few: 'هناك {n} أعطال متكررة إضافية لا توجد لها صياغة في الدليل بعد — راجع تقرير الأعطال المتكررة.',
+      many: 'هناك {n} عطلًا متكررًا إضافيًا لا توجد لها صياغة في الدليل بعد — راجع تقرير الأعطال المتكررة.',
+      other: 'هناك {n} عطل متكرر إضافي لا توجد له صياغة في الدليل بعد — راجع تقرير الأعطال المتكررة.',
     },
   },
   workflow: {

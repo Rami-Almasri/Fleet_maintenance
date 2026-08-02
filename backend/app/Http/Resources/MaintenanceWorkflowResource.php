@@ -209,13 +209,12 @@ class MaintenanceWorkflowResource extends JsonResource
             // Ready-entry-point chips (see DiagnosticGateService::dueChecks) — the exact Findings-catalog
             // keywords a system-raised ticket is due for, offered as one-tap suggestions at the Decide step.
             'suggested_findings'    => array_values($t->suggested_findings ?? []),
-            // Suggested Checks — the PER-CAR replacement for the old fixed checklist: this vehicle's own
-            // repeat faults and its live service forecast, ranked, each carrying reason CODES the UI turns
-            // into a sentence in either language. Attached by MaintenanceWorkflowService::pendingReview()
-            // (deduped per vehicle); null on every other surface, which simply renders nothing.
-            // The fixed Battery/Fluids/Brakes list lives inside it as `checklist` — an inspection agenda,
-            // explicitly NOT a set of findings to confirm. See VehicleSuggestedChecksService.
-            'suggested_checks'      => $t->suggested_checks ?? null,
+            // NOTE: Suggested Checks (this car's repeat faults + service forecast — the per-car
+            // replacement for the old fixed checklist) is deliberately NOT on this resource. It is too
+            // expensive to compute for every row of a 141-ticket queue, so it has its own endpoint,
+            // Vehicle/{vehicle}/suggested-checks, which the panel calls per card as it scrolls into
+            // view. See VehicleSuggestedChecksService.
+            //
             // Trigger Detail — the "why" snapshot behind a SYSTEM-generated (periodic) request: the rule(s)
             // that fired, each rule's human reason + checklist, and the mileage/threshold/overdue/due values
             // at detection. Null for human-raised requests. The Inspection Review Queue renders this so a

@@ -18,6 +18,7 @@ import { EmptyState } from '../components/ui/Misc';
 import { Skeleton } from '../components/ui/Skeleton';
 import TicketActionModal from '../components/workflow/TicketActionModal';
 import ComplaintIntakeModal from '../components/workflow/ComplaintIntakeModal';
+import SuggestedChecks from '../components/workflow/SuggestedChecks';
 
 // Note: `customer_reported` here is a LEGACY driver-request reason — real customer complaints are their own
 // entity now (Complaints Center), so it reads "Customer-reported", not "Customer complaint".
@@ -97,8 +98,17 @@ function dueDate(iso) {
 }
 
 // The "why the system flagged this" panel — only rendered for a system-generated request that carries a
-// trigger_detail snapshot. Shows each rule that fired (with its human reason), the mileage/threshold/
-// overdue/due values behind it, and the suggested checklist the Inspector will confirm at the Decide step.
+// trigger_detail snapshot. Shows each rule that fired (with its human reason) and the
+// mileage/threshold/overdue/due values behind it.
+//
+// WHAT IT NO LONGER SHOWS: a "Suggested checks for the inspector" chip row. That row used to fall back
+// to `rules.flatMap(r => r.finding_keywords)` whenever the ticket's own suggested_findings was empty —
+// which, for an idle car, is the fixed post-downtime checklist (Battery Replacement / Low fluid level /
+// Brake noise). The backend deliberately excludes that checklist from suggested_findings
+// (InspectionsGenerateTasks::suggestedFindings) and a command exists purely to strip it from tickets
+// that already stored it (InspectionsCleanSuggestedFindings) — so this fallback was quietly undoing
+// both, and printing the same three "findings" on every car. Per-car checks now come from
+// <SuggestedChecks>, and the standing checklist is rendered there as the agenda it is.
 function SystemDetail({ detail, suggested }) {
   const rules = Array.isArray(detail?.rules) ? detail.rules : [];
   const svc = detail?.service || null;
@@ -110,10 +120,8 @@ function SystemDetail({ detail, suggested }) {
     ['Next due', dueDate(svc?.next_due_at)],
   ].filter(([, v]) => v);
 
-  const chips = (suggested && suggested.length
-    ? suggested
-    : rules.flatMap((r) => r.finding_keywords || []))
-    .filter((v, i, a) => v && a.indexOf(v) === i);
+  // Only the ticket's OWN stored suggestions — never re-derived from the checklist rules.
+  const chips = (suggested || []).filter((v, i, a) => v && a.indexOf(v) === i);
 
   return (
     <div className="mt-3 rounded-lg border border-indigo-100 bg-indigo-50/50 px-3 py-2.5">
@@ -148,7 +156,7 @@ function SystemDetail({ detail, suggested }) {
 
       {chips.length > 0 && (
         <div className="mt-2">
-          <p className="text-[11px] text-slate-400">Suggested checks for the inspector</p>
+          <p className="text-[11px] text-slate-400">What this request is due for</p>
           <div className="mt-1 flex flex-wrap gap-1">
             {chips.map((c) => (
               <span key={c} className="rounded-full bg-white px-2 py-0.5 text-[11px] font-medium text-indigo-700 ring-1 ring-inset ring-indigo-200">
@@ -348,6 +356,13 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, ackBusy, highligh
         {isSystem && (tk.trigger_detail || (tk.suggested_findings || []).length > 0) && (
           <SystemDetail detail={tk.trigger_detail} suggested={tk.suggested_findings} />
         )}
+
+        {/* Per-car suggested checks — this car's own repeat faults + service forecast. Rendered for
+            EVERY request, not just system-raised ones: a driver reporting a noise on a car that has
+            been back for brakes four times is exactly when the reviewer needs to know. Fetches itself
+            when the card scrolls into view, so a 140-card queue stays fast. Read-only here (no
+            onPick) — the reviewer approves or rejects; the inspector does the tapping at Decide. */}
+        <SuggestedChecks vehicleId={tk.vehicle_id} />
 
         {/* ── At-a-glance data grid ────────────────────────────────────────────────── */}
         <div className="grid grid-cols-2 gap-2">

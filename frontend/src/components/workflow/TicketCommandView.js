@@ -11,6 +11,7 @@ import { useToast } from '../ui/Toast';
 import { useCountUp } from '../ui/Gauge';
 import FindingsList from './FindingsList';
 import TicketParts from './TicketParts';
+import SuggestedChecks from './SuggestedChecks';
 import CheckpointModal from '../maintenance/CheckpointModal';
 import CheckpointTimeline from '../maintenance/CheckpointTimeline';
 import { getTicketCheckpoints, isCheckpointStage } from '../../lib/maintenanceCheckpoints';
@@ -640,6 +641,10 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
                   <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
                     <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{t(tk.trigger_reason === 'periodic' ? 'workflow.detail.agenda' : 'workflow.detail.driverNote')}</p>
                     <p className="mt-1 text-sm text-slate-700">{tk.customer_complaint}</p>
+                    {/* The agenda is a frozen snapshot and, for a scheduled check, the same standing
+                        safety list on every idle car. What THIS car keeps coming back for goes right
+                        under it — same service as every other surface. */}
+                    <SuggestedChecks vehicleId={tk.vehicle_id} />
                   </div>
                 )
               )}

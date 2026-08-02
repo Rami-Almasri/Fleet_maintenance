@@ -160,7 +160,6 @@ class MaintenanceWorkflowService
         private OdometerContinuityService $continuity,
         private LogisticsDispatchService $logistics,
         private DiagnosticGateService $gate,
-        private VehicleSuggestedChecksService $suggestedChecks,
     ) {}
 
     /**
@@ -974,14 +973,9 @@ class MaintenanceWorkflowService
         // Downtime safety check uses — so the card's "last maintenance" can never contradict the system's
         // own "N days since last maintenance completion" flag.
         $anchorByVehicle = [];
-        // Per-car Suggested Checks — what to actually inspect on THIS car, from its own repeat faults and
-        // service forecast. Computed here, deduped per vehicle (same pattern as the anchor above), so the
-        // queue gets it in this one response instead of the browser firing a request per card.
-        $checksByVehicle = [];
         foreach ($tickets as $t) {
             if ($t->vehicle_id && $t->vehicle && ! array_key_exists($t->vehicle_id, $anchorByVehicle)) {
-                $anchorByVehicle[$t->vehicle_id]  = $this->gate->readyAnchor($t->vehicle);
-                $checksByVehicle[$t->vehicle_id] = $this->suggestedChecks->forVehicle($t->vehicle);
+                $anchorByVehicle[$t->vehicle_id] = $this->gate->readyAnchor($t->vehicle);
             }
         }
         foreach ($tickets as $t) {
@@ -990,9 +984,14 @@ class MaintenanceWorkflowService
             $t->last_test = ($prior && $prior['id'] !== $t->id) ? $prior : null;
             // The detector's own anchor: {at, days_ago, reason (maintenance|test|onboarding), source, …}.
             $t->last_maintenance = $anchorByVehicle[$t->vehicle_id] ?? null;
-            $t->suggested_checks = $checksByVehicle[$t->vehicle_id] ?? null;
             // NOTE: the "last oil service" anchor (km + km-since) is computed straight off the eager-loaded
             // vehicle columns in the resource — no extra query needed here.
+            //
+            // Per-car Suggested Checks are deliberately NOT attached here either. Computing them for this
+            // queue's ~137 distinct vehicles measured at 3.75s — roughly 4× the entire rest of this method
+            // — because each car's repeat-fault report is its own set of queries. The panel fetches itself
+            // from Vehicle/{id}/suggested-checks as each card scrolls into view, so the queue stays as
+            // fast as it was and only the cards someone actually opens cost anything.
         }
 
         return $tickets;
