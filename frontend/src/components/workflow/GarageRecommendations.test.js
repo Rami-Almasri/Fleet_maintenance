@@ -6,10 +6,34 @@ import GarageRecommendations from './GarageRecommendations';
 import api from '../../api/client';
 
 jest.mock('../../api/client', () => ({ get: jest.fn() }));
-jest.mock('../../i18n/I18nContext', () => ({
-  // t returns the key, but interpolates {pct}/{n} so specialization/matches text is assertable.
-  useI18n: () => ({ t: (k, v) => (v ? `${k}:${Object.values(v).join(',')}` : k), lang: 'en' }),
-}));
+// t returns the key, but interpolates {pct}/{n} so specialization/matches text is assertable.
+//
+// The reason/composed namespaces are the exception: those are resolved against the REAL English table,
+// because the whole point of the reason-code contract is that the sentence is assembled from a label —
+// a mock that echoed the key would test the renderer against itself and would not notice a missing
+// entry. Asserting on the rendered English here is what makes a dropped label a failing test.
+jest.mock('../../i18n/I18nContext', () => {
+  const { LABELS } = jest.requireActual('../../i18n/labels');
+  // Only the namespaces the reason renderer assembles from. `confidence.*` stays an echoed key because
+  // other tests assert on it raw, and no fixture reason interpolates a confidence word.
+  const REAL = /^workflow\.garageRec\.(?:(?:reason|composed)\.|list(?:And|Comma)$)/;
+  const walk = (path) => path.split('.').reduce((n, k) => (n == null ? undefined : n[k]), LABELS.en);
+  return {
+    useI18n: () => ({
+      lang: 'en',
+      t: (k, v) => {
+        if (REAL.test(k)) {
+          const hit = walk(k);
+          if (typeof hit === 'string') {
+            return v ? hit.replace(/\{(\w+)\}/g, (m, key) => (v[key] != null ? String(v[key]) : m)) : hit;
+          }
+          return k;
+        }
+        return v ? `${k}:${Object.values(v).join(',')}` : k;
+      },
+    }),
+  };
+});
 
 const PAYLOAD = {
   has_history: true,
@@ -42,7 +66,10 @@ const PAYLOAD = {
         duration_days: { value: 2, basis: 'garage', sample: 40 }, success_pct: { value: 96, basis: 'garage', sample: 40 },
         comeback_pct: { value: 4, basis: 'garage', sample: 40 }, cost_aed: { value: 420, basis: 'garage', sample: 929, confidence: 'high' },
         queue_open: 2, start_in_days: 1, duration_p90: { value: 5, basis: 'garage', sample: 40 },
-        evidence: ['6 previous Yukon Engine repairs here', '36 similar Engine repairs here on other models'],
+        evidence: [
+          { code: 'evidence_same_model', params: { n: 6, model: 'Yukon', label: 'Engine' }, text: '6 previous Yukon Engine repairs here' },
+          { code: 'evidence_other_models', params: { n: 36, label: 'Engine' }, text: '36 similar Engine repairs here on other models' },
+        ],
         // Phase 2: this garage HAS earned a price for engine work specifically.
         fault_cost: { value: 700, basis: 'garage_fault', sample: 63 },
       },
@@ -51,13 +78,26 @@ const PAYLOAD = {
         duration_days: { value: 1.5, basis: 'garage', sample: 20 }, success_pct: { value: 93, basis: 'garage', sample: 20 },
         comeback_pct: { value: 7, basis: 'garage', sample: 20 }, cost_aed: { value: 300, basis: 'garage', sample: 8 },
         queue_open: 0, start_in_days: 0, duration_p90: { value: 3, basis: 'garage', sample: 20 },
-        evidence: ['2 previous Yukon Engine repairs here', '7 similar Engine repairs here on other models'],
+        evidence: [
+          { code: 'evidence_same_model', params: { n: 2, model: 'Yukon', label: 'Engine' }, text: '2 previous Yukon Engine repairs here' },
+          { code: 'evidence_other_models', params: { n: 7, label: 'Engine' }, text: '7 similar Engine repairs here on other models' },
+        ],
       },
-      reason: '6 previous Engine repairs on this exact model.',
-      tradeoff: 'About 0.5 day(s) faster, but less Engine experience (59% coverage vs 84%).',
-      winner_points: ['Has repaired Engine on Yukon before (6×)', 'Most experience with this fault (84% vs 59%)'],
-      alt_pros: ['Can start sooner'],
-      alt_cons: ['Less Engine experience (59% vs 84%)'],
+      reason: { code: 'winner_same_model', params: { n: 6, label: 'Engine' }, sole: false, text: '6 previous Engine repairs on this exact model.' },
+      tradeoff: {
+        code: 'alt_trade',
+        parts: {
+          pros: [{ code: 'days_faster', params: { n: '0.5' }, text: 'About 0.5 day(s) faster' }],
+          cons: [{ code: 'less_experience', params: { label: 'Engine', a: 59, b: 84 }, text: 'Less Engine experience (59% vs 84%)' }],
+        },
+        text: 'About 0.5 day(s) faster — but Less Engine experience (59% vs 84%).',
+      },
+      winner_points: [
+        { code: 'repaired_on_model', params: { label: 'Engine', model: 'Yukon', n: 6 }, text: 'Has repaired Engine on Yukon before (6×)' },
+        { code: 'most_experience', params: { a: 84, b: 59 }, text: 'Most experience with this fault (84% vs 59%)' },
+      ],
+      alt_pros: [{ code: 'can_start_sooner', params: {}, text: 'Can start sooner' }],
+      alt_cons: [{ code: 'less_experience', params: { label: 'Engine', a: 59, b: 84 }, text: 'Less Engine experience (59% vs 84%)' }],
       cost_compare: {
         winner: { garage: 'Deals On Wheels auto', value: 700, basis: 'garage_fault', sample: 63 },
         alternative: { garage: '7 CYLINDER', value: 300, basis: 'garage', sample: 187 },
@@ -69,12 +109,32 @@ const PAYLOAD = {
           alternative: { value: 300, basis: 'garage', sample: 187 },
         },
       },
-      verdict: '7 CYLINDER is cheaper (AED 300 vs 550) and faster (0d vs 1d), but Deals On Wheels auto is more experienced with Engine (84% vs 59%).',
-      short_reason: 'strongest Engine history',
-      cost_confidence: { level: 'medium', reason: 'Both prices are comparable at garage level, but neither garage has enough priced history for this specific fault.' },
+      verdict: {
+        code: 'verdict_trade',
+        params: { winner: 'Deals On Wheels auto', alternative: '7 CYLINDER' },
+        parts: {
+          winner_side: [{ code: 'more_experienced_than', params: { label: 'Engine', a: 84, b: 59 }, text: 'more experienced with Engine (84% vs 59%)' }],
+          alternative_side: [
+            { code: 'cheaper_than', params: { a: 300, b: 550 }, text: 'cheaper (AED 300 vs 550)' },
+            { code: 'faster_than', params: { a: '0', b: '1' }, text: 'faster (0d vs 1d)' },
+          ],
+        },
+        text: '7 CYLINDER is cheaper (AED 300 vs 550) and faster (0d vs 1d), but Deals On Wheels auto is more experienced with Engine (84% vs 59%).',
+      },
+      short_reason: [{ code: 'short_strongest_history', params: { label: 'Engine' }, text: 'strongest Engine history' }],
+      cost_confidence: {
+        level: 'medium',
+        reason: { code: 'cost_garage_level', params: {}, text: 'Both prices are comparable at garage level, but neither garage has enough priced history for this specific fault.' },
+      },
       factors: {
-        winner: ['more experienced with Engine (84% vs 59%)', 'able to start sooner'],
-        alternative: ['cheaper (AED 300 vs 550)', 'faster (0d vs 1d)'],
+        winner: [
+          { code: 'more_experienced_than', params: { label: 'Engine', a: 84, b: 59 }, text: 'more experienced with Engine (84% vs 59%)' },
+          { code: 'starts_sooner', params: {}, text: 'able to start sooner' },
+        ],
+        alternative: [
+          { code: 'cheaper_than', params: { a: 300, b: 550 }, text: 'cheaper (AED 300 vs 550)' },
+          { code: 'faster_than', params: { a: '0', b: '1' }, text: 'faster (0d vs 1d)' },
+        ],
       },
     },
     {
@@ -85,12 +145,15 @@ const PAYLOAD = {
         duration_days: { value: 2, basis: 'garage', sample: 40 }, success_pct: { value: 96, basis: 'garage', sample: 40 },
         comeback_pct: { value: 4, basis: 'garage', sample: 40 }, cost_aed: { value: 420, basis: 'garage', sample: 929, confidence: 'high' },
         queue_open: 2, start_in_days: 1, duration_p90: { value: 5, basis: 'garage', sample: 40 },
-        evidence: ['210 similar Interior repairs here on other models'],
+        evidence: [{ code: 'evidence_other_models', params: { n: 210, label: 'Interior' }, text: '210 similar Interior repairs here on other models' }],
       },
       alternative: null,
-      reason: '210 previous Interior repairs, though none on this model.',
+      reason: { code: 'winner_other_models', params: { n: 210, label: 'Interior' }, sole: true, text: '210 previous Interior repairs, though none on this model — no other garage has a comparable record here.' },
       tradeoff: null,
-      winner_points: ['210 Interior repairs here, though none on this model', 'The only garage with a usable record for this fault'],
+      winner_points: [
+        { code: 'repairs_here_not_this_model', params: { n: 210, label: 'Interior' }, text: '210 Interior repairs here, though none on this model' },
+        { code: 'only_garage_with_record', params: {}, text: 'The only garage with a usable record for this fault' },
+      ],
       alt_pros: [],
       alt_cons: [],
     },
@@ -197,6 +260,38 @@ beforeEach(() => api.get.mockReset());
 // A ticket with no per-fault view — the older engine-first layout, which must still work.
 const NO_PER_FAULT = { ...PAYLOAD, per_fault: [] };
 
+test('the panel opens on the operational view, with the engine evidence behind one click', async () => {
+  api.get.mockResolvedValue({ data: { data: PAYLOAD } });
+  render(<GarageRecommendations ticketId={9} selectedVendorId={null} onPick={() => {}} onResult={() => {}} />);
+
+  // One plain card per fault, each naming the recommended garage and the alternative…
+  expect((await screen.findAllByText('workflow.garageRec.plain.recommended:Deals On Wheels auto')).length).toBe(2);
+  expect(screen.getByText('workflow.garageRec.plain.alternative:7 CYLINDER')).toBeInTheDocument();
+  // …and the whole engine view — scores, bases, breakdowns — folded away as "Technical details".
+  expect(screen.getByText('workflow.garageRec.plain.technical')).toBeInTheDocument();
+});
+
+test('the operational view ends with what to do with the car', async () => {
+  api.get.mockResolvedValue({ data: { data: PAYLOAD } });
+  const onPick = jest.fn();
+  render(<GarageRecommendations ticketId={9} selectedVendorId={null} onPick={onPick} onResult={() => {}} />);
+  await screen.findByText('workflow.garageRec.plain.technical');
+
+  // A ticket goes to ONE garage, so reading the faults individually is not the end of the job.
+  expect(screen.getByText('workflow.garageRec.plain.ticketGoesTo:Deals On Wheels auto')).toBeInTheDocument();
+  fireEvent.click(screen.getAllByText('workflow.garageRec.plain.sendTo:Deals On Wheels auto').slice(-1)[0]);
+  expect(onPick).toHaveBeenCalledWith(223);
+});
+
+test('when the work should be split, the footer says so instead of naming one garage', async () => {
+  const split = { ...PAYLOAD, strategy: { ...PAYLOAD.strategy, mode: 'split' } };
+  api.get.mockResolvedValue({ data: { data: split } });
+  render(<GarageRecommendations ticketId={9} selectedVendorId={null} onPick={() => {}} onResult={() => {}} />);
+
+  expect(await screen.findByText('workflow.garageRec.plain.splitNote')).toBeInTheDocument();
+  expect(screen.queryByText(/plain\.ticketGoesTo/)).not.toBeInTheDocument();
+});
+
 test('the panel leads with a fault-by-fault scan table, not a single garage', async () => {
   api.get.mockResolvedValue({ data: { data: PAYLOAD } });
   render(<GarageRecommendations ticketId={9} selectedVendorId={null} onPick={() => {}} onResult={() => {}} />);
@@ -218,7 +313,7 @@ test('each fault card compares the winner against a real alternative with its tr
   expect(screen.getAllByText('workflow.garageRec.perFault.alternative').length).toBe(1);
   // The reason and the trade-off are both stated in facts.
   expect(screen.getByText(/6 previous Engine repairs on this exact model/)).toBeInTheDocument();
-  expect(screen.getByText(/but less Engine experience/)).toBeInTheDocument();
+  expect(screen.getByText(/but Less Engine experience/)).toBeInTheDocument();
   // A fault with no comparable alternative says so rather than inventing one.
   expect(screen.getByText('workflow.garageRec.perFault.noAlternative')).toBeInTheDocument();
 });

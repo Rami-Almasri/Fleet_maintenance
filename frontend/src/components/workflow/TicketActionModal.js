@@ -30,7 +30,7 @@ import { Input, Textarea, Select } from '../ui/Field';
 import FindingsList from './FindingsList';
 import FindingsPicker from './FindingsPicker';
 import RequiredPartsEditor, { cleanRequiredParts } from './RequiredPartsEditor';
-import GarageRecommendations from './GarageRecommendations';
+import DispatchPlan from './DispatchPlan';
 import DecisionCards from './DecisionCards';
 import RootCausePicker, { rootCausesComplete } from './RootCausePicker';
 import FaultHistoryInsight from './FaultHistoryInsight';
@@ -1414,7 +1414,10 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
     <Modal
       open
       onClose={guardedClose}
-      size={['decide', 'ready', 'lineitems', 'pause', 'resume'].includes(action) ? 'lg' : 'md'}
+      // `assign` is the widest step in the app: it carries the dispatch plan, the impact strip and the
+      // full fault-by-fault evidence. At `md` (512px) the comparison cards stack into a single column
+      // and every table wraps — which is what made this step feel cramped no matter how it was laid out.
+      size={action === 'assign' ? 'xl' : ['decide', 'ready', 'lineitems', 'pause', 'resume'].includes(action) ? 'lg' : 'md'}
       title={t(`workflow.meta.${action}.title`)}
       subtitle={ticket ? `${ticket.plate || `#${ticket.id}`}${ticket.car ? ` · ${ticket.car}` : ''}` : t(`workflow.meta.${action}.sub`)}
       footer={
@@ -1568,7 +1571,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                   </ul>
                 </div>
               )}
-              <FindingsPicker catalog={findingsCatalog} keywordMeta={keywordMeta} value={symptoms} onChange={setSymptoms} locked={lockedFindings} suggested={dataSuggested} statusConditions={diagConditions} />
+              <FindingsPicker catalog={findingsCatalog} keywordMeta={keywordMeta} value={symptoms} onChange={setSymptoms} locked={lockedFindings} suggested={dataSuggested} statusConditions={diagConditions} ticketId={ticket?.id ?? null} vehicleId={ticket?.vehicle_id ?? vehicleId ?? null} aiContext="test_findings" />
             </Step>
 
             {/* STEP 3 — diagnosis: probable cause per symptom, the chronic-fault + prior-repair intelligence
@@ -1771,8 +1774,9 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                 Skipped on a "came back broken" re-dispatch (reinspection_failed): the car is going back
                 to the SAME garage that botched the repair, so a "find best garage" pick is noise here. */}
             {ticket?.workflow_status !== 'reinspection_failed' && (
-              <GarageRecommendations
+              <DispatchPlan
                 ticketId={ticket?.id}
+                garages={garages}
                 selectedVendorId={vendorId}
                 onPick={(id) => setVendorId(id)}
                 onResult={setRecoResult}
@@ -2478,7 +2482,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
           <>
             <div>
               <span className="mb-1.5 block text-sm font-medium text-slate-700">{t('workflow.field.newGarageIssues')}</span>
-              <FindingsPicker catalog={findingsCatalog} keywordMeta={keywordMeta} value={findingTags} onChange={setFindingTags} locked={lockedFindings} statusConditions={diagConditions} />
+              <FindingsPicker catalog={findingsCatalog} keywordMeta={keywordMeta} value={findingTags} onChange={setFindingTags} locked={lockedFindings} statusConditions={diagConditions} ticketId={ticket?.id ?? null} vehicleId={ticket?.vehicle_id ?? vehicleId ?? null} aiContext="garage_findings" />
             </div>
             {/* Symptom → Root-Cause — diagnose each garage-found issue (mandatory where a cause-list exists) */}
             {findingTags.length > 0 && (

@@ -9,6 +9,7 @@ use App\Services\Garage\FaultCriticality;
 use App\Services\Garage\GarageOutcomeForecaster;
 use App\Services\Garage\MetricDictionary;
 use App\Services\Garage\PerFaultRecommender;
+use App\Services\Garage\RepairOutlook;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -48,13 +49,20 @@ class GarageRecommendationService
     private FaultCriticality $criticality;
     private PerFaultRecommender $perFault;
 
+    private RepairOutlook $repairOutlook;
+
     public function __construct(
         private ?GarageAssignmentStrategy $strategy = null,
         private ?GarageOutcomeForecaster $forecaster = null,
+        // Injectable because it is the ONE collaborator in the scoring path that reads the database (the
+        // fault ontology). scoreRows is otherwise a pure function of its arguments, and the DB-free unit
+        // suite that pins the ranking depends on it staying that way — it passes a stub.
+        ?RepairOutlook $repairOutlook = null,
     ) {
         $this->strategy = $strategy ?? new GarageAssignmentStrategy();
         $this->criticality = new FaultCriticality();
         $this->perFault = new PerFaultRecommender();
+        $this->repairOutlook = $repairOutlook ?? new RepairOutlook();
     }
 
     /**
@@ -156,6 +164,10 @@ class GarageRecommendationService
             ],
             'strategy'      => null,
             'per_fault'     => [],
+            // Always present so the UI never has to distinguish "no garage history" from "key absent".
+            // Populated below even on a no-history ticket: what the repair involves is knowledge about
+            // the FAULT, and it is just as true when we have never sent this model anywhere.
+            'repair_outlook' => $this->repairOutlook->for((array) ($ctx['faults_detail'] ?? [])),
             'fleet_outcomes' => $outcomes['fleet'] ?? [],
             // Sent ONCE, not repeated per garage: what every figure on this screen means, how it was
             // calculated and which records produced it. Nothing rendered should be a magic number.
@@ -428,6 +440,11 @@ class GarageRecommendationService
         // each fault gets its own winner, its own best alternative and its own stated trade-off. Drawn
         // from every scored garage rather than the primary shortlist, because the right shop for one
         // fault is often not the best all-rounder.
+        //
+        // The ticket-level call goes IN so this layer can agree with it. Ranking by fault coverage while
+        // the header ranks by overall fit produced a panel that named two different garages for one
+        // fault; per_fault now overrules the call only when a garage is materially ahead on evidence at
+        // least as specific — and says which of the two happened.
         $base['per_fault'] = $this->perFault->recommend(
             array_values($g),
             $faults,
@@ -436,7 +453,14 @@ class GarageRecommendationService
             $vendorOutcomes,
             (array) ($ctx['faults_detail'] ?? []),
             (string) ($criteria['model'] ?? ''),
+            isset($primaryOut[0]['vendor_id']) ? (int) $primaryOut[0]['vendor_id'] : null,
         );
+
+        // WHAT THE WORK ACTUALLY IS. Everything above ranks garages; none of it says what the car is
+        // going to have done to it. Keyed per FINDING rather than per category on purpose: `per_fault`
+        // rolls a category up to one row and keeps only its first symptom, so a car with two engine
+        // faults would otherwise show the expected work for one of them. See [[RepairOutlook]].
+        $base['repair_outlook'] = $this->repairOutlook->for((array) ($ctx['faults_detail'] ?? []));
 
         return $base;
     }

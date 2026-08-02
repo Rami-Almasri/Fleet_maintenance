@@ -2,6 +2,8 @@
 
 namespace Tests\Unit;
 
+use App\Services\Garage\Reason;
+use App\Services\Garage\RepairOutlook;
 use App\Services\GarageRecommendationService;
 use PHPUnit\Framework\TestCase;
 
@@ -25,7 +27,17 @@ class GarageRecommendationServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->svc = new GarageRecommendationService();
+
+        // The expected-work panel is the one part of the response that reads the fault ontology out of
+        // the database. These tests are about the RANKING, run with no DB booted, so it is stubbed away —
+        // what a repair typically involves is knowledge about the fault and cannot change which garage
+        // wins. RepairOutlook's own behaviour belongs in a DB-backed test.
+        $this->svc = new GarageRecommendationService(null, null, new class extends RepairOutlook {
+            public function for(array $faultsDetail): array
+            {
+                return [];
+            }
+        });
     }
 
     // ── fixtures ─────────────────────────────────────────────────────────────────────
@@ -699,7 +711,7 @@ class GarageRecommendationServiceTest extends TestCase
         $this->assertSame('Electric Shop', $byFault['electrical']['winner']['garage']);
         // Each carries the evidence that justifies it, not just a name.
         $this->assertSame(100, $byFault['engine']['winner']['coverage_pct']);
-        $this->assertStringContainsString('Engine', $byFault['engine']['reason']);
+        $this->assertStringContainsString('Engine', $byFault['engine']['reason']['text']);
     }
 
     public function test_a_fault_recommendation_carries_its_criticality_and_the_operators_own_wording(): void
@@ -737,8 +749,12 @@ class GarageRecommendationServiceTest extends TestCase
         $this->assertSame('Proven Shop', $f['winner']['garage']);
         $this->assertSame('Quick Shop', $f['alternative']['garage']);
         // The trade-off names BOTH sides: what it gains and what it gives up.
-        $this->assertMatchesRegularExpression('/faster|cheaper/i', $f['tradeoff']);
-        $this->assertStringContainsString('less Engine experience', $f['tradeoff']);
+        $this->assertMatchesRegularExpression('/faster|cheaper/i', $f['tradeoff']['text']);
+        $this->assertStringContainsString("Less Engine experience", $f["tradeoff"]["text"]);
+        // And it carries the two sides as reason CODES, so a non-English UI can rebuild the sentence
+        // rather than reprinting this one.
+        $this->assertNotEmpty($f['tradeoff']['parts']['pros']);
+        $this->assertNotEmpty($f['tradeoff']['parts']['cons']);
     }
 
     public function test_a_garage_with_no_usable_history_for_a_fault_is_not_offered_as_an_option(): void
@@ -768,9 +784,12 @@ class GarageRecommendationServiceTest extends TestCase
 
         $this->assertNotEmpty($ev, 'a coverage percentage with no stated basis is a magic number');
         // The model-specific record first — that is what earned the top tier.
-        $this->assertStringContainsString('6 previous Yukon Engine repairs here', $ev[0]);
+        $this->assertStringContainsString('6 previous Yukon Engine repairs here', $ev[0]['text']);
         // The remainder is reported as the OTHER models it came from, never double-counted.
-        $this->assertStringContainsString('9 similar Engine repairs here on other models', implode(' ', $ev));
+        $this->assertStringContainsString('9 similar Engine repairs here on other models', implode(' ', Reason::texts($ev)));
+        // The counts travel as params too — the Arabic UI needs the numbers, not the English sentence.
+        $this->assertSame('evidence_same_model', $ev[0]['code']);
+        $this->assertSame(6, $ev[0]['params']['n']);
     }
 
     public function test_the_reasoning_is_available_as_scannable_points_not_only_prose(): void
@@ -788,15 +807,17 @@ class GarageRecommendationServiceTest extends TestCase
         $this->assertNotEmpty($f['winner_points']);
         // Every tick is a CHECKABLE fact. "Highest score" explains nothing and must never appear here.
         foreach ($f['winner_points'] as $p) {
-            $this->assertStringNotContainsStringIgnoringCase('score', $p);
+            $this->assertStringNotContainsStringIgnoringCase('score', $p['text']);
+            // …and every one is renderable in another language, not just printable in this one.
+            $this->assertNotEmpty($p['code']);
         }
-        $this->assertStringContainsString('Yukon', $f['winner_points'][0]);
+        $this->assertStringContainsString('Yukon', $f['winner_points'][0]['text']);
 
         // The alternative is split into what it gains and what it gives up, each side standing alone.
         $this->assertNotEmpty($f['alt_cons']);
         $this->assertNotEmpty($f['alt_pros']);
-        $this->assertStringContainsString('Less Engine experience', implode(' ', $f['alt_cons']));
-        $this->assertMatchesRegularExpression('/faster|cheaper|sooner/i', implode(' ', $f['alt_pros']));
+        $this->assertStringContainsString('Less Engine experience', implode(' ', Reason::texts($f['alt_cons'])));
+        $this->assertMatchesRegularExpression('/faster|cheaper|sooner/i', implode(' ', Reason::texts($f['alt_pros'])));
     }
 
     public function test_two_prices_are_only_subtracted_at_a_grain_both_garages_share(): void
@@ -841,7 +862,7 @@ class GarageRecommendationServiceTest extends TestCase
         $cc = $r['per_fault'][0]['cost_compare'];
 
         $this->assertNull($cc['comparison'], 'a fleet median was used as one side of a price comparison');
-        $this->assertStringNotContainsStringIgnoringCase('cheaper', (string) $r['per_fault'][0]['verdict']);
+        $this->assertStringNotContainsStringIgnoringCase('cheaper', (string) $r['per_fault'][0]['verdict']['text']);
     }
 
     public function test_the_verdict_names_both_garages_and_never_resolves_to_pick_the_cheapest(): void
@@ -857,13 +878,19 @@ class GarageRecommendationServiceTest extends TestCase
         $v = $r['per_fault'][0]['verdict'];
 
         // Both sides of the exchange, both named — this is the sentence the supervisor decides from.
-        $this->assertStringContainsString('Cheap Shop', $v);
-        $this->assertStringContainsString('Proven Shop', $v);
-        $this->assertStringContainsString('cheaper', $v);
+        $this->assertStringContainsString('Cheap Shop', $v['text']);
+        $this->assertStringContainsString('Proven Shop', $v['text']);
+        $this->assertStringContainsString('cheaper', $v['text']);
         // The engine states the trade; it never spends the money for them.
         foreach (['choose', 'should', 'recommend the cheaper', 'pick the'] as $imperative) {
-            $this->assertStringNotContainsStringIgnoringCase($imperative, $v);
+            $this->assertStringNotContainsStringIgnoringCase($imperative, $v['text']);
         }
+        // The garage NAMES are params and the two sides are reason lists, so another language rebuilds
+        // this sentence with its own grammar instead of receiving an English one it can only reprint.
+        $this->assertSame('Proven Shop', $v['params']['winner']);
+        $this->assertSame('Cheap Shop', $v['params']['alternative']);
+        // …and the clause lists live in their OWN slots, never overwriting the garage names above.
+        $this->assertNotEmpty($v['parts']['alternative_side']);
     }
 
     public function test_decision_factors_state_both_garages_as_strengths(): void
@@ -883,8 +910,8 @@ class GarageRecommendationServiceTest extends TestCase
         $this->assertNotEmpty($f['factors']['winner']);
         $this->assertNotEmpty($f['factors']['alternative']);
         // Each side's list contains only ITS OWN advantages — never the other's failings restated.
-        $this->assertStringContainsString('more experienced', implode(' ', $f['factors']['winner']));
-        $this->assertStringContainsString('cheaper', implode(' ', $f['factors']['alternative']));
+        $this->assertStringContainsString('more experienced', implode(' ', Reason::texts($f['factors']['winner'])));
+        $this->assertStringContainsString('cheaper', implode(' ', Reason::texts($f['factors']['alternative'])));
     }
 
     public function test_the_scan_reason_stays_short_enough_for_a_table_row(): void
@@ -897,9 +924,12 @@ class GarageRecommendationServiceTest extends TestCase
 
         $reason = $r['per_fault'][0]['short_reason'];
         $this->assertNotEmpty($reason);
+        // At most two clauses — the row has to stay scannable however the UI joins them.
+        $this->assertLessThanOrEqual(2, count($reason));
+        $rendered = implode(' + ', Reason::texts($reason));
         // A sentence here defeats the scan table's whole purpose.
-        $this->assertLessThanOrEqual(60, mb_strlen($reason));
-        $this->assertStringNotContainsString('.', $reason);
+        $this->assertLessThanOrEqual(60, mb_strlen($rendered));
+        $this->assertStringNotContainsString('.', $rendered);
     }
 
     public function test_the_price_comparison_declares_how_much_it_can_be_leaned_on(): void
@@ -917,7 +947,8 @@ class GarageRecommendationServiceTest extends TestCase
         $cc = $r['per_fault'][0]['cost_confidence'];
 
         $this->assertSame('low', $cc['level']);
-        $this->assertStringContainsString('indicative', $cc['reason']);
+        $this->assertStringContainsString('indicative', $cc['reason']['text']);
+        $this->assertSame('cost_garage_thin', $cc['reason']['code']);
 
         // And where one side has no price of its own, the comparison is refused outright.
         $r2 = $this->rec($rows, ['model' => 'Yukon', 'faults' => ['engine']], [

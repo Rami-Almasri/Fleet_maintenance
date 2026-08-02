@@ -1,13 +1,26 @@
-// FleetView's garage recommendation for the assign step — designed to read as a confident DECISION, not
-// an analytics list. One hero card carries the recommended garage (score, confidence, a few short reasons,
-// a Select button); the runner-up "Other proven garages" and "Specialists" sit behind a Compare toggle so
-// the operator grasps the call in seconds. Tapping any garage pre-fills the picker (onPick); the full
-// result is lifted (onResult) so the modal can record suggested-vs-chosen and show the prefill note.
+// FleetView's garage recommendation for the assign step, in two layers.
+//
+// THE DEFAULT VIEW IS OPERATIONAL. One card per fault (FaultDecision), each naming the recommended
+// garage and the best alternative in five plain sentences a supervisor can read in under ten seconds:
+// how often the garage has done this repair, how much of that was on this model, how long it takes,
+// whether the repair sticks, what it costs. No percentages that need decoding, no engine vocabulary.
+//
+// THE TECHNICAL LAYER IS EVERYTHING ELSE — the scan table, the per-fault evidence cards, the decision
+// summary, the score breakdown, the calibrated forecasts, the cost-basis ladder, the runner-ups. It is
+// kept whole, unchanged and one click away under "Technical details", because the analysts who audit a
+// recommendation and the supervisor who acts on one need genuinely different screens; collapsing them
+// into a compromise is what made this panel unreadable for both.
+//
+// Tapping any garage pre-fills the picker (onPick); the full result is lifted (onResult) so the modal
+// can record suggested-vs-chosen and show the prefill note.
 
 import { useEffect, useState } from 'react';
 import api from '../../api/client';
 import { useI18n } from '../../i18n/I18nContext';
 import Icon from '../ui/Icon';
+import { renderReason, renderReasons, renderComposed } from './reasons';
+import { days } from './format';
+import FaultDecision from './FaultDecision';
 
 const CONF_STYLE = {
   high: 'bg-emerald-100 text-emerald-800 ring-emerald-600/20',
@@ -164,7 +177,7 @@ function Figure({ id, metrics, t, value, evidence, note, stat }) {
         <ul className="mt-0.5 space-y-px">
           {evidence.map((e, i) => (
             <li key={i} className="flex gap-1 text-[10px] leading-snug text-slate-500">
-              <span aria-hidden className="text-slate-300">•</span>{e}
+              <span aria-hidden className="text-slate-300">•</span>{renderReason(t, e)}
             </li>
           ))}
         </ul>
@@ -212,8 +225,8 @@ function FaultWinnerTable({ perFault, metrics, t }) {
                 <span className="font-semibold text-slate-800">{f.winner.garage}</span>
                 {/* The reason belongs IN the scan row. A supervisor reading three faults needs to know
                     why each winner won without opening three cards. */}
-                {f.short_reason && (
-                  <span className="block text-[10px] font-normal leading-snug text-slate-500">{f.short_reason}</span>
+                {f.short_reason?.length > 0 && (
+                  <span className="block text-[10px] font-normal leading-snug text-slate-500">{renderReasons(t, f.short_reason, ' + ')}</span>
                 )}
               </td>
               <td className="px-3 py-1.5 text-end tabular-nums text-slate-700">
@@ -222,7 +235,7 @@ function FaultWinnerTable({ perFault, metrics, t }) {
                     one that answers "of what?", and a bare percentage in a summary table is exactly
                     where a magic number does the most damage. */}
                 {f.winner.evidence?.[0] && (
-                  <span className="block text-[10px] font-normal leading-snug text-slate-400">{f.winner.evidence[0]}</span>
+                  <span className="block text-[10px] font-normal leading-snug text-slate-400">{renderReason(t, f.winner.evidence[0])}</span>
                 )}
                 {/* Price reliability, as a colour, right where the fault is scanned. */}
                 {f.cost_compare?.winner && (
@@ -314,7 +327,7 @@ function FaultCard({ fault, metrics, onPick, isSel, t }) {
           cheaper one": cost is one axis of four and the call belongs to the supervisor. */}
       {fault.verdict && (
         <p className="mt-1.5 rounded-md bg-slate-50 px-2 py-1.5 text-[11px] leading-snug text-slate-700 ring-1 ring-inset ring-slate-200">
-          <b className="text-slate-500">{gr('perFault.tradeoffTitle')}: </b>{fault.verdict}
+          <b className="text-slate-500">{gr('perFault.tradeoffTitle')}: </b>{renderComposed(t, fault.verdict)}
         </p>
       )}
 
@@ -323,14 +336,14 @@ function FaultCard({ fault, metrics, onPick, isSel, t }) {
       <div className="mt-2 flex flex-col gap-2 border-t border-slate-100 pt-1.5 sm:flex-row">
         <Bullets
           title={gr('perFault.whyWon')}
-          items={(fault.winner_points || []).map((s) => ({ mark: '✓', tone: 'text-emerald-600', text: s }))}
+          items={(fault.winner_points || []).map((s) => ({ mark: '✓', tone: 'text-emerald-600', text: renderReason(t, s) }))}
         />
         {alternative && (
           <Bullets
             title={gr('perFault.whyNotAlt', { garage: alternative.garage })}
             items={[
-              ...(fault.alt_cons || []).map((s) => ({ mark: '−', tone: 'text-rose-500', text: s })),
-              ...(fault.alt_pros || []).map((s) => ({ mark: '+', tone: 'text-slate-400', text: s })),
+              ...(fault.alt_cons || []).map((s) => ({ mark: '−', tone: 'text-rose-500', text: renderReason(t, s) })),
+              ...(fault.alt_pros || []).map((s) => ({ mark: '+', tone: 'text-slate-400', text: renderReason(t, s) })),
             ]}
             empty={gr('perFault.evenlyMatched')}
           />
@@ -339,22 +352,11 @@ function FaultCard({ fault, metrics, onPick, isSel, t }) {
 
       <details className="mt-1.5">
         <summary className="cursor-pointer text-[11px] font-semibold text-indigo-600">{gr('perFault.inWords')}</summary>
-        <p className="mt-1 text-[11px] leading-snug text-slate-600">{fault.reason}</p>
-        {fault.tradeoff && <p className="mt-0.5 text-[11px] leading-snug text-slate-600">{fault.tradeoff}</p>}
+        <p className="mt-1 text-[11px] leading-snug text-slate-600">{renderComposed(t, fault.reason)}</p>
+        {fault.tradeoff && <p className="mt-0.5 text-[11px] leading-snug text-slate-600">{renderComposed(t, fault.tradeoff)}</p>}
       </details>
     </div>
   );
-}
-
-/**
- * A turnaround, in words an operator can act on. A median of 0 is a real measurement — the car went and
- * came back the same day — but "0 days" reads as missing data, and a figure that looks broken gets the
- * whole panel distrusted.
- */
-function days(n, gr) {
-  if (n == null) return '—';
-  if (n < 0.5) return gr('outcomes.sameDay');
-  return gr('outcomes.days', { n });
 }
 
 // How reliable a price is, at a glance. A supervisor with thirty seconds reads a colour, not a basis
@@ -433,7 +435,7 @@ function DecisionFactors({ fault, t }) {
       <ul className="space-y-0.5">
         {items.map((f, i) => (
           <li key={i} className="flex items-start gap-1 text-[11px] leading-snug text-slate-700">
-            <span aria-hidden className="shrink-0 font-bold text-emerald-600">✓</span>{f}
+            <span aria-hidden className="shrink-0 font-bold text-emerald-600">✓</span>{renderReason(t, f)}
           </li>
         ))}
       </ul>
@@ -544,7 +546,7 @@ function CostCompare({ compare, confidence, t }) {
       {alternative && !sameGrain && (
         <p className="mt-1 text-[10px] leading-snug text-amber-800">{gr('costBasis.mixedGrain')}</p>
       )}
-      {confidence?.reason && <p className="mt-1 text-[10px] leading-snug text-slate-500">{confidence.reason}</p>}
+      {confidence?.reason && <p className="mt-1 text-[10px] leading-snug text-slate-500">{renderReason(t, confidence.reason)}</p>}
       <p className="mt-1 text-[9px] font-medium leading-snug text-amber-800">{gr('costBasis.budgetNote')}</p>
     </div>
   );
@@ -915,21 +917,37 @@ function ConfBadge({ conf, t }) {
   );
 }
 
-export default function GarageRecommendations({ ticketId, selectedVendorId, onPick, onResult }) {
+/**
+ * @param ticketId  score a real ticket (the assign step)
+ * @param query     score a hypothetical: { model, brand, faults[], symptoms{}, severities{} } — the
+ *                  fault-first finder, where no ticket exists yet. Exactly one of the two is used.
+ * @param chrome    false strips the panel's own heading/background, for hosts that supply their own
+ * @param payload   an ALREADY-FETCHED result. When a host renders this as its evidence layer it has the
+ *                  payload in hand; refetching would mean two calls that can disagree with each other.
+ */
+export default function GarageRecommendations({ ticketId, query, payload, selectedVendorId, onPick, onResult, chrome = true }) {
   const { t } = useI18n();
-  const [state, setState] = useState({ loading: true, data: null, error: false });
+  const [state, setState] = useState({ loading: !payload, data: payload || null, error: false });
   const [showMore, setShowMore] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
   const [showCalc, setShowCalc] = useState(false);
   // Expanded by default only when there is no fault-first view to lead with (single-fault tickets).
   const [showEngine, setShowEngine] = useState(false);
 
+  // Serialised so a caller can rebuild the query object each render without re-fetching on every keystroke.
+  const queryKey = query ? JSON.stringify(query) : null;
+
   useEffect(() => {
-    if (!ticketId) return undefined;
+    if (payload) { setState({ loading: false, data: payload, error: false }); return undefined; }
+    if (!ticketId && !queryKey) return undefined;
     let alive = true;
     setState({ loading: true, data: null, error: false });
-    api
-      .get(`/maintenance-tickets/${ticketId}/garage-recommendations`)
+
+    const request = ticketId
+      ? api.get(`/maintenance-tickets/${ticketId}/garage-recommendations`)
+      : api.get('/garage-recommendations', { params: JSON.parse(queryKey) });
+
+    request
       .then((res) => {
         if (!alive) return;
         const data = res.data?.data || null;
@@ -938,18 +956,18 @@ export default function GarageRecommendations({ ticketId, selectedVendorId, onPi
       })
       .catch(() => alive && setState({ loading: false, data: null, error: true }));
     return () => { alive = false; };
-  }, [ticketId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [ticketId, queryKey, payload]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const { loading, data, error } = state;
 
-  const shell = (children) => (
+  const shell = (children) => (chrome ? (
     <div className="rounded-xl bg-gradient-to-br from-indigo-50/80 to-slate-50 p-3.5 ring-1 ring-inset ring-indigo-200/60">
       <p className="mb-2.5 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-indigo-700">
         <Icon.Wrench className="h-3.5 w-3.5" /> {t('workflow.garageRec.recTitle')}
       </p>
       {children}
     </div>
-  );
+  ) : <div>{children}</div>);
 
   if (loading) return shell(<p className="text-xs text-slate-400">{t('workflow.garageRec.loading')}</p>);
   if (error) return null;
@@ -972,8 +990,9 @@ export default function GarageRecommendations({ ticketId, selectedVendorId, onPi
   const topSelected = top && isSel(top.vendor_id);
   const gr = (k, v) => t(`workflow.garageRec.${k}`, v);
   // Per-fault coverage evidence for the top pick (tied to THIS repair's detected faults).
-  const faultsDetail = data?.ticket?.faults_detail || [];
-  const modelLabel = data?.ticket?.model_label || '';
+  // `ticket` on the assign step, `subject` on the ticket-free finder — same shape, different origin.
+  const faultsDetail = data?.ticket?.faults_detail || data?.subject?.faults_detail || [];
+  const modelLabel = data?.ticket?.model_label || data?.subject?.model_label || '';
   const covByCat = {};
   (top?.fault_coverage || []).forEach((fc) => { covByCat[fc.category_key] = fc; });
   const compareBtn = (others.length > 0 || also.length > 0) && (
@@ -986,33 +1005,10 @@ export default function GarageRecommendations({ ticketId, selectedVendorId, onPi
     </button>
   );
 
-  return shell(
+  // THE ANALYST'S HALF — kept exactly as it was, moved behind one click. Every figure, every basis,
+  // every fallback rung still renders; it simply stops being the first thing a supervisor meets.
+  const technical = (
     <>
-      {/* Faults, each tagged with the priority that decides how much it influenced the recommendation —
-          a scratch and a brake failure must never look like equal inputs. */}
-      {faultLabels.length > 0 && (
-        <div className="mb-2.5 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500">
-          <span className="font-medium">{gr('recommendedFor')}:</span>
-          {(criticality.length ? criticality : faultLabels.map((f) => ({ label: f }))).map((c) => (
-            <span
-              key={c.category_key || c.label}
-              title={c.tier ? `${t(`workflow.garageRec.criticality.${c.tier}`)} · ×${c.weight}${c.escalated ? ` · ${gr('criticality.escalated')}` : ''}` : undefined}
-              className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-semibold ring-1 ring-inset ${CRIT_STYLE[c.tier] || 'bg-white text-slate-700 ring-slate-200'}`}
-            >
-              {c.label}
-              {c.tier && <span className="opacity-70">×{c.weight}</span>}
-              {c.escalated && <span title={gr('criticality.escalated')}>↑</span>}
-            </span>
-          ))}
-        </div>
-      )}
-
-      {/* FAULT-FIRST. A supervisor reads a multi-fault car fault by fault, so the scan table comes
-          first, then one comparison card per fault, and only then the overall call. Rolling up before
-          they have seen the individual faults hides exactly the trade-off they are here to judge. */}
-      {/* If the money behind every cost figure stopped arriving, say so BEFORE the figures. */}
-      <CostFreshness freshness={data?.cost_freshness} t={t} />
-
       <FaultWinnerTable perFault={perFault} metrics={metrics} t={t} />
 
       {perFault.length > 0 && (
@@ -1273,7 +1269,7 @@ export default function GarageRecommendations({ ticketId, selectedVendorId, onPi
                     type="button"
                     onClick={() => onPick(a.vendor_id)}
                     title={t('workflow.garageRec.alsoHint')}
-                    className={`inline-flex flex-col items-start rounded-lg border px-2.5 py-1.5 text-left transition hover:border-indigo-400 ${isSel(a.vendor_id) ? 'border-indigo-500 bg-indigo-50' : 'border-dashed border-slate-300 bg-white'}`}
+                    className={`inline-flex flex-col items-start rounded-lg border px-2.5 py-1.5 text-start transition hover:border-indigo-400 ${isSel(a.vendor_id) ? 'border-indigo-500 bg-indigo-50' : 'border-dashed border-slate-300 bg-white'}`}
                   >
                     <span className="text-[10px] font-semibold uppercase tracking-wide text-indigo-600">{a.label}</span>
                     <span className="text-xs font-semibold text-slate-800">{a.garage}</span>
@@ -1285,6 +1281,83 @@ export default function GarageRecommendations({ ticketId, selectedVendorId, onPi
           )}
         </div>
       )}
+    </>
+  );
+
+  // THE PLAN, in one line. A ticket goes to ONE garage, so once the faults have been read individually
+  // the supervisor still needs to be told what to do with the car — and told plainly when the honest
+  // answer is "no single garage is right for all of this".
+  const split = data?.strategy?.mode === 'split';
+  const footer = perFault.length > 0 && (
+    split ? (
+      <p className="mb-2.5 rounded-xl bg-amber-50 px-3 py-2.5 text-[13px] leading-snug text-amber-900 ring-1 ring-inset ring-amber-300">
+        {gr('plain.splitNote')}
+      </p>
+    ) : top && (
+      <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-emerald-50 px-3 py-2.5 ring-1 ring-inset ring-emerald-300">
+        <p className="text-[13px] font-semibold text-emerald-900">{gr('plain.ticketGoesTo', { garage: top.garage })}</p>
+        <button
+          type="button"
+          onClick={() => onPick(top.vendor_id)}
+          className={`rounded-lg px-3 py-1.5 text-[13px] font-semibold transition ${
+            topSelected ? 'bg-emerald-600 text-white' : 'bg-emerald-600 text-white hover:bg-emerald-700'}`}
+        >
+          {topSelected ? gr('plain.isSelected', { garage: top.garage }) : gr('plain.sendTo', { garage: top.garage })}
+        </button>
+      </div>
+    )
+  );
+
+  return shell(
+    <>
+      {/* Faults, each tagged with the priority that decides how much it influenced the recommendation —
+          a scratch and a brake failure must never look like equal inputs. */}
+      {faultLabels.length > 0 && (
+        <div className="mb-2.5 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500">
+          <span className="font-medium">{gr('recommendedFor')}:</span>
+          {(criticality.length ? criticality : faultLabels.map((f) => ({ label: f }))).map((c) => (
+            <span
+              key={c.category_key || c.label}
+              title={c.tier ? `${t(`workflow.garageRec.criticality.${c.tier}`)} · ×${c.weight}${c.escalated ? ` · ${gr('criticality.escalated')}` : ''}` : undefined}
+              className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-semibold ring-1 ring-inset ${CRIT_STYLE[c.tier] || 'bg-white text-slate-700 ring-slate-200'}`}
+            >
+              {c.label}
+              {c.tier && <span className="opacity-70">×{c.weight}</span>}
+              {c.escalated && <span title={gr('criticality.escalated')}>↑</span>}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* If the money behind every cost figure stopped arriving, say so BEFORE the figures. */}
+      <CostFreshness freshness={data?.cost_freshness} t={t} />
+
+      {/* THE ANSWER — one card per fault, in words. This is the whole screen for most readers. */}
+      {perFault.length > 0 && (
+        <div className="mb-2.5 space-y-2">
+          {perFault.map((f) => (
+            <FaultDecision key={f.category_key} fault={f} model={modelLabel} onPick={onPick} isSel={isSel} t={t} />
+          ))}
+        </div>
+      )}
+
+      {footer}
+
+      {perFault.length > 0 && (
+        <p className="mb-2.5 text-[11px] leading-snug text-slate-400">{gr('plain.sourceNote')}</p>
+      )}
+
+      {/* THE EVIDENCE — untouched, and deliberately not the default. Rendered inside <details> rather
+          than behind a state flag so it stays in the page for search, print and screen readers. */}
+      {perFault.length > 0 ? (
+        <details className="rounded-xl bg-white/60 ring-1 ring-inset ring-slate-200">
+          <summary className="cursor-pointer px-3 py-2 text-[12px] font-semibold text-indigo-700">
+            {gr('plain.technical')}
+            <span className="ms-1.5 font-normal text-slate-400">{gr('plain.technicalHint')}</span>
+          </summary>
+          <div className="border-t border-slate-200 p-3">{technical}</div>
+        </details>
+      ) : technical}
     </>
   );
 }

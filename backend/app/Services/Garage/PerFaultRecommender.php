@@ -24,6 +24,18 @@ class PerFaultRecommender
     private const MIN_CREDIBLE_COVERAGE = 0.10;
 
     /**
+     * How far ahead on coverage another garage must be before it displaces the ticket-level call.
+     *
+     * Coverage points are comparable ACROSS evidence tiers, which is the trap: a garage with 48 repairs
+     * of this fault and none on this model can out-point one with same-model history. A two-point lead
+     * bought with weaker evidence is not a reason to overrule the ticket call.
+     */
+    private const DISPLACEMENT_GAP = 10;
+
+    /** The evidence ladder as a comparable rank. Higher is closer to "this fault, on this car". */
+    private const TIER_RANK = ['exact' => 3, 'domain' => 2, 'general' => 1, 'none' => 0];
+
+    /**
      * @param  array<int, array<string, mixed>>  $garages     every scored garage bucket
      * @param  array<int, string>  $faults                    the ticket's fault categories
      * @param  array<string, array<string, mixed>>  $crit      category => criticality
@@ -31,9 +43,11 @@ class PerFaultRecommender
      * @param  array<int, array<string, mixed>>  $outcomes     vendor id => forecast row
      * @param  array<int, array<string, mixed>>  $faultsDetail the ticket's symptoms, for human labels
      * @param  string  $modelLabel  the vehicle model, so evidence lines can name it ("6 repairs on YUKON")
+     * @param  int|null  $ticketPick  the garage the ticket-level call names, so this layer can agree
+     *                                with it instead of quietly ranking by a second yardstick
      * @return array<int, array<string, mixed>>
      */
-    public function recommend(array $garages, array $faults, array $crit, array $catLabels, array $outcomes, array $faultsDetail = [], string $modelLabel = ''): array
+    public function recommend(array $garages, array $faults, array $crit, array $catLabels, array $outcomes, array $faultsDetail = [], string $modelLabel = '', ?int $ticketPick = null): array
     {
         if (empty($faults) || empty($garages)) {
             return [];
@@ -55,7 +69,7 @@ class PerFaultRecommender
             if (empty($ranked)) {
                 continue;
             }
-            $winner = $ranked[0];
+            [$winner, $standing] = $this->reconcile($ranked, $ticketPick);
             $alternative = $this->pickAlternative($ranked, $winner);
             $c = $crit[$cat] ?? [];
 
@@ -63,6 +77,10 @@ class PerFaultRecommender
                 'category_key'      => $cat,
                 'label'             => $label,
                 'symptom'           => $symptoms[$cat] ?? $label,
+                // How this fault's answer relates to the ticket's answer. `agrees` is the common case;
+                // `displaced` is genuine split advice; `pick_absent` means the ticket's garage has no
+                // usable record here at all. The UI must not present all three the same way.
+                'standing'          => $standing,
                 'criticality'       => $c['tier'] ?? null,
                 'criticality_label' => $c['label'] ?? null,
                 'weight'            => (float) ($c['weight'] ?? 1.0),
@@ -70,7 +88,7 @@ class PerFaultRecommender
                 'alternative'       => $alternative,
                 // Prose, for the audit trail and for anyone who wants the sentence.
                 'reason'            => $this->winnerReason($winner, $alternative, $label),
-                'tradeoff'          => $alternative ? $this->alternativeReason($winner, $alternative, $label) : null,
+                'tradeoff'          => $alternative ? $this->alternativeReason($winner, $alternative, $label, $modelLabel) : null,
                 // The same reasoning as scannable bullets. A supervisor deciding in ten seconds reads
                 // ticks and minuses, not sentences — so the card leads with these and keeps the prose
                 // underneath for the cases where the nuance matters.
@@ -155,15 +173,70 @@ class PerFaultRecommender
     }
 
     /**
+     * Which garage this fault card presents as the recommendation — and how that squares with the
+     * ticket's own call.
+     *
+     * THE FAILURE THIS EXISTS TO FIX. This layer ranks by fault coverage; the ticket-level call ranks by
+     * overall fit, which weighs same-model history, specialisation and reliability alongside raw volume.
+     * On a single-fault ticket those two yardsticks answer the SAME question, so when they disagree the
+     * screen argues with itself: the header says "send this fault to FUTURE TYRES" while the fault card
+     * puts a green tick next to a different garage. A supervisor cannot act on that, and there is no
+     * reading of it that is not a bug.
+     *
+     * So the ticket's call stands unless another garage is materially ahead AND not ahead on thinner
+     * evidence — the same test the dispatch plan's own table applies, kept here so the panel, the plan
+     * and the audit trail cannot each answer it differently. Coverage points are comparable across
+     * tiers, so "48 repairs of this fault, none on this model" must not out-argue same-model history on
+     * the strength of the bigger number alone.
+     *
+     * @return array{0: array<string, mixed>, 1: string}  the presented winner, and its standing
+     */
+    private function reconcile(array $ranked, ?int $ticketPick): array
+    {
+        $leader = $ranked[0];
+        if ($ticketPick === null) {
+            return [$leader, 'no_ticket_call'];
+        }
+
+        $pick = null;
+        foreach ($ranked as $row) {
+            if ((int) $row['vendor_id'] === $ticketPick) {
+                $pick = $row;
+                break;
+            }
+        }
+
+        // The ticket's garage has no usable record for THIS fault. Naming it here anyway would be the
+        // mirror-image lie; the strongest record leads and the card is told to say why they differ.
+        if ($pick === null) {
+            return [$leader, 'pick_absent'];
+        }
+        if ((int) $pick['vendor_id'] === (int) $leader['vendor_id']) {
+            return [$pick, 'agrees'];
+        }
+
+        $gap = $leader['coverage_pct'] - $pick['coverage_pct'];
+        $onFirmerEvidence = (self::TIER_RANK[$leader['tier']] ?? 0) >= (self::TIER_RANK[$pick['tier']] ?? 0);
+
+        return $gap >= self::DISPLACEMENT_GAP && $onFirmerEvidence
+            ? [$leader, 'displaced']      // a real reason to send this fault elsewhere
+            : [$pick, 'agrees'];          // a ranking artefact, not a disagreement
+    }
+
+    /**
      * The best genuine alternative — the runner-up, but only when it is a real option. A garage that is
      * far behind on this fault is not an alternative, it is filler, and offering it as a choice invites
      * a worse decision.
+     *
+     * Excluded by VENDOR, not by position: the presented winner is no longer always `$ranked[0]`, and
+     * skipping index 0 would let the winner be offered as its own alternative.
      *
      * @return array<string, mixed>|null
      */
     private function pickAlternative(array $ranked, array $winner): ?array
     {
-        foreach (array_slice($ranked, 1) as $candidate) {
+        $others = array_values(array_filter($ranked, fn ($r) => (int) $r['vendor_id'] !== (int) $winner['vendor_id']));
+        foreach ($others as $candidate) {
             $behind = $winner['coverage_pct'] - $candidate['coverage_pct'];
             $betterSomewhere = $this->isFaster($candidate, $winner)
                 || $this->isCheaper($candidate, $winner)
@@ -180,61 +253,65 @@ class PerFaultRecommender
     }
 
     /** Why the winner won, in the strongest fact available. */
-    private function winnerReason(array $w, ?array $alt, string $label): string
+    private function winnerReason(array $w, ?array $alt, string $label): array
     {
         if ($w['same_model'] > 0) {
+            $code = 'winner_same_model';
+            $params = ['n' => (int) $w['same_model'], 'label' => $label];
             $base = "{$w['same_model']} previous {$label} repair" . ($w['same_model'] === 1 ? '' : 's') . ' on this exact model';
         } elseif ($w['at_garage'] > 0) {
+            $code = 'winner_other_models';
+            $params = ['n' => (int) $w['at_garage'], 'label' => $label];
             $base = "{$w['at_garage']} previous {$label} repair" . ($w['at_garage'] === 1 ? '' : 's') . ', though none on this model';
         } else {
+            $code = 'winner_strongest_available';
+            $params = [];
             $base = 'The strongest available record for this fault';
         }
 
-        if ($alt === null) {
-            return $base . ' — no other garage has a comparable record here.';
-        }
-        return $base . '.';
+        // Being the ONLY credible garage is a materially different situation from being the best of
+        // several, and the sentence has to say which — a supervisor weighing an override needs to know
+        // there was nothing to override to.
+        $sole = $alt === null;
+
+        return [
+            'code'   => $code,
+            'params' => $params,
+            'sole'   => $sole,
+            'text'   => $base . ($sole ? ' — no other garage has a comparable record here.' : '.'),
+        ];
     }
 
     /**
      * Why the alternative did not win — stated in the dimension that actually differs. "Slightly faster,
      * but less experience with this model" is a decision; "lower score" is not.
      */
-    private function alternativeReason(array $w, array $alt, string $label): string
+    private function alternativeReason(array $w, array $alt, string $label, string $modelLabel): array
     {
-        $pros = [];
-        $cons = [];
+        // Composed from the SAME atoms the bullet lists use. This method used to build its own parallel
+        // phrasings of "faster"/"cheaper"/"less experience", which meant one trade could be described two
+        // slightly different ways on one screen depending on which element rendered it.
+        $pros = $this->pros($alt, $w);
+        $cons = $this->cons($alt, $w, $label, $modelLabel);
 
-        if ($this->isFaster($alt, $w)) {
-            $pros[] = 'about ' . $this->round($w['duration_days']['value'] - $alt['duration_days']['value']) . ' day(s) faster';
-        }
-        if ($this->isCheaper($alt, $w)) {
-            $pros[] = 'roughly AED ' . (int) round($w['cost_aed']['value'] - $alt['cost_aed']['value']) . ' cheaper';
-        }
-        if ($this->isMoreAvailable($alt, $w)) {
-            $pros[] = 'able to start sooner';
-        }
-        if ($this->isSafer($alt, $w)) {
-            $pros[] = 'a better track record on repairs holding';
-        }
+        $shape = match (true) {
+            empty($pros) && empty($cons) => 'closely_matched',
+            empty($pros)                 => 'behind_only',
+            empty($cons)                 => 'ahead_equal',
+            default                      => 'trade',
+        };
 
-        $gap = $w['coverage_pct'] - $alt['coverage_pct'];
-        if ($gap > 0) {
-            $cons[] = $alt['same_model'] === 0 && $w['same_model'] > 0
-                ? "no {$label} repairs on this model (the recommended garage has {$w['same_model']})"
-                : "less {$label} experience ({$alt['coverage_pct']}% coverage vs {$w['coverage_pct']}%)";
-        }
+        // Punctuated, never re-cased. An embedded clause that has to be lowercased mid-sentence is a
+        // rule only English has, and it cannot be expressed in a label — so the sentence is built to
+        // read correctly with the clause in its own natural case, in any language.
+        $text = match ($shape) {
+            'closely_matched' => 'Closely matched on the evidence and on cost, speed and availability.',
+            'behind_only'     => 'Behind on: ' . Reason::join($cons) . '. No offsetting advantage.',
+            'ahead_equal'     => Reason::join($pros) . ', and just as well proven on this fault.',
+            default           => Reason::join($pros) . ' — but ' . Reason::join($cons) . '.',
+        };
 
-        if (empty($pros) && empty($cons)) {
-            return 'Closely matched on the evidence and on cost, speed and availability.';
-        }
-        if (empty($pros)) {
-            return 'Behind on ' . implode(' and ', $cons) . ', with no offsetting advantage.';
-        }
-        if (empty($cons)) {
-            return ucfirst(implode(', ', $pros)) . ', and just as well proven on this fault.';
-        }
-        return ucfirst(implode(', ', $pros)) . ', but ' . implode(' and ', $cons) . '.';
+        return ['code' => 'alt_' . $shape, 'parts' => ['pros' => $pros, 'cons' => $cons], 'text' => $text];
     }
 
     /**
@@ -336,18 +413,33 @@ class PerFaultRecommender
      * spend the money. Where a garage leads on everything measurable, the sentence says that plainly
      * rather than manufacturing a trade that does not exist.
      */
-    private function verdict(array $w, array $alt, string $label): string
+    private function verdict(array $w, array $alt, string $label): array
     {
         $altSide = $this->advantages($alt, $w, $label);
         $winSide = $this->advantages($w, $alt, $label);
 
-        if (empty($altSide)) {
-            return "{$w['garage']} leads on every measure we can compare for this fault.";
-        }
-        if (empty($winSide)) {
-            return "{$alt['garage']} is " . $this->join($altSide) . " — and nothing measurable favours {$w['garage']} here beyond its ranking.";
-        }
-        return "{$alt['garage']} is " . $this->join($altSide) . ", but {$w['garage']} is " . $this->join($winSide) . '.';
+        $shape = match (true) {
+            empty($altSide) => 'leads_all',
+            empty($winSide) => 'alt_only',
+            default         => 'trade',
+        };
+
+        $text = match ($shape) {
+            'leads_all' => "{$w['garage']} leads on every measure we can compare for this fault.",
+            'alt_only'  => "{$alt['garage']} is " . Reason::join($altSide) . " — and nothing measurable favours {$w['garage']} here beyond its ranking.",
+            default     => "{$alt['garage']} is " . Reason::join($altSide) . ", but {$w['garage']} is " . Reason::join($winSide) . '.',
+        };
+
+        return [
+            'code'   => 'verdict_' . $shape,
+            'params' => ['winner' => $w['garage'], 'alternative' => $alt['garage']],
+            // The two sides travel as reason lists, so the UI joins them with ITS OWN language's
+            // list grammar rather than receiving an English "a, b and c" it can only reprint.
+            // Named *_side, NOT winner/alternative — those slots already hold the garage names, and a
+            // clause list silently overwriting a garage name is a bug that reads as a plausible sentence.
+            'parts'  => ['winner_side' => $winSide, 'alternative_side' => $altSide],
+            'text'   => $text,
+        ];
     }
 
     /**
@@ -357,28 +449,30 @@ class PerFaultRecommender
      * defeats that. Two clauses maximum, and where nothing distinguishes the winner it says so honestly
      * rather than padding with "best match".
      */
-    private function shortReason(array $w, ?array $alt, string $label): string
+    private function shortReason(array $w, ?array $alt, string $label): array
     {
-        $parts = [];
         if ($alt === null) {
-            return "only garage with a {$label} record";
+            return [Reason::shortOnlyRecord($label)];
         }
+
+        $parts = [];
         if ($w['coverage_pct'] - $alt['coverage_pct'] >= 10) {
-            $parts[] = "strongest {$label} history";
+            $parts[] = Reason::shortStrongestHistory($label);
         }
         if ($this->isCheaper($w, $alt)) {
-            $parts[] = 'cheaper';
+            $parts[] = Reason::shortCheaper();
         }
         if ($this->isFaster($w, $alt)) {
-            $parts[] = 'faster';
+            $parts[] = Reason::shortFaster();
         }
         if ($this->isSafer($w, $alt)) {
-            $parts[] = 'repairs hold better';
+            $parts[] = Reason::shortHolds();
         }
         if (empty($parts)) {
-            return "narrowly ahead on {$label} history";
+            return [Reason::shortNarrowlyAhead($label)];
         }
-        return implode(' + ', array_slice($parts, 0, 2));
+
+        return array_slice($parts, 0, 2);
     }
 
     /**
@@ -390,35 +484,32 @@ class PerFaultRecommender
      * invisible in the number itself: "AED 250 cheaper" looks identical either way. Stating the level
      * stops every comparison being treated as equally solid.
      *
-     * @return array{level:string, reason:string}
+     * @return array{level:string, reason:array{code:string, params:array<string,mixed>, text:string}}
      */
     private function costConfidence(array $compare): array
     {
         $c = $compare['comparison'] ?? null;
         if ($c === null) {
-            return [
-                'level'  => 'none',
-                'reason' => 'Cost cannot be compared here — one of the two garages has no price of its own, only the fleet average.',
-            ];
+            return ['level' => 'none', 'reason' => Reason::costIncomparable()];
         }
 
         $n = min((int) $c['winner']['sample'], (int) $c['alternative']['sample']);
         if ($c['grain'] === 'fault') {
             return $n >= 10
-                ? ['level' => 'high', 'reason' => "Both garages have priced history for this specific fault ({$n}+ repairs each)."]
-                : ['level' => 'medium', 'reason' => "Both prices are for this specific fault, but one rests on only {$n} repairs."];
+                ? ['level' => 'high', 'reason' => Reason::costFaultDeep($n)]
+                : ['level' => 'medium', 'reason' => Reason::costFaultThin($n)];
         }
 
         return $n >= 30
-            ? ['level' => 'medium', 'reason' => 'Both prices are comparable at garage level, but neither garage has enough priced history for this specific fault.']
-            : ['level' => 'low', 'reason' => "Compared at garage level only, and one side rests on just {$n} priced repairs. Treat the difference as indicative."];
+            ? ['level' => 'medium', 'reason' => Reason::costGarageLevel()]
+            : ['level' => 'low', 'reason' => Reason::costGarageThin($n)];
     }
 
     /**
      * What garage $a can honestly claim over $b, in the operator's terms. Every clause must rest on a
      * material, garage-specific difference — see the comparison helpers below.
      *
-     * @return array<int, string>
+     * @return array<int, array{code:string, params:array<string,mixed>, text:string}>
      */
     private function advantages(array $a, array $b, string $label): array
     {
@@ -427,38 +518,28 @@ class PerFaultRecommender
         // Priced at the deepest grain BOTH sides hold, so the claim is like-for-like.
         [$ca, $cb] = $this->sharedGrain($a, $b);
         if ($ca && $cb && $cb['value'] > 0 && (($cb['value'] - $ca['value']) / $cb['value']) >= 0.15) {
-            $out[] = 'cheaper (AED ' . number_format($ca['value']) . ' vs ' . number_format($cb['value']) . ')';
+            $out[] = Reason::cheaperThan($ca['value'], $cb['value']);
         }
         if ($this->isFaster($a, $b)) {
-            $out[] = 'faster (' . $this->round($a['duration_days']['value']) . 'd vs ' . $this->round($b['duration_days']['value']) . 'd)';
+            $out[] = Reason::fasterThan($this->round($a['duration_days']['value']), $this->round($b['duration_days']['value']));
         }
         if ($this->isSafer($a, $b)) {
-            $out[] = 'better at making repairs hold (' . $a['success_pct']['value'] . '% vs ' . $b['success_pct']['value'] . '%)';
+            $out[] = Reason::holdsBetterThan($a['success_pct']['value'], $b['success_pct']['value']);
         }
         if ($this->isMoreAvailable($a, $b)) {
-            $out[] = 'able to start sooner';
+            $out[] = Reason::startsSooner();
         }
         if ($a['coverage_pct'] - $b['coverage_pct'] >= 10) {
-            $out[] = "more experienced with {$label} ({$a['coverage_pct']}% vs {$b['coverage_pct']}%)";
+            $out[] = Reason::moreExperiencedThan($label, $a['coverage_pct'], $b['coverage_pct']);
         }
         // Confidence is its own axis: two garages can show the same figure with very different amounts
         // of evidence behind it, and that difference is exactly what a supervisor is entitled to weigh.
         $rank = ['low' => 0, 'medium' => 1, 'high' => 2];
         if (($rank[$a['confidence']] ?? 0) > ($rank[$b['confidence']] ?? 0)) {
-            $out[] = "backed by more evidence ({$a['confidence']} vs {$b['confidence']} confidence)";
+            $out[] = Reason::moreEvidenceThan($a['confidence'], $b['confidence']);
         }
 
         return $out;
-    }
-
-    /** @param  array<int, string>  $parts */
-    private function join(array $parts): string
-    {
-        if (count($parts) === 1) {
-            return $parts[0];
-        }
-        $last = array_pop($parts);
-        return implode(', ', $parts) . ' and ' . $last;
     }
 
     /**
@@ -466,7 +547,7 @@ class PerFaultRecommender
      * Shown UNDER the percentage, not behind a tooltip: "84%" invites the question "84% of what?", and the
      * answer has to arrive before the question does.
      *
-     * @return array<int, string>
+     * @return array<int, array{code:string, params:array<string,mixed>, text:string}>
      */
     private function evidenceLines(array $ev, string $label, string $modelLabel): array
     {
@@ -476,15 +557,14 @@ class PerFaultRecommender
         $lines = [];
 
         if ($sm > 0) {
-            $lines[] = "{$sm} previous {$model} {$label} repair" . ($sm === 1 ? '' : 's') . ' here';
+            $lines[] = Reason::evidenceSameModel($sm, $model, $label);
         }
         // Only worth stating separately when it adds records the same-model line did not already cover.
         if ($at > $sm) {
-            $n = $at - $sm;
-            $lines[] = "{$n} similar {$label} repair" . ($n === 1 ? '' : 's') . ' here on other models';
+            $lines[] = Reason::evidenceOtherModels($at - $sm, $label);
         }
         if ($at === 0) {
-            $lines[] = "No {$label} repairs recorded here — scored on general capability only";
+            $lines[] = Reason::evidenceNone($label);
         }
 
         return $lines;
@@ -494,7 +574,7 @@ class PerFaultRecommender
      * Why the winner won, as ticks. Each one is a checkable fact, never a restatement of the score:
      * "highest score" explains nothing, "6 previous repairs on this model" does.
      *
-     * @return array<int, string>
+     * @return array<int, array{code:string, params:array<string,mixed>, text:string}>
      */
     private function winnerPoints(array $w, ?array $alt, string $label, string $modelLabel): array
     {
@@ -502,68 +582,72 @@ class PerFaultRecommender
         $points = [];
 
         if ($w['same_model'] > 0) {
-            $points[] = "Has repaired {$label} on {$model} before ({$w['same_model']}×)";
+            $points[] = Reason::repairedOnModel($label, $model, (int) $w['same_model']);
         } elseif ($w['at_garage'] > 0) {
-            $points[] = "{$w['at_garage']} {$label} repair" . ($w['at_garage'] === 1 ? '' : 's') . ' here, though none on this model';
+            $points[] = Reason::repairsHereNotThisModel($label, (int) $w['at_garage']);
         }
 
         if ($alt === null) {
-            $points[] = 'The only garage with a usable record for this fault';
+            $points[] = Reason::onlyGarageWithRecord();
         } elseif ($w['coverage_pct'] > $alt['coverage_pct']) {
-            $points[] = "Most experience with this fault ({$w['coverage_pct']}% vs {$alt['coverage_pct']}%)";
+            $points[] = Reason::mostExperience($w['coverage_pct'], $alt['coverage_pct']);
         }
 
         if (($w['start_in_days'] ?? null) !== null && $w['start_in_days'] <= 0) {
-            $points[] = 'Can start immediately';
+            $points[] = Reason::canStartImmediately();
         }
         if ($this->own($w['success_pct']) && $w['success_pct']['value'] >= 60) {
-            $points[] = "Repairs hold {$w['success_pct']['value']}% of the time";
+            $points[] = Reason::repairsHoldPct($w['success_pct']['value']);
         }
 
-        return $points ?: ['The strongest available record for this fault'];
+        return $points ?: [Reason::strongestAvailable()];
     }
 
     /**
      * What the alternative is genuinely better at. Listing nothing here is a legitimate answer — inventing
      * an advantage to balance the card would be advocacy dressed as analysis.
      *
-     * @return array<int, string>
+     * @return array<int, array{code:string, params:array<string,mixed>, text:string}>
      */
     private function pros(array $alt, array $w): array
     {
         $out = [];
         if ($this->isFaster($alt, $w)) {
-            $out[] = 'About ' . $this->round($w['duration_days']['value'] - $alt['duration_days']['value']) . ' day(s) faster';
+            $out[] = Reason::daysFaster($this->round($w['duration_days']['value'] - $alt['duration_days']['value']));
         }
         if ($this->isCheaper($alt, $w)) {
-            $out[] = 'Roughly AED ' . number_format($this->costFor($w)['value'] - $this->costFor($alt)['value']) . ' cheaper';
+            $out[] = Reason::aedCheaper($this->costFor($w)['value'] - $this->costFor($alt)['value']);
         }
         if ($this->isMoreAvailable($alt, $w)) {
-            $out[] = 'Can start sooner';
+            $out[] = Reason::canStartSooner();
         }
         if ($this->isSafer($alt, $w)) {
-            $out[] = 'Repairs hold more often (' . $alt['success_pct']['value'] . '% vs ' . $w['success_pct']['value'] . '%)';
+            $out[] = Reason::holdsMoreOften($alt['success_pct']['value'], $w['success_pct']['value']);
         }
         return $out;
     }
 
-    /** Where the alternative falls short — the reason it did not win. @return array<int, string> */
+    /**
+     * Where the alternative falls short — the reason it did not win.
+     *
+     * @return array<int, array{code:string, params:array<string,mixed>, text:string}>
+     */
     private function cons(array $alt, array $w, string $label, string $modelLabel): array
     {
         $model = $modelLabel !== '' ? $modelLabel : 'this model';
         $out = [];
 
         if ($alt['same_model'] === 0 && $w['same_model'] > 0) {
-            $out[] = "No {$label} repairs on {$model} (recommended garage has {$w['same_model']})";
+            $out[] = Reason::noRepairsOnModel($label, $model, (int) $w['same_model']);
         } elseif ($w['coverage_pct'] > $alt['coverage_pct']) {
-            $out[] = "Less {$label} experience ({$alt['coverage_pct']}% vs {$w['coverage_pct']}%)";
+            $out[] = Reason::lessExperience($label, $alt['coverage_pct'], $w['coverage_pct']);
         }
 
         if ($this->isFaster($w, $alt)) {
-            $out[] = 'Slower turnaround';
+            $out[] = Reason::slowerTurnaround();
         }
         if ($this->isCheaper($w, $alt)) {
-            $out[] = 'More expensive';
+            $out[] = Reason::moreExpensive();
         }
         return $out;
     }
