@@ -93,4 +93,21 @@ class GarageRecommendationController extends Controller
             return ResponseHelper::fromException($e);
         }
     }
+
+    /**
+     * "What the garage will do" for one ticket — the expected work, with no garage scoring attached.
+     *
+     * A separate endpoint rather than a slice of forTicket()'s payload because it answers a different
+     * question for a different reader: anyone opening the ticket wants to know what the car is having
+     * done to it, and that must not cost them a full garage comparison (nor the maintenance.delegate
+     * permission that comparing garages requires).
+     */
+    public function outlookForTicket(Maintenance $ticket)
+    {
+        try {
+            return ResponseHelper::SuccessResponse($this->service->outlookForTicket($ticket), 'Ticket repair outlook retrieved', 200);
+        } catch (\Throwable $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
 }

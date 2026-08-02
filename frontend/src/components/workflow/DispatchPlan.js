@@ -26,6 +26,7 @@ import api from '../../api/client';
 import { useI18n } from '../../i18n/I18nContext';
 import Icon from '../ui/Icon';
 import GarageRecommendations from './GarageRecommendations';
+import RepairIntelligencePanel from '../knowledge/RepairIntelligencePanel';
 import { renderReasons } from './reasons';
 import { days } from './format';
 
@@ -60,27 +61,21 @@ const CONF_STYLE = {
  * coloured by whether it is GOOD, not by its sign — fewer days is good, lower first-time-fix is not.
  */
 /**
- * "What the garage will do" — the inspector's findings answered with the work they imply.
+ * PREVIOUS SIMILAR REPAIRS — what happened last time this fleet repaired this fault.
  *
- * Deliberately the plainest thing on this screen. Everything else in the Dispatch Plan is a comparison
- * between garages; this is the only block that describes the JOB, and it is the one a supervisor can
- * repeat down the phone. So: no percentages, no scores, no tiers, no engine vocabulary
- * ([[operational-language-over-engine-vocabulary]]) — just two lists per fault.
+ * It sits on the assign step because it is the one block here that is about the GARAGES: which shop
+ * fixed this fault before, how long it took them, and whether it came back. That is evidence for the
+ * choice being made on this screen, and it was previously stranded on the ticket drawer where the
+ * choice is already history. The expected work ("What the garage will do") went the other way — see
+ * [[RepairOutlook]].
  *
- * IT MUST NOT READ AS A DIAGNOSIS. Nobody has opened this car. The header says so once, in a sentence,
- * rather than decorating every line with a hedge — a supervisor who reads "Replace spark plugs" as a
- * decision already made is the failure this block would otherwise introduce.
- *
- * A hand-written finding with no concept behind it says so and stops. Guessing the repair for it would
- * put invented work in front of the person authorising it. See [[RepairOutlook]].
+ * One panel per FINDING, keyed on the real task where the fault has been promoted to one, and falling
+ * back to a symptom preview for a finding that has not. Collapsed by default: the call, the plan and
+ * the impact answer the question for most tickets, and this is the second opinion you go looking for.
  */
-function RepairOutlook({ rows, open, onToggle, dp }) {
-  // The faults we can actually describe. A ticket of nothing but hand-written findings still renders
-  // the row for each one — "we have no standard repair for this" is the useful answer there.
-  const known = rows.filter((r) => r.known && (r.causes?.length || r.fixes?.length));
-
+function PriorRepairs({ faults, vehicleId, open, onToggle, t }) {
   return (
-    <div className="border-t border-slate-200">
+    <div className="overflow-hidden rounded-xl bg-white ring-1 ring-inset ring-slate-300">
       <button
         type="button"
         onClick={onToggle}
@@ -89,9 +84,9 @@ function RepairOutlook({ rows, open, onToggle, dp }) {
           open ? 'bg-white' : 'hover:bg-slate-50'}`}
       >
         <span className="min-w-0">
-          <span className="block text-[12px] font-semibold text-slate-700">{dp('outlook.title')}</span>
+          <span className="block text-[12px] font-semibold text-slate-700">{t('repairIntel.title')}</span>
           <span className="block text-[11px] leading-snug text-slate-400">
-            {dp('outlook.subtitle', { n: known.length })}
+            {t('repairIntel.dispatchSubtitle', { n: faults.length })}
           </span>
         </span>
         <Icon.ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition ${open ? 'rotate-180' : ''}`} />
@@ -99,32 +94,13 @@ function RepairOutlook({ rows, open, onToggle, dp }) {
 
       {open && (
         <div className="space-y-2.5 border-t border-slate-100 bg-slate-50/60 p-3">
-          {/* Said ONCE, at the top, in the words a supervisor would use. */}
-          <p className="text-[11px] leading-snug text-slate-500">{dp('outlook.caveat')}</p>
-
-          {rows.map((row, i) => (
-            <div key={`${row.symptom}-${i}`} className="rounded-lg bg-white p-2.5 ring-1 ring-inset ring-slate-200">
-              <p className="text-[12px] font-semibold text-slate-800">{row.symptom}</p>
-
-              {row.known ? (
-                <>
-                  {row.causes?.length > 0 && (
-                    <p className="mt-1 text-[11px] leading-snug text-slate-600">
-                      <span className="text-slate-400">{dp('outlook.causedBy')}</span>{' '}
-                      {row.causes.join(' · ')}
-                    </p>
-                  )}
-                  {row.fixes?.length > 0 && (
-                    <p className="mt-0.5 text-[11px] leading-snug text-slate-600">
-                      <span className="text-slate-400">{dp('outlook.workDone')}</span>{' '}
-                      {row.fixes.map((f) => f.label).join(' · ')}
-                    </p>
-                  )}
-                </>
-              ) : (
-                // Honest gap. The supervisor asks the garage rather than reading a guess.
-                <p className="mt-1 text-[11px] leading-snug text-slate-400">{dp('outlook.unknown')}</p>
-              )}
+          {faults.map((f, i) => (
+            <div key={f.task_id || `${f.symptom}-${i}`} className="space-y-1">
+              <p className="text-[12px] font-semibold text-slate-800">{f.symptom || f.label}</p>
+              <RepairIntelligencePanel
+                taskId={f.task_id || undefined}
+                preview={!f.task_id && vehicleId ? { vehicleId, symptom: f.symptom, categoryKey: f.category_key } : undefined}
+              />
             </div>
           ))}
         </div>
@@ -160,7 +136,10 @@ export default function DispatchPlan({ ticketId, garages = [], selectedVendorId,
 
   const [state, setState] = useState({ loading: true, data: null, error: false });
   const [showEvidence, setShowEvidence] = useState(false);
-  const [outlookOpen, setOutlookOpen] = useState(false);
+  // CLOSED by default, unlike the expected work that used to sit here: prior repairs are a second
+  // opinion on the call, not the first thing to read. Each panel inside also fetches on its own, so
+  // opening it is what pays for it.
+  const [priorOpen, setPriorOpen] = useState(false);
 
   useEffect(() => {
     if (!ticketId) return undefined;
@@ -182,8 +161,8 @@ export default function DispatchPlan({ ticketId, garages = [], selectedVendorId,
   const primary = useMemo(() => data?.primary || [], [data]);
   const perFault = useMemo(() => data?.per_fault || [], [data]);
   // Per FINDING, not per category — `per_fault` keeps only the first symptom of each category, so a car
-  // with two engine faults would otherwise show the expected work for one of them.
-  const outlook = useMemo(() => data?.repair_outlook || [], [data]);
+  // with two engine faults would otherwise show prior repairs for one of them.
+  const faultsDetail = useMemo(() => data?.ticket?.faults_detail || [], [data]);
   const recommended = primary[0] || null;
 
   // The garage the plan is currently describing: whatever is selected, falling back to the engine's
@@ -273,7 +252,8 @@ export default function DispatchPlan({ ticketId, garages = [], selectedVendorId,
   return (
     <div className="space-y-2.5">
       {/* ─── LAYER 0 · THE CALL ─────────────────────────────────────────────────────────────────
-          One sentence and one button. A supervisor who trusts the engine never reads past here. */}
+          One sentence, one confidence. A supervisor who trusts the engine reads this, picks that
+          garage below and never reads past here. */}
       <div className="rounded-xl border-2 border-indigo-500/70 bg-white p-3.5 shadow-sm">
         <p className="text-[10px] font-bold uppercase tracking-wide text-indigo-600">{dp('call.eyebrow')}</p>
         <div className="mt-1 flex flex-wrap items-baseline justify-between gap-2">
@@ -298,18 +278,15 @@ export default function DispatchPlan({ ticketId, garages = [], selectedVendorId,
           </p>
         )}
 
-        {hasAccepted ? (
+        {/* NO ACCEPT BUTTON. The card states the call; the garage picker below is where a choice is
+            made. Two controls that both set the same field — one of them pre-filling it with the
+            engine's answer — meant the supervisor could "accept" here and then be looking at a
+            dropdown that appears to be asking the question again. The confirmation stays: once the
+            picker holds the recommended garage, this says so. */}
+        {hasAccepted && (
           <p className="mt-3 flex items-center gap-1.5 rounded-lg bg-emerald-50 px-3 py-2 text-[13px] font-semibold text-emerald-800 ring-1 ring-inset ring-emerald-600/20">
             <Icon.Check className="h-4 w-4 shrink-0" /> {dp('call.confirmed')}
           </p>
-        ) : (
-          <button
-            type="button"
-            onClick={() => onPick(recommended.vendor_id)}
-            className="mt-3 w-full rounded-lg bg-indigo-600 px-3 py-2.5 text-[13px] font-semibold text-white transition hover:bg-indigo-700"
-          >
-            {dp('call.accept', { garage: recommended.garage })}
-          </button>
         )}
       </div>
 
@@ -320,6 +297,24 @@ export default function DispatchPlan({ ticketId, garages = [], selectedVendorId,
           <p className="mt-0.5">{strategy.reason}</p>
           <p className="mt-0.5 text-[11px] opacity-80">{dp('split.note')}</p>
         </div>
+      )}
+
+      {/* WHAT HAPPENED LAST TIME. The garage table argues from coverage and outcomes; this is the raw
+          cohort those numbers were computed over — the actual jobs, the shops that did them, and
+          whether they held. It belongs on this screen because it is evidence about GARAGES, and it is
+          collapsed because the call above already used it.
+
+          Keyed per FINDING, not per fault category. Two engine faults on one ticket are two panels;
+          folding them into a single "Engine" row (which is how the per-fault cards below are keyed)
+          would silently drop the second symptom. */}
+      {faultsDetail.length > 0 && (
+        <PriorRepairs
+          faults={faultsDetail}
+          vehicleId={data?.ticket?.vehicle_id}
+          open={priorOpen}
+          onToggle={() => setPriorOpen((o) => !o)}
+          t={t}
+        />
       )}
 
       {/* ─── LAYER 1 · THE PLAN ─────────────────────────────────────────────────────────────────
@@ -439,14 +434,6 @@ export default function DispatchPlan({ ticketId, garages = [], selectedVendorId,
           </p>
         )}
 
-        {/* WHAT THE GARAGE WILL ACTUALLY DO.
-            The table above ranks shops; it never says what the car is having done to it. "Rough idle /
-            misfire" tells an inspector plenty and a supervisor almost nothing — spark plugs, or a week
-            on an injector? Collapsed by default because the ten-second decision is Layer 0, and this is
-            for the supervisor who wants to know what they are authorising before they do. */}
-        {outlook.length > 0 && (
-          <RepairOutlook rows={outlook} open={outlookOpen} onToggle={() => setOutlookOpen((o) => !o)} dp={dp} />
-        )}
       </div>
 
       {/* ─── LAYER 2 · THE IMPACT ───────────────────────────────────────────────────────────────

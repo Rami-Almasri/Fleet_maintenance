@@ -414,6 +414,10 @@ Route::middleware('auth:sanctum')->prefix('maintenance-tickets')->controller(Mai
     // Data-driven garage recommendation for THIS ticket (learned from maintenance history) — surfaced in
     // the assign step so the Supervisor sees which garages have proven experience with this vehicle+fault.
     Route::get('/{ticket}/garage-recommendations', [\App\Http\Controllers\GarageRecommendationController::class, 'forTicket'])->middleware('permission:maintenance.delegate');
+    // "What the garage will do" — the expected work behind this ticket's faults, WITHOUT scoring a single
+    // garage. Read on the ticket itself, so it is gated on plain view: knowing what the car is having done
+    // to it is not a dispatcher's privilege.
+    Route::get('/{ticket}/repair-outlook', [\App\Http\Controllers\GarageRecommendationController::class, 'outlookForTicket'])->middleware('permission:maintenance.view');
     // Phase 2 — Supervisor (Dispatcher): review the open ticket, pick the garage + assign a driver. May
     // split-dispatch: route only a subset of faults now (fault_ids), leaving the rest Pending Assignment.
     Route::post('/{ticket}/assign-dispatch', 'assignDispatch')->middleware('permission:maintenance.delegate');

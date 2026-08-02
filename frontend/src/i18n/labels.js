@@ -813,7 +813,8 @@ const en = {
           eyebrow: 'Recommended dispatch',
           headline: 'Send all {n} faults to {garage}',
           headlineOne: 'Send this fault to {garage}',
-          accept: 'Send to {garage}',
+          // No `accept`. The card no longer carries a button — the garage picker below is the one
+          // control that sets the garage. See [[DispatchPlan]].
           confirmed: 'This garage is selected. Complete the form below to dispatch.',
           lowConfidence: 'Limited history behind this call — worth opening the evidence before you send it.',
         },
@@ -3912,7 +3913,6 @@ const ar = {
           eyebrow: 'الإسناد الموصى به',
           headline: 'أرسل الأعطال الـ{n} جميعها إلى {garage}',
           headlineOne: 'أرسل هذا العطل إلى {garage}',
-          accept: 'أرسل إلى {garage}',
           confirmed: 'تم اختيار هذا الكراج. أكمل النموذج أدناه للإرسال.',
           lowConfidence: 'السجل وراء هذه التوصية محدود — يُستحسن فتح الأدلة قبل الإرسال.',
         },

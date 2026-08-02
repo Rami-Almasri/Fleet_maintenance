@@ -73,17 +73,32 @@ function durationLine(g, gr) {
  * Whether the repair is likely to stick.
  *
  * The measurement underneath is a 90-day recurrence rate, so the sentence is bounded by that window on
- * purpose — "comes back after about 40 days" would be a claim the data cannot make. "About 4 in 10 cars
- * needed this repair again within 3 months" is the same fact in the form an operator can act on.
+ * purpose — "comes back after about 40 days" would be a claim the data cannot make.
+ *
+ * THE PERCENTAGE IS THE PRIMARY FIGURE. This line exists to be compared against the identical line on
+ * the garage next to it, and "8 in 10" against "6 in 10" makes the reader do arithmetic before they can
+ * rank two numbers that were percentages to begin with. So the percentage leads and the fraction stays
+ * underneath for whoever prefers to think in whole cars.
+ *
+ * BOTH halves are named, holding side first, because this sentence sits on the same screen as the
+ * "Predicted first-time resolution" figure — which counts the repairs that HELD. A line counting only
+ * the ones that came back reads as a second, contradictory verdict on the same garage. `s` is derived
+ * from the rounded `c` rather than from the raw complement, so the two always sum to 100 on screen.
  */
 function durabilityLine(g, gr) {
   const cb = g.comeback_pct;
   if (!cb || cb.value == null || cb.basis === 'unavailable') return { text: gr('plain.holdsUnknown') };
   const fleet = cb.basis === 'fleet';
-  const n = Math.round(cb.value / 10);
+  const c = Math.round(cb.value);
+  const s = 100 - c;
+  const n = Math.round(c / 10);
+  const h = 10 - n;
   if (n === 0) return { text: gr(fleet ? 'plain.holdsRarelyFleet' : 'plain.holdsRarely') };
-  if (fleet) return { text: gr('plain.holdsFleet', { n }) };
-  return { text: gr(cb.value < 25 ? 'plain.holds' : 'plain.returns', { n }) };
+  // The fraction rounds to tenths and the percentage does not, so they are two readings of one number
+  // rather than two numbers — which is exactly why the looser one is the secondary line.
+  const note = gr('plain.holdsFraction', { h, n });
+  if (fleet) return { text: gr('plain.holdsFleet', { s, c }), note };
+  return { text: gr(cb.value < 25 ? 'plain.holds' : 'plain.returns', { s, c }), note };
 }
 
 /** What it is likely to cost, and how much of a claim about THIS garage that figure really is. */
@@ -147,15 +162,102 @@ function tradeLines(fault, gr) {
   ].filter(Boolean);
 }
 
-/** A garage's block: who it is, and the five facts. */
-function Side({ g, lines, title, primary, onPick, isSel, gr }) {
+/**
+ * The component name a supervisor reads, not the one the engine stores.
+ *
+ * Falls back to the backend's own label so a component added server-side still renders rather than
+ * printing a raw key — the engine stays the source of truth for WHICH components exist.
+ */
+function compLabel(c, gr) {
+  const key = `plain.score.comp.${c.key}`;
+  const out = gr(key);
+  return out === `workflow.garageRec.${key}` ? c.label : out;
+}
+
+/**
+ * The 0–100, decomposed. Every component with the points it earned, the points it could have earned,
+ * and the counted facts behind them.
+ *
+ * The maxima come from the backend and are guaranteed to sum to 100, and the awarded values to sum to
+ * the headline — so this renders with no client-side arithmetic and cannot drift from the engine. A
+ * component that could not be measured says so instead of showing a zero, because zero is a verdict and
+ * "we never asked" is not.
+ */
+function ScoreCard({ breakdown, faultCount, gr }) {
+  if (!breakdown?.components?.length) return null;
+
+  return (
+    <div className="mt-2.5 rounded-lg bg-white/70 p-2 ring-1 ring-inset ring-slate-200">
+      <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-500">{gr('plain.score.title')}</p>
+      <div className="space-y-1.5">
+        {breakdown.components.map((c) => {
+          const pct = c.applicable && c.max > 0 ? Math.round((c.awarded / c.max) * 100) : 0;
+          return (
+            <div key={c.key}>
+              <div className="flex items-baseline gap-1.5">
+                <span className="shrink-0 text-[12px] font-medium text-slate-700">{compLabel(c, gr)}</span>
+                <span aria-hidden className="min-w-4 flex-1 translate-y-[-3px] border-b border-dotted border-slate-300" />
+                {c.applicable ? (
+                  <span className="shrink-0 text-[12px] font-bold tabular-nums text-slate-800">
+                    {c.awarded}<span className="font-medium text-slate-400"> / {c.max}</span>
+                  </span>
+                ) : (
+                  <span className="shrink-0 text-[11px] font-medium text-slate-400">{gr('plain.score.notMeasured')}</span>
+                )}
+              </div>
+              {c.applicable && (
+                <div className="mt-0.5 h-1 overflow-hidden rounded-full bg-slate-100">
+                  <div
+                    className={`h-full rounded-full ${pct >= 75 ? 'bg-emerald-500' : pct >= 40 ? 'bg-amber-400' : 'bg-rose-400'}`}
+                    style={{ width: `${Math.max(pct, 2)}%` }}
+                  />
+                </div>
+              )}
+              {/* WHY it scored that — the countable events, not a restatement of the number. */}
+              <p className="mt-0.5 text-[11px] leading-snug text-slate-500">{c.detail}</p>
+            </div>
+          );
+        })}
+      </div>
+      <div className="mt-1.5 flex items-baseline gap-1.5 border-t border-slate-200 pt-1.5">
+        <span className="shrink-0 text-[12px] font-bold text-slate-800">{gr('plain.score.total')}</span>
+        <span aria-hidden className="min-w-4 flex-1 translate-y-[-3px] border-b border-dotted border-slate-300" />
+        <span className="shrink-0 text-[13px] font-extrabold tabular-nums text-slate-900">{breakdown.total} / 100</span>
+      </div>
+      {breakdown.note && <p className="mt-1 text-[11px] leading-snug text-amber-700">{breakdown.note}</p>}
+      {/* On a multi-fault ticket this score is not a verdict on THIS fault, and the reader will assume
+          it is unless told. */}
+      {faultCount > 1 && (
+        <p className="mt-1 text-[11px] leading-snug text-slate-500">{gr('plain.score.ticketWide', { n: faultCount })}</p>
+      )}
+    </div>
+  );
+}
+
+// WHY THERE IS NO "Why X ranked higher" SECTION.
+//
+// There used to be one, per fault: the two score breakdowns subtracted component by component, biggest
+// gap first, with both garages' evidence under every row. It was accurate and it was a third telling of
+// the same story — the five sentences say what each garage is like, the score card says how that scored,
+// and the trade-off says what you give up. Repeating all of it a fourth time as arithmetic, on EVERY
+// fault of a multi-fault ticket, buried the two things the reader came for.
+//
+// The card still shows both derivations side by side (ScoreCard, on each garage) and both totals, so
+// the ranking remains auditable; what is gone is the subtraction, which the reader can now do on the two
+// numbers in front of them. The backend stopped emitting `score_gap` with it, rather than leaving a
+// computed field with no consumer ([[evidence-layer-governance]]).
+
+/** A garage's block: who it is, the five facts, and how it scored. */
+function Side({ g, lines, title, primary, onPick, isSel, gr, faultCount }) {
   return (
     <div className={`flex-1 rounded-xl p-3 ring-1 ring-inset ${primary ? 'bg-emerald-50/60 ring-emerald-300' : 'bg-white ring-slate-200'}`}>
       <p className={`flex items-center gap-1.5 text-[14px] font-bold ${primary ? 'text-emerald-800' : 'text-slate-700'}`}>
         {primary && <span aria-hidden>✅</span>}
         <span className="truncate">{title}</span>
       </p>
-      <ul className="mt-2 space-y-1.5">
+      {/* Tagged so the no-engine-vocabulary test can assert on the SENTENCES specifically. The score
+          sections below are deliberately technical; the rule was only ever about the prose. */}
+      <ul data-testid="garage-facts" className="mt-2 space-y-1.5">
         {lines.map((l, i) => (
           <li key={i} className="text-[13px] leading-snug text-slate-700">
             <span className="me-1 text-slate-300" aria-hidden>•</span>{l.text}
@@ -165,6 +267,9 @@ function Side({ g, lines, title, primary, onPick, isSel, gr }) {
           </li>
         ))}
       </ul>
+      {/* The score, on the same card as the facts that earned it. Both garages get one, so the reader
+          can compare the derivations and not just the verdicts. */}
+      <ScoreCard breakdown={g.breakdown} faultCount={faultCount} gr={gr} />
       <button
         type="button"
         onClick={() => onPick(g.vendor_id)}
@@ -182,10 +287,12 @@ function Side({ g, lines, title, primary, onPick, isSel, gr }) {
 /**
  * One fault, answered.
  *
- * @param fault  a row of the API's `per_fault` array
- * @param model  the vehicle model, so "none of those were on a YUKON" can name the car
+ * @param fault       a row of the API's `per_fault` array
+ * @param model       the vehicle model, so "none of those were on a YUKON" can name the car
+ * @param faultCount  how many faults the ticket carries — the match score weighs all of them, so on a
+ *                    multi-fault ticket the card has to say the score is not about this fault alone
  */
-export default function FaultDecision({ fault, model, onPick, isSel, t }) {
+export default function FaultDecision({ fault, model, onPick, isSel, t, faultCount = 1 }) {
   const gr = (k, v) => t(`workflow.garageRec.${k}`, v);
   const { winner, alternative } = fault;
   const trades = tradeLines(fault, gr);
@@ -220,13 +327,13 @@ export default function FaultDecision({ fault, model, onPick, isSel, t }) {
 
       <div className="flex flex-col gap-2 sm:flex-row">
         <Side
-          g={winner} primary gr={gr} onPick={onPick} isSel={isSel}
+          g={winner} primary gr={gr} onPick={onPick} isSel={isSel} faultCount={faultCount}
           title={gr(displaced ? 'plain.strongestHere' : 'plain.recommended', { garage: winner.garage })}
           lines={garageLines(winner, model, gr)}
         />
         {alternative
           ? <Side
-              g={alternative} gr={gr} onPick={onPick} isSel={isSel}
+              g={alternative} gr={gr} onPick={onPick} isSel={isSel} faultCount={faultCount}
               title={gr('plain.alternative', { garage: alternative.garage })}
               lines={garageLines(alternative, model, gr)}
             />

@@ -35,11 +35,40 @@ const ALT = {
   start_in_days: 0,
 };
 
+// The scorer's derivation, as the API presents it. Awarded values sum to `total` and maxima sum to 100
+// — the backend guarantees both, and the card renders them with no arithmetic of its own, so a fixture
+// that did not add up would be testing a screen the app can never produce.
+const WINNER_BREAKDOWN = {
+  total: 92,
+  components: [
+    { key: 'fault_matching', label: 'Fault matching', awarded: 38, max: 40, applicable: true, detail: '48 Suspension repairs, 6 on this model' },
+    { key: 'vehicle_similarity', label: 'Vehicle similarity', awarded: 18, max: 20, applicable: true, detail: '6 on GMC Yukon · 40 on the same vehicle class' },
+    { key: 'historical_success', label: 'Historical success', awarded: 16, max: 20, applicable: true, detail: '40 relevant repairs completed · 96% re-inspection pass rate (2 of 40 came back)' },
+    { key: 'specialization', label: 'Specialization', awarded: 10, max: 10, applicable: true, detail: '52% of this garage\'s identified work is in Suspension (48 of 92 jobs)' },
+    { key: 'confidence', label: 'Confidence', awarded: 10, max: 10, applicable: true, detail: '40 matching jobs — high confidence' },
+  ],
+  redistributed: false,
+  note: null,
+};
+
+const ALT_BREAKDOWN = {
+  total: 62,
+  components: [
+    { key: 'fault_matching', label: 'Fault matching', awarded: 24, max: 40, applicable: true, detail: '31 Suspension repairs, none on this model' },
+    { key: 'vehicle_similarity', label: 'Vehicle similarity', awarded: 6, max: 20, applicable: true, detail: 'no record on GMC Yukon · 11 on the same vehicle class' },
+    { key: 'historical_success', label: 'Historical success', awarded: 19, max: 20, applicable: true, detail: '20 relevant repairs completed · 60% re-inspection pass rate (8 of 20 came back)' },
+    { key: 'specialization', label: 'Specialization', awarded: 8, max: 10, applicable: true, detail: '31% of this garage\'s identified work is in Suspension (31 of 100 jobs)' },
+    { key: 'confidence', label: 'Confidence', awarded: 5, max: 10, applicable: true, detail: '20 matching jobs — medium confidence' },
+  ],
+  redistributed: false,
+  note: null,
+};
+
 const FAULT = {
   category_key: 'suspension', label: 'Suspension', symptom: 'Worn shock / strut',
   criticality: 'safety_critical', criticality_label: 'Safety critical', weight: 1.6,
-  winner: WINNER,
-  alternative: ALT,
+  winner: { ...WINNER, breakdown: WINNER_BREAKDOWN },
+  alternative: { ...ALT, breakdown: ALT_BREAKDOWN },
   cost_confidence: { level: 'high', reason: { code: 'cost_fault_deep', params: { n: 63 } } },
   verdict: {
     code: 'verdict_trade',
@@ -54,8 +83,8 @@ const FAULT = {
   },
 };
 
-const draw = (fault, model = 'GMC Yukon') =>
-  render(<FaultDecision fault={fault} model={model} onPick={() => {}} isSel={() => false} t={t} />);
+const draw = (fault, model = 'GMC Yukon', faultCount = 1) =>
+  render(<FaultDecision fault={fault} model={model} onPick={() => {}} isSel={() => false} t={t} faultCount={faultCount} />);
 
 const deep = (o) => JSON.parse(JSON.stringify(o));
 
@@ -72,9 +101,14 @@ test('each garage is described in five plain sentences, not percentages', () => 
   expect(screen.getByText('The repair usually takes about one day.')).toBeInTheDocument();
   expect(screen.getByText('The repair usually takes about 3 days.')).toBeInTheDocument();
 
-  // Durability, bounded by the window the measurement actually uses.
-  expect(screen.getByText('Cars repaired here almost never come back for this repair within 3 months.')).toBeInTheDocument();
-  expect(screen.getByText(/Cars repaired here often come back — about 4 in 10/)).toBeInTheDocument();
+  // Durability, bounded by the window the measurement actually uses — and stated in BOTH directions,
+  // so the sentence cannot contradict the "Predicted first-time resolution" figure beside it. The
+  // PERCENTAGE is the primary figure (it is what the reader compares against the other garage) and the
+  // two halves are pinned together here: 60 + 40 is the check that they still sum to 100.
+  expect(screen.getByText('Repairs here almost always hold — cars practically never need this repair again within 3 months.')).toBeInTheDocument();
+  expect(screen.getByText('Only a 60% first-time fix rate — 40% needed the same repair again within 3 months.')).toBeInTheDocument();
+  // The fraction survives, demoted to the secondary line rather than deleted.
+  expect(screen.getByText('About 6 in 10 stayed fixed, 4 in 10 came back.')).toBeInTheDocument();
 
   // Money, with what the price is a price OF.
   expect(screen.getByText('Expect to pay about AED 550.')).toBeInTheDocument();
@@ -91,16 +125,64 @@ test('the trade-off names both garages in full sentences', () => {
   expect(screen.getByText('Cars repaired at RMR come back less often.')).toBeInTheDocument();
 });
 
-test('none of the engine vocabulary reaches the operational view', () => {
-  // The whole point of this layer. Every one of these words appeared on the previous screen, and each
-  // one is a term the supervisor would have to be taught before the number underneath meant anything.
-  const { container } = draw(FAULT);
-  const text = container.textContent.toLowerCase();
+test('none of the engine vocabulary reaches the plain-language sentences', () => {
+  // The rule this guards, restated. It was never "the card may not contain a score" — it was that the
+  // FIVE SENTENCES describing a garage must be readable without being taught the engine's vocabulary.
+  // The score breakdown and the ranking arithmetic are now on the card too, deliberately and under
+  // their own headings, because a ranking nobody can audit is a worse failure than a technical word.
+  // So the ban is scoped to the prose, which is where it always belonged.
+  draw(FAULT);
+  const text = screen.getAllByTestId('garage-facts').map((n) => n.textContent).join(' ').toLowerCase();
 
   ['fault experience', 'first-time resolution', 'confidence', 'grain', 'same fault history',
     'garage history', 'coverage', 'basis', 'p90', '/100'].forEach((banned) => {
     expect(text).not.toContain(banned);
   });
+});
+
+test('every garage shows the full derivation of its score, with the facts that earned each component', () => {
+  draw(FAULT);
+
+  // Both sides, not just the winner — a breakdown only the recommended garage carries is advocacy.
+  expect(screen.getAllByText('How this garage scored')).toHaveLength(2);
+  expect(screen.getByText('92 / 100')).toBeInTheDocument();
+  expect(screen.getByText('62 / 100')).toBeInTheDocument();
+
+  // Components are named in the supervisor's words, not the engine's storage keys.
+  expect(screen.getAllByText('Fault experience').length).toBeGreaterThan(0);
+  expect(screen.getAllByText('Vehicle similarity').length).toBeGreaterThan(0);
+  expect(screen.getAllByText('Historical success').length).toBeGreaterThan(0);
+  expect(screen.getAllByText('Specialization').length).toBeGreaterThan(0);
+
+  // Each component carries WHY it scored that — the counted events, not a restatement of the number.
+  expect(screen.getAllByText('48 Suspension repairs, 6 on this model').length).toBeGreaterThan(0);
+  expect(screen.getAllByText(/60% re-inspection pass rate \(8 of 20 came back\)/).length).toBeGreaterThan(0);
+});
+
+test('the card does not re-tell the comparison as point arithmetic', () => {
+  // There used to be a "Why X ranked higher" section per fault: the two breakdowns subtracted
+  // component by component. Both derivations are already on the card, side by side, and the
+  // subtraction repeated the same comparison a third time on EVERY fault of the ticket.
+  draw(FAULT);
+
+  expect(screen.queryByText(/ranked higher/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/points higher overall/)).not.toBeInTheDocument();
+  expect(screen.queryByText('+14 points')).not.toBeInTheDocument();
+  expect(screen.queryByText('−3 points')).not.toBeInTheDocument();
+
+  // What replaced it is what was always underneath: both totals, both derivations.
+  expect(screen.getByText('92 / 100')).toBeInTheDocument();
+  expect(screen.getByText('62 / 100')).toBeInTheDocument();
+});
+
+test('a score covering several faults says so, rather than posing as a verdict on this one', () => {
+  draw(FAULT, 'GMC Yukon', 3);
+  expect(screen.getAllByText('This score covers all 3 faults on this ticket, not this repair alone.')).toHaveLength(2);
+});
+
+test('a single-fault ticket does not caveat a score that is genuinely about this fault', () => {
+  draw(FAULT);
+  expect(screen.queryByText(/This score covers all/)).not.toBeInTheDocument();
 });
 
 test('a fleet-borrowed figure says so in the sentence, not by being greyed', () => {
@@ -114,7 +196,7 @@ test('a fleet-borrowed figure says so in the sentence, not by being greyed', () 
   draw(f);
 
   expect(screen.getByText('We have no repair times from this garage — across the fleet this repair takes about 2 days.')).toBeInTheDocument();
-  expect(screen.getByText(/hasn't done enough of this work for us to say whether its repairs last.*about 4 in 10/)).toBeInTheDocument();
+  expect(screen.getByText(/hasn't done enough of this work for us to say whether its repairs last.*first-time fix rate is 60%, with a 40% comeback rate within 3 months/)).toBeInTheDocument();
   expect(screen.getByText('This is the fleet-wide average — this garage has no price of its own yet.')).toBeInTheDocument();
 });
 

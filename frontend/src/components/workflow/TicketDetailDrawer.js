@@ -11,7 +11,7 @@ import FindingsList from './FindingsList';
 import WhyThisGarage from './WhyThisGarage';
 import RepairQualityCheck from './RepairQualityCheck';
 import RequiredPartsPanel from './RequiredPartsPanel';
-import RepairIntelligencePanel from '../knowledge/RepairIntelligencePanel';
+import RepairOutlook from './RepairOutlook';
 import VideoEvidence from './VideoEvidence';
 import InvoicesPanel from './InvoicesPanel';
 import TicketParts from './TicketParts';
@@ -542,22 +542,12 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
             )}
           </Section>
 
-          {/* Repair intelligence — "Previous Similar Repairs + Recommendation" per fault. Read-only; the
-              panel self-loads the frozen contract and degrades gracefully when history is thin. */}
-          {tk.tasks?.some((task) => task.kind !== 'service' && task.kind !== 'inspection') && (
-            <Section title={t('repairIntel.title')} icon={<Icon.Chart className="h-3.5 w-3.5 text-indigo-400" />}>
-              <div className="space-y-2">
-                {tk.tasks
-                  .filter((task) => task.kind !== 'service' && task.kind !== 'inspection')
-                  .map((task) => (
-                    <div key={task.id} className="space-y-1">
-                      <div className="text-xs font-medium text-slate-500">{task.symptom}</div>
-                      <RepairIntelligencePanel taskId={task.id} />
-                    </div>
-                  ))}
-              </div>
-            </Section>
-          )}
+          {/* "What the garage will do" — the expected work behind each fault, in plain words. It used to
+              live on the assign step, which one supervisor sees once; everyone who opens the ticket needs
+              to know what the car is having done to it, so it moved here. Prior repairs went the other
+              way, onto the assign step where the garage is actually being chosen ([[RepairOutlook]]).
+              Self-fetches and renders nothing when no finding resolves to a known fault. */}
+          <RepairOutlook ticketId={ticketId} />
 
           {/* Required Parts — what the INSPECTOR said the repair would need. Sits directly above the Parts
               board because it is the step before it: the coordinator turns these technical lines into real
@@ -924,7 +914,7 @@ function TestDriveReport({ report, tasks = [] }) {
               <span key={i} className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 ring-1 ring-inset ring-slate-200">
                 {s}
                 {badge && (
-                  <span className={`ml-0.5 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold ring-1 ring-inset ${badge.cls}`}>
+                  <span className={`ms-0.5 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold ring-1 ring-inset ${badge.cls}`}>
                     {badge.label}
                   </span>
                 )}

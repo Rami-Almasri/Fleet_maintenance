@@ -2,6 +2,7 @@
 
 namespace App\Services\Garage;
 
+
 /**
  * A recommendation for EVERY fault, not one recommendation for the ticket.
  *
@@ -86,6 +87,12 @@ class PerFaultRecommender
                 'weight'            => (float) ($c['weight'] ?? 1.0),
                 'winner'            => $winner,
                 'alternative'       => $alternative,
+                // NO `score_gap`. The card used to carry the two breakdowns subtracted component by
+                // component ("Fault experience +9.3 points…") under a "Why {garage} ranked higher"
+                // heading. Both garages already ship their full derivation in `breakdown`, and the
+                // subtraction was a third telling of the same comparison on every fault of the ticket.
+                // It was removed from the UI, and the field went with it rather than being computed for
+                // nobody ([[evidence-layer-governance]]).
                 // Prose, for the audit trail and for anyone who wants the sentence.
                 'reason'            => $this->winnerReason($winner, $alternative, $label),
                 'tradeoff'          => $alternative ? $this->alternativeReason($winner, $alternative, $label, $modelLabel) : null,
@@ -148,6 +155,11 @@ class PerFaultRecommender
                 'same_model'   => (int) ($ev['same_model'] ?? 0),
                 'at_garage'    => (int) ($ev['at_garage'] ?? 0),
                 'match_score'  => (int) ($g['match_score'] ?? 0),
+                // The whole 0–100 derivation, per garage, so the card can show WHY this one ranked where
+                // it did instead of asserting it. The score is ticket-wide (it weighs every fault on the
+                // ticket), which the UI must say out loud on a multi-fault ticket — but it is the number
+                // that actually ordered the list, so it is the number that has to be explainable.
+                'breakdown'    => ScoreBreakdown::present((array) ($g['breakdown'] ?? [])),
                 // The records the coverage figure was computed from, in words. A percentage a supervisor
                 // cannot trace back to a count of repairs is exactly the magic number this panel exists
                 // to eliminate — so the basis travels WITH the number, not behind a click.

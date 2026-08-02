@@ -10,6 +10,15 @@ import DispatchPlan from './DispatchPlan';
 import api from '../../api/client';
 
 jest.mock('../../api/client', () => ({ get: jest.fn() }));
+// The knowledge panel self-fetches its own frozen contract and is tested where it lives; here we only
+// care that the plan mounts ONE per fault and binds it to the right fault.
+jest.mock('../knowledge/RepairIntelligencePanel', () => ({ taskId, preview }) => (
+  <div
+    data-testid="repair-intel"
+    data-task={taskId ?? ''}
+    data-preview={preview ? `${preview.vehicleId}|${preview.symptom}` : ''}
+  />
+));
 jest.mock('../../i18n/I18nContext', () => {
   const { LABELS } = jest.requireActual('../../i18n/labels');
   const walk = (p) => p.split('.').reduce((n, k) => (n == null ? undefined : n[k]), LABELS.en);
@@ -113,8 +122,8 @@ test('an untouched form is never framed as an override', async () => {
   expect(screen.queryByText('· your choice')).not.toBeInTheDocument();
   expect(screen.getByText('What to expect')).toBeInTheDocument();
   expect(screen.queryByText('What your choice changes')).not.toBeInTheDocument();
-  // …and the accept button is still offered, because nothing has been committed.
-  expect(screen.getByText('Send to Deals On Wheels auto')).toBeInTheDocument();
+  // …and nothing claims a confirmation either, because nothing has been committed.
+  expect(screen.queryByText(/This garage is selected/)).not.toBeInTheDocument();
 });
 
 test('a single-fault ticket does not say "all 1 faults"', async () => {
@@ -170,21 +179,24 @@ test('a low-confidence call carries a warning, not just a grey chip', async () =
   expect(await screen.findByText(/Limited history behind this call/)).toBeInTheDocument();
 });
 
-test('accepting the call selects the recommended garage', async () => {
+test('the call states the recommendation without offering to commit it', async () => {
+  // There is ONE control that sets the garage — the picker below the plan. A second button that also
+  // set it, pre-filled with the engine's answer, left the supervisor accepting a call and then facing
+  // a dropdown that looked like it was asking again.
   load();
   const onPick = jest.fn();
   renderPlan({ onPick });
 
-  fireEvent.click(await screen.findByText('Send to Deals On Wheels auto'));
-  expect(onPick).toHaveBeenCalledWith(223);
+  expect(await screen.findByText('Send all 2 faults to Deals On Wheels auto')).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /Send to Deals On Wheels auto/ })).not.toBeInTheDocument();
+  expect(onPick).not.toHaveBeenCalled();
 });
 
-test('once selected the call becomes a confirmation rather than a button', async () => {
+test('once the recommended garage is picked, the call says so', async () => {
   load();
   renderPlan({ selectedVendorId: 223 });
 
   expect(await screen.findByText(/This garage is selected/)).toBeInTheDocument();
-  expect(screen.queryByText('Send to Deals On Wheels auto')).not.toBeInTheDocument();
 });
 
 test('the plan grades every fault under the CHOSEN garage, not the best one', async () => {
@@ -295,91 +307,64 @@ test('degrades to the no-recommendation notice when nothing was scored', async (
   expect(await screen.findByText('No proven garage yet')).toBeInTheDocument();
 });
 
-// ─── "What the garage will do" ──────────────────────────────────────────────────────────────────
+// ─── "Previous Similar Repairs" ─────────────────────────────────────────────────────────────────
 //
-// The plan table ranks garages; it never said what the car was having done to it. These lock the four
-// things that make that block safe to show the person authorising the work.
+// The cohort the garage numbers were computed over, per fault. It lives HERE rather than on the ticket
+// drawer because it is evidence about garages, offered at the moment a garage is still being chosen —
+// and it is collapsed, because the call above has already used it.
 
-const OUTLOOK = [
-  {
-    symptom: 'Rough idle / misfire', category_key: 'engine', label: 'Engine', known: true,
-    risk: 'moderate', risk_label: 'Moderate', risk_tone: 'amber',
-    causes: ['Worn spark plugs / coils', 'Clogged / faulty fuel injector', 'Vacuum leak'],
-    fixes: [
-      { label: 'Replace spark plugs', label_ar: null, typical: true },
-      { label: 'Replace ignition coil', label_ar: null, typical: true },
-      { label: 'Clean throttle body', label_ar: null, typical: false },
+const withFaults = () => ({
+  ...PAYLOAD,
+  ticket: {
+    ...PAYLOAD.ticket,
+    vehicle_id: 12,
+    faults_detail: [
+      { symptom: 'Rough idle / misfire', category_key: 'engine', label: 'Engine', task_id: 41 },
+      // SAME CATEGORY as the row above. per_fault would have collapsed these two into one engine row
+      // and kept only the first symptom — the reason this block is keyed per finding.
+      { symptom: 'Overheating', category_key: 'engine', label: 'Engine', task_id: 42 },
+      // Never promoted to a task: still describable, via the symptom preview.
+      { symptom: 'weird clunk i heard', category_key: 'suspension', label: 'Suspension', task_id: null },
     ],
   },
-  {
-    // SAME CATEGORY as the row above. per_fault would have collapsed these two into one engine row and
-    // kept only the first symptom — the reason this block is keyed per finding.
-    symptom: 'Overheating', category_key: 'engine', label: 'Engine', known: true,
-    risk: 'critical', risk_label: 'Critical', risk_tone: 'red',
-    causes: ['Coolant leak', 'Water-pump failure'],
-    fixes: [{ label: 'Replace thermostat', label_ar: null, typical: true }],
-  },
-  {
-    symptom: 'weird clunk i heard', category_key: 'suspension', label: 'Suspension', known: false,
-    risk: null, risk_label: null, risk_tone: null, causes: [], fixes: [],
-  },
-];
-
-const withOutlook = () => ({ ...PAYLOAD, repair_outlook: OUTLOOK });
-
-test('the repair outlook stays collapsed until asked for', async () => {
-  load(withOutlook());
-  renderPlan();
-
-  // Visible as an offer; its contents are not competing with the ten-second decision in Layer 0.
-  expect(await screen.findByText('What the garage will do')).toBeInTheDocument();
-  expect(screen.queryByText(/Worn spark plugs/)).not.toBeInTheDocument();
-
-  fireEvent.click(screen.getByText('What the garage will do'));
-
-  expect(screen.getByText(/Worn spark plugs \/ coils · Clogged \/ faulty fuel injector · Vacuum leak/)).toBeInTheDocument();
-  expect(screen.getByText(/Replace spark plugs · Replace ignition coil · Clean throttle body/)).toBeInTheDocument();
 });
 
-test('every selected fault is described, including a second one in the same category', async () => {
-  load(withOutlook());
+test('prior repairs are offered but collapsed — the call is not buried under them', async () => {
+  load(withFaults());
   renderPlan();
-  fireEvent.click(await screen.findByText('What the garage will do'));
 
-  // Both engine faults, not just whichever came first.
+  expect(await screen.findByText('Previous Similar Repairs')).toBeInTheDocument();
+  expect(screen.queryByText('Rough idle / misfire')).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByText('Previous Similar Repairs'));
   expect(screen.getByText('Rough idle / misfire')).toBeInTheDocument();
+});
+
+test('every fault gets its own panel, including a second one in the same category', async () => {
+  load(withFaults());
+  renderPlan();
+  fireEvent.click(await screen.findByText('Previous Similar Repairs'));
+
   expect(screen.getByText('Overheating')).toBeInTheDocument();
-  expect(screen.getByText(/Coolant leak · Water-pump failure/)).toBeInTheDocument();
+  expect(screen.getAllByTestId('repair-intel')).toHaveLength(3);
 });
 
-test('a hand-written finding admits it has no standard repair instead of inventing one', async () => {
-  load(withOutlook());
+test('a fault that never became a task falls back to a symptom preview', async () => {
+  // Without the fallback the hand-written finding would render an empty panel bound to `undefined`.
+  load(withFaults());
   renderPlan();
-  fireEvent.click(await screen.findByText('What the garage will do'));
+  fireEvent.click(await screen.findByText('Previous Similar Repairs'));
 
-  expect(screen.getByText('weird clunk i heard')).toBeInTheDocument();
-  expect(screen.getByText(/we have no standard repair for it/)).toBeInTheDocument();
+  const panels = screen.getAllByTestId('repair-intel');
+  expect(panels[0]).toHaveAttribute('data-task', '41');
+  expect(panels[2]).toHaveAttribute('data-task', '');
+  expect(panels[2]).toHaveAttribute('data-preview', '12|weird clunk i heard');
 });
 
-test('the outlook says it is typical work, not a diagnosis of this car', async () => {
-  load(withOutlook());
+test('no prior-repairs block at all when the ticket reports no faults', async () => {
+  load();
   renderPlan();
-  fireEvent.click(await screen.findByText('What the garage will do'));
+  await screen.findByText('Send all 2 faults to Deals On Wheels auto');
 
-  // Without this the block reads as a decision already taken, and the supervisor authorises work
-  // nobody has yet confirmed the car needs.
-  expect(screen.getByText(/the garage confirms once it has looked at the car/)).toBeInTheDocument();
-});
-
-test('no engine vocabulary reaches the repair outlook', async () => {
-  load(withOutlook());
-  renderPlan();
-  fireEvent.click(await screen.findByText('What the garage will do'));
-
-  // Scoped to the block itself — the rest of the plan legitimately shows coverage and tiers.
-  const block = screen.getByText(/the garage confirms once it has looked at the car/).closest('div');
-  const text = block.textContent.toLowerCase();
-
-  ['fault experience', 'first-time resolution', 'confidence', 'grain', 'coverage', 'basis', '/100', '%']
-    .forEach((banned) => expect(text).not.toContain(banned));
+  expect(screen.queryByText('Previous Similar Repairs')).not.toBeInTheDocument();
 });
