@@ -72,4 +72,57 @@ return [
         //  - a cohort matched ONLY fleet-wide (best tier 4) can never be "high".
         //  - fewer than med_n repairs forces "low" regardless of score.
     ],
+
+    /**
+     * BROADER HISTORY — findings category → the signature buckets that describe the same area of the car.
+     *
+     * WHY THIS EXISTS. `similarRepairs` answers "have we repaired THIS fault before" out of
+     * `maintenance_tasks`, which is the structured workflow and currently holds ~100 rows. The fleet's
+     * real repair record — ~49k classified events derived from `maintenances` — lives in
+     * `maintenance_signatures` at a COARSER grain: 22 area buckets, not 105 faults. Until the workflow
+     * corpus grows, a panel that consults only the first reports "no comparable repairs" for a car whose
+     * area has been repaired a thousand times.
+     *
+     * WHY IT IS A SEPARATE ANSWER AND NOT MERGED IN. These two are not the same claim. One says "this
+     * exact fault, and here is the outcome"; the other says "this area of the car, and we do not know how
+     * it turned out". Averaging them would inflate the sample behind a recommendation with rows that
+     * cannot support it — so broader history is counted, shown and labelled separately, and it never
+     * feeds the confidence band.
+     *
+     * WHY A MAP AND NOT THE CLASSIFIER. RepairSignatureClassifier reads free-text workshop notes; asked
+     * about catalog wording it returns nothing for "Soft / spongy pedal" and "Hard / jerky shifting"
+     * because nobody writes those phrases in a note. The category is already known, the target vocabulary
+     * is 22 fixed strings, so the mapping is written down rather than inferred — auditable, and wrong in
+     * a way somebody can see and fix.
+     *
+     * A category mapping to [] has no counterpart in the signature vocabulary and correctly reports
+     * nothing rather than borrowing a neighbouring area's numbers.
+     */
+    'broader_history' => [
+        'category_signatures' => [
+            'engine'       => ['ENGINE_MECH', 'CHECK_ENGINE'],
+            'brakes'       => ['BRAKES'],
+            // TYRE only. RIM is an `is_exposure` signature — 4,907 rows of "Rim Scratch", which is
+            // customer damage on return, not tyre work. Including it answered "have we dealt with wheel
+            // alignment before" with 7,428 mostly-cosmetic events and buried the 2,521 real ones.
+            'tyres'        => ['TYRE'],
+            // Alignment, tie rods and wheel bearings are logged under both in the historical sheet.
+            'suspension'   => ['SUSPENSION', 'STEERING'],
+            'transmission' => ['TRANSMISSION'],
+            'electrical'   => ['ELECTRICAL', 'BATTERY', 'KEY'],
+            'ac'           => ['AC'],
+            'bodywork'     => ['BODY', 'GLASS'],
+            'interior'     => ['INTERIOR', 'ACCESSORY'],
+            'fluids'       => ['LEAK_OTHER', 'COOLING'],
+            'lights'       => ['LIGHTS'],
+            'routine'      => ['OIL_SERVICE'],
+            // Airbags, belts, parking sensors and ADAS have no signature of their own — the historical
+            // sheet never separated them from general electrical work. Left empty on purpose: borrowing
+            // ELECTRICAL here would answer a safety question with unrelated repairs.
+            'safety'       => [],
+        ],
+
+        // How many worked examples to return per area. This is context, not a dataset to browse.
+        'examples' => 5,
+    ],
 ];

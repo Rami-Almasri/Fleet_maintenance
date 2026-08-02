@@ -141,6 +141,19 @@ export default function FindingsPicker({ catalog, keywordMeta = {}, value = [], 
     [locked, known],
   );
 
+  // Causes + repairs for each SELECTED finding, read from the catalog payload rather than fetched.
+  // A custom tag the inspector typed has no concept behind it and is skipped — an empty "usually
+  // caused by:" would read as missing data rather than as a fault we have nothing curated for.
+  const knowledgeForSelected = useMemo(
+    () => value
+      .map((k) => {
+        const meta = keywordMeta[k] || {};
+        return { keyword: k, causes: meta.causes || [], fixes: meta.fixes || [] };
+      })
+      .filter((entry) => entry.causes.length > 0 || entry.fixes.length > 0),
+    [value, keywordMeta],
+  );
+
   const has = (k) => value.some((v) => v.toLowerCase() === k.toLowerCase());
   const toggle = (k) => {
     if (isLocked(k)) return; // already reported — never selectable
@@ -340,6 +353,32 @@ export default function FindingsPicker({ catalog, keywordMeta = {}, value = [], 
               </span>
             ))}
           </div>
+
+          {/* WHAT EACH PICKED FAULT USUALLY MEANS.
+              This used to appear only when the matcher had to FIND the fault — so an inspector who
+              knew the name and tapped the chip got nothing, and one who typed "فيه رجة" got the
+              causes and repairs. The knowledge is the same either way; only the route to it differed.
+              Now every selection carries it, from the catalog the picker already fetched. */}
+          {knowledgeForSelected.length > 0 && (
+            <div className="mt-2 space-y-1.5 border-t border-indigo-200/70 pt-2">
+              {knowledgeForSelected.map(({ keyword, causes, fixes }) => (
+                <div key={`kn-${keyword}`} className="rounded-lg bg-white/80 px-2.5 py-2">
+                  <p className="text-[11px] font-semibold text-slate-800">{kwLabel(keyword)}</p>
+                  {causes.length > 0 && (
+                    <p className="mt-0.5 text-[11px] leading-snug text-slate-600">
+                      <span className="text-slate-400">{t('findingsAi.usuallyCausedBy')}</span> {causes.join(' · ')}
+                    </p>
+                  )}
+                  {fixes.length > 0 && (
+                    <p className="mt-0.5 text-[11px] leading-snug text-slate-600">
+                      <span className="text-slate-400">{t('findingsAi.usuallyFixedBy')}</span>{' '}
+                      {fixes.map((f) => (lang === 'ar' ? f.label_ar || f.label : f.label)).join(' · ')}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

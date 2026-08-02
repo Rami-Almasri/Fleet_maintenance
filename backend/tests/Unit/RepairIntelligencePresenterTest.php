@@ -45,7 +45,11 @@ class RepairIntelligencePresenterTest extends TestCase
     {
         $out = RepairIntelligencePresenter::present($this->internal(), true);
 
-        $this->assertSame(['state', 'message', 'recommendation', 'statistics', 'similar_repairs', 'explanation', 'financials_visible'], array_keys($out));
+        // `fault_knowledge` sits between the repair cohort and the explanation on purpose. It answers a
+        // different question from everything around it — what this fault IS, rather than what happened
+        // the last time we repaired it — and it is the one section that stays populated when the fleet
+        // has no history at all.
+        $this->assertSame(['state', 'message', 'recommendation', 'statistics', 'similar_repairs', 'fault_knowledge', 'explanation', 'financials_visible'], array_keys($out));
         $this->assertSame('ready', $out['state']);
         $this->assertTrue($out['financials_visible']);
 

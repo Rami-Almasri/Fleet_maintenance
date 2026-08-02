@@ -15,6 +15,7 @@ import {
   getRepairIntelligenceForTask, previewRepairIntelligence,
   CONFIDENCE_TONE, RISK_TONE, OUTCOME_TONE, groupByTier, fmtCostBand, fmtDurationBand,
 } from '../../lib/repairIntelligence';
+import FaultKnowledgeCard from './FaultKnowledgeCard';
 
 function Chip({ tone = 'text-slate-600 bg-slate-100 ring-slate-200', children }) {
   return <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${tone}`}>{children}</span>;
@@ -65,9 +66,19 @@ export default function RepairIntelligencePanel({ taskId, preview, className = '
         <span className="ms-auto text-xs text-slate-500">{data.message}</span>
       </header>
 
-      {/* No-history state — a clear, non-broken empty note. */}
+      {/* No-history state.
+          This used to be a single grey sentence and nothing else, which read as a broken panel. Having
+          never REPAIRED a fault is not the same as knowing nothing about it: the platform can still say
+          what the fault is, which wording identified it, what usually causes it and what usually fixes
+          it. That is what fills this state now. */}
       {data.state === 'no_history' && (
-        <div className="px-3.5 py-3 text-sm text-slate-500">{t('repairIntel.noHistoryTitle')}</div>
+        <div className="space-y-2 px-3.5 py-3">
+          <p className="text-sm text-slate-500">{t('repairIntel.noHistoryTitle')}</p>
+          {/* Having never repaired a fault is not the same as knowing nothing about it. The panel used
+              to stop at the sentence above; the platform knows what this fault is, what usually causes
+              it and what usually fixes it, and none of that depends on repair history. */}
+          <FaultKnowledgeCard data={data.fault_knowledge} />
+        </div>
       )}
 
       {data.state !== 'no_history' && (
@@ -172,6 +183,10 @@ export default function RepairIntelligencePanel({ taskId, preview, className = '
               )}
             </div>
           )}
+
+          {/* Shown here too, below the history: what the fault IS, after what happened last time.
+              Last, because when there is a cohort the cohort is the stronger answer. */}
+          <FaultKnowledgeCard data={data.fault_knowledge} />
         </div>
       )}
     </section>

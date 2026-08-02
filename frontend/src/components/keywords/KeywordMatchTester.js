@@ -1,8 +1,9 @@
 import { useState } from 'react';
+import FaultKnowledgeCard from '../knowledge/FaultKnowledgeCard';
 import api from '../../api/client';
 import { useToast } from '../ui/Toast';
 import { useI18n } from '../../i18n/I18nContext';
-import Badge from '../ui/Badge';
+
 import Button from '../ui/Button';
 import { Card } from '../ui/Misc';
 
@@ -19,22 +20,11 @@ import { Card } from '../ui/Misc';
  * points straight at the bad term rather than at an opaque score.
  */
 
-const HOW_TONE = { exact: 'green', phrase: 'blue', tokens: 'violet', fuzzy: 'amber' };
-
-// Each explanation bullet says where its evidence came from, and is styled by that — a measured
-// fleet observation must never look like an unsourced model claim.
-const REASON_STYLE = {
-  lexical:    { dot: 'bg-slate-400',   text: 'text-slate-600' },
-  evidence:   { dot: 'bg-blue-500',    text: 'text-blue-800' },
-  fleet:      { dot: 'bg-emerald-500', text: 'text-emerald-800 font-medium' },
-  graph:      { dot: 'bg-violet-500',  text: 'text-violet-800' },
-  curated:    { dot: 'bg-indigo-500',  text: 'text-indigo-800' },
-  provenance: { dot: 'bg-sky-500',     text: 'text-sky-800' },
-  ungrounded: { dot: 'bg-amber-500',   text: 'text-amber-800' },
-};
+// The term-match and reason styling now lives in [[FaultKnowledgeCard]], which renders the card body
+// for this page and for the maintenance workflow alike.
 
 export default function KeywordMatchTester() {
-  const { t, lang } = useI18n();
+  const { t } = useI18n();
   const toast = useToast();
   const [text, setText] = useState('');
   const [result, setResult] = useState(null);
@@ -124,63 +114,23 @@ export default function KeywordMatchTester() {
           ) : (
             result.matches.map((m) => {
               const kw = m.keyword;
-              const name = lang === 'ar' ? kw.keyword_ar || kw.keyword : kw.keyword;
               return (
                 <div key={kw.id} className="rounded-xl bg-white p-3 ring-1 ring-inset ring-slate-200">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium text-slate-900" dir="auto">{name}</span>
-                    <Badge tone={kw.risk_tone || 'amber'} dot>{kw.risk_label}</Badge>
-                    <Badge tone={m.confidence === 'strong' ? 'green' : 'slate'}>
-                      {t(`keywordAi.${m.confidence}`)} · {m.score}
-                    </Badge>
-                    <span className="ms-auto text-xs text-slate-400">
-                      {lang === 'ar' ? kw.category_label_ar || kw.category_label : kw.category_label}
-                    </span>
-                  </div>
-
-                  {/* The "why": the terms that fired and the rule that matched them. */}
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {m.matches.map((hit, i) => (
-                      <span
-                        key={`${hit.term}-${i}`}
-                        dir="auto"
-                        className="inline-flex items-center gap-1.5 rounded-full bg-slate-50 px-2 py-0.5 text-[11px] text-slate-600 ring-1 ring-inset ring-slate-200"
-                      >
-                        <span className={`h-1.5 w-1.5 rounded-full ${
-                          HOW_TONE[hit.how] === 'green' ? 'bg-emerald-500'
-                            : HOW_TONE[hit.how] === 'blue' ? 'bg-blue-500'
-                            : HOW_TONE[hit.how] === 'violet' ? 'bg-violet-500' : 'bg-amber-500'
-                        }`} />
-                        {hit.term}
-                        <span className="text-slate-400">{t(`keywordAi.how.${hit.how}`)}</span>
-                      </span>
-                    ))}
-                  </div>
-
-                  {/* Full reasoning: documentation, fleet history, graph context — each labelled
-                      by where it came from, and grounded vs not stated plainly. */}
-                  {m.explanation?.reasons?.length > 0 && (
-                    <div className="mt-3 space-y-1 border-t border-slate-100 pt-2">
-                      {m.explanation.reasons
-                        .filter((r) => r.kind !== 'lexical')   // already shown as chips above
-                        .map((r, i) => {
-                          const style = REASON_STYLE[r.kind] || REASON_STYLE.lexical;
-                          return (
-                            <div key={i} className="flex items-start gap-2 text-xs">
-                              <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${style.dot}`} />
-                              <span className={style.text}>
-                                {r.text}
-                                {r.meta?.url && (
-                                  <a href={r.meta.url} target="_blank" rel="noopener noreferrer" className="ms-1 underline">
-                                    {t('keywordAi.viewSource')}
-                                  </a>
-                                )}
-                              </span>
-                            </div>
-                          );
-                        })}
-                    </div>
-                  )}
+                  {/* The card itself is SHARED with the maintenance workflow ([[FaultKnowledgeCard]]).
+                      Two copies of this markup would drift, and the day they did, the fault a
+                      supervisor reads on a ticket would describe itself differently from the one an
+                      admin reads while curating it. What stays here is the part that is only true of
+                      this page: a human judging a match they just typed. */}
+                  <FaultKnowledgeCard
+                    className="!p-0 !ring-0"
+                    data={{
+                      keyword: kw.keyword, keyword_ar: kw.keyword_ar,
+                      category_label: kw.category_label, category_label_ar: kw.category_label_ar,
+                      risk_label: kw.risk_label, risk_tone: kw.risk_tone,
+                      score: m.score, confidence: m.confidence,
+                      matches: m.matches, explanation: m.explanation,
+                    }}
+                  />
 
                   {/* Was this right? The only ground truth the learning loop ever gets. */}
                   <div className="mt-3 flex items-center gap-2 border-t border-slate-100 pt-2">

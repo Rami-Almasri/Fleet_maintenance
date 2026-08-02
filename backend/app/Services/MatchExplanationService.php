@@ -210,6 +210,46 @@ class MatchExplanationService
      * What our own history says. This is the reason a supervisor will actually act on, so it leads
      * with the count — "214 cases" earns trust in a way "high confidence" never does.
      */
+    /**
+     * What this fleet's OWN records say about a fault, as structured rows rather than sentences.
+     *
+     * Split out of `fleetReasons` so a second consumer can have the same facts without the English:
+     * the supervisor's dispatch plan renders them as its own bilingual sentence, and an engine that
+     * emits prose cannot be translated ([[reason-code-contract]]). This method is the single place the
+     * edges are selected and ranked; `fleetReasons` now only phrases what it returns, so the admin
+     * explanation and the supervisor's card can never quote different numbers for the same fault.
+     *
+     * @return Collection<int,array{label:string,relation:string,rate:int,count:int,scope:?string}>
+     */
+    public function fleetHistory(FindingKeyword $keyword, array $scopeChain, int $limit = 3): Collection
+    {
+        $node = $keyword->ontologyNode;
+
+        if (! $node) {
+            return collect();
+        }
+
+        return OntologyEdge::query()
+            ->active()
+            ->where('from_node_id', $node->id)
+            ->where('source', OntologyEdge::SOURCE_FLEET)
+            ->inScope($scopeChain)
+            ->relation([OntologyEdge::REL_FIXED_BY, OntologyEdge::REL_CAUSED_BY, OntologyEdge::REL_RELATED_TO])
+            ->with('to')
+            ->orderByDesc('observed_count')
+            ->limit($limit)
+            ->get()
+            ->filter(fn (OntologyEdge $e) => $e->to !== null)
+            ->map(fn (OntologyEdge $e) => [
+                'label'    => $e->to->label,
+                'relation' => $e->relation,
+                'rate'     => (int) $e->observed_rate,
+                'count'    => (int) $e->observed_count,
+                'scope'    => VehicleScope::label($e->scope_key) ?: null,
+            ])
+            ->values();
+    }
+
     private function fleetReasons(FindingKeyword $keyword, array $scopeChain): Collection
     {
         $node = $keyword->ontologyNode;

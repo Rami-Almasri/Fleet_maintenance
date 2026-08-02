@@ -3,7 +3,9 @@
 namespace App\Services\Garage;
 
 use App\Models\FindingKeyword;
+use App\Services\MatchExplanationService;
 use App\Support\TextNormalizer;
+use App\Support\VehicleScope;
 
 /**
  * WHAT THE GARAGE WILL ACTUALLY DO — the inspector's findings, answered with the work they imply.
@@ -40,10 +42,21 @@ class RepairOutlook
     private const MAX_FIXES  = 4;
 
     /**
+     * Resolved through the container rather than newed: MatchExplanationService has its own dependency
+     * (the graph service), and hard-coding its construction here would make this class break every time
+     * that one gains a collaborator.
+     */
+    public function __construct(private ?MatchExplanationService $explainer = null)
+    {
+        $this->explainer = $explainer ?? app(MatchExplanationService::class);
+    }
+
+    /**
      * @param  array<int,array{symptom:?string,category_key:?string,label?:?string}>  $faultsDetail
+     * @param  array<int,string>  $scopeChain  vehicle scope, narrowest last — see [[VehicleScope]]
      * @return array<int,array<string,mixed>>
      */
-    public function for(array $faultsDetail): array
+    public function for(array $faultsDetail, array $scopeChain = []): array
     {
         $symptoms = [];
 
@@ -81,31 +94,63 @@ class RepairOutlook
                 'risk_label'   => $concept ? FindingKeyword::riskMeta($concept->risk)['label'] : null,
                 'risk_tone'    => $concept ? FindingKeyword::riskMeta($concept->risk)['tone'] : null,
 
-                'causes'       => array_slice(
-                    (array) ($concept?->profile?->likely_causes ?? []),
-                    0,
-                    self::MAX_CAUSES,
-                ),
+                'causes'       => $concept ? self::causesOf($concept) : [],
+                'fixes'        => $concept ? self::fixesOf($concept) : [],
 
-                'fixes'        => $concept
-                    ? $concept->repairActions
-                        // 'typical' is the couple of repairs that usually fix it; 'possible' is the
-                        // rest. Position in the ontology files sets it, so the order is a person's
-                        // judgement rather than a score.
-                        ->sortBy(fn ($action) => $action->pivot->relevance === 'typical' ? 0 : 1)
-                        ->take(self::MAX_FIXES)
-                        ->map(fn ($action) => [
-                            'label'    => $action->label,
-                            'label_ar' => $action->label_ar,
-                            'typical'  => $action->pivot->relevance === 'typical',
-                        ])
-                        ->values()
-                        ->all()
+                // WHAT THIS FLEET'S OWN RECORDS SAY — the one part of this card that is measured
+                // rather than curated, mined from ~8k historical repairs into the ontology graph.
+                //
+                // It is here because it changes a dispatch decision in a way the causes and repairs
+                // above do not: "34% of 72 alignment jobs also involved engine noise" tells a
+                // supervisor the job may grow, which is exactly what they need before choosing a
+                // garage and promising the car back.
+                //
+                // Emitted as DATA, never as a sentence. The same rows drive the admin explanation,
+                // which phrases them in English; this surface has to say it in Arabic too, and an
+                // engine that returns prose cannot ([[reason-code-contract]]).
+                'history'      => $concept
+                    ? $this->explainer->fleetHistory($concept, $scopeChain !== [] ? $scopeChain : [VehicleScope::UNIVERSAL], 2)->all()
                     : [],
             ];
         }
 
         return $out;
+    }
+
+    /**
+     * What a fault is usually caused by — the ontology's answer, trimmed to what fits on a card.
+     *
+     * Static and public because the SAME two lists are now read in three places: the supervisor's
+     * dispatch plan, the inspector's findings picker (via the findings catalog) and the AI suggestion
+     * card. How many to show and which repairs come first is a product decision, and three copies of
+     * it would answer the same question three different ways on three screens.
+     *
+     * @return array<int,string>
+     */
+    public static function causesOf(FindingKeyword $concept): array
+    {
+        return array_slice((array) ($concept->profile?->likely_causes ?? []), 0, self::MAX_CAUSES);
+    }
+
+    /**
+     * …and what usually fixes it, typical repairs first.
+     *
+     * @return array<int,array{label:string,label_ar:?string,typical:bool}>
+     */
+    public static function fixesOf(FindingKeyword $concept): array
+    {
+        return $concept->repairActions
+            // 'typical' is the couple of repairs that usually fix it; 'possible' is the rest. Position
+            // in the ontology files sets it, so the order is a person's judgement rather than a score.
+            ->sortBy(fn ($action) => $action->pivot->relevance === 'typical' ? 0 : 1)
+            ->take(self::MAX_FIXES)
+            ->map(fn ($action) => [
+                'label'    => $action->label,
+                'label_ar' => $action->label_ar,
+                'typical'  => $action->pivot->relevance === 'typical',
+            ])
+            ->values()
+            ->all();
     }
 
     /**
@@ -123,7 +168,7 @@ class RepairOutlook
         $wanted = array_flip($normalisedKeys);
 
         return FindingKeyword::query()
-            ->with(['profile:id,finding_keyword_id,likely_causes', 'repairActions:id,label,label_ar'])
+            ->with(['profile:id,finding_keyword_id,likely_causes', 'repairActions:id,label,label_ar', 'ontologyNode'])
             ->get(['id', 'keyword', 'risk'])
             ->reduce(function (array $carry, FindingKeyword $keyword) use ($wanted) {
                 $key = TextNormalizer::key($keyword->keyword);

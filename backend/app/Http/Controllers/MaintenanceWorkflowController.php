@@ -208,10 +208,23 @@ class MaintenanceWorkflowController extends Controller
         // Per-keyword RISK grade (critical / moderate / routine) from the admin-curated library, keyed
         // by keyword string so a client can colour each quick-pick chip by seriousness. Additive: the
         // `categories` shape is unchanged (still string keywords), so existing pickers keep working.
+        // Shipped WITH the catalog rather than fetched per selection. The inspector taps four or five
+        // chips in a row on a phone in a yard; four or five round trips to say "this is usually worn
+        // spark plugs" would arrive after they had already moved on. The whole library is ~105 concepts
+        // and the picker already fetches this once per modal.
+        //
+        // `causes` / `fixes` come from RepairOutlook so the inspector's picker, the supervisor's
+        // dispatch plan and the AI suggestion card cannot answer the same question differently.
         $keywordRisk = \App\Models\FindingKeyword::active()
-            ->get(['keyword', 'keyword_ar', 'risk'])
+            ->with(['profile:id,finding_keyword_id,likely_causes', 'repairActions:id,label,label_ar'])
+            ->get(['id', 'keyword', 'keyword_ar', 'risk'])
             ->keyBy('keyword')
-            ->map(fn ($k) => \App\Models\FindingKeyword::riskMeta($k->risk) + ['risk' => $k->risk, 'ar' => $k->keyword_ar]);
+            ->map(fn ($k) => \App\Models\FindingKeyword::riskMeta($k->risk) + [
+                'risk'   => $k->risk,
+                'ar'     => $k->keyword_ar,
+                'causes' => \App\Services\Garage\RepairOutlook::causesOf($k),
+                'fixes'  => \App\Services\Garage\RepairOutlook::fixesOf($k),
+            ]);
 
         return ResponseHelper::SuccessResponse(
             [

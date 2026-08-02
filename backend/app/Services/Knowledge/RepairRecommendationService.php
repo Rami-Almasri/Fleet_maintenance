@@ -20,7 +20,60 @@ class RepairRecommendationService
         private RepairHistoryQueryService $history,
         private RepairCohortStats $stats,
         private ConfidenceScorer $scorer,
+        private ?\App\Services\KeywordOntologyService $ontology = null,
+        private ?\App\Services\MatchExplanationService $explainer = null,
     ) {
+    }
+
+    /**
+     * WHAT WE KNOW ABOUT THIS FAULT ITSELF — the ontology's card for it.
+     *
+     * Separate from everything else in this class, and deliberately so. The rest of the envelope
+     * answers "what happened last time we repaired this", which needs repair history and goes quiet
+     * without it. This answers "what IS this fault" — its wording, what usually causes it, what usually
+     * fixes it, and how much of that is sourced — and it is just as true on a fleet that has never seen
+     * the fault before. It is the half of the panel that should never have been able to go blank.
+     *
+     * Identical shape to `/finding-keywords/resolve`, built from the same two services, so the card
+     * here and the card on the keyword-admin page cannot drift apart.
+     *
+     * @return array<string,mixed>|null  null when the symptom matches no concept at all
+     */
+    private function faultKnowledge(SimilarRepairQuery $q): ?array
+    {
+        if (blank($q->symptom)) {
+            return null;
+        }
+
+        $ontology  = $this->ontology  ?? app(\App\Services\KeywordOntologyService::class);
+        $explainer = $this->explainer ?? app(\App\Services\MatchExplanationService::class);
+
+        $match = $ontology->resolve($q->symptom, ['limit' => 1])->first();
+
+        if (! $match) {
+            return null;
+        }
+
+        $scopeChain = \App\Support\VehicleScope::chain($q->make, $q->model);
+        $keyword    = $match['keyword'];
+        $meta       = \App\Models\FindingKeyword::riskMeta($keyword->risk);
+
+        return [
+            'keyword'        => $keyword->keyword,
+            'keyword_ar'     => $keyword->keyword_ar,
+            'category_label' => $keyword->category_label,
+            'category_label_ar' => $keyword->category_label_ar,
+            'risk_label'     => $meta['label'],
+            'risk_tone'      => $meta['tone'],
+            'score'          => $match['score'],
+            'confidence'     => $match['confidence'],
+            // Which terms fired and how — the part that makes a wrong answer point at the bad term
+            // rather than at an opaque number.
+            'matches'        => $match['matches'],
+            // Provenance, what it is usually caused by and fixed by, and the honest caveat when
+            // nothing has been cited. All of it already assembled by the explainer.
+            'explanation'    => $explainer->explain($match, $scopeChain),
+        ];
     }
 
     /**
@@ -42,6 +95,17 @@ class RepairRecommendationService
             ],
             'has_history' => $result->hasHistory(),
             'sample_size' => $result->sampleSize(),
+
+            // WHAT THIS FAULT IS, regardless of whether we have ever repaired it.
+            //
+            // Carried on BOTH branches, and it is the empty branch that needed it: the panel used to go
+            // completely blank on a fault with no repair history, when the platform in fact knows what
+            // the fault is, what usually causes it and what usually fixes it. That knowledge does not
+            // depend on having seen the fault before.
+            //
+            // It is NEVER folded into `sample_size` or the confidence band — those describe the repair
+            // cohort, and curated vocabulary is not a repair. See faultKnowledge() above.
+            'fault_knowledge' => $this->faultKnowledge($q),
         ];
 
         if (! $result->hasHistory()) {

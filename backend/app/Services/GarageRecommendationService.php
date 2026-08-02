@@ -10,6 +10,8 @@ use App\Services\Garage\GarageOutcomeForecaster;
 use App\Services\Garage\MetricDictionary;
 use App\Services\Garage\PerFaultRecommender;
 use App\Services\Garage\RepairOutlook;
+use App\Services\Garage\ScoreBreakdown;
+use App\Support\VehicleScope;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -111,7 +113,14 @@ class GarageRecommendationService
                 // pure-core test file depend on a database connection it deliberately does not have.
                 // Same treatment as `metrics` and `cost_freshness`: the DB-backed entry point does the
                 // querying, the core receives the answer.
-                'repair_outlook' => $this->repairOutlook->for((array) ($criteria['faults_detail'] ?? [])),
+                // Scoped to THIS car. The fleet's own history of a fault differs by model — an
+                // alignment job on a Yukon does not drag in the same extra work as one on a Patrol —
+                // and the graph stores make/model-specific edges alongside universal ones. Passing the
+                // chain lets the narrowest evidence that exists win, falling back to fleet-wide.
+                'repair_outlook' => $this->repairOutlook->for(
+                    (array) ($criteria['faults_detail'] ?? []),
+                    VehicleScope::chain($criteria['brand'] ?? null, $criteria['model'] ?? null),
+                ),
             ],
         );
     }
@@ -506,10 +515,37 @@ class GarageRecommendationService
     }
 
     /**
+     * THE EXPECTED WORK ALONE — what the garage will do, with no garage scoring behind it.
+     *
+     * The block moved off the assign step (where it was a by-product of the recommendation payload) onto
+     * the ticket itself, which is read by everyone, not only the supervisor holding maintenance.delegate.
+     * Scoring a dozen garages to render two bullet lists would be an absurd price for that, so this is
+     * the one thing the ticket drawer actually needs, computed on its own.
+     *
+     * Scope chain built exactly as forTicket() builds it — brand stays implicit ([[forTicket]]), so the
+     * fleet-history line reads the same numbers on the ticket as it did on the assign step. Passing the
+     * make here would silently narrow the evidence and make the two surfaces disagree.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function outlookForTicket(Maintenance $ticket): array
+    {
+        $vehicle = $ticket->relationLoaded('vehicle') ? $ticket->vehicle : $ticket->vehicle()->first();
+
+        return $this->repairOutlook->for(
+            $this->ticketFaultsDetail($ticket),
+            VehicleScope::chain(null, $vehicle?->model),
+        );
+    }
+
+    /**
      * The ticket's detected faults as {symptom, category_key, label} — from the promoted tasks (symptom +
      * category_key) or, failing that, the findings JSON resolved through the catalog.
      *
-     * @return array<int, array{symptom:string, category_key:string, label:string}>
+     * `task_id` rides along so a caller can hang the per-fault repair-history panel off the same list; a
+     * finding that never became a task carries null and the caller falls back to a symptom lookup.
+     *
+     * @return array<int, array{symptom:string, category_key:string, label:string, task_id:?int}>
      */
     private function ticketFaultsDetail(Maintenance $ticket): array
     {
@@ -522,7 +558,7 @@ class GarageRecommendationService
             if (! $cat) {
                 continue;
             }
-            $out[] = ['symptom' => $task->symptom ?: ($labels[$cat] ?? $cat), 'category_key' => $cat, 'label' => $labels[$cat] ?? $cat];
+            $out[] = ['symptom' => $task->symptom ?: ($labels[$cat] ?? $cat), 'category_key' => $cat, 'label' => $labels[$cat] ?? $cat, 'task_id' => $task->id];
         }
 
         if (empty($out)) {
@@ -532,7 +568,7 @@ class GarageRecommendationService
                 if (! $cat) {
                     continue;
                 }
-                $out[] = ['symptom' => $text, 'category_key' => $cat, 'label' => $labels[$cat] ?? $cat];
+                $out[] = ['symptom' => $text, 'category_key' => $cat, 'label' => $labels[$cat] ?? $cat, 'task_id' => null];
             }
         }
 
@@ -967,6 +1003,30 @@ class GarageRecommendationService
 
         $n = count($faults);
         $detail = "{$exactN} of {$n} faults with same-model history, {$domainN} with same-domain history";
+
+        // THE VOLUMES, not just the tiers. Two garages can land on an identical tier summary — "2 of 3
+        // faults with same-model history" — and still be nine points apart, because within a tier the
+        // score ramps linearly on the NUMBER of matching repairs (20 on this model is not 3 on this
+        // model). A detail line that omits the figure the points were computed from turns the component
+        // into exactly the unexplained number this breakdown exists to abolish, and it does it on the
+        // decisive component, which is where it does the most damage.
+        $clauses = [];
+        foreach ($points as $p) {
+            $clauses[] = match ($p['tier']) {
+                'exact'   => "{$p['label']} {$p['jobs']}× on this model",
+                'domain'  => "{$p['label']} {$p['at_garage']}× on other models",
+                'general' => "{$p['label']} — no record in this area",
+                default   => "{$p['label']} — no history",
+            };
+        }
+        // Long fault lists would push the sentence past readable; the tier summary above still covers
+        // the remainder, and the truncation is stated rather than silent.
+        $shown = array_slice($clauses, 0, 3);
+        if (count($clauses) > 3) {
+            $shown[] = '+' . (count($clauses) - 3) . ' more';
+        }
+        $detail .= ' · ' . implode(', ', $shown);
+
         if ($n > 1 && $critical && $critical['tier']) {
             $detail .= " · weighted toward {$critical['label']} ({$critical['tier']})";
         }
@@ -1105,29 +1165,15 @@ class GarageRecommendationService
      * Flatten the breakdown for the API: an ordered list the UI can render straight down, each row
      * carrying the question it answers, the points and the facts behind them.
      *
+     * The shaping itself lives in ScoreBreakdown because the per-fault cards render the same rows for
+     * both garages they name; one implementation, so the hero card and the fault card cannot disagree
+     * about what a component is called or what it scored.
+     *
      * @return array<string, mixed>
      */
     private function presentBreakdown(array $bd): array
     {
-        $rows = [];
-        foreach ($bd['components'] as $key => $c) {
-            $rows[] = [
-                'key'        => $key,
-                'label'      => $c['label'],
-                'question'   => $c['question'],
-                'awarded'    => $c['awarded'],
-                'max'        => $c['max'],
-                'applicable' => $c['applicable'],
-                'detail'     => $c['detail'],
-                'facts'      => $c['facts'] ?? null,
-            ];
-        }
-        return [
-            'total'         => $bd['total'],
-            'components'    => $rows,
-            'redistributed' => $bd['redistributed'],
-            'note'          => $bd['budget_note'],
-        ];
+        return ScoreBreakdown::present($bd);
     }
 
     /**

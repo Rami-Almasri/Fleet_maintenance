@@ -5,7 +5,10 @@ namespace Tests\Crud;
 use App\Models\ActionCatalog;
 use App\Models\FindingKeyword;
 use App\Models\KeywordProfile;
+use App\Models\Maintenance;
+use App\Models\MaintenanceTask;
 use App\Services\Garage\RepairOutlook;
+use App\Services\GarageRecommendationService;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -153,5 +156,72 @@ class RepairOutlookTest extends CrudTestCase
     {
         $this->assertSame([], app(RepairOutlook::class)->for([]));
         $this->assertSame([], app(RepairOutlook::class)->for([['symptom' => '  ', 'category_key' => null]]));
+    }
+
+    // ── On the ticket ────────────────────────────────────────────────────────────────────────────
+    //
+    // The block moved off the assign step onto the ticket, which is read by everyone rather than by one
+    // supervisor once. That move is only honest if the ticket can answer the question WITHOUT scoring a
+    // dozen garages first — these pin the standalone path and the route that exposes it.
+
+    /** A ticket with one promoted fault per symptom. */
+    private function ticket(array $symptoms): Maintenance
+    {
+        $vehicleId = $this->makeVehicle();
+        $ticket = Maintenance::create([
+            'vehicle_id'      => $vehicleId,
+            'workflow_status' => Maintenance::WF_UNDER_REPAIR,
+            'event_status'    => 'OUT',
+        ]);
+
+        foreach ($symptoms as $symptom) {
+            MaintenanceTask::create([
+                'maintenance_id' => $ticket->id,
+                'vehicle_id'     => $vehicleId,
+                'symptom'        => $symptom,
+                'category_key'   => 'engine',
+                'status'         => MaintenanceTask::STATUS_PENDING,
+            ]);
+        }
+
+        return $ticket;
+    }
+
+    public function test_the_expected_work_is_answerable_from_the_ticket_alone(): void
+    {
+        $this->concept('Overheating', ['Coolant leak'], [['Replace thermostat', 'typical']], 'critical');
+
+        $rows = app(GarageRecommendationService::class)->outlookForTicket($this->ticket(['Overheating']));
+
+        $this->assertCount(1, $rows);
+        $this->assertTrue($rows[0]['known']);
+        $this->assertSame(['Coolant leak'], $rows[0]['causes']);
+        $this->assertSame(['Replace thermostat'], array_column($rows[0]['fixes'], 'label'));
+    }
+
+    public function test_the_ticket_route_returns_the_expected_work_without_ranking_a_garage(): void
+    {
+        $this->concept('Overheating', ['Coolant leak'], [['Replace thermostat', 'typical']], 'critical');
+        $ticket = $this->ticket(['Overheating']);
+
+        $res = $this->getJson("/api/maintenance-tickets/{$ticket->id}/repair-outlook");
+
+        $res->assertSuccessful();
+        $this->assertSame('Overheating', $res->json('data.0.symptom'));
+        // The payload is the work and nothing else — no garages, no scores. A ticket reader is not
+        // being handed a dispatch decision they did not ask for.
+        $this->assertArrayNotHasKey('primary', (array) $res->json('data'));
+    }
+
+    public function test_a_finding_that_became_a_fault_carries_its_task_so_history_can_hang_off_it(): void
+    {
+        // The assign step mounts "Previous Similar Repairs" per fault off exactly this id; without it
+        // every fault would fall back to a symptom preview and lose the real repair thread.
+        $this->concept('Overheating', ['Coolant leak'], [['Replace thermostat', 'typical']]);
+        $ticket = $this->ticket(['Overheating']);
+
+        $detail = app(GarageRecommendationService::class)->forTicket($ticket)['ticket']['faults_detail'];
+
+        $this->assertSame($ticket->tasks()->first()->id, $detail[0]['task_id']);
     }
 }

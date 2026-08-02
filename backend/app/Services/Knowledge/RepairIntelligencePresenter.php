@@ -44,6 +44,9 @@ class RepairIntelligencePresenter
             'recommendation'     => self::recommendation($d, $confidence, $state, $showFinancials),
             'statistics'         => self::statistics($d['statistics'] ?? null, $sample, $showFinancials),
             'similar_repairs'    => self::similarRepairs($d['similar_repairs']['tiers'] ?? [], $showFinancials),
+            // Passed through untouched: it carries no money and no recommendation, so there is nothing
+            // for the financial gate to do to it.
+            'fault_knowledge'    => $d['fault_knowledge'] ?? null,
             'explanation'        => [
                 'why'      => array_values((array) ($d['why'] ?? [])),
                 'evidence' => self::evidence((array) ($d['evidence'] ?? []), $showFinancials),

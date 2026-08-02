@@ -23,6 +23,154 @@ use Illuminate\Support\Collection;
  */
 class RepairHistoryQueryService
 {
+    /**
+     * BROADER HISTORY — the same area of the car, out of the fleet's real repair record.
+     *
+     * `similarRepairs` above asks "have we repaired THIS fault before" against `maintenance_tasks`, the
+     * structured workflow. That table is ~100 rows old. Meanwhile `maintenance_signatures` holds ~49k
+     * classified events derived from the historical sheet, and the result was a panel reporting "no
+     * comparable repairs" for a brake fault on a fleet with 1,405 recorded brake repairs. It was not
+     * wrong about its own corpus; it was consulting the wrong one.
+     *
+     * DELIBERATELY A SECOND, WEAKER ANSWER. Signatures are 22 area buckets, not 105 faults, and the rows
+     * behind them carry no re-inspection outcome and usually no cost. So this returns a COUNT and a few
+     * dated examples — never a recommendation, never a success rate, and it is kept out of the
+     * confidence band entirely. Presenting it as equivalent evidence would let a thousand "BRAKES"
+     * events argue for a conclusion about one specific brake fault, which they cannot support.
+     *
+     * @return array{signatures:array<int,string>, total:int, by_tier:array<string,int>,
+     *               examples:array<int,array<string,mixed>>, category:?string}
+     */
+    public function broaderHistory(SimilarRepairQuery $q): array
+    {
+        $category   = $this->categoryFor($q);
+        $signatures = $category
+            ? (array) config("knowledge.broader_history.category_signatures.{$category}", [])
+            : [];
+
+        $empty = ['signatures' => [], 'total' => 0, 'by_tier' => [], 'examples' => [], 'category' => $category];
+
+        if ($signatures === []) {
+            return $empty;
+        }
+
+        // TIER RESOLVED IN SQL, not in PHP over a capped page.
+        //
+        // The first cut of this counted tiers by looping the newest 2,000 rows — which silently reported
+        // "2000" for an area with 2,521 repairs, i.e. the page size masquerading as a fleet total. The
+        // count has to be unbounded and the examples separately limited; they are two questions.
+        $tierCase = 'CASE
+            WHEN ? IS NOT NULL AND ms.vehicle_id = ? THEN 1
+            WHEN ? IS NOT NULL AND ? IS NOT NULL AND v.make = ? AND v.model = ? THEN 2
+            WHEN ? IS NOT NULL AND v.make = ? THEN 3
+            ELSE 4 END';
+
+        $tierBindings = [
+            $q->vehicleId, $q->vehicleId,
+            $q->make, $q->model, $q->make, $q->model,
+            $q->make, $q->make,
+        ];
+
+        // `maintenance_signatures` denormalises vehicle_id and occurred_at precisely so this join stays
+        // cheap. `is_exposure` rows (BODY / RIM customer damage) are KEPT — unlike the workshop-quality
+        // metrics that must exclude them, "how often have we worked on this area" is a fair question to
+        // answer with them.
+        $base = fn () => \Illuminate\Support\Facades\DB::table('maintenance_signatures as ms')
+            ->join('maintenances as m', 'm.id', '=', 'ms.maintenance_id')
+            ->leftJoin('vehicles as v', 'v.id', '=', 'ms.vehicle_id')
+            // LIVE query: retired tickets are excluded. A deleted ticket is one the fleet decided did not
+            // happen, and it must not come back as precedent ([[softdelete-bypassed-by-raw-queries]]).
+            ->whereNull('m.deleted_at')
+            ->whereIn('ms.signature', $signatures)
+            ->when($q->excludeMaintenanceId, fn ($w) => $w->where('ms.maintenance_id', '!=', $q->excludeMaintenanceId));
+
+        // COUNT(DISTINCT maintenance_id), not COUNT(*). A category can map to several signatures
+        // (`suspension` → SUSPENSION + STEERING) and one ticket can carry both, so counting rows would
+        // report two repairs where the workshop did one job. The question is "how many times have we
+        // dealt with this area", and the unit of that is the visit.
+        $counts = $base()
+            ->selectRaw("{$tierCase} AS tier, COUNT(DISTINCT ms.maintenance_id) AS n", $tierBindings)
+            ->groupBy('tier')
+            ->pluck('n', 'tier');
+
+        $total = (int) $counts->sum();
+
+        if ($total === 0) {
+            return ['signatures' => $signatures] + $empty;
+        }
+
+        $byTier = [];
+        foreach ($counts as $tier => $n) {
+            $byTier[self::TIER_LABELS[(int) $tier]] = (int) $n;
+        }
+
+        // Examples favour the NARROWEST tier available, so a supervisor sees this car's own history
+        // before the fleet's when both exist, then the most recent within that.
+        $examples = $base()
+            ->leftJoin('vendors as vd', 'vd.id', '=', 'm.vendor_id')
+            ->selectRaw(
+                "ms.maintenance_id, ms.vehicle_id, ms.occurred_at, ms.signature, v.make, v.model,
+                 v.plate_no, vd.name AS garage, m.service_main, m.service_sup, {$tierCase} AS tier",
+                $tierBindings,
+            )
+            ->orderBy('tier')
+            ->orderByDesc('ms.occurred_at')
+            // Over-fetch, then keep one row per ticket: the same visit can appear under two signatures
+            // and a list showing the same repair three times reads as three separate precedents.
+            ->limit(((int) config('knowledge.broader_history.examples', 5)) * 4)
+            ->get()
+            ->unique('maintenance_id')
+            ->take((int) config('knowledge.broader_history.examples', 5))
+            ->values()
+            ->map(fn ($row) => [
+                'maintenance_id' => (int) $row->maintenance_id,
+                'vehicle_id'     => $row->vehicle_id,
+                'plate'          => $row->plate_no,
+                'make'           => $row->make,
+                'model'          => $row->model,
+                'signature'      => $row->signature,
+                'work'           => trim((string) $row->service_main.' '.(string) $row->service_sup) ?: null,
+                'garage'         => $row->garage,
+                'occurred_at'    => $row->occurred_at ? substr((string) $row->occurred_at, 0, 10) : null,
+                'tier'           => (int) $row->tier,
+                'tier_label'     => self::TIER_LABELS[(int) $row->tier],
+            ])
+            ->all();
+
+        return [
+            'signatures' => $signatures,
+            'total'      => $total,
+            'by_tier'    => $byTier,
+            'examples'   => $examples,
+            'category'   => $category,
+        ];
+    }
+
+    /**
+     * Which findings category this query is about.
+     *
+     * Prefers the category already on the task, then falls back to looking the symptom up in the
+     * findings vocabulary — `maintenance_tasks.category_key` is NULL on every row written so far, so
+     * without the fallback this feature would resolve nothing at all on real tickets.
+     */
+    private function categoryFor(SimilarRepairQuery $q): ?string
+    {
+        if (filled($q->categoryKey)) {
+            return $q->categoryKey;
+        }
+
+        if (blank($q->symptom)) {
+            return null;
+        }
+
+        $needle = \App\Support\TextNormalizer::key($q->symptom);
+
+        return \App\Models\FindingKeyword::query()
+            ->get(['id', 'keyword', 'category_key'])
+            ->first(fn ($k) => \App\Support\TextNormalizer::key($k->keyword) === $needle)
+            ?->category_key;
+    }
+
     /** Run the tiered retrieval for a query. */
     public function similarRepairs(SimilarRepairQuery $q): SimilarRepairResult
     {
