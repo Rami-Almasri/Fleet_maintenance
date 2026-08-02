@@ -13,21 +13,20 @@ import BarChart from '../components/ui/BarChart';
 import LineChart from '../components/ui/LineChart';
 import CountUp from '../components/ui/CountUp';
 import FleetPulseGrid from '../components/FleetPulseGrid';
-import ServiceDueCard from '../components/ServiceDueCard';
 import RecentlyFixedCard from '../components/RecentlyFixedCard';
 import MaintenanceWorkflowAnalyticsPanel from '../components/analytics/MaintenanceWorkflowAnalyticsPanel';
 import { aed, fmtDate } from '../lib/format';
 import { delayReasonLabel } from '../lib/maintenanceCheckpoints';
 import { SHOW_FINANCIALS } from '../config/features';
 import { useAuth } from '../auth/AuthContext';
-import { usePermissions } from '../hooks/usePermissions';
+import { useI18n } from '../i18n/I18nContext';
 
-// Time-of-day greeting for the dashboard header ("Good morning, Rami!").
-function greeting() {
+// Time-of-day greeting key for the dashboard header ("Good morning, Rami!").
+function greetKey() {
   const h = new Date().getHours();
-  if (h < 12) return 'Good morning';
-  if (h < 18) return 'Good afternoon';
-  return 'Good evening';
+  if (h < 12) return 'morning';
+  if (h < 18) return 'afternoon';
+  return 'evening';
 }
 
 // Compact currency for chart axes (AED 4,180 → "4.2k") so y-labels never overflow.
@@ -70,8 +69,9 @@ function checkpointDelayDays(prev, next) {
 // than two unlabelled dates jammed together: the ETA change (Previous → New + how many days it slipped),
 // the reason it moved, and who filed it when. Amber "No update filed yet" when nobody has reported.
 function CheckpointLine({ cp }) {
+  const { t } = useI18n();
   if (!cp) {
-    return <p className="text-[11px] font-semibold text-amber-600">No update filed yet</p>;
+    return <p className="text-[11px] font-semibold text-amber-600">{t('dash.cp.none')}</p>;
   }
   const reason = cp.delay_reason === 'other' ? (cp.delay_reason_other || null) : delayReasonLabel(cp.delay_reason);
   const etaMoved = !!cp.next_expected_date
@@ -84,20 +84,20 @@ function CheckpointLine({ cp }) {
           {etaMoved && cp.previous_expected_date && (
             <span className="text-slate-400"><span className="line-through decoration-slate-300">{fmtDate(cp.previous_expected_date)}</span> →</span>
           )}
-          <span className="font-semibold text-slate-700">{etaMoved ? 'New ETA' : 'ETA'} {fmtDate(cp.next_expected_date)}</span>
+          <span className="font-semibold text-slate-700">{etaMoved ? t('dash.cp.newEta') : t('dash.cp.eta')} {fmtDate(cp.next_expected_date)}</span>
           {dd != null && dd > 0 && (
-            <span className="rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-bold text-red-600 ring-1 ring-red-200">+{dd}d</span>
+            <span className="rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-bold text-red-600 ring-1 ring-red-200">{t('dash.cp.slipDays', { n: dd })}</span>
           )}
         </p>
       ) : (
-        <p className="text-[11px] font-semibold text-slate-600">Update filed</p>
+        <p className="text-[11px] font-semibold text-slate-600">{t('dash.cp.filed')}</p>
       )}
       {etaMoved && (
         reason
-          ? <p className="text-[11px] text-amber-700"><span className="font-semibold">Reason:</span> {reason}</p>
-          : <p className="text-[11px] text-amber-600">No delay reason recorded</p>
+          ? <p className="text-[11px] text-amber-700"><span className="font-semibold">{t('dash.cp.reason')}</span> {reason}</p>
+          : <p className="text-[11px] text-amber-600">{t('dash.cp.noReason')}</p>
       )}
-      <p className="text-[11px] text-slate-400">{cp.by ? `Updated by ${cp.by}` : 'Updated'}{cp.at ? ` · ${fmtDate(cp.at)}` : ''}</p>
+      <p className="text-[11px] text-slate-400">{cp.by ? t('dash.cp.updatedBy', { by: cp.by }) : t('dash.cp.updated')}{cp.at ? ` · ${fmtDate(cp.at)}` : ''}</p>
     </div>
   );
 }
@@ -112,39 +112,29 @@ function KpiCell({ label, value, tone = 'text-slate-800' }) {
   );
 }
 
-// pluralised "N day(s)".
-const days = (n) => `${n} day${Math.abs(n) === 1 ? '' : 's'}`;
+// pluralised "N day(s)" — bound to the active language's plural rules by the
+// caller, since Arabic needs six forms rather than English's two.
+const daysWith = (tp) => (n) => tp('dash.days', Math.abs(n), { n });
 
 // WHERE we know this car is in the shop from — the standing traceability rule: no card without its
 // data origin. 'contract' = the OM/sheet-synced maintenance contract; 'workshop' = the app's own
 // maintenance-workflow ticket; 'both' = the same visit exists in each (shown once).
 const SOURCE_BADGE = {
-  contract: {
-    label: 'From sheet',
-    cls: 'bg-sky-50 text-sky-700 ring-sky-200',
-    title: 'Source: the open type-U maintenance contract synced from OfficeManager / the N-Maintenance sheet. No app workflow ticket is running for this visit.',
-  },
-  workshop: {
-    label: 'From system',
-    cls: 'bg-violet-50 text-violet-700 ring-violet-200',
-    title: 'Source: a maintenance-workflow ticket created in this app. No open maintenance contract stands behind this visit.',
-  },
-  both: {
-    label: 'Sheet + System',
-    cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
-    title: 'Source: both records agree — an open maintenance contract (sheet/OM) AND a live app workflow ticket for the same visit. Listed once.',
-  },
+  contract: 'bg-sky-50 text-sky-700 ring-sky-200',
+  workshop: 'bg-violet-50 text-violet-700 ring-violet-200',
+  both: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
 };
 
 function SourceBadge({ source }) {
-  const s = SOURCE_BADGE[source];
-  if (!s) return null;
+  const { t } = useI18n();
+  const cls = SOURCE_BADGE[source];
+  if (!cls) return null;
   return (
     <span
-      className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ring-1 ${s.cls}`}
-      title={s.title}
+      className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ring-1 ${cls}`}
+      title={t(`dash.source.${source}.title`)}
     >
-      {s.label}
+      {t(`dash.source.${source}.label`)}
     </span>
   );
 }
@@ -157,6 +147,8 @@ function SourceBadge({ source }) {
 // a null target falls back to the default window and the card is flagged "Estimated"). Deep-links to
 // the vehicle. The whole card is the KPI the user asked for — no plain text ETA.
 function RepairProgressCard({ item }) {
+  const { t, tp } = useI18n();
+  const days = daysWith(tp);
   const { id, plate, car, garage, eta, checkpoint, problem, problem_items, problem_type, source, ticket_id, other_tickets } = item || {};
   const e = eta || {};
   // Deep-link to the car; a ticket-sourced card with no vehicle falls back to its own ticket.
@@ -175,9 +167,9 @@ function RepairProgressCard({ item }) {
   const colorKey = ratio > 1 ? 'red' : ratio >= 0.75 ? 'orange' : 'green';
   const c = PROGRESS_TONE[colorKey];
 
-  const badge = status === 'overdue' ? `+${days(over)} overdue`
-    : status === 'due_today' ? 'Due today'
-      : `${days(left)} remaining`;
+  const badge = status === 'overdue' ? t('dash.repair.overdueBy', { days: days(over) })
+    : status === 'due_today' ? t('dash.repair.dueToday')
+      : t('dash.repair.remainingIn', { days: days(left) });
   const remainTone = status === 'overdue' ? 'text-red-600' : status === 'due_today' ? 'text-amber-600' : 'text-emerald-600';
 
   return (
@@ -187,12 +179,12 @@ function RepairProgressCard({ item }) {
     >
       {/* Tone accent strip + ambient wash — instant read of health before the eye reaches the bar. */}
       <div className={`absolute inset-x-0 top-0 h-1 bg-gradient-to-r ${c.accent}`} />
-      <div className={`pointer-events-none absolute -right-8 -top-10 h-24 w-24 rounded-full ${c.glow} blur-2xl`} />
+      <div className={`pointer-events-none absolute -end-8 -top-10 h-24 w-24 rounded-full ${c.glow} blur-2xl`} />
 
       {/* Vehicle header */}
       <div className="relative mb-3 flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="truncate text-sm font-bold text-slate-900">{plate || car || 'Vehicle'}</p>
+          <p className="truncate text-sm font-bold text-slate-900">{plate || car || t('dash.repair.vehicle')}</p>
           <p className="truncate text-xs text-slate-400">{[car, garage].filter(Boolean).join(' · ') || '—'}</p>
         </div>
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
@@ -201,17 +193,17 @@ function RepairProgressCard({ item }) {
           {other_tickets > 0 && (
             <span
               className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500"
-              title={`This car has ${other_tickets + 1} open workflow tickets. The card shows the longest-running one.`}
+              title={t('dash.repair.otherTicketsHint', { n: other_tickets + 1 })}
             >
-              +{other_tickets} ticket{other_tickets === 1 ? '' : 's'}
+              {tp('dash.repair.moreTickets', other_tickets, { n: other_tickets })}
             </span>
           )}
           {est && (
             <span
               className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500"
-              title={`No ready-by date on the ${source === 'workshop' ? 'ticket' : 'maintenance contract'} — measured against the default repair window`}
+              title={t(source === 'workshop' ? 'dash.repair.estimatedTicket' : 'dash.repair.estimatedContract')}
             >
-              Estimated
+              {t('dash.repair.estimated')}
             </span>
           )}
         </div>
@@ -219,14 +211,14 @@ function RepairProgressCard({ item }) {
 
       {/* WHY the car is in the shop — the fault(s)/reason behind the visit. */}
       <div className="relative mb-3 rounded-xl bg-slate-50 px-2.5 py-2 ring-1 ring-slate-100">
-        <p className="text-[10px] font-medium uppercase tracking-wide text-slate-400">Problem</p>
+        <p className="text-[10px] font-medium uppercase tracking-wide text-slate-400">{t('dash.repair.problem')}</p>
         {problem ? (
           <p className="truncate text-xs font-semibold text-slate-700" title={(problem_items || []).length > 1 ? problem_items.join(' · ') : problem}>
             {problem}{problem_type ? <span className="ms-1 font-normal text-slate-400">· {problem_type}</span> : null}
           </p>
         ) : (
           <p className="text-xs text-slate-400">
-            {source === 'workshop' ? 'No fault recorded on the ticket' : 'No fault recorded on the maintenance contract'}
+            {t(source === 'workshop' ? 'dash.repair.noFaultTicket' : 'dash.repair.noFaultContract')}
           </p>
         )}
       </div>
@@ -234,14 +226,14 @@ function RepairProgressCard({ item }) {
       {/* Progress bar */}
       <div className="relative">
         <div className="mb-1.5 flex items-baseline justify-between gap-2">
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Repair Progress</span>
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{t('dash.repair.progress')}</span>
           <span className="flex items-baseline gap-1 tabular-nums">
             <span className={`text-lg font-extrabold leading-none ${c.pct}`}>{pct}%</span>
           </span>
         </div>
         <div className="mb-1.5 flex items-baseline justify-between text-xs font-semibold text-slate-700">
-          <span>Day <span className="tabular-nums">{el}</span></span>
-          <span className="text-slate-400">Target {days(al)}</span>
+          <span>{t('dash.repair.day')} <span className="tabular-nums">{el}</span></span>
+          <span className="text-slate-400">{t('dash.repair.target', { days: days(al) })}</span>
         </div>
         <div className={`h-2.5 w-full overflow-hidden rounded-full ring-1 ring-inset ring-slate-200/50 ${c.track}`}>
           <div
@@ -261,27 +253,28 @@ function RepairProgressCard({ item }) {
 
       {/* Last checkpoint filed on /maintenance-progress — the delay story (ETA change + reason + who/when). */}
       <div className="relative mt-2.5 rounded-xl bg-slate-50/70 px-2.5 py-2 ring-1 ring-slate-100">
-        <p className="mb-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-400">Latest checkpoint</p>
+        <p className="mb-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-400">{t('dash.repair.latestCheckpoint')}</p>
         <CheckpointLine cp={checkpoint} />
       </div>
 
       {/* Underlying figures */}
       <dl className="relative mt-3 grid grid-cols-2 gap-x-3 gap-y-2 border-t border-slate-100 pt-3">
-        <KpiCell label="In workshop" value={days(el)} />
-        <KpiCell label="Planned" value={`${days(al)}${est ? ' · est.' : ''}`} />
+        <KpiCell label={t('dash.repair.inWorkshop')} value={days(el)} />
+        <KpiCell label={t('dash.repair.planned')} value={`${days(al)}${est ? ` · ${t('dash.repair.estAbbr')}` : ''}`} />
         <KpiCell
-          label={status === 'overdue' ? 'Overdue' : 'Remaining'}
-          value={status === 'overdue' ? days(over) : status === 'due_today' ? 'Due today' : days(left)}
+          label={status === 'overdue' ? t('dash.repair.overdue') : t('dash.repair.remaining')}
+          value={status === 'overdue' ? days(over) : status === 'due_today' ? t('dash.repair.dueToday') : days(left)}
           tone={remainTone}
         />
-        <KpiCell label="Expected" value={fmtDate(e.expected_on) || '—'} />
-        <KpiCell label="Started" value={fmtDate(e.started_on) || '—'} />
+        <KpiCell label={t('dash.repair.expected')} value={fmtDate(e.expected_on) || '—'} />
+        <KpiCell label={t('dash.repair.started')} value={fmtDate(e.started_on) || '—'} />
       </dl>
     </Link>
   );
 }
 
 function ProactiveFlags({ data, loading }) {
+  const { t, isRTL } = useI18n();
   const inShop = data?.in_maintenance || { count: 0, items: [] };
   const src = inShop.sources || {};
   const allItems = inShop.items || [];
@@ -297,24 +290,22 @@ function ProactiveFlags({ data, loading }) {
   const items = allItems.filter(matchesSource);
 
   const SOURCE_FILTERS = [
-    { key: 'all',      label: 'All',         count: inShop.count },
-    { key: 'contract', label: 'From sheet',  count: (src.contract || 0) + (src.both || 0) },
-    { key: 'workshop', label: 'From system', count: (src.workshop || 0) + (src.both || 0) },
+    { key: 'all',      label: t('dash.flags.filterAll'),      count: inShop.count },
+    { key: 'contract', label: t('dash.source.contract.label'), count: (src.contract || 0) + (src.both || 0) },
+    { key: 'workshop', label: t('dash.source.workshop.label'), count: (src.workshop || 0) + (src.both || 0) },
   ];
 
   const groups = [
     {
       // Every car in the shop right now rendered as a visual Repair-Progress KPI card (progress bar +
       // figures), not a text row. `cardItems` switches the renderer from the row list to the card grid.
-      key: 'maintenance', title: 'In Maintenance', icon: <Icon.Wrench className="h-4 w-4" />, tone: 'blue',
+      key: 'maintenance', title: t('dash.flags.inMaintenance'), icon: <Icon.Wrench className="h-4 w-4" />, tone: 'blue',
       count: inShop.count, viewAll: '/maintenance-workflow',
-      empty: sourceFilter === 'all'
-        ? 'No cars in the workshop right now'
-        : 'No cars in the workshop from this source right now',
+      empty: t(sourceFilter === 'all' ? 'dash.flags.emptyAll' : 'dash.flags.emptySource'),
       cardItems: items,
       // The provenance filter, doubling as the split ("7 from sheet · 10 from system").
       filter: (
-        <div className="flex shrink-0 flex-wrap items-center gap-1" role="group" aria-label="Filter by data source">
+        <div className="flex shrink-0 flex-wrap items-center gap-1" role="group" aria-label={t('dash.flags.filterAria')}>
           {SOURCE_FILTERS.map((f) => {
             const on = sourceFilter === f.key;
             return (
@@ -323,11 +314,7 @@ function ProactiveFlags({ data, loading }) {
                 type="button"
                 onClick={() => setSourceFilter(f.key)}
                 aria-pressed={on}
-                title={
-                  f.key === 'contract' ? 'Only cars in the shop per the OM / N-Maintenance sheet contract'
-                    : f.key === 'workshop' ? "Only cars in the shop per the app's own maintenance-workflow ticket"
-                      : 'Every car in the shop, whichever record we hold for it'
-                }
+                title={t(`dash.flags.filterHint.${f.key}`)}
                 className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 transition ${
                   on
                     ? 'bg-indigo-600 text-white ring-indigo-600'
@@ -349,11 +336,11 @@ function ProactiveFlags({ data, loading }) {
     <SectionCard
       title={
         <span className="flex items-center gap-1.5">
-          Proactive Flags
-          <InfoTip content="Conditions to act on. Sources — In Maintenance: every car in the workshop right now, from BOTH records we hold: an open type-U maintenance contract (OM / N-Maintenance sheet, badged 'From sheet') and an app maintenance-workflow ticket in an in-shop state (badged 'From system'); a car present in both is listed once and badged 'Sheet + System'. Each is shown as a Repair-Progress card — a bar filling elapsed days-in-shop against the planned target (green under 75%, orange 75–100%, red once exceeded), a badge (N days remaining / Due today / +N days overdue), and the figures behind it (in-shop total, planned duration, remaining/overdue, expected completion, repair start). Repair start = the contract's out-date; target = its ready-by date, or a default window (card flagged 'Estimated') when none is set. Payments Overdue: returned rentals with an outstanding contract balance. Click a card to open its vehicle." />
+          {t('dash.flags.title')}
+          <InfoTip content={t('dash.flags.tooltip')} />
         </span>
       }
-      subtitle="What needs attention now — every car in the shop (from the sheet contract and from the app's own tickets) and how it's tracking against its repair ETA"
+      subtitle={t('dash.flags.subtitle')}
       actions={<Badge tone={totalCount ? 'amber' : 'gray'}>{totalCount}</Badge>}
     >
       {loading ? (
@@ -376,7 +363,7 @@ function ProactiveFlags({ data, loading }) {
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   {g.filter}
-                  <Link to={g.viewAll} className="shrink-0 text-xs font-medium text-indigo-600 hover:text-indigo-700">All →</Link>
+                  <Link to={g.viewAll} className="shrink-0 text-xs font-medium text-indigo-600 hover:text-indigo-700">{t('dash.all')} {isRTL ? '←' : '→'}</Link>
                 </div>
               </div>
               {g.cardItems ? (
@@ -427,12 +414,15 @@ function ProactiveFlags({ data, loading }) {
 // Tone ramp for the accuracy gauge — strong (green) ≥90%, watch (amber) ≥75%, poor (red) below —
 // with a matching gauge gradient, verdict word, and soft ambient glow so each card reads as one piece.
 const ACCURACY_TONE = {
-  emerald: { text: 'text-emerald-600', bar: 'bg-emerald-500', chip: 'bg-emerald-50 text-emerald-700 ring-emerald-200', from: '#34d399', to: '#059669', glow: 'bg-emerald-400/20', verdict: 'Strong' },
-  amber:   { text: 'text-amber-600',   bar: 'bg-amber-500',   chip: 'bg-amber-50 text-amber-700 ring-amber-200',       from: '#fbbf24', to: '#d97706', glow: 'bg-amber-400/20',   verdict: 'On watch' },
-  red:     { text: 'text-rose-600',    bar: 'bg-rose-500',    chip: 'bg-rose-50 text-rose-700 ring-rose-200',          from: '#fb7185', to: '#e11d48', glow: 'bg-rose-400/20',     verdict: 'Needs review' },
+  emerald: { text: 'text-emerald-600', bar: 'bg-emerald-500', chip: 'bg-emerald-50 text-emerald-700 ring-emerald-200', from: '#34d399', to: '#059669', glow: 'bg-emerald-400/20', verdict: 'strong' },
+  amber:   { text: 'text-amber-600',   bar: 'bg-amber-500',   chip: 'bg-amber-50 text-amber-700 ring-amber-200',       from: '#fbbf24', to: '#d97706', glow: 'bg-amber-400/20',   verdict: 'watch' },
+  red:     { text: 'text-rose-600',    bar: 'bg-rose-500',    chip: 'bg-rose-50 text-rose-700 ring-rose-200',          from: '#fb7185', to: '#e11d48', glow: 'bg-rose-400/20',     verdict: 'review' },
 };
 
 function AccuracyCard({ title, icon, to, total, wrong, rightLabel, wrongLabel, tooltip, loading }) {
+  // `tx` (not `t`) — this component already uses `t` for the total count.
+  const { t: tx, lang } = useI18n();
+  const numLocale = lang === 'ar' ? 'ar-AE-u-nu-latn' : 'en-US';
   const t = Math.max(0, Number(total) || 0);
   const w = Math.min(t, Math.max(0, Number(wrong) || 0));
   const right = t - w;
@@ -451,7 +441,7 @@ function AccuracyCard({ title, icon, to, total, wrong, rightLabel, wrongLabel, t
       className="group relative flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-soft transition hover:-translate-y-0.5 hover:shadow-md"
     >
       {/* ambient tone wash in the corner — subtle, matches the verdict */}
-      <div className={`pointer-events-none absolute -right-8 -top-10 h-28 w-28 rounded-full ${c.glow} blur-2xl`} />
+      <div className={`pointer-events-none absolute -end-8 -top-10 h-28 w-28 rounded-full ${c.glow} blur-2xl`} />
 
       <div className="relative flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -487,23 +477,23 @@ function AccuracyCard({ title, icon, to, total, wrong, rightLabel, wrongLabel, t
             <span className={`font-display text-2xl font-bold leading-none tabular-nums ${c.text}`}>
               {loading ? '—' : `${rate}%`}
             </span>
-            <span className="mt-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-400">accuracy</span>
+            <span className="mt-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-400">{tx('dash.accuracy.label')}</span>
           </div>
         </div>
 
         <div className="min-w-0 flex-1 space-y-2.5">
           {/* Verdict — a plain-language read of the rate, instead of the raw miss count. */}
           <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ${c.chip}`}>
-            <span className={`h-1.5 w-1.5 rounded-full ${c.bar}`} />{loading ? '—' : c.verdict}
+            <span className={`h-1.5 w-1.5 rounded-full ${c.bar}`} />{loading ? '—' : tx(`dash.accuracy.verdict.${c.verdict}`)}
           </span>
           <div className="space-y-1.5 text-xs">
             <span className="flex items-baseline gap-1.5 font-medium text-slate-500">
               <span className={`h-2 w-2 shrink-0 self-center rounded-full ${c.bar}`} />
-              <span className="tabular-nums text-base font-extrabold text-slate-900">{loading ? '—' : right.toLocaleString()}</span> {rightLabel}
+              <span className="tabular-nums text-base font-extrabold text-slate-900">{loading ? '—' : right.toLocaleString(numLocale)}</span> {rightLabel}
             </span>
             <span className="flex items-baseline gap-1.5 font-medium text-slate-500">
               <span className="h-2 w-2 shrink-0 self-center rounded-full bg-slate-300" />
-              <span className="tabular-nums text-base font-extrabold text-slate-900">{loading ? '—' : w.toLocaleString()}</span> {wrongLabel}
+              <span className="tabular-nums text-base font-extrabold text-slate-900">{loading ? '—' : w.toLocaleString(numLocale)}</span> {wrongLabel}
             </span>
           </div>
         </div>
@@ -522,11 +512,11 @@ function AccuracyCard({ title, icon, to, total, wrong, rightLabel, wrongLabel, t
 // Severity → colour (status palette) + gradient + human label. Always shown beside the chip text.
 // `glyph` tints the leading emoji disc, `halo` is a soft ambient wash behind the featured #1 offender.
 const SEVERITY_META = {
-  critical: { label: 'Critical', from: '#fb7185', to: '#e11d48', text: 'text-rose-700',    soft: 'bg-rose-50 text-rose-700 ring-rose-200',       dot: 'bg-rose-500',   glyph: 'bg-rose-100 text-rose-700 ring-rose-200',       halo: 'from-rose-500/15' },
-  high:     { label: 'High',     from: '#fdba74', to: '#ea580c', text: 'text-orange-700',  soft: 'bg-orange-50 text-orange-700 ring-orange-200', dot: 'bg-orange-500', glyph: 'bg-orange-100 text-orange-700 ring-orange-200', halo: 'from-orange-500/15' },
-  moderate: { label: 'Moderate', from: '#fcd34d', to: '#d97706', text: 'text-amber-700',   soft: 'bg-amber-50 text-amber-700 ring-amber-200',    dot: 'bg-amber-500',  glyph: 'bg-amber-100 text-amber-700 ring-amber-200',    halo: 'from-amber-400/15' },
-  routine:  { label: 'Routine',  from: '#6ee7b7', to: '#059669', text: 'text-emerald-700', soft: 'bg-emerald-50 text-emerald-700 ring-emerald-200', dot: 'bg-emerald-500', glyph: 'bg-emerald-100 text-emerald-700 ring-emerald-200', halo: 'from-emerald-400/15' },
-  unknown:  { label: 'Ungraded', from: '#cbd5e1', to: '#64748b', text: 'text-slate-600',   soft: 'bg-slate-100 text-slate-600 ring-slate-200',   dot: 'bg-slate-400',  glyph: 'bg-slate-100 text-slate-500 ring-slate-200',    halo: 'from-slate-400/10' },
+  critical: { key: 'critical', from: '#fb7185', to: '#e11d48', text: 'text-rose-700',    soft: 'bg-rose-50 text-rose-700 ring-rose-200',       dot: 'bg-rose-500',   glyph: 'bg-rose-100 text-rose-700 ring-rose-200',       halo: 'from-rose-500/15' },
+  high:     { key: 'high',         from: '#fdba74', to: '#ea580c', text: 'text-orange-700',  soft: 'bg-orange-50 text-orange-700 ring-orange-200', dot: 'bg-orange-500', glyph: 'bg-orange-100 text-orange-700 ring-orange-200', halo: 'from-orange-500/15' },
+  moderate: { key: 'moderate',     from: '#fcd34d', to: '#d97706', text: 'text-amber-700',   soft: 'bg-amber-50 text-amber-700 ring-amber-200',    dot: 'bg-amber-500',  glyph: 'bg-amber-100 text-amber-700 ring-amber-200',    halo: 'from-amber-400/15' },
+  routine:  { key: 'routine',      from: '#6ee7b7', to: '#059669', text: 'text-emerald-700', soft: 'bg-emerald-50 text-emerald-700 ring-emerald-200', dot: 'bg-emerald-500', glyph: 'bg-emerald-100 text-emerald-700 ring-emerald-200', halo: 'from-emerald-400/15' },
+  unknown:  { key: 'unknown',      from: '#cbd5e1', to: '#64748b', text: 'text-slate-600',   soft: 'bg-slate-100 text-slate-600 ring-slate-200',   dot: 'bg-slate-400',  glyph: 'bg-slate-100 text-slate-500 ring-slate-200',    halo: 'from-slate-400/10' },
 };
 const sevMeta = (s) => SEVERITY_META[s] || SEVERITY_META.unknown;
 
@@ -556,6 +546,9 @@ function faultGlyph(fault = '') {
 }
 
 function MostFrequentFaults() {
+  const { t, tp, lang } = useI18n();
+  const numLocale = lang === 'ar' ? 'ar-AE-u-nu-latn' : 'en-US';
+  const num = (n) => Number(n || 0).toLocaleString(numLocale);
   const [data, setData] = useState({ items: [], total: 0 });
   const [loading, setLoading] = useState(true);
   const [grown, setGrown] = useState(false);   // flips true after mount → bars animate their width in
@@ -602,37 +595,37 @@ function MostFrequentFaults() {
     <SectionCard
       title={
         <span className="flex items-center gap-1.5">
-          Fault Leaderboard
-          <InfoTip content="The fleet's most-reported faults, combining BOTH sources: the historical workshop sheet (classified by reason) and our maintenance system (ticket symptoms). Both are folded into one shared category taxonomy so they count together. Bar length is how OFTEN it happens; bar colour is how BAD it is (worst severity across both sources). Sold/disposed cars and cancelled/not-found tickets are excluded." />
+          {t('dash.faults.title')}
+          <InfoTip content={t('dash.faults.tooltip')} />
         </span>
       }
-      subtitle="Sheet history + our system, combined · coloured by severity"
-      actions={<Link to="/maintenance-history" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">History →</Link>}
+      subtitle={t('dash.faults.subtitle')}
+      actions={<Link to="/maintenance-history" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">{t('dash.faults.history')} →</Link>}
     >
       {loading ? (
         <ul className="space-y-3">
           {Array.from({ length: 6 }).map((_, i) => <li key={i}><Skeleton className="h-11 rounded-xl" /></li>)}
         </ul>
       ) : items.length === 0 ? (
-        <p className="py-8 text-center text-sm text-slate-400">No faults recorded yet.</p>
+        <p className="py-8 text-center text-sm text-slate-400">{t('dash.faults.empty')}</p>
       ) : (
         <div>
           {/* Headline: total faults on record + the current worst offender, side by side. */}
           <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
             {/* Total faults — the running tally, with its two sources broken out as pills. */}
             <div className="rounded-2xl bg-gradient-to-br from-slate-50 to-white p-4 ring-1 ring-slate-200/70">
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Faults on record</p>
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{t('dash.faults.onRecord')}</p>
               <p className="mt-0.5 text-[2rem] font-extrabold leading-none tabular-nums text-slate-900">
-                <CountUp value={data.total} format={(n) => Math.round(n).toLocaleString()} />
+                <CountUp value={data.total} format={(n) => num(Math.round(n))} />
               </p>
               <div className="mt-2.5 flex flex-wrap items-center gap-1.5 text-[11px] font-semibold tabular-nums">
-                <span className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-0.5 text-slate-600 ring-1 ring-slate-200" title="From the historical workshop sheet">
-                  <span aria-hidden>🗒️</span>{Number(data.sheet_total || 0).toLocaleString()}
-                  <span className="font-medium text-slate-400">sheet</span>
+                <span className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-0.5 text-slate-600 ring-1 ring-slate-200" title={t('dash.faults.sheetHint')}>
+                  <span aria-hidden>🗒️</span>{num(data.sheet_total)}
+                  <span className="font-medium text-slate-400">{t('dash.faults.sheet')}</span>
                 </span>
-                <span className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-0.5 text-slate-600 ring-1 ring-slate-200" title="From our maintenance system">
-                  <span aria-hidden>⚙️</span>{Number(data.system_total || 0).toLocaleString()}
-                  <span className="font-medium text-slate-400">system</span>
+                <span className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-0.5 text-slate-600 ring-1 ring-slate-200" title={t('dash.faults.systemHint')}>
+                  <span aria-hidden>⚙️</span>{num(data.system_total)}
+                  <span className="font-medium text-slate-400">{t('dash.faults.system')}</span>
                 </span>
               </div>
             </div>
@@ -643,11 +636,11 @@ function MostFrequentFaults() {
               const wshare = data.total ? Math.round((worst.count / data.total) * 100) : 0;
               return (
                 <div className={`relative overflow-hidden rounded-2xl bg-white p-4 ring-1 ring-slate-200/70`}>
-                  <div className={`pointer-events-none absolute -right-6 -top-8 h-28 w-28 rounded-full bg-gradient-to-br ${wm.halo} to-transparent blur-xl`} />
+                  <div className={`pointer-events-none absolute -end-6 -top-8 h-28 w-28 rounded-full bg-gradient-to-br ${wm.halo} to-transparent blur-xl`} />
                   <div className="relative flex items-center justify-between">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Top offender</p>
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{t('dash.faults.topOffender')}</p>
                     <span className={`inline-flex items-center gap-1 rounded-full px-1.5 py-px text-[11px] font-semibold ring-1 ${wm.soft}`}>
-                      <span className={`h-1.5 w-1.5 rounded-full ${wm.dot}`} />{wm.label}
+                      <span className={`h-1.5 w-1.5 rounded-full ${wm.dot}`} />{t(`dash.severity.${wm.key}`)}
                     </span>
                   </div>
                   <div className="relative mt-2 flex items-center gap-2.5">
@@ -657,7 +650,7 @@ function MostFrequentFaults() {
                     <div className="min-w-0">
                       <p className="truncate text-sm font-bold text-slate-900">{worst.fault}</p>
                       <p className="text-[11px] font-medium tabular-nums text-slate-500">
-                        <span className="font-extrabold text-slate-800">{worst.count.toLocaleString()}</span> reports · {wshare}% of all faults
+                        <span className="font-extrabold text-slate-800">{num(worst.count)}</span> {t('dash.faults.reportsShare', { pct: wshare })}
                       </p>
                     </div>
                   </div>
@@ -682,7 +675,7 @@ function MostFrequentFaults() {
                     type="button"
                     onClick={() => toggleFault(it.fault)}
                     aria-expanded={isOpen}
-                    className="group flex w-full items-center gap-3 rounded-xl px-2 py-2 text-left transition-colors hover:bg-slate-50"
+                    className="group flex w-full items-center gap-3 rounded-xl px-2 py-2 text-start transition-colors hover:bg-slate-50"
                   >
                     {/* rank — medal for the top three, plain chip below */}
                     <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-xs font-extrabold tabular-nums ${
@@ -700,9 +693,9 @@ function MostFrequentFaults() {
                           <Icon.ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-300 transition-transform group-hover:text-indigo-500 ${isOpen ? 'rotate-180 text-indigo-500' : ''}`} />
                         </span>
                         <span className="flex shrink-0 items-baseline gap-1 tabular-nums">
-                          <span className="text-base font-extrabold text-slate-900">{it.count.toLocaleString()}</span>
+                          <span className="text-base font-extrabold text-slate-900">{num(it.count)}</span>
                           <span className="text-[11px] font-medium text-slate-400">
-                            {it.count === 1 ? 'time' : 'times'}
+                            {tp('dash.faults.times', it.count)}
                           </span>
                         </span>
                       </div>
@@ -724,17 +717,17 @@ function MostFrequentFaults() {
                       {/* severity + source split + spread — the labelled second encoding (never colour-alone). */}
                       <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px]">
                         <span className={`inline-flex items-center gap-1 rounded-full px-1.5 py-px font-semibold ring-1 ${m.soft}`}>
-                          <span className={`h-1.5 w-1.5 rounded-full ${m.dot}`} />{m.label}
+                          <span className={`h-1.5 w-1.5 rounded-full ${m.dot}`} />{t(`dash.severity.${m.key}`)}
                         </span>
-                        <span className="tabular-nums text-slate-400" title="How this count splits between the workshop sheet and our system">
-                          🗒️ {Number(it.sheet).toLocaleString()} · ⚙️ {Number(it.system).toLocaleString()}
+                        <span className="tabular-nums text-slate-400" title={t('dash.faults.splitHint')}>
+                          🗒️ {num(it.sheet)} · ⚙️ {num(it.system)}
                         </span>
                         <span className="text-slate-300">·</span>
                         <span className={`tabular-nums font-medium ${isOpen ? 'text-indigo-600' : 'text-slate-400 group-hover:text-indigo-500'}`}>
-                          {it.cars} car{it.cars === 1 ? '' : 's'} →
+                          {tp('dash.faults.cars', it.cars)} →
                         </span>
                         <span className="text-slate-300">·</span>
-                        <span className="tabular-nums font-medium text-slate-400">{share}% of total</span>
+                        <span className="tabular-nums font-medium text-slate-400">{t('dash.faults.ofTotal', { pct: share })}</span>
                       </div>
                     </div>
                   </button>
@@ -758,6 +751,9 @@ function MostFrequentFaults() {
 // vehicles that racked it up — medal for the podium, a mini-bar scaled to the top offender, plate/model
 // linking to the profile, and the sheet-vs-system split. Reads /Dashboard/fault-cars?fault=… (lazy).
 function FaultCarBreakdown({ detail, fault, sevMeta: m }) {
+  const { t, tp, lang } = useI18n();
+  const numLocale = lang === 'ar' ? 'ar-AE-u-nu-latn' : 'en-US';
+  const num = (n) => Number(n || 0).toLocaleString(numLocale);
   if (!detail || detail.loading) {
     return (
       <div className="space-y-1.5 rounded-xl bg-white p-2 ring-1 ring-slate-200/70">
@@ -766,10 +762,10 @@ function FaultCarBreakdown({ detail, fault, sevMeta: m }) {
     );
   }
   if (detail.error) {
-    return <p className="rounded-xl bg-white px-3 py-3 text-xs text-rose-600 ring-1 ring-slate-200/70">Couldn’t load the cars for this fault. Please try again.</p>;
+    return <p className="rounded-xl bg-white px-3 py-3 text-xs text-rose-600 ring-1 ring-slate-200/70">{t('dash.faultCars.error')}</p>;
   }
   if (!detail.items.length) {
-    return <p className="rounded-xl bg-white px-3 py-3 text-xs text-slate-400 ring-1 ring-slate-200/70">No cars recorded for this fault.</p>;
+    return <p className="rounded-xl bg-white px-3 py-3 text-xs text-slate-400 ring-1 ring-slate-200/70">{t('dash.faultCars.empty')}</p>;
   }
 
   const topCount = detail.items[0]?.count || 1;
@@ -781,10 +777,10 @@ function FaultCarBreakdown({ detail, fault, sevMeta: m }) {
       <div className="flex items-center justify-between gap-2 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white px-3 py-2">
         <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
           <Icon.Car className="h-3.5 w-3.5 text-slate-400" />
-          Cars hit most by {fault}
+          {t('dash.faultCars.title', { fault })}
         </p>
         <span className="text-[11px] font-medium tabular-nums text-slate-400">
-          {detail.cars} car{detail.cars === 1 ? '' : 's'} · {Number(detail.total).toLocaleString()} total
+          {tp('dash.faults.cars', detail.cars)} · {t('dash.faultCars.total', { n: num(detail.total) })}
         </span>
       </div>
 
@@ -815,12 +811,12 @@ function FaultCarBreakdown({ detail, fault, sevMeta: m }) {
                       {c.car && <span className="truncate text-[11px] text-slate-400">{c.car}</span>}
                       {isLeader && (
                         <span className="hidden shrink-0 rounded-full bg-rose-50 px-1.5 py-px text-[10px] font-semibold text-rose-600 ring-1 ring-rose-200 sm:inline">
-                          Repeat offender
+                          {t('dash.faultCars.repeatOffender')}
                         </span>
                       )}
                     </span>
                     <span className="flex shrink-0 items-baseline gap-1 tabular-nums">
-                      <span className="text-sm font-extrabold text-slate-900">{c.count.toLocaleString()}</span>
+                      <span className="text-sm font-extrabold text-slate-900">{num(c.count)}</span>
                       <span className="text-[10px] font-medium text-slate-400">×</span>
                     </span>
                   </div>
@@ -833,8 +829,8 @@ function FaultCarBreakdown({ detail, fault, sevMeta: m }) {
                         style={{ width: `${pct}%`, background: `linear-gradient(90deg, ${m.from}, ${m.to})` }}
                       />
                     </div>
-                    <span className="shrink-0 text-[10px] tabular-nums text-slate-400" title="Split between the workshop sheet and our system">
-                      🗒️{Number(c.sheet).toLocaleString()} · ⚙️{Number(c.system).toLocaleString()}
+                    <span className="shrink-0 text-[10px] tabular-nums text-slate-400" title={t('dash.faultCars.splitHint')}>
+                      🗒️{num(c.sheet)} · ⚙️{num(c.system)}
                     </span>
                   </div>
                 </div>
@@ -846,13 +842,18 @@ function FaultCarBreakdown({ detail, fault, sevMeta: m }) {
         })}
       </ol>
 
+      {/* One interpolated sentence rather than JSX fragments around each figure:
+          the clause order differs in Arabic, so the numbers have to be able to
+          move within the sentence. */}
       {leader && (
         <div className="border-t border-slate-100 bg-slate-50/60 px-3 py-2 text-[11px] text-slate-500">
           <span className="font-mono font-semibold text-slate-700">{leader.plate || `#${leader.id}`}</span>{' '}
-          leads with <span className="font-semibold text-slate-700">{leader.count.toLocaleString()}</span> {fault.toLowerCase()} fix{leader.count === 1 ? '' : 'es'}
-          {detail.total > leader.count && (
-            <> — <span className="font-semibold text-slate-700">{Math.round((leader.count / detail.total) * 100)}%</span> of all {detail.total.toLocaleString()} across the fleet</>
-          )}.
+          {tp('dash.faultCars.leads', leader.count, { n: num(leader.count), fault: fault.toLowerCase() })}
+          {detail.total > leader.count
+            && ` — ${t('dash.faultCars.leadShare', {
+              pct: Math.round((leader.count / detail.total) * 100),
+              total: num(detail.total),
+            })}`}.
         </div>
       )}
     </div>
@@ -872,12 +873,15 @@ const durParts = (seconds, fallbackDays = 0) => {
   if (s < 86400) return { n: Math.max(1, Math.round(s / 3600)), u: 'h' };
   return { n: Math.round(s / 86400), u: 'd' };
 };
-const durLabel = (seconds, fallbackDays = 0) => {
-  const { n, u } = durParts(seconds, fallbackDays);
-  return `${n.toLocaleString()}${u}`;
-};
-
 function MostMaintainedCars() {
+  const { t, lang } = useI18n();
+  const numLocale = lang === 'ar' ? 'ar-AE-u-nu-latn' : 'en-US';
+  const num = (n) => Number(n || 0).toLocaleString(numLocale);
+  // Duration unit suffixes ("12d" / "9h") are language-dependent.
+  const dur = (seconds, fallbackDays) => {
+    const { n, u } = durParts(seconds, fallbackDays);
+    return `${num(n)}${t(`dash.unit.${u}`)}`;
+  };
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -896,13 +900,13 @@ function MostMaintainedCars() {
     <SectionCard
       title={
         <span className="flex items-center gap-1.5">
-          Most Maintained Cars
-          <InfoTip content="The exact same lifetime numbers as Fleet Utilization (All Time). Downtime is the ACTUAL elapsed time each car spent off-road, measured from the maintenance contract out/in timestamps (real hours, not whole calendar days) — a 2-hour visit counts as ~2h, not a full day. Rental is King: time the car is both on rent and in the shop counts as rental, never shop time; overlapping periods are merged so nothing is double-counted. Ranked by true off-road shop time." />
+          {t('dash.maintained.title')}
+          <InfoTip content={t('dash.maintained.tooltip')} />
         </span>
       }
-      subtitle="True downtime — actual elapsed off-road time (hours-precise), Rental is King · lifetime"
+      subtitle={t('dash.maintained.subtitle')}
       actions={
-        <Link to="/maintenance-history" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">All cars →</Link>
+        <Link to="/maintenance-history" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">{t('dash.maintained.allCars')} →</Link>
       }
     >
       {loading ? (
@@ -910,7 +914,7 @@ function MostMaintainedCars() {
           {Array.from({ length: 6 }).map((_, i) => <li key={i}><Skeleton className="h-10 rounded-xl" /></li>)}
         </ul>
       ) : rows.length === 0 ? (
-        <p className="py-8 text-center text-sm text-slate-400">No workshop days recorded yet.</p>
+        <p className="py-8 text-center text-sm text-slate-400">{t('dash.maintained.empty')}</p>
       ) : (
         <ol className="space-y-1">
           {rows.map((r, i) => {
@@ -937,21 +941,25 @@ function MostMaintainedCars() {
                       <Link to={`/vehicles/${r.id}`} className="flex items-center gap-1.5 truncate text-sm font-semibold text-slate-800 hover:text-indigo-600">
                         <span className="truncate">{r.plate || `#${r.id}`}</span>
                         {r.currently_in_shop && (
-                          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-100 px-1.5 py-px text-[10px] font-semibold text-amber-700" title="This car is in the workshop right now">
-                            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />In shop
+                          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-100 px-1.5 py-px text-[10px] font-semibold text-amber-700" title={t('dash.maintained.inShopHint')}>
+                            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />{t('dash.maintained.inShop')}
                           </span>
                         )}
                       </Link>
                       {r.car && <p className="truncate text-[11px] text-slate-400">{r.car}</p>}
                     </div>
                     {/* The ranking metric — true off-road shop time — featured in a rose tint. */}
-                    <span className="flex shrink-0 items-baseline gap-0.5 rounded-lg bg-rose-50 px-2 py-0.5 tabular-nums ring-1 ring-rose-100" title="True off-road shop time — actual elapsed hours, not calendar days">
-                      <span className="text-base font-extrabold text-rose-700">{shop.n.toLocaleString()}</span>
-                      <span className="text-[11px] font-semibold text-rose-400">{shop.u}</span>
+                    <span className="flex shrink-0 items-baseline gap-0.5 rounded-lg bg-rose-50 px-2 py-0.5 tabular-nums ring-1 ring-rose-100" title={t('dash.maintained.shopTimeHint')}>
+                      <span className="text-base font-extrabold text-rose-700">{num(shop.n)}</span>
+                      <span className="text-[11px] font-semibold text-rose-400">{t(`dash.unit.${shop.u}`)}</span>
                     </span>
                   </div>
 
-                  <div className="mt-1.5 flex h-2 w-full overflow-hidden rounded-full bg-slate-100 ring-1 ring-inset ring-slate-200/60" title={`${durLabel(r.rented_seconds, r.days_rented)} rented · ${durLabel(r.maintenance_seconds, r.days_in_shop)} shop · ${durLabel(r.idle_seconds, r.days_idle)} idle`}>
+                  <div className="mt-1.5 flex h-2 w-full overflow-hidden rounded-full bg-slate-100 ring-1 ring-inset ring-slate-200/60" title={t('dash.maintained.splitHint', {
+                    rented: dur(r.rented_seconds, r.days_rented),
+                    shop: dur(r.maintenance_seconds, r.days_in_shop),
+                    idle: dur(r.idle_seconds, r.days_idle),
+                  })}>
                     {rentSec > 0 && <div className="relative bg-gradient-to-b from-emerald-400 to-emerald-500" style={{ width: segW(rentSec) }}><span className="absolute inset-x-0 top-0 h-1/2 bg-white/25" /></div>}
                     {shopSec > 0 && <div className="relative bg-gradient-to-b from-rose-400 to-rose-500" style={{ width: segW(shopSec) }}><span className="absolute inset-x-0 top-0 h-1/2 bg-white/25" /></div>}
                     {idleSec > 0 && <div className="relative bg-slate-300" style={{ width: segW(idleSec) }} />}
@@ -959,19 +967,19 @@ function MostMaintainedCars() {
 
                   {/* Full split — rented + util%, shop, idle, and total in-service time (matches Fleet Utilization). */}
                   <p className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px] tabular-nums text-slate-500">
-                    <span className="inline-flex items-center gap-1" title="Time on a paid rental">
-                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />{durLabel(r.rented_seconds, r.days_rented)} rented
+                    <span className="inline-flex items-center gap-1" title={t('dash.maintained.rentedHint')}>
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />{dur(r.rented_seconds, r.days_rented)} {t('dash.maintained.rented')}
                     </span>
                     {r.utilization_pct != null && (
-                      <span className="font-semibold text-emerald-600" title="Utilization — rented ÷ in-service time">{r.utilization_pct}%</span>
+                      <span className="font-semibold text-emerald-600" title={t('dash.maintained.utilHint')}>{r.utilization_pct}%</span>
                     )}
-                    <span className="inline-flex items-center gap-1" title="True off-road shop time (no active rental)">
-                      <span className="h-1.5 w-1.5 rounded-full bg-rose-500" />{durLabel(r.maintenance_seconds, r.days_in_shop)} shop
+                    <span className="inline-flex items-center gap-1" title={t('dash.maintained.shopHint')}>
+                      <span className="h-1.5 w-1.5 rounded-full bg-rose-500" />{dur(r.maintenance_seconds, r.days_in_shop)} {t('dash.maintained.shop')}
                     </span>
-                    <span className="inline-flex items-center gap-1" title="Idle — available but not earning (not rented, not in the shop)">
-                      <span className="h-1.5 w-1.5 rounded-full bg-slate-300" />{durLabel(r.idle_seconds, r.days_idle)} idle
+                    <span className="inline-flex items-center gap-1" title={t('dash.maintained.idleHint')}>
+                      <span className="h-1.5 w-1.5 rounded-full bg-slate-300" />{dur(r.idle_seconds, r.days_idle)} {t('dash.maintained.idle')}
                     </span>
-                    <span className="text-slate-400">· {Number(r.days_in_service).toLocaleString()}d total</span>
+                    <span className="text-slate-400">· {t('dash.maintained.totalDays', { n: num(r.days_in_service) })}</span>
                   </p>
                 </div>
               </li>
@@ -986,7 +994,7 @@ function MostMaintainedCars() {
 
 export default function Dashboard() {
   const { user } = useAuth();
-  const { can } = usePermissions();
+  const { t, tp } = useI18n();
   const firstName = user?.name ? String(user.name).trim().split(/\s+/)[0] : '';
   const [view, setView] = useState('metrics'); // 'metrics' | 'pulse'
 
@@ -1033,9 +1041,9 @@ export default function Dashboard() {
   // (sold/disposed/office-use/other) was dropped because those cars surface in no
   // list, so the donut totals only the active, accounted-for fleet.
   const fleetStatusSegments = [
-    { label: 'Available',   value: available, color: 'green'  },
-    { label: 'On Rent',     value: rented,    color: 'blue'   },
-    { label: 'Maintenance', value: maint,     color: 'yellow' },
+    { label: t('dash.fleet.available'),   value: available, color: 'green'  },
+    { label: t('dash.fleet.onRent'),      value: rented,    color: 'blue'   },
+    { label: t('dash.fleet.maintenance'), value: maint,     color: 'yellow' },
   ];
 
   // Inspection Accuracy — the three oversight signals reframed as a right-vs-wrong scorecard: instead of
@@ -1043,22 +1051,22 @@ export default function Dashboard() {
   // flag count on a huge volume reads as the strong performance it is (and vice-versa).
   const accuracy = [
     {
-      key: 'severity', title: 'Severity Grading', icon: <Icon.Alert className="h-4 w-4" />, to: '/oversight/severity',
+      key: 'severity', title: t('dash.accuracy.severity.title'), icon: <Icon.Alert className="h-4 w-4" />, to: '/oversight/severity',
       total: kpis.severity_graded_total || 0, wrong: kpis.severity_mismatches || 0,
-      rightLabel: 'graded right', wrongLabel: 'under-graded',
-      tooltip: 'How often the inspector\'s fault-severity grade held up. Wrong = a critical-risk keyword, a breakdown, or a red-graded car said the grade was too low.',
+      rightLabel: t('dash.accuracy.severity.right'), wrongLabel: t('dash.accuracy.severity.wrong'),
+      tooltip: t('dash.accuracy.severity.tooltip'),
     },
     {
-      key: 'diagnosis', title: 'Diagnosis Accuracy', icon: <Icon.XCircle className="h-4 w-4" />, to: '/oversight/misdiagnoses',
+      key: 'diagnosis', title: t('dash.accuracy.diagnosis.title'), icon: <Icon.XCircle className="h-4 w-4" />, to: '/oversight/misdiagnoses',
       total: kpis.diagnosed_total || 0, wrong: kpis.misdiagnoses || 0,
-      rightLabel: 'calls held', wrongLabel: 'overruled',
-      tooltip: 'Of every fault the inspector diagnosed, how many stood. Wrong = a supervisor later overruled the call as a mis-diagnosis ("mark fault incorrect").',
+      rightLabel: t('dash.accuracy.diagnosis.right'), wrongLabel: t('dash.accuracy.diagnosis.wrong'),
+      tooltip: t('dash.accuracy.diagnosis.tooltip'),
     },
     {
-      key: 'odometer', title: 'Odometer Accuracy', icon: <Icon.Gauge className="h-4 w-4" />, to: '/oversight/mileage',
+      key: 'odometer', title: t('dash.accuracy.odometer.title'), icon: <Icon.Gauge className="h-4 w-4" />, to: '/oversight/mileage',
       total: kpis.mileage_readings_total || 0, wrong: kpis.mileage_flags || 0,
-      rightLabel: 'clean readings', wrongLabel: 'flagged',
-      tooltip: 'Of every odometer reading captured across the workflow, how many were clean. Wrong = ran backwards, jumped, came from a test-drive, or was rejected outright.',
+      rightLabel: t('dash.accuracy.odometer.right'), wrongLabel: t('dash.accuracy.odometer.wrong'),
+      tooltip: t('dash.accuracy.odometer.tooltip'),
     },
   ];
 
@@ -1071,37 +1079,38 @@ export default function Dashboard() {
           <div className="min-w-0">
             <div className="opx-hint" style={{ letterSpacing: '.16em', textTransform: 'uppercase', marginBottom: 7, display: 'flex', alignItems: 'center', gap: 8 }}>
               <span className="h-1.5 w-1.5 rounded-full" style={{ background: 'var(--avail)', boxShadow: '0 0 8px var(--avail)' }} />
-              Fleet Command · Live
+              {t('dash.header.live')}
             </div>
             <div className="flex items-center gap-2.5">
               <span className="h-5 w-1 rounded-full bg-indigo-500" />
               <h1 className="font-display text-2xl font-bold tracking-tight" style={{ color: 'var(--ink)' }}>
-                {greeting()}{firstName ? `, ${firstName}` : ''}
+                {firstName ? t(`shell.greet.${greetKey()}Named`, { name: firstName }) : t(`shell.greet.${greetKey()}`)}
               </h1>
             </div>
             <p className="mt-1.5 text-sm sm:ps-3.5" style={{ color: 'var(--ink-3)' }}>
-              Live snapshot of your fleet's {SHOW_FINANCIALS ? 'finances and operations' : 'status and operations'}.
+              {t(SHOW_FINANCIALS ? 'dash.header.subtitleFinance' : 'dash.header.subtitle')}
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            <span className="hidden text-xs font-medium text-slate-400 sm:inline">Updated {fmtDate(new Date())}</span>
-            {/* View toggle — flip between the analytical "Metrics" view and the live "Fleet Pulse" wall. */}
+            <span className="hidden text-xs font-medium text-slate-400 sm:inline">{t('dash.header.updated', { date: fmtDate(new Date()) })}</span>
+            {/* View toggle — flip between the analytical "Metrics" view and the live "Fleet Pulse" wall.
+                The loop variable is `v`, not `t` — `t` is the translator in this scope. */}
             <div className="inline-flex rounded-xl bg-slate-100 p-1">
               {[
-                { key: 'metrics', label: 'Metrics', icon: <Icon.Chart className="h-4 w-4" /> },
-                { key: 'pulse', label: 'Fleet Pulse', icon: <Icon.Activity className="h-4 w-4" /> },
-              ].map((t) => (
+                { key: 'metrics', label: t('dash.header.viewMetrics'), icon: <Icon.Chart className="h-4 w-4" /> },
+                { key: 'pulse', label: t('dash.header.viewPulse'), icon: <Icon.Activity className="h-4 w-4" /> },
+              ].map((v) => (
                 <button
-                  key={t.key}
+                  key={v.key}
                   type="button"
-                  onClick={() => setView(t.key)}
+                  onClick={() => setView(v.key)}
                   className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-sm font-semibold transition ${
-                    view === t.key ? 'bg-white text-slate-900 shadow-soft' : 'text-slate-500 hover:text-slate-700'
+                    view === v.key ? 'bg-white text-slate-900 shadow-soft' : 'text-slate-500 hover:text-slate-700'
                   }`}
                 >
-                  {t.icon}
-                  {t.label}
+                  {v.icon}
+                  {v.label}
                 </button>
               ))}
             </div>
@@ -1124,15 +1133,15 @@ export default function Dashboard() {
             </Card>
           ) : (
             <FleetStatusCard
-              title="Fleet Status"
-              centerLabel="Active Fleet"
-              unit="cars"
+              title={t('dash.fleet.title')}
+              centerLabel={t('dash.fleet.centerLabel')}
+              unit={t('dash.fleet.unit')}
               total={activeFleet}
               segments={fleetStatusSegments}
               headerRight={
                 <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200">
                   <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                  Live
+                  {t('dash.fleet.liveBadge')}
                 </span>
               }
             />
@@ -1143,10 +1152,6 @@ export default function Dashboard() {
             inspections due) surfaced before they become problems. Same source lists as the
             notification bell; every row deep-links to its record. */}
         <ProactiveFlags data={proactive} loading={loading} />
-
-        {/* Cars Needing a Check — which car needs oil, battery, tires… right now. Self-fetching from
-            the service-reminder engine, so it can never disagree with /service-reminders. */}
-        {can('reminders.view') && <ServiceDueCard limit={3} />}
 
         {/* Recently Fixed — the cars that came back working: the problem, the fix, the garage and the
             downtime. The good-news counterpart to the pipeline cards above; the full ledger (with the
@@ -1170,10 +1175,10 @@ export default function Dashboard() {
           <Card>
             <div className="border-b border-slate-100 px-6 py-4">
               <h2 className="flex items-center gap-1.5 text-base font-semibold text-slate-900">
-                Expenses
-                <InfoTip content="Total vehicle expense per month over the last 12 months, from the imported Expenses sheet (the single source of vehicle cost). Hover a bar for the number of expense lines behind it." />
+                {t('dash.expenses.title')}
+                <InfoTip content={t('dash.expenses.tooltip')} />
               </h2>
-              <p className="mt-0.5 text-xs text-slate-500">Monthly expense · last 12 months</p>
+              <p className="mt-0.5 text-xs text-slate-500">{t('dash.expenses.subtitle')}</p>
             </div>
             <div className="px-3 py-5 sm:px-5">
               {loading ? (
@@ -1185,8 +1190,8 @@ export default function Dashboard() {
                   height={260}
                   format={aed}
                   tickFormat={aedK}
-                  valueLabel="Spend"
-                  tooltip={(d) => `${d.visits} expense line${d.visits === 1 ? '' : 's'}`}
+                  valueLabel={t('dash.expenses.valueLabel')}
+                  tooltip={(d) => tp('dash.expenses.lines', d.visits)}
                 />
               )}
             </div>
@@ -1196,10 +1201,10 @@ export default function Dashboard() {
           <Card>
             <div className="border-b border-slate-100 px-6 py-4">
               <h2 className="flex items-center gap-1.5 text-base font-semibold text-slate-900">
-                Downtime Trend
-                <InfoTip content="Average number of days a car spent in the shop per repair visit, by month. A falling line means cars are being turned around faster — downtime is improving." />
+                {t('dash.downtime.title')}
+                <InfoTip content={t('dash.downtime.tooltip')} />
               </h2>
-              <p className="mt-0.5 text-xs text-slate-500">Avg days in shop per visit · lower is better</p>
+              <p className="mt-0.5 text-xs text-slate-500">{t('dash.downtime.subtitle')}</p>
             </div>
             <div className="px-3 py-5 sm:px-5">
               {loading ? (
@@ -1209,10 +1214,10 @@ export default function Dashboard() {
                   data={trends.downtime}
                   color="emerald"
                   height={260}
-                  format={(v) => `${v} day${v === 1 ? '' : 's'}`}
-                  tickFormat={(v) => `${Math.round(v)}d`}
-                  valueLabel="Avg in shop"
-                  tooltip={(d) => `${d.visits} visit${d.visits === 1 ? '' : 's'}`}
+                  format={(v) => tp('dash.days', v, { n: v })}
+                  tickFormat={(v) => `${Math.round(v)}${t('dash.unit.d')}`}
+                  valueLabel={t('dash.downtime.valueLabel')}
+                  tooltip={(d) => tp('dash.downtime.visits', d.visits)}
                 />
               )}
             </div>
@@ -1224,11 +1229,11 @@ export default function Dashboard() {
         <SectionCard
           title={
             <span className="flex items-center gap-1.5">
-              Inspection Accuracy
-              <InfoTip content="How the inspector is performing across the three oversight checks — his grades, diagnoses and odometer readings — each scored as a share that held up, not just the count that didn't." />
+              {t('dash.accuracy.title')}
+              <InfoTip content={t('dash.accuracy.tooltip')} />
             </span>
           }
-          subtitle="How the inspector's grades, diagnoses & readings held up · lifetime"
+          subtitle={t('dash.accuracy.subtitle')}
         >
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {accuracy.map((a) => (

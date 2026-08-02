@@ -8,8 +8,9 @@ import Badge from '../components/ui/Badge';
 import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import { Card, PageHeader, TableSkeleton, EmptyState } from '../components/ui/Misc';
-import { Select, Textarea } from '../components/ui/Field';
+import { Select } from '../components/ui/Field';
 import { fmtAgo, fmtDate, num } from '../lib/format';
+import { useI18n } from '../i18n/I18nContext';
 
 const payload = (r) => (r?.data && 'data' in r.data ? r.data.data : r?.data);
 
@@ -19,86 +20,26 @@ const STATUS_META = {
 };
 const STATUS_FILTERS = ['open', 'decided'];
 
-// The five management decisions — the ONLY place responsibility is assigned (by a human, never the system).
-const DECISIONS = [
-  ['same_repair_failed', 'Same repair failed'],
-  ['new_unrelated_failure', 'New unrelated failure'],
-  ['workshop_responsibility', 'Workshop responsibility'],
-  ['customer_misuse', 'Customer misuse'],
-  ['investigation_required', 'Investigation required'],
-];
-const DECISION_META = {
-  same_repair_failed: { tone: 'red', label: 'Same repair failed' },
-  new_unrelated_failure: { tone: 'blue', label: 'New unrelated failure' },
-  workshop_responsibility: { tone: 'amber', label: 'Workshop responsibility' },
-  customer_misuse: { tone: 'violet', label: 'Customer misuse' },
-  investigation_required: { tone: 'cyan', label: 'Investigation required' },
+// Decisions are no longer recorded from this page — cases are ruled on by clearing or rejecting the
+// repair gate. Rulings stored before that change still render, so the tones stay. Wording lives in the
+// catalog under `recurringFaults.decision.*`.
+const DECISION_TONE = {
+  same_repair_failed: 'red', new_unrelated_failure: 'blue',
+  workshop_responsibility: 'amber', customer_misuse: 'violet',
+  investigation_required: 'cyan',
 };
-const decisionLabel = (code) => DECISION_META[code]?.label || code || '—';
-
-const PREV_RESULT_META = {
-  verified_fixed: { tone: 'green', label: 'Verified fixed' },
-  fixed: { tone: 'slate', label: 'Fixed' },
-};
+const PREV_RESULT_TONE = { verified_fixed: 'green', fixed: 'slate' };
 
 const plate = (v) => v?.plate || (v?.id ? `#${v.id}` : '—');
 const carLine = (v) => [v?.make, v?.model].filter(Boolean).join(' ') || '—';
 const km = (n) => (n != null ? `${num(n)} km` : '—');
 const days = (n) => (n != null ? `${num(n)} day${n === 1 ? '' : 's'}` : '—');
 
-// ─── Decision modal ──────────────────────────────────────────────────────────
-function DecisionModal({ open, review, onClose, onDone }) {
-  const toast = useToast();
-  const [code, setCode] = useState('');
-  const [note, setNote] = useState('');
-  const [error, setError] = useState('');
-  const [saving, setSaving] = useState(false);
-
-  const submit = async () => {
-    if (!code) { setError('Pick a decision'); return; }
-    setSaving(true);
-    try {
-      await api.post(`/recurring-fault-reviews/${review.id}/decide`, { decision: code, note: note.trim() || null });
-      toast.success('Decision recorded');
-      onDone();
-      onClose();
-    } catch (err) {
-      toast.error(err.response?.data?.message || err.response?.data?.msg || 'Could not save the decision');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Modal
-      open={open}
-      onClose={() => !saving && onClose()}
-      title="Record Decision"
-      subtitle={review ? `${review.symptom} · ${plate(review.vehicle)}` : ''}
-      size="md"
-      footer={
-        <>
-          <Button variant="secondary" onClick={onClose} disabled={saving}>Cancel</Button>
-          <Button onClick={submit} loading={saving}>Save decision</Button>
-        </>
-      }
-    >
-      <div className="space-y-4">
-        <Select label="Decision" required value={code} error={error} onChange={(e) => setCode(e.target.value)}>
-          <option value="">Select a decision…</option>
-          {DECISIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-        </Select>
-        <Textarea label="Note" rows={3} placeholder="Optional context for this decision" value={note} onChange={(e) => setNote(e.target.value)} />
-        <p className="text-xs text-slate-400">
-          Recording a decision does not blame the garage automatically — it is your judgement on why this fault came back.
-        </p>
-      </div>
-    </Modal>
-  );
-}
-
 // ─── Detail modal ────────────────────────────────────────────────────────────
 function DetailModal({ open, review, onClose }) {
+  const { t, tf } = useI18n();
+  // Shared with the board below; `tf` keeps an unrecognised code readable.
+  const decisionLabel = (code) => tf(`recurringFaults.decision.${code}`, code || '—');
   if (!review) return null;
   const parts = review.parts || [];
 
@@ -119,12 +60,12 @@ function DetailModal({ open, review, onClose }) {
         <div className="flex flex-wrap items-center gap-2">
           <Badge tone={STATUS_META[review.status]?.tone || 'gray'}>{STATUS_META[review.status]?.label || review.status}</Badge>
           {review.previous_result && (
-            <Badge tone={PREV_RESULT_META[review.previous_result]?.tone || 'slate'}>
-              Previous: {PREV_RESULT_META[review.previous_result]?.label || review.previous_result}
+            <Badge tone={PREV_RESULT_TONE[review.previous_result] || 'slate'}>
+              {t('recurringFaults.previous', { result: tf(`recurringFaults.prevResult.${review.previous_result}`, review.previous_result) })}
             </Badge>
           )}
           <Badge tone="slate">Happened {num(review.occurrence_count)}×</Badge>
-          {review.decision && <Badge tone={DECISION_META[review.decision]?.tone || 'gray'}>{decisionLabel(review.decision)}</Badge>}
+          {review.decision && <Badge tone={DECISION_TONE[review.decision] || 'gray'}>{decisionLabel(review.decision)}</Badge>}
         </div>
 
         {/* Recurrence banner */}
@@ -145,7 +86,7 @@ function DetailModal({ open, review, onClose }) {
               <Row label="Ticket" value={review.previous_maintenance_id ? `#${review.previous_maintenance_id}` : '—'} />
               <Row label="Garage" value={review.previous_garage || '—'} />
               <Row label="Repaired" value={fmtDate(review.previous_repaired_at) || '—'} />
-              <Row label="Result" value={PREV_RESULT_META[review.previous_result]?.label || '—'} />
+              <Row label={t('recurringFaults.result')} value={tf(`recurringFaults.prevResult.${review.previous_result}`, '—')} />
               <Row label="Odometer" value={km(review.previous_odometer)} />
             </dl>
             {parts.length > 0 && (
@@ -177,7 +118,7 @@ function DetailModal({ open, review, onClose }) {
 
         <div className="rounded-xl bg-slate-50 p-4 text-sm ring-1 ring-inset ring-slate-200">
           <div className="flex justify-between gap-4"><span className="text-slate-500">Opened</span><span className="text-slate-700">{review.opened_by || '—'} · {fmtAgo(review.opened_at) || '—'}</span></div>
-          {review.decision && <div className="flex justify-between gap-4"><span className="text-slate-500">Decision</span><span className="text-slate-700">{decisionLabel(review.decision)}{review.decided_by ? ` · ${review.decided_by}` : ''}</span></div>}
+          {review.decision && <div className="flex justify-between gap-4"><span className="text-slate-500">{t('recurringFaults.decisionLabel')}</span><span className="text-slate-700">{decisionLabel(review.decision)}{review.decided_by ? ` · ${review.decided_by}` : ''}</span></div>}
           {review.decision_note && <p className="mt-1 text-slate-600">“{review.decision_note}”</p>}
         </div>
       </div>
@@ -187,6 +128,8 @@ function DetailModal({ open, review, onClose }) {
 
 // ─── Page ────────────────────────────────────────────────────────────────────
 export default function RecurringFaultReviews() {
+  const { tf } = useI18n();
+  const decisionLabel = (code) => tf(`recurringFaults.decision.${code}`, code || '—');
   const toast = useToast();
   const { can } = usePermissions();
   const allowed = can('maintenance.recurring.view');
@@ -194,19 +137,17 @@ export default function RecurringFaultReviews() {
   const [busyGate, setBusyGate] = useState(null);
 
   const [status, setStatus] = useState('open');
-  const [decisionFilter, setDecisionFilter] = useState('');
 
-  const [decisionFor, setDecisionFor] = useState(null);
   const [detail, setDetail] = useState(null);
-  const anyModal = !!decisionFor || !!detail;
+  const anyModal = !!detail;
 
   const fetcher = useCallback(async () => {
     const r = await api.get('/recurring-fault-reviews', {
-      params: { status: status || undefined, decision: decisionFilter || undefined },
+      params: { status: status || undefined },
     });
     return payload(r) || {};
-  }, [status, decisionFilter]);
-  const { data, loading, error, reload } = useFetch(fetcher, [status, decisionFilter], {
+  }, [status]);
+  const { data, loading, error, reload } = useFetch(fetcher, [status], {
     refreshInterval: 30000,
     paused: () => anyModal,
   });
@@ -214,8 +155,20 @@ export default function RecurringFaultReviews() {
   // The charts run on FLEET-WIDE stats, not the filtered table: the table answers "what must I rule on
   // now", the dashboard answers "how is rework trending". Fetched separately so changing a filter never
   // reshapes the trend line under the reader.
-  const statsFetcher = useCallback(async () => payload(await api.get('/recurring-fault-reviews/stats')) || null, []);
-  const { data: stats, loading: statsLoading, reload: reloadStats } = useFetch(statsFetcher, [], {
+  //
+  // `faultWindow` is the one exception, and it scopes ONE panel: the "faults that keep coming back"
+  // ranking. It rides on the same request (the roll-ups all come from one pass over the table) but the
+  // API applies it to that ranking alone, so the KPIs and the trend line stay put while it changes.
+  const [faultWindow, setFaultWindow] = useState({ days: 0, from: null, to: null });
+
+  const statsFetcher = useCallback(async () => payload(await api.get('/recurring-fault-reviews/stats', {
+    params: {
+      faults_days: faultWindow.days || undefined,
+      faults_from: faultWindow.from || undefined,
+      faults_to: faultWindow.to || undefined,
+    },
+  })) || null, [faultWindow]);
+  const { data: stats, loading: statsLoading, reload: reloadStats } = useFetch(statsFetcher, [faultWindow], {
     refreshInterval: 60000,
     paused: () => anyModal,
   });
@@ -260,7 +213,12 @@ export default function RecurringFaultReviews() {
         />
 
         {/* Analytics — fleet-wide, deliberately independent of the table filters below. */}
-        <RecurringFaultsAnalytics stats={stats} loading={statsLoading} />
+        <RecurringFaultsAnalytics
+          stats={stats}
+          loading={statsLoading}
+          faultWindow={faultWindow}
+          onFaultWindowChange={setFaultWindow}
+        />
 
         {/* Filters — scope the case list only. */}
         <div className="flex flex-col gap-3 sm:flex-row">
@@ -268,11 +226,7 @@ export default function RecurringFaultReviews() {
             {STATUS_FILTERS.map((s) => <option key={s} value={s}>{STATUS_META[s].label}</option>)}
             <option value="">All statuses</option>
           </Select>
-          <Select className="sm:w-64" value={decisionFilter} onChange={(e) => setDecisionFilter(e.target.value)}>
-            <option value="">All decisions</option>
-            {DECISIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-          </Select>
-          <div className="flex items-center text-sm text-slate-500 sm:ml-auto">
+          <div className="flex items-center text-sm text-slate-500 sm:ms-auto">
             {loading ? '…' : `${num(openCount)} open · ${num(reviews.length)} shown`}
           </div>
         </div>
@@ -325,7 +279,7 @@ export default function RecurringFaultReviews() {
                       <td className="border-b border-slate-100 px-5 py-3.5">
                         <div className="flex flex-col items-start gap-1">
                           {r.decision
-                            ? <Badge tone={DECISION_META[r.decision]?.tone || 'gray'}>{decisionLabel(r.decision)}</Badge>
+                            ? <Badge tone={DECISION_TONE[r.decision] || 'gray'}>{decisionLabel(r.decision)}</Badge>
                             : <Badge tone={STATUS_META[r.status]?.tone || 'gray'}>{STATUS_META[r.status]?.label || r.status}</Badge>}
                           {r.repair_gate === 'pending' && <Badge tone="red">Repair blocked</Badge>}
                           {r.repair_gate === 'approved' && <Badge tone="green">Repair approved</Badge>}
@@ -340,10 +294,7 @@ export default function RecurringFaultReviews() {
                               <Button variant="ghost" size="sm" className="text-red-600 hover:bg-red-50" loading={busyGate === `${r.id}:reject`} onClick={() => gateAction(r, 'reject')}>Reject</Button>
                             </>
                           )}
-                          {r.status === 'open' && canDecide && (
-                            <Button variant="secondary" size="sm" onClick={() => setDecisionFor(r)}>Record Decision</Button>
-                          )}
-                          {!(r.repair_gate === 'pending' && canDecide) && !(r.status === 'open' && canDecide) && (
+                          {!(r.repair_gate === 'pending' && canDecide) && (
                             <span className="text-slate-300">—</span>
                           )}
                         </div>
@@ -361,12 +312,6 @@ export default function RecurringFaultReviews() {
         </Card>
       </div>
 
-      <DecisionModal
-        open={!!decisionFor}
-        review={decisionFor}
-        onClose={() => setDecisionFor(null)}
-        onDone={() => { reload({ silent: true }); reloadStats({ silent: true }); }}
-      />
       <DetailModal open={!!detail} review={detail} onClose={() => setDetail(null)} />
     </div>
   );

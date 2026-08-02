@@ -4,31 +4,22 @@
 // already fixed for. One case is an incident; the aggregate is a rework scorecard nobody otherwise sees:
 //
 //   1. Is rework getting worse?          → recurrences opened per month (12 months)
-//   2. Where does responsibility land?   → the management decision mix
-//   3. How fast do repairs fail?         → days-to-return histogram; ≤7 days is a repair that never worked
-//   4. Whose repairs come back?          → by garage, and by car, and by fault
+//   2. How fast do repairs fail?         → days-to-return histogram; ≤7 days is a repair that never worked
+//   3. Whose repairs come back?          → by garage, and by car, and by fault
 //
 // Fed by GET /recurring-fault-reviews/stats — FLEET-WIDE on purpose, not the filtered table. Running these
 // off the visible rows would show ~100% "awaiting a ruling" whenever the page sits on its default filter.
 // Every number is counted from recurring_fault_reviews; nothing here is inferred or scored.
 
 import { SectionCard } from '../ui/Table';
+import DateRangePicker from '../ui/DateRangePicker';
 import MetricCard, { MetricGrid } from '../ui/MetricCard';
 import RankedBar from '../ui/RankedBar';
-import PieChart from '../ui/PieChart';
 import BarChart from '../ui/BarChart';
 import LineChart from '../ui/LineChart';
 import { MetricCardSkeleton } from '../ui/Skeleton';
 import { num } from '../../lib/format';
-
-// Decision → the page's own badge tone, mapped to the chart palette.
-const DECISION = {
-  same_repair_failed: { label: 'Same repair failed', color: 'red' },
-  new_unrelated_failure: { label: 'New unrelated failure', color: 'blue' },
-  workshop_responsibility: { label: 'Workshop responsibility', color: 'amber' },
-  customer_misuse: { label: 'Customer misuse', color: 'purple' },
-  investigation_required: { label: 'Investigation required', color: 'cyan' },
-};
+import { useI18n } from '../../i18n/I18nContext';
 
 // The days-to-return histogram is a severity ramp: a fault back within a week means the repair never
 // worked; two months out is closer to ordinary wear.
@@ -37,7 +28,32 @@ const SPEED_COLOR = { '0-7': 'red', '8-30': 'orange', '31-60': 'amber', '61+': '
 const pct = (n) => `${Math.round(n || 0)}%`;
 const cases = (n) => `${num(n)} case${n === 1 ? '' : 's'}`;
 
-export default function RecurringFaultsAnalytics({ stats, loading = false }) {
+// What the fault ranking is currently counting, said in the subtitle. The window is echoed back by the
+// API rather than read off local state, so the caption can never describe a range the numbers aren't in.
+const DAY_LABEL = { 30: 'last 30 days', 90: 'last 90 days', 180: 'last 6 months', 365: 'last year' };
+const shortDate = (iso) => {
+  if (!iso) return '';
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+};
+const faultScope = (w) => {
+  if (!w) return 'across the fleet';
+  if (w.from && w.to) return `${shortDate(w.from)} – ${shortDate(w.to)}`;
+  if (w.from) return `since ${shortDate(w.from)}`;
+  if (w.to) return `up to ${shortDate(w.to)}`;
+  if (w.days > 0) return DAY_LABEL[w.days] || `last ${num(w.days)} days`;
+  return 'across the fleet';
+};
+
+export default function RecurringFaultsAnalytics({
+  stats,
+  loading = false,
+  // The fault ranking's own date window — {days, from, to}, mirroring the API params. Only this one
+  // panel is scoped; every other chart here stays fleet-wide and all-time by design.
+  faultWindow = { days: 0, from: null, to: null },
+  onFaultWindowChange,
+}) {
+  const { t } = useI18n();
   if (loading && !stats) {
     return (
       <MetricGrid cols={4}>
@@ -58,15 +74,6 @@ export default function RecurringFaultsAnalytics({ stats, loading = false }) {
     : {};
 
   const trend = (stats.trend || []).map((t) => ({ ...t, label: t.label }));
-  const decisions = (stats.decisions || []).map((d) => ({
-    label: DECISION[d.key]?.label || d.key,
-    value: d.value,
-    color: DECISION[d.key]?.color || 'slate',
-  }));
-  // The undecided backlog belongs in the mix — otherwise a page with 2 rulings and 40 open cases reads
-  // as a solved problem.
-  const undecided = Math.max(0, (k.total || 0) - (k.decided || 0));
-  if (undecided) decisions.push({ label: 'Awaiting a ruling', value: undecided, color: 'slate' });
 
   const speed = (stats.speed || []).map((s) => ({ ...s, color: SPEED_COLOR[s.key] || 'slate' }));
   const hasSpeed = speed.some((s) => s.value > 0);
@@ -86,7 +93,7 @@ export default function RecurringFaultsAnalytics({ stats, loading = false }) {
       {/* ── Headline numbers ─────────────────────────────────────────────── */}
       <MetricGrid cols={4}>
         <MetricCard
-          label="Awaiting a ruling"
+          label={t('recurringFaults.awaitingRuling')}
           value={num(k.open || 0)}
           tone={k.open > 0 ? 'amber' : 'emerald'}
           hint={`${cases(k.total)} on record`}
@@ -116,10 +123,9 @@ export default function RecurringFaultsAnalytics({ stats, loading = false }) {
         />
       </MetricGrid>
 
-      {/* ── Trend + responsibility ───────────────────────────────────────── */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+      {/* ── Trend ────────────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 gap-4">
         <SectionCard
-          className="lg:col-span-2"
           title="Is rework getting worse?"
           subtitle="Recurring-fault cases opened per month"
           bodyClass="p-5 pb-2"
@@ -134,16 +140,6 @@ export default function RecurringFaultsAnalytics({ stats, loading = false }) {
               ? `${num(d.verified)} after a verified fix`
               : 'None had a verified fix')}
           />
-        </SectionCard>
-
-        <SectionCard
-          title="Where responsibility lands"
-          subtitle="Management rulings, all cases"
-          bodyClass="p-5"
-        >
-          {/* stacked: this card is a third of the row, so a side-by-side legend
-              squeezes the labels into ellipses. Pie on top, full-width legend under. */}
-          <PieChart segments={decisions} size={168} stacked />
         </SectionCard>
       </div>
 
@@ -185,8 +181,20 @@ export default function RecurringFaultsAnalytics({ stats, loading = false }) {
 
         <SectionCard
           title="Faults that keep coming back"
-          subtitle="By fault category across the fleet"
+          subtitle={`By fault category · ${faultScope(stats.faults_window)}`}
           bodyClass="p-5"
+          // The only date-scoped panel on this dashboard. Which faults dominate goes stale fastest: a
+          // batch of brake jobs replaced in March keeps topping the all-time list long after it stopped
+          // recurring, so this ranking gets a window of its own. Ranking happens AFTER the window is
+          // applied server-side, so narrowing can promote a fault the all-time top-8 never showed.
+          actions={onFaultWindowChange ? (
+            <DateRangePicker
+              days={faultWindow.days}
+              from={faultWindow.from}
+              to={faultWindow.to}
+              onChange={onFaultWindowChange}
+            />
+          ) : null}
         >
           <RankedBar
             items={stats.faults || []}
@@ -197,7 +205,9 @@ export default function RecurringFaultsAnalytics({ stats, loading = false }) {
             valueWidth={56}
             labelWidth={150}
             tooltip={(f) => `Across ${num(f.cars)} car${f.cars === 1 ? '' : 's'}`}
-            empty="No recurring faults recorded."
+            empty={faultScope(stats.faults_window) === 'across the fleet'
+              ? 'No recurring faults recorded.'
+              : 'No faults came back in this window.'}
           />
         </SectionCard>
       </div>
