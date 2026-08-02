@@ -239,6 +239,12 @@ class VehicleSuggestedChecksService
                 'category_label' => $fault['issue'],
                 'chip'           => $chip,
                 'selectable'     => $chip !== null,
+                // Where to send the inspector when there is no exact keyword to pre-fill. A car whose
+                // history is all legacy sheet wording ("Electrical", "Brakes") yields category-level
+                // suggestions only — real and worth showing, but not storable as a finding. Opening the
+                // picker filtered to that category is the honest action: it puts the inspector in front
+                // of the right five keywords and lets a human choose, instead of the engine inventing one.
+                'picker_category' => $this->catalogCategoryKey($fault['key']),
                 'level'          => $this->normaliseLevel($fault['level'] ?? null),
                 // Promoted = the car is at or past the interval IT established. A stalling fault is
                 // never promoted: the evidence points at the workshop, not the vehicle.
@@ -282,6 +288,12 @@ class VehicleSuggestedChecksService
         $service = $this->forecast->forecast($vehicle);
         $out     = [];
 
+        // A car whose odometer says it is 852,999 km past its oil service has a broken reading, not a
+        // service need. The Proactive Diagnostic Monitor already refuses to raise a request on one; the
+        // panel must refuse to print it, for the same reason and by the SAME rule — otherwise the
+        // inspector reads a number the rest of the system has formally classified as an anomaly.
+        $implausibleOil = $this->gate->isOilOverdueImplausible($vehicle->serviceStatus());
+
         foreach ($conditions as $c) {
             $directive = $c['directive'] ?? null;
             if (in_array($directive, [DiagnosticGateService::DIRECTIVE_DOWNTIME, DiagnosticGateService::DIRECTIVE_INACTIVITY], true)) {
@@ -289,6 +301,10 @@ class VehicleSuggestedChecksService
             }
 
             $key = $c['key'] ?? 'condition';
+
+            if ($key === 'oil_change' && $implausibleOil) {
+                continue;   // bad odometer — fix it in Mileage Reconciliation, don't inspect on it
+            }
 
             $reasons = [['code' => 'forecast.condition_due', 'params' => ['condition' => $key]]];
 
@@ -314,10 +330,15 @@ class VehicleSuggestedChecksService
 
             $out[] = [
                 'group'          => self::GROUP_FORECAST,
-                'category_key'   => $chip ? (FaultVocabulary::categoryOf($chip)['key'] ?? $key) : $key,
+                // The CONDITION key (oil_change / battery / tyres), not the chip's catalog category.
+                // 'Oil Change' and 'Battery Replacement' both live under the catalog's `routine`
+                // category, so keying on that would make two unrelated conditions look like one row
+                // the moment either lost its chip.
+                'category_key'   => $key,
                 'category_label' => $c['label'] ?? $key,
                 'chip'           => $chip,
                 'selectable'     => $chip !== null,
+                'picker_category' => $chip ? (FaultVocabulary::categoryOf($chip)['key'] ?? null) : null,
                 'level'          => $this->normaliseLevel($c['severity'] ?? null),
                 // Already over the limit — conditionsDue only reports a condition once it IS due, so
                 // every routine condition here is a real overdue, not a forecast of one.
@@ -432,6 +453,23 @@ class VehicleSuggestedChecksService
             // somewhere else would put a brake chip on an electrical chain.
             if ($keyword && (FaultVocabulary::categoryOf($keyword)['key'] ?? null) === $categoryKey) {
                 return $keyword;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * The findings-catalog category a recurrence key names, or null when it names none. The recurrence
+     * engine's canonical keys are drawn FROM the catalog, so this is usually the identity — but it is
+     * checked rather than assumed, so an alias-only key never sends the picker to a category that does
+     * not exist.
+     */
+    private function catalogCategoryKey(string $recurrenceKey): ?string
+    {
+        foreach (config('maintenance_findings.categories', []) as $category) {
+            if (($category['key'] ?? null) === $recurrenceKey) {
+                return $recurrenceKey;
             }
         }
 

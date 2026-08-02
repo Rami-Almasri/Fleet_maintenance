@@ -46,8 +46,9 @@ class InspectionsGenerateTasks extends Command
 
     protected $description = 'Proactively raise "Needs Test Drive" requests for cars due for a routine/check-up (oil, tyres, battery, long idle), skipping implausible odometer readings';
 
-    /** Absolute floor for the oil sanity ceiling, in km — used when 3× the interval is smaller. */
-    private const ANOMALY_FLOOR_KM = 20000;
+    // The oil sanity ceiling itself lives on DiagnosticGateService (oilCeilingKm /
+    // isOilOverdueImplausible) so this command and the Suggested Checks panel cannot disagree about
+    // whether a reading is real. It used to be a private const here — the second consumer is why it moved.
 
     public function handle(MaintenanceWorkflowService $workflow, DiagnosticGateService $gate): int
     {
@@ -98,14 +99,9 @@ class InspectionsGenerateTasks extends Command
                     // anomaly, but keep every other condition on the car. `$svc` is also snapshotted onto the
                     // request below (current mileage / interval / overdue) for the Inspection Review Queue.
                     $svc = $v->serviceStatus();
-                    if (($svc['status'] ?? null) === 'service_due') {
-                        $interval = (int) ($svc['interval'] ?? 0);
-                        $over     = (int) ($svc['overdue_km'] ?? 0);
-                        $ceiling  = max(self::ANOMALY_FLOOR_KM, 3 * $interval);
-                        if ($over > $ceiling) {
-                            $anomalies[] = ['vehicle' => $v, 'service' => $svc, 'ceiling' => $ceiling];
-                            $conditions  = array_values(array_filter($conditions, fn ($c) => ($c['key'] ?? null) !== 'oil_change'));
-                        }
+                    if ($gate->isOilOverdueImplausible($svc)) {
+                        $anomalies[] = ['vehicle' => $v, 'service' => $svc, 'ceiling' => $gate->oilCeilingKm($svc)];
+                        $conditions  = array_values(array_filter($conditions, fn ($c) => ($c['key'] ?? null) !== 'oil_change'));
                     }
 
                     if (empty($conditions)) {
