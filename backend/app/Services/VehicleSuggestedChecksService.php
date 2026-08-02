@@ -2,9 +2,11 @@
 
 namespace App\Services;
 
+use App\Models\FindingKeyword;
 use App\Models\Vehicle;
 use App\Support\FaultVocabulary;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 
 /**
  * "What should the inspector actually look at on THIS car?" — the one place that answers it.
@@ -84,6 +86,28 @@ class VehicleSuggestedChecksService
     private const DUE_SOON_GAP_RATIO = 0.8;
 
     /**
+     * How many OBSERVED gaps a fault needs before we call its interval a pattern.
+     *
+     * Two episodes produce exactly one gap, and one measurement is not an interval — saying "usually
+     * returns every ~10 days" from a single 10-day observation claims a regularity nothing has shown.
+     * Measured on the live fleet: 59% of chains (157 of 266) have only that one gap, and 93 of them
+     * were being badged "Due now" on the strength of it. Below this threshold the panel states the
+     * plain fact instead ("returned once before, 10 days later") and does not promote.
+     */
+    private const MIN_GAPS_FOR_INTERVAL = 2;
+
+    /**
+     * Past this multiple of its own gap, a fault's pattern has LAPSED and we stop predicting a return.
+     *
+     * The promotion rule reads "days since last ÷ its usual gap ≥ 0.8" — which keeps climbing forever,
+     * so a fault that has been quiet for 131 days on a ~17-day interval scored 8× and shouted the
+     * loudest badge on the panel. But a car eight intervals silent is evidence the fault STOPPED, not
+     * that it is overdue. 56 live promotions were of exactly this kind. Beyond this multiple the panel
+     * says the pattern appears to have stopped, which is what the data actually shows.
+     */
+    private const PATTERN_LAPSED_MULTIPLE = 3.0;
+
+    /**
      * Recurring faults older than this are not offered. A brake fault that last recurred three years
      * ago is history, not a check for today — and the car has almost certainly changed since.
      */
@@ -121,6 +145,17 @@ class VehicleSuggestedChecksService
     }
 
     /**
+     * How long a computed payload is reused. One car costs ~20ms — almost entirely its repeat-fault
+     * report, which is several queries over the full workshop log — and the inputs move slowly: a
+     * repeat-fault chain only changes when a repair completes, and a service-due threshold only when
+     * the odometer crosses it. Fifteen minutes is well inside both.
+     *
+     * This is why `generated_at` is on the payload and rendered: a cached answer must say when it was
+     * computed (E18 — freshness is always shown), never silently pass itself off as live.
+     */
+    private const CACHE_TTL = 900;
+
+    /**
      * The full suggested-checks payload for one car.
      *
      * @return array{
@@ -131,10 +166,21 @@ class VehicleSuggestedChecksService
      */
     public function forVehicle(Vehicle $vehicle): array
     {
+        return Cache::remember(
+            'vehicle:suggested_checks:v1:' . $vehicle->id,
+            self::CACHE_TTL,
+            fn () => $this->build($vehicle),
+        );
+    }
+
+    /** Uncached computation. Everything below this line is pure derivation over recorded evidence. */
+    private function build(Vehicle $vehicle): array
+    {
         $conditions = $this->gate->conditionsDue($vehicle);
+        $recurring  = $this->fromRecurringHistory($vehicle);
 
         $suggestions = array_merge(
-            $this->fromRecurringHistory($vehicle),
+            $recurring['suggestions'],
             $this->fromForecast($vehicle, $conditions),
         );
 
@@ -142,6 +188,7 @@ class VehicleSuggestedChecksService
         // print "Oil Change" twice — the two reasons merge onto a single, better-evidenced suggestion.
         $suggestions = $this->mergeDuplicates($suggestions);
         $suggestions = $this->rank($suggestions);
+        $suggestions = $this->localise($suggestions);
 
         return [
             'vehicle_id'    => (int) $vehicle->id,
@@ -169,6 +216,12 @@ class VehicleSuggestedChecksService
                 'promoted'  => count(array_filter($suggestions, fn ($s) => $s['promoted'])),
                 'recurring' => count(array_filter($suggestions, fn ($s) => $s['group'] === self::GROUP_RECURRING)),
                 'forecast'  => count(array_filter($suggestions, fn ($s) => $s['group'] === self::GROUP_FORECAST)),
+                // Never truncate silently. `shown` vs `total` is the MAX_SUGGESTIONS cap; `unplaceable`
+                // is the repeat faults that exist but have no catalog wording to offer. Both are the
+                // difference between "this is everything" and "this is what fitted", and the panel
+                // links to the full recurrence report when either is non-zero.
+                'shown'       => min(count($suggestions), self::MAX_SUGGESTIONS),
+                'unplaceable' => $recurring['unplaceable'],
             ],
             'origin' => 'Generated per vehicle from its own recorded history and service state. Nothing here '
                       . 'is a fixed checklist; a car with no repeat faults and nothing due returns no suggestions.',
@@ -187,8 +240,9 @@ class VehicleSuggestedChecksService
      */
     private function fromRecurringHistory(Vehicle $vehicle): array
     {
-        $report = $this->recurrence->forVehicle($vehicle);
-        $out    = [];
+        $report      = $this->recurrence->forVehicle($vehicle);
+        $out         = [];
+        $unplaceable = 0;
 
         foreach ($report['faults'] ?? [] as $fault) {
             $sinceLast = $fault['days_since_last'] ?? null;
@@ -196,12 +250,39 @@ class VehicleSuggestedChecksService
                 continue;   // stale pattern — the car has moved on
             }
 
+            // The recurrence engine deliberately keeps free-text faults it cannot place in the catalog,
+            // so a real repeating problem is never lost to a wording the catalog has no word for yet
+            // (it buckets them under the raw label — including typos like "oil fillter change", which is
+            // how routine upkeep occasionally slips past the routine filter). That is right for the
+            // Vehicle Profile, which REPORTS history. It is wrong here, because this list is ACTED on:
+            // with no catalog keyword and no category, there is nothing for the inspector to tap and no
+            // picker to open. So they are counted out loud (summary.unplaceable) and left to the
+            // recurrence panel, which still shows every one of them in full. Add the alias to
+            // FaultVocabulary and the fault starts appearing here on its own.
+            if ($this->catalogCategoryKey($fault['key']) === null) {
+                $unplaceable++;
+                continue;
+            }
+
             $avgGap = $fault['avg_gap_days'] ?? null;
+
+            // How many gaps the average is actually made of. N episodes produce N−1 gaps, so a 2-episode
+            // chain averages a single observation — a fact about one return, not an interval.
+            $observedGaps = max(0, (int) $fault['episodes'] - 1);
+            $isInterval   = $observedGaps >= self::MIN_GAPS_FOR_INTERVAL && $avgGap && $avgGap > 0;
 
             // Has the car used up its own typical interval for this fault? Only answerable when the
             // car produced an interval AND we know when it was last seen; otherwise no claim is made.
-            $ratio   = ($avgGap && $avgGap > 0 && $sinceLast !== null) ? $sinceLast / $avgGap : null;
-            $dueSoon = $ratio !== null && $ratio >= self::DUE_SOON_GAP_RATIO;
+            $ratio = ($avgGap && $avgGap > 0 && $sinceLast !== null) ? $sinceLast / $avgGap : null;
+
+            // Silent for several intervals running: the fault has stopped coming back. Predicting a
+            // return here would be reading a rising ratio as urgency when it is really absence.
+            $lapsed = $ratio !== null && $ratio > self::PATTERN_LAPSED_MULTIPLE;
+
+            // Promotion needs a measured interval, not one observation, and needs the pattern to still
+            // be alive. Both guards exist because the unguarded rule promoted 93 single-gap chains and
+            // 56 long-dead ones on the live fleet.
+            $dueSoon = $isInterval && ! $lapsed && $ratio >= self::DUE_SOON_GAP_RATIO;
 
             // The counter-signal the recurrence engine already computes: the SAME garage taking the
             // car repeatedly inside a few days is a slow workshop, not a car that keeps failing. That
@@ -214,8 +295,18 @@ class VehicleSuggestedChecksService
             if ($sinceLast !== null) {
                 $reasons[] = ['code' => 'repeat.last_seen', 'params' => ['days' => (int) $sinceLast]];
             }
-            if ($avgGap) {
-                $reasons[] = ['code' => 'repeat.usual_gap', 'params' => ['days' => (int) $avgGap]];
+            if ($isInterval) {
+                // "Usually every ~N days" — earned, because N is an average of ≥2 observations.
+                $reasons[] = ['code' => 'repeat.usual_gap', 'params' => ['days' => (int) $avgGap, 'samples' => $observedGaps]];
+            } elseif ($avgGap) {
+                // One observation. State it as the single event it was, with no claim of regularity.
+                $reasons[] = ['code' => 'repeat.single_gap', 'params' => ['days' => (int) $avgGap]];
+            }
+            if ($lapsed && $isInterval) {
+                $reasons[] = ['code' => 'repeat.pattern_lapsed', 'params' => [
+                    'days'  => (int) $sinceLast,
+                    'times' => (int) floor($ratio),
+                ]];
             }
             if ($dueSoon && ! $stalling) {
                 $reasons[] = [
@@ -252,6 +343,12 @@ class VehicleSuggestedChecksService
                 'episodes'       => (int) $fault['episodes'],
                 'days_since_last' => $sinceLast,
                 'avg_gap_days'   => $avgGap,
+                // How much evidence the interval rests on, published rather than implied. 1 means the
+                // "gap" is a single observation; the UI must not word it as a pattern, and a consumer
+                // reading this payload can apply its own threshold instead of trusting ours blindly.
+                'gap_samples'    => $observedGaps,
+                'interval_measured' => $isInterval,
+                'pattern_lapsed' => $lapsed && $isInterval,
                 'reasons'        => $reasons,
                 'probability'    => null,   // E15 §⑤ — obligations and measured intervals carry no probability
                 'source'         => 'repeat_fault_history',
@@ -263,7 +360,7 @@ class VehicleSuggestedChecksService
             ];
         }
 
-        return $out;
+        return ['suggestions' => $out, 'unplaceable' => $unplaceable];
     }
 
     // ── Source 2 · scheduled service & vehicle health ──────────────────────────────────────────
@@ -510,6 +607,49 @@ class VehicleSuggestedChecksService
         }
 
         return $index;
+    }
+
+    /**
+     * Attach the Arabic name of every chip and category.
+     *
+     * The engine emits reason CODES precisely so the sentence around a suggestion can be composed in
+     * either language — but the NOUN in the middle of that sentence ("Brake noise") is catalog data,
+     * not a UI string, so the UI cannot translate it from labels.js. Arabic for a finding keyword lives
+     * in `finding_keywords.keyword_ar` (fully populated) and Arabic for a category in the catalog's
+     * `label_ar`. Both are attached here, in one batched query, so an Arabic user reads an Arabic
+     * suggestion instead of an English keyword wrapped in an Arabic sentence.
+     *
+     * @param  array<int,array<string,mixed>>  $suggestions
+     * @return array<int,array<string,mixed>>
+     */
+    private function localise(array $suggestions): array
+    {
+        $chips = array_values(array_filter(array_column($suggestions, 'chip')));
+
+        $arabic = $chips
+            ? FindingKeyword::whereIn('keyword', $chips)
+                ->pluck('keyword_ar', 'keyword')
+                ->all()
+            : [];
+
+        $categoryAr = [];
+        foreach (config('maintenance_findings.categories', []) as $category) {
+            if (($category['key'] ?? null) && ! empty($category['label_ar'])) {
+                $categoryAr[$category['key']] = $category['label_ar'];
+            }
+        }
+
+        foreach ($suggestions as &$s) {
+            // Null when the catalog has no Arabic for it — the UI falls back to the English, which is
+            // still the correct keyword. Never a machine translation.
+            $s['chip_ar'] = $s['chip'] ? ($arabic[$s['chip']] ?? null) : null;
+            // Only when the CATEGORY is the noun on screen. A forecast row shows its chip ("Battery
+            // Replacement"), and its picker_category is the catalog bucket that chip happens to live in
+            // (`routine`) — translating that would print "Routine Maintenance" under a battery check.
+            $s['category_label_ar'] = $s['chip'] ? null : ($categoryAr[$s['picker_category'] ?? ''] ?? null);
+        }
+
+        return $suggestions;
     }
 
     /**
