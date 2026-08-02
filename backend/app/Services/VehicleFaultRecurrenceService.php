@@ -40,8 +40,9 @@ use Illuminate\Support\Facades\DB;
  * never contradict the fleet view:
  *   • Rule A — every event under the SAME Type-U maintenance contract is ONE episode, however many
  *     times the car moved between garages. The counter does not tick inside a contract.
- *   • Rule B — events with NO maintenance contract open (the car was on rent) join the current episode
- *     only when they land within WAITING_BUFFER_DAYS; a longer gap is a genuine return.
+ *   • Rule B — events with NO maintenance contract open join the current episode only when they land
+ *     within WAITING_BUFFER_DAYS; a longer gap is a genuine return. (No maintenance contract does NOT
+ *     establish that the car was on rent — see the 'kind' field in describeFault().)
  *   • A new episode therefore begins when the contract changes / opens / closes, or after a >7-day gap
  *     with no contract. Each break records WHY, which is what the chain renders.
  *   • Routine planned upkeep and cosmetic / rental-return work are excluded — a car having its oil
@@ -344,7 +345,8 @@ class VehicleFaultRecurrenceService
 
     /**
      * The Type-U contract an event on $date belongs to (latest contract whose window —
-     * out_date − buffer … in_date — covers it), or null when the car was out on rent instead.
+     * out_date − buffer … in_date — covers it), or null when no maintenance contract covers it.
+     * Null is NOT evidence of a rental: Type-C contracts are never consulted here.
      *
      * @param  \Illuminate\Support\Collection<int,object>  $contracts
      */
@@ -468,9 +470,16 @@ class VehicleFaultRecurrenceService
             $chain[] = [
                 'contract_id' => $ep['contract'],
                 'contract_no' => $ep['contract'] ? ($contractNumbers[$ep['contract']] ?? $ep['contract']) : null,
-                // 'contract' = the car was taken off the road for this repair; 'rental' = it broke
-                // while it was out with a customer (no maintenance contract was open).
-                'kind'        => $ep['contract'] ? 'contract' : 'rental',
+                // 'contract' = a Type-U maintenance contract covers this date, so the car was
+                // provably in the shop. 'unknown' = it does NOT — and that is ALL it means.
+                // This used to be reported as 'rental' and rendered as "During rental", which was an
+                // inference from a negative: nothing here looks at a Type-C rental contract, so an
+                // idle car, an unsynced contract or shop work with no contract raised all read as
+                // "a customer had it". Measured on vehicle 1805's Brakes chain, 1 of 7 such episodes
+                // had no rental contract at all. Until the rental side is actually resolved (then:
+                // in maintenance / with customer / no active contract), this stays 'unknown' and the
+                // UI shows no status rather than a claim it cannot support.
+                'kind'        => $ep['contract'] ? 'contract' : 'unknown',
                 'visits'      => count($ep['events']),
                 'gap_days'    => $ep['gap_days'],
                 'boundary'    => $ep['boundary'],

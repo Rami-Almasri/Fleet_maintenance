@@ -16,11 +16,17 @@ import { aed2, fmtDate, num } from '../../lib/format';
  *
  *   ●──── held 25d ────●──── held 50d ────●
  *   FIRST TIME          RETURN 1           LATEST
- *   During rental       #4473              #4728 ×2
+ *   (no label)          #4473              #4728 ×2
  *
  * Every marker is a real record: a Type-U maintenance contract the car went out on (clickable), or a
- * workshop visit with no contract open — i.e. it broke while it was out with a customer. Nothing is
- * predicted; the panel states its own source at the bottom ([[traceability-visibility-requirement]]).
+ * workshop visit with no such contract. Nothing is predicted; the panel states its own source at the
+ * bottom ([[traceability-visibility-requirement]]).
+ *
+ * WHERE THE CAR WAS: the only thing shown is the maintenance contract number, and only when such a
+ * contract provably covers the date. Everything else shows NO label. The old "During rental" text was
+ * inferred purely from the absence of a maintenance contract — the backend never checked for a rental
+ * contract — so an idle car read as "a customer had it". That label is withdrawn until the rental side
+ * is resolved for real; then this becomes In maintenance / With customer / No active contract.
  */
 
 /** Escalating tone by how many separate times the fault came back — 2 is a worry, 4+ is a pattern. */
@@ -67,12 +73,13 @@ function Stat({ value, label, tip, tone = 'text-slate-900' }) {
 }
 
 /**
- * One marker on the timeline — a single repair episode. Contract episodes deep-link to the contract;
- * rental episodes are called out, because a fault that returns while a customer has the car is the
- * expensive kind.
+ * One marker on the timeline — a single repair episode. Contract episodes are labelled "In
+ * maintenance" and deep-link to the contract. Episodes with no maintenance contract carry NO
+ * where-was-the-car status at all: the date and what was recorded still show, but the panel does not
+ * guess whether a customer had it (see the note at the top of this file).
  */
 function Episode({ node, index, total, tone, showFinancials }) {
-  const isRental = node.kind !== 'contract';
+  const inMaintenance = node.kind === 'contract';
   const isFirst = index === 0;
   const isLast = index === total - 1;
 
@@ -86,23 +93,37 @@ function Episode({ node, index, total, tone, showFinancials }) {
   const title = [
     `${fmtDate(node.first)}${node.last !== node.first ? ` → ${fmtDate(node.last)}` : ''}`,
     node.garages?.length ? node.garages.join(' · ') : null,
-    isRental ? 'No maintenance contract was open — the car was out with a customer.' : null,
+    inMaintenance
+      ? `Maintenance contract #${node.contract_no} was open on this date.`
+      : 'No maintenance contract covers this date. Where the car was is not established, so no status is shown.',
   ].filter(Boolean).join('\n');
+
+  // The ×N repeat badge rides on the status line when there is one, else on the date line.
+  const visitsBadge = node.visits > 1 && (
+    <span className="ms-auto shrink-0 rounded bg-slate-900/5 px-1 text-[10px] font-black tabular-nums text-slate-500">
+      ×{node.visits}
+    </span>
+  );
 
   const card = (
     <>
-      <span className="flex items-center gap-1.5 text-[13px] font-bold leading-tight">
-        {isRental
-          ? <Icon.Car className="h-3.5 w-3.5 shrink-0 text-slate-400" />
-          : <Icon.Invoice className="h-3.5 w-3.5 shrink-0 text-indigo-400" />}
-        <span className="truncate">{node.contract_no ? `#${node.contract_no}` : 'During rental'}</span>
-        {node.visits > 1 && (
-          <span className="ms-auto shrink-0 rounded bg-slate-900/5 px-1 text-[10px] font-black tabular-nums text-slate-500">
-            ×{node.visits}
-          </span>
-        )}
+      {/* Only a PROVEN whereabouts is stated. With no maintenance contract this line is omitted
+          entirely — the episode is still a real record, we just don't claim where the car was. */}
+      {inMaintenance && (
+        <span className="flex items-center gap-1.5 text-[13px] font-bold leading-tight">
+          <Icon.Invoice className="h-3.5 w-3.5 shrink-0 text-indigo-400" />
+          <span className="truncate">#{node.contract_no}</span>
+          {visitsBadge}
+        </span>
+      )}
+      <span
+        className={inMaintenance
+          ? 'mt-1 flex items-center text-[11px] font-semibold text-slate-500'
+          : 'flex items-center text-[13px] font-bold leading-tight text-slate-700'}
+      >
+        <span className="truncate">{fmtDate(node.first)}</span>
+        {!inMaintenance && visitsBadge}
       </span>
-      <span className="mt-1 block text-[11px] font-semibold text-slate-500">{fmtDate(node.first)}</span>
       {meta.length > 0 && (
         <span className="mt-0.5 block truncate text-[11px] text-slate-400">{meta.join(' · ')}</span>
       )}
@@ -110,9 +131,9 @@ function Episode({ node, index, total, tone, showFinancials }) {
   );
 
   const shell = 'block w-full rounded-xl border-l-[3px] bg-white px-2.5 py-2 text-start shadow-sm ring-1 transition '
-    + (isRental
-      ? 'border-l-slate-300 text-slate-700 ring-slate-200/70'
-      : 'border-l-indigo-500 text-indigo-900 ring-slate-200/70 hover:-translate-y-px hover:shadow-md hover:ring-indigo-300');
+    + (inMaintenance
+      ? 'border-l-indigo-500 text-indigo-900 ring-slate-200/70 hover:-translate-y-px hover:shadow-md hover:ring-indigo-300'
+      : 'border-l-slate-300 text-slate-700 ring-slate-200/70');
 
   return (
     <div className="w-[158px] shrink-0">
