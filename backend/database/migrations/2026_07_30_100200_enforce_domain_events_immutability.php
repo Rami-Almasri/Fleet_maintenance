@@ -27,6 +27,14 @@ return new class extends Migration
             return;
         }
 
+        // Dropped first so a re-run is clean. This migration creates two triggers in two statements
+        // with no transaction around them (MySQL does not roll back DDL), so a failure on the second
+        // leaves the first behind and the migration unrecorded — the retry would then die on "trigger
+        // already exists" instead of on the real cause. That is not hypothetical: it is how the
+        // deploy that first hit error 1419 left the database.
+        DB::unprepared('DROP TRIGGER IF EXISTS domain_events_no_update');
+        DB::unprepared('DROP TRIGGER IF EXISTS domain_events_no_delete');
+
         DB::unprepared('
             CREATE TRIGGER domain_events_no_update
             BEFORE UPDATE ON domain_events

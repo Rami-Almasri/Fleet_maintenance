@@ -17,6 +17,15 @@ services:
   db:
     image: mysql:8.0
     restart: unless-stopped
+    # MySQL 8 ships with binary logging ON, and refuses CREATE TRIGGER from any account
+    # without SUPER while it is (error 1419). The app connects as ${MYSQL_USER}, never root,
+    # and 2026_07_30_100200_enforce_domain_events_immutability creates the domain_events
+    # append-only triggers during the migrations the backend runs on boot — so without this
+    # the backend container cannot start at all. Granting the app SUPER would be a far wider
+    # hole than trusting it to create a trigger. Local MariaDB does not enforce 1419, which is
+    # why this only ever surfaces on the server ([[mariadb-local-mysql8-prod]]).
+    command:
+      - "--log-bin-trust-function-creators=1"
     environment:
       MYSQL_DATABASE: "${MYSQL_DATABASE:-laravel}"
       MYSQL_USER: "${MYSQL_USER:-fleet}"
