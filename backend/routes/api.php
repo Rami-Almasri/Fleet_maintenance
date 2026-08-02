@@ -100,6 +100,7 @@ Route::middleware('auth:sanctum')->prefix('Vehicle')->controller(VehicleControll
     Route::get('/{vehicle}/tire-history', 'tireHistory')->middleware('permission:maintenance.view');       // tyre details (brand/DOT/tread/warranty) from maintenance line items
     Route::get('/{vehicle}/plate-history', 'plateHistory')->middleware('permission:vehicles.view');        // every car that shared this plate (reuse timeline) — history discoverable, never merged
     Route::get('/{vehicle}/repeat-faults', 'repeatFaults')->middleware('permission:maintenance.view');     // "keeps breaking down": faults that returned after a repair, as a chain of episodes
+    Route::get('/{vehicle}/suggested-checks', 'suggestedChecks')->middleware('permission:maintenance.view'); // what to inspect on THIS car: its repeat faults + service forecast (never a fixed checklist)
     Route::get('/{vehicle}/profile', 'profile')->middleware('permission:vehicles.view');   // full car profile: registration, insurance, fines, contracts
     Route::get('/{vehicle}', 'show')->middleware('permission:vehicles.view');
     Route::post('/', 'store')->middleware('permission:vehicles.manage');

@@ -94,6 +94,36 @@ class DiagnosticGateService
         return $this->downtimeInfo($vehicle);
     }
 
+    /** Absolute floor for the oil sanity ceiling, in km — used when 3× the interval is smaller. */
+    private const OIL_ANOMALY_FLOOR_KM = 20000;
+
+    /**
+     * THE oil sanity ceiling: a service-due distance beyond max(20,000 km, 3 × interval) is almost
+     * certainly a bad odometer reading, not a car that genuinely drove that far past its service.
+     *
+     * This lives here, once, because more than one surface has to make the same call and they must not
+     * disagree: the Proactive Diagnostic Monitor drops the oil condition and files a Data Anomaly
+     * instead of raising a nonsense request, and VehicleSuggestedChecksService suppresses the same
+     * reading rather than printing "overdue by 852,999 km" to an inspector. A second copy of this
+     * threshold would let one surface call a car due while the other calls it broken data.
+     *
+     * @param  array<string,mixed>  $serviceStatus  the array from Vehicle::serviceStatus()
+     */
+    public function oilCeilingKm(array $serviceStatus): int
+    {
+        return max(self::OIL_ANOMALY_FLOOR_KM, 3 * (int) ($serviceStatus['interval'] ?? 0));
+    }
+
+    /** True when a car's service-due distance is too large to be a real reading (see oilCeilingKm). */
+    public function isOilOverdueImplausible(array $serviceStatus): bool
+    {
+        if (($serviceStatus['status'] ?? null) !== 'service_due') {
+            return false;
+        }
+
+        return (int) ($serviceStatus['overdue_km'] ?? 0) > $this->oilCeilingKm($serviceStatus);
+    }
+
     /**
      * Reality-check for a single routine service type (oil_change / battery / tire_rotation /
      * tire_change) against a car's LIVE status — is it actually due, or is someone logging a routine
