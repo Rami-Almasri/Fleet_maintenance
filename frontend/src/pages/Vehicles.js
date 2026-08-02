@@ -12,6 +12,7 @@ import VehicleForm, { VEHICLE_STATUSES, vehicleToForm, cleanPayload } from './ve
 import DualState, { ContractLines } from '../components/ops/DualState';
 import { CommandPanel, StatGaugeTile } from '../components/ops';
 import VehiclesAnalytics from '../components/analytics/VehiclesAnalytics';
+import { useI18n } from '../i18n/I18nContext';
 
 const PAGE_SIZE = 12;
 
@@ -22,6 +23,10 @@ const plateId = (v) => (v && v.plate_key ? `${v.plate_code ?? ''}:${v.plate_key}
 export default function Vehicles() {
   const toast = useToast();
   const { can } = usePermissions();
+  const { t, lang, isRTL } = useI18n();
+  // Thousands separators follow the language; Arabic keeps Latin digits so the
+  // numbers stay aligned with the monospace/tabular columns they sit in.
+  const numLocale = lang === 'ar' ? 'ar-AE-u-nu-latn' : 'en-US';
   const fetcher = useCallback(async () => {
     const { data } = await api.get('/Vehicle');
     return data.data || [];
@@ -50,10 +55,10 @@ export default function Vehicles() {
   const resolveDefer = async (v) => {
     try {
       await api.delete(`/Vehicle/${v.id}/defer-maintenance`);
-      toast.success('Deferred-maintenance flag cleared');
+      toast.success(t('vehicles.deferCleared'));
       reload();
     } catch (e) {
-      toast.error(e.response?.data?.message || 'Could not clear the flag');
+      toast.error(e.response?.data?.message || t('vehicles.deferClearFailed'));
     }
   };
 
@@ -149,9 +154,9 @@ export default function Vehicles() {
   // Floating page gauge: share of the active fleet that's available to rent.
   usePageStat({
     percent: active.length ? (availableCount / active.length) * 100 : null,
-    label: 'Available',
+    label: t('vehicles.kpi.available'),
     color: 'emerald',
-    hint: `${availableCount} of ${active.length} active cars available to rent`,
+    hint: t('vehicles.availableHint', { n: availableCount, total: active.length }),
   });
 
   const pageCount = Math.ceil(filtered.length / PAGE_SIZE) || 1;
@@ -179,10 +184,10 @@ export default function Vehicles() {
       const payload = cleanPayload(form);
       if (editing) {
         const { data } = await api.post(`/Vehicle/${editing.id}`, payload);
-        toast.success(data?.message || 'Vehicle updated');
+        toast.success(data?.message || t('vehicles.updated'));
       } else {
         await api.post('/Vehicle', payload);
-        toast.success('Vehicle created');
+        toast.success(t('vehicles.created'));
       }
       setModalOpen(false);
       reload();
@@ -190,9 +195,9 @@ export default function Vehicles() {
       const res = err.response?.data;
       if (res?.errors) {
         setFormErrors(res.errors);
-        toast.error('Please fix the highlighted fields');
+        toast.error(t('vehicles.fixFields'));
       } else {
-        toast.error(res?.message || res?.msg || 'Could not save vehicle');
+        toast.error(res?.message || res?.msg || t('vehicles.saveFailed'));
       }
     } finally {
       setSaving(false);
@@ -203,18 +208,18 @@ export default function Vehicles() {
     setDeleting(true);
     try {
       await api.delete(`/Vehicle/${toDelete.id}`);
-      toast.success('Vehicle deleted');
+      toast.success(t('vehicles.deleted'));
       setToDelete(null);
       reload();
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Could not delete vehicle');
+      toast.error(err.response?.data?.message || t('vehicles.deleteFailed'));
     } finally {
       setDeleting(false);
     }
   };
 
   // Row presentation helpers (mission-control telemetry rows).
-  const fmtKm = (n) => (n == null ? '—' : `${Number(n).toLocaleString()} km`);
+  const fmtKm = (n) => (n == null ? '—' : t('vehicles.km', { n: Number(n).toLocaleString(numLocale) }));
   const rowTone = (v) => {
     if (v.is_deferred_maintenance) return 'rt-paused';
     if (['red', 'yellow'].includes(v.condition_grade)) return 'rt-crit';
@@ -228,25 +233,25 @@ export default function Vehicles() {
     if (!reusedKeys.has(plateId(v))) return null;
     const base = { display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 3, padding: '1px 7px', borderRadius: 999, fontSize: 10, fontWeight: 700, letterSpacing: '.02em' };
     if (v.is_current_plate_holder) {
-      return <span style={{ ...base, background: 'rgba(16,185,129,.14)', color: '#10b981', border: '1px solid rgba(16,185,129,.3)' }}>● Current plate holder</span>;
+      return <span style={{ ...base, background: 'rgba(16,185,129,.14)', color: '#10b981', border: '1px solid rgba(16,185,129,.3)' }}>● {t('vehicles.plate.current')}</span>;
     }
     const gone = ['sold', 'disposed', 'returned'].includes(v.status);
     return gone
-      ? <span style={{ ...base, background: 'rgba(148,163,184,.14)', color: '#94a3b8', border: '1px solid rgba(148,163,184,.3)' }}>◍ Sold vehicle · history</span>
-      : <span style={{ ...base, background: 'rgba(245,158,11,.14)', color: '#f59e0b', border: '1px solid rgba(245,158,11,.3)' }}>◍ Previous plate holder</span>;
+      ? <span style={{ ...base, background: 'rgba(148,163,184,.14)', color: '#94a3b8', border: '1px solid rgba(148,163,184,.3)' }}>◍ {t('vehicles.plate.sold')}</span>
+      : <span style={{ ...base, background: 'rgba(245,158,11,.14)', color: '#f59e0b', border: '1px solid rgba(245,158,11,.3)' }}>◍ {t('vehicles.plate.previous')}</span>;
   };
   const condChip = (v) => {
     const g = v.condition_grade;
-    if (g === 'red') return <span className="ds-chip sm ds-crit"><span className="ds-dot" />Critical</span>;
-    if (g === 'yellow') return <span className="ds-chip sm ds-crit"><span className="ds-dot" />Maintenance needed</span>;
-    if (g === 'orange') return <span className="ds-chip sm ds-paused"><span className="ds-dot" />Watch</span>;
-    return <span className="ds-chip sm ds-none"><span className="ds-dot" />OK</span>;
+    if (g === 'red') return <span className="ds-chip sm ds-crit"><span className="ds-dot" />{t('vehicles.cond.red')}</span>;
+    if (g === 'yellow') return <span className="ds-chip sm ds-crit"><span className="ds-dot" />{t('vehicles.cond.yellow')}</span>;
+    if (g === 'orange') return <span className="ds-chip sm ds-paused"><span className="ds-dot" />{t('vehicles.cond.orange')}</span>;
+    return <span className="ds-chip sm ds-none"><span className="ds-dot" />{t('vehicles.cond.ok')}</span>;
   };
   const KPIS = [
-    { key: 'available', label: 'Available', value: availableCount, tone: 'avail', icon: 'car', hint: 'Free to rent or send for maintenance' },
-    { key: 'reserved', label: 'Reserved', value: reservedCount, tone: 'reserved', icon: 'calendar', hint: 'Open reservation / booking' },
-    { key: 'rented', label: 'Rented', value: rentedCount, tone: 'rented', icon: 'car', hint: 'Currently out on rent' },
-    { key: 'maint', label: 'In Maintenance', value: maintCount, tone: 'maint', icon: 'wrench', hint: 'Currently in the garage' },
+    { key: 'available', label: t('vehicles.kpi.available'), value: availableCount, tone: 'avail', icon: 'car', hint: t('vehicles.kpi.availableHint') },
+    { key: 'reserved', label: t('vehicles.kpi.reserved'), value: reservedCount, tone: 'reserved', icon: 'calendar', hint: t('vehicles.kpi.reservedHint') },
+    { key: 'rented', label: t('vehicles.kpi.rented'), value: rentedCount, tone: 'rented', icon: 'car', hint: t('vehicles.kpi.rentedHint') },
+    { key: 'maint', label: t('vehicles.kpi.maint'), value: maintCount, tone: 'maint', icon: 'wrench', hint: t('vehicles.kpi.maintHint') },
   ];
 
   return (
@@ -280,29 +285,29 @@ export default function Vehicles() {
 
         {/* Fleet Registry — the mission-control telemetry table. */}
         <CommandPanel
-          title="Fleet Registry"
+          title={t('vehicles.registry')}
           dotColor="#22d3ee"
-          label={loading ? 'loading' : `${filtered.length} of ${list.length}`}
-          meta={`${availableCount} available · ${rentedCount} on rent · ${maintCount} in shop`}
+          label={loading ? t('common.loading') : t('vehicles.countOf', { n: filtered.length, total: list.length })}
+          meta={t('vehicles.meta', { available: availableCount, rented: rentedCount, maint: maintCount })}
           bodyFlush
           action={can('vehicles.manage') ? (
-            <button className="opx-btn primary" onClick={openCreate}>+ Add Vehicle</button>
+            <button className="opx-btn primary" onClick={openCreate}>{t('vehicles.add')}</button>
           ) : null}
         >
           <div className="opx-toolbar">
             <input
               className="opx-input"
               value={search}
-              placeholder="Search plate, VIN, make or model…"
+              placeholder={t('vehicles.searchPlaceholder')}
               onChange={(e) => resetFilters(() => setSearch(e.target.value))}
             />
             <select className="opx-select" value={status} onChange={(e) => resetFilters(() => setStatus(e.target.value))}>
-              <option value="">All statuses</option>
-              {VEHICLE_STATUSES.map((s) => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
+              <option value="">{t('vehicles.allStatuses')}</option>
+              {VEHICLE_STATUSES.map((s) => <option key={s} value={s}>{t(`vehicles.status.${s}`)}</option>)}
             </select>
             {/* Shared-plate filter: show every car sitting on a reused plate (incl. sold holders). */}
             <label
-              title="Show only vehicles whose plate was reused across more than one car (includes sold / previous holders)"
+              title={t('vehicles.sharedPlatesHint')}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 7, cursor: 'pointer', fontSize: 12.5,
                 padding: '0 10px', borderRadius: 8, border: '1px solid var(--line)',
                 background: sharedOnly ? 'rgba(245,158,11,.12)' : 'transparent',
@@ -314,18 +319,19 @@ export default function Vehicles() {
                 onChange={(e) => resetFilters(() => setSharedOnly(e.target.checked))}
                 style={{ accentColor: '#f59e0b', cursor: 'pointer' }}
               />
-              Shared plates only{sharedPlateCount ? ` (${sharedPlateCount})` : ''}
+              {t('vehicles.sharedPlatesOnly')}{sharedPlateCount ? ` (${sharedPlateCount})` : ''}
             </label>
-            {flag && <button className="opx-ibtn" onClick={() => toggleFlag(flag)}>✕ Clear filter</button>}
+            {flag && <button className="opx-ibtn" onClick={() => toggleFlag(flag)}>✕ {t('vehicles.clearFilter')}</button>}
           </div>
 
           {plateReuseInResults && (
             <div style={{ margin: '0 0 4px', padding: '9px 14px', borderRadius: 10, border: '1px solid rgba(245,158,11,.3)', background: 'rgba(245,158,11,.08)', color: '#f59e0b', fontSize: 12.5, display: 'flex', gap: 8, alignItems: 'center' }}>
               <span>⚠️</span>
-              <span>{sharedOnly
-                ? <>Showing vehicles that share a <b>reused plate</b>. Each plate’s <b>current holder</b> is listed first, followed by its previous / sold holders. Every vehicle keeps its own records — nothing is merged.</>
-                : <>This plate was previously assigned to another vehicle. The <b>current holder</b> is shown first; previous vehicles are kept for history. Each vehicle keeps its own records — nothing is merged.</>}
-              </span>
+              {/* Plain strings rather than inline <b> fragments: the emphasised
+                  clauses sit at different points in an Arabic sentence, so
+                  splitting the text around markup would force a word order the
+                  translation can't honour. */}
+              <span>{sharedOnly ? t('vehicles.reuse.sharedOnly') : t('vehicles.reuse.inResults')}</span>
             </div>
           )}
 
@@ -333,20 +339,20 @@ export default function Vehicles() {
             <table className="opx-tbl">
               <thead>
                 <tr>
-                  <th>Vehicle</th>
-                  <th>Year · VIN</th>
-                  <th className="r">Odometer</th>
+                  <th>{t('vehicles.col.vehicle')}</th>
+                  <th>{t('vehicles.col.yearVin')}</th>
+                  <th className="r">{t('vehicles.col.odometer')}</th>
                   {/* Status chips + the live paperwork underneath — no longer maintenance-only. */}
-                  <th>Status · Contracts</th>
-                  <th>Condition</th>
-                  <th className="r">Actions</th>
+                  <th>{t('vehicles.col.statusContracts')}</th>
+                  <th>{t('vehicles.col.condition')}</th>
+                  <th className="r">{t('vehicles.col.actions')}</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
                   <tr><td colSpan={6}><div className="opx-skel" style={{ height: 260 }} /></td></tr>
                 ) : paged.length === 0 ? (
-                  <tr><td colSpan={6}><div className="opx-empty"><div className="big">🛰️</div>No vehicles match your search or filters.</div></td></tr>
+                  <tr><td colSpan={6}><div className="opx-empty"><div className="big">🛰️</div>{t('vehicles.empty')}</div></td></tr>
                 ) : paged.map((v) => (
                   <tr key={v.id} className={rowTone(v)}>
                     <td>
@@ -371,10 +377,10 @@ export default function Vehicles() {
                     <td>{condChip(v)}</td>
                     <td>
                       <div className="opx-actions">
-                        {canResolveDefer && v.is_deferred_maintenance && <button className="opx-ibtn" onClick={() => resolveDefer(v)} title="Clear the deferred-maintenance flag">✓ Resolve</button>}
-                        <Link to={`/vehicles/${v.id}`} className="opx-ibtn go">View</Link>
-                        <button className="opx-ibtn" onClick={() => openEdit(v)}>Edit</button>
-                        <button className="opx-ibtn danger" onClick={() => setToDelete(v)}>Delete</button>
+                        {canResolveDefer && v.is_deferred_maintenance && <button className="opx-ibtn" onClick={() => resolveDefer(v)} title={t('vehicles.resolveDeferHint')}>✓ {t('vehicles.resolve')}</button>}
+                        <Link to={`/vehicles/${v.id}`} className="opx-ibtn go">{t('vehicles.view')}</Link>
+                        <button className="opx-ibtn" onClick={() => openEdit(v)}>{t('common.edit')}</button>
+                        <button className="opx-ibtn danger" onClick={() => setToDelete(v)}>{t('vehicles.delete')}</button>
                       </div>
                     </td>
                   </tr>
@@ -385,11 +391,17 @@ export default function Vehicles() {
 
           {!loading && filtered.length > 0 && (
             <div className="opx-pager">
-              <span>{(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, filtered.length)} of {filtered.length}</span>
+              <span>{t('vehicles.range', {
+                from: (safePage - 1) * PAGE_SIZE + 1,
+                to: Math.min(safePage * PAGE_SIZE, filtered.length),
+                total: filtered.length,
+              })}</span>
+              {/* ‹ / › are direction-dependent glyphs — swap them under RTL so
+                  "previous" always points backwards in the reading direction. */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <button className="opx-ibtn" disabled={safePage <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))} style={{ opacity: safePage <= 1 ? 0.4 : 1 }}>‹ Prev</button>
-                <span>Page {safePage} / {pageCount}</span>
-                <button className="opx-ibtn" disabled={safePage >= pageCount} onClick={() => setPage((p) => Math.min(pageCount, p + 1))} style={{ opacity: safePage >= pageCount ? 0.4 : 1 }}>Next ›</button>
+                <button className="opx-ibtn" disabled={safePage <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))} style={{ opacity: safePage <= 1 ? 0.4 : 1 }}>{isRTL ? '›' : '‹'} {t('vehicles.prev')}</button>
+                <span>{t('vehicles.pageOf', { page: safePage, total: pageCount })}</span>
+                <button className="opx-ibtn" disabled={safePage >= pageCount} onClick={() => setPage((p) => Math.min(pageCount, p + 1))} style={{ opacity: safePage >= pageCount ? 0.4 : 1 }}>{t('vehicles.next')} {isRTL ? '‹' : '›'}</button>
               </div>
             </div>
           )}
@@ -401,13 +413,13 @@ export default function Vehicles() {
       <Modal
         open={modalOpen}
         onClose={() => !saving && setModalOpen(false)}
-        title={editing ? 'Edit Vehicle' : 'Add New Vehicle'}
-        subtitle={editing ? editing.vin : 'Enter the vehicle details'}
+        title={editing ? t('vehicles.editTitle') : t('vehicles.addTitle')}
+        subtitle={editing ? editing.vin : t('vehicles.addSubtitle')}
         size="xl"
         footer={
           <>
-            <Button variant="secondary" onClick={() => setModalOpen(false)} disabled={saving}>Cancel</Button>
-            <Button onClick={save} loading={saving}>{editing ? 'Save Changes' : 'Create Vehicle'}</Button>
+            <Button variant="secondary" onClick={() => setModalOpen(false)} disabled={saving}>{t('common.cancel')}</Button>
+            <Button onClick={save} loading={saving}>{editing ? t('vehicles.saveChanges') : t('vehicles.createVehicle')}</Button>
           </>
         }
       >
@@ -420,9 +432,12 @@ export default function Vehicles() {
         onClose={() => !deleting && setToDelete(null)}
         onConfirm={confirmDelete}
         loading={deleting}
-        title="Delete vehicle?"
-        confirmText="Delete"
-        message={toDelete ? `This will remove ${[toDelete.make, toDelete.model].filter(Boolean).join(' ')} (${toDelete.plate_no || toDelete.vin}). This can be undone via the database (soft delete).` : ''}
+        title={t('vehicles.deleteTitle')}
+        confirmText={t('vehicles.delete')}
+        message={toDelete ? t('vehicles.deleteMessage', {
+          vehicle: [toDelete.make, toDelete.model].filter(Boolean).join(' '),
+          plate: toDelete.plate_no || toDelete.vin,
+        }) : ''}
       />
     </>
   );

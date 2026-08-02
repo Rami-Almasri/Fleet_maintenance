@@ -217,12 +217,12 @@ export default function WorkshopEvents({ vehicleId, contractId, defaultDate, exp
           No workshop events yet.{canManage ? ' Click “+ Add event” to log the first one.' : ''}
         </p>
       ) : (
-        <ol className="relative space-y-3 border-l-2 border-slate-100 pl-5">
+        <ol className="relative space-y-3 border-s-2 border-slate-100 ps-5">
           {events.map((ev) => {
             const lvl = LEVEL[ev.priority];
             return (
               <li key={ev.tombstoned ? `t${ev.tombstone_id}` : ev.id} className="relative">
-                <span className={`absolute -left-[27px] top-1.5 h-3 w-3 rounded-full ring-4 ring-white ${ev.tombstoned ? 'bg-slate-300' : (ev.stage === 'IN' ? 'bg-emerald-500' : 'bg-indigo-400')}`} />
+                <span className={`absolute -start-[27px] top-1.5 h-3 w-3 rounded-full ring-4 ring-white ${ev.tombstoned ? 'bg-slate-300' : (ev.stage === 'IN' ? 'bg-emerald-500' : 'bg-indigo-400')}`} />
                 <div className={`rounded-xl border p-4 shadow-soft ${ev.tombstoned ? 'border-dashed border-slate-200 bg-slate-50/70' : 'border-slate-100 bg-white'}`}>
                   <div className={`flex flex-wrap items-center gap-2 ${ev.tombstoned ? 'opacity-60' : ''}`}>
                     <Badge tone={STAGE_TONE[ev.stage] || 'slate'}>{ev.stage || '—'}</Badge>
@@ -234,7 +234,7 @@ export default function WorkshopEvents({ vehicleId, contractId, defaultDate, exp
                     {ev.tombstoned
                       ? <Badge tone="red" title="Removed — hidden from the board and kept out of future syncs">🗑 Removed</Badge>
                       : !ev.editable && <Badge tone="gray" title="Synced from the Google Sheet — read-only here">📄 Sheet</Badge>}
-                    <span className="ml-auto text-xs text-slate-400">{ev.out_date ? fmtDate(ev.out_date) : '—'}</span>
+                    <span className="ms-auto text-xs text-slate-400">{ev.out_date ? fmtDate(ev.out_date) : '—'}</span>
                   </div>
 
                   <div className={ev.tombstoned ? 'opacity-60' : ''}>

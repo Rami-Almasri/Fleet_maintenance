@@ -278,6 +278,24 @@ class AuthController extends Controller
         ]);
     }
 
+    /**
+     * The CURRENT account, re-read from the database — same shape as login's `user` payload.
+     *
+     * Why this exists: login snapshots roles + permissions into the browser's localStorage, and the
+     * frontend gates whole surfaces on that snapshot (usePermissions → e.g. the Action Center's lanes).
+     * A permission granted after a user last signed in therefore stayed invisible to them until they
+     * logged out and back in. The app re-fetches this on boot so a role change lands on the next page
+     * load instead of on the next sign-in.
+     */
+    public function me(Request $request)
+    {
+        return response()->json([
+            "success" => true,
+            "msg" => 'OK',
+            "data" => ['user' => UserResource::make($request->user())],
+        ]);
+    }
+
     public function logout(Request $request)
     {
         // Workforce activity: stamp the logout before the token is revoked.

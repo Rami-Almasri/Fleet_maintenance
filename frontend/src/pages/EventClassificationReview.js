@@ -76,7 +76,7 @@ export default function EventClassificationReview() {
           <h1 className="text-xl font-bold tracking-tight text-slate-900">{t('classReview.title')}</h1>
           <p className="text-sm text-slate-500">{t('classReview.subtitle')}</p>
         </div>
-        <span className="ml-auto rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-600">{tasks.length}</span>
+        <span className="ms-auto rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-600">{tasks.length}</span>
       </div>
 
       {loading && <p className="text-sm text-slate-400">{t('classReview.loading')}</p>}
@@ -103,7 +103,7 @@ export default function EventClassificationReview() {
                     {tk.ticket?.visit_context ? ` · ${tk.ticket.visit_context}` : ''}
                   </p>
                 </div>
-                <div className="text-right text-xs text-slate-500">
+                <div className="text-end text-xs text-slate-500">
                   <div>{t('classReview.current')}: <KindBadge kind={tk.current?.kind} t={t} /></div>
                   <div className="mt-1">{t('classReview.suggested')}: <KindBadge kind={tk.suggested_kind} t={t} /></div>
                 </div>
@@ -136,7 +136,7 @@ export default function EventClassificationReview() {
                   type="button"
                   disabled={busy === tk.id}
                   onClick={() => confirm(tk.id)}
-                  className="ml-auto rounded-lg bg-indigo-600 px-4 py-1.5 text-[13px] font-semibold text-white transition hover:bg-indigo-700 disabled:opacity-50"
+                  className="ms-auto rounded-lg bg-indigo-600 px-4 py-1.5 text-[13px] font-semibold text-white transition hover:bg-indigo-700 disabled:opacity-50"
                 >
                   {busy === tk.id ? '…' : t('classReview.confirm')}
                 </button>

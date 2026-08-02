@@ -54,16 +54,37 @@ const FAULT_PALETTE = ['#2a78d6', '#1baf7a', '#eda100', '#008300', '#4a3aa7', '#
 const UNSPECIFIED_COLOR = '#94a3b8';
 const OTHER_COLOR = '#64748b';
 
+const arr = (x) => (Array.isArray(x) ? x.filter(Boolean) : []);
+
+// A visit's FAULTS — nothing else. The legacy sheet typed faults, planned services and bookkeeping
+// words into one free-text column, so `tags` mixes "Rim Scratch" with "Oil & Fillter Change" and
+// "Customer"; the backend now ships that list already split (fault_tags / service_tags /
+// context_tags — see EventClassificationService::labelKind). `tags` is the fallback for payloads
+// that predate the split, where the old undifferentiated behaviour is still the best available.
+export function visitFaults(visit) {
+  if (Array.isArray(visit?.fault_tags) || Array.isArray(visit?.service_tags)) return arr(visit.fault_tags);
+  return arr(visit?.tags);
+}
+
+// True when a visit is PLANNED WORK ONLY — a service was recorded and no fault was. Such a visit has
+// zero faults and must not be counted as one; it is also not missing data, so it must not inflate
+// "Unspecified" either. It simply does not appear on a fault chart.
+export function isServiceOnlyVisit(visit) {
+  return !visitFaults(visit).length && arr(visit?.service_tags).length > 0;
+}
+
 // Per-FAULT distribution — instead of bucketing each visit into one broad mechanical category,
 // this tallies the INDIVIDUAL fault tags recorded across all visits, so a car's donut shows each
-// distinct fault and its share of every fault logged (the slices sum to 100%). A visit's faults are
-// its issue tags (MAIN+SUP); a visit with no tags falls back to its reason, else "Unspecified".
-// The long tail past `top` is folded into one "Other (N types)" slice so the donut stays legible.
-// Returns [{ key, label, color, value }] sorted big → small.
+// distinct fault and its share of every fault logged (the slices sum to 100%). Services are excluded
+// entirely (see isServiceOnlyVisit); a visit with nothing recorded falls back to its reason, else
+// "Unspecified". The long tail past `top` folds into one "Other (N types)" slice so the donut stays
+// legible. Returns [{ key, label, color, value }] sorted big → small.
 export function faultTagSegments(visits = [], { top = 10 } = {}) {
   const totals = {};
   visits.forEach((v) => {
-    let faults = Array.isArray(v?.tags) ? v.tags.filter(Boolean) : [];
+    let faults = visitFaults(v);
+    // A service-only visit contributes nothing at all — it has no fault, known or unknown.
+    if (!faults.length && isServiceOnlyVisit(v)) return;
     if (!faults.length && v?.reason) faults = [v.reason];
     if (!faults.length) faults = ['Unspecified'];
     faults.forEach((f) => {

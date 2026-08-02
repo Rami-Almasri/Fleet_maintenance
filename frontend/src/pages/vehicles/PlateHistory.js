@@ -51,11 +51,11 @@ export default function PlateHistory({ data = null, loading = false }) {
           </div>
 
           {/* Vertical timeline: current holder first, previous holders below. */}
-          <ol className="relative ml-2 border-l border-slate-200">
+          <ol className="relative ms-2 border-s border-slate-200">
             {holders.map((h) => (
-              <li key={h.vehicle_id} className="relative mb-5 pl-6 last:mb-0">
+              <li key={h.vehicle_id} className="relative mb-5 ps-6 last:mb-0">
                 <span
-                  className={`absolute -left-[7px] top-1.5 h-3 w-3 rounded-full ring-4 ring-white ${
+                  className={`absolute -start-[7px] top-1.5 h-3 w-3 rounded-full ring-4 ring-white ${
                     h.is_current ? 'bg-emerald-500' : h.is_gone ? 'bg-slate-400' : 'bg-amber-500'
                   }`}
                 />
@@ -89,7 +89,7 @@ export default function PlateHistory({ data = null, loading = false }) {
                     <span className="inline-flex items-center gap-1"><Icon.Shield className="h-3 w-3" /> {h.inspection_count} inspections</span>
                     <span className="inline-flex items-center gap-1"><Icon.Check className="h-3 w-3" /> {h.repair_count} repairs</span>
                     {!h.is_self && (
-                      <Link to={`/vehicles/${h.vehicle_id}`} className="ml-auto inline-flex items-center gap-1 font-medium text-cyan-700 hover:underline">
+                      <Link to={`/vehicles/${h.vehicle_id}`} className="ms-auto inline-flex items-center gap-1 font-medium text-cyan-700 hover:underline">
                         Open this vehicle <Icon.ArrowRight className="h-3 w-3" />
                       </Link>
                     )}

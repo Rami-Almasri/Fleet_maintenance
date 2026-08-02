@@ -135,14 +135,14 @@ export default function QuickCostInput() {
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
                     <div className="relative">
-                      <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-xs font-medium text-slate-400">AED</span>
+                      <span className="pointer-events-none absolute start-3 top-1/2 -translate-y-1/2 text-xs font-medium text-slate-400">AED</span>
                       <Input
                         type="number"
                         min="0"
                         step="0.01"
                         inputMode="decimal"
                         placeholder="0.00"
-                        className="w-36 pl-11"
+                        className="w-36 ps-11"
                         value={amounts[r.id] ?? ''}
                         onChange={(e) => setAmounts((a) => ({ ...a, [r.id]: e.target.value }))}
                         onKeyDown={(e) => { if (e.key === 'Enter') save(r); }}

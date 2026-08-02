@@ -205,7 +205,7 @@ export function FleetDonut({ segments = [], total = null, centerLabel = 'Total',
               <span className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: pal.from }} />
               <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-600">{a.label}</span>
               <span className="shrink-0 text-sm font-bold text-slate-900 tabular-nums">{a.value}</span>
-              <span className="w-10 shrink-0 text-right text-xs font-medium text-slate-400 tabular-nums">{pct}%</span>
+              <span className="w-10 shrink-0 text-end text-xs font-medium text-slate-400 tabular-nums">{pct}%</span>
             </div>
           );
         })}

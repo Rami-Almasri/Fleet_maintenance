@@ -118,8 +118,8 @@ export default function PieChart({ segments = [], size = 210, stacked = false, c
             <span className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: a.color }} />
             <span className="flex-1 truncate text-sm font-medium text-slate-600">{a.label}</span>
             {/* min-w keeps the count and the % from collapsing into each other in a narrow card */}
-            <span className="min-w-[2ch] shrink-0 text-right text-sm font-bold text-slate-900 tabular-nums">{a.value}</span>
-            <span className="w-10 shrink-0 text-right text-xs font-semibold text-slate-500 tabular-nums">{Math.round(a.frac * 100)}%</span>
+            <span className="min-w-[2ch] shrink-0 text-end text-sm font-bold text-slate-900 tabular-nums">{a.value}</span>
+            <span className="w-10 shrink-0 text-end text-xs font-semibold text-slate-500 tabular-nums">{Math.round(a.frac * 100)}%</span>
           </div>
         ))}
       </div>

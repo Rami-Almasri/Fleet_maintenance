@@ -33,7 +33,13 @@ class GarageRecommendationServiceTest extends TestCase
         // what a repair typically involves is knowledge about the fault and cannot change which garage
         // wins. RepairOutlook's own behaviour belongs in a DB-backed test.
         $this->svc = new GarageRecommendationService(null, null, new class extends RepairOutlook {
-            public function for(array $faultsDetail): array
+            // Constructor overridden as a no-op: the real one resolves MatchExplanationService out of
+            // the container, and this stub answers without collaborators.
+            public function __construct()
+            {
+            }
+
+            public function for(array $faultsDetail, array $scopeChain = []): array
             {
                 return [];
             }
@@ -325,6 +331,58 @@ class GarageRecommendationServiceTest extends TestCase
             $this->assertNotEmpty($row['detail']);
             $this->assertNotEmpty($row['question']);
         }
+    }
+
+    public function test_fault_matching_states_the_repair_VOLUME_that_earned_the_points(): void
+    {
+        // THE DEFECT THIS LOCKS. The detail line used to report only which TIER each fault landed in —
+        // "2 of 3 faults with same-model history" — while the score ramps linearly on the NUMBER of
+        // matching repairs inside that tier. Two garages therefore printed word-for-word identical
+        // evidence and sat nine points apart, on the component the card names as decisive. A breakdown
+        // whose top row cannot be checked against a count is the black box it was built to replace.
+        $r = $this->rec($this->fleet(), ['model' => 'Patrol', 'class' => 'SUV', 'faults' => ['engine']]);
+        $byName = [];
+        foreach ($r['primary'] as $p) {
+            $byName[$p['garage']] = $this->components($p)['fault_matching']['detail'];
+        }
+
+        // Same tier (both have Patrol engine history), very different volumes — 20 against 15.
+        $this->assertStringContainsString('Engine 20× on this model', $byName['Nissan Service']);
+        $this->assertStringContainsString('Engine 15× on this model', $byName['Deals On Wheels']);
+        $this->assertNotSame($byName['Nissan Service'], $byName['Deals On Wheels']);
+
+        // A garage with the fault but never on this model must say which volume it is claiming, and
+        // say WHICH volume it is — borrowing the same-model wording for other-model history is the
+        // same lie one rung down the evidence ladder.
+        // No model on the query, so nothing can reach the same-model rung and every fault lands on the
+        // other-models one.
+        $other = $this->rec(
+            $this->rows(12, 9, 'Ford Only', 'Ford', 'Mustang', ['engine']),
+            ['faults' => ['engine']],
+        );
+        $this->assertStringContainsString(
+            'Engine 12× on other models',
+            $this->components($other['primary'][0])['fault_matching']['detail'],
+        );
+    }
+
+    public function test_a_long_fault_list_truncates_the_volumes_out_loud(): void
+    {
+        // Silent truncation reads as "that was all of them", which is the one thing it must not.
+        $rows = array_merge(
+            $this->rows(6, 1, 'Wide Shop', 'Nissan', 'Patrol', ['engine']),
+            $this->rows(4, 1, 'Wide Shop', 'Nissan', 'Patrol', ['brakes']),
+            $this->rows(3, 1, 'Wide Shop', 'Nissan', 'Patrol', ['bodywork']),
+            $this->rows(2, 1, 'Wide Shop', 'Nissan', 'Patrol', ['electrical']),
+            $this->rows(9, 2, 'Other Shop', 'Nissan', 'Patrol', ['engine']),
+        );
+        $r = $this->rec($rows, [
+            'model' => 'Patrol', 'class' => 'SUV',
+            'faults' => ['engine', 'brakes', 'bodywork', 'electrical'],
+        ]);
+        $detail = $this->components($r['primary'][0])['fault_matching']['detail'];
+
+        $this->assertStringContainsString('+1 more', $detail);
     }
 
     public function test_unmeasurable_factors_are_redistributed_not_silently_zeroed(): void

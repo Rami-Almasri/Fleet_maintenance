@@ -293,24 +293,65 @@ const Req = () => <span className="text-red-500"> *</span>;
 // A numbered section of a long form — used to break the Inspector's test-drive report ('decide') into
 // four readable steps (mileage → findings → diagnosis → decision) instead of one undifferentiated
 // scroll. `done` flips the step number to a green tick so progress through the report is visible.
-function Step({ n, title, hint, done = false, children }) {
+// One step of the test-drive report ('decide').
+//
+// The report is five questions long, and rendering all five expanded is what made this screen read as a
+// wall: the inspector met every field of every question at once, including the routing decisions he can
+// only answer after he's finished diagnosing. So only ONE step is open at a time. The others collapse to
+// a single row that still carries its own answer ("3 selected", "87,101 km", "Requires maintenance"), so
+// the whole report stays readable at a glance and nothing is hidden — a collapsed row is a summary, never
+// a black box. Tapping any row opens it; "Continue" walks forward.
+//
+// `open` defaults to true, so a caller that doesn't drive the accordion gets the old always-expanded card.
+function Step({ n, title, hint, done = false, children, open = true, onOpen, summary, onNext, nextLabel }) {
+  const badge = (
+    <span
+      className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+        done ? 'bg-emerald-500 text-white' : 'bg-slate-100 text-slate-500'
+      }`}
+      aria-hidden
+    >
+      {done ? '✓' : n}
+    </span>
+  );
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={onOpen}
+        className="flex w-full items-center gap-2.5 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-start shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
+      >
+        {badge}
+        <span className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-700">{title}</span>
+        {summary && <span className="min-w-0 max-w-[45%] shrink-0 truncate text-xs text-slate-500">{summary}</span>}
+        <Icon.ChevronDown className="h-4 w-4 shrink-0 -rotate-90 text-slate-300 rtl:rotate-90" aria-hidden />
+      </button>
+    );
+  }
+
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+    <section className="rounded-2xl border border-indigo-200 bg-white shadow-sm ring-1 ring-indigo-100">
       <header className="flex items-start gap-2.5 border-b border-slate-100 px-4 py-3">
-        <span
-          className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
-            done ? 'bg-emerald-500 text-white' : 'bg-slate-100 text-slate-500'
-          }`}
-          aria-hidden
-        >
-          {done ? '✓' : n}
-        </span>
+        <span className="mt-0.5">{badge}</span>
         <span className="min-w-0">
           <span className="block text-sm font-semibold text-slate-800">{title}</span>
           {hint && <span className="mt-0.5 block text-xs text-slate-500">{hint}</span>}
         </span>
       </header>
       <div className="space-y-3 p-4">{children}</div>
+      {onNext && (
+        <div className="flex justify-end border-t border-slate-100 px-4 py-2.5">
+          <button
+            type="button"
+            onClick={onNext}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700"
+          >
+            {nextLabel}
+            <Icon.ChevronDown className="h-4 w-4 -rotate-90 rtl:rotate-90" aria-hidden />
+          </button>
+        </div>
+      )}
     </section>
   );
 }
@@ -655,6 +696,8 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   const [unverifiable, setUnverifiable] = useState({});       // { [taskId]: true }
   const [unverifiableReason, setUnverifiableReason] = useState({}); // { [taskId]: 'vehicle_unavailable' }
   const [requiresMaintenance, setRequiresMaintenance] = useState(true); // decide: open ticket | clear diagnostic
+  // decide: which of the five report steps is expanded. One question at a time — see <Step>.
+  const [activeStep, setActiveStep] = useState(1);
   const [faultSeverity, setFaultSeverity] = useState(() => ticket?.fault_severity || ''); // decide: mandatory fault-severity grade
   // decide: Repair Location — 'in_shop' (garage → alerts Waleed & Abdullah) | 'on_site' (mobile; car stays free).
   const [repairLocation, setRepairLocation] = useState('in_shop');
@@ -1397,6 +1440,34 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
     }
   }
 
+  // ── The test-drive report, walked one step at a time ──────────────────────────────────────────
+  // Five steps, of which routing (5) only exists when the car is actually going in for work. Each
+  // step reports whether it's answered AND what the answer was, so the four collapsed rows read as a
+  // running summary of the report instead of hiding it. `openStep` is clamped to a step that still
+  // exists — picking "No maintenance needed" on step 4 deletes step 5 out from under the cursor.
+  const decideSteps = requiresMaintenance ? [1, 2, 3, 4, 5] : [1, 2, 3, 4];
+  const lastDecideStep = decideSteps[decideSteps.length - 1];
+  const causesComplete = rootCausesComplete(symptoms, faultCausesCatalog, causes);
+  const openStep = decideSteps.includes(activeStep) ? activeStep : lastDecideStep;
+  const stepProps = (n, summary, done) => ({
+    n,
+    done,
+    summary,
+    open: openStep === n,
+    onOpen: () => setActiveStep(n),
+    onNext: n === lastDecideStep ? undefined : () => setActiveStep(n + 1),
+    nextLabel: t('workflow.decideStep.continue'),
+  });
+
+  // What still blocks the submit button, and which step to open to fix it. The gate already existed —
+  // it just expressed itself as a greyed-out button with no explanation, which is unreadable once the
+  // offending field is collapsed inside another step.
+  const decideBlockers = action !== 'decide' ? [] : [
+    odoGateBlocked && { step: 1, label: t('workflow.decideStep.needOdometerCheck') },
+    requiresMaintenance && !causesComplete && { step: 3, label: t('workflow.decideStep.needCauses') },
+    requiresMaintenance && !faultSeverity && { step: 5, label: t('workflow.decideStep.needSeverity') },
+  ].filter(Boolean);
+
   // Submit-button label: the branching steps spell out their decision; the rest use the action's submit verb.
   const submitLabel = isObservation
     ? t('workflow.field.observationSubmit')
@@ -1539,7 +1610,15 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
             {/* STEP 1 — end-of-test-drive odometer. Optional here, so the inspector can log the reading when
                 they step out of the car. Runs the same continuity + >10 km note gate as every other capture
                 and lands as its own "End of test drive" row in the mileage timeline. */}
-            <Step n={1} title={t('workflow.decideStep.mileageTitle')} hint={t('workflow.decideStep.mileageHint')} done={!!odometer}>
+            <Step
+              {...stepProps(
+                1,
+                odometer ? `${Number(odometer).toLocaleString()} km` : t('workflow.decideStep.notRecorded'),
+                !!odometer,
+              )}
+              title={t('workflow.decideStep.mileageTitle')}
+              hint={t('workflow.decideStep.mileageHint')}
+            >
               <Input label={t('workflow.field.reportOdometerKm')} type="number" min="1" value={odometer} onChange={(e) => setOdometer(e.target.value)} placeholder={ticket?.test_odometer ? t('workflow.ph.startedAt', { km: Number(ticket.test_odometer).toLocaleString() }) : t('workflow.ph.odometerExample')} />
               <OdometerContinuityHint previous={prevOdometer} continuity={continuity} confirmed={odoConfirmed} onConfirm={setOdoConfirmed} noteRequired={odoNoteRequired} note={odoNote} onNote={setOdoNote} ignoreTolerance={ignoreOdoTolerance} t={t} />
               <div>
@@ -1551,10 +1630,15 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
             {/* STEP 2 — the findings themselves. The post-downtime inspection checklist rides INSIDE this
                 step (it tells the inspector what to look over; it never pre-logs a finding). */}
             <Step
-              n={2}
+              {...stepProps(
+                2,
+                symptoms.length > 0
+                  ? t('findingsPicker.selectedCount', { count: symptoms.length })
+                  : t('workflow.decideStep.notAnswered'),
+                symptoms.length > 0 || !requiresMaintenance,
+              )}
               title={t('workflow.decideStep.findingsTitle')}
               hint={t('workflow.decideStep.findingsHint')}
-              done={symptoms.length > 0 || !requiresMaintenance}
             >
               {inspectChecklist.length > 0 && (
                 <div className="rounded-xl border border-sky-200 bg-sky-50/70 p-3">
@@ -1577,10 +1661,15 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
             {/* STEP 3 — diagnosis: probable cause per symptom, the chronic-fault + prior-repair intelligence
                 that reacts to those picks, and the inspector's own recommendation. */}
             <Step
-              n={3}
+              {...stepProps(
+                3,
+                symptoms.length > 0 && causesComplete
+                  ? (recommended.trim() || t('workflow.decideStep.diagnosed'))
+                  : t('workflow.decideStep.notAnswered'),
+                symptoms.length > 0 && causesComplete,
+              )}
               title={t('workflow.decideStep.diagnosisTitle')}
               hint={t('workflow.decideStep.diagnosisHint')}
-              done={symptoms.length > 0 && rootCausesComplete(symptoms, faultCausesCatalog, causes)}
             >
               {symptoms.length > 0 ? (
                 <div>
@@ -1621,7 +1710,15 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
 
             {/* STEP 4 — the decision. It comes FIRST inside this step (it's the branch); the classification
                 only appears once the answer is "requires maintenance". */}
-            <Step n={4} title={t('workflow.decideStep.decisionTitle')} hint={t('workflow.decideStep.decisionHint')} done>
+            <Step
+              {...stepProps(
+                4,
+                requiresMaintenance ? t('workflow.decision.requires') : t('workflow.decision.noNeed'),
+                true,
+              )}
+              title={t('workflow.decideStep.decisionTitle')}
+              hint={t('workflow.decideStep.decisionHint')}
+            >
               <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
@@ -1658,10 +1755,13 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                 All three only exist once the car is actually going into maintenance. */}
             {requiresMaintenance && (
               <Step
-                n={5}
+                {...stepProps(
+                  5,
+                  faultSeverity ? t(`workflow.faultSeverity.${faultSeverity}`) : t('workflow.decideStep.notAnswered'),
+                  !!faultSeverity,
+                )}
                 title={t('workflow.decideStep.routingTitle')}
                 hint={t('workflow.decideStep.routingHint')}
-                done={!!faultSeverity}
               >
             {/* Fault Severity — the inspector's MANDATORY diagnostic grade, gating "Requires maintenance".
                 It becomes the headline urgency the supervisor reads first on the dispatch board. */}
@@ -1745,6 +1845,29 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                 </p>
               </div>
               </Step>
+            )}
+
+            {/* Why the submit button is still grey, in words, with a tap straight to the step that fixes it.
+                Collapsing the steps is what makes this necessary: a missing severity grade is now two rows
+                below the fold, and "disabled button, no reason given" is exactly the dead end the accordion
+                would otherwise create. */}
+            {decideBlockers.length > 0 && (
+              <div className="rounded-xl bg-amber-50 px-3 py-2.5 text-xs text-amber-800 ring-1 ring-inset ring-amber-500/25">
+                <p className="font-semibold">{t('workflow.decideStep.stillNeeded')}</p>
+                <ul className="mt-1 space-y-0.5">
+                  {decideBlockers.map((b) => (
+                    <li key={b.step}>
+                      <button
+                        type="button"
+                        onClick={() => setActiveStep(b.step)}
+                        className="text-start underline decoration-amber-400 underline-offset-2 transition hover:text-amber-900"
+                      >
+                        {b.label}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             )}
           </>
         )}

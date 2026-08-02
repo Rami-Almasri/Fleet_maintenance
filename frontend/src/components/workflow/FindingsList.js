@@ -141,14 +141,14 @@ export default function FindingsList({ findings = [], tasks = [], compact = fals
                     {f.repair_hours != null && <span className="font-semibold opacity-80">· {f.repair_hours}h</span>}
                     {/* Live fix status — so a fixed fault reads as done the moment the ticket is opened. */}
                     {badge && (
-                      <span className={`ml-0.5 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold ring-1 ring-inset ${badge.cls}`}>
+                      <span className={`ms-0.5 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold ring-1 ring-inset ${badge.cls}`}>
                         {badge.label}
-                        {badge.garage && <span className="ml-1 font-semibold opacity-80">· {badge.garage}</span>}
+                        {badge.garage && <span className="ms-1 font-semibold opacity-80">· {badge.garage}</span>}
                       </span>
                     )}
                     {/* Vehicle-sync state for a performed routine service — Pending Confirmation until close. */}
                     {badge?.confirm && CONFIRM_BADGE[badge.confirm] && (
-                      <span className={`ml-0.5 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold ring-1 ring-inset ${CONFIRM_BADGE[badge.confirm].cls}`}>
+                      <span className={`ms-0.5 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold ring-1 ring-inset ${CONFIRM_BADGE[badge.confirm].cls}`}>
                         {CONFIRM_BADGE[badge.confirm].label}
                       </span>
                     )}

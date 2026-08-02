@@ -99,7 +99,7 @@ export default function VehicleWorkflowPanel({ vehicleId, sections = ALL_SECTION
             {!loading && health?.detail && <p className="mt-1.5 text-sm text-slate-500">{health.detail}</p>}
           </div>
 
-          <div className="shrink-0 text-right">
+          <div className="shrink-0 text-end">
             <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-slate-400">Last odometer</p>
             {loading ? (
               <Skeleton className="h-20 w-28 rounded-lg" />
@@ -139,13 +139,13 @@ export default function VehicleWorkflowPanel({ vehicleId, sections = ALL_SECTION
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-slate-100 text-left text-xs font-semibold uppercase tracking-wide text-slate-400">
+                <tr className="border-b border-slate-100 text-start text-xs font-semibold uppercase tracking-wide text-slate-400">
                   <th className="px-3 py-2">Stage</th>
                   <th className="px-3 py-2">Reason</th>
                   <th className="px-3 py-2">Dispatch odo</th>
                   <th className="px-3 py-2">Return odo</th>
                   <th className="px-3 py-2">Garage</th>
-                  <th className="px-3 py-2 text-right">Cost</th>
+                  <th className="px-3 py-2 text-end">Cost</th>
                   <th className="px-3 py-2">Opened</th>
                 </tr>
               </thead>
@@ -161,7 +161,7 @@ export default function VehicleWorkflowPanel({ vehicleId, sections = ALL_SECTION
                         <td className="px-3 py-2 tabular-nums text-slate-600">{odo(t.dispatch_odometer)}</td>
                         <td className="px-3 py-2 tabular-nums text-slate-600">{odo(t.return_odometer)}</td>
                         <td className="px-3 py-2 text-slate-500">{t.garage || '—'}</td>
-                        <td className="px-3 py-2 text-right tabular-nums text-slate-600">{t.cost != null ? aed2(t.cost) : '—'}</td>
+                        <td className="px-3 py-2 text-end tabular-nums text-slate-600">{t.cost != null ? aed2(t.cost) : '—'}</td>
                         <td className="px-3 py-2 text-slate-400">{t.created_at ? fmtDate(t.created_at) : '—'}</td>
                       </tr>
                       {hasFindings && (
@@ -191,14 +191,14 @@ export default function VehicleWorkflowPanel({ vehicleId, sections = ALL_SECTION
         ) : (
           <div className="flex gap-3 overflow-x-auto p-1 pb-3">
             {photos.map((p) => (
-              <button key={p.id} type="button" onClick={() => p.url && setLightbox(p)} className="group shrink-0 text-left">
+              <button key={p.id} type="button" onClick={() => p.url && setLightbox(p)} className="group shrink-0 text-start">
                 <div className="relative h-32 w-44 overflow-hidden rounded-xl ring-1 ring-slate-200">
                   {p.url ? (
                     <img src={photoSrc(p.url)} alt={p.body_part} className="h-full w-full object-cover transition group-hover:scale-105" />
                   ) : (
                     <div className="flex h-full w-full items-center justify-center bg-slate-50 text-slate-300"><Icon.Gauge className="h-7 w-7" /></div>
                   )}
-                  <span className="absolute left-1.5 top-1.5">
+                  <span className="absolute start-1.5 top-1.5">
                     <Badge tone={p.phase === 'post' ? 'cyan' : 'indigo'}>{p.phase === 'post' ? 'After' : 'Before'}</Badge>
                   </span>
                 </div>

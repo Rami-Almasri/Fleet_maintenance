@@ -110,7 +110,7 @@ export function PageStatGauge() {
         onClick={() => setCollapsed(false)}
         title={stat.hint || stat.label}
         aria-label="Show page metric"
-        className="fixed bottom-6 right-6 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-white text-sm font-bold text-slate-900 shadow-2xl ring-1 ring-slate-200 transition hover:ring-indigo-300 active:scale-90"
+        className="fixed bottom-6 end-6 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-white text-sm font-bold text-slate-900 shadow-2xl ring-1 ring-slate-200 transition hover:ring-indigo-300 active:scale-90"
       >
         {Math.round(stat.percent)}%
       </button>
@@ -119,14 +119,14 @@ export function PageStatGauge() {
 
   return (
     <div
-      className="fixed bottom-6 right-6 z-40 flex w-32 flex-col items-center rounded-2xl border border-slate-200 bg-white/95 px-3 pb-2.5 pt-3 shadow-2xl ring-1 ring-black/5 backdrop-blur animate-fade-in-up"
+      className="fixed bottom-6 end-6 z-40 flex w-32 flex-col items-center rounded-2xl border border-slate-200 bg-white/95 px-3 pb-2.5 pt-3 shadow-2xl ring-1 ring-black/5 backdrop-blur animate-fade-in-up"
       title={stat.hint}
     >
       <button
         onClick={() => setCollapsed(true)}
         title="Minimize"
         aria-label="Minimize page metric"
-        className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full text-slate-300 transition hover:bg-slate-100 hover:text-slate-500"
+        className="absolute end-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full text-slate-300 transition hover:bg-slate-100 hover:text-slate-500"
       >
         <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M5 12h14" /></svg>
       </button>

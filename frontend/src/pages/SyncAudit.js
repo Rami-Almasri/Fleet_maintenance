@@ -112,7 +112,7 @@ function UpdateCard({ rec }) {
       </div>
       <table className="min-w-full text-sm">
         <thead>
-          <tr className="text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+          <tr className="text-start text-[11px] font-semibold uppercase tracking-wide text-slate-400">
             <th className="px-4 py-2">Field</th>
             <th className="px-4 py-2">Was</th>
             <th className="w-8 px-1 py-2" />

@@ -36,7 +36,7 @@ export default function Drawer({ open, onClose, title, subtitle, eyebrow, width 
 
       {/* The panel itself, anchored to the right edge. */}
       <div
-        className={`absolute inset-y-0 right-0 flex w-full ${WIDTHS[width] || WIDTHS.half} flex-col bg-slate-50 shadow-2xl ring-1 ring-slate-900/10 animate-slide-in-right`}
+        className={`absolute inset-y-0 end-0 flex w-full ${WIDTHS[width] || WIDTHS.half} flex-col bg-slate-50 shadow-2xl ring-1 ring-slate-900/10 animate-slide-in-right rtl:animate-slide-in-left`}
         role="dialog"
         aria-modal="true"
       >
@@ -50,7 +50,7 @@ export default function Drawer({ open, onClose, title, subtitle, eyebrow, width 
           </div>
           <button
             onClick={onClose}
-            className="-mr-1 shrink-0 rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+            className="-me-1 shrink-0 rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
             aria-label="Close"
           >
             <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">

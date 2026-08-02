@@ -21,7 +21,7 @@ import VehicleInvestigationTimeline from '../../components/vehicles/VehicleInves
 import VehicleComponentsPanel from '../../components/vehicles/VehicleComponentsPanel';
 import { aed2, fmtDate, fmtClock, num } from '../../lib/format';
 import CompositionDonut from '../../components/ui/CompositionDonut';
-import { faultTagSegments } from '../../lib/faultCategories';
+import { faultTagSegments, isServiceOnlyVisit } from '../../lib/faultCategories';
 import { openVehicleProfileReport } from '../../lib/vehicleProfileReport';
 import { SHOW_FINANCIALS } from '../../config/features';
 import ReadinessChecklist from './ReadinessChecklist';
@@ -220,17 +220,17 @@ function WorkflowJourneys({ journeys }) {
                   );
                 })}
               </div>
-              <p className="mb-4 text-right text-[11px] text-slate-400">time in each stage (proportional)</p>
+              <p className="mb-4 text-end text-[11px] text-slate-400">time in each stage (proportional)</p>
 
               {/* Stage-by-stage detail — a vertical rail, the current stage still ticking */}
-              <ol className="relative space-y-3 border-l border-slate-200 pl-5">
+              <ol className="relative space-y-3 border-s border-slate-200 ps-5">
                 {j.stages.map((stg, i) => {
                   const { label, tone, style } = stageMeta(stg);
                   const isCurrent = j.is_open && i === j.stages.length - 1;
                   const dur = fmtDuration(stg.seconds);
                   return (
                     <li key={i} className="relative">
-                      <span className={`absolute -left-[27px] mt-1 flex h-3.5 w-3.5 items-center justify-center rounded-full ring-4 ring-white ${style.dot}`} />
+                      <span className={`absolute -start-[27px] mt-1 flex h-3.5 w-3.5 items-center justify-center rounded-full ring-4 ring-white ${style.dot}`} />
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="flex items-center gap-2">
                           <Badge tone={tone}>{label}</Badge>
@@ -304,7 +304,7 @@ const TAB_ORIGIN = {
   activity: 'The car’s whole history as an investigation tool — search, filters, KPIs, grouping and sorting over every source unified: the N-Maintenance sheet workshop visits (click one for its full record — garage, cost, issues, notes), the maintenance-workflow audit trail (inspections, dispatch, repair, re-inspection, parts, approvals & follow-ups), the logistics movement log, and inspection records. Every row carries who acted and when; nothing is editable, and the exact filtered view is captured in the URL to share.',
   financials: 'Reverse-engineered from OfficeManager billing via RealProfitService: rent − discount + realized usage − operating − car-level maintenance.',
   media: 'Pre/post condition & odometer photos captured during the maintenance workflow (inspection & garage steps).',
-  components: 'The vehicle’s physical configuration, DERIVED from the maintenance workflow — never typed in. A component appears here only when a ticket reaches its install step (part purchased → received → installed), which also retires the part it replaced and writes both to the timeline. Identity, supplier, cost, warranty and odometer are FACTS copied from the purchase order; age, life-used, warranty standing and cost/km are DERIVED at read time. Consumables refreshed by routine servicing (oil, filters bundled with an oil change) are merged in from the service log and tagged “Service”, because they are performed work rather than tracked assets.',
+  components: 'The vehicle’s physical configuration, DERIVED from the maintenance workflow — never typed in. A component appears here through one of two doors, and the row says which. PURCHASED: a ticket reached its install step (part purchased → received → installed); identity, supplier, cost, warranty and odometer are FACTS copied from the purchase order. REPORTED: a technician recorded “replaced X” at repair capture with no purchase behind it — the part is genuinely fitted, but there is no paperwork, so cost and supplier are blank rather than zero, and no warranty is claimed. Either way the install retires the part it replaced and writes both to the timeline. Age, life-used, warranty standing and cost/km are DERIVED at read time. Money figures count only the parts whose cost is known, and say how many that is. Consumables refreshed by routine servicing (oil, filters bundled with an oil change) are merged in from the service log and tagged “Service”, because they are performed work rather than tracked assets.',
 };
 
 // A muted provenance caption shown at the foot of each tab.
@@ -325,7 +325,7 @@ function Field({ label, value, tip }) {
         {label}
         {tip && <InfoTip content={tip} />}
       </span>
-      <span className="text-right font-medium text-slate-900">{value ?? '—'}</span>
+      <span className="text-end font-medium text-slate-900">{value ?? '—'}</span>
     </div>
   );
 }
@@ -336,7 +336,7 @@ function BridgeLine({ label, hint, value, labelClass = 'text-slate-600', valueCl
     <div className="flex items-baseline justify-between gap-4">
       <dt className={labelClass}>
         {label}
-        {hint && <span className="ml-2 hidden text-xs font-normal text-slate-400 sm:inline">{hint}</span>}
+        {hint && <span className="ms-2 hidden text-xs font-normal text-slate-400 sm:inline">{hint}</span>}
       </dt>
       <dd className={`tabular-nums font-medium ${valueClass}`}>{value}</dd>
     </div>
@@ -481,6 +481,15 @@ export default function VehicleProfile() {
     return scrollToAnchor('maintenance-log', 'start');
   }, [focus, data, scrollToAnchor]);
 
+  // Arriving from the Recurring Faults analytics ("Cars that keep coming back") with
+  // ?focus=repeat-faults: the ranking answers WHICH car, this panel answers WHICH faults — so land
+  // on the Overview tab and scroll the "Keeps breaking down" panel into view.
+  useEffect(() => {
+    if (focus !== 'repeat-faults' || !data) return undefined;
+    setActiveTab('overview');
+    return scrollToAnchor('repeat-faults', 'start');
+  }, [focus, data, scrollToAnchor]);
+
   // Keep the active tab in sync with the URL when it changes underneath us (browser back/forward,
   // or a shared ?tab= link). changeTab already updates both, so this is a no-op for normal clicks.
   useEffect(() => {
@@ -599,7 +608,11 @@ export default function VehicleProfile() {
   const maintenance = data.maintenance || [];
   // Per-fault distribution for the hero telemetry card — each individual fault by its share of every
   // fault ever logged on this car (slices sum to 100%). Same source/shape as the Overview donut.
+  // FAULTS ONLY: planned services (oil & filter, periodic maintenance, cleaning) are a different kind
+  // of event and are counted out — see faultCategories.visitFaults. What was removed is stated on the
+  // card rather than silently dropped, so the chart's scope is readable off the chart itself.
   const faultSegments = faultTagSegments(maintenance, { top: 8 });
+  const serviceOnlyVisits = maintenance.filter(isServiceOnlyVisit).length;
   const maintenanceLog = data.maintenance_log || [];
   // One unified history: legacy sheet workshop events + the manual workflow audit trail + follow-ups.
   const timeline = data.timeline || maintenanceLog;
@@ -712,7 +725,11 @@ export default function VehicleProfile() {
             {/* Fault distribution — frosted glass telemetry card */}
             <div className="vhero-glass w-full shrink-0 p-5 lg:w-96">
               <div className="text-[10px] font-semibold uppercase text-slate-400" style={{ letterSpacing: '.14em', marginBottom: 4 }}>Fault Distribution</div>
-              <p className="mb-4 text-xs text-slate-500">Each fault by share of all faults recorded</p>
+              <p className="mb-1 text-xs text-slate-500">Each fault by share of all faults recorded</p>
+              <p className="mb-4 text-[11px] text-slate-400">
+                Faults only — scheduled service is not a fault
+                {serviceOnlyVisits > 0 && <> · {num(serviceOnlyVisits)} service {serviceOnlyVisits === 1 ? 'visit' : 'visits'} excluded</>}
+              </p>
               {faultSegments.length ? (
                 <CompositionDonut
                   className="!flex-col !gap-5"
@@ -834,14 +851,14 @@ export default function VehicleProfile() {
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm stagger-rows">
               <thead className="bg-slate-50/90">
-                <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <tr className="text-start text-xs font-semibold uppercase tracking-wide text-slate-500">
                   <th className="whitespace-nowrap border-b border-slate-200 px-6 py-3">Visit</th>
                   <th className="whitespace-nowrap border-b border-slate-200 px-6 py-3">Out / In</th>
                   <th className="whitespace-nowrap border-b border-slate-200 px-6 py-3">Priority</th>
                   <th className="whitespace-nowrap border-b border-slate-200 px-6 py-3">Status</th>
                   <th className="whitespace-nowrap border-b border-slate-200 px-6 py-3">Garage</th>
                   <th className="whitespace-nowrap border-b border-slate-200 px-6 py-3">Issues</th>
-                  {SHOW_FINANCIALS && <th className="whitespace-nowrap border-b border-slate-200 px-6 py-3 text-right">Total Cost</th>}
+                  {SHOW_FINANCIALS && <th className="whitespace-nowrap border-b border-slate-200 px-6 py-3 text-end">Total Cost</th>}
                 </tr>
               </thead>
               <tbody>
@@ -871,7 +888,7 @@ export default function VehicleProfile() {
                         </td>
                         <td className="border-b border-slate-100 px-6 py-3.5">
                           {m.stage ? <Badge tone={EVENT_TONE[m.stage] || 'gray'}>{m.stage}</Badge> : <span className="text-xs text-slate-300">—</span>}
-                          {m.event_count > 1 && <span className="ml-1 text-xs text-slate-400">×{m.event_count}</span>}
+                          {m.event_count > 1 && <span className="ms-1 text-xs text-slate-400">×{m.event_count}</span>}
                         </td>
                         <td className="border-b border-slate-100 px-6 py-3.5 text-slate-700">{m.garage || '—'}</td>
                         <td className="border-b border-slate-100 px-6 py-3.5">
@@ -881,7 +898,7 @@ export default function VehicleProfile() {
                             {(!m.tags || m.tags.length === 0) && <span className="text-xs text-slate-300">—</span>}
                           </div>
                         </td>
-                        {SHOW_FINANCIALS && <td className={`border-b border-slate-100 px-6 py-3.5 text-right tabular-nums ${Number(m.total) > 0 ? 'font-semibold text-slate-900' : 'text-slate-300'}`}>{aed2(m.total)}</td>}
+                        {SHOW_FINANCIALS && <td className={`border-b border-slate-100 px-6 py-3.5 text-end tabular-nums ${Number(m.total) > 0 ? 'font-semibold text-slate-900' : 'text-slate-300'}`}>{aed2(m.total)}</td>}
                       </tr>
                       {open && expandable && (
                         <tr className="bg-slate-50/60">
@@ -1004,7 +1021,7 @@ export default function VehicleProfile() {
                       <>
                         {s.fleet_avg != null ? aed2(s.fleet_avg) : '—'}
                         {vsFleet != null && vsFleet !== 0 && (
-                          <span className={`ml-1 text-xs ${vsFleet > 0 ? 'text-red-500' : 'text-emerald-600'}`}>
+                          <span className={`ms-1 text-xs ${vsFleet > 0 ? 'text-red-500' : 'text-emerald-600'}`}>
                             {vsFleet > 0 ? '(above)' : '(below)'}
                           </span>
                         )}
@@ -1200,7 +1217,7 @@ export default function VehicleProfile() {
                   </p>
                 </div>
                 {logEvent.cost != null && Number(logEvent.cost) > 0 && (
-                  <div className="shrink-0 text-right">
+                  <div className="shrink-0 text-end">
                     <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">Cost</p>
                     <p className="text-lg font-bold text-slate-900">{aed2(logEvent.cost)}</p>
                   </div>
@@ -1308,13 +1325,13 @@ export default function VehicleProfile() {
                     <table className="min-w-full divide-y divide-slate-100 text-sm">
                       <thead className="sticky top-0 bg-slate-50 text-[11px] uppercase tracking-wide text-slate-500">
                         <tr>
-                          <th className="px-3 py-2 text-left font-semibold">Contract</th>
-                          <th className="px-3 py-2 text-left font-semibold">Out</th>
-                          <th className="px-3 py-2 text-right font-semibold">Rent</th>
-                          <th className="px-3 py-2 text-right font-semibold">Disc.</th>
-                          <th className="px-3 py-2 text-right font-semibold">Usage</th>
-                          <th className="px-3 py-2 text-right font-semibold">Oper.</th>
-                          <th className="px-3 py-2 text-right font-semibold">Net</th>
+                          <th className="px-3 py-2 text-start font-semibold">Contract</th>
+                          <th className="px-3 py-2 text-start font-semibold">Out</th>
+                          <th className="px-3 py-2 text-end font-semibold">Rent</th>
+                          <th className="px-3 py-2 text-end font-semibold">Disc.</th>
+                          <th className="px-3 py-2 text-end font-semibold">Usage</th>
+                          <th className="px-3 py-2 text-end font-semibold">Oper.</th>
+                          <th className="px-3 py-2 text-end font-semibold">Net</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-50">
@@ -1325,11 +1342,11 @@ export default function VehicleProfile() {
                               {c.customer && <div className="text-xs text-slate-400">{c.customer}</div>}
                             </td>
                             <td className="px-3 py-2 text-slate-500">{c.out_date ? fmtDate(c.out_date) : '—'}</td>
-                            <td className="px-3 py-2 text-right tabular-nums text-slate-700">{aed2(c.rent_billed)}</td>
-                            <td className="px-3 py-2 text-right tabular-nums text-slate-400">{c.discount ? `− ${aed2(c.discount)}` : '—'}</td>
-                            <td className="px-3 py-2 text-right tabular-nums text-slate-700">{c.realized_usage ? `+ ${aed2(c.realized_usage)}` : '—'}</td>
-                            <td className="px-3 py-2 text-right tabular-nums text-slate-400">{c.operating_cost ? `− ${aed2(c.operating_cost)}` : '—'}</td>
-                            <td className={`px-3 py-2 text-right tabular-nums font-semibold ${Number(c.net) < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{aed2(c.net)}</td>
+                            <td className="px-3 py-2 text-end tabular-nums text-slate-700">{aed2(c.rent_billed)}</td>
+                            <td className="px-3 py-2 text-end tabular-nums text-slate-400">{c.discount ? `− ${aed2(c.discount)}` : '—'}</td>
+                            <td className="px-3 py-2 text-end tabular-nums text-slate-700">{c.realized_usage ? `+ ${aed2(c.realized_usage)}` : '—'}</td>
+                            <td className="px-3 py-2 text-end tabular-nums text-slate-400">{c.operating_cost ? `− ${aed2(c.operating_cost)}` : '—'}</td>
+                            <td className={`px-3 py-2 text-end tabular-nums font-semibold ${Number(c.net) < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{aed2(c.net)}</td>
                           </tr>
                         ))}
                       </tbody>

@@ -101,13 +101,13 @@ export default function GarageInvoiceQueue() {
           <div className="overflow-x-auto rounded-2xl border border-slate-200/60 bg-white shadow-soft">
             <table className="w-full min-w-[760px] border-separate border-spacing-0 text-sm">
               <thead>
-                <tr className="text-left">
+                <tr className="text-start">
                   <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">{t('oversight.common.vehicle')}</th>
                   <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">{t('oversight.garage.garage')}</th>
                   <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">{t('oversight.garage.left')}</th>
                   <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-center text-xs font-semibold uppercase tracking-wide text-slate-500">{t('oversight.garage.faults')}</th>
                   <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">{t('oversight.garage.invoice')}</th>
-                  <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500" />
+                  <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-end text-xs font-semibold uppercase tracking-wide text-slate-500" />
                 </tr>
               </thead>
               <tbody>
@@ -132,7 +132,7 @@ export default function GarageInvoiceQueue() {
                         <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700"><Icon.Alert className="h-3 w-3" />{t('oversight.garage.notRequested')}</span>
                       )}
                     </td>
-                    <td className="border-b border-slate-100 px-5 py-3.5 text-right">
+                    <td className="border-b border-slate-100 px-5 py-3.5 text-end">
                       <Link to={`/maintenance-workflow/${r.ticket_id}`} className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-indigo-600 hover:bg-indigo-50">
                         {t('oversight.garage.request')} <Icon.ArrowRight className="h-3 w-3" />
                       </Link>

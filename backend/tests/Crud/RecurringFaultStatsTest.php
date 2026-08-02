@@ -83,13 +83,25 @@ class RecurringFaultStatsTest extends CrudTestCase
         $this->assertSame(3, $stats['faults'][0]['value']);
         $this->assertSame(2, $stats['faults'][0]['cars']);
 
+        // Each ranking carries the OTHER dimension for its hover: the cars behind the fault, worst
+        // first — this fault is car A twice and car B once, not three separate cars.
+        $this->assertSame([2, 1], array_column($stats['faults'][0]['top_cars'], 'value'));
+        $this->assertSame(0, $stats['faults'][0]['cars_more'], 'two cars fit inside the top-4 cut');
+
+        // …and the faults behind the car.
+        $this->assertSame([['label' => 'cooling', 'value' => 2]], $stats['vehicles'][0]['faults']);
+        $this->assertSame(0, $stats['vehicles'][0]['more']);
+
         // The trend is always 12 zero-filled months ending on the current one.
         $this->assertCount(12, $stats['trend']);
         $this->assertSame(Carbon::now()->format('Y-m'), $stats['trend'][11]['key']);
         $this->assertSame(3, $stats['trend'][11]['value']);
         $this->assertSame(0, $stats['trend'][0]['value']);
 
-        $this->assertSame(0, $kpi['verified_fixed'], 'no post-repair inspection signed any of these off');
+        // Cases opened after a post-repair inspection signed the previous fix off are the QC failures.
+        // None here — the count lives on the trend and garage tooltips, not on a headline card.
+        $this->assertSame(0, $stats['trend'][11]['verified']);
+        $this->assertSame(0, $stats['garages'][0]['verified']);
     }
 
     public function test_the_stats_endpoint_is_served_and_needs_no_filters(): void
@@ -103,6 +115,127 @@ class RecurringFaultStatsTest extends CrudTestCase
         $this->assertSame(10, $body['kpi']['median_days']);
         $this->assertCount(12, $body['trend']);
         $this->assertCount(4, $body['speed']);
+    }
+
+    /**
+     * "Faults that keep coming back" is one of the two date-scoped panels. Narrowing it must move that
+     * ranking and nothing else — the KPIs, the trend line and the car ranking stay all-time.
+     */
+    public function test_the_fault_ranking_can_be_scoped_by_date_without_moving_anything_else(): void
+    {
+        $garageId = $this->makeVendor();
+
+        $recent = $this->recurrence($garageId, 10);
+        $old    = $this->recurrence($garageId, 10);
+        // Backdate one case: the recurrence itself was raised four months ago.
+        $old['review']->forceFill(['opened_at' => Carbon::now()->subDays(120)])->save();
+
+        $service = app(RecurringFaultService::class);
+
+        $all = $service->stats();
+        $this->assertSame(2, $all['faults'][0]['value'], 'all time counts both recurrences');
+        $this->assertSame(0, $all['faults_window']['days']);
+        $this->assertSame(2, $all['faults_window']['cases']);
+
+        // Trailing preset — only the case opened just now is inside 30 days.
+        $windowed = $service->stats(['days' => 30]);
+        $this->assertSame(1, $windowed['faults'][0]['value']);
+        $this->assertSame(1, $windowed['faults'][0]['cars']);
+        $this->assertSame(30, $windowed['faults_window']['days']);
+
+        // Everything else is untouched by the window.
+        $this->assertSame(2, $windowed['kpi']['total']);
+        $this->assertSame(2, $windowed['garages'][0]['value']);
+        $this->assertCount(2, $windowed['vehicles']);
+        $this->assertCount(12, $windowed['trend']);
+
+        // An explicit range wins over the preset, and covers whole days at both ends.
+        $onlyOld = $service->stats([
+            'days' => 30,
+            'from' => Carbon::now()->subDays(121)->toDateString(),
+            'to'   => Carbon::now()->subDays(119)->toDateString(),
+        ]);
+        $this->assertSame(1, $onlyOld['faults'][0]['value'], 'the four-month-old case, not the fresh one');
+        $this->assertCount(2, $onlyOld['vehicles'], 'the car ranking is still all-time');
+        $this->assertSame(0, $onlyOld['faults_window']['days'], 'an explicit range clears the preset');
+
+        // A window with nothing in it empties the ranking rather than falling back to all-time.
+        $empty = $service->stats(['from' => Carbon::now()->addDay()->toDateString()]);
+        $this->assertSame([], $empty['faults']);
+        $this->assertSame(0, $empty['faults_window']['cases']);
+        $this->assertSame(2, $empty['kpi']['total']);
+
+        $this->assertNotSame($recent['vehicle_id'], $old['vehicle_id']);
+    }
+
+    /**
+     * "Cars that keep coming back" carries its own window. The two are independent: scoping the car
+     * ranking must not reshape the fault ranking, and vice versa.
+     */
+    public function test_the_car_ranking_has_its_own_window_independent_of_the_fault_one(): void
+    {
+        $garageId = $this->makeVendor();
+
+        // Car A: one case raised just now and one raised four months ago — a repeat offender all-time,
+        // but a single-case car inside a 30-day window. Car B: one case, four months ago.
+        $carA = $this->recurrence($garageId, 10);
+        $this->recurrence($garageId, 30, $carA['vehicle_id'])['review']
+            ->forceFill(['opened_at' => Carbon::now()->subDays(120)])->save();
+        $carB = $this->recurrence($garageId, 10);
+        $carB['review']->forceFill(['opened_at' => Carbon::now()->subDays(120)])->save();
+
+        $service = app(RecurringFaultService::class);
+
+        // All time: both cars on the board, car A worst.
+        $all = $service->stats();
+        $this->assertCount(2, $all['vehicles']);
+        $this->assertSame($carA['vehicle_id'], $all['vehicles'][0]['vehicle_id']);
+        $this->assertSame(2, $all['vehicles'][0]['value']);
+
+        // Scoped to 30 days: only car A's fresh case survives, so car B leaves the ranking entirely.
+        $scoped = $service->stats([], ['days' => 30]);
+        $this->assertCount(1, $scoped['vehicles']);
+        $this->assertSame($carA['vehicle_id'], $scoped['vehicles'][0]['vehicle_id']);
+        $this->assertSame(1, $scoped['vehicles'][0]['value']);
+        $this->assertSame(30, $scoped['cars_window']['days']);
+        $this->assertSame(1, $scoped['cars_window']['cases']);
+
+        // The car window touches NOTHING else — not the fault ranking, not the KPIs, not the garages.
+        $this->assertSame(3, $scoped['faults'][0]['value'], 'the fault ranking is still all-time');
+        $this->assertSame(0, $scoped['faults_window']['days']);
+        $this->assertSame(3, $scoped['kpi']['total']);
+        $this->assertSame(3, $scoped['garages'][0]['value']);
+        $this->assertSame(1, $scoped['kpi']['repeat_vehicles'], 'car A is still a repeat offender all-time');
+
+        // …and the two windows can be narrowed to opposite slices at once without interfering.
+        $both = $service->stats(
+            ['days' => 30],
+            ['from' => Carbon::now()->subDays(121)->toDateString(), 'to' => Carbon::now()->subDays(119)->toDateString()],
+        );
+        $this->assertSame(1, $both['faults'][0]['value'], 'faults: just the fresh case');
+        $this->assertSame(2, $both['cars_window']['cases'], 'cars: just the two four-month-old ones');
+        $this->assertCount(2, $both['vehicles']);
+    }
+
+    /** The endpoint passes both windows through under their `faults_*` / `cars_*` params. */
+    public function test_the_stats_endpoint_accepts_both_windows(): void
+    {
+        $garageId = $this->makeVendor();
+        $this->recurrence($garageId, 10);
+        $stale = $this->recurrence($garageId, 10);
+        $stale['review']->forceFill(['opened_at' => Carbon::now()->subDays(200)])->save();
+
+        $body = $this->getJson('/api/recurring-fault-reviews/stats?faults_days=30&cars_days=30')
+            ->assertOk()->json('data');
+
+        $this->assertSame(1, $body['faults'][0]['value']);
+        $this->assertSame(30, $body['faults_window']['days']);
+        $this->assertCount(1, $body['vehicles']);
+        $this->assertSame(30, $body['cars_window']['days']);
+        $this->assertSame(2, $body['kpi']['total'], 'the KPIs ignore both windows');
+
+        $this->getJson('/api/recurring-fault-reviews/stats?faults_days=-1')->assertStatus(422);
+        $this->getJson('/api/recurring-fault-reviews/stats?cars_to=not-a-date')->assertStatus(422);
     }
 
     // ── Fixtures ──────────────────────────────────────────────────────────────────────────────────

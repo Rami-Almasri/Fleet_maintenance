@@ -109,7 +109,7 @@ function TimeMachine({ cars }) {
           <select
             value={carId}
             onChange={(e) => setCarId(e.target.value)}
-            className="w-60 rounded-lg border-slate-200 bg-white py-2 pl-3 pr-8 text-sm font-medium text-slate-700 ring-1 ring-inset ring-slate-200 focus:ring-indigo-400"
+            className="w-60 rounded-lg border-slate-200 bg-white py-2 ps-3 pe-8 text-sm font-medium text-slate-700 ring-1 ring-inset ring-slate-200 focus:ring-indigo-400"
           >
             <option value="">Select a car…</option>
             {cars.map((c) => (
@@ -256,7 +256,7 @@ function TimeMachineResult({ r }) {
           <p className="text-lg font-bold tracking-tight text-slate-900">{r.label}</p>
           <p className="text-sm text-slate-600">{r.detail}</p>
         </div>
-        <span className="ml-auto shrink-0 text-right text-xs text-slate-400">
+        <span className="ms-auto shrink-0 text-end text-xs text-slate-400">
           <span className="block font-semibold text-slate-700">{r.plate || r.code || `#${r.vehicle_id}`}</span>
           {r.car && <span className="block">{[r.car, r.year].filter(Boolean).join(' · ')}</span>}
           <span className="block">on {fmtDate(r.date)}</span>
@@ -366,7 +366,7 @@ export default function FleetUtilization() {
               <span className="h-7 w-1 rounded-full bg-indigo-500" />
               <h1 className="text-2xl font-bold tracking-tight text-slate-900">Fleet Utilization</h1>
             </div>
-            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-500 sm:pl-4">
+            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-500 sm:ps-4">
               How every car's time splits between earning on rent, in the workshop, and sitting idle —
               measured from each car's first rental, so new cars aren't branded as downtime.
             </p>
@@ -400,23 +400,23 @@ export default function FleetUtilization() {
                 {custom ? `${range.from || '…'} → ${range.to || '…'}` : 'Custom dates'}
               </button>
             </div>
-            <div className="ml-auto flex flex-wrap items-center gap-2">
+            <div className="ms-auto flex flex-wrap items-center gap-2">
               <select
                 value={sort}
                 onChange={(e) => setSort(e.target.value)}
-                className="rounded-lg border-slate-200 bg-white py-1.5 pl-3 pr-8 text-sm text-slate-700 ring-1 ring-inset ring-slate-200 focus:ring-indigo-400"
+                className="rounded-lg border-slate-200 bg-white py-1.5 ps-3 pe-8 text-sm text-slate-700 ring-1 ring-inset ring-slate-200 focus:ring-indigo-400"
               >
                 {SORTS.map((o) => (
                   <option key={o.key} value={o.key}>{o.label}</option>
                 ))}
               </select>
               <div className="relative">
-                <Icon.Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <Icon.Search className="pointer-events-none absolute start-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                 <input
                   value={q}
                   onChange={(e) => setQ(e.target.value)}
                   placeholder="Search plate / model…"
-                  className="w-44 rounded-lg border-slate-200 bg-white py-1.5 pl-8 pr-3 text-sm text-slate-700 ring-1 ring-inset ring-slate-200 focus:ring-indigo-400"
+                  className="w-44 rounded-lg border-slate-200 bg-white py-1.5 ps-8 pe-3 text-sm text-slate-700 ring-1 ring-inset ring-slate-200 focus:ring-indigo-400"
                 />
               </div>
             </div>
@@ -484,7 +484,7 @@ export default function FleetUtilization() {
                   </button>
                 );
               })}
-              <span className="ml-auto flex items-center gap-2 text-xs">
+              <span className="ms-auto flex items-center gap-2 text-xs">
                 <button onClick={() => setStatuses(DEFAULT_STATUSES)} className="font-medium text-indigo-600 hover:text-indigo-700">Operational</button>
                 <span className="text-slate-300">·</span>
                 <button onClick={() => setStatuses(statusOptions.map((o) => o.status))} className="font-medium text-slate-500 hover:text-slate-700">All</button>
@@ -495,7 +495,7 @@ export default function FleetUtilization() {
             <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-500" /> Rented</span>
             <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-red-500" /> In maintenance</span>
             <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-slate-300" /> Idle</span>
-            <span className="ml-auto italic">Maintenance = true off-road shop days — workshop days with no active rental, from the OfficeManager maintenance contracts. Rental is King: a day a car is both on rent and in the shop counts as <span className="font-semibold text-emerald-600 not-italic">rental time</span>, never shop time. The three always add up to days in service.</span>
+            <span className="ms-auto italic">Maintenance = true off-road shop days — workshop days with no active rental, from the OfficeManager maintenance contracts. Rental is King: a day a car is both on rent and in the shop counts as <span className="font-semibold text-emerald-600 not-italic">rental time</span>, never shop time. The three always add up to days in service.</span>
           </p>
         </Card>
 
@@ -528,7 +528,7 @@ export default function FleetUtilization() {
                         {c.plate || c.code || `#${c.vehicle_id}`}
                       </Link>
                       {c.pending_service && (
-                        <span className="ml-2 inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700 ring-1 ring-inset ring-amber-200" title="Purchased but not yet rented — no performance metrics until its first rental contract.">
+                        <span className="ms-2 inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700 ring-1 ring-inset ring-amber-200" title="Purchased but not yet rented — no performance metrics until its first rental contract.">
                           Pending service
                         </span>
                       )}

@@ -228,8 +228,8 @@ export default function SimulationPanel() {
                   <span className="w-16 shrink-0 tabular-nums text-xs text-slate-400">{r.at}</span>
                   <span className="min-w-0 flex-1">
                     <span className="font-medium text-slate-800">{r.emoji} {r.label}</span>
-                    {r.vehicle && <span className="ml-2 text-slate-500">{r.vehicle}</span>}
-                    {r.detail && <span className="ml-2 text-xs text-slate-400">· {r.detail}</span>}
+                    {r.vehicle && <span className="ms-2 text-slate-500">{r.vehicle}</span>}
+                    {r.detail && <span className="ms-2 text-xs text-slate-400">· {r.detail}</span>}
                   </span>
                   {r.link && (
                     <Button variant="ghost" size="sm" onClick={() => navigate(r.link)}>{r.linkLabel}</Button>

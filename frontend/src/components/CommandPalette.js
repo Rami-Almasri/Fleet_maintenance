@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useI18n } from '../i18n/I18nContext';
 
 // ⌘K / Ctrl+K quick navigator + action runner.
 //   • type to fuzzily filter pages and quick actions
@@ -7,6 +8,7 @@ import { useNavigate } from 'react-router-dom';
 //   • ↑/↓ to move, ↵ to run, Esc to close
 export default function CommandPalette({ open, onClose, items, actions = [], recents = [] }) {
   const navigate = useNavigate();
+  const { t } = useI18n();
   const [q, setQ] = useState('');
   const [active, setActive] = useState(0);
   const inputRef = useRef(null);
@@ -33,8 +35,8 @@ export default function CommandPalette({ open, onClose, items, actions = [], rec
       const sectionGroups = Object.entries(bySection).map(([title, rows]) => ({ title, rows }));
 
       const g = [];
-      if (actionRows.length) g.push({ title: 'Quick actions', rows: actionRows });
-      if (recentRows.length) g.push({ title: 'Recent', rows: recentRows });
+      if (actionRows.length) g.push({ key: 'quickActions', rows: actionRows });
+      if (recentRows.length) g.push({ key: 'recent', rows: recentRows });
       g.push(...sectionGroups);
       return { groups: g, flat: g.flatMap((x) => x.rows) };
     }
@@ -45,8 +47,8 @@ export default function CommandPalette({ open, onClose, items, actions = [], rec
     const ap = actionRows.filter(matchAction);
     const pp = pageRows.filter(matchPage);
     const g = [];
-    if (ap.length) g.push({ title: 'Actions', rows: ap });
-    if (pp.length) g.push({ title: 'Pages', rows: pp });
+    if (ap.length) g.push({ key: 'actions', rows: ap });
+    if (pp.length) g.push({ key: 'pages', rows: pp });
     return { groups: g, flat: g.flatMap((x) => x.rows) };
   }, [q, items, actions, recents]);
 
@@ -101,7 +103,7 @@ export default function CommandPalette({ open, onClose, items, actions = [], rec
             value={q}
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={onKey}
-            placeholder="Search pages or run an action…"
+            placeholder={t('palette.placeholder')}
             className="w-full bg-transparent py-3.5 text-sm text-slate-800 outline-none placeholder:text-slate-400"
           />
           <kbd className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-semibold text-slate-400">ESC</kbd>
@@ -109,12 +111,12 @@ export default function CommandPalette({ open, onClose, items, actions = [], rec
 
         <ul ref={listRef} className="max-h-[24rem] overflow-y-auto p-2">
           {flat.length === 0 && (
-            <li className="px-3 py-10 text-center text-sm text-slate-400">No matches for “{q}”.</li>
+            <li className="px-3 py-10 text-center text-sm text-slate-400">{t('palette.noMatches', { q })}</li>
           )}
           {groups.map((group) => (
-            <li key={group.title} className="mb-1">
+            <li key={group.key} className="mb-1">
               <p className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-300">
-                {group.title}
+                {t(`palette.group.${group.key}`)}
               </p>
               <ul>
                 {group.rows.map((row) => {
@@ -126,14 +128,14 @@ export default function CommandPalette({ open, onClose, items, actions = [], rec
                       <button
                         onMouseEnter={() => setActive(i)}
                         onClick={() => go(row)}
-                        className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition ${
+                        className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-start text-sm transition ${
                           i === active ? 'bg-indigo-50 text-indigo-700' : 'text-slate-700 hover:bg-slate-50'
                         }`}
                       >
                         <svg className={`h-[18px] w-[18px] shrink-0 ${i === active ? 'text-indigo-500' : 'text-slate-400'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d={row.icon} /></svg>
                         <span className="flex-1 font-medium">{isAction ? row.label : row.name}</span>
                         {isAction
-                          ? <span className="text-[10px] font-semibold uppercase tracking-wide text-violet-300">Action</span>
+                          ? <span className="text-[10px] font-semibold uppercase tracking-wide text-violet-300">{t('palette.action')}</span>
                           : <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-300">{row.section}</span>}
                         {i === active && (
                           <kbd className="rounded border border-indigo-200 bg-white px-1 text-[10px] font-semibold text-indigo-400">↵</kbd>

@@ -128,7 +128,7 @@ function CommandColumn({ title, hint, count, tone, icon, children }) {
           <h2 className="text-sm font-bold tracking-tight text-slate-800">{title}</h2>
           {hint && <p className="text-[11px] text-slate-400">{hint}</p>}
         </div>
-        <span className="ml-auto rounded-full bg-white px-2.5 py-0.5 text-xs font-bold text-slate-600 ring-1 ring-inset ring-slate-200">{num(count)}</span>
+        <span className="ms-auto rounded-full bg-white px-2.5 py-0.5 text-xs font-bold text-slate-600 ring-1 ring-inset ring-slate-200">{num(count)}</span>
       </div>
       <div className="flex max-h-[64vh] flex-col gap-2.5 overflow-y-auto p-3">
         {count === 0 ? <p className="py-10 text-center text-sm text-slate-400">Nothing here.</p> : children}
@@ -141,7 +141,7 @@ function CommandColumn({ title, hint, count, tone, icon, children }) {
 function ActionCard({ car, onProcess }) {
   const withCustomer = car.status === 'with_customer';
   return (
-    <div className={`rounded-xl border-l-4 bg-white p-3.5 shadow-sm transition hover:shadow ${withCustomer ? 'border-l-blue-500 border border-slate-200' : 'border-l-emerald-500 border border-slate-200'}`}>
+    <div className={`rounded-xl border-s-4 bg-white p-3.5 shadow-sm transition hover:shadow ${withCustomer ? 'border-l-blue-500 border border-slate-200' : 'border-l-emerald-500 border border-slate-200'}`}>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="font-bold text-slate-800">{car.plate}</p>
@@ -180,7 +180,7 @@ function ActionCard({ car, onProcess }) {
       </div>
 
       <Button variant={withCustomer ? 'primary' : 'success'} size="sm" className="mt-3 w-full" onClick={() => onProcess(car)}>
-        <Icon.Refresh className="mr-1.5 h-4 w-4" /> Process Swap
+        <Icon.Refresh className="me-1.5 h-4 w-4" /> Process Swap
       </Button>
     </div>
   );
@@ -248,7 +248,7 @@ function SwapRenewModal({ original, pool, onClose, onConfirm }) {
           <div className="flex items-center gap-2">
             <Button variant="secondary" onClick={onClose}>Cancel</Button>
             <Button variant="primary" disabled={!picked} onClick={() => onConfirm(picked)}>
-              <Icon.Check className="mr-1.5 h-4 w-4" /> Confirm Swap & Renew
+              <Icon.Check className="me-1.5 h-4 w-4" /> Confirm Swap & Renew
             </Button>
           </div>
         </div>
@@ -269,7 +269,7 @@ function SwapRenewModal({ original, pool, onClose, onConfirm }) {
             <button
               key={c.id}
               onClick={() => setPicked(c)}
-              className={`flex items-center justify-between gap-2 rounded-xl border p-3 text-left transition ${on ? 'border-emerald-400 bg-emerald-50 ring-1 ring-emerald-300' : 'border-slate-200 bg-white hover:border-indigo-200 hover:bg-slate-50'}`}
+              className={`flex items-center justify-between gap-2 rounded-xl border p-3 text-start transition ${on ? 'border-emerald-400 bg-emerald-50 ring-1 ring-emerald-300' : 'border-slate-200 bg-white hover:border-indigo-200 hover:bg-slate-50'}`}
             >
               <span className="min-w-0">
                 <span className="block font-bold text-slate-800">{c.plate}</span>
@@ -372,10 +372,10 @@ export default function MaintenanceSwap() {
           <div className="flex items-center gap-2">
             <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">Live data · simulated actions</span>
             <Button variant="ghost" size="sm" onClick={() => reload()} disabled={loading}>
-              <Icon.Download className="mr-1.5 h-4 w-4" /> Refresh
+              <Icon.Download className="me-1.5 h-4 w-4" /> Refresh
             </Button>
             <Button variant="secondary" size="sm" onClick={resetBoard} disabled={!snapshotRef.current}>
-              <Icon.Refresh className="mr-1.5 h-4 w-4" /> Reset
+              <Icon.Refresh className="me-1.5 h-4 w-4" /> Reset
             </Button>
           </div>
         </div>

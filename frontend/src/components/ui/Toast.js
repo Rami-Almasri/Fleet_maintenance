@@ -41,7 +41,7 @@ export function ToastProvider({ children }) {
     <ToastContext.Provider value={api}>
       {children}
       {createPortal(
-        <div className="fixed bottom-4 right-4 z-[60] flex w-full max-w-sm flex-col gap-2">
+        <div className="fixed bottom-4 end-4 z-[60] flex w-full max-w-sm flex-col gap-2">
           {toasts.map((t) => {
             const tone = TONE[t.type] || TONE.info;
             return (

@@ -385,7 +385,7 @@ export default function RepairCaptureModal({ open, taskId, onClose, onSaved }) {
                         key={o.value}
                         type="button"
                         onClick={() => setOutcome(o.value)}
-                        className={`rounded-lg px-3 py-2 text-left ring-1 transition ${
+                        className={`rounded-lg px-3 py-2 text-start ring-1 transition ${
                           outcome === o.value
                             ? `${TONES[o.tone]} ring-2`
                             : 'bg-white text-slate-700 ring-slate-200 hover:bg-slate-50'

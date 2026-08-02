@@ -28,12 +28,12 @@ export default function ComplaintTimeline({ timeline = [], emptyLabel = 'No acti
         return (
           <li key={e.id ?? i} className="relative flex gap-3 pb-5 last:pb-0">
             {/* The rail — a vertical connector behind every node except the last. */}
-            {!last && <span aria-hidden className="absolute left-[15px] top-8 bottom-0 w-px bg-slate-200" />}
+            {!last && <span aria-hidden className="absolute start-[15px] top-8 bottom-0 w-px bg-slate-200" />}
 
             {/* Node glyph */}
             <span className="relative z-10 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-base ring-1 ring-slate-200">
               {e.emoji || '•'}
-              <span className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-white ${SOURCE_DOT[e.source] || 'bg-slate-300'}`} />
+              <span className={`absolute -bottom-0.5 -end-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-white ${SOURCE_DOT[e.source] || 'bg-slate-300'}`} />
             </span>
 
             {/* Body */}

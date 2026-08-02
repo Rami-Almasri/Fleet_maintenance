@@ -18,6 +18,11 @@ use App\Models\ServiceCatalog;
  *   classifyFromCatalog()  — the NORMAL path: the user picked a catalog row, so kind is authoritative.
  *   resolveLegacyKind()    — the SHIELD, run ONCE at backfill/import for rows that carry no catalog
  *                            reference. Best-effort, marks ambiguous rows needs_review. Never read-time.
+ *   labelKind()            — types a legacy SHEET LABEL (a `service_main`/`service_sup` tag), not an
+ *                            event: a lookup over the closed 147-label vocabulary in
+ *                            config/sheet_label_kinds.php. It exists because the imported sheet
+ *                            corpus has no `kind` to read and every reader was counting oil changes
+ *                            as faults. Never use it on anything that has a MaintenanceTask.
  *
  * Every write path (workflow, API, backfill, import) goes through this class; no other code assigns
  * `kind` directly. See docs/Service-vs-Fault-Domain-Separation.md.
@@ -27,6 +32,7 @@ class EventClassificationService
     /** Cached normalized lookup maps (built once per request). */
     private ?array $serviceMap = null;   // normalized name|slug => service_catalog_id
     private ?array $faultMap = null;     // normalized name|slug => fault_catalog_id
+    private ?array $labelMap = null;     // normalized legacy sheet label => service|context
 
     /**
      * NORMAL path — the user picked a catalog row. Returns the attribute set to persist on the task:
@@ -111,7 +117,85 @@ class EventClassificationService
         return $this->attributes(MaintenanceTask::KIND_FAULT, null, MaintenanceTask::CLS_RESOLVER, true);
     }
 
+    // ── legacy sheet labels ───────────────────────────────────────────────────────────────────────
+
+    /** A sheet label that is neither a fault nor a service: request origin, stage, visit type. */
+    public const LABEL_CONTEXT = 'context';
+
+    /**
+     * The kind of ONE legacy sheet label (a single `service_main` / `service_sup` tag).
+     *
+     * This is a VOCABULARY LOOKUP over the closed 147-label sheet corpus (config/sheet_label_kinds.php),
+     * not a third classifier: it types a *word*, never an *event*. Anything the workflow created
+     * carries `maintenance_tasks.kind` and must be read from there instead.
+     *
+     * Order: the explicit legacy map wins, then an exact catalog name/slug hit, then fault — so the
+     * default stays exactly what every reader does today and an unmapped label is never dropped.
+     *
+     * @return string one of MaintenanceTask::KIND_FAULT, KIND_SERVICE, self::LABEL_CONTEXT
+     */
+    public function labelKind(?string $label): string
+    {
+        $key = $this->norm($label);
+        if ($key === '') {
+            return MaintenanceTask::KIND_FAULT;
+        }
+
+        if (isset($this->labelMap()[$key])) {
+            return $this->labelMap()[$key];
+        }
+        if (isset($this->serviceMap()[$key])) {
+            return MaintenanceTask::KIND_SERVICE;
+        }
+
+        return MaintenanceTask::KIND_FAULT;
+    }
+
+    /**
+     * Split a list of legacy sheet labels by kind, preserving order and dropping duplicates.
+     * Every input label lands in exactly one bucket, so the three always re-assemble into the input.
+     *
+     * @param  array<int,string> $labels
+     * @return array{fault: array<int,string>, service: array<int,string>, context: array<int,string>}
+     */
+    public function splitLabels(array $labels): array
+    {
+        $out = [
+            MaintenanceTask::KIND_FAULT   => [],
+            MaintenanceTask::KIND_SERVICE => [],
+            self::LABEL_CONTEXT           => [],
+        ];
+
+        foreach ($labels as $label) {
+            $label = trim((string) $label);
+            if ($label === '') {
+                continue;
+            }
+            $kind = $this->labelKind($label);
+            if (! in_array($label, $out[$kind], true)) {
+                $out[$kind][] = $label;
+            }
+        }
+
+        return $out;
+    }
+
     // ── internals ─────────────────────────────────────────────────────────────────────────────────
+
+    /** normalized legacy label => kind, built once per request from config/sheet_label_kinds.php. */
+    private function labelMap(): array
+    {
+        if ($this->labelMap === null) {
+            $this->labelMap = [];
+            foreach ([MaintenanceTask::KIND_SERVICE, self::LABEL_CONTEXT] as $kind) {
+                foreach ((array) config("sheet_label_kinds.{$kind}", []) as $label) {
+                    $this->labelMap[$this->norm($label)] = $kind;
+                }
+            }
+        }
+
+        return $this->labelMap;
+    }
 
     /** Build the attribute payload with exactly the one catalog FK matching the kind set. */
     private function attributes(string $kind, ?int $catalogId, string $source, bool $needsReview = false): array

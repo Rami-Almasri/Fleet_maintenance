@@ -558,7 +558,7 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
 
               {/* live downtime + progress + primary CTA */}
               <div className="flex items-center gap-5">
-                <div className="text-right">
+                <div className="text-end">
                   <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
                     {terminal ? t('workflow.detail.totalDowntime') : 'Downtime · live'}
                   </p>
@@ -894,7 +894,7 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
                 <div className="space-y-2">
                   <p className="text-xs text-slate-500">
                     {t('workflow.awaitingInvoice.waiting', { n: tk.invoice_days_waiting ?? 0 })}
-                    {tk.invoice_overdue && <span className="ml-1 font-semibold text-red-600">· {t('workflow.awaitingInvoice.overdue')}</span>}
+                    {tk.invoice_overdue && <span className="ms-1 font-semibold text-red-600">· {t('workflow.awaitingInvoice.overdue')}</span>}
                   </p>
                   <Button size="sm" variant="primary" disabled={auditBusy} onClick={markInvoiceReceived} className="w-full justify-center">
                     {t('workflow.awaitingInvoice.markReceived')}

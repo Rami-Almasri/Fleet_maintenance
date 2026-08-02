@@ -35,7 +35,7 @@ export default function OpsCard({ tk, onOpen }) {
     <button
       type="button"
       onClick={() => onOpen?.(tk)}
-      className="group flex w-full flex-col rounded-2xl bg-white text-left shadow-soft ring-1 ring-slate-200/70 transition hover:-translate-y-0.5 hover:shadow-lg hover:ring-indigo-300"
+      className="group flex w-full flex-col rounded-2xl bg-white text-start shadow-soft ring-1 ring-slate-200/70 transition hover:-translate-y-0.5 hover:shadow-lg hover:ring-indigo-300"
     >
       {/* State accent — the card's colour IS its operational state, readable across a room. */}
       <div className="h-1 w-full rounded-t-2xl" style={{ background: st.bar }} />
@@ -107,7 +107,7 @@ export default function OpsCard({ tk, onOpen }) {
                   <span className="truncate">
                     {/* A dot marks the parts that are actually holding the repair up — the rest are
                         ordered/arrived but not yet fitted, which blocks nothing. */}
-                    {p.blocking && <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-violet-500 align-middle" />}
+                    {p.blocking && <span className="me-1 inline-block h-1.5 w-1.5 rounded-full bg-violet-500 align-middle" />}
                     {p.name}
                   </span>
                   <span className="shrink-0 font-medium capitalize text-violet-500">

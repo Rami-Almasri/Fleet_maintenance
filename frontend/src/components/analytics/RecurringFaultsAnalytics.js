@@ -7,28 +7,26 @@
 //   2. How fast do repairs fail?         → days-to-return histogram; ≤7 days is a repair that never worked
 //   3. Whose repairs come back?          → by garage, and by car, and by fault
 //
+// All charts, no headline numbers: the counts that used to sit in a KPI row are readable off the table
+// below and the charts here, and a scorecard that restates them is one more thing to keep honest.
+//
 // Fed by GET /recurring-fault-reviews/stats — FLEET-WIDE on purpose, not the filtered table. Running these
 // off the visible rows would show ~100% "awaiting a ruling" whenever the page sits on its default filter.
 // Every number is counted from recurring_fault_reviews; nothing here is inferred or scored.
 
 import { SectionCard } from '../ui/Table';
 import DateRangePicker from '../ui/DateRangePicker';
-import MetricCard, { MetricGrid } from '../ui/MetricCard';
 import RankedBar from '../ui/RankedBar';
 import BarChart from '../ui/BarChart';
 import LineChart from '../ui/LineChart';
-import { MetricCardSkeleton } from '../ui/Skeleton';
+import Skeleton from '../ui/Skeleton';
 import { num } from '../../lib/format';
-import { useI18n } from '../../i18n/I18nContext';
 
 // The days-to-return histogram is a severity ramp: a fault back within a week means the repair never
 // worked; two months out is closer to ordinary wear.
 const SPEED_COLOR = { '0-7': 'red', '8-30': 'orange', '31-60': 'amber', '61+': 'slate' };
 
-const pct = (n) => `${Math.round(n || 0)}%`;
-const cases = (n) => `${num(n)} case${n === 1 ? '' : 's'}`;
-
-// What the fault ranking is currently counting, said in the subtitle. The window is echoed back by the
+// What a windowed ranking is currently counting, said in its subtitle. The window is echoed back by the
 // API rather than read off local state, so the caption can never describe a range the numbers aren't in.
 const DAY_LABEL = { 30: 'last 30 days', 90: 'last 90 days', 180: 'last 6 months', 365: 'last year' };
 const shortDate = (iso) => {
@@ -36,42 +34,68 @@ const shortDate = (iso) => {
   const [y, m, d] = iso.split('-').map(Number);
   return new Date(y, m - 1, d).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 };
-const faultScope = (w) => {
-  if (!w) return 'across the fleet';
+const ALL_TIME = 'across the fleet';
+const scopeLabel = (w) => {
+  if (!w) return ALL_TIME;
   if (w.from && w.to) return `${shortDate(w.from)} – ${shortDate(w.to)}`;
   if (w.from) return `since ${shortDate(w.from)}`;
   if (w.to) return `up to ${shortDate(w.to)}`;
   if (w.days > 0) return DAY_LABEL[w.days] || `last ${num(w.days)} days`;
-  return 'across the fleet';
+  return ALL_TIME;
 };
+const isScoped = (w) => scopeLabel(w) !== ALL_TIME;
+
+// The window a ranking is actually counting, stated in full above the bars. It lives in the BODY, not
+// in the card's subtitle: the header truncates to make room for the picker, and a scope caption that
+// reads "across the fl…" is worse than none. Read off the API's echo, never local state, so it can
+// never describe a range the bars aren't in.
+function ScopeNote({ window: w, noun }) {
+  const scoped = isScoped(w);
+  return (
+    <p className={`mb-3 text-xs ${scoped ? 'font-medium text-indigo-600' : 'text-slate-400'}`}>
+      {scopeLabel(w)}
+      {w?.cases != null && ` · ${num(w.cases)} ${noun}${w.cases === 1 ? '' : 's'}`}
+    </p>
+  );
+}
+
+// The "made of what?" list inside a tooltip — the cars behind a fault, the faults behind a car, the
+// faults inside a speed bucket. One shape for all three so a breakdown always reads the same way.
+function Breakdown({ items = [], more = 0, unit, empty }) {
+  if (!items.length) return empty || null;
+  return (
+    <div className="mt-1 space-y-0.5">
+      {items.map((it) => (
+        <div key={it.label} className="flex gap-3 capitalize">
+          <span className="flex-1 truncate">{it.label}</span>
+          <span className="tabular-nums">{num(it.value)}</span>
+        </div>
+      ))}
+      {more > 0 && (
+        <div className="text-white/50">+{num(more)} other {unit}{more === 1 ? '' : 's'}</div>
+      )}
+    </div>
+  );
+}
 
 export default function RecurringFaultsAnalytics({
   stats,
   loading = false,
-  // The fault ranking's own date window — {days, from, to}, mirroring the API params. Only this one
-  // panel is scoped; every other chart here stays fleet-wide and all-time by design.
+  // Each "keeps coming back" ranking carries its OWN date window — {days, from, to}, mirroring the API
+  // params. Only those two panels are scoped; every other chart here stays fleet-wide and all-time.
   faultWindow = { days: 0, from: null, to: null },
   onFaultWindowChange,
+  carWindow = { days: 0, from: null, to: null },
+  onCarWindowChange,
 }) {
-  const { t } = useI18n();
   if (loading && !stats) {
-    return (
-      <MetricGrid cols={4}>
-        {[0, 1, 2, 3].map((i) => <MetricCardSkeleton key={i} />)}
-      </MetricGrid>
-    );
+    return <Skeleton className="h-[300px] w-full rounded-2xl" />;
   }
   if (!stats) return null;
 
-  const k = stats.kpi || {};
-  if (!k.total) return null;
-
-  // Momentum vs the previous 30 days. A RISE in recurrences is bad news, so it takes the red `down`
-  // treatment — the pill's colour tracks whether the fleet is improving, not whether the number grew.
-  const delta = (k.last_30_days || 0) - (k.prev_30_days || 0);
-  const deltaPill = k.prev_30_days || k.last_30_days
-    ? { delta: `${delta > 0 ? '+' : ''}${num(delta)} vs prev 30d`, trend: delta > 0 ? 'down' : delta < 0 ? 'up' : 'flat' }
-    : {};
+  // The KPI row is gone, but its `total` still decides whether there is a dashboard to draw at all:
+  // with no case on record every chart below would be an empty frame.
+  if (!(stats.kpi?.total)) return null;
 
   const trend = (stats.trend || []).map((t) => ({ ...t, label: t.label }));
 
@@ -86,43 +110,12 @@ export default function RecurringFaultsAnalytics({
     to: v.vehicle_id ? `/vehicles/${v.vehicle_id}?focus=repeat-faults` : undefined,
     value: v.value,
     open: v.open,
+    faults: v.faults,
+    more: v.more,
   }));
 
   return (
     <div className="space-y-4">
-      {/* ── Headline numbers ─────────────────────────────────────────────── */}
-      <MetricGrid cols={4}>
-        <MetricCard
-          label={t('recurringFaults.awaitingRuling')}
-          value={num(k.open || 0)}
-          tone={k.open > 0 ? 'amber' : 'emerald'}
-          hint={`${cases(k.total)} on record`}
-          tooltip="Confirmed recurrences with no management decision yet. Each one blocks its repair."
-        />
-        <MetricCard
-          label="Came back (last 30 days)"
-          value={num(k.last_30_days || 0)}
-          tone={delta > 0 ? 'red' : 'indigo'}
-          hint={`${num(k.prev_30_days || 0)} in the 30 days before`}
-          tooltip="Review cases opened in the last 30 days — the rate at which repairs are failing."
-          {...deltaPill}
-        />
-        <MetricCard
-          label="Median time to return"
-          value={k.median_days != null ? `${num(k.median_days)}d` : '—'}
-          tone={k.median_days != null && k.median_days <= 14 ? 'red' : 'slate'}
-          hint={`Detection window ${num(k.window_days)} days`}
-          tooltip="Median days between a repair being completed and the same fault being confirmed again. Median, not average, so one late return can't flatter the number."
-        />
-        <MetricCard
-          label="Failed after a verified fix"
-          value={num(k.verified_fixed || 0)}
-          tone={k.verified_fixed > 0 ? 'red' : 'emerald'}
-          hint={`${pct(k.verified_share)} of all cases`}
-          tooltip="The previous repair passed a post-repair inspection and the fault still came back. That is a QC failure, not bad luck."
-        />
-      </MetricGrid>
-
       {/* ── Trend ────────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 gap-4">
         <SectionCard
@@ -158,19 +151,7 @@ export default function RecurringFaultsAnalytics({
               valueLabel="Cases"
               // A bucket count on its own doesn't say what to fix. Hovering names the faults that came
               // back in that window, biggest first, so "9 within a week" becomes "6 of them brake noise".
-              tooltip={(d) => (d.faults?.length ? (
-                <div className="mt-1 space-y-0.5">
-                  {d.faults.map((f) => (
-                    <div key={f.label} className="flex gap-3 capitalize">
-                      <span className="flex-1 truncate">{f.label}</span>
-                      <span className="tabular-nums">{num(f.value)}</span>
-                    </div>
-                  ))}
-                  {d.more > 0 && (
-                    <div className="text-white/50">+{num(d.more)} other fault{d.more === 1 ? '' : 's'}</div>
-                  )}
-                </div>
-              ) : null)}
+              tooltip={(d) => <Breakdown items={d.faults} more={d.more} unit="fault" />}
             />
           ) : (
             <div className="flex h-[200px] items-center justify-center text-sm text-slate-400">
@@ -181,12 +162,13 @@ export default function RecurringFaultsAnalytics({
 
         <SectionCard
           title="Faults that keep coming back"
-          subtitle={`By fault category · ${faultScope(stats.faults_window)}`}
+          subtitle="By fault category"
           bodyClass="p-5"
-          // The only date-scoped panel on this dashboard. Which faults dominate goes stale fastest: a
-          // batch of brake jobs replaced in March keeps topping the all-time list long after it stopped
-          // recurring, so this ranking gets a window of its own. Ranking happens AFTER the window is
-          // applied server-side, so narrowing can promote a fault the all-time top-8 never showed.
+          // Which faults dominate goes stale fastest: a batch of brake jobs replaced in March keeps
+          // topping the all-time list long after it stopped recurring, so this ranking gets a window of
+          // its own. Ranking happens AFTER the window is applied server-side, so narrowing it can
+          // promote a fault the all-time top-8 never showed.
+          overflowVisible
           actions={onFaultWindowChange ? (
             <DateRangePicker
               days={faultWindow.days}
@@ -196,6 +178,7 @@ export default function RecurringFaultsAnalytics({
             />
           ) : null}
         >
+          <ScopeNote window={stats.faults_window} noun="fault case" />
           <RankedBar
             items={stats.faults || []}
             showRank
@@ -204,10 +187,17 @@ export default function RecurringFaultsAnalytics({
             valueLabel="Cases"
             valueWidth={56}
             labelWidth={150}
-            tooltip={(f) => `Across ${num(f.cars)} car${f.cars === 1 ? '' : 's'}`}
-            empty={faultScope(stats.faults_window) === 'across the fleet'
-              ? 'No recurring faults recorded.'
-              : 'No faults came back in this window.'}
+            // Hovering names the CARS behind the fault: "Brake failure, 10 cases" reads very
+            // differently once you see it is one car ten times rather than ten cars once each.
+            tooltip={(f) => (
+              <>
+                <div>Across {num(f.cars)} car{f.cars === 1 ? '' : 's'}</div>
+                <Breakdown items={f.top_cars} more={f.cars_more} unit="car" />
+              </>
+            )}
+            empty={isScoped(stats.faults_window)
+              ? 'No faults came back in this window.'
+              : 'No recurring faults recorded.'}
           />
         </SectionCard>
       </div>
@@ -238,9 +228,22 @@ export default function RecurringFaultsAnalytics({
 
         <SectionCard
           title="Cars that keep coming back"
-          subtitle="Recurring-fault cases raised per car"
+          subtitle="Cases raised per car"
           bodyClass="p-5"
+          // Its own window, independent of the fault ranking's: "which cars are hurting us THIS quarter"
+          // is a different question from "which faults", and a car sold months ago should be able to
+          // drop off this list without touching the other. Ranked after the window, same as faults.
+          overflowVisible
+          actions={onCarWindowChange ? (
+            <DateRangePicker
+              days={carWindow.days}
+              from={carWindow.from}
+              to={carWindow.to}
+              onChange={onCarWindowChange}
+            />
+          ) : null}
         >
+          <ScopeNote window={stats.cars_window} noun="case" />
           <RankedBar
             items={vehicles}
             showRank
@@ -249,8 +252,15 @@ export default function RecurringFaultsAnalytics({
             valueLabel="Cases"
             valueWidth={56}
             labelWidth={150}
-            tooltip={(r) => (r.open > 0 ? `${num(r.open)} still awaiting a ruling` : 'All ruled on')}
-            empty="No cases raised."
+            // Hovering names the FAULTS this car keeps coming back with: "4 cases" says the car is a
+            // problem, "3 of them the same AC fault" says what the problem is.
+            tooltip={(r) => (
+              <>
+                <div>{r.open > 0 ? `${num(r.open)} still awaiting a ruling` : 'All ruled on'}</div>
+                <Breakdown items={r.faults} more={r.more} unit="fault" />
+              </>
+            )}
+            empty={isScoped(stats.cars_window) ? 'No cases raised in this window.' : 'No cases raised.'}
           />
         </SectionCard>
       </div>

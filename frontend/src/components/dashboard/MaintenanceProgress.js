@@ -189,7 +189,7 @@ export default function MaintenanceProgress() {
         <div className="overflow-x-auto">
           <table className="w-full min-w-[820px] text-sm">
             <thead>
-              <tr className="border-b border-slate-100 text-left text-xs font-semibold uppercase tracking-wide text-slate-400">
+              <tr className="border-b border-slate-100 text-start text-xs font-semibold uppercase tracking-wide text-slate-400">
                 <th className="py-2 pe-3">Vehicle</th>
                 <th className="py-2 pe-3">Problem</th>
                 <th className="py-2 pe-3">Workshop</th>
@@ -231,7 +231,7 @@ export default function MaintenanceProgress() {
                       {(r.responsible || []).length > 2 ? ` +${r.responsible.length - 2}` : ''}
                     </span>
                   </td>
-                  <td className="py-2.5 pe-1 text-right">
+                  <td className="py-2.5 pe-1 text-end">
                     <button
                       type="button"
                       disabled={opening === `${r.source}-${r.ticket_id ?? r.contract_id}`}

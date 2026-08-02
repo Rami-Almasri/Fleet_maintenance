@@ -174,13 +174,13 @@ export default function Drivers() {
           <div className="overflow-x-auto">
             <table className="min-w-full border-separate border-spacing-0 text-sm stagger-rows">
               <thead className="bg-slate-50/90">
-                <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <tr className="text-start text-xs font-semibold uppercase tracking-wide text-slate-500">
                   <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Name</th>
                   <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Phone</th>
                   <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Licence No.</th>
                   <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Licence Expiry</th>
                   <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Status</th>
-                  {canManage && <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-right">Actions</th>}
+                  {canManage && <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-end">Actions</th>}
                 </tr>
               </thead>
 
@@ -195,7 +195,7 @@ export default function Drivers() {
                       <tr key={d.id} className="bg-white transition-colors even:bg-slate-50/40 hover:bg-indigo-50/40">
                         <td className="border-b border-slate-100 px-5 py-3.5 font-medium text-slate-900">
                           {d.name || '—'}
-                          {d.origin && d.origin !== 'web' && <span className="ml-2 text-xs text-slate-400">({d.origin})</span>}
+                          {d.origin && d.origin !== 'web' && <span className="ms-2 text-xs text-slate-400">({d.origin})</span>}
                         </td>
                         <td className="border-b border-slate-100 px-5 py-3.5 text-slate-600" dir="ltr">{d.phone || <span className="text-slate-300">—</span>}</td>
                         <td className="border-b border-slate-100 px-5 py-3.5 text-slate-600">{d.license_no || <span className="text-slate-300">—</span>}</td>

@@ -34,7 +34,7 @@ export default function CheckpointTimeline({ checkpoints = [], onDelete = null, 
   return (
     <ol className="relative space-y-4">
       {/* Connecting rail behind the markers. */}
-      <span aria-hidden="true" className="absolute left-[15px] top-2 bottom-2 w-px bg-slate-200" />
+      <span aria-hidden="true" className="absolute start-[15px] top-2 bottom-2 w-px bg-slate-200" />
       {checkpoints.map((c) => {
         const images = (c.media || []).filter((m) => m.kind === 'image');
         const videos = (c.media || []).filter((m) => m.kind === 'video');

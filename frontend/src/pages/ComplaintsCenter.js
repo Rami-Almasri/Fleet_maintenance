@@ -227,12 +227,12 @@ export default function ComplaintsCenter() {
           actions={(
             <div className="flex flex-wrap items-center gap-2">
               <div className="relative">
-                <Icon.Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                <Icon.Search className="pointer-events-none absolute start-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
                 <input
                   value={q}
                   onChange={(e) => setQ(e.target.value)}
                   placeholder="Search car / customer…"
-                  className="w-44 rounded-lg border border-slate-200 py-1.5 pl-8 pr-2 text-sm outline-none focus:border-indigo-400"
+                  className="w-44 rounded-lg border border-slate-200 py-1.5 ps-8 pe-2 text-sm outline-none focus:border-indigo-400"
                 />
               </div>
               <select value={assignee} onChange={(e) => setAssignee(e.target.value)} className="rounded-lg border border-slate-200 py-1.5 px-2 text-sm text-slate-600 outline-none focus:border-indigo-400">

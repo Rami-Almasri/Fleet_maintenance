@@ -110,7 +110,7 @@ export default function MaintenanceCarsCard({ onRowClick }) {
         <button
           type="button"
           onClick={(ev) => { ev.stopPropagation(); handleRowClick(v); }}
-          className="text-left"
+          className="text-start"
           title="Open this car"
         >
           <span className="font-semibold text-slate-900 hover:text-indigo-600">{v.plate || `#${v.vehicle_id}`}</span>

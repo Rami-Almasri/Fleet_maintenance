@@ -2,17 +2,19 @@
 // Animated sun/moon swap; persists via ThemeContext (localStorage + <html>).
 
 import { useTheme } from '../theme/ThemeContext';
+import { useI18n } from '../i18n/I18nContext';
 
 export default function ThemeToggle({ className = '' }) {
   const { theme, toggle } = useTheme();
+  const { t } = useI18n();
   const dark = theme === 'dark';
 
   return (
     <button
       type="button"
       onClick={toggle}
-      title={dark ? 'Switch to Platinum (light)' : 'Switch to Cockpit (dark)'}
-      aria-label="Toggle theme"
+      title={dark ? t('theme.toLight') : t('theme.toDark')}
+      aria-label={t('theme.toggle')}
       className={`group relative inline-flex h-9 w-9 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:text-slate-700 hover:ring-1 hover:ring-slate-200 ${className}`}
     >
       {/* Sun (light mode) */}

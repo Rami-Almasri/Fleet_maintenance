@@ -247,10 +247,10 @@ export default function CarStatusDrawer({ open, seed, onClose }) {
               {/* Maintenance timeline */}
               {journey && (
                 <Section title="Maintenance timeline" icon={Icon.Clock} count={journey.stage_count}>
-                  <ol className="relative space-y-3 border-l border-slate-200 pl-4">
+                  <ol className="relative space-y-3 border-s border-slate-200 ps-4">
                     {journey.stages.map((st, i) => (
                       <li key={i} className="relative">
-                        <span className="absolute -left-[21px] top-1 h-2.5 w-2.5 rounded-full bg-blue-400 ring-2 ring-white" />
+                        <span className="absolute -start-[21px] top-1 h-2.5 w-2.5 rounded-full bg-blue-400 ring-2 ring-white" />
                         <div className="flex items-baseline justify-between gap-2">
                           <p className="text-sm font-medium text-slate-700">{humanize(st.workflow_status)}</p>
                           <span className="shrink-0 text-[11px] text-slate-400">{st.seconds != null ? fmtSeconds(st.seconds) : 'now'}</span>

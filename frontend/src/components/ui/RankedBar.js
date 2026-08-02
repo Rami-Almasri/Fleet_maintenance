@@ -97,7 +97,7 @@ export default function RankedBar({
             <div className="shrink-0 truncate" style={{ width: labelWidth }}>
               <span className="flex items-baseline gap-1.5">
                 {showRank && (
-                  <span className="w-4 shrink-0 text-right text-[10px] font-bold tabular-nums text-slate-300">{i + 1}</span>
+                  <span className="w-4 shrink-0 text-end text-[10px] font-bold tabular-nums text-slate-300">{i + 1}</span>
                 )}
                 <span className="min-w-0 flex-1 truncate">
                   {r.to ? (
@@ -136,7 +136,7 @@ export default function RankedBar({
                 </>
               ) : (
                 <span
-                  className="absolute inset-y-0 left-0 rounded-full"
+                  className="absolute inset-y-0 start-0 rounded-full"
                   style={{
                     background: fill(tone),
                     width: `${mounted ? pct : 0}%`,
@@ -148,7 +148,7 @@ export default function RankedBar({
 
             {/* value */}
             <div
-              className={`shrink-0 text-right text-sm font-semibold tabular-nums ${
+              className={`shrink-0 text-end text-sm font-semibold tabular-nums ${
                 diverging ? (v > 0 ? 'text-emerald-600' : v < 0 ? 'text-red-600' : 'text-slate-400') : 'text-slate-900'
               }`}
               style={{ width: valueWidth }}

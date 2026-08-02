@@ -17,6 +17,7 @@ import Button from '../components/ui/Button';
 import { SectionCard } from '../components/ui/Table';
 import Icon from '../components/ui/Icon';
 import { SHOW_FINANCIALS } from '../config/features';
+import { useI18n } from '../i18n/I18nContext';
 
 // One labelled row inside a settings card: title + description on the left,
 // the control on the right.
@@ -62,6 +63,7 @@ export default function Settings() {
   const { theme } = useTheme();
   const { user, logout } = useAuth();
   const { roles, permissions, isSuperAdmin } = usePermissions();
+  const { t } = useI18n();
 
   const initial = (user?.name || '?').charAt(0).toUpperCase();
 
@@ -75,8 +77,8 @@ export default function Settings() {
               {initial}
             </div>
             <div className="min-w-0">
-              <p className="text-xs font-semibold uppercase tracking-widest text-brand-300/90">Settings</p>
-              <h1 className="mt-1 truncate font-display text-3xl font-bold tracking-tight text-white">{user?.name || 'Your account'}</h1>
+              <p className="text-xs font-semibold uppercase tracking-widest text-brand-300/90">{t('settings.eyebrow')}</p>
+              <h1 className="mt-1 truncate font-display text-3xl font-bold tracking-tight text-white">{user?.name || t('settings.yourAccount')}</h1>
               <p className="mt-0.5 truncate text-sm text-slate-300">{user?.email}</p>
             </div>
           </div>
@@ -84,17 +86,17 @@ export default function Settings() {
 
         {/* Appearance */}
         <SectionCard
-          title="Appearance"
-          subtitle="Tune how Faster looks and reads on your device"
+          title={t('settings.appearance.title')}
+          subtitle={t('settings.appearance.subtitle')}
         >
           <div className="px-1">
-            <Row title="Theme" desc={`Currently ${theme === 'dark' ? 'Cockpit (dark)' : 'Platinum (light)'} — switch between the day and night surfaces.`}>
+            <Row title={t('settings.appearance.theme')} desc={t('settings.appearance.themeDesc', { theme: t(theme === 'dark' ? 'settings.appearance.dark' : 'settings.appearance.light') })}>
               <div className="flex items-center gap-2">
-                <span className="text-xs font-medium text-slate-500">{theme === 'dark' ? 'Cockpit' : 'Platinum'}</span>
+                <span className="text-xs font-medium text-slate-500">{t(theme === 'dark' ? 'settings.appearance.darkShort' : 'settings.appearance.lightShort')}</span>
                 <ThemeToggle />
               </div>
             </Row>
-            <Row title="Language" desc="Switch the interface language. The toggle also flips layout direction for right-to-left languages." last>
+            <Row title={t('settings.appearance.language')} desc={t('settings.appearance.languageDesc')} last>
               <LanguageToggle />
             </Row>
           </div>
@@ -102,19 +104,19 @@ export default function Settings() {
 
         {/* Account & access */}
         <SectionCard
-          title="Account & Access"
-          subtitle="Your identity and what you're permitted to do across the platform"
+          title={t('settings.account.title')}
+          subtitle={t('settings.account.subtitle')}
         >
           <div className="px-1">
-            <Row title="Name" desc="Shown in the top bar and on any records you create.">
+            <Row title={t('settings.account.name')} desc={t('settings.account.nameDesc')}>
               <span className="text-sm font-semibold text-slate-900">{user?.name || '—'}</span>
             </Row>
-            <Row title="Email" desc="The address you sign in with.">
+            <Row title={t('settings.account.email')} desc={t('settings.account.emailDesc')}>
               <span className="text-sm text-slate-700">{user?.email || '—'}</span>
             </Row>
             <Row
-              title="Roles"
-              desc={isSuperAdmin ? 'Super-admin — full access to every feature, including ones added later.' : 'The role(s) that grant your permissions.'}
+              title={t('settings.account.roles')}
+              desc={t(isSuperAdmin ? 'settings.account.rolesSuperDesc' : 'settings.account.rolesDesc')}
               last={!permissions.length}
             >
               <div className="flex max-w-[16rem] flex-wrap justify-end gap-1.5">
@@ -123,7 +125,7 @@ export default function Settings() {
                     <Badge key={r} tone={r === 'super-admin' ? 'violet' : 'indigo'}>{pretty(r)}</Badge>
                   ))
                 ) : (
-                  <span className="text-sm text-slate-400">No role assigned</span>
+                  <span className="text-sm text-slate-400">{t('settings.account.noRole')}</span>
                 )}
               </div>
             </Row>
@@ -131,9 +133,9 @@ export default function Settings() {
             {/* Permission grid — a reassuring, glanceable "here's what you can reach". */}
             {permissions.length > 0 && (
               <div className="py-4">
-                <p className="text-sm font-semibold text-slate-900">Permissions</p>
+                <p className="text-sm font-semibold text-slate-900">{t('settings.account.permissions')}</p>
                 <p className="mb-3 mt-0.5 text-xs text-slate-500">
-                  {isSuperAdmin ? 'Super-admin bypasses these checks — everything is available.' : `${permissions.length} capabilities granted to your account.`}
+                  {isSuperAdmin ? t('settings.account.permsSuper') : t('settings.account.permsCount', { n: permissions.length })}
                 </p>
                 <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
                   {permissions.slice(0, 40).map((p) => (
@@ -150,44 +152,44 @@ export default function Settings() {
 
         {/* Keyboard shortcuts */}
         <SectionCard
-          title="Keyboard Shortcuts"
-          subtitle="Move around Faster without touching the mouse"
-          actions={<Badge tone="gray">power user</Badge>}
+          title={t('settings.shortcuts.title')}
+          subtitle={t('settings.shortcuts.subtitle')}
+          actions={<Badge tone="gray">{t('settings.shortcuts.badge')}</Badge>}
         >
           <div className="grid grid-cols-1 gap-x-10 px-1 sm:grid-cols-2">
             <div className="divide-y divide-slate-100">
-              <Shortcut keys={['⌘', 'K']} label="Open command palette / search" />
-              <Shortcut keys={['?']} label="Show keyboard shortcuts" />
-              <Shortcut keys={['t']} label="Scroll back to top" />
+              <Shortcut keys={['⌘', 'K']} label={t('settings.shortcuts.palette')} />
+              <Shortcut keys={['?']} label={t('settings.shortcuts.help')} />
+              <Shortcut keys={['t']} label={t('settings.shortcuts.top')} />
             </div>
             <div className="divide-y divide-slate-100">
-              <Shortcut keys={['g', 'd']} label="Go to Dashboard" />
-              <Shortcut keys={['g', 'v']} label="Go to Vehicles" />
-              <Shortcut keys={['g', 'c']} label="Go to Contracts" />
-              <Shortcut keys={['g', 'm']} label="Go to Maintenance" />
+              <Shortcut keys={['g', 'd']} label={t('shortcuts.navigation.dashboard')} />
+              <Shortcut keys={['g', 'v']} label={t('shortcuts.navigation.vehicles')} />
+              <Shortcut keys={['g', 'c']} label={t('shortcuts.navigation.contracts')} />
+              <Shortcut keys={['g', 'm']} label={t('shortcuts.navigation.maintenance')} />
             </div>
           </div>
         </SectionCard>
 
         {/* About / build info */}
-        <SectionCard title="About" subtitle="This build of Faster">
+        <SectionCard title={t('settings.about.title')} subtitle={t('settings.about.subtitle')}>
           <div className="px-1">
-            <Row title="Financial widgets" desc="Money figures (balances, wallets, invoice/payment & cost totals) across the app.">
-              <Badge tone={SHOW_FINANCIALS ? 'emerald' : 'gray'}>{SHOW_FINANCIALS ? 'Visible' : 'Hidden'}</Badge>
+            <Row title={t('settings.about.financial')} desc={t('settings.about.financialDesc')}>
+              <Badge tone={SHOW_FINANCIALS ? 'emerald' : 'gray'}>{t(SHOW_FINANCIALS ? 'settings.about.visible' : 'settings.about.hidden')}</Badge>
             </Row>
-            <Row title="Source of truth" desc="Which cars exist and their rental contracts." last>
+            <Row title={t('settings.about.source')} desc={t('settings.about.sourceDesc')} last>
               <span className="text-sm text-slate-700">OfficeManager API</span>
             </Row>
           </div>
         </SectionCard>
 
         {/* Session */}
-        <SectionCard title="Session" subtitle="Sign out of this device">
+        <SectionCard title={t('settings.session.title')} subtitle={t('settings.session.subtitle')}>
           <div className="flex items-center justify-between gap-4 px-1 py-2">
-            <p className="text-sm text-slate-500">You'll be returned to the login screen. Your data stays synced on the server.</p>
+            <p className="text-sm text-slate-500">{t('settings.session.note')}</p>
             <Button variant="danger" onClick={logout} className="shrink-0">
-              <Icon.ArrowRight className="h-4 w-4" />
-              Log out
+              <Icon.ArrowRight className="h-4 w-4 rtl:-scale-x-100" />
+              {t('shell.logout')}
             </Button>
           </div>
         </SectionCard>

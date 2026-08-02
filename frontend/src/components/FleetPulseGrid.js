@@ -45,7 +45,7 @@ function PulseCard({ v }) {
       to={`/vehicles/${v.id}`}
       className={`hover-lift relative block overflow-hidden rounded-2xl border border-slate-200/60 bg-white p-4 shadow-soft ${p.ring}`}
     >
-      <span className="absolute inset-y-0 left-0 w-1.5" style={{ background: p.rail }} />
+      <span className="absolute inset-y-0 start-0 w-1.5" style={{ background: p.rail }} />
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="truncate font-mono text-sm font-bold tracking-wider text-slate-800">{v.plate || '—'}</p>
@@ -157,12 +157,12 @@ export default function FleetPulseGrid() {
           })}
         </div>
         <div className="relative sm:w-64">
-          <Icon.Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <Icon.Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Search plate or model…"
-            className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm text-slate-700 shadow-soft outline-none placeholder:text-slate-400 focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
+            className="w-full rounded-xl border border-slate-200 bg-white py-2 ps-9 pe-3 text-sm text-slate-700 shadow-soft outline-none placeholder:text-slate-400 focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
           />
         </div>
       </div>

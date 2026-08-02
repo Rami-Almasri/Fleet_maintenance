@@ -126,8 +126,8 @@ export default function CarStatus() {
       {/* Hero — the fleet's maintenance position in four numbers. */}
       <div className="relative overflow-hidden bg-navy-900 text-white">
         <div className="pointer-events-none absolute inset-0" aria-hidden="true">
-          <div className="absolute -right-24 -top-32 h-96 w-96 rounded-full bg-brand-500/25 blur-3xl" />
-          <div className="absolute -bottom-40 left-10 h-80 w-80 rounded-full bg-violet-500/10 blur-3xl" />
+          <div className="absolute -end-24 -top-32 h-96 w-96 rounded-full bg-brand-500/25 blur-3xl" />
+          <div className="absolute -bottom-40 start-10 h-80 w-80 rounded-full bg-violet-500/10 blur-3xl" />
         </div>
         <div className="relative mx-auto max-w-[1700px] px-4 pb-10 pt-8 sm:px-6 lg:px-8">
           <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
@@ -193,7 +193,7 @@ export default function CarStatus() {
                 );
               })}
             </div>
-            <div className="ml-auto flex items-center gap-3">
+            <div className="ms-auto flex items-center gap-3">
               <span className="text-xs font-medium text-slate-400">
                 <span className="tabular-nums text-slate-600">{num(opsTickets.length)}</span> shown
               </span>
@@ -278,7 +278,7 @@ function Lane({ lane, onOpen }) {
           <span className="h-2.5 w-2.5 rounded-full" style={{ background: lane.tone, boxShadow: `0 0 8px ${lane.tone}66` }} />
           <span className="font-display text-sm font-bold tracking-tight text-slate-800">{lane.name}</span>
           <span
-            className="ml-auto rounded-full px-2 py-0.5 text-xs font-bold tabular-nums"
+            className="ms-auto rounded-full px-2 py-0.5 text-xs font-bold tabular-nums"
             style={{ color: lane.tone, background: `${lane.tone}1a` }}
           >
             {lane.tickets.length}
@@ -317,7 +317,7 @@ function LaneCard({ tk, role, onOpen }) {
     <button
       type="button"
       onClick={() => onOpen(tk)}
-      className="group w-full rounded-xl bg-white p-3 text-left shadow-soft ring-1 ring-slate-200/70 transition hover:ring-indigo-300"
+      className="group w-full rounded-xl bg-white p-3 text-start shadow-soft ring-1 ring-slate-200/70 transition hover:ring-indigo-300"
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">

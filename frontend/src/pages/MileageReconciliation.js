@@ -57,8 +57,8 @@ function ReconCard({ row, applied, busy, canApply, onApply }) {
 
   return (
     <div className="group relative overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-soft ring-1 ring-slate-900/5 transition hover:-translate-y-0.5 hover:shadow-card">
-      <span className={`absolute inset-y-0 left-0 w-1.5 ${meta.bar}`} />
-      <div className="p-5 pl-6">
+      <span className={`absolute inset-y-0 start-0 w-1.5 ${meta.bar}`} />
+      <div className="p-5 ps-6">
         {/* Identity + status */}
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -84,7 +84,7 @@ function ReconCard({ row, applied, busy, canApply, onApply }) {
               ? `Start-mileage baseline: ${km(row.baseline)}. The trusted odometer the scanner rebuilt from contract history.`
               : 'The trusted odometer the scanner rebuilt from contract history.'}
           >
-            <div className="text-right">
+            <div className="text-end">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Scanner value</p>
               <p className="mt-0.5 text-xl font-bold tabular-nums text-emerald-600">{km(row.scanner_value)}</p>
             </div>
@@ -215,7 +215,7 @@ export default function MileageReconciliation({ embedded = false }) {
               </p>
             </div>
             {s.total_gap_km > 0 && (
-              <div className="text-left sm:text-right">
+              <div className="text-start sm:text-end">
                 <p className="text-2xl font-bold tracking-tight text-slate-900 tabular-nums">{km(s.total_gap_km)}</p>
                 <p className="text-xs text-slate-400">total odometer gap to reconcile</p>
               </div>
@@ -266,7 +266,7 @@ export default function MileageReconciliation({ embedded = false }) {
               <button
                 type="button"
                 onClick={() => setStatusFilter(null)}
-                className="ml-1 inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs font-medium text-indigo-600 hover:bg-indigo-50"
+                className="ms-1 inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs font-medium text-indigo-600 hover:bg-indigo-50"
               >
                 Clear filter ✕
               </button>
@@ -277,7 +277,7 @@ export default function MileageReconciliation({ embedded = false }) {
         {/* Controls: gap threshold + full-fleet audit toggle */}
         <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="mr-1 text-xs font-medium uppercase tracking-wide text-slate-500">Show gaps</span>
+            <span className="me-1 text-xs font-medium uppercase tracking-wide text-slate-500">Show gaps</span>
             {THRESHOLDS.map((t) => (
               <button
                 key={t}
@@ -293,7 +293,7 @@ export default function MileageReconciliation({ embedded = false }) {
               </button>
             ))}
           </div>
-          <label className="ml-auto flex cursor-pointer select-none items-center gap-2 text-xs font-medium text-slate-600">
+          <label className="ms-auto flex cursor-pointer select-none items-center gap-2 text-xs font-medium text-slate-600">
             <input
               type="checkbox"
               checked={showAll}
@@ -308,8 +308,8 @@ export default function MileageReconciliation({ embedded = false }) {
         {loading ? (
           <div className="grid gap-4 md:grid-cols-2">
             {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="relative overflow-hidden rounded-2xl border border-slate-200/70 bg-white p-5 pl-6 shadow-soft ring-1 ring-slate-900/5">
-                <span className="absolute inset-y-0 left-0 w-1.5 bg-slate-100" />
+              <div key={i} className="relative overflow-hidden rounded-2xl border border-slate-200/70 bg-white p-5 ps-6 shadow-soft ring-1 ring-slate-900/5">
+                <span className="absolute inset-y-0 start-0 w-1.5 bg-slate-100" />
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 space-y-2">
                     <Skeleton className="h-5 w-24" />

@@ -172,7 +172,7 @@ export default function CostIntelligence() {
             <span className="text-xs text-slate-400">Lifetime (all dates)</span>
           )}
           {windowed && (
-            <span className="ml-auto text-xs text-amber-600">Cost/km &amp; Cost/day are lifetime-only — shown as “—” while filtered.</span>
+            <span className="ms-auto text-xs text-amber-600">Cost/km &amp; Cost/day are lifetime-only — shown as “—” while filtered.</span>
           )}
         </div>
 
@@ -239,7 +239,7 @@ export default function CostIntelligence() {
                     key={label}
                     type="button"
                     onClick={() => setCat(selected ? null : label)}
-                    className={`flex w-full items-center gap-4 px-5 py-3 text-left transition-colors hover:bg-indigo-50/40 ${selected ? 'bg-indigo-50/60' : ''}`}
+                    className={`flex w-full items-center gap-4 px-5 py-3 text-start transition-colors hover:bg-indigo-50/40 ${selected ? 'bg-indigo-50/60' : ''}`}
                   >
                     <div className="w-40 shrink-0">
                       <div className="truncate text-sm font-medium text-slate-800">{label}</div>
@@ -248,10 +248,10 @@ export default function CostIntelligence() {
                       </div>
                     </div>
                     <div className="relative h-2.5 flex-1 overflow-hidden rounded-full bg-slate-100">
-                      <div className="absolute inset-y-0 left-0 rounded-full bg-amber-400" style={{ width: `${Math.max(2, (c.maintenance_cost / maxCatCost) * 100)}%` }} />
+                      <div className="absolute inset-y-0 start-0 rounded-full bg-amber-400" style={{ width: `${Math.max(2, (c.maintenance_cost / maxCatCost) * 100)}%` }} />
                     </div>
-                    <div className="w-32 shrink-0 text-right tabular-nums text-sm font-semibold text-amber-600">{aed2(c.maintenance_cost)}</div>
-                    <div className="hidden w-24 shrink-0 text-right tabular-nums text-sm text-slate-500 sm:block" title="Cost per rental">
+                    <div className="w-32 shrink-0 text-end tabular-nums text-sm font-semibold text-amber-600">{aed2(c.maintenance_cost)}</div>
+                    <div className="hidden w-24 shrink-0 text-end tabular-nums text-sm text-slate-500 sm:block" title="Cost per rental">
                       {c.cost_per_rental != null ? `${aed2(c.cost_per_rental)}/rental` : '—'}
                     </div>
                   </button>
@@ -270,7 +270,7 @@ export default function CostIntelligence() {
           {cat != null && (
             <Badge tone="indigo">Category: {cat}</Badge>
           )}
-          <span className="ml-auto text-xs text-slate-400">{num(rows.length)} of {num(s.vehicles)} cars</span>
+          <span className="ms-auto text-xs text-slate-400">{num(rows.length)} of {num(s.vehicles)} cars</span>
         </div>
 
         {/* Analytics — same filtered rows as the table below. */}

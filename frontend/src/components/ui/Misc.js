@@ -1,5 +1,7 @@
 // Small shared presentational primitives.
 
+import { useI18n } from '../../i18n/I18nContext';
+
 export function Spinner({ className = 'h-5 w-5' }) {
   return (
     <svg className={`animate-spin text-indigo-400 ${className}`} viewBox="0 0 24 24" fill="none">
@@ -24,7 +26,9 @@ export function PageHeader({ title, subtitle, children }) {
   );
 }
 
-export function EmptyState({ title = 'Nothing here', message, icon, action }) {
+export function EmptyState({ title, message, icon, action }) {
+  const { t } = useI18n();
+  title = title ?? t('state.empty');
   return (
     <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
       <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-slate-100 text-slate-400 ring-1 ring-inset ring-slate-200/70">
@@ -45,7 +49,10 @@ export function EmptyState({ title = 'Nothing here', message, icon, action }) {
 // errors. Calm red accent, a plain message, and an optional Retry action. Use
 // this instead of a bare "Something went wrong" string so every page fails the
 // same way. `onRetry` renders a subtle retry button when provided.
-export function ErrorState({ title = 'Couldn’t load this', message = 'Something went wrong while fetching data. Please try again.', onRetry }) {
+export function ErrorState({ title, message, onRetry }) {
+  const { t } = useI18n();
+  title = title ?? t('state.errorTitle');
+  message = message ?? t('state.errorMessage');
   return (
     <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
       <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-red-50 text-red-500 ring-1 ring-inset ring-red-200/70">
@@ -62,14 +69,16 @@ export function ErrorState({ title = 'Couldn’t load this', message = 'Somethin
           className="focus-ring-self mt-4 inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
         >
           <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4v6h6M20 9A8 8 0 0 0 6.3 5.3L4 8" /></svg>
-          Retry
+          {t('state.retry')}
         </button>
       )}
     </div>
   );
 }
 
-export function SearchInput({ value, onChange, placeholder = 'Search…', className = '' }) {
+export function SearchInput({ value, onChange, placeholder, className = '' }) {
+  const { t } = useI18n();
+  placeholder = placeholder ?? t('common.search');
   return (
     <div className={`relative ${className}`}>
       <svg className="pointer-events-none absolute start-3.5 top-2.5 h-5 w-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.7">

@@ -824,14 +824,14 @@ export default function ContractForm() {
               <div className="space-y-2">
                 <div className="hidden gap-2 px-1 text-xs font-medium uppercase tracking-wide text-slate-400 sm:grid sm:grid-cols-12">
                   <div className="sm:col-span-5">Service</div>
-                  <div className="text-right sm:col-span-2">Cost</div>
+                  <div className="text-end sm:col-span-2">Cost</div>
                   <div className="sm:col-span-4">Notes</div>
                   <div className="sm:col-span-1" />
                 </div>
                 {items.map((it, idx) => (
                   <div key={idx} className="grid grid-cols-1 gap-2 sm:grid-cols-12 sm:items-center">
                     <input className={`${inputCls} sm:col-span-5`} value={it.service_name} onChange={(e) => setItem(idx, 'service_name', e.target.value)} placeholder="e.g. Oil Change" />
-                    <input type="number" step="0.01" className={`${inputCls} text-right sm:col-span-2`} value={it.cost} onChange={(e) => setItem(idx, 'cost', e.target.value)} placeholder="0.00" />
+                    <input type="number" step="0.01" className={`${inputCls} text-end sm:col-span-2`} value={it.cost} onChange={(e) => setItem(idx, 'cost', e.target.value)} placeholder="0.00" />
                     <input className={`${inputCls} sm:col-span-4`} value={it.notes} onChange={(e) => setItem(idx, 'notes', e.target.value)} placeholder="Notes (optional)" />
                     <Button type="button" variant="ghost" size="sm" onClick={() => removeItem(idx)} className="text-red-600 hover:bg-red-50 sm:col-span-1" title="Remove">Remove</Button>
                   </div>

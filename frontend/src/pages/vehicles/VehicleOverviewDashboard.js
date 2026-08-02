@@ -49,7 +49,7 @@ const FactRow = ({ label, value, tip }) => (
       {label}
       {tip && <InfoTip content={tip} />}
     </span>
-    <span className="text-right font-medium text-slate-800">{value ?? '—'}</span>
+    <span className="text-end font-medium text-slate-800">{value ?? '—'}</span>
   </div>
 );
 
@@ -207,7 +207,7 @@ function StatBig({ icon, hex, value, label, onClick }) {
     <Wrap
       type={onClick ? 'button' : undefined}
       onClick={onClick}
-      className={`flex items-center gap-3.5 text-left ${onClick ? 'rounded-xl transition hover:bg-slate-50' : ''}`}
+      className={`flex items-center gap-3.5 text-start ${onClick ? 'rounded-xl transition hover:bg-slate-50' : ''}`}
     >
       <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl" style={{ backgroundColor: `${hex}1a`, color: hex }}>
         {icon}

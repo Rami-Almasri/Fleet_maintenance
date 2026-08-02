@@ -1591,6 +1591,15 @@ const en = {
       routingTitle: 'Routing',
       routingHint: 'How urgent, where the repair happens, and whether the car may still be rented.',
       noFindings: 'No findings tapped yet.',
+      // Accordion walk-through: one step open at a time, the rest collapsed to their own answer.
+      continue: 'Continue',
+      notRecorded: 'Not recorded',
+      notAnswered: 'Nothing yet',
+      diagnosed: 'Cause named',
+      stillNeeded: 'Still needed before you can submit:',
+      needOdometerCheck: 'Confirm the odometer reading',
+      needCauses: 'A probable cause for every finding',
+      needSeverity: 'A fault severity grade',
     },
     // "Requires Parts" — the inspector reports a technical need and submitting the report sends it straight
     // to the parts team. The wording says so plainly: he is not ordering or approving anything, but he IS
@@ -4626,6 +4635,14 @@ const ar = {
       routingTitle: 'التوجيه',
       routingHint: 'درجة الإلحاح، ومكان الإصلاح، وهل يمكن تأجير السيارة أثناءه.',
       noFindings: 'لم تُحدَّد أي ملاحظة بعد.',
+      continue: 'متابعة',
+      notRecorded: 'لم تُسجَّل',
+      notAnswered: 'لا شيء بعد',
+      diagnosed: 'تم تحديد السبب',
+      stillNeeded: 'مطلوب قبل الإرسال:',
+      needOdometerCheck: 'تأكيد قراءة العدّاد',
+      needCauses: 'سبب محتمل لكل ملاحظة',
+      needSeverity: 'درجة خطورة العطل',
     },
     requiredParts: {
       toggle: 'هذا الإصلاح يحتاج قطع غيار',

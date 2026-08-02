@@ -165,6 +165,33 @@ class MaintenanceTask extends Model
             }
         });
 
+        // Findings CATEGORY — derived here because every writer forgot it, and none of them errored.
+        //
+        // `category_key` was NULL on all 108 rows ever written. Both creation paths read it off the
+        // caller (`$f['category_key'] ?? null` in MaintenanceTaskService, `$issue['category_key'] ?? null`
+        // in the re-inspection controller) and nothing upstream ever put it there — the findings JSON the
+        // inspector's report builds carries text, source, severity and cause, but never a category. A
+        // silent `?? null` in two places is indistinguishable from "this fault genuinely has no category".
+        //
+        // WHAT IT COST. The column is the middle tier of the repair-history matcher
+        // (fault_catalog_id → category_key → symptom), so every lookup fell through to an EXACT symptom
+        // string match — the narrowest possible test — and "Previous Similar Repairs" reported nothing
+        // for faults the fleet had repaired hundreds of times. Garage routing and the recommendation
+        // engine re-derive the category from the text on every call for the same reason.
+        //
+        // Derived on CREATE, in the model, for the same reason `kind` is: a rule that lives in the
+        // writers is a rule each new writer has to remember, and the two that exist both forgot it.
+        // An explicit value from the caller always wins.
+        //
+        // EXACT CATALOG MATCH ONLY, deliberately. A symptom the catalog does not know stays NULL rather
+        // than being fuzzy-matched into a neighbouring category — a task filed under the wrong category
+        // routes to the wrong garage, and silence is the cheaper error. See [[findings-vocabulary-contract]].
+        static::creating(function (MaintenanceTask $t) {
+            if (blank($t->category_key) && filled($t->symptom)) {
+                $t->category_key = Maintenance::categoryForKeyword($t->symptom);
+            }
+        });
+
         // Classification integrity — the FIRST line of defence (the DB CHECK is the last). Exactly the
         // one *_catalog_id matching `kind` may be set; more than one is a bug; zero is allowed only as the
         // legacy/unclassified case (matches the CHECK, so flag-off behaviour is unchanged).

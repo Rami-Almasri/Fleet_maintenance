@@ -28,7 +28,7 @@ const SOURCE_LABEL = { inspector: 'Inspection side', garage: 'Garage side' };
 function StageRow({ s }) {
   return (
     <li className="relative ps-6">
-      <span className={`absolute left-0 top-1.5 h-3 w-3 rounded-full ring-4 ring-white ${DOT[s.tone] || DOT.gray}`} />
+      <span className={`absolute start-0 top-1.5 h-3 w-3 rounded-full ring-4 ring-white ${DOT[s.tone] || DOT.gray}`} />
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <p className="text-sm font-semibold text-slate-800">{s.label}</p>
         {s.duration_seconds != null && (
@@ -74,7 +74,7 @@ function Journey({ j }) {
         </div>
       </div>
       <ol className="relative space-y-4">
-        <span className="absolute inset-y-1.5 left-[5px] w-px bg-slate-200" aria-hidden />
+        <span className="absolute inset-y-1.5 start-[5px] w-px bg-slate-200" aria-hidden />
         {j.stages.map((s, i) => <StageRow key={i} s={s} />)}
       </ol>
     </section>

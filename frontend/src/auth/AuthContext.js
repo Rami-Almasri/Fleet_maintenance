@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, useMemo } from 'react';
+import { createContext, useContext, useState, useCallback, useMemo, useEffect } from 'react';
 import api from '../api/client';
 
 const AuthContext = createContext(null);
@@ -40,6 +40,28 @@ export function AuthProvider({ children }) {
     setToken(null);
     setUser(null);
   }, []);
+
+  // Refresh the cached account on boot. `user` (roles + permissions) is snapshotted at login and the
+  // UI gates whole surfaces on it — the Action Center's lanes, the sidebar, every `can()` call. Without
+  // this, a permission granted after the user last signed in stays invisible until they log out and
+  // back in. Failures are deliberately silent: an offline/expired call must never drop the session
+  // here (the API client already handles 401 globally).
+  useEffect(() => {
+    if (!token) return;
+    let alive = true;
+    (async () => {
+      try {
+        const { data } = await api.get('/auth/me');
+        const fresh = data?.data?.user;
+        if (!alive || !fresh) return;
+        localStorage.setItem('user', JSON.stringify(fresh));
+        setUser(fresh);
+      } catch (_) {
+        // keep the cached user
+      }
+    })();
+    return () => { alive = false; };
+  }, [token]);
 
   // Stable context value — only changes when auth actually changes, so the
   // app-wide consumers of useAuth() don't re-render on unrelated parent renders.

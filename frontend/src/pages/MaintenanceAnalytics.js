@@ -41,7 +41,7 @@ export default function MaintenanceAnalytics() {
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-slate-100 text-sm">
                 <thead className="bg-slate-50/90">
-                  <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  <tr className="text-start text-xs font-semibold uppercase tracking-wide text-slate-500">
                     <th className="px-5 py-3.5">Car</th>
                     <th className="px-5 py-3.5">Recurring fault</th>
                     <th className="px-5 py-3.5 text-center">Times</th>
@@ -80,12 +80,12 @@ export default function MaintenanceAnalytics() {
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-slate-100 text-sm">
               <thead className="bg-slate-50/90">
-                <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <tr className="text-start text-xs font-semibold uppercase tracking-wide text-slate-500">
                   <th className="px-5 py-3.5">Service</th>
                   <th className="px-5 py-3.5 text-center">Visits</th>
-                  <th className="px-5 py-3.5 text-right">Average</th>
-                  <th className="px-5 py-3.5 text-right">Lowest</th>
-                  <th className="px-5 py-3.5 text-right">Highest</th>
+                  <th className="px-5 py-3.5 text-end">Average</th>
+                  <th className="px-5 py-3.5 text-end">Lowest</th>
+                  <th className="px-5 py-3.5 text-end">Highest</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -93,9 +93,9 @@ export default function MaintenanceAnalytics() {
                   <tr key={s.service} className="hover:bg-indigo-50/40 transition-colors">
                     <td className="px-5 py-3.5 font-medium text-slate-900">{s.service}</td>
                     <td className="px-5 py-3.5 text-center text-slate-500">{num(s.visits)}</td>
-                    <td className="px-5 py-3.5 text-right font-medium text-slate-900">{aed2(s.avg_cost)}</td>
-                    <td className="px-5 py-3.5 text-right text-emerald-600">{aed2(s.min_cost)}</td>
-                    <td className="px-5 py-3.5 text-right text-red-600">{aed2(s.max_cost)}</td>
+                    <td className="px-5 py-3.5 text-end font-medium text-slate-900">{aed2(s.avg_cost)}</td>
+                    <td className="px-5 py-3.5 text-end text-emerald-600">{aed2(s.min_cost)}</td>
+                    <td className="px-5 py-3.5 text-end text-red-600">{aed2(s.max_cost)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -126,12 +126,12 @@ export default function MaintenanceAnalytics() {
                 <div className="overflow-x-auto">
                   <table className="min-w-full divide-y divide-slate-100 text-sm">
                     <thead className="bg-slate-50/90">
-                      <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      <tr className="text-start text-xs font-semibold uppercase tracking-wide text-slate-500">
                         <th className="px-5 py-3.5">Garage</th>
                         <th className="px-5 py-3.5 text-center">Times</th>
-                        <th className="px-5 py-3.5 text-right">Avg</th>
-                        <th className="px-5 py-3.5 text-right">Lowest</th>
-                        <th className="px-5 py-3.5 text-right">Highest</th>
+                        <th className="px-5 py-3.5 text-end">Avg</th>
+                        <th className="px-5 py-3.5 text-end">Lowest</th>
+                        <th className="px-5 py-3.5 text-end">Highest</th>
                         <th className="px-5 py-3.5"></th>
                       </tr>
                     </thead>
@@ -143,9 +143,9 @@ export default function MaintenanceAnalytics() {
                           <tr key={`${v.vendor_id}`} className={isCheapest ? 'bg-emerald-50/50' : ''}>
                             <td className="px-5 py-3.5 font-medium text-slate-900">{v.vendor || '—'}</td>
                             <td className="px-5 py-3.5 text-center text-slate-500">{num(v.visits)}</td>
-                            <td className="px-5 py-3.5 text-right font-medium text-slate-900">{aed2(v.avg_cost)}</td>
-                            <td className="px-5 py-3.5 text-right text-slate-600">{aed2(v.min_cost)}</td>
-                            <td className="px-5 py-3.5 text-right text-slate-600">{aed2(v.max_cost)}</td>
+                            <td className="px-5 py-3.5 text-end font-medium text-slate-900">{aed2(v.avg_cost)}</td>
+                            <td className="px-5 py-3.5 text-end text-slate-600">{aed2(v.min_cost)}</td>
+                            <td className="px-5 py-3.5 text-end text-slate-600">{aed2(v.max_cost)}</td>
                             <td className="px-5 py-3.5">
                               {isCheapest && <Badge tone="green">Best price</Badge>}
                               {isDearest && <Badge tone="red">Most expensive</Badge>}

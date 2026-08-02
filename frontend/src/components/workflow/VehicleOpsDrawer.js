@@ -71,7 +71,7 @@ export default function VehicleOpsDrawer({ ticketId, onClose }) {
                 Vehicle details
               </Button>
             )}
-            <span className="ml-auto text-[11px] text-slate-400">
+            <span className="ms-auto text-[11px] text-slate-400">
               Ticket #{tk.id} · opened {fmtDate(tk.created_at)}
             </span>
           </div>
@@ -254,7 +254,7 @@ export default function VehicleOpsDrawer({ ticketId, onClose }) {
                           </div>
                         )}
                       </div>
-                      <div className="shrink-0 text-right text-[11px] text-slate-400">
+                      <div className="shrink-0 text-end text-[11px] text-slate-400">
                         <div>{fmtDate(c.created_at)}</div>
                         {c.submitted_by_name && <div className="font-medium text-slate-500">{c.submitted_by_name}</div>}
                       </div>

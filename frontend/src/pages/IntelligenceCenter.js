@@ -69,7 +69,7 @@ function Headline({ headline, alert, generatedAt, cached, onRefresh, busy }) {
           <p className="mt-1 text-base font-semibold">{headline?.text}</p>
           {alert && <p className="mt-1 max-w-3xl text-sm opacity-90">{alert.detail}</p>}
         </div>
-        <div className="text-right text-xs opacity-70">
+        <div className="text-end text-xs opacity-70">
           <div>Read {generatedAt ? new Date(generatedAt).toLocaleString() : '—'}</div>
           {cached && <div className="italic">from cache</div>}
           <button
@@ -98,7 +98,7 @@ function Capability({ c }) {
 
   return (
     <Card className="overflow-hidden">
-      <button type="button" onClick={() => setOpen((v) => !v)} className="w-full px-5 py-4 text-left hover:bg-slate-50">
+      <button type="button" onClick={() => setOpen((v) => !v)} className="w-full px-5 py-4 text-start hover:bg-slate-50">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <span className="text-2xl font-semibold tabular-nums text-slate-800">
@@ -116,7 +116,7 @@ function Capability({ c }) {
               <p className="mt-0.5 text-sm text-slate-500">{c.attention}</p>
             </div>
           </div>
-          <div className="text-right text-xs text-slate-500">
+          <div className="text-end text-xs text-slate-500">
             <div className="font-medium text-slate-700">{num(c.current)} / {num(c.threshold)}</div>
             <div>{c.ready_label}</div>
           </div>
@@ -154,7 +154,7 @@ function Capability({ c }) {
               {c.weekly_rate > 0 ? `${c.weekly_rate}/week` : 'nothing arriving'}
               {/* Without this the rate reads as a habit when it is really one afternoon's import. */}
               {c.bulk_loaded && (
-                <span className="ml-1 text-amber-600">
+                <span className="ms-1 text-amber-600">
                   · {Math.round(c.single_day_share * 100)}% on one day
                 </span>
               )}
@@ -162,10 +162,10 @@ function Capability({ c }) {
             <Fact label="Coverage">{pct(c.coverage)}</Fact>
             <Fact label="Median evidence age">
               {c.median_age_days === null ? '—' : `${num(c.median_age_days)} days`}
-              {c.evidence_stale && <span className="ml-1 text-amber-600">· over a year old</span>}
+              {c.evidence_stale && <span className="ms-1 text-amber-600">· over a year old</span>}
             </Fact>
             <Fact label="Observed between">{c.oldest_at || '—'} → {c.newest_at || '—'}
-              {c.feed_quiet && <span className="ml-1 text-amber-600">· feed quiet 30d+</span>}
+              {c.feed_quiet && <span className="ms-1 text-amber-600">· feed quiet 30d+</span>}
             </Fact>
             <Fact label="Last evaluated">{c.last_evaluated_at || 'never'}</Fact>
             <Fact label="Corpus last grew">{c.dataset_age_days === null ? '—' : `${num(c.dataset_age_days)} days ago`}</Fact>
@@ -453,7 +453,7 @@ function Promotions({ rows = [], versions }) {
       ) : (
         <div className="mt-4 overflow-x-auto">
           <table className="w-full min-w-[640px] text-sm">
-            <thead className="text-left text-[11px] uppercase tracking-wide text-slate-400">
+            <thead className="text-start text-[11px] uppercase tracking-wide text-slate-400">
               <tr>
                 <th className="pb-2">When</th>
                 <th className="pb-2">Capability</th>
@@ -475,7 +475,7 @@ function Promotions({ rows = [], versions }) {
                     </td>
                     <td className="py-2 tabular-nums text-slate-500">{num(p.evidence_count)}/{num(p.evidence_threshold)}</td>
                     <td className="py-2 text-slate-600">{p.reason}</td>
-                    <td className="py-2 text-right">
+                    <td className="py-2 text-end">
                       <button type="button" onClick={() => setOpen(open === p.id ? null : p.id)} className="text-xs font-medium text-indigo-600">
                         {open === p.id ? 'hide' : 'provenance'}
                       </button>

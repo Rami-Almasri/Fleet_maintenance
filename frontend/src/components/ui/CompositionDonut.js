@@ -130,7 +130,7 @@ export default function CompositionDonut({
                     <span className="ms-1 text-slate-400">{isOpen ? '▾' : '▸'}</span>
                   )}
                 </span>
-                <span className="shrink-0 text-right text-xs font-semibold tabular-nums text-slate-400">
+                <span className="shrink-0 text-end text-xs font-semibold tabular-nums text-slate-400">
                   {(a.frac * 100).toFixed(1)}%
                 </span>
               </div>

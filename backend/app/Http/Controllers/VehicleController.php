@@ -11,6 +11,7 @@ use App\Models\VehicleLogEvent;
 use App\Http\Requests\StoreVehicleRequest;
 use App\Http\Requests\UpdateVehicleRequest;
 use App\Http\Resources\VehicleResource;
+use App\Services\EventClassificationService;
 use App\Services\FleetUtilizationService;
 use App\Services\MaintenanceAnalyticsService;
 use App\Services\MileageBaselineService;
@@ -435,7 +436,12 @@ class VehicleController extends Controller
     /**
      * Full car profile: specs + registration/insurance + fines + contract history.
      */
-    public function profile(Vehicle $vehicle, MaintenanceAnalyticsService $analytics, RealProfitService $profit)
+    public function profile(
+        Vehicle $vehicle,
+        MaintenanceAnalyticsService $analytics,
+        RealProfitService $profit,
+        EventClassificationService $classifier
+    )
     {
         try {
             $vehicle->load('registration.insuranceCompany');
@@ -528,7 +534,7 @@ class VehicleController extends Controller
             // repair often logs a Test on day 1 then OUT/IN on later dates, all one visit.
             $linkedEvents = $analytics->linkedSheetEvents($maintenanceContracts);
 
-            $maintenance = $maintenanceContracts->map(function ($c) use ($analytics, $linkedEvents, $levelRank) {
+            $maintenance = $maintenanceContracts->map(function ($c) use ($analytics, $classifier, $linkedEvents, $levelRank) {
                 $visitDate = optional($c->out_date)->toDateString();
                 // Newest-first so the existing ->first() calls below mean "latest event".
                 $events = ($linkedEvents[$c->id] ?? collect())->reverse()->values();
@@ -537,6 +543,12 @@ class VehicleController extends Controller
                 $tags = ! empty($c->maintenance?->maintenance_tags)
                     ? $c->maintenance->maintenance_tags
                     : $events->flatMap(fn ($e) => $analytics->sheetIssueTags($e))->unique()->values()->all();
+
+                // Those same tags, typed. The sheet kept faults, planned services and bookkeeping
+                // words ("Oil & Fillter Change", "Rim Scratch", "Customer") in one free-text column,
+                // so anything counting `tags` counts an oil change as a fault. `tags` stays the raw
+                // union every existing reader expects; the three typed lists are the honest ones.
+                $byKind = $classifier->splitLabels($tags);
 
                 // Garage: header vendor; else the first garage seen across the visit's events.
                 $garage = $c->maintenance?->vendor?->name
@@ -568,6 +580,9 @@ class VehicleController extends Controller
                     'priority'     => $priority,
                     'reason'       => $c->maintenance?->reason?->reason_en,
                     'tags'         => $tags,
+                    'fault_tags'   => $byKind['fault'],
+                    'service_tags' => $byKind['service'],
+                    'context_tags' => $byKind['context'],
                     'notes'        => $c->maintenance?->maintenance_notes,
                     // latest workshop stage for this visit (OUT/IN/Follow up/…)
                     'stage'        => optional($events->first())->event_status,

@@ -127,7 +127,7 @@ export function TimelineBar({ segments = [], height = 12, showLegend = true, cla
               <span className="font-medium text-slate-500">{s.label}</span>
               <span className="font-semibold tabular-nums text-slate-700">
                 {s.value}
-                <span className="ml-1 text-slate-400">{Math.round((s.value / total) * 100)}%</span>
+                <span className="ms-1 text-slate-400">{Math.round((s.value / total) * 100)}%</span>
               </span>
             </div>
           ))}

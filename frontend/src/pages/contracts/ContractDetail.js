@@ -25,7 +25,7 @@ function Section({ title, pairs }) {
         {visible.map(([label, value]) => (
           <div key={label} className="flex justify-between gap-4 py-1.5 text-sm" style={{ borderBottom: '1px solid var(--line)' }}>
             <span style={{ color: 'var(--ink-3)' }}>{label}</span>
-            <span className="text-right font-medium" style={{ color: 'var(--ink)' }}>{value}</span>
+            <span className="text-end font-medium" style={{ color: 'var(--ink)' }}>{value}</span>
           </div>
         ))}
       </div>
@@ -136,7 +136,7 @@ function Lifecycle({ out, expected, actual, open, late }) {
     <Card className="p-6">
       <h3 className="mb-5 text-xs font-semibold uppercase tracking-wide text-slate-400">Lifecycle</h3>
       <div className="relative flex items-start justify-between">
-        <span aria-hidden className="pointer-events-none absolute left-8 right-8 top-5 h-0.5 bg-slate-200" />
+        <span aria-hidden className="pointer-events-none absolute start-8 end-8 top-5 h-0.5 bg-slate-200" />
         {nodes.map((n, i) => <Milestone key={i} {...n} />)}
       </div>
     </Card>
@@ -276,8 +276,8 @@ export default function ContractDetail() {
 
         {/* Hero */}
         <div className="relative overflow-hidden rounded-2xl bg-navy-950 p-6 shadow-card sm:p-8">
-          <div className="pointer-events-none absolute -right-16 -top-20 h-64 w-64 rounded-full bg-indigo-500/20 blur-3xl" />
-          <div className="pointer-events-none absolute -bottom-24 left-1/4 h-64 w-64 rounded-full bg-violet-500/10 blur-3xl" />
+          <div className="pointer-events-none absolute -end-16 -top-20 h-64 w-64 rounded-full bg-indigo-500/20 blur-3xl" />
+          <div className="pointer-events-none absolute -bottom-24 start-1/4 h-64 w-64 rounded-full bg-violet-500/10 blur-3xl" />
           <div className="relative flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
             <div className="flex items-start gap-4">
               <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-white/10 ring-1 ring-inset ring-white/15 backdrop-blur">
@@ -448,7 +448,7 @@ export default function ContractDetail() {
                 .map(([l, v]) => (
                   <div key={l} className="flex justify-between gap-4 py-1.5 text-sm">
                     <span className="text-slate-500">{l}</span>
-                    <span className="text-right font-medium text-slate-900">{v}</span>
+                    <span className="text-end font-medium text-slate-900">{v}</span>
                   </div>
                 ))}
             </div>
@@ -465,9 +465,9 @@ export default function ContractDetail() {
               <div className="overflow-x-auto">
                 <table className="min-w-full text-sm stagger-rows">
                   <thead className="bg-slate-50/90">
-                    <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    <tr className="text-start text-xs font-semibold uppercase tracking-wide text-slate-500">
                       <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Service</th>
-                      <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-right">Cost</th>
+                      <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-end">Cost</th>
                       <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Notes</th>
                     </tr>
                   </thead>
@@ -475,15 +475,15 @@ export default function ContractDetail() {
                     {c.items.map((it) => (
                       <tr key={it.id} className="transition-colors even:bg-slate-50/40 hover:bg-indigo-50/40">
                         <td className="border-b border-slate-100 px-5 py-3.5 font-medium text-slate-900">{it.service_name}</td>
-                        <td className="border-b border-slate-100 px-5 py-3.5 text-right tabular-nums text-slate-700">{aed2(it.cost)}</td>
+                        <td className="border-b border-slate-100 px-5 py-3.5 text-end tabular-nums text-slate-700">{aed2(it.cost)}</td>
                         <td className="border-b border-slate-100 px-5 py-3.5 text-slate-500">{it.notes || '—'}</td>
                       </tr>
                     ))}
                   </tbody>
                   <tfoot>
                     <tr className="border-t border-slate-200">
-                      <td className="px-5 py-3 text-right font-semibold text-slate-700">Total</td>
-                      <td className="px-5 py-3 text-right font-bold tabular-nums text-slate-900">{aed2(c.maintenance_total ?? c.items.reduce((s, i) => s + Number(i.cost || 0), 0))}</td>
+                      <td className="px-5 py-3 text-end font-semibold text-slate-700">Total</td>
+                      <td className="px-5 py-3 text-end font-bold tabular-nums text-slate-900">{aed2(c.maintenance_total ?? c.items.reduce((s, i) => s + Number(i.cost || 0), 0))}</td>
                       <td />
                     </tr>
                   </tfoot>
@@ -516,7 +516,7 @@ export default function ContractDetail() {
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <Section title="Parties" pairs={[
-            ['Customer', c.customer ? <Link to={`/customers/${c.customer_id}`} className="text-indigo-600 hover:text-indigo-700">{c.customer.name_en || `#${c.customer.customer_no}`}{c.customer.name_en ? <span className="ml-1.5 text-xs text-slate-400">#{c.customer.customer_no}</span> : null}</Link> : '—'],
+            ['Customer', c.customer ? <Link to={`/customers/${c.customer_id}`} className="text-indigo-600 hover:text-indigo-700">{c.customer.name_en || `#${c.customer.customer_no}`}{c.customer.name_en ? <span className="ms-1.5 text-xs text-slate-400">#{c.customer.customer_no}</span> : null}</Link> : '—'],
             ['Vehicle', c.vehicle?.plate_no ? <Link to={`/vehicles/${c.vehicle_id}`} className="text-indigo-600 hover:text-indigo-700">{c.vehicle.plate_no} · {[c.vehicle.make, c.vehicle.model].filter(Boolean).join(' ')}</Link> : (c.vehicle_id || '—')],
             ['Reference', c.reference],
             ['Source', c.source],

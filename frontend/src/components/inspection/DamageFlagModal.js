@@ -135,7 +135,7 @@ export default function DamageFlagModal({ open, zoneLabel, initial, onSave, onRe
             <div className="grid grid-cols-2 gap-2">
               <button
                 onClick={() => setOrigin('existing')}
-                className={`rounded-xl border px-3 py-2.5 text-left text-sm font-medium transition ${
+                className={`rounded-xl border px-3 py-2.5 text-start text-sm font-medium transition ${
                   origin === 'existing'
                     ? 'border-slate-500 bg-slate-100 text-slate-800 ring-1 ring-slate-300'
                     : 'border-slate-200 text-slate-600 hover:border-slate-300'
@@ -146,7 +146,7 @@ export default function DamageFlagModal({ open, zoneLabel, initial, onSave, onRe
               </button>
               <button
                 onClick={() => setOrigin('new')}
-                className={`rounded-xl border px-3 py-2.5 text-left text-sm font-medium transition ${
+                className={`rounded-xl border px-3 py-2.5 text-start text-sm font-medium transition ${
                   origin === 'new'
                     ? 'border-amber-500 bg-amber-50 text-amber-700 ring-1 ring-amber-200'
                     : 'border-slate-200 text-slate-600 hover:border-slate-300'

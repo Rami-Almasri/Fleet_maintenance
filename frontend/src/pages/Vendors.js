@@ -163,7 +163,7 @@ export default function Vendors() {
             <button
               key={tile.t}
               onClick={() => toggleType(tile.t)}
-              className={`hover-lift relative flex items-center justify-between rounded-2xl border border-slate-200/60 bg-white px-5 py-4 text-left shadow-soft ${type === tile.t ? 'ring-2 ring-indigo-500' : ''}`}
+              className={`hover-lift relative flex items-center justify-between rounded-2xl border border-slate-200/60 bg-white px-5 py-4 text-start shadow-soft ${type === tile.t ? 'ring-2 ring-indigo-500' : ''}`}
             >
               <div>
                 <div className="flex items-center gap-2">
@@ -202,14 +202,14 @@ export default function Vendors() {
           <div className="overflow-x-auto">
             <table className="min-w-full border-separate border-spacing-0 text-sm stagger-rows">
               <thead className="bg-slate-50/90">
-                <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <tr className="text-start text-xs font-semibold uppercase tracking-wide text-slate-500">
                   <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Name</th>
                   <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Type</th>
                   <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Phone</th>
                   <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Specialization / Link</th>
-                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-right">Cars Insured</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-end">Cars Insured</th>
                   <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Status</th>
-                  {canManage && <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-right">Actions</th>}
+                  {canManage && <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-end">Actions</th>}
                 </tr>
               </thead>
 
@@ -230,7 +230,7 @@ export default function Vendors() {
                           </a>
                         ) : (v.notes || <span className="text-slate-300">—</span>)}
                       </td>
-                      <td className="border-b border-slate-100 px-5 py-3.5 text-right tabular-nums text-slate-600">{v.type === 'insurance' ? num(v.insured_vehicles_count || 0) : <span className="text-slate-300">—</span>}</td>
+                      <td className="border-b border-slate-100 px-5 py-3.5 text-end tabular-nums text-slate-600">{v.type === 'insurance' ? num(v.insured_vehicles_count || 0) : <span className="text-slate-300">—</span>}</td>
                       <td className="border-b border-slate-100 px-5 py-3.5">
                         {v.active ? <Badge tone="green">Active</Badge> : <Badge tone="gray">Inactive</Badge>}
                       </td>

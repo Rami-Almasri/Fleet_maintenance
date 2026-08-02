@@ -89,7 +89,7 @@ export default function ConditionGradeModal({ open, vehicle, onClose, onSaved })
                 key={g.key}
                 type="button"
                 onClick={() => setGrade(g.key)}
-                className={`flex w-full items-start gap-3 rounded-xl border px-4 py-3 text-left transition ${
+                className={`flex w-full items-start gap-3 rounded-xl border px-4 py-3 text-start transition ${
                   on ? `border-transparent ring-2 ${g.ring}` : 'border-slate-200 bg-white hover:bg-slate-50'
                 }`}
               >

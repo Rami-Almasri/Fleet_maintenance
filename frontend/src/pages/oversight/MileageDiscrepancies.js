@@ -294,16 +294,16 @@ export default function MileageDiscrepancies() {
               <div className="overflow-x-auto rounded-2xl border border-slate-200/60 bg-white shadow-soft">
                 <table className="w-full min-w-[1080px] border-separate border-spacing-0 text-sm">
                   <thead>
-                    <tr className="text-left">
+                    <tr className="text-start">
                       <Th>{t('oversight.common.vehicle')}</Th>
                       <Th>{t('oversight.mileage.colTransition')}</Th>
                       <Th>{t('oversight.mileage.colReason')}</Th>
-                      <Th className="text-right">{t('oversight.mileage.colReading')}</Th>
+                      <Th className="text-end">{t('oversight.mileage.colReading')}</Th>
                       <Th>{t('oversight.mileage.colSeverity')}</Th>
                       <Th>{t('oversight.mileage.colSource')}</Th>
                       <Th>{t('oversight.mileage.colApprovedBy')}</Th>
                       <Th>{t('oversight.mileage.colStatus')}</Th>
-                      <Th className="text-right"> </Th>
+                      <Th className="text-end"> </Th>
                     </tr>
                   </thead>
                   <tbody>
@@ -319,7 +319,7 @@ export default function MileageDiscrepancies() {
                         <tr
                           key={`${r.ticket_id}-${r.stage_key}-${i}`}
                           onClick={() => setSelected(r)}
-                          className={`cursor-pointer border-l-4 ${sev.bar} transition-colors hover:bg-indigo-50/50 ${i % 2 ? 'bg-slate-50/40' : 'bg-white'}`}
+                          className={`cursor-pointer border-s-4 ${sev.bar} transition-colors hover:bg-indigo-50/50 ${i % 2 ? 'bg-slate-50/40' : 'bg-white'}`}
                         >
                           {/* Vehicle */}
                           <td className="border-b border-slate-100 px-4 py-3.5">
@@ -375,7 +375,7 @@ export default function MileageDiscrepancies() {
                             <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${status.cls}`}>{t(status.labelKey)}</span>
                           </td>
                           {/* Action */}
-                          <td className="border-b border-slate-100 px-4 py-3.5 text-right">
+                          <td className="border-b border-slate-100 px-4 py-3.5 text-end">
                             <button
                               type="button"
                               onClick={(e) => { e.stopPropagation(); setSelected(r); }}
@@ -509,7 +509,7 @@ function InvestigationDrawer({ t, row, recurrence, onClose, onPhoto }) {
             <button
               type="button"
               onClick={() => onPhoto({ url: row.photo_url, label: row.stage_label, plate: row.plate_no || `#${row.ticket_id}` })}
-              className="group flex w-full items-center gap-3 rounded-xl border border-slate-200 p-2 text-left transition hover:border-indigo-300 hover:bg-indigo-50/40"
+              className="group flex w-full items-center gap-3 rounded-xl border border-slate-200 p-2 text-start transition hover:border-indigo-300 hover:bg-indigo-50/40"
             >
               <img src={row.photo_url} alt={t('oversight.mileage.odometerPhoto')} className="h-16 w-16 rounded-lg object-cover ring-1 ring-slate-200" loading="lazy" />
               <div>
@@ -590,7 +590,7 @@ function ReadingCompare({ r, compact }) {
   const blocked = r.outcome === 'blocked';
   if (compact) {
     return (
-      <div className="text-right tabular-nums">
+      <div className="text-end tabular-nums">
         <div className="flex items-center justify-end gap-1.5 text-xs text-slate-400">
           <span>{fmtNum(r.previous)}</span>
           <Icon.ArrowRight className="h-3 w-3" />

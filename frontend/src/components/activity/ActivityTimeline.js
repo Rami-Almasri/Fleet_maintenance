@@ -277,7 +277,7 @@ function ActivitySession({ session, showVehicle = false }) {
         <button
           type="button"
           onClick={() => setOpen((o) => !o)}
-          className="flex w-full items-start gap-3 p-4 text-left transition hover:bg-slate-50/70"
+          className="flex w-full items-start gap-3 p-4 text-start transition hover:bg-slate-50/70"
         >
           {/* tier spine */}
           <span aria-hidden className={`mt-0.5 h-full min-h-[2.5rem] w-1 shrink-0 self-stretch rounded-full ${st.spine}`} />
@@ -314,7 +314,7 @@ function ActivitySession({ session, showVehicle = false }) {
         {open && (
           <div className="border-t border-slate-100 bg-slate-50/50 px-4 py-3">
             <div className="relative">
-              <span aria-hidden className="pointer-events-none absolute bottom-2 left-[0.3rem] top-2 w-px bg-slate-200" />
+              <span aria-hidden className="pointer-events-none absolute bottom-2 start-[0.3rem] top-2 w-px bg-slate-200" />
               <ol className="space-y-2.5">
                 {chron.map((e) => <SubEvent key={e.id} e={e} />)}
               </ol>
@@ -350,7 +350,7 @@ export default function ActivityTimeline({
 
   return (
     <div className="relative">
-      <span aria-hidden className="pointer-events-none absolute bottom-4 left-[1.125rem] top-4 w-px bg-gradient-to-b from-slate-200 via-slate-200 to-transparent" />
+      <span aria-hidden className="pointer-events-none absolute bottom-4 start-[1.125rem] top-4 w-px bg-gradient-to-b from-slate-200 via-slate-200 to-transparent" />
       <ol className="stagger space-y-3">
         {items.map((it) => (it.type === 'session'
           ? <ActivitySession key={it.key} session={it} showVehicle={showVehicle} />

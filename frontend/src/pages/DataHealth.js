@@ -64,9 +64,9 @@ function Group({ g }) {
         <table className="min-w-full border-separate border-spacing-0 text-sm">
           <thead>
             <tr>
-              <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Record</th>
-              <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">What's missing</th>
-              <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Open</th>
+              <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-start text-xs font-semibold uppercase tracking-wide text-slate-500">Record</th>
+              <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-start text-xs font-semibold uppercase tracking-wide text-slate-500">What's missing</th>
+              <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-end text-xs font-semibold uppercase tracking-wide text-slate-500">Open</th>
             </tr>
           </thead>
           <tbody>
@@ -74,7 +74,7 @@ function Group({ g }) {
               <tr key={i} className="bg-white transition-colors even:bg-slate-50/40 hover:bg-indigo-50/40">
                 <td className="border-b border-slate-100 px-5 py-3.5"><Record it={it} /></td>
                 <td className="border-b border-slate-100 px-5 py-3.5 text-slate-600">{it.detail}</td>
-                <td className="border-b border-slate-100 px-5 py-3.5 text-right"><RowLink it={it} /></td>
+                <td className="border-b border-slate-100 px-5 py-3.5 text-end"><RowLink it={it} /></td>
               </tr>
             ))}
           </tbody>

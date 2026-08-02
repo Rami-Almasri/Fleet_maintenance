@@ -44,7 +44,7 @@ function StatTile({ label, value, tone, active, onClick }) {
   return (
     <button
       onClick={onClick}
-      className={`hover-lift relative flex items-center justify-between rounded-2xl border border-slate-200/60 bg-white px-5 py-4 text-left shadow-soft ${
+      className={`hover-lift relative flex items-center justify-between rounded-2xl border border-slate-200/60 bg-white px-5 py-4 text-start shadow-soft ${
         active ? 'ring-2 ring-indigo-500' : ''
       }`}
     >
@@ -177,7 +177,7 @@ export default function Registrations() {
           <div className="overflow-x-auto">
             <table className="min-w-full border-separate border-spacing-0 text-sm stagger-rows">
               <thead className="bg-slate-50/90">
-                <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <tr className="text-start text-xs font-semibold uppercase tracking-wide text-slate-500">
                   <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Vehicle</th>
                   <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">VIN / Chassis</th>
                   <SortHeader label="Registration" active={sort === 'registration'} onClick={() => { setSort(sort === 'registration' ? 'default' : 'registration'); setPage(1); }} />

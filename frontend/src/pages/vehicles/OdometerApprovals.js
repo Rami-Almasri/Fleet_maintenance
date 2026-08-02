@@ -310,8 +310,8 @@ function StageTrail({ ticket }) {
           <Link to={`/vehicles/${ticket.vehicle_id}`} className="font-semibold text-indigo-600 hover:text-indigo-700">
             {ticket.plate_no || `#${ticket.vehicle_id}`}
           </Link>
-          <span className="ml-2 text-sm text-slate-400">{[ticket.make, ticket.model].filter(Boolean).join(' ') || ticket.vin || '—'}</span>
-          {ticket.issue && <span className="ml-2 text-xs text-slate-400">· {ticket.issue}</span>}
+          <span className="ms-2 text-sm text-slate-400">{[ticket.make, ticket.model].filter(Boolean).join(' ') || ticket.vin || '—'}</span>
+          {ticket.issue && <span className="ms-2 text-xs text-slate-400">· {ticket.issue}</span>}
         </div>
         {ticket.current_odometer != null && (
           <span className="text-xs text-slate-400">
@@ -326,7 +326,7 @@ function StageTrail({ ticket }) {
             {s.captured ? (
               <div className="min-w-[7.5rem] rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
                 <div className="text-[11px] font-medium uppercase tracking-wide text-slate-400">{s.label}</div>
-                <div className="tabular-nums text-base font-semibold text-slate-900">{num(s.reading)}<span className="ml-1 text-xs font-normal text-slate-400">km</span></div>
+                <div className="tabular-nums text-base font-semibold text-slate-900">{num(s.reading)}<span className="ms-1 text-xs font-normal text-slate-400">km</span></div>
                 {s.delta != null && (
                   <div className={`text-xs tabular-nums ${deltaTone(s.delta)}`}>
                     {s.delta > 0 ? '+' : ''}{num(s.delta)} km

@@ -169,7 +169,7 @@ export default function RepairVerifyModal({ open, taskId, onClose, onSaved }) {
                       key={r.value}
                       type="button"
                       onClick={() => setResult(r.value)}
-                      className={`rounded-lg px-3 py-2 text-left ring-1 transition ${
+                      className={`rounded-lg px-3 py-2 text-start ring-1 transition ${
                         result === r.value
                           ? `${TONES[r.tone]} ring-2`
                           : 'bg-white text-slate-700 ring-slate-200 hover:bg-slate-50'

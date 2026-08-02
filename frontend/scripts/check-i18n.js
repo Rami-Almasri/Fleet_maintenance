@@ -23,14 +23,35 @@ const path = require('path');
 
 const SRC = process.argv[2] || path.join(__dirname, '..', 'src');
 let failures = 0;
-const labelsSrc = fs.readFileSync(path.join(SRC, 'i18n/labels.js'), 'utf8');
-const mod = { exports: {} };
-const cjs = labelsSrc
-  .replace(/^export const /gm, 'module.exports.')
-  .replace(/^export default .*$/gm, '');
-new Function('module', 'exports', cjs)(mod, mod.exports);
-const { LABELS } = mod.exports;
+// Evaluate the phrase dictionary first, then labels.js with that import stubbed.
+// Strip the ESM keywords so every declaration stays a plain local, then collect
+// the names we care about at the end. (Rewriting `export const X` straight onto
+// module.exports breaks `export default X`, which still refers to the local.)
+const evalModule = (file, injectName, injectValue) => {
+  const src = fs.readFileSync(path.join(SRC, file), 'utf8');
+  const m = { exports: {} };
+  const cjs = `${src
+    .replace(/^import .*$/gm, '')
+    .replace(/^export default .*$/gm, '')
+    .replace(/^export /gm, '')}
+    ;module.exports = {
+      ...(typeof LABELS   !== 'undefined' ? { LABELS }   : {}),
+      ...(typeof LANGS    !== 'undefined' ? { LANGS }    : {}),
+      ...(typeof PHRASES  !== 'undefined' ? { PHRASES }  : {}),
+      ...(typeof phrasesAr!== 'undefined' ? { default: phrasesAr } : {}),
+    };`;
+  new Function('module', 'exports', injectName || '_unused', cjs)(m, m.exports, injectValue);
+  return m.exports;
+};
+
+const phrasesAr = evalModule('i18n/phrases.ar.js').default || {};
+const { LABELS, PHRASES } = evalModule('i18n/labels.js', 'phrasesAr', phrasesAr);
 console.log('✓ labels.js parses; langs =', Object.keys(LABELS).join(', '));
+console.log(`✓ phrases.ar.js parses; ${Object.keys(phrasesAr).length} phrases`);
+if (PHRASES?.ar !== phrasesAr) {
+  console.log('✗ PHRASES.ar is not wired to phrases.ar.js');
+  failures++;
+}
 
 const layoutSrc = fs.readFileSync(path.join(SRC, 'layouts/AppLayout.js'), 'utf8');
 const navBlock = layoutSrc.slice(layoutSrc.indexOf('const NAV_SECTIONS'), layoutSrc.indexOf('const ALL_ITEMS'));
@@ -135,6 +156,16 @@ const arKeys = new Set(walk(LABELS.ar).filter((k) => !exempt(k)));
 report('keys in en but not ar', [...enKeys].filter((k) => !arKeys.has(k)));
 report('keys in ar but not en', [...arKeys].filter((k) => !enKeys.has(k)));
 console.log(`total translated keys: en=${enKeys.size} ar=${arKeys.size}`);
+
+// ── Phrase dictionary: report coverage, and flag entries that translate to
+// themselves (a copy-paste slip that silently leaves the UI in English).
+const untranslated = Object.entries(phrasesAr).filter(([en, ar]) => !ar || ar === en).map(([en]) => en);
+report('phrases with no Arabic', untranslated);
+// A phrase key carrying a {var} must keep it, or the value vanishes at runtime.
+const lostVars = Object.entries(phrasesAr)
+  .filter(([en, ar]) => (en.match(/\{(\w+)\}/g) || []).some((v) => !String(ar).includes(v)))
+  .map(([en]) => en);
+report('phrases dropping a {var}', lostVars);
 
 if (failures) {
   console.error(`\n✗ i18n check failed — ${failures} problem(s). See the ✗ lines above.`);

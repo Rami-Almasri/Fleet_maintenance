@@ -84,8 +84,11 @@ module.exports = {
         },
         // Sweep used by gauges / progress bars when they fill.
         sweep: { '0%': { strokeDashoffset: 'var(--dash, 100)' }, '100%': { strokeDashoffset: 'var(--off, 0)' } },
-        // Right-side slide-over drawer entrance.
+        // Slide-over drawer entrance. The drawer is pinned to the trailing edge
+        // (end-0), so under RTL it must enter from the left instead — transforms
+        // have no logical axis, hence the mirrored pair.
         'slide-in-right': { '0%': { transform: 'translateX(100%)' }, '100%': { transform: 'translateX(0)' } },
+        'slide-in-left': { '0%': { transform: 'translateX(-100%)' }, '100%': { transform: 'translateX(0)' } },
         // Attention pulse for the deep-linked / highlighted board card.
         'pulse-ring': {
           '0%,100%': { boxShadow: '0 0 0 0 rgb(var(--brand-500) / 0.5)' },
@@ -99,6 +102,7 @@ module.exports = {
         pop: 'pop .16s cubic-bezier(.21,1.02,.73,1) both',
         bell: 'bell .9s ease-in-out',
         'slide-in-right': 'slide-in-right .28s cubic-bezier(.32,.72,0,1) both',
+        'slide-in-left': 'slide-in-left .28s cubic-bezier(.32,.72,0,1) both',
         'pulse-ring': 'pulse-ring 1.6s ease-out infinite',
       },
     },

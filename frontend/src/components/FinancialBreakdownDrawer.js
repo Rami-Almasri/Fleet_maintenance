@@ -111,7 +111,7 @@ function Formula({ formula, onOpen }) {
               key={i}
               type={clickable ? 'button' : undefined}
               onClick={clickable ? () => onOpen(t.ref) : undefined}
-              className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm ${clickable ? 'cursor-pointer hover:bg-indigo-50/60' : ''}`}
+              className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-start text-sm ${clickable ? 'cursor-pointer hover:bg-indigo-50/60' : ''}`}
             >
               <span className="flex items-center gap-2">
                 <span className="w-4 text-center font-mono text-slate-400">{t.op}</span>
@@ -143,7 +143,7 @@ function Evidence({ items, onOpen }) {
           const Row = clickable ? 'button' : 'div';
           return (
             <Row key={i} type={clickable ? 'button' : undefined} onClick={clickable ? () => onOpen(e.ref) : undefined}
-              className={`flex w-full items-center justify-between gap-3 px-4 py-2 text-left text-sm ${clickable ? 'hover:bg-indigo-50/60' : ''}`}>
+              className={`flex w-full items-center justify-between gap-3 px-4 py-2 text-start text-sm ${clickable ? 'hover:bg-indigo-50/60' : ''}`}>
               <span className={clickable ? 'font-medium text-indigo-700' : 'text-slate-600'}>{e.label}</span>
               <span className="flex items-center gap-2">
                 {e.kind && <Badge tone="slate" className="text-[10px]">{e.kind}</Badge>}
@@ -191,7 +191,7 @@ function Children({ ids, label, nodes, onOpen }) {
               key={id}
               type="button"
               onClick={() => onOpen(id)}
-              className="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left hover:bg-indigo-50/60"
+              className="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-start hover:bg-indigo-50/60"
             >
               <span className="min-w-0">
                 <span className="block truncate text-sm font-medium text-indigo-700">{c.label}</span>

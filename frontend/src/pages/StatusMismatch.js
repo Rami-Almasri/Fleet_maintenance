@@ -32,11 +32,11 @@ function Group({ g }) {
         <table className="min-w-full border-separate border-spacing-0 text-sm">
           <thead>
             <tr>
-              <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Car</th>
-              <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Vehicle status</th>
-              <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Contract reality</th>
-              <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Customer</th>
-              <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Open</th>
+              <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-start text-xs font-semibold uppercase tracking-wide text-slate-500">Car</th>
+              <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-start text-xs font-semibold uppercase tracking-wide text-slate-500">Vehicle status</th>
+              <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-start text-xs font-semibold uppercase tracking-wide text-slate-500">Contract reality</th>
+              <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-start text-xs font-semibold uppercase tracking-wide text-slate-500">Customer</th>
+              <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-end text-xs font-semibold uppercase tracking-wide text-slate-500">Open</th>
             </tr>
           </thead>
           <tbody>
@@ -57,7 +57,7 @@ function Group({ g }) {
                     ? <Link to={`/customers/${it.customer_id}`} className="text-indigo-600 hover:text-indigo-700">{it.customer || '—'}</Link>
                     : (it.customer || <span className="text-slate-300">—</span>)}
                 </td>
-                <td className="border-b border-slate-100 px-5 py-3.5 text-right">
+                <td className="border-b border-slate-100 px-5 py-3.5 text-end">
                   {it.contract_id
                     ? <Link to={`/contracts/${it.contract_id}`} className="text-xs font-medium text-indigo-600 hover:text-indigo-700">Contract →</Link>
                     : (it.vehicle_id ? <Link to={`/vehicles/${it.vehicle_id}`} className="text-xs font-medium text-indigo-600 hover:text-indigo-700">Car →</Link> : <span className="text-slate-300">—</span>)}

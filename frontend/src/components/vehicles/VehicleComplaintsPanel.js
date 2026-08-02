@@ -48,7 +48,7 @@ export default function VehicleComplaintsPanel({ vehicleId }) {
             key={r.id}
             type="button"
             onClick={() => setOpenId(r.id)}
-            className="flex w-full items-start gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-left shadow-soft transition hover:border-indigo-300 hover:shadow-md"
+            className="flex w-full items-start gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-start shadow-soft transition hover:border-indigo-300 hover:shadow-md"
           >
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">

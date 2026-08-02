@@ -149,8 +149,14 @@ class PerFaultRecommenderTest extends TestCase
         //
         // Asserted by reading the source: a unit test cannot prove the absence of a query, but it can
         // prove the core never reaches for the collaborator that issues one.
+        // Bounded to scoreRows() ITSELF, not "everything after it". Slicing to end-of-file made the
+        // guard fire on any LATER method that legitimately reaches for the outlook — outlookForTicket()
+        // is a DB-backed entry point where doing so is exactly right — so the test was reporting a
+        // violation in a method it was never about.
         $core = file_get_contents(dirname(__DIR__, 2).'/app/Services/GarageRecommendationService.php');
-        $scoreRows = substr($core, (int) strpos($core, 'public function scoreRows'));
+        $from = (int) strpos($core, 'public function scoreRows');
+        $next = strpos($core, "\n    public function ", $from + 1);
+        $scoreRows = $next === false ? substr($core, $from) : substr($core, $from, $next - $from);
 
         $this->assertStringNotContainsString('repairOutlook->', $scoreRows,
             'scoreRows() must receive the repair outlook through $ctx, never resolve it itself.');

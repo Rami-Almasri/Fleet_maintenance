@@ -82,7 +82,7 @@ function CaptureColumn({ phase, title, hint, photos, busy, onCapture, onDelete }
                 <button
                   type="button"
                   onClick={() => onDelete(p.id)}
-                  className="absolute right-1 top-1 hidden h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white group-hover:flex"
+                  className="absolute end-1 top-1 hidden h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white group-hover:flex"
                   aria-label="Delete photo"
                 >
                   ×
@@ -209,7 +209,7 @@ export default function CleaningCapture() {
               <Badge tone={statusMeta.tone}>{statusMeta.label}</Badge>
             </div>
             {canManage && (
-              <div className="ml-auto flex flex-wrap items-center gap-2">
+              <div className="ms-auto flex flex-wrap items-center gap-2">
                 <Button variant="secondary" onClick={() => mark('dirty')} loading={savingStatus} disabled={!vehicleId} className="gap-1.5">
                   Mark dirty
                 </Button>

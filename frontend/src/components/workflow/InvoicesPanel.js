@@ -80,7 +80,7 @@ function InvoiceCard({ invoice, canManage, onEdit, onDelete, onReconcile, busy }
             </div>
           )}
         </div>
-        <div className="shrink-0 text-right">
+        <div className="shrink-0 text-end">
           <div className="text-base font-bold tabular-nums text-slate-900">{money(invoice.amount)}</div>
           <div className="text-[11px] text-slate-400">
             {t('workflow.invoices.partsLabor', { parts: money(invoice.parts_total), labor: money(invoice.labor_total) })}
@@ -289,7 +289,7 @@ function InvoiceEditor({ ticket, invoice, garages, findingsCatalog, onClose, onS
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700">{t('workflow.invoices.receiptPhoto')}</label>
-            <input type="file" accept="image/*" onChange={(e) => setPhoto(e.target.files?.[0] || null)} className="block w-full text-xs text-slate-500 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-slate-700 hover:file:bg-slate-200" />
+            <input type="file" accept="image/*" onChange={(e) => setPhoto(e.target.files?.[0] || null)} className="block w-full text-xs text-slate-500 file:me-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-slate-700 hover:file:bg-slate-200" />
             {editing && invoice.receipt_photo_url && !photo && (
               <a href={invoice.receipt_photo_url} target="_blank" rel="noreferrer" className="mt-1 inline-block text-[11px] font-semibold text-indigo-600 hover:underline">{t('workflow.invoices.currentReceipt')}</a>
             )}

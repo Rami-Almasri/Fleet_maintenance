@@ -1336,7 +1336,7 @@ export default function GarageRecommendations({ ticketId, query, payload, select
       {perFault.length > 0 && (
         <div className="mb-2.5 space-y-2">
           {perFault.map((f) => (
-            <FaultDecision key={f.category_key} fault={f} model={modelLabel} onPick={onPick} isSel={isSel} t={t} />
+            <FaultDecision key={f.category_key} fault={f} model={modelLabel} onPick={onPick} isSel={isSel} t={t} faultCount={perFault.length} />
           ))}
         </div>
       )}

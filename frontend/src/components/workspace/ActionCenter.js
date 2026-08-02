@@ -123,8 +123,8 @@ function CategoryPanel({ category, rows, total, severity }) {
   const more = total - rows.length;
 
   return (
-    <div className="relative overflow-hidden rounded-2xl border border-slate-200/60 bg-white p-4 pl-5 shadow-soft">
-      <span className={`absolute inset-y-0 left-0 w-1 ${ACCENT[severity] || ACCENT[3]}`} aria-hidden="true" />
+    <div className="relative overflow-hidden rounded-2xl border border-slate-200/60 bg-white p-4 ps-5 shadow-soft">
+      <span className={`absolute inset-y-0 start-0 w-1 ${ACCENT[severity] || ACCENT[3]}`} aria-hidden="true" />
       <div className="mb-2 flex items-center gap-2.5">
         <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${BUBBLE[category.tone] || BUBBLE.slate}`}>
           {category.icon}

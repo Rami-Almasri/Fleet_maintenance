@@ -23,9 +23,9 @@
 .mwf-hero-copy h1{margin:0;font-size:21px;font-weight:800;letter-spacing:-.02em;color:var(--ink);
   display:flex;align-items:center;gap:11px;line-height:1.15}
 .mwf-hero-copy p{margin:3px 0 0;font-size:12.5px;color:var(--ink-3);letter-spacing:.01em}
-.mwf-hero-clock{margin-left:auto;font-family:var(--mono);font-size:13px;color:var(--ink-2);position:relative}
+.mwf-hero-clock{margin-inline-start:auto;font-family:var(--mono);font-size:13px;color:var(--ink-2);position:relative}
 .mwf-hero-clock .clock b{color:var(--ink);font-weight:600}
-@media(max-width:640px){.mwf-hero-clock{margin-left:0;width:100%}}
+@media(max-width:640px){.mwf-hero-clock{margin-inline-start:0;width:100%}}
 
 .mwf-live{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10px;
   letter-spacing:.14em;font-weight:700;color:var(--avail);text-transform:uppercase;
@@ -41,9 +41,9 @@
 .mwf-search{position:relative;display:flex;align-items:center}
 .mwf-search>svg{position:absolute;left:11px;color:var(--ink-3);pointer-events:none}
 .mwf-search .opx-input{min-width:280px}
-.mwf-toolbar-right{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-left:auto}
+.mwf-toolbar-right{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-inline-start:auto}
 .mwf-toolbar-meta{font-family:var(--mono);font-size:11px;color:var(--ink-3);letter-spacing:.04em;white-space:nowrap}
-@media(max-width:900px){.mwf-toolbar-right{margin-left:0;width:100%}}
+@media(max-width:900px){.mwf-toolbar-right{margin-inline-start:0;width:100%}}
 
 /* view toggle — moved out of the (removed) command header into the toolbar */
 .mwf .seg{display:flex;gap:2px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:3px}
@@ -88,7 +88,7 @@
 .mwf-lane-hd{display:flex;align-items:center;gap:8px;padding:12px 12px 10px;border-bottom:1px solid var(--line)}
 .mwf-lane-hd .dot{width:8px;height:8px;border-radius:50%;flex:none}
 .mwf-lane-hd .nm{font-size:11.5px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:var(--ink-2);line-height:1.2}
-.mwf-lane-hd .ct{margin-left:auto;font-family:var(--mono);font-size:12px;font-weight:800;border-radius:8px;padding:1px 9px;flex:none}
+.mwf-lane-hd .ct{margin-inline-start:auto;font-family:var(--mono);font-size:12px;font-weight:800;border-radius:8px;padding:1px 9px;flex:none}
 .mwf-lane-bd{display:flex;flex-direction:column;gap:9px;padding:10px;flex:1}
 
 .mwf-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;
@@ -132,7 +132,7 @@
   letter-spacing:.06em;color:var(--ink);background:var(--ov2);border:1px solid var(--line-2);
   padding:3px 9px;border-radius:8px;line-height:1}
 .mwf-plate svg{color:var(--cyan);flex:none}
-.mwf-car{font-size:11.5px;font-weight:600;color:var(--ink-2);padding-left:2px;margin-top:6px;line-height:1.35;
+.mwf-car{font-size:11.5px;font-weight:600;color:var(--ink-2);padding-inline-start:2px;margin-top:6px;line-height:1.35;
   overflow-wrap:anywhere;word-break:break-word}
 .mwf-id-right{display:flex;align-items:center;gap:5px;flex:none}
 .mwf-age{display:inline-flex;align-items:center;gap:3px;font-family:var(--mono);font-size:10px;font-weight:600;color:var(--ink-3)}
@@ -153,13 +153,13 @@
 .opx-chip.moving{animation:mwf-pulse 1.6s ease-in-out infinite}
 @keyframes mwf-pulse{0%,100%{opacity:1}50%{opacity:.55}}
 /* live-position chip: full width, wraps instead of clipping long garage/destination text */
-.mwf-pos{display:flex;width:100%;white-space:normal;text-align:left;align-items:flex-start;
+.mwf-pos{display:flex;width:100%;white-space:normal;text-align:start;align-items:flex-start;
   height:auto;line-height:1.4;overflow-wrap:anywhere;word-break:break-word}
 /* severity/complaint/disabled pills: allow wrap so no label is ever cut off */
 .mwf .opx-chip,.mwf-pill{white-space:normal;height:auto;overflow-wrap:anywhere}
 
 .mwf-agenda{font-size:11.5px;line-height:1.5;color:var(--ink-2);background:rgba(245,165,36,.07);
-  border:1px solid rgba(245,165,36,.18);border-left:2.5px solid var(--paused);border-radius:8px;padding:7px 10px;margin:0;
+  border:1px solid rgba(245,165,36,.18);border-inline-start:2.5px solid var(--paused);border-radius:8px;padding:7px 10px;margin:0;
   overflow-wrap:anywhere;word-break:break-word}
 
 .mwf-tasks{display:flex;flex-direction:column;gap:5px;padding:8px;border-radius:10px;background:var(--ov);border:1px solid var(--line)}
@@ -182,7 +182,7 @@
 .mwf-part .qt{flex:none;font-family:var(--mono);color:var(--ink-3)}
 .mwf-part .st{flex:none;margin-inline-start:auto;color:var(--ink-3)}
 .mwf-part.muted .nm{color:var(--ink-3);text-decoration:line-through}
-.mwf-fail{margin-left:auto;font-family:var(--mono);font-size:9px;font-weight:700;color:var(--crit);
+.mwf-fail{margin-inline-start:auto;font-family:var(--mono);font-size:9px;font-weight:700;color:var(--crit);
   background:rgba(251,113,133,.14);border-radius:999px;padding:1px 5px;flex:none}
 
 .mwf-who{display:flex;align-items:flex-start;gap:5px;font-size:11px;line-height:1.45;color:var(--ink-3);min-width:0}
@@ -218,7 +218,7 @@
 .mwf-cycle-hd{display:flex;align-items:flex-start;gap:12px;margin-bottom:14px}
 .mwf-cycle-title{margin:0;font-size:14px;font-weight:700;color:var(--ink-1);letter-spacing:.01em}
 .mwf-cycle-sub{margin:3px 0 0;font-size:12px;line-height:1.5;color:var(--ink-3);max-width:70ch}
-.mwf-cycle-x{margin-left:auto;flex:none;display:grid;place-items:center;padding:5px;border-radius:8px;
+.mwf-cycle-x{margin-inline-start:auto;flex:none;display:grid;place-items:center;padding:5px;border-radius:8px;
   color:var(--ink-3);background:transparent;border:1px solid var(--line);cursor:pointer;transition:.15s}
 .mwf-cycle-x:hover{color:var(--crit);border-color:var(--crit)}
 
@@ -231,7 +231,7 @@
 .mwf-cycle-num{flex:none;width:20px;height:20px;border-radius:6px;display:grid;place-items:center;
   font-family:var(--mono);font-size:11px;font-weight:800}
 .mwf-cycle-nm{font-size:11.5px;font-weight:700;color:var(--ink-1);line-height:1.25}
-.mwf-cycle-ct{margin-left:auto;flex:none;font-family:var(--mono);font-size:11px;font-weight:800;color:var(--ink-3);
+.mwf-cycle-ct{margin-inline-start:auto;flex:none;font-family:var(--mono);font-size:11px;font-weight:800;color:var(--ink-3);
   background:var(--ov2);border-radius:7px;padding:0 7px}
 .mwf-cycle-actor{margin:0;display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:var(--ink-2)}
 .mwf-cycle-actor svg{flex:none;color:var(--ink-3)}
@@ -248,7 +248,8 @@
 
 /* RTL: the flow arrows point the other way so the sequence still reads start→end. */
 [dir=rtl] .mwf-cycle-arrow{transform:scaleX(-1)}
-[dir=rtl] .mwf-cycle-ct,[dir=rtl] .mwf-cycle-x{margin-left:0;margin-right:auto}
+/* (The old margin-left:0/margin-right:auto override that lived here is gone —
+   .mwf-cycle-ct / .mwf-cycle-x now use margin-inline-start, which already flips.) */
 
 /* ---- list view over-age ---- */
 .mwf-over{color:var(--crit)!important}

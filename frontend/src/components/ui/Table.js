@@ -21,7 +21,7 @@
 
 import { Tooltip } from './Tooltip';
 
-const ALIGN = { left: 'text-left', right: 'text-right', center: 'text-center' };
+const ALIGN = { left: 'text-start', right: 'text-end', center: 'text-center' };
 
 export default function DataTable({
   columns = [],
@@ -121,7 +121,7 @@ export default function DataTable({
                   {columns.map((c, ci) => (
                     <td
                       key={c.key ?? ci}
-                      className={`border-b border-slate-100 px-5 ${py} text-slate-600 ${ci === 0 && flag ? 'relative before:absolute before:inset-y-0 before:left-0 before:w-1 before:bg-amber-400' : ''} ${ALIGN[c.align] || ALIGN.left} ${c.cellClass || ''}`}
+                      className={`border-b border-slate-100 px-5 ${py} text-slate-600 ${ci === 0 && flag ? 'relative before:absolute before:inset-y-0 before:start-0 before:w-1 before:bg-amber-400' : ''} ${ALIGN[c.align] || ALIGN.left} ${c.cellClass || ''}`}
                     >
                       {c.render ? c.render(row, ri) : row[c.key]}
                     </td>
@@ -138,9 +138,14 @@ export default function DataTable({
 
 // Section card with a header bar (title + optional action area) wrapping a table or
 // any content — the repeating "Card > header border-b > body" pattern, standardized.
-export function SectionCard({ id, title, subtitle, actions, children, className = '', bodyClass = '' }) {
+//
+// `overflowVisible` lifts the default clipping. The card clips by default so a table's corners follow
+// the rounded border; but an action that opens a popover WIDER than the card (a date picker on a
+// half-width card, say) gets its panel sliced off by that same clip. Opt out on those cards only —
+// the body then has to keep its own corners tidy.
+export function SectionCard({ id, title, subtitle, actions, children, className = '', bodyClass = '', overflowVisible = false }) {
   return (
-    <div id={id} className={`overflow-hidden rounded-2xl border border-slate-200/60 bg-white shadow-soft ${className}`}>
+    <div id={id} className={`${overflowVisible ? 'overflow-visible' : 'overflow-hidden'} rounded-2xl border border-slate-200/60 bg-white shadow-soft ${className}`}>
       {(title || actions) && (
         <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
           <div className="min-w-0">

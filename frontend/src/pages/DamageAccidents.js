@@ -79,7 +79,7 @@ function IncidentRow({ inc, open, onToggle }) {
         </td>
         <td className="px-4 py-3"><FaultBadge fault={inc.fault} liable={inc.liable_party} isAccident={inc.is_accident} /></td>
         <td className="px-4 py-3 text-slate-500">{inc.garage || '—'}</td>
-        <td className="px-4 py-3 text-right text-slate-600">{inc.cost > 0 ? aed2(inc.cost) : '—'}</td>
+        <td className="px-4 py-3 text-end text-slate-600">{inc.cost > 0 ? aed2(inc.cost) : '—'}</td>
         <td className="px-4 py-3 text-slate-400">
           <svg className={`h-4 w-4 transition-transform ${open ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18l6-6-6-6" /></svg>
         </td>
@@ -181,8 +181,8 @@ export default function DamageAccidents() {
 
         {/* Legend — the red/green key, stated plainly. */}
         <div className="rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-2.5 text-xs text-slate-600">
-          <span className="mr-4 inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-red-500" /> <b>Red</b> — renter at fault</span>
-          <span className="mr-4 inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-emerald-500" /> <b>Green</b> — third party (insured accident)</span>
+          <span className="me-4 inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-red-500" /> <b>Red</b> — renter at fault</span>
+          <span className="me-4 inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-emerald-500" /> <b>Green</b> — third party (insured accident)</span>
           <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-slate-400" /> <b>Grey</b> — the record doesn’t state fault</span>
         </div>
 
@@ -211,14 +211,14 @@ export default function DamageAccidents() {
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-slate-100 text-sm">
                 <thead className="bg-slate-50/90">
-                  <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  <tr className="text-start text-xs font-semibold uppercase tracking-wide text-slate-500">
                     <th className="px-4 py-3">Vehicle</th>
                     <th className="px-4 py-3">Date</th>
                     <th className="px-4 py-3">What happened</th>
                     <th className="px-4 py-3">Category (سبب الصيانة)</th>
                     <th className="px-4 py-3">Fault</th>
                     <th className="px-4 py-3">Garage</th>
-                    <th className="px-4 py-3 text-right">Cost</th>
+                    <th className="px-4 py-3 text-end">Cost</th>
                     <th className="px-4 py-3 w-8"></th>
                   </tr>
                 </thead>

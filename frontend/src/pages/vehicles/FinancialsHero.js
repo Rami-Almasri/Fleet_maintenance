@@ -149,7 +149,7 @@ function CostDonut({ segments, total, onDrill }) {
               onMouseEnter={() => setActive(a.i)}
               onMouseLeave={() => setActive(null)}
               onClick={() => onDrill?.(a.key)}
-              className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition hover:bg-slate-50 ${dim ? 'opacity-50' : ''}`}
+              className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-start transition hover:bg-slate-50 ${dim ? 'opacity-50' : ''}`}
             >
               <span className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: pal.from }} />
               <span className="min-w-0 flex-1">

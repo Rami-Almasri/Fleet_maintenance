@@ -88,7 +88,7 @@ export default function BillingReconciliation({ contract: c }) {
 
   return (
     <Card className="p-6">
-      <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="flex w-full items-center justify-between gap-3 text-left">
+      <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="flex w-full items-center justify-between gap-3 text-start">
         <div className="flex items-center gap-3">
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-100 text-indigo-600">
             <Icon.Invoice className="h-5 w-5" />
@@ -138,9 +138,9 @@ export default function BillingReconciliation({ contract: c }) {
               {/* Total row — reconciles to OM's Balance. */}
               <div className="grid grid-cols-4 gap-3 border-t-2 border-slate-200 bg-slate-50/60 px-5 py-3 text-sm font-semibold">
                 <span className="text-slate-700">Total</span>
-                <span className="text-right tabular-nums text-slate-900">{aed2(totalCharged)}</span>
-                <span className="text-right tabular-nums text-slate-900">{aed2(totalSettled)}</span>
-                <span className={`text-right tabular-nums ${balanceTone}`}>{aed2(balance)}</span>
+                <span className="text-end tabular-nums text-slate-900">{aed2(totalCharged)}</span>
+                <span className="text-end tabular-nums text-slate-900">{aed2(totalSettled)}</span>
+                <span className={`text-end tabular-nums ${balanceTone}`}>{aed2(balance)}</span>
               </div>
             </div>
             <p className="mt-2 text-xs text-slate-500">
@@ -195,7 +195,7 @@ export default function BillingReconciliation({ contract: c }) {
                   is never mistaken for a credit/refund on the customer's balance. */}
               {discount > 0 && (
                 <div className="relative mt-3 overflow-hidden rounded-2xl border border-amber-200/70 bg-amber-50 p-4">
-                  <svg aria-hidden className="pointer-events-none absolute -right-4 -top-4 h-24 w-24 text-amber-200/40" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"><path d="M16.5 6v.75m0 3v.75m0 3v.75m0 3V18m-9-5.25h5.25M7.5 15h3M3.375 5.25c-.621 0-1.125.504-1.125 1.125v3.026a3 3 0 0 1 0 5.198v3.026c0 .621.504 1.125 1.125 1.125h17.25c.621 0 1.125-.504 1.125-1.125v-3.026a3 3 0 0 1 0-5.198V6.375c0-.621-.504-1.125-1.125-1.125H3.375Z" /></svg>
+                  <svg aria-hidden className="pointer-events-none absolute -end-4 -top-4 h-24 w-24 text-amber-200/40" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"><path d="M16.5 6v.75m0 3v.75m0 3v.75m0 3V18m-9-5.25h5.25M7.5 15h3M3.375 5.25c-.621 0-1.125.504-1.125 1.125v3.026a3 3 0 0 1 0 5.198v3.026c0 .621.504 1.125 1.125 1.125h17.25c.621 0 1.125-.504 1.125-1.125v-3.026a3 3 0 0 1 0-5.198V6.375c0-.621-.504-1.125-1.125-1.125H3.375Z" /></svg>
                   <div className="relative flex items-center gap-4">
                     <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-600 ring-1 ring-inset ring-amber-200">
                       <svg aria-hidden="true" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M16.5 6v.75m0 3v.75m0 3v.75m0 3V18m-9-5.25h5.25M7.5 15h3M3.375 5.25c-.621 0-1.125.504-1.125 1.125v3.026a3 3 0 0 1 0 5.198v3.026c0 .621.504 1.125 1.125 1.125h17.25c.621 0 1.125-.504 1.125-1.125v-3.026a3 3 0 0 1 0-5.198V6.375c0-.621-.504-1.125-1.125-1.125H3.375Z" /></svg>

@@ -6,6 +6,8 @@ import { usePermissions } from '../hooks/usePermissions';
 import { PageHeader, EmptyState, Card } from '../components/ui/Misc';
 import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
+import { useToast } from '../components/ui/Toast';
+import CheckpointModal from '../components/maintenance/CheckpointModal';
 import {
   visibleLanes,
   laneOf,
@@ -53,6 +55,14 @@ export default function Notifications() {
   const navigate = useNavigate();
   const { unreadCount, refresh, markAllRead, clearAll } = useNotifications();
   const { can } = usePermissions();
+  const toast = useToast();
+
+  // Maintenance Progress checkpoints (Waleed & Abdullah's lane): a `maint_checkpoint` reminder is
+  // answered by FILING the update, not by reading a page — so its action opens the very same
+  // CheckpointModal /maintenance-progress uses, right here on the card. The alert carries the ticket
+  // in `meta.ticket_id`; without it (or without the permission to file) we fall back to the deep link.
+  const [checkpointTicket, setCheckpointTicket] = useState(null);
+  const canCheckpoint = can('maintenance.checkpoint.create');
 
   // The lanes this operator is allowed to see (permission-gated), plus a Set of
   // their keys for fast lane assignment. Recomputed only when the permission set
@@ -102,6 +112,15 @@ export default function Notifications() {
       setItems((list) => list.map((x) => (x.id === n.id ? { ...x, read: true } : x)));
       try { await api.post(`/notifications/${n.id}/read`); } catch (_) {}
       refresh();
+    }
+    // Checkpoint reminders are actioned in place — open the form instead of leaving the board.
+    if (n.type === 'maint_checkpoint' && canCheckpoint && n.meta?.ticket_id) {
+      setCheckpointTicket({
+        ticketId: n.meta.ticket_id,
+        label: n.meta.plate || `Ticket #${n.meta.ticket_id}`,
+        sub: n.meta.garage || undefined,
+      });
+      return;
     }
     const to = actionTarget(n);
     if (to) navigate(to);
@@ -293,7 +312,7 @@ export default function Notifications() {
             </span>
             <span className="hidden text-xs text-slate-400 sm:inline">Pick the work you own</span>
 
-            <div className="ml-auto flex flex-wrap items-center gap-2">
+            <div className="ms-auto flex flex-wrap items-center gap-2">
               {/* Group-by: priority vs time — the two ways an ops manager scans the board. */}
               <div className="inline-flex items-center gap-2">
                 <span className="hidden text-[11px] font-semibold uppercase tracking-wide text-slate-400 sm:inline">Group by</span>
@@ -458,6 +477,24 @@ export default function Notifications() {
           </div>
         )}
       </div>
+
+      {/* Maintenance Progress — file the owed checkpoint without leaving the Action Center. Filing one
+          clears the reminder chain server-side, so we reload the feed on success. */}
+      {checkpointTicket && (
+        <CheckpointModal
+          open
+          ticketId={checkpointTicket.ticketId}
+          title={`Checkpoint · ${checkpointTicket.label}`}
+          subtitle={checkpointTicket.sub}
+          onClose={() => setCheckpointTicket(null)}
+          onDone={(msg) => {
+            if (msg) toast.success(msg);
+            setPage(1);
+            fetchPage(1, true);
+            refresh();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -621,8 +658,8 @@ function NotificationRow({ n, onAction, onMarkRead, onDismiss, grouped = false }
 
   return (
     <article className={shell}>
-      <span className={`absolute inset-y-0 left-0 ${isCritical ? 'w-1.5' : 'w-1'} ${theme.accent} ${n.read ? 'opacity-40' : ''}`} aria-hidden="true" />
-      <div className="flex gap-4 p-5 pl-6">{inner}</div>
+      <span className={`absolute inset-y-0 start-0 ${isCritical ? 'w-1.5' : 'w-1'} ${theme.accent} ${n.read ? 'opacity-40' : ''}`} aria-hidden="true" />
+      <div className="flex gap-4 p-5 ps-6">{inner}</div>
     </article>
   );
 }
@@ -706,7 +743,7 @@ function StatTile({ label, value, tone = 'slate', icon = 'bell', active = false,
       aria-pressed={onClick ? active : undefined}
       disabled={!clickable}
       className={[
-        'flex items-center gap-3 rounded-2xl border bg-white px-4 py-3 text-left shadow-soft transition-all duration-150',
+        'flex items-center gap-3 rounded-2xl border bg-white px-4 py-3 text-start shadow-soft transition-all duration-150',
         active ? `${t.bg} ring-2 ${t.activeRing} border-transparent` : 'border-slate-200/70',
         clickable ? 'hover:-translate-y-px hover:shadow-card focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2' : 'cursor-default',
         zero && !active ? 'opacity-70' : '',
@@ -737,7 +774,7 @@ function SectionHeader({ accent, label, sub, count, unread }) {
       <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold tabular-nums text-slate-500">{count}</span>
       {sub && <span className="hidden text-xs text-slate-400 sm:inline">· {sub}</span>}
       {unread > 0 && (
-        <span className="ml-auto rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-bold tabular-nums text-indigo-600">{unread} unread</span>
+        <span className="ms-auto rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-bold tabular-nums text-indigo-600">{unread} unread</span>
       )}
     </div>
   );
@@ -766,7 +803,7 @@ function PrioritySection({ severity, rows, children }) {
             <p className="text-sm font-bold">Critical · {rows.length} need{rows.length === 1 ? 's' : ''} immediate attention</p>
             <p className="text-xs text-red-50/90">Start here — highest-priority work in your fleet right now.</p>
           </div>
-          {unread > 0 && <span className="ml-auto rounded-full bg-white/20 px-2.5 py-1 text-[11px] font-bold tabular-nums">{unread} unread</span>}
+          {unread > 0 && <span className="ms-auto rounded-full bg-white/20 px-2.5 py-1 text-[11px] font-bold tabular-nums">{unread} unread</span>}
         </header>
         <div className="space-y-3 p-3">{children}</div>
       </section>
@@ -805,7 +842,7 @@ function VehicleGroup({ node, onAction, onMarkRead, onDismiss }) {
           <p className={`truncate text-sm font-bold text-slate-800 ${isPlate ? 'font-mono' : ''}`}>{heading}</p>
           <p className="text-[11px] font-medium text-slate-400">{node.items.length} related alerts on this {isPlate ? 'vehicle' : 'ticket'}</p>
         </div>
-        <div className="ml-auto flex shrink-0 items-center gap-2">
+        <div className="ms-auto flex shrink-0 items-center gap-2">
           <Badge tone={SEVERITY_TONE[worst] || 'blue'} dot>{theme.label}</Badge>
           {unread > 0 && <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-bold tabular-nums text-indigo-600">{unread} new</span>}
         </div>
@@ -843,7 +880,7 @@ function LaneEmptyState({ tab, isAll }) {
             : `Nothing needs you in this lane right now.`}
         </p>
         {!isAll && (
-          <div className="mt-4 flex items-start gap-2 rounded-xl bg-slate-50 px-3.5 py-2.5 text-left ring-1 ring-inset ring-slate-200/60">
+          <div className="mt-4 flex items-start gap-2 rounded-xl bg-slate-50 px-3.5 py-2.5 text-start ring-1 ring-inset ring-slate-200/60">
             <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-white text-slate-400 ring-1 ring-inset ring-slate-200">
               <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={iconPath(tab.icon || 'bell')} /></svg>
             </span>

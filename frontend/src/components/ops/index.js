@@ -401,7 +401,10 @@ export function JourneyMap({ nodes = [] }) {
 }
 
 /* ------------------------- Contextual action drawer -------------------- */
-export function ContextualDrawer({ open, onClose, title, subtitle, children, footer, rtl = false }) {
+// The old `rtl` prop is gone: .opx-drawer now anchors to the trailing edge with
+// inset-inline-end, so it already mirrors with the document direction. No caller
+// ever passed it.
+export function ContextualDrawer({ open, onClose, title, subtitle, children, footer }) {
   useEffect(() => {
     if (!open) return undefined;
     const onKey = (e) => e.key === 'Escape' && onClose && onClose();
@@ -412,7 +415,7 @@ export function ContextualDrawer({ open, onClose, title, subtitle, children, foo
   return (
     <>
       <div className="opx-drawer-scrim" onClick={onClose} />
-      <div className={`opx-drawer ${rtl ? 'rtl' : ''}`}>
+      <div className="opx-drawer">
         <div className="opx-drawer-hd">
           <div>
             <div style={{ fontSize: 15, fontWeight: 700 }}>{title}</div>

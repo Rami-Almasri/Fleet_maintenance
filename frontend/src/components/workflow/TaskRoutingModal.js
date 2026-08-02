@@ -405,7 +405,7 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
             <button
               type="button"
               onClick={() => setTransportMethod('recovery')}
-              className="flex flex-col items-start gap-1 rounded-xl border border-slate-200 bg-white p-3 text-left transition hover:border-red-300 hover:bg-red-50/50"
+              className="flex flex-col items-start gap-1 rounded-xl border border-slate-200 bg-white p-3 text-start transition hover:border-red-300 hover:bg-red-50/50"
             >
               <span className="flex items-center gap-1.5 text-sm font-semibold text-slate-800">🛻 {t('workflow.task.transportRecovery')}</span>
               <span className="text-xs text-slate-500">{t('workflow.task.transportRecoveryHint')}</span>
@@ -413,7 +413,7 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
             <button
               type="button"
               onClick={() => setTransportMethod('driver')}
-              className="flex flex-col items-start gap-1 rounded-xl border border-slate-200 bg-white p-3 text-left transition hover:border-indigo-300 hover:bg-indigo-50/50"
+              className="flex flex-col items-start gap-1 rounded-xl border border-slate-200 bg-white p-3 text-start transition hover:border-indigo-300 hover:bg-indigo-50/50"
             >
               <span className="flex items-center gap-1.5 text-sm font-semibold text-slate-800">🚗 {t('workflow.task.transportDriver')}</span>
               <span className="text-xs text-slate-500">{t('workflow.task.transportDriverHint')}</span>
@@ -792,7 +792,7 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
                     {fixVideo && (
                       <p className="px-0.5 text-[11px] text-slate-400">
                         {(fixVideo.size / (1024 * 1024)).toFixed(1)} MB
-                        <button type="button" className="ml-2 text-slate-400 underline hover:text-slate-600" disabled={fixBusy} onClick={() => setFixVideo(null)}>remove</button>
+                        <button type="button" className="ms-2 text-slate-400 underline hover:text-slate-600" disabled={fixBusy} onClick={() => setFixVideo(null)}>remove</button>
                       </p>
                     )}
 

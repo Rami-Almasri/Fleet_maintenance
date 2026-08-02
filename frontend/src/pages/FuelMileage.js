@@ -208,7 +208,7 @@ export default function FuelMileage({ embedded = false }) {
               {p.label}
             </button>
           ))}
-          <Button variant="secondary" size="sm" onClick={exportCsv} disabled={!rows.length} className="ml-auto">
+          <Button variant="secondary" size="sm" onClick={exportCsv} disabled={!rows.length} className="ms-auto">
             <Icon.Download className="h-4 w-4" /> Export CSV
           </Button>
         </div>
@@ -268,7 +268,7 @@ export default function FuelMileage({ embedded = false }) {
                 <input type="checkbox" checked={onlyFlagged} onChange={(e) => setOnlyFlagged(e.target.checked)} className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
                 Only flagged cars (leakage / rollback)
               </label>
-              <span className="ml-auto text-xs text-slate-400">{num(rows.length)} of {num(s.vehicles)} cars</span>
+              <span className="ms-auto text-xs text-slate-400">{num(rows.length)} of {num(s.vehicles)} cars</span>
             </div>
 
             <SectionCard
@@ -377,12 +377,12 @@ function VehicleLedgerDrawer({ vehicle, from, to, onClose, onOpenProfile }) {
           <table className="min-w-full divide-y divide-slate-200 text-sm">
             <thead className="bg-slate-50/90 text-[11px] uppercase tracking-wide text-slate-500">
               <tr>
-                <th className="px-3 py-2 text-left font-semibold">Trip</th>
-                <th className="px-3 py-2 text-left font-semibold">Out → In</th>
-                <th className="px-3 py-2 text-right font-semibold">Odometer</th>
-                <th className="px-3 py-2 text-right font-semibold">Trip km</th>
-                <th className="px-3 py-2 text-right font-semibold" title="Km driven between the previous return and this pickup — off-contract">Gap before</th>
-                <th className="px-3 py-2 text-right font-semibold">Fuel</th>
+                <th className="px-3 py-2 text-start font-semibold">Trip</th>
+                <th className="px-3 py-2 text-start font-semibold">Out → In</th>
+                <th className="px-3 py-2 text-end font-semibold">Odometer</th>
+                <th className="px-3 py-2 text-end font-semibold">Trip km</th>
+                <th className="px-3 py-2 text-end font-semibold" title="Km driven between the previous return and this pickup — off-contract">Gap before</th>
+                <th className="px-3 py-2 text-end font-semibold">Fuel</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 bg-white">
@@ -395,19 +395,19 @@ function VehicleLedgerDrawer({ vehicle, from, to, onClose, onOpenProfile }) {
                   <td className="px-3 py-2 text-xs text-slate-500">
                     {fmtDate(c.out_date) || '—'} <span className="text-slate-300">→</span> {c.in_date ? fmtDate(c.in_date) : <span className="text-blue-500">out</span>}
                   </td>
-                  <td className="px-3 py-2 text-right tabular-nums text-slate-500">
+                  <td className="px-3 py-2 text-end tabular-nums text-slate-500">
                     {c.out_milage != null ? num(c.out_milage) : '—'} <span className="text-slate-300">→</span> {c.in_milage != null ? num(c.in_milage) : '—'}
                   </td>
-                  <td className={`px-3 py-2 text-right tabular-nums font-medium ${c.negative ? 'text-red-600' : 'text-slate-700'}`}>
+                  <td className={`px-3 py-2 text-end tabular-nums font-medium ${c.negative ? 'text-red-600' : 'text-slate-700'}`}>
                     {c.contract_mileage != null ? num(c.contract_mileage) : '—'}
                   </td>
-                  <td className="px-3 py-2 text-right tabular-nums">
+                  <td className="px-3 py-2 text-end tabular-nums">
                     {c.gap_before == null ? <span className="text-slate-300">—</span>
                       : c.gap_before > 5 ? <span className="font-semibold text-amber-600">+{num(c.gap_before)}</span>
                       : c.gap_before < 0 ? <span className="text-red-600">{num(c.gap_before)}</span>
                       : <span className="text-slate-400">{num(c.gap_before)}</span>}
                   </td>
-                  <td className="px-3 py-2 text-right tabular-nums text-amber-600">{c.fuel_debit ? aed2(c.fuel_debit) : <span className="text-slate-300">—</span>}</td>
+                  <td className="px-3 py-2 text-end tabular-nums text-amber-600">{c.fuel_debit ? aed2(c.fuel_debit) : <span className="text-slate-300">—</span>}</td>
                 </tr>
               ))}
               {!state.loading && !(state.data?.contracts || []).length && (

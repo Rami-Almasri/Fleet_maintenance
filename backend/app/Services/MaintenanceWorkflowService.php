@@ -2331,6 +2331,7 @@ class MaintenanceWorkflowService
     {
         return [
             'text'          => $serviceLabel,
+            'category_key'  => Maintenance::categoryForKeyword($serviceLabel),
             'source'        => Maintenance::FINDING_INSPECTOR,
             'severity'      => Maintenance::FAULT_SEVERITY_ROUTINE,
             'root_cause'    => null,
@@ -2562,6 +2563,13 @@ class MaintenanceWorkflowService
 
                     return [
                         'text'          => $text,
+                        // Stamped at the ORIGIN, not left for readers to re-derive. Half a dozen
+                        // consumers (garage routing, the recommendation engine, repair history) each
+                        // called categoryForKeyword() on this text because the entry never carried it,
+                        // and MaintenanceTask read `$f['category_key'] ?? null` from an entry that had
+                        // no such key. Null here means the catalog does not know this text — a custom
+                        // issue the inspector typed — which is a fact worth recording, not a gap.
+                        'category_key'  => Maintenance::categoryForKeyword($text),
                         'source'        => Maintenance::FINDING_INSPECTOR,
                         'severity'      => $payload['severity'],
                         'root_cause'    => $cause,

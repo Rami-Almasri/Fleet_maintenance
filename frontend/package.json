@@ -19,7 +19,9 @@
     "build": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject",
-    "check:i18n": "node scripts/check-i18n.js"
+    "check:i18n": "node scripts/check-i18n.js",
+    "check:rtl": "node scripts/check-rtl.js src",
+    "check": "npm run check:i18n && npm run check:rtl"
   },
   "eslintConfig": {
     "extends": [

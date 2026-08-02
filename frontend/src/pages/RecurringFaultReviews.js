@@ -156,19 +156,24 @@ export default function RecurringFaultReviews() {
   // now", the dashboard answers "how is rework trending". Fetched separately so changing a filter never
   // reshapes the trend line under the reader.
   //
-  // `faultWindow` is the one exception, and it scopes ONE panel: the "faults that keep coming back"
-  // ranking. It rides on the same request (the roll-ups all come from one pass over the table) but the
-  // API applies it to that ranking alone, so the KPIs and the trend line stay put while it changes.
+  // The two ranking windows are the exception, and each scopes ONE panel: "faults that keep coming back"
+  // and "cars that keep coming back". They ride on the same request (the roll-ups all come from one pass
+  // over the table) but the API applies each to its own ranking, so the KPIs and the trend line stay put
+  // while either changes — and narrowing the cars panel never reshapes the faults panel.
   const [faultWindow, setFaultWindow] = useState({ days: 0, from: null, to: null });
+  const [carWindow, setCarWindow] = useState({ days: 0, from: null, to: null });
 
   const statsFetcher = useCallback(async () => payload(await api.get('/recurring-fault-reviews/stats', {
     params: {
       faults_days: faultWindow.days || undefined,
       faults_from: faultWindow.from || undefined,
       faults_to: faultWindow.to || undefined,
+      cars_days: carWindow.days || undefined,
+      cars_from: carWindow.from || undefined,
+      cars_to: carWindow.to || undefined,
     },
-  })) || null, [faultWindow]);
-  const { data: stats, loading: statsLoading, reload: reloadStats } = useFetch(statsFetcher, [faultWindow], {
+  })) || null, [faultWindow, carWindow]);
+  const { data: stats, loading: statsLoading, reload: reloadStats } = useFetch(statsFetcher, [faultWindow, carWindow], {
     refreshInterval: 60000,
     paused: () => anyModal,
   });
@@ -218,6 +223,8 @@ export default function RecurringFaultReviews() {
           loading={statsLoading}
           faultWindow={faultWindow}
           onFaultWindowChange={setFaultWindow}
+          carWindow={carWindow}
+          onCarWindowChange={setCarWindow}
         />
 
         {/* Filters — scope the case list only. */}

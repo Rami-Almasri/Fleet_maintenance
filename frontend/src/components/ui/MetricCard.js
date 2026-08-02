@@ -87,7 +87,7 @@ export default function MetricCard({
   const cls = `block rounded-2xl border border-slate-200/60 bg-white p-5 shadow-soft ${clickable ? 'hover-lift cursor-pointer' : ''} ${className}`;
 
   if (to) return <Link to={to} className={cls}>{inner}</Link>;
-  if (onClick) return <button type="button" onClick={onClick} className={`${cls} w-full text-left`}>{inner}</button>;
+  if (onClick) return <button type="button" onClick={onClick} className={`${cls} w-full text-start`}>{inner}</button>;
   return <div className={cls}>{inner}</div>;
 }
 

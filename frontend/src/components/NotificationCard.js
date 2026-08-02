@@ -25,7 +25,7 @@ export default function NotificationCard({ n, onAction, onMarkRead, onDismiss })
     <article
       className={[
         'group relative flex flex-col overflow-hidden rounded-2xl border border-slate-200/60',
-        'border-l-4 shadow-soft hover-lift',
+        'border-s-4 shadow-soft hover-lift',
         theme.border,
         n.read ? 'bg-white' : theme.cardTint,
       ].join(' ')}
@@ -44,7 +44,7 @@ export default function NotificationCard({ n, onAction, onMarkRead, onDismiss })
               {theme.label}
             </span>
             {!n.read && <span className={`h-2 w-2 rounded-full ${theme.dot}`} aria-label="unread" />}
-            <span className="ml-auto whitespace-nowrap text-[11px] font-medium text-slate-400">{timeAgo(n.created_at)}</span>
+            <span className="ms-auto whitespace-nowrap text-[11px] font-medium text-slate-400">{timeAgo(n.created_at)}</span>
           </div>
           <h3 className={`mt-1.5 text-sm leading-snug ${n.read ? 'font-semibold text-slate-700' : 'font-bold text-slate-900'}`}>
             {n.title}
@@ -56,7 +56,7 @@ export default function NotificationCard({ n, onAction, onMarkRead, onDismiss })
           <button
             type="button"
             onClick={() => onDismiss(n.id)}
-            className="-mr-1 -mt-1 rounded-lg p-1 text-slate-300 opacity-0 transition-colors duration-150 hover:bg-slate-100 hover:text-slate-500 focus-visible:opacity-100 group-hover:opacity-100"
+            className="-me-1 -mt-1 rounded-lg p-1 text-slate-300 opacity-0 transition-colors duration-150 hover:bg-slate-100 hover:text-slate-500 focus-visible:opacity-100 group-hover:opacity-100"
             title="Dismiss"
             aria-label="Dismiss notification"
           >

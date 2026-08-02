@@ -47,7 +47,7 @@ function Field({ label, value }) {
   return (
     <div className="flex justify-between gap-4 py-1.5 text-sm" style={{ borderBottom: '1px solid var(--line)' }}>
       <span style={{ color: 'var(--ink-3)' }}>{label}</span>
-      <span className="text-right font-medium" style={{ color: 'var(--ink)' }}>{value || '—'}</span>
+      <span className="text-end font-medium" style={{ color: 'var(--ink)' }}>{value || '—'}</span>
     </div>
   );
 }
@@ -194,7 +194,7 @@ export default function CustomerProfile() {
             />
           ) : (
             <div className="relative px-6 py-6">
-              <span aria-hidden className="pointer-events-none absolute bottom-8 left-10 top-8 w-px bg-slate-200" />
+              <span aria-hidden className="pointer-events-none absolute bottom-8 start-10 top-8 w-px bg-slate-200" />
               <ol className="stagger space-y-4">
                 {shownContracts.map((ct) => {
                   const open = ct.state === 'open';

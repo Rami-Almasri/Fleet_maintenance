@@ -74,6 +74,9 @@ Route::prefix('auth')->controller(AuthController::class)->group(function () {
     Route::delete('users/{user}', 'destroy')->middleware(['auth:sanctum', 'permission:users.manage']);
     // Throttle login to blunt credential-stuffing/brute force (per IP+email).
     Route::post('login', 'login')->middleware('throttle:10,1');
+    // The signed-in account, refreshed from the database (roles + permissions). The SPA calls this on
+    // boot so a role change takes effect on the next page load, not the next login.
+    Route::get('me', 'me')->middleware('auth:sanctum');
     Route::post('logout', 'logout');
 });
 

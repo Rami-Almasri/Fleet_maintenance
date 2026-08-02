@@ -66,7 +66,7 @@ export default function NotificationBell() {
         </svg>
 
         {unreadCount > 0 && (
-          <span className="absolute -right-0.5 -top-0.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white shadow-sm ring-2 ring-white">
+          <span className="absolute -end-0.5 -top-0.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white shadow-sm ring-2 ring-white">
             {badge}
           </span>
         )}
@@ -77,7 +77,7 @@ export default function NotificationBell() {
           {/* mobile scrim */}
           <div className="fixed inset-0 z-30 sm:hidden" onClick={() => setOpen(false)} />
 
-          <div className="absolute right-0 z-40 mt-2 w-[min(92vw,24rem)] origin-top-right animate-pop overflow-hidden rounded-2xl border border-slate-200/60 bg-white shadow-card">
+          <div className="absolute end-0 z-40 mt-2 w-[min(92vw,24rem)] origin-top-right animate-pop overflow-hidden rounded-2xl border border-slate-200/60 bg-white shadow-card">
             {/* header */}
             <div className="flex items-center justify-between gap-2 border-b border-slate-100 bg-slate-50 px-4 py-3">
               <div className="flex items-center gap-2">

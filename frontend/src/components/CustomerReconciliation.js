@@ -20,7 +20,7 @@ export default function CustomerReconciliation({ ledger = [], totals }) {
 
   return (
     <Card>
-      <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="flex w-full items-center justify-between gap-3 px-6 py-4 text-left transition-colors duration-150 hover:bg-slate-50/60">
+      <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="flex w-full items-center justify-between gap-3 px-6 py-4 text-start transition-colors duration-150 hover:bg-slate-50/60">
         <div className="flex items-center gap-3">
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-100 text-indigo-600">
             <Icon.Scale className="h-5 w-5" />
@@ -64,9 +64,9 @@ export default function CustomerReconciliation({ ledger = [], totals }) {
             {/* Total row — ties to the customer's Balance to the cent. */}
             <div className="grid grid-cols-4 gap-3 border-t-2 border-slate-200 bg-slate-50/60 px-5 py-3 text-sm font-semibold">
               <span className="text-slate-700">Total</span>
-              <span className="text-right tabular-nums text-slate-900">{aed2(totals.charged)}</span>
-              <span className="text-right tabular-nums text-slate-900">{aed2(totals.settled)}</span>
-              <span className={`text-right tabular-nums ${balanceTone}`}>{aed2(balance)}</span>
+              <span className="text-end tabular-nums text-slate-900">{aed2(totals.charged)}</span>
+              <span className="text-end tabular-nums text-slate-900">{aed2(totals.settled)}</span>
+              <span className={`text-end tabular-nums ${balanceTone}`}>{aed2(balance)}</span>
             </div>
           </div>
           <p className="mt-2 text-xs text-slate-500">

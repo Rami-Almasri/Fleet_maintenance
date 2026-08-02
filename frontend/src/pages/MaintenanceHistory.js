@@ -81,7 +81,7 @@ export default function MaintenanceHistory() {
 
   const toggleSort = (key) => setSort((s) => (s.key === key ? { key, dir: s.dir === 'desc' ? 'asc' : 'desc' } : { key, dir: 'desc' }));
   const SortHead = ({ label, sortKey, align = 'left' }) => (
-    <th className={`whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 ${align === 'right' ? 'text-right' : ''}`}>
+    <th className={`whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 ${align === 'right' ? 'text-end' : ''}`}>
       <button onClick={() => toggleSort(sortKey)} className={`inline-flex items-center gap-1 hover:text-slate-700 ${align === 'right' ? 'flex-row-reverse' : ''}`}>
         {label}
         <Icon.ChevronDown className={`h-3 w-3 transition ${sort.key === sortKey ? (sort.dir === 'asc' ? 'rotate-180 text-indigo-600' : 'text-indigo-600') : 'text-slate-300'}`} />
@@ -143,7 +143,7 @@ export default function MaintenanceHistory() {
           <div className="overflow-x-auto rounded-2xl border border-slate-200/60 bg-white shadow-soft">
             <table className="w-full min-w-[760px] border-separate border-spacing-0 text-sm">
               <thead>
-                <tr className="text-left">
+                <tr className="text-start">
                   <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Vehicle</th>
                   <SortHead label="Visits" sortKey="visits" align="right" />
                   <SortHead label="Time in shop" sortKey="days_in_shop" align="right" />
@@ -163,12 +163,12 @@ export default function MaintenanceHistory() {
                       <Link to={`/vehicles/${r.id}`} className="font-mono font-semibold text-slate-900 hover:text-indigo-600">{r.plate || `#${r.id}`}</Link>
                       {r.car && <p className="text-xs text-slate-400">{r.car}</p>}
                     </td>
-                    <td className="border-b border-slate-100 px-5 py-3.5 text-right">
+                    <td className="border-b border-slate-100 px-5 py-3.5 text-end">
                       <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${r.visits >= 10 ? 'bg-red-100 text-red-700' : r.visits >= 5 ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>
                         {plural(r.visits, 'visit')}
                       </span>
                     </td>
-                    <td className="border-b border-slate-100 px-5 py-3.5 text-right font-semibold tabular-nums text-slate-700">
+                    <td className="border-b border-slate-100 px-5 py-3.5 text-end font-semibold tabular-nums text-slate-700">
                       {r.days_in_shop == null ? <span className="text-slate-300">—</span> : plural(r.days_in_shop, 'day')}
                     </td>
                     <td className="border-b border-slate-100 px-5 py-3.5 text-slate-500">{fmtDate(r.first_visit)}</td>
@@ -223,10 +223,10 @@ function VisitList({ detail }) {
     <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
       <table className="w-full text-sm">
         <thead>
-          <tr className="text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+          <tr className="text-start text-[11px] font-semibold uppercase tracking-wide text-slate-400">
             <th className="px-4 py-2">Went in</th>
             <th className="px-4 py-2">Came back</th>
-            <th className="px-4 py-2 text-right">Days</th>
+            <th className="px-4 py-2 text-end">Days</th>
             <th className="px-4 py-2">Garage</th>
             <th className="px-4 py-2">What was done</th>
           </tr>
@@ -238,7 +238,7 @@ function VisitList({ detail }) {
               <td className="whitespace-nowrap px-4 py-2 text-slate-500">
                 {v.returned ? fmtDate(v.in_date) : <span className="inline-flex items-center gap-1 text-amber-600"><span className="h-1.5 w-1.5 rounded-full bg-amber-500" /> Still in</span>}
               </td>
-              <td className="whitespace-nowrap px-4 py-2 text-right tabular-nums text-slate-600">{v.days == null ? '—' : plural(v.days, 'day')}</td>
+              <td className="whitespace-nowrap px-4 py-2 text-end tabular-nums text-slate-600">{v.days == null ? '—' : plural(v.days, 'day')}</td>
               <td className="px-4 py-2 text-slate-600">{v.garage || <span className="text-slate-300">—</span>}</td>
               <td className="px-4 py-2 text-slate-600">{v.issue || v.notes || <span className="text-slate-300">—</span>}</td>
             </tr>

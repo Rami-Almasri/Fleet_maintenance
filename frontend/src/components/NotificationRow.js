@@ -15,7 +15,7 @@ export default function NotificationRow({ n, onOpen, onDismiss, compact = false 
       ].join(' ')}
     >
       {/* unread accent rail */}
-      {!n.read && <span aria-hidden="true" className={`absolute inset-y-0 left-0 w-[3px] ${theme.accent}`} />}
+      {!n.read && <span aria-hidden="true" className={`absolute inset-y-0 start-0 w-[3px] ${theme.accent}`} />}
 
       {/* severity icon tile */}
       <div
@@ -30,7 +30,7 @@ export default function NotificationRow({ n, onOpen, onDismiss, compact = false 
       <button
         type="button"
         onClick={() => onOpen?.(n)}
-        className="min-w-0 flex-1 text-left"
+        className="min-w-0 flex-1 text-start"
       >
         <div className="flex items-start gap-2">
           <p className={`truncate text-sm ${n.read ? 'font-medium text-slate-700' : 'font-semibold text-slate-900'}`}>
@@ -55,7 +55,7 @@ export default function NotificationRow({ n, onOpen, onDismiss, compact = false 
         <button
           type="button"
           onClick={(e) => { e.stopPropagation(); onDismiss(n.id); }}
-          className="absolute right-2 top-2 rounded-lg p-1 text-slate-300 opacity-0 transition-colors duration-150 hover:bg-slate-100 hover:text-slate-500 focus-visible:opacity-100 group-hover:opacity-100"
+          className="absolute end-2 top-2 rounded-lg p-1 text-slate-300 opacity-0 transition-colors duration-150 hover:bg-slate-100 hover:text-slate-500 focus-visible:opacity-100 group-hover:opacity-100"
           title="Dismiss"
           aria-label="Dismiss notification"
         >

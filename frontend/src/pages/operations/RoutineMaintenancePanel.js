@@ -50,7 +50,7 @@ function RoutineMaintenanceCard({ c }) {
           #{c.id}{c.emoji ? ` ${c.emoji}` : ''}
         </span>
         <Badge tone={c.location.tone} className="normal-case">
-          <Glyph className="mr-1 h-3 w-3" />{c.location.label}
+          <Glyph className="me-1 h-3 w-3" />{c.location.label}
         </Badge>
       </div>
       <p className="mt-2 truncate text-sm font-semibold text-slate-800" title={c.vehicle}>{c.vehicle}</p>

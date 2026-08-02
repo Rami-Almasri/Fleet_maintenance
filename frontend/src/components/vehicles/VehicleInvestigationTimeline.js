@@ -74,7 +74,7 @@ function Chip({ on, tone = 'slate', onClick, children, count }) {
 // A removable summary of one active filter — shown in the toolbar so a collapsed panel never hides state.
 function ActivePill({ label, value, onClear }) {
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 py-1 pl-2.5 pr-1.5 text-xs font-medium text-indigo-700 ring-1 ring-inset ring-indigo-100">
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 py-1 ps-2.5 pe-1.5 text-xs font-medium text-indigo-700 ring-1 ring-inset ring-indigo-100">
       <span className="text-indigo-400">{label}</span>
       <span className="font-semibold">{value}</span>
       <button type="button" onClick={onClear} aria-label={`Clear ${label} filter`} className="text-indigo-300 transition hover:text-indigo-600">
@@ -102,12 +102,12 @@ function Select({ value, onChange, children }) {
 // Toolbar-sized select: the label sits inline so sort/group cost one line, not a whole form row.
 function InlineSelect({ label, value, onChange, children }) {
   return (
-    <label className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white pl-2.5 text-xs shadow-soft focus-within:border-indigo-300 focus-within:ring-2 focus-within:ring-indigo-100">
+    <label className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white ps-2.5 text-xs shadow-soft focus-within:border-indigo-300 focus-within:ring-2 focus-within:ring-indigo-100">
       <span className="font-semibold uppercase tracking-wide text-slate-400">{label}</span>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="cursor-pointer rounded-r-lg border-0 bg-transparent py-1.5 pl-0 pr-2 text-xs font-semibold text-slate-700 focus:outline-none"
+        className="cursor-pointer rounded-e-lg border-0 bg-transparent py-1.5 ps-0 pe-2 text-xs font-semibold text-slate-700 focus:outline-none"
       >
         {children}
       </select>
@@ -149,7 +149,7 @@ function EventRow({ e, onOpen, highlighted, showDate }) {
   const openable = Boolean(e.raw && onOpen);
   const Card = openable ? 'button' : 'div';
   const cardProps = openable
-    ? { type: 'button', onClick: () => onOpen(e.raw), className: 'group text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-card focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400' }
+    ? { type: 'button', onClick: () => onOpen(e.raw), className: 'group text-start transition-all duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-card focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400' }
     : {};
 
   return (
@@ -181,7 +181,7 @@ function EventRow({ e, onOpen, highlighted, showDate }) {
           {/* The day divider carries the date in a chronological view, so the row only needs the clock;
               under severity/mileage sorts there is no divider, so it states the full date instead. */}
           <span
-            className="shrink-0 whitespace-nowrap text-right text-[11px] font-medium tabular-nums text-slate-400"
+            className="shrink-0 whitespace-nowrap text-end text-[11px] font-medium tabular-nums text-slate-400"
             title={e.occurred_at ? `${fmtDate(e.occurred_at)} · ${fmtClock(e.occurred_at)} · ${fmtAgo(e.occurred_at)}` : ''}
           >
             {!e.occurred_at ? 'No date' : showDate ? fmtDate(e.occurred_at) : fmtClock(e.occurred_at) || fmtAgo(e.occurred_at)}
@@ -256,7 +256,7 @@ function EventList({ events, onOpen, highlightEventId, chronological }) {
   let lastDay = null;
   return (
     <div className="relative">
-      <span aria-hidden className="pointer-events-none absolute bottom-4 left-4 top-4 w-px bg-gradient-to-b from-slate-200 via-slate-200 to-transparent" />
+      <span aria-hidden className="pointer-events-none absolute bottom-4 start-4 top-4 w-px bg-gradient-to-b from-slate-200 via-slate-200 to-transparent" />
       <ol className="space-y-2.5">
         {events.map((e) => {
           const day = e.occurred_at ? String(e.occurred_at).slice(0, 10) : null;
@@ -283,7 +283,7 @@ function EventList({ events, onOpen, highlightEventId, chronological }) {
 function ListSkeleton() {
   return (
     <div className="relative rounded-2xl border border-slate-200/70 bg-slate-50/60 p-3">
-      <span aria-hidden className="pointer-events-none absolute bottom-7 left-7 top-7 w-px bg-slate-200" />
+      <span aria-hidden className="pointer-events-none absolute bottom-7 start-7 top-7 w-px bg-slate-200" />
       <ul className="space-y-2.5">
         {[0, 1, 2, 3, 4].map((i) => (
           <li key={i} className="flex animate-pulse gap-3.5">
@@ -492,7 +492,7 @@ export default function VehicleInvestigationTimeline({ vehicleId, legacyTimeline
             )}
             {refinements.map((r) => <ActivePill key={r.key} label={r.label} value={r.value} onClear={r.clear} />)}
             {anyFilter && (
-              <button type="button" onClick={resetAll} className="ml-1 text-xs font-semibold text-slate-400 underline-offset-2 hover:text-slate-600 hover:underline">
+              <button type="button" onClick={resetAll} className="ms-1 text-xs font-semibold text-slate-400 underline-offset-2 hover:text-slate-600 hover:underline">
                 Clear all
               </button>
             )}

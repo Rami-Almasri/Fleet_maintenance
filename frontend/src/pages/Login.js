@@ -2,9 +2,15 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { homePathForRoles } from '../config/access';
+import { useI18n } from '../i18n/I18nContext';
+import LanguageToggle from '../components/LanguageToggle';
+
+// Feature chips under the sign-in form. Keys resolve against `login.chips.*`.
+const CHIPS = ['vehicles', 'maintenance', 'contracts', 'dataHealth'];
 
 export default function Login() {
   const { login } = useAuth();
+  const { t } = useI18n();
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -26,7 +32,7 @@ export default function Login() {
       // never render an object as a React child.
       let msg = err.response?.data?.msg;
       if (msg && typeof msg === 'object') msg = Object.values(msg).flat()[0];
-      setError(msg || 'Login failed. Check your credentials.');
+      setError(msg || t('login.failed'));
     } finally {
       setLoading(false);
     }
@@ -82,15 +88,15 @@ export default function Login() {
       />
       {/* Aurora blobs */}
       <div
-        className="fv-anim pointer-events-none absolute -left-40 -top-40 h-[38rem] w-[38rem] rounded-full blur-3xl"
+        className="fv-anim pointer-events-none absolute -start-40 -top-40 h-[38rem] w-[38rem] rounded-full blur-3xl"
         style={{ background: 'radial-gradient(circle, rgba(250,204,21,0.20), transparent 62%)', animation: 'fv-aurora 18s ease-in-out infinite' }}
       />
       <div
-        className="fv-anim pointer-events-none absolute -bottom-48 -right-32 h-[42rem] w-[42rem] rounded-full blur-3xl"
+        className="fv-anim pointer-events-none absolute -bottom-48 -end-32 h-[42rem] w-[42rem] rounded-full blur-3xl"
         style={{ background: 'radial-gradient(circle, rgb(var(--brand-500) / 0.34), transparent 60%)', animation: 'fv-aurora 22s ease-in-out infinite reverse' }}
       />
       <div
-        className="fv-anim pointer-events-none absolute left-[62%] top-2/3 h-96 w-96 rounded-full blur-3xl"
+        className="fv-anim pointer-events-none absolute start-[62%] top-2/3 h-96 w-96 rounded-full blur-3xl"
         style={{ background: 'radial-gradient(circle, rgb(var(--accent-500) / 0.16), transparent 65%)', animation: 'fv-aurora 26s ease-in-out infinite' }}
       />
       {/* Moving grid */}
@@ -141,6 +147,12 @@ export default function Login() {
       {/* Top hairline glow */}
       <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[#facc15]/40 to-transparent" />
 
+      {/* Language switch — must be reachable BEFORE signing in, otherwise an
+          Arabic speaker has no way to read the login form. */}
+      <div className="absolute end-4 top-4 z-10 sm:end-6 sm:top-6">
+        <LanguageToggle />
+      </div>
+
       {/* ---- Card ---- */}
       <div className="relative w-full max-w-md animate-fade-in-up">
         {/* Gradient border wrapper */}
@@ -171,10 +183,10 @@ export default function Login() {
                   />
                 </div>
                 <h1 className="mt-5 font-display text-3xl font-bold tracking-tight">
-                  Welcome to <span className="text-[#facc15]">Faster</span>
+                  {t('login.welcome')} <span className="text-[#facc15]">Faster</span>
                 </h1>
                 <p className="mt-2 text-sm text-white/60">
-                  Sign in to your fleet command center.
+                  {t('login.subtitle')}
                 </p>
               </div>
 
@@ -187,9 +199,9 @@ export default function Login() {
                 )}
 
                 <div>
-                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-white/50">Email</label>
+                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-white/50">{t('login.email')}</label>
                   <div className="relative">
-                    <span className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-white/40">
+                    <span className="pointer-events-none absolute start-3.5 top-1/2 -translate-y-1/2 text-white/40">
                       <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.6"><rect x="3" y="5" width="18" height="14" rx="2" /><path strokeLinecap="round" strokeLinejoin="round" d="m3 7 9 6 9-6" /></svg>
                     </span>
                     <input
@@ -198,16 +210,16 @@ export default function Login() {
                       onChange={(e) => setEmail(e.target.value)}
                       required
                       autoFocus
-                      className="w-full rounded-xl border border-white/10 bg-white/5 py-3 pl-11 pr-3.5 text-sm text-white placeholder-white/30 outline-none transition focus:border-[#facc15]/60 focus:bg-white/10 focus:ring-4 focus:ring-[#facc15]/15"
+                      className="w-full rounded-xl border border-white/10 bg-white/5 py-3 ps-11 pe-3.5 text-sm text-white placeholder-white/30 outline-none transition focus:border-[#facc15]/60 focus:bg-white/10 focus:ring-4 focus:ring-[#facc15]/15"
                       placeholder="you@example.com"
                     />
                   </div>
                 </div>
 
                 <div>
-                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-white/50">Password</label>
+                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-white/50">{t('login.password')}</label>
                   <div className="relative">
-                    <span className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-white/40">
+                    <span className="pointer-events-none absolute start-3.5 top-1/2 -translate-y-1/2 text-white/40">
                       <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.6"><rect x="4" y="11" width="16" height="10" rx="2" /><path strokeLinecap="round" strokeLinejoin="round" d="M8 11V7a4 4 0 1 1 8 0v4" /></svg>
                     </span>
                     <input
@@ -215,14 +227,14 @@ export default function Login() {
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       required
-                      className="w-full rounded-xl border border-white/10 bg-white/5 py-3 pl-11 pr-11 text-sm text-white placeholder-white/30 outline-none transition focus:border-[#facc15]/60 focus:bg-white/10 focus:ring-4 focus:ring-[#facc15]/15"
+                      className="w-full rounded-xl border border-white/10 bg-white/5 py-3 ps-11 pe-11 text-sm text-white placeholder-white/30 outline-none transition focus:border-[#facc15]/60 focus:bg-white/10 focus:ring-4 focus:ring-[#facc15]/15"
                       placeholder="••••••••"
                     />
                     <button
                       type="button"
                       onClick={() => setShow((v) => !v)}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-white/40 transition hover:bg-white/10 hover:text-white/80"
-                      title={show ? 'Hide password' : 'Show password'}
+                      className="absolute end-2 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-white/40 transition hover:bg-white/10 hover:text-white/80"
+                      title={show ? t('login.hidePassword') : t('login.showPassword')}
                     >
                       {show ? (
                         <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.7"><path strokeLinecap="round" strokeLinejoin="round" d="M3 3l18 18M10.6 10.6a2 2 0 0 0 2.8 2.8M9.9 4.2A9.8 9.8 0 0 1 12 4c5 0 9 4.5 9 8a12 12 0 0 1-2.2 3.3M6.6 6.6A12 12 0 0 0 3 12c0 3.5 4 8 9 8a9.6 9.6 0 0 0 3.4-.6" /></svg>
@@ -244,21 +256,21 @@ export default function Login() {
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z" />
                       </svg>
-                      Signing in…
+                      {t('login.signingIn')}
                     </>
                   ) : (
                     <>
-                      Sign in
-                      <svg className="h-4 w-4 transition-transform group-hover:translate-x-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2"><path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14m-6-6 6 6-6 6" /></svg>
+                      {t('login.signIn')}
+                      <svg className="h-4 w-4 transition-transform group-hover:translate-x-0.5 rtl:-scale-x-100" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2"><path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14m-6-6 6 6-6 6" /></svg>
                     </>
                   )}
                 </button>
               </form>
 
               <div className="mt-7 flex flex-wrap items-center justify-center gap-2">
-                {['Vehicles', 'Maintenance', 'Contracts', 'Data Health'].map((t) => (
-                  <span key={t} className="rounded-full bg-white/5 px-2.5 py-1 text-[11px] font-medium text-white/55 ring-1 ring-inset ring-white/10">
-                    {t}
+                {CHIPS.map((c) => (
+                  <span key={c} className="rounded-full bg-white/5 px-2.5 py-1 text-[11px] font-medium text-white/55 ring-1 ring-inset ring-white/10">
+                    {t(`login.chips.${c}`)}
                   </span>
                 ))}
               </div>
@@ -267,7 +279,7 @@ export default function Login() {
         </div>
 
         <p className="mt-6 text-center text-xs text-white/35">
-          © {new Date().getFullYear()} Faster · Fleet Maintenance
+          {t('login.footer', { year: new Date().getFullYear() })}
         </p>
       </div>
     </div>

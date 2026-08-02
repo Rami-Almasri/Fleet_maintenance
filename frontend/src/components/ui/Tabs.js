@@ -60,7 +60,7 @@ export default function Tabs({ tabs, active, onChange, className = '', ariaLabel
             {t.icon && <span className={selected ? 'text-indigo-500' : 'text-slate-400 group-hover:text-slate-500'}>{t.icon}</span>}
             {t.label}
             {t.badge != null && t.badge !== '' && (
-              <span className={`ml-0.5 rounded-full px-1.5 py-0.5 text-[11px] font-semibold tabular-nums ${
+              <span className={`ms-0.5 rounded-full px-1.5 py-0.5 text-[11px] font-semibold tabular-nums ${
                 selected ? 'bg-indigo-50 text-indigo-600' : 'bg-slate-100 text-slate-500'
               }`}>
                 {t.badge}

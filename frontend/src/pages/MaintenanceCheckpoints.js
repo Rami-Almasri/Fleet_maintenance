@@ -293,12 +293,12 @@ export default function MaintenanceCheckpoints() {
         {/* Toolbar */}
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative flex-1 min-w-[220px]">
-            <Icon.Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <Icon.Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="Search vehicle, workshop or responsible…"
-              className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-none transition focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10"
+              className="w-full rounded-lg border border-slate-200 bg-white py-2 ps-9 pe-3 text-sm outline-none transition focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10"
             />
           </div>
           <select
@@ -330,7 +330,7 @@ export default function MaintenanceCheckpoints() {
             <div className="overflow-x-auto">
               <table className="w-full min-w-[1080px] text-sm">
                 <thead>
-                  <tr className="border-b border-slate-100 bg-slate-50/60 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                  <tr className="border-b border-slate-100 bg-slate-50/60 text-start text-[11px] font-semibold uppercase tracking-wide text-slate-400">
                     <th className="px-4 py-2.5">Vehicle</th>
                     <th className="px-4 py-2.5">Problem</th>
                     <th className="px-4 py-2.5">Workshop</th>
@@ -339,7 +339,7 @@ export default function MaintenanceCheckpoints() {
                     <th className="px-4 py-2.5">Progress</th>
                     <th className="px-4 py-2.5">Last checkpoint</th>
                     <th className="px-4 py-2.5">Responsible</th>
-                    <th className="px-4 py-2.5 text-right">Action</th>
+                    <th className="px-4 py-2.5 text-end">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
@@ -365,7 +365,7 @@ export default function MaintenanceCheckpoints() {
                         {(r.responsible || []).slice(0, 2).map((u) => u.name).join(', ') || '—'}
                         {(r.responsible || []).length > 2 ? ` +${r.responsible.length - 2}` : ''}
                       </td>
-                      <td className="px-4 py-3 text-right">
+                      <td className="px-4 py-3 text-end">
                         <button
                           type="button"
                           disabled={opening === `${r.source}-${r.ticket_id ?? r.contract_id}`}

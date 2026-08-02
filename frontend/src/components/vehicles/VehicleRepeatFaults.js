@@ -97,7 +97,7 @@ function Episode({ node, index, total, tone, showFinancials }) {
           : <Icon.Invoice className="h-3.5 w-3.5 shrink-0 text-indigo-400" />}
         <span className="truncate">{node.contract_no ? `#${node.contract_no}` : 'During rental'}</span>
         {node.visits > 1 && (
-          <span className="ml-auto shrink-0 rounded bg-slate-900/5 px-1 text-[10px] font-black tabular-nums text-slate-500">
+          <span className="ms-auto shrink-0 rounded bg-slate-900/5 px-1 text-[10px] font-black tabular-nums text-slate-500">
             ×{node.visits}
           </span>
         )}
@@ -109,7 +109,7 @@ function Episode({ node, index, total, tone, showFinancials }) {
     </>
   );
 
-  const shell = 'block w-full rounded-xl border-l-[3px] bg-white px-2.5 py-2 text-left shadow-sm ring-1 transition '
+  const shell = 'block w-full rounded-xl border-l-[3px] bg-white px-2.5 py-2 text-start shadow-sm ring-1 transition '
     + (isRental
       ? 'border-l-slate-300 text-slate-700 ring-slate-200/70'
       : 'border-l-indigo-500 text-indigo-900 ring-slate-200/70 hover:-translate-y-px hover:shadow-md hover:ring-indigo-300');
@@ -136,9 +136,8 @@ function Episode({ node, index, total, tone, showFinancials }) {
           ? <Link to={`/contracts/${node.contract_id}`} className={shell}>{card}</Link>
           : <div className={shell}>{card}</div>}
 
-        {/* Which system recorded this step. Ticket steps deep-link to the ticket; a step still
-            waiting to reach a garage is called out, because that is the live one. */}
-        {(node.ticket_ids?.length > 0 || node.pending) && (
+        {/* Which system recorded this step. Ticket steps deep-link to the ticket. */}
+        {node.ticket_ids?.length > 0 && (
           <div className="mt-1 flex flex-wrap items-center gap-1">
             {(node.ticket_ids || []).slice(0, 2).map((id) => (
               <Link
@@ -150,14 +149,6 @@ function Episode({ node, index, total, tone, showFinancials }) {
                 <Icon.Wrench className="h-2.5 w-2.5" />T-{id}
               </Link>
             ))}
-            {node.pending && (
-              <span
-                title="Reported on a ticket — the car has not gone to a garage for it yet."
-                className="rounded bg-amber-50 px-1.5 py-px text-[10px] font-bold uppercase tracking-wide text-amber-700 ring-1 ring-inset ring-amber-200"
-              >
-                Not in shop yet
-              </span>
-            )}
           </div>
         )}
       </div>
@@ -207,9 +198,9 @@ function Fault({ fault, showFinancials }) {
   ].filter(Boolean);
 
   return (
-    <div className="relative py-4 pl-5 pr-5">
+    <div className="relative py-4 ps-5 pe-5">
       {/* Severity stripe — the whole row is graded by how many times it came back. */}
-      <span className={`absolute inset-y-4 left-0 w-1 rounded-r-full ${tone.stripe}`} />
+      <span className={`absolute inset-y-4 start-0 w-1 rounded-e-full ${tone.stripe}`} />
 
       <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
         <span className={`inline-flex h-7 items-center rounded-lg px-2.5 text-[13px] font-black tabular-nums text-white shadow-sm ${tone.badge}`}>
@@ -225,7 +216,7 @@ function Fault({ fault, showFinancials }) {
         )}
         {fault.hint && <span className="text-xs font-medium text-slate-400">{fault.hint}</span>}
 
-        <span className="ml-auto whitespace-nowrap text-xs text-slate-400">
+        <span className="ms-auto whitespace-nowrap text-xs text-slate-400">
           Last <span className="font-semibold text-slate-600">{fmtDate(fault.last_seen)}</span>
           <span className="text-slate-300"> · </span>
           {fault.days_since_last === 0 ? 'today' : `${plural(fault.days_since_last, 'day')} ago`}
@@ -283,9 +274,11 @@ function Fault({ fault, showFinancials }) {
 }
 
 /** The card shell, so the loading / error / all-clear states sit in the same frame as the real thing. */
+// id="repeat-faults" is a deep-link anchor: the Recurring Faults analytics ("Cars that keep coming
+// back") links straight here with ?focus=repeat-faults. scroll-mt clears the sticky app header + tabs.
 function Shell({ children, header }) {
   return (
-    <div className="overflow-hidden rounded-2xl border border-slate-200/60 bg-white shadow-soft">
+    <div id="repeat-faults" className="scroll-mt-32 overflow-hidden rounded-2xl border border-slate-200/60 bg-white shadow-soft">
       {header}
       {children}
     </div>
@@ -346,7 +339,7 @@ export default function VehicleRepeatFaults({ vehicleId, showFinancials = false 
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 bg-gradient-to-r from-slate-900 via-slate-900 to-red-900/90 px-5 py-4">
           <span className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/10 ring-1 ring-inset ring-white/15">
             <Icon.Refresh className="h-[18px] w-[18px] text-red-300" />
-            <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-slate-900" />
+            <span className="absolute -end-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-slate-900" />
           </span>
           <div className="min-w-0">
             <h3 className="truncate text-base font-bold tracking-tight text-white">Keeps breaking down</h3>
@@ -354,7 +347,7 @@ export default function VehicleRepeatFaults({ vehicleId, showFinancials = false 
               The same faults return after each fix — every step below is a real record
             </p>
           </div>
-          <span className="ml-auto inline-flex shrink-0 items-baseline gap-1.5 rounded-full bg-white/10 px-3 py-1.5 ring-1 ring-inset ring-white/15">
+          <span className="ms-auto inline-flex shrink-0 items-baseline gap-1.5 rounded-full bg-white/10 px-3 py-1.5 ring-1 ring-inset ring-white/15">
             <span className="text-lg font-black leading-none tabular-nums text-white">{num(summary.returns)}</span>
             <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-300">
               {Number(summary.returns) === 1 ? 'return' : 'returns'}

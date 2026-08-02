@@ -13,30 +13,23 @@ import { Select } from '../components/ui/Field';
 import ContractsAnalytics from '../components/analytics/ContractsAnalytics';
 import { aed2, fmtDate, num } from '../lib/format';
 import { SHOW_FINANCIALS } from '../config/features';
+import { useI18n } from '../i18n/I18nContext';
 
 const SERVER_PAGE = 50;
 
 const TYPES = [
-  { value: '', label: 'All types' },
-  { value: 'C', label: 'Rental' },
-  { value: 'U', label: 'Maintenance' },
-  { value: 'R', label: 'Booking' },
+  { value: '', key: 'all' }, { value: 'C', key: 'rental' },
+  { value: 'U', key: 'maintenance' }, { value: 'R', key: 'booking' },
 ];
 const STATES = [
-  { value: '', label: 'All states' },
-  { value: 'open', label: 'Open' },
-  { value: 'closed', label: 'Closed' },
+  { value: '', key: 'all' }, { value: 'open', key: 'open' }, { value: 'closed', key: 'closed' },
 ];
 const BALANCES = [
-  { value: '', label: 'Any balance' },
-  { value: 'owes', label: 'Owes (balance > 0)' },
-  { value: 'credit', label: 'Credit (overpaid)' },
-  { value: 'settled', label: 'Settled (0)' },
+  { value: '', key: 'any' }, { value: 'owes', key: 'owes' },
+  { value: 'credit', key: 'credit' }, { value: 'settled', key: 'settled' },
 ];
 const SERIALS = [
-  { value: '', label: 'Any serial' },
-  { value: 'present', label: 'Has serial' },
-  { value: 'missing', label: 'No serial' },
+  { value: '', key: 'any' }, { value: 'present', key: 'present' }, { value: 'missing', key: 'missing' },
 ];
 
 const balTone = (b) => {
@@ -47,6 +40,7 @@ const balTone = (b) => {
 };
 
 export default function Contracts() {
+  const { t } = useI18n();
   const [page, setPage] = useState(1);
   const [type, setType] = useState('');
   const [state, setState] = useState('');
@@ -87,13 +81,13 @@ export default function Contracts() {
 
   const columns = [
     {
-      key: 'contract', header: 'Contract', cellClass: 'font-medium',
+      key: 'contract', header: t('contracts.col.contract'), cellClass: 'font-medium',
       render: (c) => (
         <Link to={`/contracts/${c.id}`} className="text-indigo-600 hover:text-indigo-700">#{c.contract_no || c.id}</Link>
       ),
     },
     {
-      key: 'customer', header: 'Customer',
+      key: 'customer', header: t('contracts.col.customer'),
       render: (c) => (
         c.customer ? (
           <Link to={`/customers/${c.customer_id}`} className="block hover:text-indigo-700">
@@ -104,7 +98,7 @@ export default function Contracts() {
       ),
     },
     {
-      key: 'vehicle', header: 'Vehicle',
+      key: 'vehicle', header: t('contracts.col.vehicle'),
       render: (c) => (
         c.vehicle ? (
           <div>
@@ -115,21 +109,21 @@ export default function Contracts() {
       ),
     },
     {
-      key: 'type', header: 'Type', tooltip: 'C = Rental · U = Maintenance · R = Booking.',
+      key: 'type', header: t('contracts.col.type'), tooltip: t('contracts.tip.type'),
       render: (c) => <ContractTypeBadge type={c.contract_type} />,
     },
     {
-      key: 'state', header: 'State', tooltip: 'Lifecycle state of the contract (open = vehicle still out, closed = returned).',
+      key: 'state', header: t('contracts.col.state'), tooltip: t('contracts.tip.state'),
       render: (c) => <ContractStateBadge state={c.state} />,
     },
     {
-      key: 'out_date', header: 'Out Date', cellClass: 'text-slate-500',
+      key: 'out_date', header: t('contracts.col.outDate'), cellClass: 'text-slate-500',
       render: (c) => fmtDate(c.out_date),
     },
     // Balance column — financials only.
     ...(SHOW_FINANCIALS ? [{
-      key: 'balance', header: 'Balance', align: 'right', cellClass: 'tabular-nums',
-      tooltip: 'Outstanding amount: positive = customer owes, negative = credit/overpaid.',
+      key: 'balance', header: t('contracts.col.balance'), align: 'right', cellClass: 'tabular-nums',
+      tooltip: t('contracts.tip.balance'),
       render: (c) => <Badge tone={balTone(c.contract_balance)}>{aed2(c.contract_balance)}</Badge>,
     }] : []),
   ];
@@ -137,7 +131,7 @@ export default function Contracts() {
   return (
     <div className="py-8">
       <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
-        <PageHeader title="Contracts" subtitle="Every vehicle movement — rentals, maintenance, transfers.">
+        <PageHeader title={t('contracts.title')} subtitle={t('contracts.subtitle')}>
           <Link to="/contracts/new">
             <Button>
               <Icon.Plus className="h-4 w-4" />
@@ -156,33 +150,33 @@ export default function Contracts() {
         )}
 
         <SectionCard
-          title="All contracts"
-          subtitle={total != null ? `${num(total)} total` : undefined}
+          title={t('contracts.allTitle')}
+          subtitle={total != null ? t('contracts.total', { n: num(total) }) : undefined}
           actions={
             <span className="inline-flex items-center gap-1 text-xs text-slate-400">
               <Icon.Filter className="h-3.5 w-3.5" />
-              Type / state / balance
-              <InfoTip content="Filters and search run server-side; results are paginated below." />
+              {t('contracts.filterHint')}
+              <InfoTip content={t('contracts.filterTip')} />
             </span>
           }
           bodyClass="space-y-4 p-4 sm:p-5"
         >
           {/* Filters — KEEP every control working exactly as before */}
           <div className="flex flex-col gap-3 lg:flex-row">
-            <SearchInput className="flex-1" value={searchInput} onChange={setSearchInput} placeholder="Search contract no., plate, VIN or customer…" />
+            <SearchInput className="flex-1" value={searchInput} onChange={setSearchInput} placeholder={t('contracts.searchPlaceholder')} />
             <Select className="lg:w-44" value={type} onChange={onType}>
-              {TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+              {TYPES.map((o) => <option key={o.value} value={o.value}>{t(`contracts.type.${o.key}`)}</option>)}
             </Select>
             <Select className="lg:w-40" value={state} onChange={onState}>
-              {STATES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+              {STATES.map((o) => <option key={o.value} value={o.value}>{t(`contracts.state.${o.key}`)}</option>)}
             </Select>
             {SHOW_FINANCIALS && (
               <Select className="lg:w-48" value={balance} onChange={onBalance}>
-                {BALANCES.map((b) => <option key={b.value} value={b.value}>{b.label}</option>)}
+                {BALANCES.map((o) => <option key={o.value} value={o.value}>{t(`contracts.balance.${o.key}`)}</option>)}
               </Select>
             )}
             <Select className="lg:w-44" value={serial} onChange={onSerial}>
-              {SERIALS.map((n) => <option key={n.value} value={n.value}>{n.label}</option>)}
+              {SERIALS.map((o) => <option key={o.value} value={o.value}>{t(`contracts.serial.${o.key}`)}</option>)}
             </Select>
           </div>
 
@@ -194,7 +188,7 @@ export default function Contracts() {
             skeletonRows={8}
             // subtle highlight for contracts that owe money (positive balance) — financials only
             highlightRow={(c) => SHOW_FINANCIALS && Number(c.contract_balance || 0) > 0}
-            empty="No contracts match these filters. Try clearing the type, state or search."
+            empty={t('contracts.empty')}
           />
 
           {!loading && rows.length > 0 && (

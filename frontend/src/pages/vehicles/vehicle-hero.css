@@ -126,7 +126,7 @@
   text-shadow: 0 0 18px rgba(34, 211, 238, 0.35);
   line-height: 1.15;
 }
-.vhero-stat .num .unit { font-size: 11px; font-weight: 600; color: #93a7cd; margin-left: 3px; letter-spacing: 0; text-shadow: none; }
+.vhero-stat .num .unit { font-size: 11px; font-weight: 600; color: #93a7cd; margin-inline-start: 3px; letter-spacing: 0; text-shadow: none; }
 
 /* health LED row */
 .vhero-led { display: inline-flex; align-items: center; gap: 7px; font-size: 11.5px; color: #aebcda; }

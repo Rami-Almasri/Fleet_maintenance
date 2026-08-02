@@ -11,7 +11,7 @@
 // blanking the UI. {var} tokens are interpolated from the second argument.
 
 import { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react';
-import { LABELS, LANGS } from './labels';
+import { LABELS, LANGS, PHRASES } from './labels';
 
 const STORAGE_KEY = 'fv:lang';
 const I18nContext = createContext(null);
@@ -51,11 +51,29 @@ export function I18nProvider({ children }) {
     setLangState((cur) => (cur === 'en' ? 'ar' : 'en'));
   }, []);
 
+  // Two kinds of key are supported, checked in this order:
+  //
+  //   1. PHRASE keys — the English sentence itself:  t('Save changes')
+  //      Looked up in the flat PHRASES[lang] map. English needs no entry: an
+  //      untranslated phrase falls through to step 3 and renders the key, which
+  //      IS the correct English. This is how the bulk of the app is localized —
+  //      the English stays the source text and only Arabic is ever added.
+  //
+  //   2. DOT-PATH keys — a namespaced label:  t('vehicles.registry')
+  //      Resolved against the nested LABELS tree, English fallback, as before.
+  //      Used where one string needs per-context wording or plural forms.
+  //
+  //   3. Neither found → return the key untouched.
+  //
+  // Phrases are checked first and by exact match, so a sentence containing a '.'
+  // is never mistaken for a dot-path.
   const t = useCallback(
     (key, vars) => {
+      const phrase = PHRASES[lang]?.[key];
+      if (phrase !== undefined) return interpolate(phrase, vars);
       const hit = resolve(LABELS[lang], key);
       const val = hit !== undefined ? hit : resolve(LABELS.en, key);
-      if (val === undefined) return key; // last-resort: show the key, never blank
+      if (val === undefined) return interpolate(key, vars); // the key IS the English
       return interpolate(val, vars);
     },
     [lang],

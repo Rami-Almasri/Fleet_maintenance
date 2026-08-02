@@ -237,7 +237,7 @@ export default function LineItemsEditor({
                         <div className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-100/70 px-2.5 py-2 text-sm text-slate-600">
                           <Icon.Check className="h-3.5 w-3.5 text-emerald-500" />
                           <span>{categoryLabel(r.category_key)}</span>
-                          <span className="ml-auto text-[10px] uppercase tracking-wide text-slate-400">{t('workflow.lineItem.categoryAuto')}</span>
+                          <span className="ms-auto text-[10px] uppercase tracking-wide text-slate-400">{t('workflow.lineItem.categoryAuto')}</span>
                         </div>
                       ) : (
                         <select
@@ -335,7 +335,7 @@ export default function LineItemsEditor({
           <span>{t('workflow.lineItem.partsTotal')}: <span className="font-semibold tabular-nums text-slate-200">{money(partsTotal)}</span></span>
           <span>{t('workflow.lineItem.laborTotal')}: <span className="font-semibold tabular-nums text-slate-200">{money(laborTotal)}</span></span>
         </div>
-        <div className="flex items-baseline gap-2 border-l border-white/10 pl-5">
+        <div className="flex items-baseline gap-2 border-s border-white/10 ps-5">
           <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">{t('workflow.lineItem.grandTotal')}</span>
           <span className="text-2xl font-bold tabular-nums text-white">{money(grandTotal)}</span>
         </div>

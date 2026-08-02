@@ -47,13 +47,27 @@ class RecurringFaultReviewController extends Controller
     /**
      * GET /recurring-fault-reviews/stats — fleet-wide analytics for the dashboard charts.
      *
-     * Intentionally takes no filters: the table answers "what must I rule on now", these charts answer
-     * "how is rework trending across the fleet". See RecurringFaultService::stats().
+     * Takes no case filters: the table answers "what must I rule on now", these charts answer "how is
+     * rework trending across the fleet". The exceptions are the two independent date windows — `faults_*`
+     * and `cars_*` — which scope the "keeps coming back" rankings by when the case was opened. See
+     * RecurringFaultService::stats(). Everything else stays all-time whatever is sent.
      */
-    public function stats()
+    public function stats(Request $request)
     {
         try {
-            return ResponseHelper::SuccessResponse($this->service->stats(), 'Recurring fault stats retrieved');
+            $w = $request->validate([
+                'faults_days' => ['nullable', 'integer', 'min:0', 'max:3650'],
+                'faults_from' => ['nullable', 'date'],
+                'faults_to'   => ['nullable', 'date'],
+                'cars_days'   => ['nullable', 'integer', 'min:0', 'max:3650'],
+                'cars_from'   => ['nullable', 'date'],
+                'cars_to'     => ['nullable', 'date'],
+            ]);
+
+            return ResponseHelper::SuccessResponse($this->service->stats(
+                ['days' => $w['faults_days'] ?? null, 'from' => $w['faults_from'] ?? null, 'to' => $w['faults_to'] ?? null],
+                ['days' => $w['cars_days'] ?? null,   'from' => $w['cars_from'] ?? null,   'to' => $w['cars_to'] ?? null],
+            ), 'Recurring fault stats retrieved');
         } catch (\Throwable $e) {
             return ResponseHelper::fromException($e);
         }

@@ -270,7 +270,7 @@ export const inboxCategoryOf = (n) => n?.group || TYPE_TO_INBOX[n?.type] || 'oth
 //   • Inspector (Abu Maroof · maintenance.initiate):
 //       Complaints · Awaiting Test · Re-inspect · Car Received
 //   • Supervisor / Drivers (Waleed & Abdullah · delegate / logistics / checkpoint):
-//       Assignments · Assign Garage · Pickup / Dropoff
+//       Checkpoint · Assign Garage · Pickup / Dropoff
 //   • Controller (Lin · maintenance.manage):
 //       Test Approvals · Test Interrupted
 // Managers / super-admins hold every permission and therefore see every lane.
@@ -338,11 +338,11 @@ export const LANES = [
   {
     key: 'assignments',
     group: 'workshop',
-    label: 'Assignments',
+    label: 'Checkpoint',
     icon: 'wrench',
     permission: 'maintenance.checkpoint.manage',
     blurb: 'Cars in the workshop that need you — progress updates owed',
-    empty: 'No open assignments',
+    empty: 'No checkpoints owed',
     types: ['maint_checkpoint'],
   },
   {

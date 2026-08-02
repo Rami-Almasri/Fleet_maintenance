@@ -201,10 +201,10 @@ export default function MaintenanceOperationsDrawer({ vehicleId, onClose }) {
             {cps.length === 0 ? (
               <p className="text-sm text-slate-400">No progress updates filed yet.</p>
             ) : (
-              <ol className="relative space-y-3 border-l border-slate-200 pl-4">
+              <ol className="relative space-y-3 border-s border-slate-200 ps-4">
                 {cps.map((c) => (
                   <li key={c.id} className="relative">
-                    <span className="absolute -left-[21px] top-1 h-2.5 w-2.5 rounded-full bg-indigo-400 ring-2 ring-white" />
+                    <span className="absolute -start-[21px] top-1 h-2.5 w-2.5 rounded-full bg-indigo-400 ring-2 ring-white" />
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-sm font-medium text-slate-700">{c.status ? c.status.replace(/_/g, ' ') : 'Update'}</span>
                       <span className="text-[11px] text-slate-400">{c.created_at ? fmtAgo(c.created_at) : ''}</span>

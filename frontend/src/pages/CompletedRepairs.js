@@ -348,12 +348,12 @@ export default function CompletedRepairs() {
             )}
 
             <div className="relative ms-auto min-w-[240px] flex-1 sm:max-w-xs">
-              <Icon.Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <Icon.Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder={t('completedRepairs.searchPlaceholder')}
-                className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-10 pr-4 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                className="w-full rounded-xl border border-slate-200 bg-white py-2 ps-10 pe-4 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
               />
             </div>
 
@@ -425,7 +425,7 @@ function StatTile({ icon, tone = 'slate', value, label, small, active, onClick }
     <Tag
       type={onClick ? 'button' : undefined}
       onClick={onClick}
-      className={`flex items-center gap-3 rounded-2xl border bg-white px-4 py-3.5 text-left shadow-soft transition ${
+      className={`flex items-center gap-3 rounded-2xl border bg-white px-4 py-3.5 text-start shadow-soft transition ${
         active ? 'border-rose-300 ring-2 ring-rose-100' : 'border-slate-200/60'
       } ${onClick ? 'cursor-pointer hover:border-slate-300 hover:shadow-md' : ''}`}
     >
@@ -456,7 +456,7 @@ function RepairCard({ tk, t, visits, isOpen, onToggle }) {
       <div className="flex">
         <span className="w-1 shrink-0 bg-emerald-500" />
         <div className="min-w-0 flex-1">
-          <button type="button" onClick={onToggle} className="w-full px-5 py-4 text-left">
+          <button type="button" onClick={onToggle} className="w-full px-5 py-4 text-start">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="flex min-w-0 gap-3">
                 <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600">
@@ -520,7 +520,7 @@ function RepairCard({ tk, t, visits, isOpen, onToggle }) {
               </div>
 
               <div className="flex shrink-0 items-start gap-3">
-                <div className="text-right">
+                <div className="text-end">
                   <p className="text-sm font-semibold text-slate-800">{fmtDate(closed)}</p>
                   <p className="text-xs text-slate-400">{ago(closed)}</p>
                   {SHOW_FINANCIALS && tk.cost != null && (
@@ -719,7 +719,7 @@ function MiniFact({ icon, label, value }) {
 function ChainStep({ label, name, at, sub, last }) {
   const done = Boolean(name || at);
   return (
-    <li className="relative flex gap-3 pl-1">
+    <li className="relative flex gap-3 ps-1">
       <span className="mt-1 flex flex-col items-center">
         <span className={`h-2.5 w-2.5 rounded-full ${done ? 'bg-emerald-500' : 'bg-slate-300'}`} />
         {!last && <span className="mt-0.5 h-6 w-px bg-slate-200" />}
@@ -738,7 +738,7 @@ function FactRow({ label, value }) {
   return (
     <div className="flex items-baseline justify-between gap-4">
       <dt className="text-slate-400">{label}</dt>
-      <dd className="text-right font-medium text-slate-700">{value || <span className="text-slate-300">—</span>}</dd>
+      <dd className="text-end font-medium text-slate-700">{value || <span className="text-slate-300">—</span>}</dd>
     </div>
   );
 }

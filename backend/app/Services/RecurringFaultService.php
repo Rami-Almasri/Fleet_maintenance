@@ -9,6 +9,7 @@ use App\Models\RepairInspection;
 use App\Models\User;
 use App\Models\Vehicle;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 
 /**
  * Recurring-Fault Intelligence — detects a vehicle returning with the SAME confirmed problem after a
@@ -231,8 +232,21 @@ class RecurringFaultService
      * ~100% "awaiting a ruling" whenever the page sits on its default `open` filter.
      *
      * Every number here is a FACT counted from recurring_fault_reviews — no scoring, no inference.
+     *
+     * The two "who keeps coming back" rankings each carry their OWN date window, applied to when the
+     * case was opened. They are the rankings that go stale: a brake batch replaced in March tops the
+     * all-time fault list months after it stopped recurring, and a car sold in spring stays on the
+     * worst-offenders list forever. Each window scopes its own ranking and nothing else — the KPIs, the
+     * 12-month trend, the speed histogram and the garage roll-up stay all-time whatever is passed, so
+     * narrowing one panel can never move a number the reader is not looking at.
+     *
+     * @param array{days?:?int, from?:?string, to?:?string} $faultWindow scopes "faults that keep coming
+     *        back": trailing days (0/absent = all time), or an explicit from/to range which overrides
+     *        `days` when either end is set.
+     * @param array{days?:?int, from?:?string, to?:?string} $carWindow   the same, for "cars that keep
+     *        coming back". Independent of $faultWindow.
      */
-    public function stats(): array
+    public function stats(array $faultWindow = [], array $carWindow = []): array
     {
         $now         = Carbon::now();
         $windowStart = $now->copy()->startOfMonth()->subMonths(11); // 12 calendar months inclusive
@@ -266,10 +280,6 @@ class RecurringFaultService
                 : ($dayValues[$dayValues->count() / 2 - 1] + $dayValues[$dayValues->count() / 2]) / 2
         );
 
-        // The damning subset: the previous repair was signed off by a post-repair inspection and the fault
-        // STILL came back. That is a QC failure, not bad luck.
-        $verified = $rows->where('previous_result', RecurringFaultReview::RESULT_VERIFIED_FIXED)->count();
-
         // ── Trend: recurrences opened per calendar month (12 months, zero-filled) ──────────────────
         $byMonth = $rows->filter(fn ($r) => $r->opened_at && $r->opened_at->gte($windowStart))
             ->groupBy(fn ($r) => $r->opened_at->format('Y-m'));
@@ -301,6 +311,19 @@ class RecurringFaultService
             ? str_replace('_', ' ', (string) $r->category_key)
             : (trim((string) $r->symptom) ?: 'Unspecified');
 
+        // A rank is a number until you can see what it is made of. Both "keeps coming back" rankings
+        // carry a breakdown of the OTHER dimension — the cars behind a fault, the faults behind a car —
+        // so hovering a bar answers "made of what?" without opening anything. Top 4 plus a "+N more"
+        // count, the same shape the speed histogram already uses.
+        $breakdown = function (Collection $group, callable $key, callable $label) {
+            $ranked = $group->groupBy($key)
+                ->map(fn ($g) => ['label' => $label($g->first()), 'value' => $g->count()])
+                ->sortByDesc('value')
+                ->values();
+
+            return [$ranked->take(4)->all(), max(0, $ranked->count() - 4)];
+        };
+
         // ── How fast faults come back — the speed-of-failure histogram ─────────────────────────────
         // Each bar also carries WHICH faults returned in that window: a bucket of 9 is a shrug until you
         // see that 6 of them are the same brake noise.
@@ -317,19 +340,16 @@ class RecurringFaultService
                 && $r->days_since_repair > $floor
                 && $r->days_since_repair <= $b['max']);
 
-            $topFaults = $in->groupBy($faultKey)
-                ->map(fn ($g) => ['label' => $faultLabel($g->first()), 'value' => $g->count()])
-                ->sortByDesc('value')
-                ->values();
+            // How many distinct faults did NOT make the top-4 cut, so the tooltip can say "+3 more"
+            // instead of silently truncating.
+            [$topFaults, $moreFaults] = $breakdown($in, $faultKey, $faultLabel);
 
             $speed[] = [
                 'key'    => $b['key'],
                 'label'  => $b['label'],
                 'value'  => $in->count(),
-                'faults' => $topFaults->take(4)->all(),
-                // How many distinct faults did NOT make the top-4 cut, so the tooltip can say "+3 more"
-                // instead of silently truncating.
-                'more'   => max(0, $topFaults->count() - 4),
+                'faults' => $topFaults,
+                'more'   => $moreFaults,
             ];
             $floor = $b['max'];
         }
@@ -351,16 +371,27 @@ class RecurringFaultService
             ->all();
 
         // ── Cars that keep coming back ─────────────────────────────────────────────────────────────
-        $vehicles = $rows->filter(fn ($r) => $r->vehicle_id)
+        // Scoped by $carWindow, and ranked AFTER the window is applied — see the fault ranking below for
+        // why filtering an all-time top-8 would be the wrong shape.
+        $carWin  = $this->resolveWindow($carWindow, $now);
+        $carRows = $this->within($rows, $carWin);
+
+        $vehicles = $carRows->filter(fn ($r) => $r->vehicle_id)
             ->groupBy('vehicle_id')
-            ->map(function ($g, $vehicleId) {
+            ->map(function ($g, $vehicleId) use ($breakdown, $faultKey, $faultLabel) {
                 $v = $g->first()->vehicle;
+                // WHICH faults this car keeps coming back with. "4 cases" says a car is a problem;
+                // "3 of them the same AC fault" says what the problem IS.
+                [$faults, $more] = $breakdown($g, $faultKey, $faultLabel);
+
                 return [
                     'vehicle_id' => (int) $vehicleId,
                     'label'      => $v?->plate_no ?: '#' . $vehicleId,
                     'sub'        => trim(($v?->make ?? '') . ' ' . ($v?->model ?? '')) ?: null,
                     'value'      => $g->count(),
                     'open'       => $g->where('status', RecurringFaultReview::STATUS_OPEN)->count(),
+                    'faults'     => $faults,
+                    'more'       => $more,
                 ];
             })
             ->sortByDesc('value')
@@ -369,12 +400,28 @@ class RecurringFaultService
             ->all();
 
         // ── Which faults recur — category_key when the ontology tagged it, else the raw symptom ────
-        $faults = $rows->groupBy($faultKey)
-            ->map(fn ($g) => [
-                'label' => $faultLabel($g->first()),
-                'value' => $g->count(),
-                'cars'  => $g->pluck('vehicle_id')->filter()->unique()->count(),
-            ])
+        // Scoped by $faultWindow: the ranking is taken AFTER the window is applied, never by filtering
+        // an all-time top-8. A fault that is 9th over two years can be the worst thing in the fleet this
+        // month, and truncating first would hide it.
+        $faultWin  = $this->resolveWindow($faultWindow, $now);
+        $faultRows = $this->within($rows, $faultWin);
+
+        $carLabel = fn ($r) => $r->vehicle?->plate_no ?: ($r->vehicle_id ? '#' . $r->vehicle_id : 'Unknown car');
+
+        $faults = $faultRows->groupBy($faultKey)
+            ->map(function ($g) use ($breakdown, $carLabel, $faultLabel) {
+                // WHICH cars are behind this fault. "Brake failure, 10 cases" reads very differently
+                // once you see it is one car ten times rather than ten cars once each.
+                [$cars, $more] = $breakdown($g, fn ($r) => $r->vehicle_id ?: 0, $carLabel);
+
+                return [
+                    'label'     => $faultLabel($g->first()),
+                    'value'     => $g->count(),
+                    'cars'      => $g->pluck('vehicle_id')->filter()->unique()->count(),
+                    'top_cars'  => $cars,
+                    'cars_more' => $more,
+                ];
+            })
             ->sortByDesc('value')
             ->take(8)
             ->values()
@@ -388,9 +435,10 @@ class RecurringFaultService
                 'last_30_days'         => $last30,
                 'prev_30_days'         => $prev30,
                 'median_days'          => $medianDays,
-                'verified_fixed'       => $verified,
-                'verified_share'       => $total ? round($verified / $total * 100) : 0,
-                'repeat_vehicles'      => collect($vehicles)->where('value', '>', 1)->count(),
+                // Counted off ALL rows, never $carRows: a KPI that moved when someone narrowed the car
+                // ranking would be reporting a different fleet than the one it is labelled with.
+                'repeat_vehicles'      => $rows->filter(fn ($r) => $r->vehicle_id)
+                    ->groupBy('vehicle_id')->filter(fn ($g) => $g->count() > 1)->count(),
                 'window_days'          => $this->windowDays(),
             ],
             'trend'     => $trend,
@@ -399,10 +447,73 @@ class RecurringFaultService
             'garages'   => $garages,
             'vehicles'  => $vehicles,
             'faults'    => $faults,
+            // Echoed back so each panel can say what it is showing rather than silently ranking a subset.
+            'faults_window' => $this->windowMeta($faultWin, $faultRows),
+            'cars_window'   => $this->windowMeta($carWin, $carRows),
         ];
     }
 
     // ── Internals ──────────────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Resolve one panel's date window into concrete bounds.
+     *
+     * An explicit from/to range wins over the trailing-days preset — the picker sends both, and a stale
+     * `days` must not silently clip a range the user drew by hand. Dates are inclusive of their whole
+     * day, so picking the same day for both ends means "that day", not an empty window.
+     *
+     * @param  array{days?:?int, from?:?string, to?:?string} $in
+     * @return array{days:int, from:?Carbon, to:?Carbon}
+     */
+    private function resolveWindow(array $in, Carbon $now): array
+    {
+        $from = ($in['from'] ?? null) ? Carbon::parse($in['from'])->startOfDay() : null;
+        $to   = ($in['to'] ?? null) ? Carbon::parse($in['to'])->endOfDay() : null;
+
+        if ($from && $to && $from->gt($to)) {
+            [$from, $to] = [$to->copy()->startOfDay(), $from->copy()->endOfDay()];
+        }
+
+        if ($from || $to) {
+            return ['days' => 0, 'from' => $from, 'to' => $to];
+        }
+
+        $days = max(0, (int) ($in['days'] ?? 0));
+
+        return [
+            'days' => $days,
+            'from' => $days > 0 ? $now->copy()->subDays($days)->startOfDay() : null,
+            'to'   => null,
+        ];
+    }
+
+    /**
+     * The review cases that fall inside a resolved window. An unbounded window returns the rows
+     * untouched — a case with no opened_at is only dropped once someone actually asks for a date range.
+     *
+     * @param array{from:?Carbon, to:?Carbon} $w
+     */
+    private function within(Collection $rows, array $w): Collection
+    {
+        if (!$w['from'] && !$w['to']) {
+            return $rows;
+        }
+
+        return $rows->filter(fn ($r) => $r->opened_at
+            && (!$w['from'] || $r->opened_at->gte($w['from']))
+            && (!$w['to'] || $r->opened_at->lte($w['to'])));
+    }
+
+    /** What a panel's caption needs to describe the slice it is ranking. */
+    private function windowMeta(array $w, Collection $rows): array
+    {
+        return [
+            'days'  => $w['days'],
+            'from'  => $w['from']?->toDateString(),
+            'to'    => $w['to']?->toDateString(),
+            'cases' => $rows->count(),
+        ];
+    }
 
     /** Build + persist the review case from a detector match. */
     private function openReview(MaintenanceTask $fault, User $actor, array $match): RecurringFaultReview

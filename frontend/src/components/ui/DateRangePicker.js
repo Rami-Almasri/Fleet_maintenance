@@ -8,7 +8,7 @@
 //   to    — explicit range end   'YYYY-MM-DD'
 // Emits the full next state via onChange({ days, from, to }).
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import Icon from './Icon';
 
 // ── date helpers (no external lib; all local-time, date-only) ───────────────────
@@ -34,6 +34,11 @@ const TRAILING = [
 export default function DateRangePicker({ days, from, to, onChange }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
+  const panelRef = useRef(null);
+  // The panel is anchored to the trigger's end edge, which puts it off-screen whenever the trigger sits
+  // near the start of a narrow container (a picker in a half-width card header). Measured once per open
+  // and nudged back inside the viewport, so no preset or date is ever cut off.
+  const [shift, setShift] = useState(0);
 
   const usingRange = Boolean(from || to);
   const fromD = from ? parseISO(from) : null;
@@ -59,6 +64,19 @@ export default function DateRangePicker({ days, from, to, onChange }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, from, to]);
+
+  // Keep the open panel inside the viewport. Runs before paint so it never renders in the wrong place;
+  // measured with the shift reset to 0 (the effect only re-runs on open) so it can't drift on reopen.
+  useLayoutEffect(() => {
+    if (!open) { setShift(0); return; }
+    const el = panelRef.current;
+    if (!el) return;
+    const pad = 8;
+    const r = el.getBoundingClientRect();
+    if (r.left < pad) setShift(pad - r.left);
+    else if (r.right > window.innerWidth - pad) setShift(window.innerWidth - pad - r.right);
+    else setShift(0);
+  }, [open]);
 
   // Close on outside click / Escape.
   useEffect(() => {
@@ -126,7 +144,9 @@ export default function DateRangePicker({ days, from, to, onChange }) {
       {/* Popover */}
       {open && (
         <div
+          ref={panelRef}
           role="dialog"
+          style={shift ? { transform: `translateX(${shift}px)` } : undefined}
           className="absolute end-0 z-30 mt-2 flex w-[min(92vw,640px)] origin-top-right flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl ring-1 ring-black/5 sm:flex-row"
         >
           {/* Presets */}
@@ -195,7 +215,7 @@ function PresetRow({ active, onClick, children }) {
   return (
     <button
       onClick={onClick}
-      className={`flex items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-sm transition
+      className={`flex items-center justify-between rounded-lg px-2.5 py-1.5 text-start text-sm transition
         ${active ? 'bg-indigo-600 font-semibold text-white shadow-sm' : 'text-slate-600 hover:bg-white hover:text-indigo-600'}`}
     >
       {children}

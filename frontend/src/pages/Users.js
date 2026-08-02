@@ -137,7 +137,7 @@ function UserRow({ row, isSelf, onOpen, onEdit, onToggle, onDelete }) {
         <span className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-slate-100 to-slate-200 text-xs font-bold text-slate-600 ring-1 ring-slate-200">
           {initialsOf(row.name)}
           <span
-            className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-white ${
+            className={`absolute -bottom-0.5 -end-0.5 h-3 w-3 rounded-full border-2 border-white ${
               row.status === 'online' ? 'bg-emerald-500' : row.status === 'idle' ? 'bg-amber-400' : 'bg-slate-300'
             }`}
           />
@@ -172,11 +172,11 @@ function UserRow({ row, isSelf, onOpen, onEdit, onToggle, onDelete }) {
       </div>
 
       {/* Session / today */}
-      <div className="col-span-6 hidden text-right sm:col-span-1 sm:block">
+      <div className="col-span-6 hidden text-end sm:col-span-1 sm:block">
         <p className="text-sm font-semibold tabular-nums text-slate-700">{row.online ? fmtDuration(row.current_session_seconds) : '—'}</p>
         <p className="text-[11px] text-slate-400">session</p>
       </div>
-      <div className="col-span-6 hidden text-right sm:col-span-1 sm:block">
+      <div className="col-span-6 hidden text-end sm:col-span-1 sm:block">
         <p className="text-sm font-semibold tabular-nums text-slate-700">{fmtDuration(row.today_seconds)}</p>
         <p className="text-[11px] text-slate-400">today</p>
       </div>
@@ -267,7 +267,7 @@ function PerformancePanel({ c }) {
           <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Performance · 30 days</span>
           <Badge tone={rating.tone}>{rating.label}</Badge>
         </div>
-        <div className="text-right">
+        <div className="text-end">
           <p className="text-sm font-bold text-slate-800">Rank #{c.rank} <span className="font-normal text-slate-400">of {c.total_users}</span></p>
           {c.percentile != null && <p className="text-[11px] text-slate-400">ahead of {Math.round(c.percentile * 100)}% of the team</p>}
         </div>
@@ -456,10 +456,10 @@ function ActivityDrawer({ open, row, onClose, currentUserId, onEdit, onToggle, o
               {(detail?.timeline || []).length === 0 ? (
                 <p className="py-8 text-center text-sm text-slate-400">No recorded activity on this day.</p>
               ) : (
-                <ol className="relative ml-2 border-l-2 border-slate-100">
+                <ol className="relative ms-2 border-s-2 border-slate-100">
                   {detail.timeline.map((e, i) => (
-                    <li key={i} className="mb-4 ml-4 last:mb-0">
-                      <span className={`absolute -left-[7px] mt-1 h-3 w-3 rounded-full ring-2 ring-white ${
+                    <li key={i} className="mb-4 ms-4 last:mb-0">
+                      <span className={`absolute -start-[7px] mt-1 h-3 w-3 rounded-full ring-2 ring-white ${
                         e.type === 'login' ? 'bg-emerald-500' : e.type === 'logout' ? 'bg-slate-400' : 'bg-blue-500'
                       }`} />
                       <div className="flex items-center gap-2">
@@ -683,7 +683,7 @@ export default function Users() {
               className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm text-slate-700"
               title="Analytics date"
             />
-            <Button onClick={openCreate}><span className="mr-1"><Icon.Plus /></span>Add user</Button>
+            <Button onClick={openCreate}><span className="me-1"><Icon.Plus /></span>Add user</Button>
           </div>
         </PageHeader>
 

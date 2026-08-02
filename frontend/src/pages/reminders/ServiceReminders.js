@@ -592,7 +592,7 @@ export default function ServiceReminders() {
 /** Kebab menu for the row's secondary actions (edit / mute / delete). */
 function RowMenu({ onEdit, onMute, onDelete, muted }) {
   const [open, setOpen] = useState(false);
-  const item = 'block w-full px-3 py-1.5 text-left text-slate-600 hover:bg-slate-50';
+  const item = 'block w-full px-3 py-1.5 text-start text-slate-600 hover:bg-slate-50';
   return (
     <div className="relative">
       <button type="button" onClick={() => setOpen((o) => !o)} className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600" aria-label="More actions">
@@ -601,7 +601,7 @@ function RowMenu({ onEdit, onMute, onDelete, muted }) {
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 z-20 mt-1 w-40 overflow-hidden rounded-lg bg-white py-1 text-sm shadow-lg ring-1 ring-slate-200">
+          <div className="absolute end-0 z-20 mt-1 w-40 overflow-hidden rounded-lg bg-white py-1 text-sm shadow-lg ring-1 ring-slate-200">
             <button type="button" className={item} onClick={() => { setOpen(false); onEdit(); }}>Edit reminder</button>
             <button type="button" className={item} onClick={() => { setOpen(false); onMute(); }}>{muted ? 'Un-mute' : 'Mute'}</button>
             <button type="button" className={`${item} text-red-600 hover:bg-red-50`} onClick={() => { setOpen(false); onDelete(); }}>Delete</button>

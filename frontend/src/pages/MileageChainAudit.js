@@ -160,7 +160,7 @@ function QuickFixModal({ vehicleLabel, link, onClose, onSaved }) {
               </div>
               <div className="mt-1 text-[11px] text-slate-400">
                 Synced reading: {isReal(row.raw) ? `${num(row.raw)} km` : 'none'}
-                {row.overridden && <span className="ml-1 font-semibold text-indigo-600">· currently corrected</span>}
+                {row.overridden && <span className="ms-1 font-semibold text-indigo-600">· currently corrected</span>}
               </div>
 
               <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_2fr]">
@@ -332,7 +332,7 @@ export default function MileageChainAudit({ embedded = false }) {
 
         {/* Semantic funnel */}
         <div className="flex flex-wrap items-center gap-2">
-          <span className="mr-1 text-xs font-medium uppercase tracking-wide text-slate-500">Show</span>
+          <span className="me-1 text-xs font-medium uppercase tracking-wide text-slate-500">Show</span>
           {FILTERS.map((f) => (
             <button
               key={f.key}
