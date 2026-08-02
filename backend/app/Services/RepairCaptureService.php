@@ -9,6 +9,7 @@ use App\Models\DomainEvent;
 use App\Models\MaintenanceTask;
 use App\Models\MaintenanceTaskAction;
 use App\Models\User;
+use App\Models\Vehicle;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
@@ -152,8 +153,72 @@ class RepairCaptureService
 
         $this->recordEvents($task, $actions, $catalog, $outcome, $verification, $noFaultFound, $actor);
         $this->recordFriction($task, $data, $actions, $actor, $isCorrection);
+        $this->recordComponents($task, $catalog, $actor);
 
         return $task->fresh();
+    }
+
+    /**
+     * Asset Layer bridge — a `replace` action is a part going onto a car, whether or not anyone
+     * raised a purchase for it.
+     *
+     * OUTSIDE THE CAPTURE TRANSACTION, ON PURPOSE, AND NEVER ENFORCED. Every other asset-layer call
+     * site honours the three-mode flag contract (off / shadow / enforced), where enforced makes the
+     * component write atomic with the workflow write. This one is shadow-only even when the flag
+     * says enforced, and the asymmetry is deliberate:
+     *
+     * The parts screen is a parts screen — asking it for a serial or a disposition is fair, and
+     * failing the install when it cannot answer is a reasonable trade. The capture screen is a
+     * technician standing next to a car answering four questions, and repair actions are the
+     * scarcer evidence of the two by an enormous margin: the fleet has 26,838 tickets with 22
+     * populated findings between them, which is the entire reason Tier-1 capture exists. Losing a
+     * repair record because the asset ledger could not resolve a slot would be trading the rare
+     * thing for the recoverable one. The component can always be reconciled later — from the
+     * purchase, or by hand. The technician is not coming back.
+     *
+     * Reads the flag directly rather than taking a mode parameter, so `ASSET_LAYER_MODE=off` still
+     * means byte-identical behaviour here, exactly as it does everywhere else.
+     */
+    private function recordComponents(MaintenanceTask $task, $catalog, User $actor): void
+    {
+        if (config('features.asset_layer', 'off') === 'off') {
+            return;
+        }
+
+        // Re-read rather than reusing the submitted array: capture rewrites its action rows, and
+        // what is in the table now is what actually happened.
+        $actions = MaintenanceTaskAction::where('maintenance_task_id', $task->id)->orderBy('sequence')->get();
+        if ($actions->isEmpty()) {
+            return;
+        }
+
+        // Resolved once, outside the loop — the car's reading is the same for every action on one
+        // capture, and looking it up per action would be an N+1 on the technician's submit.
+        $odometer = Vehicle::whereKey($task->vehicle_id)->value('odometer');
+        $service  = app(ComponentService::class);
+
+        foreach ($actions as $action) {
+            $entry = $catalog[$action->action_catalog_id] ?? null;
+            if (! $entry) {
+                continue;
+            }
+
+            try {
+                $service->installFromAction($action, $entry, [
+                    'installed_odometer' => $odometer,
+                    'technician_name'    => $action->performed_by_name,
+                ], $actor);
+            } catch (Throwable $e) {
+                // Reported, never rethrown — see the docblock. One unresolvable action must not
+                // cost the capture, and must not stop the actions after it either.
+                report($e);
+                Log::warning('asset_layer.capture_component_failed', [
+                    'task_id'   => $task->id,
+                    'action_id' => $action->id,
+                    'error'     => $e->getMessage(),
+                ]);
+            }
+        }
     }
 
     /**

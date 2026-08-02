@@ -192,7 +192,9 @@ class ComponentReadModel
             'recently_replaced'   => $this->recentlyReplaced($limit),
             'frequently_replaced' => $this->frequentlyReplaced($limit),
             'data_origin' => 'Live aggregate over vehicle_components (workflow-written). Counts are exact; '
-                . 'age, life-used and warranty status are derived at read time from install date + odometer.',
+                . 'age, life-used and warranty status are derived at read time from install date + odometer. '
+                . 'Money is not: a part installed from a repair-capture report has no purchase and no price, '
+                . 'so the value figure covers only the parts whose cost is known and says how many that is.',
         ];
     }
 
@@ -203,6 +205,10 @@ class ComponentReadModel
             ->selectRaw('COUNT(*) as n')
             ->selectRaw('COUNT(DISTINCT vehicle_id) as vehicles')
             ->selectRaw('COALESCE(SUM(purchase_cost), 0) as value')
+            // How many of those rows the value figure actually covers. Counted in the same pass —
+            // a second query for a caveat is a caveat that gets dropped the first time someone
+            // optimises this method.
+            ->selectRaw('SUM(CASE WHEN purchase_cost IS NULL THEN 1 ELSE 0 END) as uncosted')
             ->selectRaw('AVG(' . $this->daysBetween('installed_at', $this->nowExpr()) . ') as avg_age')
             ->first();
 
@@ -215,6 +221,11 @@ class ComponentReadModel
             'installed_components'  => (int) $agg->n,
             'vehicles_covered'      => (int) $agg->vehicles,
             'total_installed_value' => round((float) $agg->value, 2),
+            // The value above is a sum over the parts whose cost is known, NOT a fleet total.
+            // Repair capture installs parts with no purchase behind them, so this is the number
+            // that stops the headline claiming a completeness it does not have.
+            'uncosted_components'   => (int) $agg->uncosted,
+            'costed_components'     => (int) $agg->n - (int) $agg->uncosted,
             'currency'              => 'AED',
             // Averaged in SQL over calendar-day boundaries (DATEDIFF), where the per-row age shown on
             // a component's own card counts whole 24h periods (Carbon). On a large fleet the two can
@@ -490,6 +501,17 @@ class ComponentReadModel
             'position'      => $c->position,
             'quantity'      => $c->quantity === null ? null : (float) $c->quantity,
 
+            // Provenance — HOW this row is known, and WHERE the part came from. Two axes, never
+            // merged: a warranty replacement booked as a zero-AED purchase and one reported by a
+            // technician are the same acquisition and different evidence.
+            //
+            // `evidence_channel` is what tells the UI whether a blank cost means "free" (it never
+            // does) or "nobody recorded one". Without it on the wire, a technician-reported part is
+            // indistinguishable from a purchased part with fields missing.
+            'evidence_channel' => $c->evidence_channel,
+            'acquisition'      => $c->acquisition,
+            'cost_known'       => $c->purchase_cost !== null,
+
             // Commercial FACTS (copied from the purchase, never recomputed)
             'supplier'      => $c->supplier ? ['id' => $c->supplier->id, 'name' => $c->supplier->name] : null,
             'installer'     => $c->installer ? ['id' => $c->installer->id, 'name' => $c->installer->name] : null,
@@ -675,6 +697,18 @@ class ComponentReadModel
                 + $history->sum(fn ($r) => (float) ($r['purchase_cost'] ?? 0)),
                 2
             ),
+            // COST COVERAGE — how much of the value figure above is actually knowable.
+            //
+            // Every component used to arrive through a purchase, so a cost total WAS a total.
+            // Since repair capture can install a part with no purchase behind it, some fitted
+            // components have no cost at all, and summing what is left produces a number that
+            // looks complete and is not. The UI must never print the total without this beside
+            // it — a figure that silently omits a third of the fleet's parts is worse than no
+            // figure, because nobody can tell it is doing so.
+            'costed_count'          => $installed->where('cost_known', true)->count(),
+            'uncosted_count'        => $installed->where('cost_known', false)->count(),
+            'reported_count'        => $installed->where('evidence_channel', VehicleComponent::EV_REPAIR_CAPTURE)->count(),
+
             'average_age_days'      => $ages->isEmpty() ? null : (int) round($ages->avg()),
             'under_warranty'        => $installed->where('warranty.status', 'active')->count(),
             'warranty_expiring'     => $installed->where('warranty.status', 'expiring_soon')->count(),

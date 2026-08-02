@@ -43,7 +43,7 @@ class ComponentCatalog extends Model
     ];
 
     protected $fillable = [
-        'slug', 'name', 'category_key', 'tracking_mode',
+        'slug', 'name', 'category_key', 'action_target', 'tracking_mode',
         'default_part_number', 'default_warranty_months',
         'expected_life_km', 'expected_life_months',
         'position_scheme', 'is_active', 'notes',
@@ -80,5 +80,27 @@ class ComponentCatalog extends Model
     public function positionsFor(): array
     {
         return self::POSITIONS_BY_SCHEME[$this->position_scheme] ?? [];
+    }
+
+    /**
+     * The component type a repair action's `target` refers to, or null when that target is not an
+     * asset at all (`brake_system`, `warning_light`, `wiring` — bled, reset and repaired, never
+     * fitted).
+     *
+     * Deliberately an exact lookup against the mapped column, never a slug transform: the two
+     * vocabularies were authored independently and disagree on six of the first twenty-eight
+     * targets (`battery` → `battery-12v`, `cooling_fan` → `radiator-fan`, `link_rod` →
+     * `stabilizer-link`, …). See the add_action_target_to_component_catalog migration.
+     *
+     * Consumables ARE mapped and ARE returned — the caller skips them by tracking_mode, so that
+     * "oil is not an asset" reads as a deliberate rule rather than as an unmapped gap.
+     */
+    public static function forActionTarget(?string $target): ?self
+    {
+        if (! $target) {
+            return null;
+        }
+
+        return static::query()->active()->where('action_target', $target)->first();
     }
 }

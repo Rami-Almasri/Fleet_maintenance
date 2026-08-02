@@ -180,7 +180,20 @@ export default function VehicleComponentsPanel({ vehicleId }) {
           header: 'Cost',
           align: 'right',
           cellClass: 'tabular-nums font-semibold text-slate-800',
-          render: (r) => (r.purchase_cost === null || r.purchase_cost === undefined ? '—' : aed2(r.purchase_cost)),
+          // A blank cost means two different things and the user must be able to tell them
+          // apart: a purchased part missing its price is a data-entry gap worth chasing; a
+          // technician-reported part never had one, and chasing it is wasted effort. The
+          // "Reported" chip is the difference, and it is why evidence_channel is on the wire.
+          render: (r) => {
+            if (r.purchase_cost !== null && r.purchase_cost !== undefined) return aed2(r.purchase_cost);
+            return r.evidence_channel === 'repair_capture' ? (
+              <span title="Recorded by the technician at repair capture — there is no purchase order, so no cost or supplier exists for this part.">
+                <Badge tone="gray">Reported</Badge>
+              </span>
+            ) : (
+              '—'
+            );
+          },
         },
       ];
     }
@@ -236,11 +249,19 @@ export default function VehicleComponentsPanel({ vehicleId }) {
             icon={<Icon.Wrench className="h-5 w-5" />}
             hint="Parts currently fitted to this vehicle"
           />
+          {/* The value is a SUM OVER WHAT IS KNOWN, not a total, and the hint has to say so.
+              A part fitted through repair capture has no purchase behind it and therefore no
+              cost — counting it as zero would understate the car silently, and printing the
+              remainder as "installed value" would claim a completeness we do not have. */}
           <MetricCard
             label="Installed value"
             value={aed2(summary.total_installed_value ?? 0)}
             icon={<Icon.Cash className="h-5 w-5" />}
-            hint={`Lifetime component spend ${aed2(summary.lifetime_component_spend ?? 0)}`}
+            hint={
+              summary.uncosted_count
+                ? `Based on ${num(summary.costed_count ?? 0)} of ${num(summary.installed_count ?? 0)} fitted parts — ${num(summary.uncosted_count)} have no recorded cost. Lifetime spend ${aed2(summary.lifetime_component_spend ?? 0)}`
+                : `Lifetime component spend ${aed2(summary.lifetime_component_spend ?? 0)}`
+            }
           />
           <MetricCard
             label="Average age"
@@ -476,7 +497,7 @@ function Row({ label, value, mono }) {
   return (
     <div className="flex justify-between gap-4 py-1.5 text-sm">
       <span className="shrink-0 text-slate-500">{label}</span>
-      <span className={`text-right font-medium text-slate-900 ${mono ? 'font-mono text-xs' : ''}`}>{value || '—'}</span>
+      <span className={`text-end font-medium text-slate-900 ${mono ? 'font-mono text-xs' : ''}`}>{value || '—'}</span>
     </div>
   );
 }
@@ -486,7 +507,7 @@ function LinkRow({ label, to, value }) {
   return (
     <div className="flex justify-between gap-4 py-1.5 text-sm">
       <span className="shrink-0 text-slate-500">{label}</span>
-      <Link to={to} className="text-right font-medium text-indigo-600 hover:underline">
+      <Link to={to} className="text-end font-medium text-indigo-600 hover:underline">
         {value}
       </Link>
     </div>

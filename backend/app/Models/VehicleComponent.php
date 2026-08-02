@@ -84,10 +84,61 @@ class VehicleComponent extends Model
     ];
 
     // ── Provenance trust label ──────────────────────────────────────────────────────────────────
+    // HOW THIS ROW CAME TO EXIST. Not to be confused with the two axes below, and not to be
+    // extended with values from them: isLegacyBackfill(), components:verify and
+    // ComponentsShadowAudit all read this column, and widening it changes what they measure.
     public const SOURCE_WORKFLOW        = 'workflow';
     public const SOURCE_MANUAL          = 'manual';
     public const SOURCE_LEGACY_BACKFILL = 'legacy_backfill';
     public const SOURCES = [self::SOURCE_WORKFLOW, self::SOURCE_MANUAL, self::SOURCE_LEGACY_BACKFILL];
+
+    /**
+     * ── Evidence channel — HOW WE LEARNED the part is fitted ────────────────────────────────────
+     *
+     * Decides how far the row is trusted and whether it may carry a cost. A `purchase` row has a
+     * price, a supplier and paperwork; a `repair_capture` row is a technician saying they fitted
+     * something, with `purchase_cost` null. Both are real installs. Only the first may feed a
+     * money figure.
+     */
+    public const EV_PURCHASE       = 'purchase';
+    public const EV_REPAIR_CAPTURE = 'repair_capture';
+    public const EV_GARAGE_PORTAL  = 'garage_portal';
+    public const EV_IMPORT         = 'import';
+    public const EV_MANUAL         = 'manual';
+    public const EVIDENCE_CHANNELS = [
+        self::EV_PURCHASE, self::EV_REPAIR_CAPTURE, self::EV_GARAGE_PORTAL,
+        self::EV_IMPORT, self::EV_MANUAL,
+    ];
+
+    /**
+     * ── Acquisition — WHERE THE PART CAME FROM and who paid ─────────────────────────────────────
+     *
+     * Decides warranty and ownership. ORTHOGONAL to the evidence channel: a warranty replacement
+     * can arrive as a zero-AED purchase row or as a capture action, and it is the same commercial
+     * fact either way. That is why these are two columns and not one enum.
+     *
+     * `unknown` is offered on purpose. A technician who fitted a part the garage handed them may
+     * genuinely not know who paid, and the honest answer must be recordable — otherwise the field
+     * fills with a confident default that nobody verified.
+     */
+    public const ACQ_PURCHASED            = 'purchased';
+    public const ACQ_WARRANTY_REPLACEMENT = 'warranty_replacement';
+    public const ACQ_GARAGE_SUPPLIED      = 'garage_supplied';
+    public const ACQ_CUSTOMER_SUPPLIED    = 'customer_supplied';
+    public const ACQ_UNKNOWN              = 'unknown';
+    public const ACQUISITIONS = [
+        self::ACQ_PURCHASED, self::ACQ_WARRANTY_REPLACEMENT, self::ACQ_GARAGE_SUPPLIED,
+        self::ACQ_CUSTOMER_SUPPLIED, self::ACQ_UNKNOWN,
+    ];
+
+    /**
+     * Acquisitions under which WE own the part and a supplier warranty is ours to claim.
+     *
+     * A customer-supplied part carries no warranty we can enforce, and a garage-supplied one is the
+     * garage's own stock — its warranty is a conversation with them, not a line on our ledger. Used
+     * to decide whether the catalog's default warranty months may be applied at all.
+     */
+    public const ACQ_WARRANTABLE = [self::ACQ_PURCHASED, self::ACQ_WARRANTY_REPLACEMENT];
 
     // ── Shadow-launch trust markers (write_mode + validation_status, §7.1 of the launch plan) ───
     public const VALIDATION_PROVISIONAL = 'provisional'; // observation — not yet confirmed against reality
@@ -114,7 +165,8 @@ class VehicleComponent extends Model
         'installed_at', 'installed_odometer', 'installed_by', 'installed_by_name',
         'technician_name', 'installer_vendor_id', 'supplier_vendor_id',
         'purchase_cost', 'currency', 'warranty_months',
-        'source_part_purchase_id', 'source_line_item_id', 'source',
+        'source_part_purchase_id', 'source_line_item_id', 'source_maintenance_task_id', 'source',
+        'evidence_channel', 'acquisition',
     ];
 
     protected $casts = [

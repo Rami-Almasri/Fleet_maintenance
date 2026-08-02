@@ -26,6 +26,11 @@ class ComponentCatalogSeeder extends Seeder
                 [
                     'name'                    => $entry['name'],
                     'category_key'            => $entry['category_key'],
+                    // The action-vocabulary join (see the add_action_target migration). Synced from
+                    // config like every other descriptive field, so the mapping lives beside the
+                    // component type it belongs to rather than in a second table someone must
+                    // remember to update.
+                    'action_target'           => $entry['action_target'] ?? null,
                     'tracking_mode'           => $entry['tracking_mode'],
                     'default_part_number'     => $entry['default_part_number'] ?? null,
                     'default_warranty_months' => $entry['default_warranty_months'] ?? null,

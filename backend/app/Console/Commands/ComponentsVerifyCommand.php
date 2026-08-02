@@ -28,12 +28,17 @@ class ComponentsVerifyCommand extends Command
 {
     protected $signature = 'components:verify
         {--vehicle= : Restrict the check to one vehicle id}
-        {--limit=50 : Maximum divergences to print}';
+        {--limit=50 : Maximum divergences to print}
+        {--targets : Report action-target mapping coverage instead of replaying events}';
 
     protected $description = 'Replay component_events and verify the stored installed configuration matches';
 
     public function handle(): int
     {
+        if ($this->option('targets')) {
+            return $this->reportTargetCoverage();
+        }
+
         $vehicleId = $this->option('vehicle') ? (int) $this->option('vehicle') : null;
         $limit     = (int) $this->option('limit');
 
@@ -178,5 +183,110 @@ class ComponentsVerifyCommand extends Command
             ->groupBy('vehicle_id', 'component_catalog_id', 'position')
             ->havingRaw('COUNT(*) > 1')
             ->get();
+    }
+
+    /**
+     * `--targets`: how much of the repair vocabulary can actually reach the asset ledger.
+     *
+     * The Repair Capture → Component Ledger bridge is only as good as the mapping between an
+     * action's `target` and a component type. An unmapped target does not error — it silently
+     * writes nothing, which is exactly the failure the bridge was built to remove, reappearing one
+     * catalog entry at a time. This makes it countable.
+     *
+     * Three outcomes, and they are NOT the same thing:
+     *   mapped       — a fitting action that will create a component.
+     *   consumable   — mapped ON PURPOSE to a consumable so the resolver recognises and skips it
+     *                  (oil, coolant). Correct behaviour, not a gap.
+     *   unmapped     — nobody has said what this target is. The real backlog.
+     */
+    private function reportTargetCoverage(): int
+    {
+        $fitting = \App\Models\ActionCatalog::query()
+            ->active()
+            ->whereIn('verb', ['replace', 'install'])
+            ->orderBy('target')
+            ->get(['slug', 'verb', 'target', 'category_key']);
+
+        $catalogs = \App\Models\ComponentCatalog::query()
+            ->whereNotNull('action_target')
+            ->get(['slug', 'name', 'action_target', 'tracking_mode'])
+            ->keyBy('action_target');
+
+        $mapped = $consumable = $unmapped = [];
+
+        foreach ($fitting->unique('target') as $action) {
+            $entry = $catalogs->get($action->target);
+
+            if (! $entry) {
+                $unmapped[] = $action;
+            } elseif ($entry->tracking_mode === \App\Models\ComponentCatalog::TRACKING_CONSUMABLE) {
+                $consumable[] = [$action->target, $entry->slug];
+            } else {
+                $mapped[] = [$action->target, $entry->slug, $entry->tracking_mode];
+            }
+        }
+
+        $distinct = $fitting->unique('target')->count();
+        $total    = \App\Models\ActionCatalog::active()->count();
+
+        $this->info('Action-target mapping coverage');
+        $this->line('');
+        $this->line("  action vocabulary       {$total} active actions");
+        $this->line("  fitting actions         {$fitting->count()} (verb = replace|install)");
+        $this->line("  distinct targets        {$distinct}");
+        $this->line('');
+        $this->line('  → mapped to a component ' . count($mapped) . '  (' . $this->pct(count($mapped), $distinct) . ')');
+        $this->line('  → mapped to consumable  ' . count($consumable) . '  (' . $this->pct(count($consumable), $distinct) . ')  deliberate skip');
+        $this->line('  → UNMAPPED              ' . count($unmapped) . '  (' . $this->pct(count($unmapped), $distinct) . ')  writes nothing');
+        $this->line('');
+
+        if ($unmapped) {
+            $this->warn('Unmapped fitting targets — each is a replacement the ledger will never see:');
+            foreach (array_chunk(array_map(fn ($a) => $a->target, $unmapped), 4) as $row) {
+                $this->line('  ' . implode(', ', $row));
+            }
+            $this->line('');
+            $this->line('  Map one by adding \'action_target\' => \'<target>\' to its config/component_catalog.php');
+            $this->line('  entry and re-running db:seed --class=ComponentCatalogSeeder. Leave it unmapped if the');
+            $this->line('  target genuinely is not an asset.');
+            $this->line('');
+        }
+
+        // Component types nothing can create from a capture. Not an error — an engine or a gearbox
+        // legitimately arrives through a purchase — but worth seeing, because a type that SHOULD be
+        // capture-reachable and is not looks identical to one that should not.
+        $unreachable = \App\Models\ComponentCatalog::query()
+            ->active()
+            ->whereNull('action_target')
+            ->where('tracking_mode', '!=', \App\Models\ComponentCatalog::TRACKING_CONSUMABLE)
+            ->orderBy('slug')
+            ->pluck('slug');
+
+        if ($unreachable->isNotEmpty()) {
+            $this->line('Component types reachable only via a purchase install (' . $unreachable->count() . '):');
+            foreach ($unreachable->chunk(4) as $row) {
+                $this->line('  ' . $row->implode(', '));
+            }
+            $this->line('');
+        }
+
+        // What the ledger has actually recorded, by evidence channel — the other half of coverage.
+        $byChannel = VehicleComponent::query()
+            ->selectRaw('COALESCE(evidence_channel, \'(null)\') as ch, COUNT(*) as n')
+            ->groupBy('ch')->orderByDesc('n')->pluck('n', 'ch');
+
+        if ($byChannel->isNotEmpty()) {
+            $this->line('Ledger rows by evidence channel:');
+            foreach ($byChannel as $ch => $n) {
+                $this->line(sprintf('  %-16s %d', $ch, $n));
+            }
+        }
+
+        return $unmapped ? self::SUCCESS : self::SUCCESS; // reporting, never a gate
+    }
+
+    private function pct(int $n, int $of): string
+    {
+        return $of === 0 ? 'n/a' : round($n / $of * 100) . '%';
     }
 }

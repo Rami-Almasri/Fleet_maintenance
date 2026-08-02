@@ -95,12 +95,19 @@ export default function ComponentsDashboard() {
             icon={<Icon.Wrench className="h-5 w-5" />}
             hint={`Across ${num(totals.vehicles_covered ?? 0)} vehicles`}
           />
+          {/* Not "everything currently fitted" — everything whose cost we know. Parts installed
+              through repair capture carry no purchase and no price, so the hint states the
+              denominator rather than letting the headline imply a complete total. */}
           <MetricCard
             label="Total installed value"
             value={aed2(totals.total_installed_value ?? 0)}
             icon={<Icon.Cash className="h-5 w-5" />}
             tone="indigo"
-            hint="Purchase cost of everything currently fitted"
+            hint={
+              totals.uncosted_components
+                ? `Purchase cost of ${num(totals.costed_components ?? 0)} of ${num(totals.installed_components ?? 0)} fitted parts — ${num(totals.uncosted_components)} were reported without one`
+                : 'Purchase cost of everything currently fitted'
+            }
           />
           <MetricCard
             label="Average age"
