@@ -140,6 +140,24 @@ class PerFaultRecommenderTest extends TestCase
         $this->assertSame('Deals On Wheels', $out[0]['alternative']['garage']);
     }
 
+    public function test_the_repair_outlook_is_passed_in_never_queried_by_the_core(): void
+    {
+        // REGRESSION GUARD, and the reason it belongs in a test rather than a comment: RepairOutlook
+        // reads the fault ontology through Eloquent, and scoreRows is contractually DB-free. Calling it
+        // from inside the core made every test in GarageRecommendationServiceTest depend on a database
+        // connection those tests deliberately do not have — the whole file died on one added line.
+        //
+        // Asserted by reading the source: a unit test cannot prove the absence of a query, but it can
+        // prove the core never reaches for the collaborator that issues one.
+        $core = file_get_contents(dirname(__DIR__, 2).'/app/Services/GarageRecommendationService.php');
+        $scoreRows = substr($core, (int) strpos($core, 'public function scoreRows'));
+
+        $this->assertStringNotContainsString('repairOutlook->', $scoreRows,
+            'scoreRows() must receive the repair outlook through $ctx, never resolve it itself.');
+        $this->assertStringContainsString("\$ctx['repair_outlook']", $scoreRows,
+            'The core still has to publish the outlook it was handed.');
+    }
+
     public function test_with_no_ticket_call_the_coverage_leader_still_leads(): void
     {
         // The ticket-free finder scores a hypothetical car with no assignment in play.

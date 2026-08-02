@@ -106,6 +106,12 @@ class GarageRecommendationService
                 'faults_detail' => $criteria['faults_detail'] ?? [],
                 // Whether the expense ledger behind every cost figure is still being maintained.
                 'cost_freshness' => $outcomes['cost_freshness'] ?? null,
+                // Resolved HERE, not inside the core. RepairOutlook reads the fault ontology through
+                // Eloquent, and scoreRows is contractually DB-free — calling it in there made the whole
+                // pure-core test file depend on a database connection it deliberately does not have.
+                // Same treatment as `metrics` and `cost_freshness`: the DB-backed entry point does the
+                // querying, the core receives the answer.
+                'repair_outlook' => $this->repairOutlook->for((array) ($criteria['faults_detail'] ?? [])),
             ],
         );
     }
@@ -164,10 +170,13 @@ class GarageRecommendationService
             ],
             'strategy'      => null,
             'per_fault'     => [],
-            // Always present so the UI never has to distinguish "no garage history" from "key absent".
-            // Populated below even on a no-history ticket: what the repair involves is knowledge about
-            // the FAULT, and it is just as true when we have never sent this model anywhere.
-            'repair_outlook' => $this->repairOutlook->for((array) ($ctx['faults_detail'] ?? [])),
+            // WHAT THE WORK ACTUALLY IS. Everything else here ranks garages; none of it says what the
+            // car is going to have done to it. Present even on a no-history ticket: what a repair
+            // involves is knowledge about the FAULT, and it stays true when we have never sent this
+            // model anywhere. Keyed per FINDING rather than per category on purpose — `per_fault` rolls
+            // a category up to one row and keeps only its first symptom, so a car with two engine
+            // faults would otherwise show the expected work for one of them. See [[RepairOutlook]].
+            'repair_outlook' => (array) ($ctx['repair_outlook'] ?? []),
             'fleet_outcomes' => $outcomes['fleet'] ?? [],
             // Sent ONCE, not repeated per garage: what every figure on this screen means, how it was
             // calculated and which records produced it. Nothing rendered should be a magic number.
@@ -455,12 +464,6 @@ class GarageRecommendationService
             (string) ($criteria['model'] ?? ''),
             isset($primaryOut[0]['vendor_id']) ? (int) $primaryOut[0]['vendor_id'] : null,
         );
-
-        // WHAT THE WORK ACTUALLY IS. Everything above ranks garages; none of it says what the car is
-        // going to have done to it. Keyed per FINDING rather than per category on purpose: `per_fault`
-        // rolls a category up to one row and keeps only its first symptom, so a car with two engine
-        // faults would otherwise show the expected work for one of them. See [[RepairOutlook]].
-        $base['repair_outlook'] = $this->repairOutlook->for((array) ($ctx['faults_detail'] ?? []));
 
         return $base;
     }
