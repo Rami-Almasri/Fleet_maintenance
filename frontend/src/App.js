@@ -27,7 +27,8 @@ import MaintenanceHistory from './pages/MaintenanceHistory';
 import MaintenanceWorkflow from './pages/MaintenanceWorkflow';
 import MaintenanceCheckpoints from './pages/MaintenanceCheckpoints';
 import CarStatus from './pages/CarStatus';
-import ComponentsDashboard from './pages/ComponentsDashboard';
+// ComponentsDashboard is held back as "Coming Soon" — the page file stays in the
+// repo; re-import it here when /components is switched back on.
 import CarStatusVehicle from './pages/CarStatusVehicle';
 import MyMaintenanceQueue from './pages/MyMaintenanceQueue';
 import InspectionReviewQueue from './pages/InspectionReviewQueue';
@@ -45,7 +46,9 @@ import DamageAccidents from './pages/DamageAccidents';
 import CostIntelligence from './pages/CostIntelligence';
 import RecommendationIntelligence from './pages/RecommendationIntelligence';
 import ServiceReminders from './pages/reminders/ServiceReminders';
+import GarageFinder from './pages/GarageFinder';
 import EventClassificationReview from './pages/EventClassificationReview';
+import ConceptBridgeReview from './pages/ConceptBridgeReview';
 import MileageCenter from './pages/MileageCenter';
 import DataHealth from './pages/DataHealth';
 import IntelligenceCenter from './pages/IntelligenceCenter';
@@ -113,6 +116,8 @@ export default function App() {
                 {/* Event Type layer — human-in-the-loop classification review (needs_review queue). */}
                 <Route element={<RequirePermission permission="maintenance.manage" />}>
                   <Route path="/classification-review" element={<EventClassificationReview />} />
+                  {/* Concept Bridge benchmark — the human ground truth that gates legacy concept enrichment. */}
+                  <Route path="/concept-bridge-review" element={<ConceptBridgeReview />} />
                 </Route>
 
                 <Route element={<RequirePermission permission="users.manage" />}>
@@ -192,12 +197,18 @@ export default function App() {
 
                 {/* Component Intelligence — the fleet-wide asset layer: warranty exposure, expected
                     service life, replacement churn and installed value. Read-only: a component only
-                    ever reaches this data by the maintenance workflow installing it. */}
+                    ever reaches this data by the maintenance workflow installing it.
+                    Marked "Coming Soon" in the module registry — redirect the URL so the page
+                    isn't reachable directly while it is held back. The per-vehicle Installed
+                    Components tab on each car's profile is unaffected. */}
                 <Route element={<RequirePermission permission="components.view" />}>
-                  <Route path="/components" element={<ComponentsDashboard />} />
+                  <Route path="/components" element={<Navigate to="/apps/maintenance" replace />} />
                 </Route>
 
                 <Route element={<RequirePermission permission="maintenance.view" />}>
+                  {/* Garage Finder — "this car has this fault; who is best at it?", asked BEFORE a ticket
+                      exists. Same engine as the assign step, read-only: it answers, it does not dispatch. */}
+                  <Route path="/garage-finder" element={<GarageFinder />} />
                   {/* Car Status — the live stage board: every car in the maintenance workflow by the stage
                       it's in and who's responsible for it there; opens into the per-vehicle operational profile. */}
                   <Route path="/car-status" element={<CarStatus />} />

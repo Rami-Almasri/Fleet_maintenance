@@ -12,7 +12,7 @@ import LanguageToggle from '../components/LanguageToggle';
 import Brand from '../components/Brand';
 import { PageStatProvider, PageStatGauge } from '../components/PageStat';
 import { SHOW_FINANCIALS, DEMO_MODE, SHOW_FLEET_INTELLIGENCE } from '../config/features';
-import { pathBlockedForRoles } from '../config/access';
+import { pathBlockedForRoles, homePathForRoles } from '../config/access';
 import { moduleForPath } from '../config/moduleRegistry';
 import ModuleTabBar from '../components/workspace/ModuleTabBar';
 import { useI18n } from '../i18n/I18nContext';
@@ -102,7 +102,20 @@ const NAV_SECTIONS = [
       { name: 'Maintenance Cycle', to: '/maintenance-workflow', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-3 7-3 3 3 3m6-6 3 3-3 3', desc: 'The live maintenance ticket pipeline (Inspector → Supervisor → Driver → Garage → Re-inspection). Open a ticket and advance it through the stages; the board updates in real time.' },
       { name: 'My Queue', to: '/my-maintenance-queue', icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-3 9 2 2 4-4', desc: 'Your role-scoped maintenance work in one place: Abu Maroof (Inspector) sees pending inspections and final re-inspections; a Supervisor (Dispatcher) sees tickets awaiting a garage + driver assignment; a Driver sees active trips/dispatches and cars waiting on a follow-up.' },
       { name: 'Inspection Review', to: '/inspection-review', icon: 'M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Controllers (Lin & Marwa) review inspection requests before they reach Abu Maroof — approve to send it on, or reject with a reason.' },
+      { name: 'Garage Finder', to: '/garage-finder', icon: 'M21 21l-4.35-4.35M11 19a8 8 0 1 1 0-16 8 8 0 0 1 0 16z', desc: 'Pick a car and the faults it has, and get the same fault-by-fault garage report the assign step shows — before any ticket exists. Each fault names its strongest garage, the best alternative, and the trade-off between them, with the repair history behind every figure. Read-only: it answers the question, it does not dispatch the car.' },
       { name: 'Service Reminders', to: '/service-reminders', icon: 'M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Every car’s recurring service due points — oil change, filters, brakes, tires, battery — with how far each is from due in km or days. Oil and tire reminders are seeded per car from the Oil Change intervals; add or edit any of them. Notify alerts the drivers and technicians; Schedule opens the maintenance ticket that performs the work.' },
+    ],
+  },
+  // Customer Care — the two intake surfaces that feed the pipeline from outside
+  // the workshop: what the customer said (Complaint) and what the driver noticed
+  // (Observation). They lived only as Workspace launcher tiles, which made them
+  // unreachable for the roles blocked from the launcher (inspector, supervisor,
+  // driver) — including Abu Maroof, whose complaint-triage lane they drive.
+  {
+    title: 'Customer Care',
+    items: [
+      { name: 'Complaints', to: '/complaints', icon: 'M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-7-7A2 2 0 0 1 3 12V5a2 2 0 0 1 2-2h7a2 2 0 0 1 1.4.6l7.2 7.2a2 2 0 0 1 0 2.8zM7.5 7.5h.01', desc: 'Every customer complaint and its follow-up timeline in one management view. Ops logs the complaint here; Abu Maroof triages it from the detail drawer — talk to the customer, resolve it on-site, or send the car in as a maintenance ticket.' },
+      { name: 'Driver Observations', to: '/driver-observations', icon: 'M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12zM12 14.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z', desc: 'Internal handover notes from drivers — something they noticed on the car that is not (yet) a customer complaint. Review each note and escalate it into an inspection request when it deserves one.' },
     ],
   },
   {
@@ -117,6 +130,7 @@ const NAV_SECTIONS = [
     items: [
       { name: 'Keyword Risk', to: '/finding-keywords', icon: 'M20.59 13.41 13.42 20.6a2 2 0 0 1-2.83 0l-7-7A2 2 0 0 1 3 12V5a2 2 0 0 1 2-2h7a2 2 0 0 1 1.42.59l7.17 7.17a2 2 0 0 1 0 2.83zM7.5 7.5h.01', desc: 'The fault-keyword library the inspection picker offers, each graded by risk (🔴 critical / 🟡 moderate / 🟢 routine). Add, edit or retire keywords and set how serious each fault type is.' },
       { name: 'Recurring Fault Reviews', to: '/recurring-fault-reviews', icon: 'M3 2v6h6M3 8a9 9 0 1 0 2.6-4.36L3 8', desc: 'Cars that came back with the SAME confirmed fault after a completed repair. Each case shows the previous ticket, garage, parts used, days and distance since the repair, and how many times it recurred — so management can decide whether the earlier repair failed, it is a new failure, workshop responsibility, customer misuse, or needs investigation.' },
+      { name: 'Concept Bridge Review', to: '/concept-bridge-review', icon: 'M9 12h6m-3-3v6M5 8V6a2 2 0 0 1 2-2h2M5 16v2a2 2 0 0 0 2 2h2m6-16h2a2 2 0 0 1 2 2v2m-4 12h2a2 2 0 0 0 2-2v-2', desc: 'Teach the system to read workshop language. You are shown one real line from a maintenance note and asked what it means — BEFORE the computer\'s answer is revealed, so your judgement stays independent. Roughly 90 lines, mostly button clicks. The result is the benchmark that decides whether we may translate 26,839 historical tickets into automotive concepts, or need to fix the matching first.' },
     ],
   },
   {
@@ -139,7 +153,8 @@ const NAV_SECTIONS = [
       { name: 'Driver Dispatch', to: '/driver-dispatch', icon: 'M3 7h11v8H3zM14 10h3.5L21 13v2h-7M6.5 18.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM17.5 18.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z', desc: 'Driver Dispatch: send a vehicle between locations (to Deals on Wheels, the garage, …) and track which driver has it and where. Dispatching a car flips it to “In Transit to …” on the grid and drops an Action Required task into the assignee’s My Queue.' },
       { name: 'Fleet Health', to: '/inspections/schedules', icon: 'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM9 15l2 2 4-4', desc: 'The fleet\'s neural center — a unified hub with tabs for Service Due (odometer-based) and Registration & Insurance expiry, consolidating the live per-car health surfaces in one place.' },
       { name: 'Car Status', to: '/car-status', icon: 'M5 17h14M5 17a2 2 0 0 1-2-2v-3l2-5a2 2 0 0 1 2-1.4h8A2 2 0 0 1 19 7l2 5v3a2 2 0 0 1-2 2M7 17v1a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-1m14 0v1a1 1 0 0 1-1 1h0a1 1 0 0 1-1-1v-1M9 12l2 2 4-4', desc: 'The live stage board — every car in the maintenance workflow laid out by the exact stage it\'s in right now (Needs Test Drive → Being Inspected → Needs Dispatch → Awaiting Pickup → En Route → In Workshop → Ready for Pickup → Final QA), each showing who is responsible for it at that stage: the inspector, the supervisor who must dispatch, the driver who holds the car, or the garage. A stage reads “Waiting” until someone takes it, then shows their name. Click any car to open its ticket.' },
-      { name: 'Component Intelligence', to: '/components', icon: 'M12 2l8 4v6c0 5-3.4 8.7-8 10-4.6-1.3-8-5-8-10V6l8-4zM9.5 12l1.8 1.8L15 10', desc: 'The fleet as rolling assets — every part currently installed on every car, with what is about to fall out of warranty, what is running past its expected service life, what has been replaced lately, and which component types churn hardest (the buying signal). Built entirely from the maintenance workflow: a part appears only when a ticket installs it, so there is nothing to keep in sync and no "Add Component" button anywhere.' },
+      // Component Intelligence (/components) is held back as "Coming Soon" — see the
+      // module registry. Kept out of the sidebar so it is never a link to a redirect.
     ],
   },
   {
@@ -206,6 +221,8 @@ const NAV_PERMISSIONS = {
   '/notifications': null,
   '/settings': null,
   '/completed-repairs': 'maintenance.view',
+  '/complaints': 'maintenance.view',
+  '/driver-observations': 'maintenance.view',
   '/maintenance-history': 'dashboard.view',
   '/finding-keywords': 'maintenance.view',
   '/parts': 'parts.view',
@@ -372,6 +389,16 @@ export default function AppLayout() {
   const isLauncher = location.pathname === '/';
   const activeModule = moduleForPath(location.pathname);
 
+  // Where "Home" actually goes. The launcher (/) is Dashboard-gated, so the
+  // operational roles walled off from it (supervisor, inspector, driver) would
+  // hit the Forbidden wall on every Home click. homePathForRoles resolves each
+  // of them to the board they actually work out of instead — the supervisor and
+  // the inspector to My Queue, the driver to Driver Dispatch. Everyone else
+  // still gets '/'. The button is hidden when Home IS the current page, so it
+  // never renders as a no-op.
+  const homePath = homePathForRoles(roles);
+  const atHome = location.pathname === homePath;
+
   const initial = (user?.name || '?').charAt(0).toUpperCase();
   // Note: resolveModuleLabel above deliberately stays English — it is reported to
   // the backend activity tracker as data, not shown to this user.
@@ -428,18 +455,22 @@ export default function AppLayout() {
                   </svg>
                   <span className="hidden sm:inline">{t('shell.back')}</span>
                 </button>
-                <span className="h-5 w-px bg-slate-200" />
-                <button
-                  onClick={() => navigate('/')}
-                  className="flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-100 hover:text-slate-900"
-                  title={t('shell.homeHint')}
-                  aria-label={t('shell.homeHint')}
-                >
-                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M3 12l9-9 9 9M5 10v10a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V10" />
-                  </svg>
-                  <span className="hidden sm:inline">{t('shell.home')}</span>
-                </button>
+                {!atHome && (
+                  <>
+                    <span className="h-5 w-px bg-slate-200" />
+                    <button
+                      onClick={() => navigate(homePath)}
+                      className="flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-100 hover:text-slate-900"
+                      title={t('shell.homeHint')}
+                      aria-label={t('shell.homeHint')}
+                    >
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M3 12l9-9 9 9M5 10v10a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V10" />
+                      </svg>
+                      <span className="hidden sm:inline">{t('shell.home')}</span>
+                    </button>
+                  </>
+                )}
               </div>
               <span className="hidden h-6 w-px bg-slate-200 sm:block" />
               <h2 className="truncate text-[15px] font-semibold text-slate-800">{pageName || 'Faster'}</h2>
@@ -477,7 +508,7 @@ export default function AppLayout() {
             {/* subtle divider between actions and the user identity block */}
             <span className="hidden h-6 w-px bg-slate-200 lg:block" />
 
-            <div className="hidden text-right lg:block">
+            <div className="hidden text-end lg:block">
               <p className="text-sm font-semibold leading-tight text-slate-900">{user?.name}</p>
               <p className="text-xs text-slate-500">{user?.email}</p>
             </div>

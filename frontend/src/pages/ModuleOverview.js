@@ -8,6 +8,7 @@
 
 import { useParams, Navigate } from 'react-router-dom';
 import { usePermissions } from '../hooks/usePermissions';
+import { homePathForRoles } from '../config/access';
 import {
   getModule, isModuleVisible, visibleSections,
   moduleNameKey, moduleTaglineKey, sectionNameKey, sectionDescKey,
@@ -47,8 +48,12 @@ export default function ModuleOverview() {
   const { can, roles } = usePermissions();
   const { t, tf, tp } = useI18n();
 
-  if (!module) return <Navigate to="/" replace />;
-  if (!isModuleVisible(module, can, roles)) return <Navigate to="/" replace />;
+  // Bounce an unknown or unreachable module to the user's OWN home — '/' is
+  // Dashboard-gated, so sending a supervisor / inspector / driver there would
+  // just swap one dead end for the Forbidden wall.
+  const home = homePathForRoles(roles);
+  if (!module) return <Navigate to={home} replace />;
+  if (!isModuleVisible(module, can, roles)) return <Navigate to={home} replace />;
 
   const moduleName = tf(moduleNameKey(module), module.name);
   const sections = visibleSections(module, can, roles);

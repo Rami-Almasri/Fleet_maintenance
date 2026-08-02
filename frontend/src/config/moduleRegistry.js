@@ -48,7 +48,7 @@ export const MODULES = [
     tagline: 'The repair pipeline, queues, parts, suppliers and history',
     sections: [
       { name: 'Car Status', route: '/car-status', permission: 'maintenance.view', icon: Icon.Wrench, desc: 'Live stage board — every car by the exact workflow stage it sits in and who is responsible right now.' },
-      { name: 'Component Intelligence', route: '/components', permission: 'components.view', icon: Icon.Shield, desc: 'Every part installed across the fleet — warranty exposure, expected service life, replacement churn and total installed value. Built from the workflow; nothing is entered by hand.' },
+      { name: 'Component Intelligence', route: null, permission: 'components.view', icon: Icon.Shield, status: 'soon', desc: 'Every part installed across the fleet — warranty exposure, expected service life, replacement churn and total installed value. Built from the workflow; nothing is entered by hand — coming soon.' },
       {
         name: 'Maintenance Cycle',
         route: '/maintenance-workflow',

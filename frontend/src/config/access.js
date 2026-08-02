@@ -28,6 +28,11 @@ const ALWAYS_ALLOWED = ['/notifications', '/settings'];
 // role slug → paths that role must never see.
 // Blocking a path also blocks everything under it (e.g. '/vehicles' also hides
 // '/vehicles/123'), so parent paths are enough.
+//
+// Suffix a path with '$' to block it EXACTLY and leave its children reachable —
+// for a landing board the role shouldn't browse, whose detail pages it still
+// gets deep-linked into ('/maintenance-workflow$' hides the pipeline board but
+// keeps '/maintenance-workflow/123', the single-ticket command view).
 export const ROLE_BLOCKED_PATHS = {
   // ── The field driver. He drives the car and nothing else. Keeps Driver
   // Dispatch, My Queue, the ticket screen (to stamp Picked Up / Delivered /
@@ -39,12 +44,20 @@ export const ROLE_BLOCKED_PATHS = {
     '/inspection-review',
     '/inspections/schedules',
     '/service-reminders',
+    '/complaints',              // Customer Care — the inspector's lane, not his
+    '/driver-observations',     // he files these in the field; he doesn't triage
     '/completed-repairs',
     '/maintenance-history',
     '/maintenance-swap',
     '/finding-keywords',
     '/recurring-fault-reviews',
     '/parts',
+    // The fleet asset board — warranty exposure, installed value, replacement
+    // churn. Every role holding `components.view` reaches it by permission, so
+    // it has to be denied here for the same roles that lose the other
+    // fleet-wide intelligence boards. The per-car Components tab (inside
+    // /vehicles/:id) is unaffected — that one is operational, this one is not.
+    '/components',
     '/garages',
     '/vendors',
     '/damage-accidents',
@@ -70,10 +83,15 @@ export const ROLE_BLOCKED_PATHS = {
     '/',                        // Workspace landing (Dashboard-gated)
     '/dashboard',               // Classic fleet Dashboard
     '/maintenance-swap',        // rental replacement — an Operations decision
+    // Customer Care is the inspector's + controller's lane; the dispatcher acts
+    // on the ticket it produces, not on the complaint itself.
+    '/complaints',
+    '/driver-observations',
     '/damage-accidents',
     '/customers',
     '/contracts',
     '/odometer-approvals',
+    '/components',              // fleet asset board; he works from the car's own tab
     '/cost-intelligence',
     '/recommendation-intelligence',
     '/fleet-utilization',
@@ -86,11 +104,37 @@ export const ROLE_BLOCKED_PATHS = {
   ],
 
   // ── Inspector (Abu Maroof): finds the fault, files the report, re-inspects
-  // on return. Lives in My Queue. Keeps the diagnostic + history surfaces he
-  // reads before judging a car; walled off from money, customers and dispatch.
+  // on return. Owner ruling — his sidebar is exactly six working surfaces:
+  //
+  //   My Queue · Complaints · Driver Observations · Maintenance History ·
+  //   Fleet Health · Vehicles          (+ Notifications and Settings, which are
+  //                                     ALWAYS_ALLOWED and can't be removed)
+  //
+  // Everything else is blocked below. The reasoning for the non-obvious ones:
+  //   · Maintenance Cycle — the full pipeline board is the dispatcher's view.
+  //   · Completed Repairs — the signed-off ledger is a control surface; what he
+  //     needs before judging a car is the per-car visit list in History.
+  //   · Service Reminders / Parts / Keyword Risk — scheduling, procurement and
+  //     vocabulary admin. His report auto-raises part requests; he never opens
+  //     the procurement board himself.
+  //   · Car Status — overlaps Vehicles, which he keeps for plate lookup and the
+  //     car's timeline / past faults / odometer.
+  //   · Component Intelligence — the fleet-wide asset/warranty board is a
+  //     procurement surface. What a car currently has fitted is on that car's
+  //     own Components tab, which he reaches through Vehicles.
   inspector: [
     '/',                        // Workspace landing (Dashboard-gated)
     '/dashboard',
+    // The pipeline board is the dispatcher's; exact-match only, because he is
+    // still deep-linked into a single ticket (/maintenance-workflow/:id) from a
+    // complaint drawer and from a car's repeat-fault timeline.
+    '/maintenance-workflow$',
+    '/completed-repairs',
+    '/service-reminders',
+    '/finding-keywords',
+    '/parts',
+    '/components',
+    '/car-status',
     '/driver-dispatch',         // the supervisor assigns; the inspector doesn't
     '/maintenance-swap',
     '/damage-accidents',
@@ -135,6 +179,7 @@ export const ROLE_BLOCKED_PATHS = {
     '/contracts',
     '/mileage',
     '/odometer-approvals',
+    '/components',              // fleet asset/warranty board — procurement, not control
     '/cost-intelligence',
     '/recommendation-intelligence',
     '/fleet-utilization',
@@ -153,6 +198,7 @@ export const ROLE_BLOCKED_PATHS = {
     '/finding-keywords',
     '/recurring-fault-reviews',
     '/odometer-approvals',
+    '/components',              // asset custody sits with maintenance, not the desk
     '/cost-intelligence',
     '/recommendation-intelligence',
     '/data-health',
@@ -164,9 +210,17 @@ export const ROLE_BLOCKED_PATHS = {
 
   // ── Finance / accounts: audits the money. Reads what a repair was for, but
   // never moves an operational ticket.
+  //
+  // '/components' is deliberately ABSENT — finance is the one role that keeps
+  // the fleet asset board. Installed value, warranty exposure and replacement
+  // churn are asset-cost questions, which is exactly why the seeder grants this
+  // role `components.view` ("read-only — asset cost visibility"). It sits with
+  // the other money surfaces finance keeps (cost-intelligence, fleet-utilization).
   finance: [
     '/maintenance-workflow',
     '/my-maintenance-queue',
+    '/complaints',              // operational follow-up, not an accounting record
+    '/driver-observations',
     '/car-status',
     '/driver-dispatch',
     '/inspection-review',
@@ -191,7 +245,8 @@ export const ROLE_BLOCKED_PATHS = {
 
 // True if `path` is blocked for a user holding `roles`. Admins bypass all
 // blocks. A blocked parent path also blocks its children ('/vehicles' hides
-// '/vehicles/123'); '/' is matched exactly so it never swallows the whole app.
+// '/vehicles/123'); '/' and any '…$' entry are matched exactly, so neither
+// swallows the pages beneath it.
 //
 // Multi-role users get the UNION of what their roles can see: the path is only
 // blocked when EVERY role the user holds blocks it. Adding a second role must
@@ -203,9 +258,10 @@ export function pathBlockedForRoles(path, roles = []) {
   if (!roles.length) return false;
   if (roles.some((r) => BYPASS_ROLES.includes(r))) return false;
   return roles.every((r) =>
-    (ROLE_BLOCKED_PATHS[r] || []).some(
-      (blocked) => path === blocked || path.startsWith(`${blocked}/`),
-    ),
+    (ROLE_BLOCKED_PATHS[r] || []).some((blocked) => {
+      if (blocked.endsWith('$')) return path === blocked.slice(0, -1);
+      return path === blocked || path.startsWith(`${blocked}/`);
+    }),
   );
 }
 
