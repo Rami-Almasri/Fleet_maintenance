@@ -3,6 +3,7 @@
 namespace Database\Seeders;
 
 use App\Models\FindingKeyword;
+use App\Services\KeywordOntologyService;
 use App\Support\TextNormalizer;
 use Illuminate\Database\Seeder;
 
@@ -171,5 +172,13 @@ class FindingKeywordSeeder extends Seeder
                 $row->save();
             }
         }
+
+        // The match corpus is cached for 5 minutes and joins `finding_keywords.is_active`, so a row
+        // written here is invisible to search until the entry expires. Harmless during a full
+        // `db:seed` — FaultOntologySeeder and CustomerVocabularySeeder both run after this one and
+        // flush at the end — but running THIS seeder alone left a window where the admin page
+        // reported full keyword coverage while a search for those very keywords found nothing.
+        // Every other writer of these tables already flushes; this was the one that didn't.
+        KeywordOntologyService::flushCache();
     }
 }
