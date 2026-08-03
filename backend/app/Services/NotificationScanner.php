@@ -82,7 +82,11 @@ class NotificationScanner
         'deferred_maintenance_return' => 'maintenance.manage', // supervisors/ops: car back from rental still owes the workshop
         'part_delivery_overdue'       => 'parts.view',          // parts desk: a purchased part is past its promised delivery date
         'test_interrupted'            => 'maintenance.manage',   // controllers (Leen): a recommended test lapsed because the car went back on rent
+        'maint_invoice_missing'       => 'maintenance.checkpoint.manage', // the Checkpoint lane's owners: car left the garage, bill never arrived
     ];
+
+    /** Days a garage is given to send its bill before the missing invoice becomes an alert. */
+    private const INVOICE_GRACE_DAYS = 2;
 
     public function __construct(
         private DashboardService $dashboard,
@@ -93,6 +97,7 @@ class NotificationScanner
         private BookingReadinessService $bookingReadiness,
         private OperationalStateLoader $loader,
         private MaintenanceDelayResolver $delayResolver,
+        private LeftGarageInvoiceService $leftGarageQueue,
     ) {}
 
     /**
@@ -308,6 +313,7 @@ class NotificationScanner
             ->concat($this->inspectionDue())
             ->concat($this->partsAwaitingDelivery())
             ->concat($this->testRecommendationsInterrupted())
+            ->concat($this->leftGarageInvoiceMissing())
             ->all();
     }
 
@@ -1013,6 +1019,53 @@ class NotificationScanner
                 'icon'     => 'clipboard',
                 'meta'     => ['plate' => $r['plate'], 'status' => $r['status'], 'days_remaining' => $r['days_remaining']],
             ]);
+    }
+
+    /**
+     * PROACTIVE — the car has physically left the garage but no invoice has been entered, so the job is
+     * finished on the ground and still open on paper. Consumes the ONE definition of that condition
+     * ({@see LeftGarageInvoiceService}), the same rows the /oversight/left-garage page lists, so the lane
+     * and the page can never show different work.
+     *
+     * Timing: a two-day grace period after collection — a garage is allowed a day or two to send the bill
+     * before anyone is nagged about it. Keyed per ticket, so it clears the moment a cost is entered and
+     * the ticket drops off the queue.
+     */
+    private function leftGarageInvoiceMissing(): Collection
+    {
+        return $this->leftGarageQueue->rows()
+            ->filter(fn ($r) => ($r['days_since'] ?? 0) >= self::INVOICE_GRACE_DAYS)
+            ->take(self::CAP)
+            ->map(function (array $r) {
+                $days = (int) ($r['days_since'] ?? 0);
+                $car  = $r['plate_no'] ?: ($r['car'] ?: ('Ticket #' . $r['ticket_id']));
+
+                return [
+                    'type'     => 'maint_invoice_missing',
+                    'category' => 'maintenance',
+                    'severity' => $days >= 14 ? 'critical' : ($days >= 7 ? 'warning' : 'info'),
+                    'title'    => 'No invoice · left ' . $days . 'd ago · ' . $car,
+                    'body'     => trim($car . ' left ' . ($r['garage'] ? $r['garage'] : 'the garage')
+                                    . ' ' . $days . ' day(s) ago and no invoice has been entered'
+                                    . ($r['invoice_requested']
+                                        ? ' — already requested, chase the garage.'
+                                        : ' — request the bill from the garage.')),
+                    // Straight to the ticket — that is where the invoice is actually requested and
+                    // recorded, and it's the same destination the queue page's own row action uses.
+                    'url'      => '/maintenance-workflow/' . $r['ticket_id'],
+                    'key'      => 'maint_invoice_missing:' . $r['ticket_id'],
+                    'icon'     => 'dollar',
+                    'meta'     => [
+                        'ticket_id'         => $r['ticket_id'],
+                        'vehicle_id'        => $r['vehicle_id'],
+                        'plate'             => $r['plate_no'],
+                        'garage'            => $r['garage'],
+                        'days_since'        => $days,
+                        'invoice_requested' => $r['invoice_requested'],
+                    ],
+                ];
+            })
+            ->values();
     }
 
     // ── Recipients & dedup ─────────────────────────────────────────────────────
