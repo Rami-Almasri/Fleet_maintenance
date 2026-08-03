@@ -171,10 +171,12 @@ class CarStatusService
         $delay     = $this->delayResolver->resolve($t);
         $effective = EffectiveState::reduce($t->vehicle?->operational_status, $repair);
 
-        // Open (non-terminal) part names on the ticket — a display list, from the loaded graph.
+        // The parts the car is still WAITING on — a display list, from the loaded graph. Same rule as
+        // $waitingParts below (PartRequest::isOutstanding), so the list can't contradict the flag: the wait
+        // ends at DELIVERY, so a landed part drops off even while its request is still `purchased`.
         $openPartNames = $t->tasks
             ->flatMap(fn ($task) => $task->partRequests)
-            ->reject(fn (PartRequest $r) => in_array($r->status, PartRequest::TERMINAL, true))
+            ->filter(fn (PartRequest $r) => $r->isOutstanding())
             ->pluck('part_name')->filter()->unique()->values()->all();
 
         // waiting_parts: now a single source — the mid-repair resolver, which reads the ticket's open part
@@ -459,18 +461,23 @@ class CarStatusService
             ->sortByDesc('occurrences')->values()->all();
     }
 
-    /** Every vehicle currently waiting on a part — one row per open part request. */
+    /**
+     * Every vehicle currently waiting on a part — one row per outstanding part request. Uses the SQL twin
+     * of PartRequest::isOutstanding(), so a delivered part leaves this widget the moment it lands rather
+     * than lingering until someone closes the request.
+     */
     private function waitingForParts(): array
     {
         $now = Carbon::now();
 
         return PartRequest::query()
-            ->whereNotIn('status', PartRequest::TERMINAL)
+            ->outstanding()
             ->with([
                 'vehicle:id,plate_no,make,model',
                 'maintenance:id,vendor_id',
                 'maintenance.vendor:id,name',
-                'purchases:id,part_request_id,source_vendor_id,source_name',
+                // delivered_at/installed_at ride along so the mapped row agrees with the scope above.
+                'purchases:id,part_request_id,source_vendor_id,source_name,delivered_at,installed_at',
                 'purchases.sourceVendor:id,name',
             ])
             ->orderBy('requested_at')

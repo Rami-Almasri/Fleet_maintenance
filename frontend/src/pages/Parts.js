@@ -328,11 +328,15 @@ function PurchaseModal({ open, request, onClose, onDone, vendors }) {
 function InstallModal({ open, request, onClose, onDone }) {
   const toast = useToast();
   const purchase = request?.purchases?.find((p) => !p.installed_at) || request?.purchases?.[request.purchases.length - 1];
+  const vehicleId = request?.vehicle?.id || request?.vehicle_id || purchase?.vehicle_id || null;
   // The Asset Layer fields ride along with the install: this step is the ONLY moment the system can
   // learn what physically went on the car and what happened to the part it displaced. Asking here is
   // why no "Add Component" screen has to exist anywhere else.
+  // Installing is a confirmation, not a form. Odometer / warranty / result / notes are no longer asked
+  // for here — the backend defaults them (result → success, the rest → null / whatever the purchase
+  // already carried), so fitting a part is one click. What remains is the Asset Layer block, which is
+  // the ONLY moment the system can learn what physically went on the car.
   const BLANK = {
-    installed_odometer: '', warranty_months: '', result: 'success', notes: '',
     component_catalog_id: '', brand: '', serial_no: '', position: '',
     removal_reason: '', disposition: '',
   };
@@ -359,6 +363,22 @@ function InstallModal({ open, request, onClose, onDone }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  // What is ALREADY on this car. A live component of the same type means this fitting is a
+  // replacement, and the backend refuses to let the old part just vanish — it wants a reason and a
+  // destination. Under shadow mode that refusal is swallowed, so without knowing this up front the
+  // modal would happily submit an install that silently never reaches the components tab.
+  // A failed/forbidden fetch leaves the list empty, which only means "don't block" — never a false
+  // requirement on the operator.
+  const [installed, setInstalled] = useState([]);
+  useEffect(() => {
+    if (!open || !vehicleId) { setInstalled([]); return undefined; }
+    let alive = true;
+    api.get(`/Vehicle/${vehicleId}/components`)
+      .then((r) => { if (alive) setInstalled(payload(r)?.installed || []); })
+      .catch(() => { if (alive) setInstalled([]); });
+    return () => { alive = false; };
+  }, [open, vehicleId]);
+
   // Best-guess the type from the part name so the common case is one confirming glance, not a hunt
   // through 30 options. Longest catalog name that appears in the part name wins ("Brake Discs (set)"
   // beats "Brake Pads (set)" for "front brake discs"), so a partial match can't shadow a fuller one.
@@ -376,19 +396,56 @@ function InstallModal({ open, request, onClose, onDone }) {
   // Positions are per type: a radiator takes none, a tyre takes four corners. Offering all of them
   // always invites a 422 ("… does not take a position") that shadow mode would swallow.
   const positions = selectedType?.positions || [];
+  // The live part this fitting would displace, if any — matched on the catalog slug the components
+  // read model exposes. Its presence turns the "Replacing an existing part?" block from optional
+  // into required.
+  const replacing = selectedType
+    ? installed.find((c) => c.catalog_slug === selectedType.slug && c.kind !== 'consumable') || null
+    : null;
 
   const set = (field, value) => setForm((f) => ({ ...f, [field]: value }));
 
+  /**
+   * The two ways this install can be accepted, billed, and still never reach the vehicle's Installed
+   * Components tab. Both are refused by the backend with a 422 — but under shadow mode that 422 is
+   * caught and swallowed so it can never roll back the billing write, which means an unguarded submit
+   * looks like a complete success while the asset ledger silently skips the part. Catching it here is
+   * what turns a silent no-op into a fixable field error.
+   */
+  const assetErrors = () => {
+    const e = {};
+    if (!form.component_catalog_id) {
+      e['component.component_catalog_id'] = ['Pick a component type — without it the part cannot join the vehicle’s configuration.'];
+      return e;
+    }
+    if (selectedType?.requires_serial && !form.serial_no.trim()) {
+      e['component.serial_no'] = [`${selectedType.name} is serialized — enter its serial number.`];
+    }
+    // Replacing a live part of the same type: the old one needs a reason AND a destination, or the
+    // backend refuses the whole component write.
+    if (replacing && !(form.removal_reason && form.disposition)) {
+      if (!form.removal_reason) e['predecessor.removal_reason'] = [`This car already has a ${selectedType.name} fitted — say why it came off.`];
+      if (!form.disposition) e['predecessor.disposition'] = ['Say where the old part went.'];
+    }
+    return e;
+  };
+
   const submit = async () => {
     if (!purchase) { toast.error('No purchase found to install'); return; }
+
+    const blocking = assetErrors();
+    if (Object.keys(blocking).length) {
+      setErrors(blocking);
+      toast.error('Please fix the highlighted fields');
+      return;
+    }
+
     setSaving(true);
     setErrors({});
     try {
       await api.post(`/part-purchases/${purchase.id}/install`, {
-        installed_odometer: form.installed_odometer === '' ? null : Number(form.installed_odometer),
-        warranty_months: form.warranty_months === '' ? null : Number(form.warranty_months),
-        result: form.result,
-        notes: form.notes.trim() || null,
+        // No odometer / warranty / result / notes: omitted entirely so installPurchase() applies its own
+        // defaults (result → success). The API still accepts them for any other caller.
 
         // Asset Layer. Blank fields are omitted rather than sent as empty strings so the backend's
         // "nullable" rules see a genuinely absent value and its own defaults apply.
@@ -431,39 +488,11 @@ function InstallModal({ open, request, onClose, onDone }) {
       }
     >
       <div className="space-y-4">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Input
-            label="Installed odometer (km)"
-            type="number"
-            min={0}
-            placeholder="Optional"
-            value={form.installed_odometer}
-            error={errors.installed_odometer?.[0]}
-            onChange={(e) => set('installed_odometer', e.target.value)}
-          />
-          <Input
-            label="Warranty (months)"
-            type="number"
-            min={0}
-            placeholder="Optional"
-            value={form.warranty_months}
-            error={errors.warranty_months?.[0]}
-            onChange={(e) => set('warranty_months', e.target.value)}
-          />
-        </div>
-        <Select label="Result" value={form.result} error={errors.result?.[0]} onChange={(e) => set('result', e.target.value)}>
-          <option value="success">Success</option>
-          <option value="failed">Failed</option>
-          <option value="pending">Pending</option>
-        </Select>
-        <Textarea
-          label="Notes"
-          rows={2}
-          placeholder="Optional"
-          value={form.notes}
-          error={errors.notes?.[0]}
-          onChange={(e) => set('notes', e.target.value)}
-        />
+        {/* Fitting the part is the confirmation itself — the button below is the whole action. */}
+        <p className="text-sm text-slate-600">
+          Record <span className="font-medium text-slate-800">{request?.part_name}</span> as fitted to{' '}
+          <span className="font-medium text-slate-800">{request?.vehicle?.plate || `#${request?.vehicle?.id}`}</span>?
+        </p>
 
         {/* ── Vehicle configuration ─────────────────────────────────────────────────────────────
             Recording the install here is what puts the part on the vehicle's Installed Components
@@ -488,9 +517,9 @@ function InstallModal({ open, request, onClose, onDone }) {
                 <option key={c.id} value={c.id}>{c.name}</option>
               ))}
             </Select>
-            {!form.component_catalog_id && (
+            {!form.component_catalog_id && !errors['component.component_catalog_id'] && (
               <p className="mt-1 text-xs text-amber-600">
-                Pick a type, or this part will be billed but won’t appear on the vehicle’s Installed Components tab.
+                Required — the type is what puts this part on the vehicle’s Installed Components tab.
               </p>
             )}
           </div>
@@ -531,9 +560,13 @@ function InstallModal({ open, request, onClose, onDone }) {
           {/* The old part is never allowed to just vanish: if this fitting replaces something, the
               system needs a reason AND a destination before it will retire the previous record. */}
           <div className="mt-4 border-t border-slate-200 pt-3">
-            <p className="text-xs font-medium text-slate-600">Replacing an existing part?</p>
-            <p className="mt-0.5 text-xs text-slate-400">
-              Answer both and the old part is retired automatically, linked to this one as its successor. Leave blank if nothing was removed.
+            <p className="text-xs font-medium text-slate-600">
+              {replacing ? 'Replacing an existing part — both answers required' : 'Replacing an existing part?'}
+            </p>
+            <p className={`mt-0.5 text-xs ${replacing ? 'text-amber-600' : 'text-slate-400'}`}>
+              {replacing
+                ? `This car already has a ${replacing.part_name || selectedType?.name} fitted${replacing.installed_at ? ` since ${String(replacing.installed_at).slice(0, 10)}` : ''}. Say why it came off and where it went, or the fitting cannot be recorded.`
+                : 'Answer both and the old part is retired automatically, linked to this one as its successor. Leave blank if nothing was removed.'}
             </p>
             <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Select

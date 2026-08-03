@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
@@ -42,6 +43,18 @@ class PartRequest extends Model
 
     public const TERMINAL = [self::STATUS_COMPLETED, self::STATUS_REJECTED, self::STATUS_CANCELLED];
 
+    /**
+     * Statuses where the part is no longer owed — fitted (installed/completed) or dropped
+     * (rejected/cancelled). Wider than TERMINAL, which excludes `installed` because an installed request
+     * is still open bookkeeping-wise even though the car has the part. Used by isOutstanding().
+     */
+    public const SETTLED = [
+        self::STATUS_INSTALLED,
+        self::STATUS_COMPLETED,
+        self::STATUS_REJECTED,
+        self::STATUS_CANCELLED,
+    ];
+
     public const LOCATION_GARAGE = 'garage';
     public const LOCATION_ONSITE = 'onsite';
     public const LOCATIONS = [self::LOCATION_GARAGE, self::LOCATION_ONSITE];
@@ -74,6 +87,48 @@ class PartRequest extends Model
     public function isTerminal(): bool
     {
         return in_array($this->status, self::TERMINAL, true);
+    }
+
+    /**
+     * True once the part is physically on site — a purchase against it was marked delivered, or it was
+     * already fitted. Delivery is NOT a request status (the request stays `purchased` after
+     * PartWorkflowService::markDelivered); it lives only on part_purchases.delivered_at, so this is the
+     * only honest way to ask "has it arrived?".
+     *
+     * Reads the loaded `purchases` collection — eager-load it on any hot path (board/state loaders).
+     */
+    public function isOnSite(): bool
+    {
+        return $this->purchases->contains(
+            fn (PartPurchase $purchase) => $purchase->delivered_at !== null || $purchase->installed_at !== null
+        );
+    }
+
+    /**
+     * Is the car still WAITING on this part? The wait is for DELIVERY, not for the fitting: a request
+     * stops being outstanding the moment the part lands (delivered) or its status settles
+     * (installed/completed = fitted, rejected/cancelled = never coming).
+     *
+     * This is the single definition of "waiting on parts" — WorkflowStateResolver's repair-blocked state
+     * and the workflow board's "Parts Requested" badge both read it, so they can never drift apart.
+     */
+    public function isOutstanding(): bool
+    {
+        return ! in_array($this->status, self::SETTLED, true) && ! $this->isOnSite();
+    }
+
+    /**
+     * The SQL twin of isOutstanding(), for the surfaces that count/filter in the database rather than
+     * over a loaded collection (dashboard widgets, KPI counts). Kept beside it deliberately: if one
+     * changes the other must, or the widgets start disagreeing with the cards again.
+     */
+    public function scopeOutstanding(Builder $query): Builder
+    {
+        return $query
+            ->whereNotIn('status', self::SETTLED)
+            ->whereDoesntHave('purchases', fn (Builder $p) => $p
+                ->whereNotNull('delivered_at')
+                ->orWhereNotNull('installed_at'));
     }
 
     /** Has this request been paid for yet? (Guards the install step.) */

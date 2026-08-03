@@ -15,6 +15,7 @@ import RepairOutlook from './RepairOutlook';
 import VideoEvidence from './VideoEvidence';
 import InvoicesPanel from './InvoicesPanel';
 import TicketParts from './TicketParts';
+import SuggestedChecks from './SuggestedChecks';
 import { resolveAction, allows, ctaLabel, ago, fmtDuration, fmtDateTime, SEVERITY_CHIP, custodyBlocked, custodyHolderName, isAtGarage, isPausable, isPaused, isPausedOut, isTempReleasable, isTemporarilyReleased, canOrderParts, ORIGIN_LABEL } from './meta';
 import { SHOW_VIDEO_REVIEW } from '../../config/features';
 
@@ -443,6 +444,14 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
                   {t(tk.trigger_reason === 'customer_reported' ? 'workflow.detail.complaint' : tk.trigger_reason === 'periodic' ? 'workflow.detail.agenda' : 'workflow.detail.driverNote')}
                 </p>
                 <p className="mt-1 text-sm text-slate-700">{tk.customer_complaint}</p>
+
+                {/* The agenda text above is a FROZEN snapshot of why the request was raised, and for a
+                    system-scheduled check it is the standing safety list ("please check: Battery,
+                    Fluids, and Brakes") — the same wording on every idle car. On its own it tells the
+                    reader nothing about THIS vehicle. The live per-car picture goes directly beneath
+                    it, from the one service every surface reads, so whoever acts on the agenda sees
+                    what this car actually keeps coming back for. */}
+                <SuggestedChecks vehicleId={tk.vehicle_id} />
               </div>
             )}
             {hasReport(tk.test_drive_report) && (

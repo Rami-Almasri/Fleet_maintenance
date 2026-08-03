@@ -147,7 +147,14 @@
 .mwf-pill.crit{color:var(--crit);background:rgba(251,113,133,.12);border-color:rgba(251,113,133,.34)}
 .mwf-pill.paused{color:var(--paused);background:rgba(245,165,36,.12);border-color:rgba(245,165,36,.32)}
 /* expected-return day: calm neutral chip; turns red (.over) once the promised day has passed */
-.mwf-pill.parts{color:var(--reserved);background:rgba(167,139,250,.12);border-color:rgba(167,139,250,.32)}
+.mwf-pill.parts{color:var(--reserved);background:rgba(167,139,250,.12);border-color:rgba(167,139,250,.32);cursor:help}
+/* Parts-requested badge hover list — "Brake Pads ×2 — Requested", one line per open request.
+   Renders inside the portaled dark <Tooltip>, so it styles against that navy chrome. */
+.mwf-parts-tip{display:flex;flex-direction:column;gap:3px;text-align:start}
+.mwf-parts-tip .hd{font-weight:700;font-size:11px;opacity:.72;margin-bottom:1px}
+.mwf-parts-tip .ln{display:flex;align-items:baseline;gap:6px;justify-content:space-between}
+.mwf-parts-tip .ln .nm{font-weight:600;overflow-wrap:anywhere}
+.mwf-parts-tip .ln .st{flex:none;opacity:.68;font-size:10px;white-space:nowrap}
 .mwf-pill.due{color:var(--ink-2);background:var(--ov);border-color:var(--line)}
 .mwf-pill.due.over{color:var(--crit);background:rgba(251,113,133,.12);border-color:rgba(251,113,133,.34)}
 .opx-chip.moving{animation:mwf-pulse 1.6s ease-in-out infinite}

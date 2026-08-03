@@ -57,6 +57,9 @@ class PartRequestController extends Controller
      * Fleet-wide parts spend for the board's "Where parts money goes" chart. Deliberately NOT derived
      * from the request list: most parts money is itemised on garage invoices and never passes through
      * a part request, so the chart reads the unified ledger (see PartSpendService).
+     *
+     * `days` / `from` / `to` scope it to WHEN the money was spent (an explicit range wins over the
+     * trailing preset). Omitting all three keeps the all-time answer.
      */
     public function spend(Request $request, PartSpendService $spend)
     {
@@ -65,10 +68,18 @@ class PartRequestController extends Controller
                 'by'         => ['nullable', Rule::in(['part', 'car'])],
                 'limit'      => ['nullable', 'integer', 'min:1', 'max:50'],
                 'vehicle_id' => ['nullable', 'exists:vehicles,id'],
+                'days'       => ['nullable', 'integer', 'min:0', 'max:3650'],
+                'from'       => ['nullable', 'date'],
+                'to'         => ['nullable', 'date'],
             ]);
 
             return ResponseHelper::SuccessResponse(
-                $spend->ranked($data['by'] ?? 'part', (int) ($data['limit'] ?? 10), $data['vehicle_id'] ?? null),
+                $spend->ranked(
+                    $data['by'] ?? 'part',
+                    (int) ($data['limit'] ?? 10),
+                    $data['vehicle_id'] ?? null,
+                    ['days' => $data['days'] ?? null, 'from' => $data['from'] ?? null, 'to' => $data['to'] ?? null],
+                ),
                 'Parts spend retrieved'
             );
         } catch (\Throwable $e) {

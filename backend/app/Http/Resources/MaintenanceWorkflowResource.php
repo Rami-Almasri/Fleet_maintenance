@@ -209,13 +209,12 @@ class MaintenanceWorkflowResource extends JsonResource
             // Ready-entry-point chips (see DiagnosticGateService::dueChecks) — the exact Findings-catalog
             // keywords a system-raised ticket is due for, offered as one-tap suggestions at the Decide step.
             'suggested_findings'    => array_values($t->suggested_findings ?? []),
-            // Suggested Checks — the PER-CAR replacement for the old fixed checklist: this vehicle's own
-            // repeat faults and its live service forecast, ranked, each carrying reason CODES the UI turns
-            // into a sentence in either language. Attached by MaintenanceWorkflowService::pendingReview()
-            // (deduped per vehicle); null on every other surface, which simply renders nothing.
-            // The fixed Battery/Fluids/Brakes list lives inside it as `checklist` — an inspection agenda,
-            // explicitly NOT a set of findings to confirm. See VehicleSuggestedChecksService.
-            'suggested_checks'      => $t->suggested_checks ?? null,
+            // NOTE: Suggested Checks (this car's repeat faults + service forecast — the per-car
+            // replacement for the old fixed checklist) is deliberately NOT on this resource. It is too
+            // expensive to compute for every row of a 141-ticket queue, so it has its own endpoint,
+            // Vehicle/{vehicle}/suggested-checks, which the panel calls per card as it scrolls into
+            // view. See VehicleSuggestedChecksService.
+            //
             // Trigger Detail — the "why" snapshot behind a SYSTEM-generated (periodic) request: the rule(s)
             // that fired, each rule's human reason + checklist, and the mileage/threshold/overdue/due values
             // at detection. Null for human-raised requests. The Inspection Review Queue renders this so a
@@ -295,6 +294,11 @@ class MaintenanceWorkflowResource extends JsonResource
             // ticket level (no maintenance_task_id — e.g. an ad-hoc procurement request) is invisible to
             // the per-fault `tasks[].parts` list, so the card reads THIS to show it. Present only when the
             // ticket's own partRequests relation is eager-loaded.
+            // `delivered` / `outstanding` are DERIVED, never stored: delivery is not a request status (the
+            // request stays `purchased` after markDelivered), it lives on part_purchases.delivered_at. The
+            // board's parts badge reads `outstanding` so it clears the moment a part LANDS, without waiting
+            // for someone to fit it and move the status. Both come from PartRequest::isOutstanding(), the
+            // same rule WorkflowStateResolver uses, so board and state can't disagree.
             'parts' => $this->whenLoaded('partRequests', fn () => $t->partRequests->map(fn (PartRequest $p) => [
                 'id'          => $p->id,
                 'part_name'   => $p->part_name,
@@ -302,6 +306,8 @@ class MaintenanceWorkflowResource extends JsonResource
                 'quantity'    => $p->quantity,
                 'status'      => $p->status,
                 'task_id'     => $p->maintenance_task_id,
+                'delivered'   => $p->relationLoaded('purchases') ? $p->isOnSite() : null,
+                'outstanding' => $p->relationLoaded('purchases') ? $p->isOutstanding() : null,
             ])->values()),
 
             // OPERATIONS CARD — the "what is happening to this car right now" block the Car Status
@@ -560,9 +566,10 @@ class MaintenanceWorkflowResource extends JsonResource
     }
 
     /**
-     * The distinct names of every OPEN (non-terminal) part request across this ticket's faults — the
-     * parts the car is still waiting on. Empty when the tasks / their part requests aren't eager-loaded
-     * (so it never fires a lazy query) or nothing is outstanding.
+     * The distinct names of every part this ticket is still WAITING on — PartRequest::isOutstanding(),
+     * the same rule the board badge and WorkflowStateResolver use. The wait ends at DELIVERY, not at the
+     * fitting, so a part that has landed drops off this list even though its request stays `purchased`.
+     * Empty when the tasks / their part requests aren't eager-loaded (so it never fires a lazy query).
      *
      * @return array<int,string>
      */
@@ -577,7 +584,7 @@ class MaintenanceWorkflowResource extends JsonResource
                 : collect());
 
         return $requests
-            ->reject(fn (PartRequest $r) => in_array($r->status, PartRequest::TERMINAL, true))
+            ->filter(fn (PartRequest $r) => $r->isOutstanding())
             ->pluck('part_name')
             ->filter()
             ->unique()

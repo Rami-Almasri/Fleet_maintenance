@@ -7,6 +7,7 @@ import { useAuth } from '../auth/AuthContext';
 import { useI18n } from '../i18n/I18nContext';
 import { useToast } from '../components/ui/Toast';
 import Icon from '../components/ui/Icon';
+import { Tooltip } from '../components/ui/Tooltip';
 import TicketActionModal from '../components/workflow/TicketActionModal';
 import TicketDetailDrawer from '../components/workflow/TicketDetailDrawer';
 import TicketCommandView from '../components/workflow/TicketCommandView';
@@ -101,15 +102,40 @@ const PART_STATUS = {
   under_review: { dot: 'var(--rented)', label: 'Under review' },
   approved:     { dot: 'var(--rented)', label: 'Approved' },
   purchased:    { dot: 'var(--reserved)', label: 'Purchased' },
+  // Not a request status — synthesised when the purchase carries delivered_at. The part is on site and
+  // the car has stopped waiting, even though the request stays `purchased` until someone fits it.
+  delivered:    { check: true,          label: 'Delivered' },
   installed:    { check: true,          label: 'Installed' },
   completed:    { check: true,          label: 'Installed' },
   rejected:     { dot: 'var(--ink-3)',  label: 'Rejected',  muted: true },
   cancelled:    { dot: 'var(--ink-3)',  label: 'Cancelled', muted: true },
 };
 
+// Statuses where the part is no longer owed — fitted (installed/completed) or dropped
+// (rejected/cancelled). Mirrors PartRequest::SETTLED.
+const PART_SETTLED = new Set(['installed', 'completed', 'rejected', 'cancelled']);
+
+// Is the car still WAITING on this part? The wait is for DELIVERY, not for the fitting — a part that
+// has LANDED stops counting even though its request is still `purchased` (delivery is recorded on the
+// purchase's delivered_at, not as a request status). The backend computes this as `outstanding` via
+// PartRequest::isOutstanding(); we trust it when present and fall back to the same rule locally so an
+// older/lighter payload still behaves. Purely DERIVED — nothing is written because of it.
+function isOutstandingPart(p) {
+  if (typeof p.outstanding === 'boolean') return p.outstanding;
+  return !PART_SETTLED.has(p.status) && !p.delivered;
+}
+
+// Every part request on the ticket that is still owed — fault-linked and ticket-level alike, since
+// `tk.parts` is the ticket's own partRequests relation (the board eager-loads it, so this is free).
+function outstandingParts(tk) {
+  return (tk.parts || []).filter(isOutstandingPart);
+}
+
 // One part line — the status marker, the name (+ qty) and where it is in its lifecycle.
 function PartRow({ part }) {
-  const ps = PART_STATUS[part.status] || { dot: 'var(--ink-3)', label: part.status };
+  // A delivered-but-not-yet-fitted part reads "Delivered", not a stale "Purchased".
+  const key = part.delivered && !PART_SETTLED.has(part.status) ? 'delivered' : part.status;
+  const ps = PART_STATUS[key] || { dot: 'var(--ink-3)', label: part.status };
   return (
     <div
       className={`mwf-part ${ps.muted ? 'muted' : ''}`}
@@ -136,7 +162,7 @@ const SEV_FILTERS = [
 // affordance (severity, complaint/breakdown flags, live position, single-garage fault routing,
 // custody gate, delegation, the one primary stage action) — only the skin changed to the .opx tokens.
 function TicketCard({ tk, tone, laneKey, laneName, can, userId, active, onSelect, onAct }) {
-  const { t } = useI18n();
+  const { t, tf, tp } = useI18n();
   const cardRef = useRef(null);
   useEffect(() => {
     if (active && cardRef.current) cardRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -163,9 +189,13 @@ function TicketCard({ tk, tone, laneKey, laneName, can, userId, active, onSelect
   const isDisabled = tk.maintenance_type === 'breakdown' || tk.is_recovery;
   const age = stageAge(tk, t);
   const expected = expectedReturn(tk.expected_return_date);
-  // Parts still owed on the ticket (any non-terminal part request across its faults) — the board eager-
-  // loads tasks.partRequests, so this is free. Drives the header pill; the per-fault list renders below.
+  // Parts still owed on the ticket — a DERIVED read of its part requests, not a workflow state. The
+  // ticket stays in whatever lane it is in; this only decides whether the header badge shows. Falls
+  // back to the resource's `parts_pending` names when the full request list isn't serialized, so the
+  // badge never silently vanishes on a lighter payload.
+  const partsOwed = outstandingParts(tk);
   const partsPending = tk.parts_pending || [];
+  const partsCount = tk.parts ? partsOwed.length : partsPending.length;
   // Requests raised against the TICKET with no fault attached — they never show up in tasks[].parts, so
   // they get their own block under the fault list (otherwise they'd be invisible on the board).
   const looseParts = (tk.parts || []).filter((p) => !p.task_id);
@@ -226,11 +256,44 @@ function TicketCard({ tk, tone, laneKey, laneName, can, userId, active, onSelect
           {tk.fault_severity && (
             <span className={`opx-chip ${sevCls}`}><span className="cd" />{tk.fault_severity_emoji} {t(`workflow.faultSeverity.${tk.fault_severity}`)}</span>
           )}
-          {/* Parts blocker — the car is sitting on an outstanding part request. Names them in the tooltip
-              so a supervisor knows WHAT is owed without opening the ticket. */}
-          {partsPending.length > 0 && (
-            <span className="mwf-pill parts" title={t('workflow.board.partsWaitingTip', { names: partsPending.join(', ') })}>
-              🧩 {t('workflow.board.partsWaiting', { n: partsPending.length })}
+          {/* Parts blocker — the car is sitting on an outstanding part request. Purely visual: the ticket
+              keeps its lane and the vehicle keeps its operational status. Hover/focus lists exactly what
+              is owed (name ×qty — stage) so a dispatcher knows WHY without opening the ticket.
+              The wrapper swallows click/Enter so reading the badge never opens the drawer behind it. */}
+          {partsCount > 0 && (
+            <span
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && e.stopPropagation()}
+            >
+              <Tooltip
+                side="bottom"
+                maxWidth={280}
+                content={
+                  <div className="mwf-parts-tip">
+                    <div className="hd">{tp('workflow.board.partsRequested', partsCount)}</div>
+                    {partsOwed.length > 0
+                      ? partsOwed.map((p) => (
+                          <div key={p.id} className="ln">
+                            <span className="nm">
+                              {p.part_name}
+                              {p.quantity > 1 ? ` ×${Math.round(p.quantity)}` : ''}
+                            </span>
+                            <span className="st">
+                              {tf(
+                                `workflow.board.partStatus.${p.status}`,
+                                (PART_STATUS[p.status] || {}).label || p.status,
+                              )}
+                            </span>
+                          </div>
+                        ))
+                      : partsPending.map((n) => <div key={n} className="ln"><span className="nm">{n}</span></div>)}
+                  </div>
+                }
+              >
+                <span className="mwf-pill parts">
+                  🔧 {tp('workflow.board.partsRequested', partsCount)}
+                </span>
+              </Tooltip>
             </span>
           )}
           {tk.sent_back && (

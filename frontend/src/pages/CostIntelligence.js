@@ -86,6 +86,10 @@ export default function CostIntelligence() {
     return [...list].sort((a, b) => cmp(a[sort.key], b[sort.key], sort.dir));
   }, [data, q, activeOnly, cat, sort]);
 
+  // How many cars the filters are keeping off screen, and the one action that brings them back.
+  const hidden = Math.max(0, (data?.vehicles?.length || 0) - rows.length);
+  const showAll = useCallback(() => { setActiveOnly(false); setCat(null); setQ(''); }, []);
+
   const categories = data?.by_category || [];
   const maxCatCost = categories.reduce((m, c) => Math.max(m, c.maintenance_cost || 0), 0) || 1;
   const s = data?.summary || {};
@@ -280,7 +284,24 @@ export default function CostIntelligence() {
 
         <SectionCard
           title="Fleet — running cost per car"
-          actions={<span className="text-xs text-slate-400">{num(rows.length)} car{rows.length === 1 ? '' : 's'}</span>}
+          subtitle={hidden > 0 ? `${num(hidden)} car${hidden === 1 ? '' : 's'} hidden by the filters above` : undefined}
+          actions={(
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-400">
+                {num(rows.length)}{hidden > 0 ? ` of ${num(s.vehicles)}` : ''} car{rows.length === 1 ? '' : 's'}
+              </span>
+              {hidden > 0 && (
+                <button
+                  type="button"
+                  onClick={showAll}
+                  className="rounded-lg bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100"
+                  title="Clear every filter and list the whole fleet"
+                >
+                  Show all {num(s.vehicles)}
+                </button>
+              )}
+            </div>
+          )}
         >
           <DataTable
             columns={columns}
@@ -293,6 +314,21 @@ export default function CostIntelligence() {
             onRowClick={(r) => navigate(`/vehicles/${r.vehicle_id}`)}
             empty={q ? 'No cars match your search.' : 'No vehicles found.'}
           />
+          {/* The default view hides most of the fleet. Say so, and offer the way out — a count with no
+              way to widen it reads as "this is all there is". */}
+          {hidden > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 bg-slate-50/60 px-5 py-3 text-xs text-slate-500">
+              <span>
+                Showing <span className="font-semibold text-slate-700">{num(rows.length)}</span> of {num(s.vehicles)} cars
+                {activeOnly && ' · rented & ready only'}
+                {cat != null && ` · category “${cat}”`}
+                {q.trim() && ` · matching “${q.trim()}”`}
+              </span>
+              <button type="button" onClick={showAll} className="font-medium text-indigo-600 hover:text-indigo-700 hover:underline">
+                Show all {num(s.vehicles)} cars →
+              </button>
+            </div>
+          )}
         </SectionCard>
 
         {/* Calculation drill-down — opens from any number and shows exactly how it was derived. */}
