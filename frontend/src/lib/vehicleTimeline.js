@@ -20,6 +20,10 @@ export const TYPE_META = {
   fault:          { label: 'Fault',         tone: 'red',     Icon: Icon.Alert },
   routine:        { label: 'Routine',       tone: 'emerald', Icon: Icon.Spark },
   dispatch:       { label: 'Dispatch',      tone: 'violet',  Icon: Icon.Truck },
+  // A tow, not a drive. Split out of `dispatch` because the two answer different questions on an
+  // investigation: a recovery leg means the car could not move under its own power (and so carries no
+  // mileage between pickup and arrival), which is exactly the row an investigator is scanning for.
+  recovery:       { label: 'Recovery',      tone: 'orange',  Icon: Icon.Tow },
   garage:         { label: 'Garage',        tone: 'indigo',  Icon: Icon.Wrench },
   parts:          { label: 'Parts',         tone: 'amber',   Icon: Icon.Card },
   approval:       { label: 'Approval',      tone: 'green',   Icon: Icon.Check },
@@ -94,6 +98,19 @@ const TASK_SCOPED = new Set([
   'task_marked_incorrect', 'severity_upgraded', 'severity_review_kept', 'task_assigned',
 ]);
 
+// A tow is not stamped as its own event_type — it rides on the SAME dispatch events as a driven leg and
+// is only distinguishable by the marker the service writes into the event's meta (shipped as `details`):
+//   • dispatchRecovery()  → event `dispatched`,         meta.recovery = true
+//   • requestTransfer()   → event `transport_assigned`, meta.transport_method = 'recovery'
+// Anything without that marker stays a normal driver dispatch. Mirrors MaintenanceWorkflowService.
+const RECOVERY_CARRIERS = new Set(['dispatched', 'transport_assigned']);
+
+function isRecoveryEvent(e) {
+  if (!RECOVERY_CARRIERS.has(e.event_type)) return false;
+  const d = e.details || {};
+  return Boolean(d.recovery) || d.transport_method === 'recovery';
+}
+
 // The single investigation kind for an event. Damage walk-arounds are accidents whatever their source
 // label; then the event's OWN maintenance type when it has one; then the explicit event_type map, then a
 // category/source fallback.
@@ -113,6 +130,9 @@ export function eventKind(e) {
     if (e.task_kind === 'damage') return 'accident';
     return 'fault';
   }
+
+  // Ahead of the event_type map, which would file both tow legs under the generic 'dispatch'.
+  if (isRecoveryEvent(e)) return 'recovery';
 
   const mapped = EVENT_KIND[e.event_type];
   if (mapped) return mapped;

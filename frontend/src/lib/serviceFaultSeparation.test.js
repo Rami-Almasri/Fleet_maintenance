@@ -39,6 +39,29 @@ describe('vehicle timeline — an event is bucketed by its own type', () => {
   });
 });
 
+// A tow shares its event_type with a driven leg — only the meta marker separates them, so the marker is
+// the thing worth pinning down. Mirrors MaintenanceWorkflowService::dispatchRecovery() / requestTransfer().
+describe('vehicle timeline — a towed leg is a recovery, not a dispatch', () => {
+  it('reads the recovery marker on a breakdown tow', () => {
+    expect(eventKind({ event_type: 'dispatched', details: { recovery: true, recovery_unit: 'Recovery Truck #05' } })).toBe('recovery');
+  });
+
+  it('reads the transport method on a recovery transfer', () => {
+    expect(eventKind({ event_type: 'transport_assigned', details: { transport_method: 'recovery' } })).toBe('recovery');
+  });
+
+  it('leaves a driven leg under dispatch', () => {
+    expect(eventKind({ event_type: 'dispatched', details: { garage: 'Al Faris' } })).toBe('dispatch');
+    expect(eventKind({ event_type: 'transport_assigned', details: { transport_method: 'driver' } })).toBe('dispatch');
+    expect(eventKind({ event_type: 'dispatched' })).toBe('dispatch');
+  });
+
+  // The marker only means "towed" on the legs that can BE towed — it must not re-bucket other events.
+  it('does not turn a non-dispatch event into a recovery', () => {
+    expect(eventKind({ event_type: 'under_repair', details: { recovery: true } })).toBe('garage');
+  });
+});
+
 describe('vehicle dossier — the fault donut counts faults only', () => {
   it('reads the typed list when the backend supplies one', () => {
     const visit = { tags: ['Oil & Fillter Change', 'Rim Scratch'], fault_tags: ['Rim Scratch'], service_tags: ['Oil & Fillter Change'] };

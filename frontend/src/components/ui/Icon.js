@@ -43,6 +43,9 @@ const Icon = {
   Car: base(<><path d="M5 13l1.5-4.5A2 2 0 0 1 8.4 7h7.2a2 2 0 0 1 1.9 1.5L19 13" /><path d="M3 13h18v4a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1v-1H6v1a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z" /><path d="M6.5 16h.01M17.5 16h.01" /></>),
   Wrench: base(<><path d="M14.7 6.3a4 4 0 0 0-5.3 5l-6 6 2.3 2.3 6-6a4 4 0 0 0 5-5.3l-2.4 2.4-2-2z" /></>),
   Truck: base(<><path d="M3 6a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v9H3z" /><path d="M14 9h3.5L21 12.5V15h-7z" /><circle cx="7" cy="17.5" r="1.5" /><circle cx="17.5" cy="17.5" r="1.5" /></>),
+  // A tow/recovery unit — the truck chassis plus the boom + hook that distinguishes it from a plain
+  // delivery Truck. Used wherever a car MOVES WITHOUT BEING DRIVEN (breakdown tow, recovery transfer).
+  Tow: base(<><path d="M3 15V9a1 1 0 0 1 1-1h5v7z" /><path d="M9 15v-4h4l3 4z" /><circle cx="6.5" cy="17.5" r="1.5" /><circle cx="16" cy="17.5" r="1.5" /><path d="M12.5 11L20 4.5" /><path d="M20 4.5V9M18.5 9h3" /></>),
   Gauge: base(<><path d="M12 14l4-4" /><path d="M3.5 18a9 9 0 1 1 17 0" /><circle cx="12" cy="14" r="1.5" /></>),
   Activity: base(<><path d="M3 12h4l3 8 4-16 3 8h4" /></>),
   Shield: base(<><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z" /><path d="M9 12l2 2 4-4" /></>),
