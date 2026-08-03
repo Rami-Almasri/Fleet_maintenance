@@ -1319,14 +1319,15 @@ const en = {
       // Set only by the Driver Observation escalation — never offered in a picker. It is a REASON
       // ("a driver reported a fault"), not a source; the source lives in request_origin.
       driver_reported:   { label: 'Driver reported issue', sub: 'A fault reported by someone who drove the car' },
-      // Driver-voice variants — the same three reasons written from the driver's own experience
+      // Driver-voice variants — the same reasons written from the driver's own experience
       // ("this happened to me"), shown only on the driver's Request Inspection form.
+      // `periodic` has NO driver voice: routine service is raised by the system from the Service
+      // Reminders, never hand-filed here. See DRIVER_REQUEST_CHOICES in TicketActionModal.
       driverLabel: 'What happened?',
       driver: {
         test_drive:        { label: 'Something happened while I drove it', sub: 'I felt, heard or saw something wrong' },
         customer_reported: { label: 'The customer told me',                sub: 'A renter reported an issue' },
-        periodic:          { label: 'It’s due for routine service',        sub: 'Mileage / time-based service' },
-        // UI-only third path — NOT a backend trigger reason. Picking it writes a Driver Observation
+        // UI-only second path — NOT a backend trigger reason. Picking it writes a Driver Observation
         // (a note), so a passing remark never opens an inspection ticket on its own.
         observation:       { label: 'I just noticed something about it',   sub: 'I tried it or rode in it — logging a note, not a repair request' },
       },
@@ -4489,8 +4490,7 @@ const ar = {
       driver: {
         test_drive:        { label: 'حدث شيء أثناء قيادتي لها', sub: 'شعرت أو سمعت أو رأيت خطأً ما' },
         customer_reported: { label: 'العميل أخبرني',            sub: 'المستأجر أبلغ عن مشكلة' },
-        periodic:          { label: 'حان موعد الصيانة الدورية',  sub: 'خدمة بحسب المسافة / الوقت' },
-        // مسار ثالث في الواجهة فقط — ليس سببًا معتمدًا في الخادم. اختياره يسجّل «ملاحظة سائق» فقط.
+        // مسار ثانٍ في الواجهة فقط — ليس سببًا معتمدًا في الخادم. اختياره يسجّل «ملاحظة سائق» فقط.
         observation:       { label: 'لاحظت شيئًا عنها فحسب',     sub: 'جرّبتها أو ركبت فيها — تسجيل ملاحظة، وليس طلب إصلاح' },
       },
     },

@@ -42,7 +42,6 @@ import OdometerContinuityHint from './OdometerContinuityHint';
 import SignaturePad from './SignaturePad';
 import { isPaused, ORIGIN_LABEL } from './meta';
 import { useAuth } from '../../auth/AuthContext';
-import { usePermissions } from '../../hooks/usePermissions';
 
 // Enterprise Handover Workflow — CONTRACT with backend/config/maintenance_handover.php. Small, fixed
 // enums, so hardcoded client-side rather than fetched.
@@ -132,17 +131,17 @@ const UNVERIFIABLE_FALLBACK = {
 // in the Complaint entity (Complaints Center, source driver_relayed) or a Driver Observation, never a
 // hand-picked complaint-tagged inspection request. (Backend contract stays App\Models\Maintenance::TRIGGER_REASONS.)
 const INSPECTION_TRIGGER_REASONS = ['test_drive', 'periodic'];
-// The driver's "What happened?" choices. The first two are real trigger reasons; OBSERVATION_CHOICE is a
-// UI-ONLY third path — it is never sent as a trigger_reason. Picking it switches the form into Driver
+// The driver's "What happened?" choices. `test_drive` is a real trigger reason; OBSERVATION_CHOICE is a
+// UI-ONLY second path — it is never sent as a trigger_reason. Picking it switches the form into Driver
 // Observation mode (POST /driver-observations), so a passing remark from someone who merely tried the car
 // is captured as an internal note instead of inflating the inspection queue. See [[driver-observation-entity]].
+//
+// `periodic` ("It's due for routine service") is deliberately ABSENT for every role: routine upkeep is
+// mileage/time-based and the system now raises it itself from the Service Reminders — nobody hand-files
+// it from the driver-voice form. A person here reports what they experienced (test drive) or logs an
+// observation. The planner-facing `open` form (UC-1) still offers it via INSPECTION_TRIGGER_REASONS.
 const OBSERVATION_CHOICE = 'observation';
-const DRIVER_REQUEST_CHOICES = [...INSPECTION_TRIGGER_REASONS, OBSERVATION_CHOICE];
-// "It's due for routine service" is a SCHEDULING call, not something a driver observes: routine
-// service is driven by the mileage/time interval the Service Reminders own, so only the roles that
-// plan upkeep may raise it from the driver-voice request form. Everyone else files what they
-// actually saw (test drive) or logs an observation. The `open` form (UC-1) is unaffected.
-const PERIODIC_REQUEST_ROLES = ['admin', 'super-admin', 'maintenance'];
+const DRIVER_REQUEST_CHOICES = ['test_drive', OBSERVATION_CHOICE];
 // Breakdown is the SOLE classification an operator ever picks. The backend still knows all six
 // (App\Models\Maintenance::MAINTENANCE_TYPES) so historic rows keep their value and the API stays
 // compatible, but the administrative types (Routine, Insurance / Non-Insurance Incident,
@@ -564,14 +563,6 @@ function HandoverFields({
 export default function TicketActionModal({ action, ticket, vehicles = [], garages = [], findingsCatalog = [], keywordMeta = {}, faultCausesCatalog = {}, assignableDrivers = [], allowedTypes = null, onClose, onDone }) {
   const { t, tf } = useI18n();
   const { user: currentUser } = useAuth();
-  const { roles } = usePermissions();
-  // Driver-voice "What happened?" choices this user may pick — see PERIODIC_REQUEST_ROLES.
-  const driverRequestChoices = useMemo(
-    () => (roles.some((r) => PERIODIC_REQUEST_ROLES.includes(r))
-      ? DRIVER_REQUEST_CHOICES
-      : DRIVER_REQUEST_CHOICES.filter((rv) => rv !== 'periodic')),
-    [roles],
-  );
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [stale, setStale] = useState(false); // the ticket moved on under us (concurrent edit) → offer a refresh, not a red error
@@ -2651,7 +2642,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
             <div>
               <span className="mb-1.5 block text-sm font-medium text-slate-700">{t('workflow.reason.driverLabel')}</span>
               <div className="grid gap-2">
-                {driverRequestChoices.map((rv) => {
+                {DRIVER_REQUEST_CHOICES.map((rv) => {
                   const active = reason === rv;
                   return (
                     <button

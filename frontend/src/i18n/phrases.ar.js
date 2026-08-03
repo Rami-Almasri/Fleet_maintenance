@@ -1119,7 +1119,6 @@ const phrasesAr = {
   'Issue Keywords / Tags': 'الكلمات المفتاحية / الوسوم للمشكلة',
   'Issues': 'المشكلات',
   'It won\'t apply immediately — it will be sent to an admin for approval, along with the note below.': 'لن يُطبَّق فوراً — سيُرسل إلى المسؤول للموافقة، مرفقاً بالملاحظة أدناه.',
-  'It’s due for routine service': 'حان موعد الصيانة الدورية لها',
   'Itemise the bill so cost is tracked per part and per repair. Totals add up automatically.': 'فصّل الفاتورة بنوداً ليُتابع التكلفة لكل قطعة غيار ولكل إصلاح. تُجمع الإجماليات تلقائياً.',
   'Jobs': 'الأعمال',
   'Journey': 'الرحلة',
