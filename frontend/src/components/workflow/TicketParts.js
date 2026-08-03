@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api/client';
 import { useToast } from '../ui/Toast';
@@ -11,6 +11,8 @@ import { Input, Select, Textarea } from '../ui/Field';
 import { SHOW_FINANCIALS } from '../../config/features';
 import { fmtAgo, aed, num } from '../../lib/format';
 import { canOrderParts } from './meta';
+import PartPurchaseHistory from '../parts/PartPurchaseHistory';
+import PartRecordModal from '../parts/PartRecordModal';
 
 // Envelope-aware unwrap: the API wraps most payloads in { data: … }.
 const payload = (r) => (r?.data && 'data' in r.data ? r.data.data : r?.data);
@@ -28,6 +30,10 @@ const STATUS_LABEL = {
 };
 const CLASS_TONE = { consumable: 'gray', standard: 'blue', major: 'amber' };
 const CLASS_LABEL = { consumable: 'Consumable', standard: 'Standard', major: 'Major' };
+
+// A stable empty default — an inline `tasks = []` would mint a new array on every render, re-running
+// every memo/effect keyed on it for a ticket that simply has no faults yet.
+const NO_TASKS = [];
 
 // A read-only "comes from the ticket" fact.
 function ContextFact({ label, value }) {
@@ -59,11 +65,20 @@ function TicketPartRequestModal({ open, onClose, onCreated, ticket, tasks }) {
   const [dup, setDup] = useState(null);       // live duplicate verdict for the current part name
   const [checking, setChecking] = useState(false);
 
-  // Reset on open, pre-selecting the sole/first open fault so a single-fault ticket needs no picking.
+  // Read at reset time without making the reset depend on the array's identity (see below).
+  const faultOptionsRef = useRef(faultOptions);
+  faultOptionsRef.current = faultOptions;
+
+  // Reset ON OPEN — and ONLY on open — pre-selecting the sole/first open fault so a single-fault ticket
+  // needs no picking. This deliberately does NOT depend on faultOptions: the parent drawer hands down a
+  // fresh `tasks` array every time it reloads, which gives faultOptions a new identity and would re-fire
+  // this reset mid-typing, blanking the part name the technician had entered and the purchase record
+  // shown underneath it. The modal resets when it opens; nothing else may reset it.
   useEffect(() => {
     if (!open) return;
+    const opts = faultOptionsRef.current;
     setForm({
-      maintenance_task_id: faultOptions.length === 1 ? String(faultOptions[0].id) : '',
+      maintenance_task_id: opts.length === 1 ? String(opts[0].id) : '',
       part_name: '',
       part_number: '',
       quantity: 1,
@@ -74,7 +89,7 @@ function TicketPartRequestModal({ open, onClose, onCreated, ticket, tasks }) {
     });
     setErrors({});
     setDup(null);
-  }, [open, faultOptions]);
+  }, [open]);
 
   const set = (field, value) => setForm((f) => ({ ...f, [field]: value }));
 
@@ -186,7 +201,7 @@ function TicketPartRequestModal({ open, onClose, onCreated, ticket, tasks }) {
 
         {/* Duplicate-purchase intelligence — surfaced BEFORE the request is created. */}
         {checking && partName.trim().length >= 2 && !dup && (
-          <p className="text-xs text-slate-400">Checking this vehicle’s recent purchase history…</p>
+          <p className="text-xs text-slate-400">Checking this vehicle’s purchase record for this part…</p>
         )}
         {prev && (
           <div className={`rounded-xl px-4 py-3 ring-1 ring-inset ${dup.priority === 'high' ? 'bg-red-50 text-red-800 ring-red-600/25' : 'bg-amber-50 text-amber-800 ring-amber-600/25'}`}>
@@ -225,6 +240,10 @@ function TicketPartRequestModal({ open, onClose, onCreated, ticket, tasks }) {
             <p className="mt-2 text-[11px] font-medium opacity-80">Admins will be notified to review this before approval.</p>
           </div>
         )}
+
+        {/* Every prior purchase of this part on this car — no date cutoff. The banner above only fires
+            inside the alert window; this shows the rest of the story, including when there is no alert. */}
+        {dup && <PartPurchaseHistory history={dup.history} partName={partName.trim()} />}
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Input
@@ -297,12 +316,13 @@ function TicketPartRequestModal({ open, onClose, onCreated, ticket, tasks }) {
 // this ticket (with its lifecycle status) and lets a technician file a new one without leaving the
 // ticket. The standalone /parts page stays the hub for review → approve → purchase → install.
 export default function TicketParts({
-  ticketId, ticket, tasks = [], canView = true, canRequest = false,
+  ticketId, ticket, tasks = NO_TASKS, canView = true, canRequest = false,
   openSignal = 0, onChanged, variant = 'drawer',
 }) {
   const [rows, setRows] = useState(null);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
+  const [recordFor, setRecordFor] = useState(null);  // the row whose full purchase record is open
 
   const load = useCallback(async () => {
     if (!ticketId) return;
@@ -405,6 +425,17 @@ export default function TicketParts({
                   <Badge tone={STATUS_TONE[r.status] || 'gray'}>{STATUS_LABEL[r.status] || r.status}</Badge>
                 </div>
                 </Link>
+                {/* Outside the Link — the row navigates to the Parts board, this opens the record in place.
+                    Present on every row and every status: anyone working the ticket can ask "has this car
+                    had this part before?" without needing approval rights or the Parts board. */}
+                <button
+                  type="button"
+                  onClick={() => setRecordFor(r)}
+                  className="mt-1 inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
+                >
+                  <Icon.Clock className="h-3 w-3" />
+                  Purchase record
+                </button>
               </li>
             ))}
           </ul>
@@ -424,6 +455,11 @@ export default function TicketParts({
         onCreated={onCreated}
         ticket={ticket}
         tasks={tasks}
+      />
+      <PartRecordModal
+        open={!!recordFor}
+        request={recordFor}
+        onClose={() => setRecordFor(null)}
       />
     </section>
   );

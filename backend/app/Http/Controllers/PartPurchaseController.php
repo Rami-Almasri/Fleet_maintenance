@@ -51,6 +51,10 @@ class PartPurchaseController extends Controller
     /**
      * Pre-buy check: given a vehicle + part, would this trip a duplicate alert, and what's the prior repair?
      * Lets the purchase modal surface the "already received this part N days ago" prompt BEFORE the buy.
+     *
+     * The verdict is windowed (that's what makes it an alert), but the `history` block it ships alongside is
+     * NOT: it is every purchase of this part on this vehicle, so the buyer sees the part's whole record and
+     * not merely the fact that something happened inside 90 days.
      */
     public function duplicateCheck(Request $request)
     {
@@ -63,12 +67,21 @@ class PartPurchaseController extends Controller
                 // The FAULT this part is for — enables the stronger Vehicle + Part + Fault duplicate signal.
                 'fault_category_key' => ['nullable', 'string', 'max:60'],
                 'fault_symptom'      => ['nullable', 'string', 'max:255'],
+                // Skip the full record when the caller only wants the alert verdict (a keystroke-level check).
+                'include_history'    => ['nullable', 'boolean'],
             ]);
 
             $verdict = $this->intel->detectDuplicate(
                 (int) $data['vehicle_id'], $data['part_name'] ?? null, $data['part_number'] ?? null, $data['category_key'] ?? null,
                 null, null, false, $data['fault_category_key'] ?? null, $data['fault_symptom'] ?? null
             );
+
+            $history = $request->boolean('include_history', true)
+                ? $this->intel->partHistory(
+                    (int) $data['vehicle_id'], $data['part_name'] ?? null, $data['part_number'] ?? null,
+                    $data['category_key'] ?? null, null, $verdict['part_class']
+                )
+                : null;
 
             return ResponseHelper::SuccessResponse([
                 'duplicate'    => $verdict['duplicate'],
@@ -78,6 +91,9 @@ class PartPurchaseController extends Controller
                 'days_between' => $verdict['days_between'],
                 'window_days'  => $verdict['window_days'],
                 'context'      => $this->intel->duplicateContext($verdict),
+                // The unwindowed record. Present even when `duplicate` is false — "no alert" is not the same
+                // as "no history", and the buyer is entitled to the difference.
+                'history'      => $history,
             ], 'Duplicate check complete');
         } catch (\Throwable $e) {
             return ResponseHelper::fromException($e);

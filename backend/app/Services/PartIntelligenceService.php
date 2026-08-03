@@ -220,18 +220,28 @@ class PartIntelligenceService
             ->where('vehicle_id', $vehicleId)
             ->when($excludeId, fn ($q) => $q->where('id', '!=', $excludeId));
 
-        $pn = $partNumber ? preg_replace('/\s+/', '', $partNumber) : '';
-        if ($pn !== '') {
-            // Match on SKU when we have one — the stable identity.
-            $q->whereRaw("REPLACE(LOWER(part_number),' ','') = ?", [strtolower($pn)]);
-        } else {
-            $name = $partName ? strtolower(preg_replace('/\s+/', ' ', trim($partName))) : '';
-            $q->whereRaw("LOWER(TRIM(part_name)) = ?", [$name]);
-        }
+        $this->applyIdentity($q, $partNumber, $partName);
 
         $q->orderByDesc('purchased_at')->orderByDesc('id');
 
         return $lock ? $q->lockForUpdate() : $q;
+    }
+
+    /**
+     * The part-identity match, shared by every read: the SKU when we have one (the stable identity),
+     * otherwise the collapsed lower-cased name. Kept in one place so the duplicate verdict and the full
+     * history can never disagree about what counts as "the same part".
+     */
+    private function applyIdentity($q, ?string $partNumber, ?string $partName)
+    {
+        $pn = $partNumber ? preg_replace('/\s+/', '', $partNumber) : '';
+        if ($pn !== '') {
+            return $q->whereRaw("REPLACE(LOWER(part_number),' ','') = ?", [strtolower($pn)]);
+        }
+
+        $name = $partName ? strtolower(preg_replace('/\s+/', ' ', trim($partName))) : '';
+
+        return $q->whereRaw('LOWER(TRIM(part_name)) = ?', [$name]);
     }
 
     /** Human-readable snapshot of the prior purchase for the alert / investigation context. */
@@ -261,6 +271,176 @@ class PartIntelligenceService
                 'maintenance_id' => $prev->maintenance_id,
                 'purchased_by'  => $prev->purchased_by_name,
             ] : null,
+        ];
+    }
+
+    // ───────────────────────────── full purchase record ─────────────────────────────
+
+    /**
+     * EVERY time this part was bought for this vehicle — the whole record, not just the window the alert
+     * cares about. detectDuplicate() answers "should I warn?"; this answers "what has actually happened
+     * with this part on this car?", which is the question the buyer is really asking. No date cutoff: a
+     * purchase from two years ago is still a purchase, it simply carries `within_alert_window = false`.
+     *
+     * Returns ['records'=>[…newest first…], 'summary'=>[…], 'fleet'=>[…]|null, 'truncated'=>bool].
+     * `fleet` is the same part on OTHER vehicles — what it normally costs and how often the fleet buys it.
+     */
+    public function partHistory(
+        int $vehicleId,
+        ?string $partName,
+        ?string $partNumber,
+        ?string $categoryKey = null,
+        ?int $excludePurchaseId = null,
+        ?string $partClass = null
+    ): array {
+        $empty = ['records' => [], 'summary' => null, 'fleet' => null, 'truncated' => false];
+
+        if ($this->identityKey($partNumber, $partName) === null) {
+            return $empty; // nothing to match on
+        }
+
+        $partClass = $partClass ?: $this->classify($partName, $partNumber, $categoryKey);
+        $window    = $this->windowForClass($partClass);
+        $limit     = (int) ($this->cfg['history']['max_records'] ?? 50);
+
+        $q         = $this->priorPurchaseQuery($vehicleId, $partNumber, $partName, $excludePurchaseId, false);
+        $total     = (clone $q)->count();
+        $matchedBy = trim((string) $partNumber) !== '' ? 'part_number' : 'part_name';
+
+        // A SKU that matches nothing is NOT evidence the part is new. Part numbers are hand-typed, differ
+        // between suppliers for the same component, and are sometimes placeholders ("1111"). Matching on
+        // the SKU alone would then report "never bought" for a car that has had the part twice — a false
+        // clean bill, which is the one answer this feature must never give. So fall back to the name, and
+        // report which identity actually answered so the UI can say so.
+        if ($total === 0 && $matchedBy === 'part_number' && trim((string) $partName) !== '') {
+            $q         = $this->priorPurchaseQuery($vehicleId, null, $partName, $excludePurchaseId, false);
+            $total     = (clone $q)->count();
+            $matchedBy = 'part_name';
+            $partNumber = null;   // the fleet roll-up below must use the SAME identity that found these
+        }
+
+        if ($total === 0) {
+            return $empty;
+        }
+
+        $rows = $q->with([
+            'sourceVendor:id,name',
+            'task:id,symptom,category_key,root_cause,status,resolved_at',
+        ])->limit($limit)->get();
+
+        $today   = Carbon::now()->startOfDay();
+        $records = $rows->map(function (PartPurchase $p) use ($today, $window) {
+            $at   = $p->purchased_at ?: $p->created_at;
+            $days = $at ? (int) $at->copy()->startOfDay()->diffInDays($today) : null;
+            $qty  = (float) ($p->quantity ?: 1);
+
+            return [
+                'purchase_id'     => $p->id,
+                'purchased_at'    => optional($at)->toDateString(),
+                'days_ago'        => $days,
+                // Whether THIS row is inside the window that would raise an alert. Rows outside it are the
+                // history the old check threw away — shown, but visibly not the reason for any warning.
+                'within_alert_window' => $days !== null && $days <= $window,
+                'part_name'       => $p->part_name,
+                'part_number'     => $p->part_number,
+                'part_class'      => $p->part_class,
+                'quantity'        => $qty,
+                'unit_price'      => $p->purchase_price === null ? null : (float) $p->purchase_price,
+                'total_price'     => $p->purchase_price === null ? null : round((float) $p->purchase_price * $qty, 2),
+                'currency'        => $p->currency,
+                'purchase_source' => $p->purchase_source,                       // garage | supplier
+                'source_name'     => $p->sourceVendor?->name ?: $p->source_name,
+                'po_number'       => $p->po_number,
+                'repair_location' => $p->repair_location,                       // garage | onsite
+                'maintenance_id'  => $p->maintenance_id,
+                'fault'           => $p->task?->symptom,
+                'fault_category'  => $p->task?->category_key,
+                'root_cause'      => $p->task?->root_cause,
+                'purchased_by'    => $p->purchased_by_name,
+                'installed_by'    => $p->installed_by_name,
+                'installed_at'    => optional($p->installed_at)->toDateString(),
+                'installed_odometer' => $p->installed_odometer,
+                'delivered_at'    => optional($p->delivered_at)->toDateString(),
+                // The outcome of the fix this part was bought for — a 'failed' row is the single most
+                // useful thing on this list: the same part is about to be bought again after it did not work.
+                'result'          => $p->result,
+                'flagged'         => (bool) $p->requires_review,
+                'notes'           => $p->notes,
+            ];
+        })->values()->all();
+
+        return [
+            'records'   => $records,
+            'summary'   => $this->historySummary($records, $total, $partClass, $window) + ['matched_by' => $matchedBy],
+            'fleet'     => $this->fleetPartStats($vehicleId, $partNumber, $partName, $excludePurchaseId),
+            'truncated' => $total > count($records),
+        ];
+    }
+
+    /** Roll the record list up into the one-line verdict above it ("bought 4 times, 1 350 AED, 1 failed"). */
+    private function historySummary(array $records, int $total, string $partClass, int $window): array
+    {
+        // Spend sums only the rows we returned, and only those in the base currency — adding a dirham to a
+        // dollar would invent a number. It is therefore reported alongside the row count it actually covers.
+        $base   = (string) $this->cfg['base_currency'];
+        $priced = array_values(array_filter(
+            $records,
+            fn ($r) => $r['total_price'] !== null && ($r['currency'] === null || $r['currency'] === $base)
+        ));
+        $spend  = array_sum(array_column($priced, 'total_price'));
+        $first  = $records ? end($records) : null;
+        $last   = $records[0] ?? null;
+
+        return [
+            'total_purchases'  => $total,
+            'shown'            => count($records),
+            'part_class'       => $partClass,
+            'alert_window_days' => $window,
+            'in_alert_window'  => count(array_filter($records, fn ($r) => $r['within_alert_window'])),
+            'first_purchased_at' => $first['purchased_at'] ?? null,
+            'last_purchased_at'  => $last['purchased_at'] ?? null,
+            'days_since_last'    => $last['days_ago'] ?? null,
+            'total_spend'      => $priced ? round($spend, 2) : null,
+            'spend_covers'     => count($priced),
+            'currency'         => $base,
+            'failed'           => count(array_filter($records, fn ($r) => $r['result'] === PartPurchase::RESULT_FAILED)),
+            'flagged'          => count(array_filter($records, fn ($r) => $r['flagged'])),
+            'never_installed'  => count(array_filter($records, fn ($r) => $r['installed_at'] === null)),
+            'sources'          => array_values(array_unique(array_filter(array_column($records, 'source_name')))),
+        ];
+    }
+
+    /**
+     * The same part across the REST of the fleet — how often it is bought and what it normally costs, so
+     * the buyer can sanity-check today's price. Null when no other vehicle has ever had it.
+     */
+    private function fleetPartStats(int $vehicleId, ?string $partNumber, ?string $partName, ?int $excludeId): ?array
+    {
+        $q = PartPurchase::query()
+            ->where('vehicle_id', '!=', $vehicleId)
+            ->when($excludeId, fn ($q) => $q->where('id', '!=', $excludeId));
+        $this->applyIdentity($q, $partNumber, $partName);
+
+        $base = (string) $this->cfg['base_currency'];
+        $row  = (clone $q)->selectRaw('COUNT(*) as c, COUNT(DISTINCT vehicle_id) as v, MAX(purchased_at) as last_at')->first();
+        if (! $row || (int) $row->c === 0) {
+            return null;
+        }
+
+        // Price stats stay in the base currency only — averaging mixed currencies would invent a number.
+        $price = (clone $q)->where('currency', $base)->whereNotNull('purchase_price')
+            ->selectRaw('COUNT(*) as c, AVG(purchase_price) as avg_p, MIN(purchase_price) as min_p, MAX(purchase_price) as max_p')
+            ->first();
+
+        return [
+            'purchases'    => (int) $row->c,
+            'vehicles'     => (int) $row->v,
+            'last_purchased_at' => $row->last_at ? Carbon::parse($row->last_at)->toDateString() : null,
+            'currency'     => $base,
+            'priced_rows'  => (int) ($price->c ?? 0),
+            'avg_price'    => ($price && $price->c) ? round((float) $price->avg_p, 2) : null,
+            'min_price'    => ($price && $price->c) ? round((float) $price->min_p, 2) : null,
+            'max_price'    => ($price && $price->c) ? round((float) $price->max_p, 2) : null,
         ];
     }
 

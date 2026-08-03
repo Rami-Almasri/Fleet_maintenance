@@ -56,6 +56,14 @@ return [
         'investigation_days'   => 30,  // …and additionally open a fault_recurrence investigation if within this
     ],
 
+    // The full purchase record shown at buy time. The alert WINDOWS above decide whether to warn; this
+    // decides how much of the part's life story is handed to the buyer, and it is deliberately unwindowed —
+    // a part bought two years ago is still the same part on the same car, and the buyer should see it.
+    // The cap only guards the payload size for a pathological history; the API reports when it truncates.
+    'history' => [
+        'max_records' => 50,
+    ],
+
     // Only this currency feeds the maintenance cost roll-up on install; others are recorded + flagged.
     'base_currency' => 'AED',
 ];

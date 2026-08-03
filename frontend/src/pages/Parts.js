@@ -12,6 +12,8 @@ import SearchSelect from '../components/ui/SearchSelect';
 import { Card, PageHeader, SearchInput, TableSkeleton, EmptyState } from '../components/ui/Misc';
 import { Input, Select, Textarea } from '../components/ui/Field';
 import PartsAnalytics from '../components/analytics/PartsAnalytics';
+import PartPurchaseHistory from '../components/parts/PartPurchaseHistory';
+import PartRecordModal from '../components/parts/PartRecordModal';
 import { SHOW_FINANCIALS } from '../config/features';
 import { aed, fmtAgo, num } from '../lib/format';
 
@@ -189,7 +191,7 @@ function PurchaseModal({ open, request, onClose, onDone, vendors }) {
       }
     >
       <div className="space-y-4">
-        {checking && <div className="text-xs text-slate-400">Checking recent purchase history…</div>}
+        {checking && <div className="text-xs text-slate-400">Loading this part’s full purchase record…</div>}
 
         {/* Duplicate-purchase warning — prominent, and it gates the submit button. */}
         {isDuplicate && (
@@ -230,6 +232,12 @@ function PurchaseModal({ open, request, onClose, onDone, vendors }) {
             </div>
           </div>
         )}
+
+        {/* The part's whole life on this vehicle — shown whether or not an alert tripped. A repeat buy
+            outside every window raises no warning, but the buyer still deserves to see it.
+            Deliberately NOT gated on `checking`: the record must not blink out from under the buyer
+            because a re-check is in flight. It renders nothing on its own when there is no history. */}
+        <PartPurchaseHistory history={dup?.history} partName={request?.part_name} />
 
         {/* Purchase source toggle */}
         <div>
@@ -653,12 +661,15 @@ function RejectModal({ open, request, onClose, onDone }) {
   );
 }
 
-// ─── Approve modal (duplicate heads-up BEFORE approval) ──────────────────────
-// Only shown when the pre-approval duplicate check trips — a clean request is
-// approved directly with no modal. Mirrors the purchase-step warning so the
-// approver sees the prior spend before green-lighting a repeat buy. The full
-// mandatory reason stays at the purchase step (where money is committed); here
-// an optional note is enough and is kept on the request for the audit trail.
+// ─── Approve modal (purchase record BEFORE approval) ─────────────────────────
+// Shown whenever this vehicle has ANY prior purchase of this part — not only when
+// the duplicate alert trips. Approving is the moment someone commits to spending
+// again, so the approver gets the part's whole record: a consumable bought twice
+// raises no alert at all, yet "we already bought this, twice" is still exactly
+// what a person needs to see before saying yes. A part with no history behind it
+// approves straight through with no modal — there is nothing to show.
+// The full mandatory reason stays at the purchase step (where money is actually
+// committed); here an optional note is enough, kept on the request's audit trail.
 function ApproveModal({ open, request, dup, onClose, onDone }) {
   const toast = useToast();
   const [note, setNote] = useState('');
@@ -682,47 +693,73 @@ function ApproveModal({ open, request, dup, onClose, onDone }) {
 
   const prev = dup?.context?.previous;
   const high = dup?.priority === 'high';
+  // An alert and a record are two different things: the alert is windowed, the record is not. The modal
+  // opens for either, so every label below has to say which of the two the approver is actually looking at.
+  const alerted = !!dup?.duplicate;
+  const count = dup?.history?.summary?.total_purchases || 0;
 
   return (
     <Modal
       open={open}
       onClose={() => !saving && onClose()}
-      title="Approve — possible duplicate"
+      title={alerted ? 'Approve — possible duplicate' : 'Approve — this part has been bought before'}
       subtitle={request ? `${request.part_name} · ${request.vehicle?.plate || `#${request.vehicle?.id}`}` : ''}
-      size="md"
+      size="lg"
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={saving}>Cancel</Button>
-          <Button variant={high ? 'danger' : 'success'} onClick={submit} loading={saving}>Approve anyway</Button>
+          <Button variant={high ? 'danger' : 'success'} onClick={submit} loading={saving}>
+            {alerted ? 'Approve anyway' : 'Approve'}
+          </Button>
         </>
       }
     >
       <div className="space-y-3">
-        <div className={`rounded-xl px-4 py-3 text-sm ring-1 ring-inset ${high ? 'bg-red-50 text-red-800 ring-red-600/25' : 'bg-amber-50 text-amber-800 ring-amber-600/25'}`}>
-          <p className="font-semibold">
-            ⚠ Attention: this vehicle already received {prev?.part_name || 'this part'} {num(dup?.days_between)} day(s) ago.
-          </p>
-          <ul className="mt-1.5 space-y-0.5 text-xs">
-            {prev?.purchase_price != null && (
-              <li>Previous cost {aed(prev.purchase_price)} {prev.currency && prev.currency !== 'AED' ? `(${prev.currency})` : ''}.</li>
-            )}
-            {prev?.purchased_by && <li>Previous purchase by {prev.purchased_by}.</li>}
-            {prev?.source && (
-              <li>Bought from {prev.source_name ? <span className="font-medium">{prev.source_name}</span> : sourceLabel(prev.source)}{prev.source_name && sourceLabel(prev.source) ? ` (${sourceLabel(prev.source)})` : ''}.</li>
-            )}
-            {dup?.part_class && <li>Part class: <span className="font-medium capitalize">{dup.part_class}</span> · window {num(dup.window_days)} day(s).</li>}
-            {dup?.same_fault && <li className="font-medium">Same fault as before — the earlier repair may have failed.</li>}
-          </ul>
-        </div>
+        {alerted ? (
+          <div className={`rounded-xl px-4 py-3 text-sm ring-1 ring-inset ${high ? 'bg-red-50 text-red-800 ring-red-600/25' : 'bg-amber-50 text-amber-800 ring-amber-600/25'}`}>
+            <p className="font-semibold">
+              ⚠ Attention: this vehicle already received {prev?.part_name || 'this part'} {num(dup?.days_between)} day(s) ago.
+            </p>
+            <ul className="mt-1.5 space-y-0.5 text-xs">
+              {prev?.purchase_price != null && (
+                <li>Previous cost {aed(prev.purchase_price)} {prev.currency && prev.currency !== 'AED' ? `(${prev.currency})` : ''}.</li>
+              )}
+              {prev?.purchased_by && <li>Previous purchase by {prev.purchased_by}.</li>}
+              {prev?.source && (
+                <li>Bought from {prev.source_name ? <span className="font-medium">{prev.source_name}</span> : sourceLabel(prev.source)}{prev.source_name && sourceLabel(prev.source) ? ` (${sourceLabel(prev.source)})` : ''}.</li>
+              )}
+              {dup?.part_class && <li>Part class: <span className="font-medium capitalize">{dup.part_class}</span> · window {num(dup.window_days)} day(s).</li>}
+              {dup?.same_fault && <li className="font-medium">Same fault as before — the earlier repair may have failed.</li>}
+            </ul>
+          </div>
+        ) : (
+          // No alert fired — say so plainly, so a quiet engine is never mistaken for a clean history.
+          <div className="rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-700 ring-1 ring-inset ring-slate-200">
+            <p className="font-semibold">
+              This vehicle has had this part {num(count)} time(s) before.
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              No duplicate alert
+              {dup?.part_class ? <> — a <span className="font-medium capitalize">{dup.part_class}</span> part repeated outside the {num(dup?.window_days)}-day window is normal</> : ''}
+              . The record is shown so you approve knowing what came before.
+            </p>
+          </div>
+        )}
+
+        {/* The whole record — every prior purchase, not just the one that did or didn't trip an alert. */}
+        <PartPurchaseHistory history={dup?.history} partName={request?.part_name} />
+
         <Textarea
-          label="Reason for approving again (optional)"
+          label={alerted ? 'Reason for approving again (optional)' : 'Note (optional)'}
           rows={2}
-          placeholder="e.g. previous part failed, wrong diagnosis, customer request…"
+          placeholder={alerted ? 'e.g. previous part failed, wrong diagnosis, customer request…' : 'Anything the buyer should know…'}
           value={note}
           onChange={(e) => setNote(e.target.value)}
         />
         <p className="text-xs text-slate-400">
-          A full reason is still required at the purchase step — this note is kept on the request for the audit trail.
+          {alerted
+            ? 'A full reason is still required at the purchase step — this note is kept on the request for the audit trail.'
+            : 'This note is kept on the request for the audit trail.'}
         </p>
       </div>
     </Modal>
@@ -742,7 +779,8 @@ export default function Parts() {
   const [installFor, setInstallFor] = useState(null);
   const [rejectFor, setRejectFor] = useState(null);
   const [approveFor, setApproveFor] = useState(null); // { request, dup } — set only when a duplicate trips
-  const anyModal = !!purchaseFor || !!installFor || !!rejectFor || !!approveFor;
+  const [recordFor, setRecordFor] = useState(null);   // the row whose full part record is open
+  const anyModal = !!purchaseFor || !!installFor || !!rejectFor || !!approveFor || !!recordFor;
 
   const fetcher = useCallback(async () => {
     const r = await api.get('/part-requests', { params: { per_page: 200 } });
@@ -851,8 +889,10 @@ export default function Parts() {
   };
   const isBusy = (req, action) => busy === `${req.id}:${action}`;
 
-  // Approve runs a duplicate heads-up FIRST: a clean request approves straight through,
-  // a flagged one opens the warning modal so the approver sees the prior spend before proceeding.
+  // Approve pulls the part's record FIRST: a part this vehicle has never had approves straight through,
+  // anything with prior purchases opens the modal so the approver sees what came before — whether or not
+  // it tripped a duplicate alert. The alert is windowed and class-aware, so it stays silent for e.g. a
+  // consumable bought twice; "we already bought this twice" is still the approver's business.
   const onApprove = async (req) => {
     setBusy(`${req.id}:approve`);
     let dup = null;
@@ -860,8 +900,13 @@ export default function Parts() {
       dup = payload(await api.get('/part-purchases/duplicate-check', {
         params: { vehicle_id: req.vehicle?.id, part_name: req.part_name, part_number: req.part_number || undefined },
       }));
-    } catch { dup = null; } // advisory only — never block approval on the check
-    if (dup?.duplicate) { setApproveFor({ request: req, dup }); setBusy(null); return; }
+    } catch {
+      // Advisory only — a failed lookup never blocks an approval. But it is SAID, because an approver
+      // who sees no record must know whether that means "none exists" or "we could not find out".
+      dup = null;
+      toast.error('Could not load the purchase record — approving without it');
+    }
+    if (dup?.duplicate || dup?.history?.records?.length) { setApproveFor({ request: req, dup }); setBusy(null); return; }
     try {
       await api.post(`/part-requests/${req.id}/approve`, {});
       toast.success('Request approved');
@@ -890,6 +935,15 @@ export default function Parts() {
 
   const rowActions = (r) => {
     const actions = [];
+    // The record button comes FIRST — before Approve — because it is what the approver should read
+    // before deciding. Always present, on every row and every status: the answer "this part has never
+    // been bought for this car" is as much a result as a list of five purchases, and staff must be able
+    // to ask the question without having to start an approval to find out.
+    actions.push(
+      <Button key="record" variant="ghost" size="sm" className="text-slate-600 hover:bg-slate-100" onClick={() => setRecordFor(r)}>
+        Record
+      </Button>,
+    );
     // 'under_review' kept in the guard so any legacy row in that state can still be actioned,
     // but the Review step itself is retired — a request goes straight to Approve/Reject.
     if (['requested', 'under_review'].includes(r.status) && canReview) {
@@ -1050,6 +1104,11 @@ export default function Parts() {
         </Card>
       </div>
 
+      <PartRecordModal
+        open={!!recordFor}
+        request={recordFor}
+        onClose={() => setRecordFor(null)}
+      />
       <PurchaseModal
         open={!!purchaseFor}
         request={purchaseFor}
