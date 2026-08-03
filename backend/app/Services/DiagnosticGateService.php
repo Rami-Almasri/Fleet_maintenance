@@ -98,81 +98,107 @@ class DiagnosticGateService
 
         return [
             'enabled'  => $this->enabled(),
+
+            // One plain sentence an operator can read in three seconds. Everything below it is detail.
+            'headline' => 'Nobody asks for these tests. Every morning the system checks each car in the fleet, '
+                . 'and when a car is past one of the limits below, it puts a request here for you to approve.',
+
             // Mirrors the Schedule::command('inspections:generate-tasks')->dailyAt('07:30') entry in
             // routes/console.php — the one value here NOT read from config, so keep the two in step.
             'schedule' => [
                 'command'     => 'inspections:generate-tasks',
                 'runs_at'     => '07:30',
                 'frequency'   => 'daily',
-                'description' => 'The Proactive Diagnostic Monitor scans the active fleet once every morning.',
+                'description' => 'The system checks the whole fleet once every morning at 07:30.',
             ],
+
+            // The journey, as four steps — the operator's mental model of where a system request comes from
+            // and where it goes. Rendered as the flow strip at the top of the panel.
+            'steps' => [
+                ['title' => 'Every morning', 'text' => 'The system checks every car that is with us and working.'],
+                ['title' => 'It finds a car past a limit', 'text' => 'Oil, tyres, battery, or too long since its last workshop visit.'],
+                ['title' => 'It asks here', 'text' => 'A request appears in this queue marked “System Schedule”, with what to check.'],
+                ['title' => 'You decide', 'text' => 'Approve and the inspector gets it. Reject and it stops here — nothing leaves the office.'],
+            ],
+
             // Every gate a car must pass before a request is raised at all (see InspectionsGenerateTasks).
             'preconditions' => [
-                'Car is active fleet — Ready or Rented (sold / suspended / office-use cars are never scanned).',
-                'Car is not flagged for sale.',
-                'Car has no open workflow ticket already — including one only requested, so a car in the pipeline is never asked twice.',
-                'At least one condition below is actually due.',
+                'The car is with us and working — Ready or Rented. Sold, suspended and office cars are never checked.',
+                'The car is not up for sale.',
+                'The car is not already in the workshop or waiting for one — so nobody is asked twice for the same car.',
+                'At least one of the limits below has actually been passed.',
             ],
+
             'rules' => [
                 [
                     'key'       => 'oil_change',
-                    'label'     => 'Oil / service overdue',
+                    'label'     => 'Oil change is late',
                     'severity'  => 'moderate',
                     'axis'      => 'km or date',
-                    'when'      => 'The car is past its service interval by distance, or its oil-change reminder date has passed.',
-                    'threshold' => 'Whichever comes first — the vehicle service interval (km) or the reminder due date.',
+                    // `plain` is the sentence on the card. `note` is the extra nuance underneath it.
+                    'plain'     => 'The car has driven past its oil-change distance, or the oil-change date has passed.',
+                    'note'      => 'Whichever comes first counts — distance or date.',
+                    'chip'      => 'Service interval',
                     'agenda'    => 'Oil Change',
                 ],
                 [
                     'key'       => 'reminders',
-                    'label'     => 'Any other service reminder overdue',
+                    'label'     => 'Another service is late',
                     'severity'  => 'moderate / routine',
                     'axis'      => 'km or date',
-                    'when'      => 'An active service reminder on the car (tyre rotation, tyre change, brakes, filters…) is past its due km or due date.',
-                    'threshold' => 'Each reminder carries its own interval; tyre reminders are graded moderate, the rest routine.',
-                    'agenda'    => "The reminder's own name",
+                    'plain'     => 'A service reminder set on the car — tyre rotation, tyre change, brakes, filters — is past its date or its kilometres.',
+                    'note'      => 'Each reminder has its own limit. Tyres are treated as more urgent than the rest.',
+                    'chip'      => 'Per reminder',
+                    'agenda'    => 'Whatever the reminder is for',
                 ],
                 [
                     'key'       => 'battery',
-                    'label'     => 'Battery past its service life',
+                    'label'     => 'Battery is old',
                     'severity'  => 'routine',
                     'axis'      => 'date',
-                    'when'      => 'The battery-change date on file is older than the battery life, and no explicit battery reminder already covers the car.',
-                    'threshold' => self::BATTERY_LIFE_MONTHS . ' months since the last battery change.',
+                    'plain'     => 'The battery was last changed more than ' . self::BATTERY_LIFE_MONTHS . ' months ago.',
+                    'note'      => 'Only used when the car has no battery reminder of its own already.',
+                    'chip'      => self::BATTERY_LIFE_MONTHS . ' months',
                     'agenda'    => 'Battery Status',
                 ],
                 [
                     'key'       => 'downtime',
-                    'label'     => 'Post-downtime safety check',
+                    'label'     => 'Too long since the last workshop visit',
                     'severity'  => 'moderate',
                     'axis'      => 'date',
-                    'when'      => 'Too long since the car\'s last maintenance completion, and it HAS been rented since. The clock counts calendar days and keeps running while the car is out with a customer; it pauses only while the car is being processed through a workflow.',
-                    'threshold' => $downtime . ' days since the last maintenance completion.',
+                    'plain'     => 'It has been more than ' . $downtime . ' days since the car left the workshop, and it has been rented since then.',
+                    'note'      => 'The days keep counting while the car is out with a customer. They only pause while the car is being handled in a workshop.',
+                    'chip'      => $downtime . ' days',
                     'agenda'    => 'Check ' . $this->humanList(self::POST_DOWNTIME_CHECKLIST),
                 ],
                 [
                     'key'       => 'inactivity',
-                    'label'     => 'Inactivity check',
+                    'label'     => 'Car has been sitting unused',
                     'severity'  => 'routine',
                     'axis'      => 'date',
-                    'when'      => 'The car has NOT been rented at all since its last test and the grace window has lapsed — the deliberate counterpart of the post-downtime rule, so a parked-and-forgotten car is still kept road-ready. The two rules are mutually exclusive on any one car.',
-                    'threshold' => $inactive . ' days since the last test with no rental in between.',
+                    'plain'     => 'The car has not been rented once since its last test, and ' . $inactive . ' days have passed.',
+                    'note'      => 'This is the opposite case to the one above: that one needs a rental since the last visit, this one needs none. A car can only trip one of the two.',
+                    'chip'      => $inactive . ' days',
                     'agenda'    => 'General check-up',
                 ],
             ],
+
             // Conditions the monitor drops on purpose, and why — so a Controller who expected a request and
             // did not get one can tell "not due" apart from "suppressed".
             'suppressions' => [
                 [
-                    'label' => 'Implausible odometer (oil sanity ceiling)',
-                    'why'   => 'A service-due distance over max(' . number_format(self::OIL_ANOMALY_FLOOR_KM) . ' km, 3 × the interval) is almost certainly a bad odometer reading, so the oil condition is dropped and filed as a Data Anomaly instead of being sent to the Inspector. Other conditions on the same car still raise the request; a car whose only condition was that oil is skipped entirely.',
+                    'label' => 'A kilometre reading that cannot be true',
+                    'why'   => 'If a car looks more than ' . number_format(self::OIL_ANOMALY_FLOOR_KM) . ' km past its oil change (or three times its interval, whichever is bigger), that is a wrong odometer, not a real car. The oil part is dropped and reported as a data problem instead of being sent to the inspector. Anything else on the same car is still requested.',
                 ],
                 [
-                    'label' => 'Post-downtime checklist is an agenda, not a finding',
-                    'why'   => 'The ' . $this->humanList(self::POST_DOWNTIME_CHECKLIST) . ' items are what to go look at — they are never pre-filled as tap-to-confirm findings, because nothing has been declared due.',
+                    'label' => 'The safety list is a "go look", not a verdict',
+                    'why'   => 'When a car is asked for the ' . $this->humanList(self::POST_DOWNTIME_CHECKLIST) . ' check, that is a list of things to look at. It is never filled in as work that needs doing — nothing has been found yet.',
                 ],
             ],
-            'outcome' => 'A matching car gets a system-attributed inspection request (Source: System Schedule) that lands here, in this queue, awaiting Controller approval. It only reaches the Inspector once a Controller approves it; rejecting it terminates the request and nothing is sent externally.',
+
+            'outcome' => 'The request lands here, in this queue, marked “System Schedule” — the system raised it, no person did. '
+                . 'It reaches the inspector only after you approve it. If you reject it, it stops here and nothing is sent outside the office.',
+
             'limits'  => [
                 'downtime_days'        => $downtime,
                 'inactive_days'        => $inactive,

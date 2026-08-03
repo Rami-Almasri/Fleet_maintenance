@@ -179,11 +179,94 @@ function SystemDetail({ detail, suggested }) {
 // DiagnosticGateService::rulebook(), the same service that decides what's due. Nothing is retyped in the
 // frontend, so changing DIAGNOSTIC_GATE_DOWNTIME_DAYS changes this panel too. Collapsed by default —
 // it's reference material, not something to read on every visit.
-const RULE_DOT = { moderate: 'bg-amber-500', routine: 'bg-emerald-500', critical: 'bg-red-500' };
+// One visual identity per rule — the icon and accent colour are presentation, so they live here and are
+// keyed off the rule's stable `key`. An unknown key still renders, in neutral slate: the backend owns the
+// list of rules, and this map must never be the thing that decides whether one is shown.
+const RULE_SKIN = {
+  oil_change: { icon: '🛢️', ring: 'ring-amber-200',   tint: 'bg-amber-50',   ink: 'text-amber-700',   bar: 'bg-amber-400' },
+  reminders:  { icon: '🔧', ring: 'ring-sky-200',     tint: 'bg-sky-50',     ink: 'text-sky-700',     bar: 'bg-sky-400' },
+  battery:    { icon: '🔋', ring: 'ring-emerald-200', tint: 'bg-emerald-50', ink: 'text-emerald-700', bar: 'bg-emerald-400' },
+  downtime:   { icon: '🗓️', ring: 'ring-violet-200',  tint: 'bg-violet-50',  ink: 'text-violet-700',  bar: 'bg-violet-400' },
+  inactivity: { icon: '🅿️', ring: 'ring-slate-200',   tint: 'bg-slate-50',   ink: 'text-slate-700',   bar: 'bg-slate-400' },
+};
+const RULE_SKIN_FALLBACK = { icon: '•', ring: 'ring-slate-200', tint: 'bg-slate-50', ink: 'text-slate-700', bar: 'bg-slate-400' };
 
-function ruleDot(severity) {
-  const key = String(severity || '').split('/')[0].trim();
-  return RULE_DOT[key] || 'bg-slate-400';
+// The urgency the rule carries into the workshop. Shown as a word, not a colour alone — a colour-blind
+// reader gets the same information.
+const SEVERITY_WORD = {
+  moderate: { label: 'Needs attention', cls: 'bg-amber-100 text-amber-800' },
+  routine:  { label: 'Routine',         cls: 'bg-emerald-100 text-emerald-800' },
+  critical: { label: 'Urgent',          cls: 'bg-rose-100 text-rose-800' },
+};
+
+function severityChip(severity) {
+  const first = String(severity || '').split('/')[0].trim();
+  return SEVERITY_WORD[first] || { label: severity || '—', cls: 'bg-slate-100 text-slate-700' };
+}
+
+// One rule = one card. Big threshold on the right so the limits ("15 days", "30 months") are scannable
+// without reading a word; the plain sentence carries the meaning, the note carries the nuance.
+function RuleCard({ rule }) {
+  const skin = RULE_SKIN[rule.key] || RULE_SKIN_FALLBACK;
+  const sev = severityChip(rule.severity);
+
+  return (
+    <div className={`relative overflow-hidden rounded-xl bg-white p-3.5 pl-4 shadow-sm ring-1 ring-inset ${skin.ring}`}>
+      <span className={`absolute inset-y-0 left-0 w-1 ${skin.bar}`} aria-hidden />
+      <div className="flex items-start gap-3">
+        <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-lg ${skin.tint}`} aria-hidden>
+          {skin.icon}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h4 className="text-sm font-bold text-slate-800">{rule.label}</h4>
+            <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${sev.cls}`}>
+              {sev.label}
+            </span>
+          </div>
+          <p className="mt-1 text-[13px] leading-relaxed text-slate-700">{rule.plain || rule.when}</p>
+          {rule.note && <p className="mt-1 text-xs leading-relaxed text-slate-500">{rule.note}</p>}
+          {rule.agenda && (
+            <p className="mt-2 flex items-center gap-1.5 border-t border-slate-100 pt-2 text-[11px] text-slate-500">
+              <span aria-hidden>👉</span>
+              <span>The inspector is asked to check: <span className="font-semibold text-slate-700">{rule.agenda}</span></span>
+            </p>
+          )}
+        </div>
+        {(rule.chip || rule.threshold) && (
+          <span className={`shrink-0 rounded-lg px-2 py-1 text-center text-[11px] font-bold leading-tight ${skin.tint} ${skin.ink}`}>
+            {rule.chip || rule.threshold}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// The four-step journey strip. Numbered, so it reads as a sequence rather than four unrelated boxes.
+function FlowStrip({ steps }) {
+  return (
+    <ol className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+      {steps.map((s, i) => (
+        <li key={s.title} className="relative rounded-xl bg-white p-3 shadow-sm ring-1 ring-inset ring-slate-200">
+          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-indigo-600 text-[11px] font-bold text-white">
+            {i + 1}
+          </span>
+          <p className="mt-2 text-[13px] font-bold text-slate-800">{s.title}</p>
+          <p className="mt-0.5 text-xs leading-relaxed text-slate-600">{s.text}</p>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function SectionTitle({ children, hint }) {
+  return (
+    <div className="mb-2 flex items-baseline gap-2">
+      <h3 className="text-[13px] font-bold uppercase tracking-wide text-slate-700">{children}</h3>
+      {hint && <span className="text-xs text-slate-400">{hint}</span>}
+    </div>
+  );
 }
 
 function SystemRulesPanel() {
@@ -216,118 +299,145 @@ function SystemRulesPanel() {
   }, [open]);
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-indigo-200 bg-indigo-50/40">
+    <section className="overflow-hidden rounded-2xl bg-white shadow-soft ring-1 ring-inset ring-indigo-200">
+      {/* ── Banner: readable as a single line when collapsed ─────────────────────────── */}
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-indigo-50"
+        className="flex w-full items-center gap-3 bg-gradient-to-r from-indigo-600 to-indigo-500 px-4 py-3.5 text-left transition-opacity hover:opacity-95"
       >
-        <span className="flex items-center gap-2">
-          <span aria-hidden>🤖</span>
-          <span className="text-sm font-semibold text-indigo-900">When &amp; why the system asks for a test</span>
-          <span className="hidden text-xs text-indigo-700/70 sm:inline">
-            — the rules behind every “System Schedule” request in this queue
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/15 text-lg" aria-hidden>🤖</span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-bold text-white">Why does the system ask for a test?</span>
+          <span className="block text-xs text-indigo-100">
+            Some requests below were raised by the system, not by a person. This explains when, and why.
           </span>
         </span>
-        <span className="shrink-0 text-xs font-semibold text-indigo-600">{open ? 'Hide' : 'Show'}</span>
+        <span className="shrink-0 rounded-full bg-white/15 px-2.5 py-1 text-xs font-semibold text-white">
+          {open ? 'Hide' : 'Read this'}
+        </span>
       </button>
 
       {open && (
-        <div className="border-t border-indigo-100 bg-white px-4 py-4">
-          {state === 'loading' && <Skeleton className="h-24 rounded-lg" />}
+        <div className="px-4 py-5 sm:px-5">
+          {state === 'loading' && (
+            <div className="space-y-2">
+              <Skeleton className="h-5 w-2/3 rounded" />
+              <Skeleton className="h-20 rounded-lg" />
+            </div>
+          )}
           {state === 'error' && (
-            <p className="text-xs text-rose-600">Could not load the rulebook — collapse and re-open to try again.</p>
+            <p className="text-sm text-rose-600">Could not load this explanation — close and open it again to retry.</p>
           )}
           {state === 'idle' && !book && (
-            <p className="text-xs text-slate-500">The rulebook came back empty — the diagnostic monitor may not be configured.</p>
+            <p className="text-sm text-slate-500">Nothing came back — the automatic check may not be switched on.</p>
           )}
 
           {book && (
-            <div className="space-y-4">
-              {/* WHEN it looks — the scan itself. */}
-              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
-                <span className="rounded-full bg-slate-100 px-2 py-0.5 font-semibold text-slate-700">
-                  Runs {book.schedule?.frequency || 'daily'} at {book.schedule?.runs_at || '—'}
+            <div className="space-y-6">
+              {/* 1 ── The one sentence that answers the question. */}
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <p className="max-w-2xl text-[15px] font-medium leading-relaxed text-slate-800">
+                  {book.headline}
+                </p>
+                <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white">
+                  <Icon.Clock className="h-3.5 w-3.5" />
+                  Checked every day at {book.schedule?.runs_at || '—'}
                 </span>
-                <code className="rounded bg-slate-900/90 px-1.5 py-0.5 font-mono text-[11px] text-slate-100">
-                  {book.schedule?.command}
-                </code>
-                {book.enabled === false && (
-                  <span className="rounded-full bg-rose-50 px-2 py-0.5 font-semibold text-rose-700 ring-1 ring-inset ring-rose-200">
-                    Monitor currently disabled
-                  </span>
-                )}
               </div>
-              <p className="text-xs text-slate-500">{book.schedule?.description}</p>
 
-              {/* WHO gets looked at at all. */}
-              {Array.isArray(book.preconditions) && book.preconditions.length > 0 && (
-                <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Which cars it looks at</p>
-                  <ul className="mt-1 space-y-1">
-                    {book.preconditions.map((p) => (
-                      <li key={p} className="flex items-start gap-2 text-xs text-slate-700">
-                        <Icon.Check className="mt-0.5 h-3 w-3 shrink-0 text-emerald-500" />
-                        <span>{p}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {/* WHY — the conditions, with their live thresholds. */}
-              {Array.isArray(book.rules) && (
-                <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">What makes a car due</p>
-                  <ul className="mt-1.5 space-y-2.5">
-                    {book.rules.map((r) => (
-                      <li key={r.key} className="rounded-lg bg-slate-50 px-3 py-2 ring-1 ring-inset ring-slate-100">
-                        <p className="flex items-center gap-2 text-xs font-semibold text-slate-800">
-                          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${ruleDot(r.severity)}`} />
-                          {r.label}
-                          <span className="font-normal text-[10px] uppercase tracking-wide text-slate-400">{r.severity}</span>
-                        </p>
-                        <p className="mt-1 text-xs text-slate-600">{r.when}</p>
-                        <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-[11px] text-slate-500">
-                          <span><span className="text-slate-400">Threshold:</span> {r.threshold}</span>
-                          {r.agenda && <span><span className="text-slate-400">Inspector is told to:</span> {r.agenda}</span>}
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {/* What it deliberately does NOT raise — "not due" vs "suppressed". */}
-              {Array.isArray(book.suppressions) && book.suppressions.length > 0 && (
-                <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">What it deliberately holds back</p>
-                  <ul className="mt-1 space-y-1.5">
-                    {book.suppressions.map((s) => (
-                      <li key={s.label} className="text-xs text-slate-600">
-                        <span className="font-medium text-slate-700">{s.label}</span> — {s.why}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {book.outcome && (
-                <p className="rounded-lg border border-indigo-100 bg-indigo-50/60 px-3 py-2 text-xs text-indigo-900">
-                  <span className="font-semibold">What happens next: </span>{book.outcome}
+              {book.enabled === false && (
+                <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700 ring-1 ring-inset ring-rose-200">
+                  ⚠ The automatic check is currently switched off — no new system requests are being raised.
                 </p>
               )}
 
-              <p className="text-[11px] text-slate-400">
-                Data Origin: live thresholds from <code className="font-mono">DiagnosticGateService</code> (config
-                <code className="font-mono"> features.diagnostic_gate</code>) — the same rules the monitor evaluates.
-              </p>
+              {/* 2 ── The journey, so the request in the queue has a visible origin. */}
+              {Array.isArray(book.steps) && book.steps.length > 0 && (
+                <div>
+                  <SectionTitle hint="from the daily check to your decision">How it works</SectionTitle>
+                  <FlowStrip steps={book.steps} />
+                </div>
+              )}
+
+              {/* 3 ── The rules themselves: the heart of the panel. */}
+              {Array.isArray(book.rules) && book.rules.length > 0 && (
+                <div>
+                  <SectionTitle hint="any one of these is enough">What makes a car due for a test</SectionTitle>
+                  <div className="grid grid-cols-1 gap-2.5 lg:grid-cols-2">
+                    {book.rules.map((r) => <RuleCard key={r.key} rule={r} />)}
+                  </div>
+                </div>
+              )}
+
+              {/* 4 ── The two "and it does NOT…" halves, side by side. */}
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                {Array.isArray(book.preconditions) && book.preconditions.length > 0 && (
+                  <div className="rounded-xl bg-emerald-50/60 p-3.5 ring-1 ring-inset ring-emerald-100">
+                    <SectionTitle>Which cars it checks</SectionTitle>
+                    <ul className="space-y-1.5">
+                      {book.preconditions.map((p) => (
+                        <li key={p} className="flex items-start gap-2 text-[13px] leading-relaxed text-slate-700">
+                          <Icon.Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" />
+                          <span>{p}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {Array.isArray(book.suppressions) && book.suppressions.length > 0 && (
+                  <div className="rounded-xl bg-amber-50/60 p-3.5 ring-1 ring-inset ring-amber-100">
+                    <SectionTitle hint="so you can tell “not due” from “held back”">What it will not ask for</SectionTitle>
+                    <ul className="space-y-2">
+                      {book.suppressions.map((s) => (
+                        <li key={s.label} className="text-[13px] leading-relaxed text-slate-700">
+                          <span className="font-semibold text-slate-800">{s.label}</span>
+                          <span className="block text-xs leading-relaxed text-slate-600">{s.why}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+
+              {/* 5 ── Where it lands and who decides — the operator's own part. */}
+              {book.outcome && (
+                <div className="flex items-start gap-3 rounded-xl bg-indigo-50 p-3.5 ring-1 ring-inset ring-indigo-100">
+                  <span className="text-lg" aria-hidden>🙋</span>
+                  <p className="text-[13px] leading-relaxed text-indigo-950">
+                    <span className="font-bold">Your part: </span>{book.outcome}
+                  </p>
+                </div>
+              )}
+
+              {/* 6 ── Engine vocabulary lives here, out of the operator's way. */}
+              <details className="rounded-lg bg-slate-50 px-3 py-2 ring-1 ring-inset ring-slate-200">
+                <summary className="cursor-pointer text-xs font-semibold text-slate-600">Technical details</summary>
+                <div className="mt-2 space-y-1.5 text-[11px] text-slate-500">
+                  <p>
+                    Job: <code className="rounded bg-slate-900/90 px-1.5 py-0.5 font-mono text-slate-100">{book.schedule?.command}</code>
+                    {' '}— {book.schedule?.frequency} at {book.schedule?.runs_at}. {book.schedule?.description}
+                  </p>
+                  {book.limits && (
+                    <p className="font-mono">
+                      downtime_days={book.limits.downtime_days} · inactive_days={book.limits.inactive_days} ·
+                      battery_life_months={book.limits.battery_life_months} · oil_ceiling_floor_km={book.limits.oil_ceiling_floor_km}
+                    </p>
+                  )}
+                  <p>
+                    Data Origin: every limit above is read live from <code className="font-mono">DiagnosticGateService</code>
+                    {' '}(config <code className="font-mono">features.diagnostic_gate</code>) — the same code that decides what is
+                    due, so this page cannot describe a rule that is not the one running.
+                  </p>
+                </div>
+              </details>
             </div>
           )}
         </div>
       )}
-    </div>
+    </section>
   );
 }
 
