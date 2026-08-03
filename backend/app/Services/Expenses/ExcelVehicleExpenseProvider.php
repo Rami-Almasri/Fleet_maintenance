@@ -14,15 +14,57 @@ use Illuminate\Support\Facades\DB;
  *
  * Expense per vehicle = Σ amount (amount = debit − credit) of its lines. All reads are scoped to
  * source = 'excel' so a future provider's rows never bleed in.
+ *
+ * COST EXCLUSIONS. Every aggregate that answers "what did this vehicle COST" — total, totalsByVehicle,
+ * totalsByMonth, linesByVehicle — drops the categories listed in `expenses.excluded_categories`
+ * (sub-rental recharges: cars hired IN from other companies and billed through the same ledger, which
+ * are a rental transaction, not spend on the asset). {@see history()} is the deliberate exception: it
+ * returns EVERY line, each flagged `excluded`, so the drawer can show what came out of the number
+ * instead of quietly shrinking it.
  */
 class ExcelVehicleExpenseProvider implements VehicleExpenseProvider
 {
     private const SOURCE = 'excel';
 
     /** {@inheritDoc} */
+    public function exclusions(): array
+    {
+        $labels = ExpenseCategoryClassifier::labels();
+        $out = [];
+        foreach ((array) config('expenses.excluded_categories', []) as $key => $reason) {
+            $out[] = [
+                'key'    => (string) $key,
+                'label'  => $labels[$key] ?? (string) $key,
+                'reason' => (string) $reason,
+            ];
+        }
+
+        return $out;
+    }
+
+    /**
+     * Category keys that are in the ledger but are not spend on the vehicle. Read from config so the
+     * policy is one line to change and one place to audit.
+     *
+     * @return array<int,string>
+     */
+    private function excludedCategories(): array
+    {
+        return array_map('strval', array_keys((array) config('expenses.excluded_categories', [])));
+    }
+
+    /** Apply the cost exclusions to a query. The ONE place the policy is enforced. */
+    private function costOnly($query)
+    {
+        $excluded = $this->excludedCategories();
+
+        return $excluded ? $query->whereNotIn('category', $excluded) : $query;
+    }
+
+    /** {@inheritDoc} */
     public function totalsByVehicle(?array $vehicleIds = null, ?string $from = null, ?string $to = null): array
     {
-        $rows = DB::table('vehicle_expenses')
+        $rows = $this->costOnly(DB::table('vehicle_expenses'))
             ->where('source', self::SOURCE)
             ->whereNotNull('vehicle_id')
             ->when($vehicleIds !== null, fn ($q) => $q->whereIn('vehicle_id', $vehicleIds))
@@ -43,7 +85,7 @@ class ExcelVehicleExpenseProvider implements VehicleExpenseProvider
     /** {@inheritDoc} */
     public function total(int $vehicleId, ?string $from = null, ?string $to = null): ?float
     {
-        $total = DB::table('vehicle_expenses')
+        $total = $this->costOnly(DB::table('vehicle_expenses'))
             ->where('source', self::SOURCE)
             ->where('vehicle_id', $vehicleId)
             ->when($from, fn ($q) => $q->whereDate('entry_date', '>=', $from))
@@ -61,7 +103,7 @@ class ExcelVehicleExpenseProvider implements VehicleExpenseProvider
     /** {@inheritDoc} */
     public function totalsByMonth(?string $from = null, ?string $to = null, ?array $vehicleIds = null): array
     {
-        $rows = DB::table('vehicle_expenses')
+        $rows = $this->costOnly(DB::table('vehicle_expenses'))
             ->where('source', self::SOURCE)
             ->whereNotNull('vehicle_id')
             ->whereNotNull('entry_date')
@@ -83,9 +125,18 @@ class ExcelVehicleExpenseProvider implements VehicleExpenseProvider
         return $out;
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     *
+     * Returns EVERY line, including the ones the cost aggregates exclude — each carrying `excluded`
+     * so the drawer can show them under their own heading. A total that dropped AED X has to be able
+     * to name the lines it dropped.
+     */
     public function history(int $vehicleId, ?string $from = null, ?string $to = null): array
     {
+        $labels   = ExpenseCategoryClassifier::labels();
+        $excluded = $this->excludedCategories();
+
         return DB::table('vehicle_expenses')
             ->where('source', self::SOURCE)
             ->where('vehicle_id', $vehicleId)
@@ -93,13 +144,21 @@ class ExcelVehicleExpenseProvider implements VehicleExpenseProvider
             ->when($to, fn ($q) => $q->whereDate('entry_date', '<=', $to))
             ->orderByRaw('entry_date IS NULL, entry_date ASC')   // oldest first; undated last
             ->orderBy('id')
-            ->get(['entry_date', 'remarks', 'amount', 'account_type'])
-            ->map(fn ($r) => [
-                'date'         => $r->entry_date ? substr((string) $r->entry_date, 0, 10) : null,
-                'remarks'      => $r->remarks,
-                'amount'       => round((float) $r->amount, 2),
-                'account_type' => $r->account_type,
-            ])
+            ->get(['entry_date', 'remarks', 'amount', 'account_type', 'category', 'category_matched'])
+            ->map(function ($r) use ($labels, $excluded) {
+                $key = $r->category ?: ExpenseCategoryClassifier::UNCATEGORISED;
+
+                return [
+                    'date'             => $r->entry_date ? substr((string) $r->entry_date, 0, 10) : null,
+                    'remarks'          => $r->remarks,
+                    'amount'           => round((float) $r->amount, 2),
+                    'account_type'     => $r->account_type,
+                    'category'         => $key,
+                    'category_label'   => $labels[$key] ?? 'Uncategorised',
+                    'category_matched' => $r->category_matched,
+                    'excluded'         => in_array($key, $excluded, true),
+                ];
+            })
             ->all();
     }
 
@@ -107,7 +166,7 @@ class ExcelVehicleExpenseProvider implements VehicleExpenseProvider
     public function linesByVehicle(?array $vehicleIds = null, ?string $from = null, ?string $to = null): array
     {
         $out = [];
-        DB::table('vehicle_expenses')
+        $this->costOnly(DB::table('vehicle_expenses'))
             ->where('source', self::SOURCE)
             ->whereNotNull('vehicle_id')
             ->when($vehicleIds !== null, fn ($q) => $q->whereIn('vehicle_id', $vehicleIds))

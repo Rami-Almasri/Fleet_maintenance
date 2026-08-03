@@ -18,6 +18,12 @@ namespace App\Contracts;
  *   Odoo  → VehicleExpenseProvider → FleetView   (later)
  *
  * A missing/unknown expense is null (or absent from the map) — never a fabricated 0.
+ *
+ * COST ≠ EVERY LINE. Some ledger lines are not spend on the vehicle at all (a car hired in from another
+ * company, recharged through the same sheet). Every method that answers "what did this cost" —
+ * {@see totalsByVehicle()}, {@see total()}, {@see totalsByMonth()}, {@see linesByVehicle()} — has those
+ * removed; {@see exclusions()} names them and {@see history()} still returns them, flagged. Nothing is
+ * dropped silently.
  */
 interface VehicleExpenseProvider
 {
@@ -48,7 +54,17 @@ interface VehicleExpenseProvider
      * expense total is built from, so the UI can render it verbatim as the remarks / timeline list:
      *   ['date' => 'Y-m-d'|null, 'remarks' => string|null, 'amount' => float, 'account_type' => string|null]
      *
-     * @return array<int,array{date:?string,remarks:?string,amount:float,account_type:?string}>
+     * Each line also carries a `category` — the operational bucket (insurance / tyres / oil …) derived
+     * from the remark by {@see \App\Services\Expenses\ExpenseCategoryClassifier}, plus the literal term
+     * that decided it. This is presentation metadata for filtering; it never alters `amount`, and the
+     * source columns above are still returned verbatim.
+     *
+     * UNLIKE the cost aggregates, this returns EVERY line — including the categories {@see exclusions()}
+     * keeps OUT of the totals, each marked `excluded`. That is deliberate: the drawer has to be able to
+     * show what was taken out of a number, so consumers must sum only the non-excluded lines to tie
+     * back to {@see total()}.
+     *
+     * @return array<int,array{date:?string,remarks:?string,amount:float,account_type:?string,category:string,category_label:string,category_matched:?string,excluded:bool}>
      */
     public function history(int $vehicleId, ?string $from = null, ?string $to = null): array;
 
@@ -71,6 +87,18 @@ interface VehicleExpenseProvider
      * @return array{label:string,available:bool,as_of:?string,lines:int}
      */
     public function source(): array;
+
+    /**
+     * Which categories are in the ledger but deliberately KEPT OUT of every cost figure, and why.
+     *
+     * Cost aggregates ({@see total()}, {@see totalsByVehicle()}, {@see totalsByMonth()},
+     * {@see linesByVehicle()}) already have these removed. This exists so a UI can SAY SO: an expense
+     * total that silently omits lines is exactly the black box the app is not allowed to be. Empty
+     * array = nothing is excluded and every line counts.
+     *
+     * @return array<int,array{key:string,label:string,reason:string}>
+     */
+    public function exclusions(): array;
 
     /**
      * Is this source still being MAINTAINED?

@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\Vehicle;
+use App\Services\Expenses\ExpenseCategoryClassifier;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -82,6 +83,7 @@ class ImportVehicleExpenses extends Command
         $sumAmount = 0.0; $carSerials = []; $unmatchedSerials = [];
         $batch = []; $sample = [];
         $wroteFresh = false;
+        $classifier = new ExpenseCategoryClassifier();
 
         foreach ($this->readRows($path) as $i => $cells) {
             if ($i === 0) {
@@ -115,12 +117,18 @@ class ImportVehicleExpenses extends Command
                 $unmatchedSerials[$carSerial] = true;
             }
 
+            // The operational bucket, derived from the remark at write time (account_type is "Expence"
+            // on every row and tells us nothing). Re-derivable at any point with `expenses:classify`.
+            $category = $classifier->classify($remarks);
+
             $row = [
                 'car_serial'   => $carSerial,
                 'vehicle_id'   => $vehicleId,
                 'entry_date'   => $this->excelDate($cells[self::COL_DATE] ?? null),
                 'account_type' => $this->text($cells[self::COL_ACCOUNT] ?? null),
                 'remarks'      => $remarks,
+                'category'         => $category['key'],
+                'category_matched' => $category['matched'],
                 'debit'        => round($debit, 2),
                 'credit'       => round($credit, 2),
                 'amount'       => $amount,

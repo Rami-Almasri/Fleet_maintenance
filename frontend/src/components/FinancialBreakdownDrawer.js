@@ -177,13 +177,65 @@ function Record({ record }) {
 }
 
 // ---- Children list — the contributing records, each drillable -----------------------------------
-function Children({ ids, label, nodes, onOpen }) {
+// When the parent declares `children_facets`, the list gains a type filter. A ledger of 262 lines
+// mixing insurance, tyres, salik and sub-rental is unreadable as one list; the chips narrow it while
+// the header keeps showing the FULL total alongside the filtered subtotal, so a filtered view can
+// never be mistaken for the whole number.
+function Children({ ids, label, facets, facetLabel, facetNote, nodes, onOpen }) {
+  const [facet, setFacet] = useState(null);
+  const list = useMemo(
+    () => (facet ? (ids || []).filter((id) => nodes[id]?.group?.key === facet) : ids || []),
+    [ids, facet, nodes],
+  );
+  const subtotal = useMemo(
+    () => (facet ? list.reduce((s, id) => s + (Number(nodes[id]?.value) || 0), 0) : null),
+    [facet, list, nodes],
+  );
+
   if (!ids || !ids.length) return null;
+  const active = (facets || []).find((f) => f.key === facet);
+
   return (
     <div className="rounded-xl border border-slate-200/70 bg-white">
       <p className="border-b border-slate-100 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{label || `Contributing records (${ids.length})`}</p>
+
+      {facets?.length > 1 && (
+        <div className="border-b border-slate-100 px-3 py-2.5">
+          <div className="mb-1.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+            {facetLabel || 'Type'}
+            {facetNote && <span className="cursor-help text-slate-300" title={facetNote}>ⓘ</span>}
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              onClick={() => setFacet(null)}
+              className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${facet === null ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+            >
+              All ({ids.length})
+            </button>
+            {facets.map((f) => (
+              <button
+                key={f.key}
+                type="button"
+                onClick={() => setFacet((cur) => (cur === f.key ? null : f.key))}
+                title={`${f.label} — ${f.count} line${f.count === 1 ? '' : 's'}, ${aed2(f.total)}`}
+                className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${facet === f.key ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+              >
+                {f.label} ({f.count})
+              </button>
+            ))}
+          </div>
+          {active && (
+            <p className="mt-2 rounded-lg bg-indigo-50/70 px-3 py-1.5 text-[11px] text-indigo-800">
+              Showing <span className="font-semibold">{list.length}</span> of {ids.length} lines ·{' '}
+              <span className="font-semibold tabular-nums">{aed2(subtotal)}</span> of this bucket
+            </p>
+          )}
+        </div>
+      )}
+
       <div className="max-h-[420px] divide-y divide-slate-100 overflow-y-auto">
-        {ids.map((id) => {
+        {list.map((id) => {
           const c = nodes[id];
           if (!c) return null;
           return (
@@ -195,7 +247,12 @@ function Children({ ids, label, nodes, onOpen }) {
             >
               <span className="min-w-0">
                 <span className="block truncate text-sm font-medium text-indigo-700">{c.label}</span>
-                {c.subtitle && <span className="block truncate text-xs text-slate-400">{c.subtitle}</span>}
+                <span className="flex items-center gap-1.5">
+                  {c.subtitle && <span className="truncate text-xs text-slate-400">{c.subtitle}</span>}
+                  {c.group && !facet && (
+                    <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">{c.group.label}</span>
+                  )}
+                </span>
               </span>
               <span className="flex shrink-0 items-center gap-2">
                 <span className="tabular-nums text-sm font-semibold text-slate-900">{fmtVal(c.value, c.unit)}</span>
@@ -205,6 +262,49 @@ function Children({ ids, label, nodes, onOpen }) {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+// ---- Excluded lines — records that exist on this vehicle but are NOT part of the total -----------
+// The counterpart to Children: a total that leaves records out has to name them, or it is a smaller
+// number with no explanation. Styled distinctly (amber, struck value) so it can never be misread as
+// part of the sum, and still drillable down to the original record.
+function Excluded({ ids, label, note, nodes, onOpen }) {
+  const [open, setOpen] = useState(false);
+  if (!ids || !ids.length) return null;
+  return (
+    <div className="rounded-xl border border-amber-300/60 bg-amber-50/40">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center justify-between gap-3 px-4 py-2 text-start"
+      >
+        <span className="text-xs font-semibold uppercase tracking-wide text-amber-700">{label}</span>
+        <span className="text-[11px] text-amber-700">{open ? 'hide' : 'show'} {open ? '▴' : '▾'}</span>
+      </button>
+      {note && <p className="border-t border-amber-200/70 px-4 py-2 text-[11px] text-amber-800">{note}</p>}
+      {open && (
+        <div className="max-h-[320px] divide-y divide-amber-200/60 overflow-y-auto border-t border-amber-200/70">
+          {ids.map((id) => {
+            const c = nodes[id];
+            if (!c) return null;
+            return (
+              <button key={id} type="button" onClick={() => onOpen(id)}
+                className="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-start hover:bg-amber-100/50">
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-medium text-amber-900">{c.label}</span>
+                  {c.subtitle && <span className="block truncate text-xs text-amber-700/70">{c.subtitle}</span>}
+                </span>
+                <span className="flex shrink-0 items-center gap-2">
+                  <span className="tabular-nums text-sm font-medium text-amber-700 line-through">{fmtVal(c.value, c.unit)}</span>
+                  <span className="text-[10px] text-amber-500">▸</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -317,7 +417,12 @@ function NodeView({ node, nodes, context, onOpen }) {
             <ConfidenceBadge value={node.confidence} />
           </div>
         </div>
-        {node.note && <p className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">{node.note}</p>}
+        {node.note && (
+          <p className={`mt-2 rounded-lg px-3 py-2 text-xs ${node.excluded ? 'bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-600/20' : 'bg-slate-50 text-slate-500'}`}>
+            {node.excluded && <span className="font-semibold">Not counted in the total · </span>}
+            {node.note}
+          </p>
+        )}
       </div>
 
       <BusinessRule rule={node.business_rule} onOpen={onOpen} />
@@ -325,7 +430,22 @@ function NodeView({ node, nodes, context, onOpen }) {
       <Formula formula={node.formula} onOpen={onOpen} />
       <Evidence items={node.evidence} onOpen={onOpen} />
       {node.record && <Record record={node.record} />}
-      <Children ids={node.children} label={node.children_label} nodes={nodes} onOpen={onOpen} />
+      <Children
+        ids={node.children}
+        label={node.children_label}
+        facets={node.children_facets}
+        facetLabel={node.children_facet_label}
+        facetNote={node.children_facet_note}
+        nodes={nodes}
+        onOpen={onOpen}
+      />
+      <Excluded
+        ids={node.excluded_children}
+        label={node.excluded_children_label}
+        note={node.excluded_note}
+        nodes={nodes}
+        onOpen={onOpen}
+      />
       <Impact ids={node.reverse_dependencies} nodes={nodes} onOpen={onOpen} />
       <Audit audit={node.audit} context={context} />
     </div>
