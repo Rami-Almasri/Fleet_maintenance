@@ -48,7 +48,11 @@ class RepairRecommendationService
         $ontology  = $this->ontology  ?? app(\App\Services\KeywordOntologyService::class);
         $explainer = $this->explainer ?? app(\App\Services\MatchExplanationService::class);
 
-        $match = $ontology->resolve($q->symptom, ['limit' => 1])->first();
+        // FAULT LANE — a repair recommendation is an answer to a symptom, and this call had no score
+        // floor at all, so the top match was taken whatever it was (audit H6).
+        $match = $ontology->resolve($q->symptom, [
+            'limit' => 1, 'min_score' => 55, 'kinds' => [\App\Models\MaintenanceTask::KIND_FAULT],
+        ])->first();
 
         if (! $match) {
             return null;

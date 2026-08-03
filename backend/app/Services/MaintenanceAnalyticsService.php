@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Contract;
 use App\Models\Maintenance;
 use App\Models\MaintenanceReason;
+use App\Models\MaintenanceTask;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -113,11 +114,25 @@ class MaintenanceAnalyticsService
      *      e.g. "oil" or "engine" — is ambiguous and skipped rather than guessed)
      * Falls back to 'routine' when nothing matches (incl. jobs with no tags).
      *
+     * FAULT LABELS ONLY. This scores how URGENT a visit is, and urgency comes from what went wrong on
+     * it. A tag list straight off the sheet mixes faults with planned services ("Oil & Fillter Change")
+     * and bookkeeping words ("Customer", "Ready"), and feeding those in let an oil change contribute to
+     * a car's priority. The filter lives HERE rather than at each of the eight call sites, so no caller
+     * has to remember it and there is one place to change (audit M8).
+     *
+     * A tag list that is ENTIRELY non-fault falls through to the raw list rather than to silence — a
+     * service visit still has a priority, it is just not being scored as a breakdown.
+     *
      * @param  array<int,string>|string|null  $tags
      * @return array{level:string, matched:?string}
      */
     public function classifyPriority($tags, ?string $notes = null): array
     {
+        if (is_array($tags) && $tags !== []) {
+            $faults = app(EventClassificationService::class)->splitLabels($tags)[MaintenanceTask::KIND_FAULT];
+            $tags   = $faults ?: $tags;
+        }
+
         $raw = (is_array($tags) ? implode(' ', $tags) : (string) $tags) . ' ' . (string) $notes;
         if (trim($raw) === '') {
             return ['level' => 'routine', 'matched' => null];
@@ -325,19 +340,63 @@ class MaintenanceAnalyticsService
      */
     public function sheetIssueTags(?Maintenance $sheet): array
     {
-        if (! $sheet) {
-            return [];
-        }
-        $tags = [];
-        foreach ([$sheet->service_main, $sheet->service_sup] as $field) {
+        $grain = $this->sheetIssueTagsByGrain($sheet);
+
+        return array_values(array_unique(array_merge($grain['main'], $grain['sup'])));
+    }
+
+    /**
+     * The same labels, kept at their ORIGINAL GRAIN instead of flattened.
+     *
+     * `service_main` is a system CATEGORY ("Engine", "Body & Exterior"); `service_sup` is the specific
+     * finding inside it ("Rim Scratch"). Flattening them into one list makes a category the peer of its
+     * own child, so a single visit is counted twice and the top of every fault chart is category labels
+     * rather than faults (audit M6). Consumers that COUNT must pick a grain; only consumers that DISPLAY
+     * a "what was this visit about" blob should use the flattened sheetIssueTags().
+     *
+     * @return array{main: array<int,string>, sup: array<int,string>}
+     */
+    public function sheetIssueTagsByGrain(?Maintenance $sheet): array
+    {
+        $split = function (?string $field): array {
+            $out = [];
             foreach (preg_split('/\s*,\s*/', (string) $field, -1, PREG_SPLIT_NO_EMPTY) as $t) {
                 $t = trim($t);
-                if ($t !== '' && ! in_array($t, $tags, true)) {
-                    $tags[] = $t;
+                if ($t !== '' && ! in_array($t, $out, true)) {
+                    $out[] = $t;
                 }
             }
+
+            return $out;
+        };
+
+        if (! $sheet) {
+            return ['main' => [], 'sup' => []];
         }
-        return $tags;
+
+        $main = $split($sheet->service_main);
+        $sup  = $split($sheet->service_sup);
+
+        // A label repeated across both columns belongs to the finer grain only, so the pair never
+        // double-counts the same word.
+        $main = array_values(array_diff($main, $sup));
+
+        return ['main' => $main, 'sup' => $sup];
+    }
+
+    /**
+     * The visit's labels TYPED — fault / service / context — through the one classifier that owns the
+     * legacy sheet vocabulary (EventClassificationService::splitLabels).
+     *
+     * The imported sheet has no type axis: faults ("Rim Scratch"), planned services ("Oil & Fillter
+     * Change") and bookkeeping words ("Customer", "Ready") share one free-text column. Every consumer
+     * that counts, charts or scores FAULTS must read `fault` here rather than the raw tag list.
+     *
+     * @return array{fault: array<int,string>, service: array<int,string>, context: array<int,string>}
+     */
+    public function sheetIssueTagsByKind(?Maintenance $sheet): array
+    {
+        return app(EventClassificationService::class)->splitLabels($this->sheetIssueTags($sheet));
     }
 
     /**
@@ -533,7 +592,11 @@ class MaintenanceAnalyticsService
             ->join('maintenance_reasons as r', 'r.id', '=', 'mt.maintenance_reason_id')
             ->join('vehicles as v', 'v.id', '=', 'c.vehicle_id')
             ->whereNull('c.deleted_at')
-            ->whereIn('r.level', ['critical', 'minor'])
+            // FAULTS ONLY. This used to read `r.level IN (critical, minor)` — a priority column standing in
+            // for the type — which both let planned work through and dropped genuine faults the sheet rates
+            // as low-priority ("Engine Oil leak", "Fluid Leaks"). Typed by name through the one vocabulary
+            // instead. See EventClassificationService::faultReasonIds() and audit M7.
+            ->whereIn('mt.maintenance_reason_id', app(EventClassificationService::class)->faultReasonIds())
             ->selectRaw('c.vehicle_id, v.plate_no, v.make, v.model, r.reason_en as reason, r.level,
                          COUNT(*) as visits, MAX(c.out_date) as last_date')
             ->groupBy('c.vehicle_id', 'v.plate_no', 'v.make', 'v.model', 'r.reason_en', 'r.level')

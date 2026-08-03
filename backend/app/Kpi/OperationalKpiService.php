@@ -179,11 +179,17 @@ class OperationalKpiService
                 FROM (
                     SELECT vehicle_id, fault_catalog_id, COUNT(*) AS c
                     FROM maintenance_tasks
-                    WHERE vehicle_id IS NOT NULL AND fault_catalog_id IS NOT NULL
+                    WHERE vehicle_id IS NOT NULL
+                      AND fault_catalog_id IS NOT NULL
+                      -- "Chronic repeat FAULT" — say so explicitly rather than relying on the
+                      -- exactly-one-catalog invariant to keep damage and service out implicitly. The
+                      -- filter above already does that structurally today; this makes the intent
+                      -- readable and survives any future row that slips past the guard.
+                      AND kind = ?
                     GROUP BY vehicle_id, fault_catalog_id
                 ) a
                 GROUP BY vehicle_id
-            ) b');
+            ) b', [\App\Models\MaintenanceTask::KIND_FAULT]);
 
         $vehicles = (int) ($row->vehicles ?? 0);
 

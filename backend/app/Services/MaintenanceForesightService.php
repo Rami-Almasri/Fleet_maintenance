@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Contract;
 use App\Models\Maintenance;
+use App\Models\MaintenanceTask;
 use App\Models\Vehicle;
 use App\Support\FaultVocabulary;
 use Carbon\Carbon;
@@ -157,11 +158,10 @@ class MaintenanceForesightService
             ->leftJoin('vendors as vd', 'vd.id', '=', 'm.vendor_id')
             ->whereIn('m.origin', Maintenance::WORKSHOP_LOG_ORIGINS)
             ->whereNotNull('m.out_date')
-            ->where(function ($q) {
-                // Same Rental-First exclusion the cost average uses — routine upkeep is not a repair.
-                $q->whereNull('m.visit_context')
-                  ->orWhere('m.visit_context', '<>', Maintenance::CONTEXT_ROUTINE);
-            })
+            // Planned upkeep is now excluded at LABEL grain by splitIssues(), which is both finer and
+            // more complete than the old visit-level `visit_context <> routine` filter — that dropped
+            // genuine faults discovered on a routine visit while letting service labels through on every
+            // visit whose context was null (the majority). See audit M1.
             ->orderBy('m.vehicle_id')
             ->orderBy('m.out_date')
             ->get(['m.id', 'm.vehicle_id', 'm.out_date', 'm.actual_in_date', 'm.service_main', 'm.service_sup', 'm.cost', 'm.origin', 'm.garage', 'v.plate_no', 'v.make', 'v.model', 'vd.name as vendor']);
@@ -696,14 +696,12 @@ class MaintenanceForesightService
             ->leftJoin('vendors as vd', 'vd.id', '=', 'm.vendor_id')
             ->whereIn('m.origin', Maintenance::WORKSHOP_LOG_ORIGINS)
             ->whereNotNull('m.out_date')
-            // "Rental-First" policy: routine service (oil/filters/periodic) is PLANNED upkeep,
-            // not a failure — exclude it so recurring oil changes never read as a "Chronic" fault
-            // or push a car onto the "Act now" list. (The proactive, odometer-based service-due
-            // reminder lives in Signal 1 via Vehicle::serviceStatus() and is untouched by this.)
-            ->where(function ($q) {
-                $q->whereNull('m.visit_context')
-                  ->orWhere('m.visit_context', '<>', Maintenance::CONTEXT_ROUTINE);
-            })
+            // "Rental-First" policy: routine service (oil/filters/periodic) is PLANNED upkeep, not a
+            // failure — so recurring oil changes never read as a "Chronic" fault or push a car onto the
+            // "Act now" list. Enforced at LABEL grain in splitIssues() rather than by dropping whole
+            // visits, so a real fault found during a routine visit is still seen (audit M1). (The
+            // proactive, odometer-based service-due reminder lives in Signal 1 via
+            // Vehicle::serviceStatus() and is untouched by this.)
             ->orderBy('m.vehicle_id')
             ->orderBy('m.out_date')
             ->get(['m.vehicle_id', 'm.out_date', 'm.actual_in_date', 'm.service_main', 'm.service_sup', 'm.spare_part', 'm.cost', 'm.vendor_id', 'm.garage', 'vd.name as vendor']);
@@ -1328,9 +1326,20 @@ class MaintenanceForesightService
     }
 
     /** @return array<int,string> */
+    /**
+     * The visit's FAULT labels — split from the sheet's free-text columns and then typed.
+     *
+     * The engine's whole output (Chronic, Act-now, cost-per-issue) is "which faults keep happening", so a
+     * planned-service label must not enter it and a bookkeeping word must not become an issue. This used
+     * to be handled only by excluding whole visits whose `visit_context` was routine, which is both too
+     * coarse (a real fault found during a routine visit was dropped) and too narrow (`visit_context` is
+     * null on most sheet rows, so an "Oil & Fillter Change" label on an ordinary visit still counted as a
+     * fault). Typing the LABELS through the one vocabulary fixes both directions. See audit M1.
+     */
     private function splitIssues(?string $main, ?string $sup): array
     {
-        return FaultVocabulary::splitIssues($main, $sup);
+        return app(EventClassificationService::class)
+            ->splitLabels(FaultVocabulary::splitIssues($main, $sup))[MaintenanceTask::KIND_FAULT];
     }
 
     private function normalise(string $s): string

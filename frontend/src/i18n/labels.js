@@ -85,7 +85,7 @@ const en = {
     loadError: 'Could not load the review queue.',
     empty: 'Nothing to review — every event is confidently classified.',
     original: 'Original text', current: 'Current', suggested: 'Suggested',
-    fault: 'Fault', service: 'Service', inspection: 'Inspection',
+    fault: 'Fault', service: 'Service', damage: 'Damage', inspection: 'Inspection',
     pickCatalog: 'No specific catalog', confirm: 'Confirm',
   },
   common: {
@@ -2509,6 +2509,7 @@ const en = {
   },
 
   findingsPicker: {
+    plannedService: 'Service',
     alreadyReported: 'Already reported on this ticket',
     lockedNote: 'Greyed-out items are already reported on this ticket and can’t be added again.',
     customTitle: 'Custom issue (not in the list)',
@@ -3021,7 +3022,7 @@ const ar = {
     loadError: 'تعذّر تحميل قائمة المراجعة.',
     empty: 'لا شيء للمراجعة — كل حدث مصنّف بثقة.',
     original: 'النص الأصلي', current: 'الحالي', suggested: 'المقترح',
-    fault: 'عطل', service: 'خدمة', inspection: 'فحص',
+    fault: 'عطل', service: 'خدمة', damage: 'ضرر', inspection: 'فحص',
     pickCatalog: 'بدون كتالوج محدد', confirm: 'تأكيد',
   },
   common: {
@@ -5635,6 +5636,7 @@ const ar = {
   },
 
   findingsPicker: {
+    plannedService: 'صيانة دورية',
     alreadyReported: 'مُبلَّغ عنه مسبقًا في هذه البطاقة',
     lockedNote: 'العناصر الباهتة مُبلَّغ عنها مسبقًا في هذه البطاقة ولا يمكن إضافتها مرة أخرى.',
     customTitle: 'عطل مخصّص (غير موجود في القائمة)',

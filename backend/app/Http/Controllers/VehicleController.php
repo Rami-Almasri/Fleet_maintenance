@@ -581,6 +581,8 @@ class VehicleController extends Controller
                 $level = $c->maintenance?->reason?->level
                     ?: $events->map(fn ($e) => $e->reason?->level)->filter()
                         ->sortBy(fn ($l) => $levelRank[$l] ?? 9)->first();
+                // Scored from the FAULT labels only — a visit's priority comes from what went wrong, not
+                // from the planned service performed alongside it (audit M8).
                 $priority = $level ?: $analytics->classifyPriority($tags)['level'];
 
                 // Cost: contract line items if any; else the sum of the events' costs.
@@ -604,6 +606,7 @@ class VehicleController extends Controller
                     'tags'         => $tags,
                     'fault_tags'   => $byKind['fault'],
                     'service_tags' => $byKind['service'],
+                    'damage_tags'  => $byKind['damage'],
                     'context_tags' => $byKind['context'],
                     'notes'        => $c->maintenance?->maintenance_notes,
                     // latest workshop stage for this visit (OUT/IN/Follow up/…)
@@ -611,7 +614,10 @@ class VehicleController extends Controller
                     'event_count'  => $events->count(),
                     'total'        => $cost,
                     // the workshop events behind this visit, for the expandable detail
-                    'events'       => $events->map(fn ($e) => [
+                    'events'       => $events->map(function ($e) use ($analytics) {
+                      $eventKinds = $analytics->sheetIssueTagsByKind($e);
+
+                      return [
                         'id'     => $e->id,
                         'event'  => $e->event_status,
                         'date'   => optional($e->out_date)->toDateString()
@@ -622,9 +628,14 @@ class VehicleController extends Controller
                         'garage' => $e->vendor?->name ?: $e->garage,
                         'type'   => $e->maintenance_type,
                         'issues' => $analytics->sheetIssueTags($e),
+                        // Typed alongside the raw list, so a per-event view can separate the fault from
+                        // the planned work without re-deriving the vocabulary in JS (audit M8).
+                        'fault_tags'   => $eventKinds['fault'],
+                        'service_tags' => $eventKinds['service'],
                         'notes'  => $e->maintenance_notes,
                         'cost'   => $e->cost,
-                    ])->values(),
+                      ];
+                    })->values(),
                     'items'        => $c->items->map(fn ($i) => [
                         'id'           => $i->id,
                         'service_name' => $i->service_name,

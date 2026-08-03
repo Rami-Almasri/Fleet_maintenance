@@ -372,4 +372,27 @@ Each phase is independently shippable and reversible; everything behind the `SER
 
 ---
 
-*Status: PROPOSED — awaiting review. No code has been written. On approval, Phase 0 begins with migrations + seeders + resolver behind `SERVICE_FAULT_SPLIT`.*
+## 11. Implementation status (updated 2026-08-03)
+
+The footer below said "PROPOSED — no code has been written" long after Phase 0 shipped. Current state:
+
+| Phase | Status |
+|---|---|
+| **0 — Catalogs + discriminator** | ✅ Shipped. `service_catalog` (19), `fault_catalog` (64), `inspection_types` (5), `maintenance_tasks.kind` + 3 typed FKs + `classification_source` + `needs_review`, model guard, `creating` hook, `events:backfill-kind`, `events:purge-kind`. |
+| **1 — Backend read path** | ✅ Shipped, gated. 8 call sites consult `EventKind::enforced()`; the sheet-grain readers (Top Faults source B, foresight, recurring reasons) are typed through `EventClassificationService` unconditionally. |
+| **2 — API contract** | ✅ Shipped. `kind`, `kind_meta`, `catalog`, `needs_review`, `classification_source` on `MaintenanceTaskResource` (and therefore `MaintenanceWorkflowResource`); `fault_tags`/`service_tags`/`context_tags` on `WorkshopEventResource`; `task_kind` on the activity feed; `kind` on every `/finding-keywords/resolve` match. |
+| **3 — UI separation** | ◐ Partial. Timeline reads `kind`; the vehicle dossier's fault donut is split; the findings picker marks planned-work categories. Type-first intake (§7) is NOT built — findings are typed from the catalog by name instead, which produces `classification_source = catalog` without a new form. |
+| **4 — Recall / Inspection first-class** | Not started (Recall is out of scope per the 2026-07-26 amendment). |
+
+**Flag rename.** `SERVICE_FAULT_SPLIT` in §0.6/§8/§9 is now `EVENT_KIND_MODE` (`off` | `shadow` | `enforced`), read via `App\Support\EventKind`. That class documents precisely what the flag governs — task-grain fault *analytics* only. Classification, writes, and label/concept typing are unconditional: a rollout flag must never decide whether a stored fact is correct.
+
+**Amendments learned from the audit** (`docs/Service-Fault-Separation-Audit.md`):
+- §0.1 said "`kind` is the ONLY classifier". True at EVENT grain. The sheet corpus (~27k rows, ~99% of history) has no tasks and therefore no `kind`, so it needs a LABEL-grain authority. That is `EventClassificationService::labelKind()/conceptKind()/isServiceCategory()/faultReasonIds()` — the same class, one owner, four grains.
+- `maintenance_reasons.level` is a PRIORITY axis and must never be used as a type filter. The sheet's owners rate `Engine Oil leak` as "Maintenance / Routine" because it is cheap, not because it is planned.
+- The service catalog outranks the ontology's category when typing a concept: the ontology files by SYSTEM (`Tyre Rotation` lives in `tyres`), which is a different axis from the type of work.
+
+**Integrity in production.** The `chk_task_kind_catalog` CHECK is not installed on MySQL 8 (errno 3823 — a CHECK may not reference a column carrying an FK with a referential action). Run `php artisan events:kind-integrity` there; it verifies every invariant the constraint would and exits non-zero on violation.
+
+---
+
+*Status: Phases 0–2 SHIPPED, Phase 3 partial. See §11 above and `docs/Service-Fault-Separation-Audit.md` for the audit that produced this status.*

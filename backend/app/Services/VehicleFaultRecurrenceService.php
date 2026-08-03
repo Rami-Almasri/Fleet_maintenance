@@ -253,7 +253,7 @@ class VehicleFaultRecurrenceService
             // A fault the workshop cancelled or never found did not happen — it can't be a recurrence.
             ->whereNotIn('maintenance_tasks.status', MaintenanceTask::NON_REPAIR_TERMINAL)
             // Event Type layer: planned services and inspections are not breakdowns.
-            ->when(EventKind::enforced(), fn ($q) => $q->faults())
+            ->affectingReliability()
             ->join('maintenances as m', 'm.id', '=', 'maintenance_tasks.maintenance_id')
             ->leftJoin('vendors as vd', 'vd.id', '=', 'maintenance_tasks.current_vendor_id')
             ->leftJoin('vendors as mv', 'mv.id', '=', 'm.vendor_id')
@@ -313,6 +313,16 @@ class VehicleFaultRecurrenceService
      */
     private function bucketFor(string $label): ?array
     {
+        // TYPE FIRST, at the LABEL grain. Damage and planned service are excluded by what the wording IS,
+        // before any category reasoning — because the categories that hold most damage (`bodywork`,
+        // `interior`) also hold real faults (Dashboard fault, Door lock fault, Water leakage into cabin),
+        // and the old category-level cosmetic rule was dropping those from recurrence along with the
+        // scratches. See docs/Service-Fault-Damage-Domain.md.
+        $classifier = app(\App\Services\EventClassificationService::class);
+        if (! $classifier->kindAffectsReliability($classifier->labelKind($label))) {
+            return null;
+        }
+
         if ($category = FaultVocabulary::categoryOf($label)) {
             return FaultVocabulary::isFailureCategory($category['key']) ? $category : null;
         }

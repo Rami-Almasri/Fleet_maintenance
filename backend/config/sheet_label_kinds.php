@@ -48,6 +48,65 @@ return [
         'Freon Recharge Needed',
         'Upgrades / Modifications',
         'Modification-Related',
+
+        // TYRE/WHEEL SERVICING — both spellings, deliberately.
+        //
+        // `service_catalog` spells these "Tyre …" while the ontology and config/maintenance_findings
+        // spell them "Tire …", and TextNormalizer::key does NOT fold tyre→tire (spelling is load-bearing
+        // for concept identity — see [[findings-vocabulary-contract]]). Typing is not identity, so both
+        // spellings are declared here rather than folding them anywhere: it is one reviewable list
+        // instead of a normalisation rule that would quietly merge two concepts.
+        //
+        // Note these are EXACT labels. The fault wordings that contain them — "Wheel Alignment Issue",
+        // "Tire Issues", "Uneven Tire Wear" — are unaffected, because this map never substring-matches.
+        'Tyre Rotation',
+        'Tire Rotation',
+        'Tyre Change',
+        'Tire Change',
+        'Wheel Alignment',
+        'Wheel Balancing',
+        'Brake Pads (service)',
+        'A/C Service',
+        'General Service',
+    ],
+
+    /**
+     * DAMAGE — externally-caused physical damage. Unplanned like a fault, but it describes what happened
+     * TO the car, not what is wrong WITH it, so it must never reach reliability, recurrence or forecasting.
+     *
+     * Most damage wordings are typed from `damage_catalog` (config/damage_catalog.php) and need no entry
+     * here. This list is for the SHEET'S OWN wordings that the catalog does not carry verbatim — the
+     * category headers and the spelling variants the workshop actually typed.
+     *
+     * `Body & Exterior` and `Interior` are the sheet's `service_main` CATEGORY headers. On the sheet they
+     * are only ever written above damage sub-findings, so they are damage here — but note this is a
+     * statement about the SHEET's usage, not about the categories themselves: the `interior` ontology
+     * category contains real faults and is deliberately NOT typed as damage anywhere else.
+     */
+    'damage' => [
+        'Body & Exterior',
+        'Body Damage',
+        'Interior',
+        'Rim Scratch',
+        'Rims scratch',
+        'Minor Surface Scratch',
+        'Deep Dent',
+        'Upholstery Damage',
+        'Panel Misalignment',
+        'Front Lip / Diffuser Damage',
+        'Front Lip',
+        'Paint Peeling / Fading',
+        'Trim/Panel Damage',
+        'Mirror Cover Damage',
+        'Sticker Damage',
+        'Sticker Misalignment / Damage',
+        'Wrap Peeling',
+        'Glass Chip / Crack',
+        'Mirror Glass Crack',
+        'Rim Dent / Bend',
+        'Accident',
+        'accident',
+        'Muffler Damage',
     ],
 
     /**

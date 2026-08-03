@@ -86,11 +86,34 @@ const EVENT_KIND = {
   cleaning_updated: 'system', odometer_corrected: 'system',
 };
 
+// Task-scoped event types: the row is about ONE maintenance event, so its bucket must come from that
+// event's stored type rather than from the event_type name. `task_identified` says a finding was
+// recorded — it does not say the finding was a fault.
+const TASK_SCOPED = new Set([
+  'task_identified', 'task_transferred', 'task_resolved', 'task_reinspection_failed',
+  'task_marked_incorrect', 'severity_upgraded', 'severity_review_kept', 'task_assigned',
+]);
+
 // The single investigation kind for an event. Damage walk-arounds are accidents whatever their source
-// label; otherwise the explicit event_type map wins, then a category/source fallback.
+// label; then the event's OWN maintenance type when it has one; then the explicit event_type map, then a
+// category/source fallback.
 export function eventKind(e) {
   if (!e) return 'system';
   if (e.flagged && e.source === 'inspection') return 'accident';
+
+  // READ THE TYPE, DON'T GUESS IT. The backend ships `task_kind` (fault | service | damage | inspection) from
+  // maintenance_tasks.kind. Every task_* event used to be hard-mapped to 'fault', so a logged oil change
+  // sat under the Faults quick-jump and inflated the Faults counter (audit M4). Falls through when the
+  // payload predates the field, keeping the old behaviour for cached/legacy responses.
+  if (TASK_SCOPED.has(e.event_type) && e.task_kind) {
+    if (e.task_kind === 'service') return 'routine';
+    if (e.task_kind === 'inspection') return 'inspection';
+    // Externally-caused damage files with accidents, not with faults: both are "something happened to
+    // this car", which is a different investigation from "this car is failing".
+    if (e.task_kind === 'damage') return 'accident';
+    return 'fault';
+  }
+
   const mapped = EVENT_KIND[e.event_type];
   if (mapped) return mapped;
   if (e.source === 'logistics' || e.category === 'movement') return 'dispatch';

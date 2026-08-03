@@ -119,7 +119,12 @@ class CausalReasoner
         /** @var \App\Services\KeywordOntologyService $matcher */
         $matcher = app(\App\Services\KeywordOntologyService::class);
 
-        $best = $matcher->resolve($text, ['limit' => 1, 'scope' => $scopeChain])->first();
+        // FAULT LANE — this returns the fault whose CAUSES are then reasoned about. A scheduled service
+        // has no causal story to tell ("caused by: the odometer reached the service point"), so letting
+        // one win here would produce a confident, useless diagnosis (audit H6).
+        $best = $matcher->resolve($text, [
+            'limit' => 1, 'scope' => $scopeChain, 'kinds' => [\App\Models\MaintenanceTask::KIND_FAULT],
+        ])->first();
 
         if (! $best) {
             return ['fault' => null, 'causes' => []];

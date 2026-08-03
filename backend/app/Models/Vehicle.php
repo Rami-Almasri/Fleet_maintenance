@@ -233,9 +233,10 @@ class Vehicle extends Model
 
     /**
      * Every maintenance EVENT on this car, across all tickets. A vehicle is a container of typed events
-     * (Fault / Service / Inspection) — the typed helpers below are the sanctioned entry points; features
-     * read faults()/services()/inspections(), never a raw kind/category filter. Event Type layer; see
-     * docs/Service-vs-Fault-Domain-Separation.md.
+     * (Fault / Service / Damage / Inspection) — the typed helpers below are the sanctioned entry points;
+     * features read faults()/services()/damages()/inspections(), never a raw kind/category filter.
+     * Event Type layer; see docs/Service-vs-Fault-Domain-Separation.md and
+     * docs/Service-Fault-Damage-Domain.md.
      */
     public function maintenanceTasks(): HasMany
     {
@@ -258,6 +259,27 @@ class Vehicle extends Model
     public function inspections(): HasMany
     {
         return $this->maintenanceTasks()->inspections();
+    }
+
+    /**
+     * 🟣 Externally-caused damage only — kerbed rims, dents, cracked glass, accident damage.
+     *
+     * Costed and billable like any other event, and deliberately absent from reliability: damage is a
+     * fact about a driver, not about the car. This is the door the Damage dashboard and any
+     * renter-liability feature should use, so nothing has to re-derive what damage is.
+     */
+    public function damages(): HasMany
+    {
+        return $this->maintenanceTasks()->damages();
+    }
+
+    /**
+     * Events that are evidence about the VEHICLE's own condition — the grain health, reliability,
+     * recurrence and forecasting read. Damage is always excluded; services follow EVENT_KIND_MODE.
+     */
+    public function reliabilityEvents(): HasMany
+    {
+        return $this->maintenanceTasks()->affectingReliability();
     }
 
     /** Recurring technical service due-points (oil, filters, brakes, …) for this car. */

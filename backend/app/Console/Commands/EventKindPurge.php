@@ -35,13 +35,19 @@ class EventKindPurge extends Command
             }
         }
 
+        // EVERY catalog FK is cleared, walked from KIND_CATALOG_FK rather than hand-listed.
+        //
+        // This matters more here than anywhere else: the update goes through the query builder, which
+        // BYPASSES the model's exactly-one-catalog guard. Missing a column would reset `kind` to `fault`
+        // while leaving another kind's catalog id set — writing a row the application considers
+        // impossible, and one the DB CHECK would reject on the next legitimate save. The damage column
+        // was exactly that gap when the fourth kind landed.
+        $reset = array_fill_keys(array_values(MaintenanceTask::KIND_CATALOG_FK), null);
+
         $affected = DB::table('maintenance_tasks')
             ->whereIn('classification_source', [MaintenanceTask::CLS_RESOLVER, MaintenanceTask::CLS_IMPORT])
-            ->update([
+            ->update($reset + [
                 'kind'                  => MaintenanceTask::KIND_FAULT,
-                'fault_catalog_id'      => null,
-                'service_catalog_id'    => null,
-                'inspection_type_id'    => null,
                 'classification_source' => MaintenanceTask::CLS_RESOLVER,
                 'needs_review'          => false,
             ]);

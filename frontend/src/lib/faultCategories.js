@@ -62,8 +62,17 @@ const arr = (x) => (Array.isArray(x) ? x.filter(Boolean) : []);
 // context_tags — see EventClassificationService::labelKind). `tags` is the fallback for payloads
 // that predate the split, where the old undifferentiated behaviour is still the best available.
 export function visitFaults(visit) {
-  if (Array.isArray(visit?.fault_tags) || Array.isArray(visit?.service_tags)) return arr(visit.fault_tags);
+  if (Array.isArray(visit?.fault_tags) || Array.isArray(visit?.service_tags) || Array.isArray(visit?.damage_tags)) {
+    return arr(visit.fault_tags);
+  }
   return arr(visit?.tags);
+}
+
+// A visit's DAMAGE — externally-caused physical damage (kerbed rim, door dent, cracked screen).
+// Unplanned like a fault, but it describes what happened TO the car rather than what is wrong WITH it,
+// so it belongs on the Damage surface and never on a fault chart.
+export function visitDamage(visit) {
+  return arr(visit?.damage_tags);
 }
 
 // True when a visit is PLANNED WORK ONLY — a service was recorded and no fault was. Such a visit has
@@ -71,6 +80,14 @@ export function visitFaults(visit) {
 // "Unspecified" either. It simply does not appear on a fault chart.
 export function isServiceOnlyVisit(visit) {
   return !visitFaults(visit).length && arr(visit?.service_tags).length > 0;
+}
+
+// True when a visit produced NO fault — only planned work and/or externally-caused damage. Such a visit
+// contributes nothing to a fault chart, and must not be counted as "Unspecified" either: we know exactly
+// what it was about, and it was not a failure of the car.
+export function isNonFaultVisit(visit) {
+  return !visitFaults(visit).length
+    && (arr(visit?.service_tags).length > 0 || visitDamage(visit).length > 0);
 }
 
 // Per-FAULT distribution — instead of bucketing each visit into one broad mechanical category,
@@ -83,8 +100,10 @@ export function faultTagSegments(visits = [], { top = 10 } = {}) {
   const totals = {};
   visits.forEach((v) => {
     let faults = visitFaults(v);
-    // A service-only visit contributes nothing at all — it has no fault, known or unknown.
-    if (!faults.length && isServiceOnlyVisit(v)) return;
+    // A visit with no fault — only planned service and/or externally-caused damage — contributes
+    // nothing at all. It has no fault, known or unknown, so it must neither be counted nor inflate
+    // "Unspecified" (which means "we don't know what this visit was about", and here we do).
+    if (!faults.length && isNonFaultVisit(v)) return;
     if (!faults.length && v?.reason) faults = [v.reason];
     if (!faults.length) faults = ['Unspecified'];
     faults.forEach((f) => {

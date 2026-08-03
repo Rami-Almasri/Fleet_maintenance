@@ -144,7 +144,12 @@ const DRIVER_REQUEST_CHOICES = [...INSPECTION_TRIGGER_REASONS, OBSERVATION_CHOIC
 // actually saw (test drive) or logs an observation. The `open` form (UC-1) is unaffected.
 const PERIODIC_REQUEST_ROLES = ['admin', 'super-admin', 'maintenance'];
 const MAINTENANCE_TYPES = [
+  { value: 'routine', icon: '🔧' },
   { value: 'breakdown', icon: '⚠️' },
+  { value: 'ins_incident', icon: '🛡️' },
+  { value: 'non_ins_incident', icon: '💥' },
+  { value: 'modification', icon: '⚙️' },
+  { value: 'upgrade', icon: '⬆️' },
 ]; // App\Models\Maintenance::MAINTENANCE_TYPES
 
 // Fault Severity (🔴/🟡/🟢) — CONTRACT with App\Models\Maintenance::FAULT_SEVERITIES. The inspector's

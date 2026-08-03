@@ -360,7 +360,7 @@ class ActivityFeedService
     private function fromVehicleLog(callable $scope, int $limit): array
     {
         $q = VehicleLogEvent::query()
-            ->with(['vehicle:id,plate_no,make,model', 'actor:id,name', 'linkedContract:id,contract_no', 'task:id,severity']);
+            ->with(['vehicle:id,plate_no,make,model', 'actor:id,name', 'linkedContract:id,contract_no', 'task:id,severity,kind']);
         $scope($q);
         $rows = $q->orderByDesc('occurred_at')->limit($limit)->get();
 
@@ -418,6 +418,11 @@ class ActivityFeedService
                 // (no new columns — workflow_status is a column, severity comes off the linked task, the
                 // garage is stamped in meta). All null-safe.
                 'workflow_status' => $e->workflow_status,
+                // The EVENT TYPE of the task this log line is about (fault | service | inspection), read
+                // from the stored discriminator. The timeline used to hard-code every task_* event as a
+                // fault, so a logged oil change appeared under the "Faults" filter and in the fault
+                // counter (audit M4). Null for ticket-level lines that belong to no single task.
+                'task_kind'   => $e->task?->kind,
                 'severity'    => $e->task?->severity ?? ($meta['severity'] ?? null),
                 'garage'      => $meta['garage'] ?? $meta['vendor'] ?? null,
                 'contract_id' => $e->linked_contract_id,

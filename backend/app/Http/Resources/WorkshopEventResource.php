@@ -23,12 +23,18 @@ class WorkshopEventResource extends JsonResource
         $analytics = app(MaintenanceAnalyticsService::class);
 
         $issues   = $analytics->sheetIssueTags($this->resource);
+        // The sheet's one free-text column holds faults, planned services and bookkeeping words together.
+        // `issues` stays the raw union every existing reader expects; the typed lists are the honest ones
+        // and are what anything counting faults must read (ADR §6 / audit H3, M8).
+        $byKind   = $analytics->sheetIssueTagsByKind($this->resource);
         // The car is back if the stage says IN *or* an actual return date is recorded.
         // A row can carry an in-date while its latest stage is still OUT (the sheet logs
         // both on one row); either way it's closed and must not raise an Overdue SLA.
         $returned = $this->event_status === 'IN' || $this->actual_in_date !== null;
 
         // Keyword-driven priority: the linked reason is authoritative; else classify the issues.
+        // Only the FAULT labels are scored — a visit's priority is set by what went wrong on it, not by
+        // the oil change performed alongside or by a bookkeeping word like "Customer" (audit M8).
         $priority = ($this->maintenance_reason_id && $this->reason)
             ? ['level' => $this->reason->level, 'matched' => $this->reason->reason_en]
             : $analytics->classifyPriority($issues, $this->maintenance_notes);
@@ -50,7 +56,11 @@ class WorkshopEventResource extends JsonResource
             'stage'                => $this->event_status,            // OUT / IN / Follow up / …
             'vendor_id'            => $this->vendor_id,
             'garage'               => $this->vendor?->name ?: $this->garage,
-            'issues'               => $issues,                        // keyword tags
+            'issues'               => $issues,                        // keyword tags (raw union — legacy shape)
+            'fault_tags'           => $byKind['fault'],               // the faults only
+            'service_tags'         => $byKind['service'],             // planned work performed on the visit
+            'damage_tags'          => $byKind['damage'],              // externally-caused damage — never a fault
+            'context_tags'         => $byKind['context'],             // bookkeeping words (Customer, Ready, …)
             'service_main'         => $this->service_main,
             'service_sup'          => $this->service_sup,
             'maintenance_type'     => $this->maintenance_type,

@@ -53,6 +53,7 @@ class DatabaseSeeder extends Seeder
         $this->call(ServiceCatalogSeeder::class);
         $this->call(FaultCatalogSeeder::class);
         $this->call(InspectionTypeSeeder::class);
+        $this->call(DamageCatalogSeeder::class);
 
         // A bootstrap super-admin so there's always one account that can do
         // everything (and promote others). Credentials come from the environment,

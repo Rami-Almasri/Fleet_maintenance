@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\MaintenanceTask;
 use App\Ontology\Matching\MatchPipeline;
 use App\Ontology\Matching\MatchQuery;
 use App\Ontology\Matching\TermIndex;
@@ -35,28 +36,58 @@ class KeywordOntologyService
     }
 
     /**
-     * Resolve free text to ranked fault concepts.
+     * Resolve free text to ranked concepts.
      *
-     * @param  array{limit?:int,category?:string,min_score?:int,scope?:array<int,string>}  $options
+     * `kinds` restricts the answer to one side of the Service/Fault boundary — pass
+     * `['fault']` from a diagnosis lane (complaint interpretation, causal reasoning, repair
+     * recommendation) so a scheduled service can never be returned as a diagnosis. Without it the
+     * matcher answers across both lanes, which is right for the admin "test the matcher" box and for
+     * the inspector's picker, and was wrong everywhere else: "car does not start battery dead" returned
+     * the SERVICE "Battery Replacement" two points behind the fault (audit H6).
+     *
+     * Filtering happens after ranking (the score is a property of the wording, not of the lane), so the
+     * pipeline is over-fetched and then trimmed to `limit` — a caller asking for 1 fault gets the best
+     * fault, not "the best match, if it happens to be a fault".
+     *
+     * @param  array{limit?:int,category?:string,min_score?:int,scope?:array<int,string>,kinds?:array<int,string>}  $options
      * @return Collection<int,array>
      */
     public function resolve(string $text, array $options = []): Collection
     {
+        $limit = (int) ($options['limit'] ?? config('knowledge_platform.matching.limit', 8));
+        $kinds = array_values(array_filter((array) ($options['kinds'] ?? [])));
+
         $query = new MatchQuery(
             text: $text,
             scopeChain: $options['scope'] ?? [VehicleScope::UNIVERSAL],
             category: $options['category'] ?? null,
-            limit: (int) ($options['limit'] ?? config('knowledge_platform.matching.limit', 8)),
+            // Over-fetch when a lane filter is set so the trim below can still fill `limit`.
+            limit: $kinds ? max($limit * 4, 12) : $limit,
             minScore: (int) ($options['min_score'] ?? config('knowledge_platform.matching.min_score', 25)),
         );
 
-        $strong = (int) config('knowledge_platform.matching.strong', 70);
+        $strong     = (int) config('knowledge_platform.matching.strong', 70);
+        $classifier = app(EventClassificationService::class);
 
-        return $this->pipeline->run($query)->map(function (array $result) use ($strong) {
+        $results = $this->pipeline->run($query);
+
+        if ($kinds) {
+            $results = $results
+                ->filter(fn (array $r) => in_array($this->conceptKind($r['keyword'], $classifier), $kinds, true))
+                ->take($limit)
+                ->values();
+        }
+
+        return $results->map(function (array $result) use ($strong, $classifier) {
             return [
                 'keyword'    => $result['keyword'],
                 'score'      => $result['score'],
                 'confidence' => $result['score'] >= $strong ? 'strong' : 'possible',
+
+                // Which side of the Service/Fault boundary this concept sits on, so a caller can SEE the
+                // lane instead of assuming every match is a fault (the endpoint used to announce
+                // "Matched N fault(s)" regardless).
+                'kind'       => $this->conceptKind($result['keyword'], $classifier),
 
                 // Legacy shape: the per-term hits, flattened from the stage evidence so existing
                 // callers and the frontend keep working unchanged.
@@ -79,6 +110,16 @@ class KeywordOntologyService
                 'evidence'          => $result['evidence'],
             ];
         });
+    }
+
+    /**
+     * The Service/Fault lane of one ontology concept, from its category — the same authority every other
+     * layer uses (EventClassificationService), so the matcher cannot develop a private opinion about
+     * which words mean planned work.
+     */
+    private function conceptKind(mixed $concept, EventClassificationService $classifier): string
+    {
+        return $classifier->conceptKind($concept->keyword ?? null, $concept->category_key ?? null);
     }
 
     /** Which matching stages are active — exposed so the pipeline is inspectable from the API. */

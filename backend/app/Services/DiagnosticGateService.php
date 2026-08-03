@@ -82,6 +82,122 @@ class DiagnosticGateService
     }
 
     /**
+     * The RULEBOOK — the same conditions dueChecks() evaluates, described once for humans, with the LIVE
+     * thresholds read from config rather than retyped. This is what the Inspection Review Queue's
+     * "When & why the system asks for a test" panel renders, so the explanation on screen can never drift
+     * from the rules that actually fire: change `features.diagnostic_gate.*` and the panel changes with it.
+     *
+     * Deliberately describes rules only — it takes no vehicle and touches no data.
+     *
+     * @return array<string,mixed>
+     */
+    public function rulebook(): array
+    {
+        $downtime = $this->downtimeLimitDays();
+        $inactive = $this->inactivityLimitDays();
+
+        return [
+            'enabled'  => $this->enabled(),
+            // Mirrors the Schedule::command('inspections:generate-tasks')->dailyAt('07:30') entry in
+            // routes/console.php — the one value here NOT read from config, so keep the two in step.
+            'schedule' => [
+                'command'     => 'inspections:generate-tasks',
+                'runs_at'     => '07:30',
+                'frequency'   => 'daily',
+                'description' => 'The Proactive Diagnostic Monitor scans the active fleet once every morning.',
+            ],
+            // Every gate a car must pass before a request is raised at all (see InspectionsGenerateTasks).
+            'preconditions' => [
+                'Car is active fleet — Ready or Rented (sold / suspended / office-use cars are never scanned).',
+                'Car is not flagged for sale.',
+                'Car has no open workflow ticket already — including one only requested, so a car in the pipeline is never asked twice.',
+                'At least one condition below is actually due.',
+            ],
+            'rules' => [
+                [
+                    'key'       => 'oil_change',
+                    'label'     => 'Oil / service overdue',
+                    'severity'  => 'moderate',
+                    'axis'      => 'km or date',
+                    'when'      => 'The car is past its service interval by distance, or its oil-change reminder date has passed.',
+                    'threshold' => 'Whichever comes first — the vehicle service interval (km) or the reminder due date.',
+                    'agenda'    => 'Oil Change',
+                ],
+                [
+                    'key'       => 'reminders',
+                    'label'     => 'Any other service reminder overdue',
+                    'severity'  => 'moderate / routine',
+                    'axis'      => 'km or date',
+                    'when'      => 'An active service reminder on the car (tyre rotation, tyre change, brakes, filters…) is past its due km or due date.',
+                    'threshold' => 'Each reminder carries its own interval; tyre reminders are graded moderate, the rest routine.',
+                    'agenda'    => "The reminder's own name",
+                ],
+                [
+                    'key'       => 'battery',
+                    'label'     => 'Battery past its service life',
+                    'severity'  => 'routine',
+                    'axis'      => 'date',
+                    'when'      => 'The battery-change date on file is older than the battery life, and no explicit battery reminder already covers the car.',
+                    'threshold' => self::BATTERY_LIFE_MONTHS . ' months since the last battery change.',
+                    'agenda'    => 'Battery Status',
+                ],
+                [
+                    'key'       => 'downtime',
+                    'label'     => 'Post-downtime safety check',
+                    'severity'  => 'moderate',
+                    'axis'      => 'date',
+                    'when'      => 'Too long since the car\'s last maintenance completion, and it HAS been rented since. The clock counts calendar days and keeps running while the car is out with a customer; it pauses only while the car is being processed through a workflow.',
+                    'threshold' => $downtime . ' days since the last maintenance completion.',
+                    'agenda'    => 'Check ' . $this->humanList(self::POST_DOWNTIME_CHECKLIST),
+                ],
+                [
+                    'key'       => 'inactivity',
+                    'label'     => 'Inactivity check',
+                    'severity'  => 'routine',
+                    'axis'      => 'date',
+                    'when'      => 'The car has NOT been rented at all since its last test and the grace window has lapsed — the deliberate counterpart of the post-downtime rule, so a parked-and-forgotten car is still kept road-ready. The two rules are mutually exclusive on any one car.',
+                    'threshold' => $inactive . ' days since the last test with no rental in between.',
+                    'agenda'    => 'General check-up',
+                ],
+            ],
+            // Conditions the monitor drops on purpose, and why — so a Controller who expected a request and
+            // did not get one can tell "not due" apart from "suppressed".
+            'suppressions' => [
+                [
+                    'label' => 'Implausible odometer (oil sanity ceiling)',
+                    'why'   => 'A service-due distance over max(' . number_format(self::OIL_ANOMALY_FLOOR_KM) . ' km, 3 × the interval) is almost certainly a bad odometer reading, so the oil condition is dropped and filed as a Data Anomaly instead of being sent to the Inspector. Other conditions on the same car still raise the request; a car whose only condition was that oil is skipped entirely.',
+                ],
+                [
+                    'label' => 'Post-downtime checklist is an agenda, not a finding',
+                    'why'   => 'The ' . $this->humanList(self::POST_DOWNTIME_CHECKLIST) . ' items are what to go look at — they are never pre-filled as tap-to-confirm findings, because nothing has been declared due.',
+                ],
+            ],
+            'outcome' => 'A matching car gets a system-attributed inspection request (Source: System Schedule) that lands here, in this queue, awaiting Controller approval. It only reaches the Inspector once a Controller approves it; rejecting it terminates the request and nothing is sent externally.',
+            'limits'  => [
+                'downtime_days'        => $downtime,
+                'inactive_days'        => $inactive,
+                'battery_life_months'  => self::BATTERY_LIFE_MONTHS,
+                'oil_ceiling_floor_km' => self::OIL_ANOMALY_FLOOR_KM,
+            ],
+        ];
+    }
+
+    /** "A, B, and C" — natural-language list used by the rulebook copy. */
+    private function humanList(array $items): string
+    {
+        $items = array_values(array_filter($items));
+        if (count($items) <= 1) {
+            return (string) ($items[0] ?? '');
+        }
+        if (count($items) === 2) {
+            return $items[0] . ' and ' . $items[1];
+        }
+        $last = array_pop($items);
+
+        return implode(', ', $items) . ', and ' . $last;
+    }
+
+    /**
      * PUBLIC: just the idle (park-duration) info for a car — how long it has been sitting since its last
      * movement. Drives the Scheduled-tab intake ("this car has been parked N days") before any ticket
      * exists. Same shape as the `idle` block of context(): { eligible, idle_since, days, limit, exceeded,

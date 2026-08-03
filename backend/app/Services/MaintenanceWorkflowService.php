@@ -5469,6 +5469,14 @@ class MaintenanceWorkflowService
             ->filter()
             ->unique(fn ($t) => mb_strtolower($t))
             ->values();
+
+        // FAULTS ONLY. This is the Chronic Fault Watchdog — "you have repaired this before" — and a
+        // planned service repeating is not a chronic anything. Without the filter, picking "Oil Change"
+        // at the Decide step warned the inspector that the car had the same problem four times before
+        // (audit M2).
+        $classifier = app(\App\Services\EventClassificationService::class);
+        $tags = $tags->filter(fn ($t) => $classifier->labelKind($t) === \App\Models\MaintenanceTask::KIND_FAULT)->values();
+
         if ($tags->isEmpty()) {
             return [];
         }
@@ -5961,8 +5969,9 @@ class MaintenanceWorkflowService
     {
         return $ticket->tasks()
             ->whereNotIn('status', \App\Models\MaintenanceTask::NON_REPAIR_TERMINAL)
-            ->get(['id', 'symptom'])
-            ->contains(fn ($task) => Maintenance::serviceTypeForSymptom($task->symptom) !== null);
+            ->with('serviceCatalog:id,service_reminder_type')
+            ->get(['id', 'symptom', 'kind', 'service_catalog_id'])
+            ->contains(fn ($task) => $task->serviceReminderType() !== null);
     }
 
     private function confirmRoutineServices(Maintenance $ticket, User $actor): void
@@ -5984,20 +5993,27 @@ class MaintenanceWorkflowService
 
         $completed = $ticket->tasks()
             ->where('status', \App\Models\MaintenanceTask::STATUS_COMPLETED)
+            ->with('serviceCatalog:id,service_reminder_type')
             ->get();
 
         foreach ($completed as $task) {
-            $type = Maintenance::serviceTypeForSymptom($task->symptom);
+            // TYPE FIRST. This is the single place a maintenance action reaches the vehicle master record
+            // (odometer anchor + reminder roll-forward), so it reads the stored domain type — never the
+            // symptom wording. A fault named "Oil Change" must not stamp the car as serviced, and a
+            // catalog-linked service must roll even when its wording differs from the reminder's label
+            // ("Brake Pads (service)" → brake_pads). See docs/Service-Fault-Separation-Audit.md C2.
+            $type = $task->serviceReminderType();
             if (! $type) {
-                continue; // ordinary fault — no recurring service to roll forward
+                continue; // a fault, an inspection, or a service with no recurring reminder behind it
             }
 
-            // Curated routine services (oil / battery / filters / tyres) always sync — oil & battery also
-            // re-anchor the car's serviceStatus / battery date. A service matched only by a Service-Reminder
-            // LABEL (brakes, A/C, transmission — reminder-originated tickets) rolls ONLY an EXISTING reminder,
-            // so an ordinary fault that happens to be named like a service can't silently spawn a new reminder.
-            $isCurated = Maintenance::routineServiceTypeFor($task->symptom) !== null;
-            if (! $isCurated && ! $vehicle->serviceReminders()->where('service_type', $type)->exists()) {
+            // Catalog-linked services (and the curated routine keywords behind legacy rows) always sync —
+            // oil & battery also re-anchor the car's serviceStatus / battery date. A service resolved ONLY
+            // by a Service-Reminder LABEL (the legacy text shim) rolls ONLY an EXISTING reminder, so a
+            // loosely-named legacy row cannot silently spawn a brand-new reminder schedule.
+            $isAuthoritative = $task->service_catalog_id !== null
+                || Maintenance::routineServiceTypeFor($task->symptom) !== null;
+            if (! $isAuthoritative && ! $vehicle->serviceReminders()->where('service_type', $type)->exists()) {
                 continue;
             }
 

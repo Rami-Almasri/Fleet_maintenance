@@ -74,14 +74,21 @@ class MaintenanceTask extends Model
 
     // ── PRIMARY DOMAIN CLASSIFICATION (Event Type layer) ──────────────────────────────────────────
     // `kind` is the ONE field the whole system reads to know what an event IS. Its source of truth is
-    // the catalog the user picked (fault_catalog / service_catalog / inspection_types) — exactly one
-    // *_catalog_id is set, matching `kind`, enforced by the DB CHECK + the saving() guard below. NEVER
-    // decide type from symptom/category_key/severity/maintenance_type again — read `kind`.
-    // See docs/Service-vs-Fault-Domain-Separation.md.
+    // the catalog the user picked (fault_catalog / service_catalog / inspection_types / damage_catalog)
+    // — exactly one *_catalog_id is set, matching `kind`, enforced by the DB CHECK + the saving() guard
+    // below. NEVER decide type from symptom/category_key/severity/maintenance_type again — read `kind`.
+    // See docs/Service-vs-Fault-Domain-Separation.md and docs/Service-Fault-Damage-Domain.md.
+    //
+    // THE FOUR KINDS ANSWER FOUR DIFFERENT QUESTIONS:
+    //   service    — we planned this work.        Recurring is normal.
+    //   fault      — the vehicle failed.          Recurring is a reliability signal.
+    //   damage     — something was done TO it.    Recurring says something about DRIVERS, not the car.
+    //   inspection — we looked at it.             May spawn a separate fault or damage event.
     public const KIND_FAULT      = 'fault';       // 🔴 unplanned failure/defect — counts in fault stats
     public const KIND_SERVICE    = 'service';     // 🔵 planned preventive work — excluded from fault stats
     public const KIND_INSPECTION = 'inspection';  // 🟨 a check — may spawn a separate fault
-    public const KINDS = [self::KIND_FAULT, self::KIND_SERVICE, self::KIND_INSPECTION];
+    public const KIND_DAMAGE     = 'damage';      // 🟣 externally-caused damage — billable, never a reliability signal
+    public const KINDS = [self::KIND_FAULT, self::KIND_SERVICE, self::KIND_INSPECTION, self::KIND_DAMAGE];
 
     /** Provenance of the `kind` value (audit + review targeting). */
     public const CLS_CATALOG  = 'catalog';   // user picked a catalog row (authoritative)
@@ -95,6 +102,7 @@ class MaintenanceTask extends Model
         self::KIND_FAULT      => ['emoji' => '🔴', 'label' => 'Fault',      'tone' => 'red'],
         self::KIND_SERVICE    => ['emoji' => '🔵', 'label' => 'Service',    'tone' => 'blue'],
         self::KIND_INSPECTION => ['emoji' => '🟨', 'label' => 'Inspection', 'tone' => 'amber'],
+        self::KIND_DAMAGE     => ['emoji' => '🟣', 'label' => 'Damage',     'tone' => 'purple'],
     ];
 
     /** Which *_catalog_id column backs each kind (used by the guard + catalog() resolver). */
@@ -102,12 +110,57 @@ class MaintenanceTask extends Model
         self::KIND_FAULT      => 'fault_catalog_id',
         self::KIND_SERVICE    => 'service_catalog_id',
         self::KIND_INSPECTION => 'inspection_type_id',
+        self::KIND_DAMAGE     => 'damage_catalog_id',
     ];
+
+    /** Which belongsTo relation backs each kind (used by API resources to serialise `catalog`). */
+    public const KIND_CATALOG_RELATIONS = [
+        self::KIND_FAULT      => 'faultCatalog',
+        self::KIND_SERVICE    => 'serviceCatalog',
+        self::KIND_INSPECTION => 'inspectionType',
+        self::KIND_DAMAGE     => 'damageCatalog',
+    ];
+
+    /**
+     * Kinds that count as evidence about the VEHICLE's own condition.
+     *
+     * This is the list reliability, recurrence, health, foresight and predictive maintenance filter on —
+     * and it is deliberately a named concept rather than `where kind = fault` scattered across a dozen
+     * services, so that adding a fifth kind one day is one edit here instead of a hunt.
+     *
+     * Damage is excluded BY DEFINITION: a kerbed rim is a fact about a driver, not about the car. It is
+     * still costed, billed, reported and searchable — it simply is not evidence of unreliability.
+     */
+    public const RELIABILITY_KINDS = [self::KIND_FAULT];
+
+    /**
+     * Which kinds a reliability-shaped reader should include RIGHT NOW, given the rollout mode.
+     *
+     * Two different rules live here, and the difference is deliberate:
+     *
+     *   • DAMAGE is excluded ALWAYS. It is a new kind — no reader has ever counted a `damage` row, so
+     *     there is no previous behaviour to preserve and nothing to stage. Letting the rollout flag
+     *     decide whether a kerbed rim counts as a reliability signal would be inventing a wrong mode.
+     *   • SERVICE is excluded only once EVENT_KIND_MODE is `enforced`, because services HAVE been counted
+     *     historically and the flag exists precisely so that change is comparable before/after.
+     *
+     * One place, so no reader has to remember either rule.
+     *
+     * @return array<int,string>
+     */
+    public static function reliabilityKindsForMode(): array
+    {
+        return \App\Support\EventKind::enforced()
+            ? self::RELIABILITY_KINDS
+            // "everything except damage", DERIVED — a hand-written list would silently omit a fifth kind
+            // and quietly start counting it as reliability evidence.
+            : array_values(array_diff(self::KINDS, [self::KIND_DAMAGE]));
+    }
 
     protected $fillable = [
         'maintenance_id', 'vehicle_id',
         // Domain classification — the primary type + its catalog source-of-truth + provenance.
-        'kind', 'fault_catalog_id', 'service_catalog_id', 'inspection_type_id',
+        'kind', 'fault_catalog_id', 'service_catalog_id', 'inspection_type_id', 'damage_catalog_id',
         'classification_source', 'needs_review',
         'symptom', 'category_key', 'source', 'severity',
         'root_cause_id', 'root_cause', 'notes', 'resolution_note',
@@ -124,6 +177,18 @@ class MaintenanceTask extends Model
         'reinspection_failures', 'last_failed_vendor_id', 'last_failed_at',
         // Delegate dispute: a supervisor overruled the inspector — this fault is a mis-diagnosis.
         'marked_incorrect_by', 'marked_incorrect_at', 'incorrect_reason',
+    ];
+
+    /**
+     * `kind` mirrors its column default in PHP so a new instance is never momentarily untyped.
+     *
+     * Laravel fires `saving` BEFORE `creating`, so the integrity guard below would otherwise see a null
+     * kind on every insert — the column default only applies once the row reaches the database. Starting
+     * at `fault` matches the migration default (and is the safe default: it is exactly the pre-separation
+     * behaviour), and the `creating` hook immediately replaces it with the resolved or catalog-given type.
+     */
+    protected $attributes = [
+        'kind' => self::KIND_FAULT,
     ];
 
     protected $casts = [
@@ -196,17 +261,33 @@ class MaintenanceTask extends Model
         // one *_catalog_id matching `kind` may be set; more than one is a bug; zero is allowed only as the
         // legacy/unclassified case (matches the CHECK, so flag-off behaviour is unchanged).
         static::saving(function (MaintenanceTask $t) {
-            $set = array_filter([
-                self::KIND_FAULT      => $t->fault_catalog_id,
-                self::KIND_SERVICE    => $t->service_catalog_id,
-                self::KIND_INSPECTION => $t->inspection_type_id,
-            ], fn ($v) => $v !== null);
+            // The discriminator itself must be a known type. Checked BEFORE the early return below,
+            // because the all-catalogs-null case is the overwhelming majority of rows — leaving it
+            // unchecked meant `kind` was effectively a free-text column for every legacy row, and the DB
+            // CHECK permits any string when the FKs are null too (audit L1).
+            if (! in_array($t->kind, self::KINDS, true)) {
+                throw new \DomainException(
+                    "maintenance_task kind must be one of [" . implode(', ', self::KINDS) . "], got " . var_export($t->kind, true) . '.'
+                );
+            }
+
+            // Derived from KIND_CATALOG_FK, never hand-listed. When this WAS hand-listed it silently
+            // stopped covering `damage` the moment the fourth kind landed: a row with kind=fault and a
+            // damage_catalog_id produced an EMPTY $set, took the early return below, and was accepted —
+            // leaving the DB CHECK (which production's MySQL 8 cannot install) as the only defence
+            // against a combination the application considers impossible.
+            $set = array_filter(
+                array_map(fn ($column) => $t->{$column}, self::KIND_CATALOG_FK),
+                fn ($v) => $v !== null
+            );
 
             if (count($set) === 0) {
                 return; // legacy / not-yet-classified — permitted
             }
             if (count($set) > 1) {
-                throw new \DomainException('A maintenance_task may reference at most one catalog (fault/service/inspection).');
+                throw new \DomainException(
+                    'A maintenance_task may reference at most one catalog (' . implode('/', self::KINDS) . ').'
+                );
             }
             $catalogKind = array_key_first($set);
             if ($t->kind !== $catalogKind) {
@@ -266,6 +347,11 @@ class MaintenanceTask extends Model
         return $this->belongsTo(InspectionType::class, 'inspection_type_id');
     }
 
+    public function damageCatalog(): BelongsTo
+    {
+        return $this->belongsTo(DamageCatalog::class, 'damage_catalog_id');
+    }
+
     /** The one catalog row backing this task's kind (null when unclassified/legacy). Query-free if loaded. */
     public function catalog(): ?Model
     {
@@ -273,8 +359,40 @@ class MaintenanceTask extends Model
             self::KIND_FAULT      => $this->faultCatalog,
             self::KIND_SERVICE    => $this->serviceCatalog,
             self::KIND_INSPECTION => $this->inspectionType,
+            self::KIND_DAMAGE     => $this->damageCatalog,
             default               => null,
         };
+    }
+
+    /**
+     * The recurring ServiceReminder type this event closes when it is marked fixed, or null if it closes
+     * none. THE single answer to "does completing this roll a service forward?" — used by the workflow
+     * (confirmRoutineServices), the re-inspection gate and the API resource, so all three agree.
+     *
+     * Resolution order, authoritative first:
+     *   1. `service_catalog.service_reminder_type` — the typed link the catalog exists to provide.
+     *   2. Legacy text match, ONLY for a `kind=service` row with no catalog id (pre-catalog history).
+     *   3. Anything else → null.
+     *
+     * A fault or an inspection returns null even when its wording resembles a service. That is the whole
+     * point of the type: "Oil Change" written on a fault row must not stamp the car as serviced (audit C2).
+     * The text path survives only as the legacy shim in case 2 and is what will be deleted once every row
+     * carries a catalog id.
+     */
+    public function serviceReminderType(): ?string
+    {
+        if (! $this->isService()) {
+            return null;
+        }
+
+        if ($this->service_catalog_id) {
+            $catalog = $this->relationLoaded('serviceCatalog') ? $this->serviceCatalog : $this->serviceCatalog()->first();
+            if ($catalog) {
+                return $catalog->service_reminder_type ?: null;
+            }
+        }
+
+        return Maintenance::serviceTypeForSymptom($this->symptom);
     }
 
     public function identifiedBy(): BelongsTo
@@ -395,9 +513,27 @@ class MaintenanceTask extends Model
         return $q->where('kind', self::KIND_INSPECTION);
     }
 
+    public function scopeDamages(Builder $q): Builder
+    {
+        return $q->where('kind', self::KIND_DAMAGE);
+    }
+
     public function scopeOfKind(Builder $q, string ...$kinds): Builder
     {
         return $q->whereIn('kind', $kinds);
+    }
+
+    /**
+     * Events that are evidence about the VEHICLE — the scope every reliability-shaped query should use.
+     *
+     * Prefer this over ->faults() in analytics: it states the INTENT ("things that tell me about this
+     * car") rather than naming a kind, so the rule lives in reliabilityKindsForMode() and a new kind is
+     * one edit rather than a hunt through a dozen services. Damage is always excluded; services follow
+     * the rollout flag.
+     */
+    public function scopeAffectingReliability(Builder $q): Builder
+    {
+        return $q->whereIn('kind', self::reliabilityKindsForMode());
     }
 
     public function scopeNeedsReview(Builder $q): Builder
@@ -456,6 +592,23 @@ class MaintenanceTask extends Model
     public function isInspection(): bool
     {
         return $this->kind === self::KIND_INSPECTION;
+    }
+
+    public function isDamage(): bool
+    {
+        return $this->kind === self::KIND_DAMAGE;
+    }
+
+    /**
+     * Does this event say anything about how RELIABLE the vehicle is?
+     *
+     * The one predicate every reliability-shaped reader should ask — health, recurrence, foresight,
+     * predictive maintenance, part-recurrence. Only a fault qualifies: a service was planned, an
+     * inspection is a look, and damage is a fact about a driver rather than about the car.
+     */
+    public function affectsReliability(): bool
+    {
+        return in_array($this->kind, self::RELIABILITY_KINDS, true);
     }
 
     /** Emoji/label/tone for rendering this task's kind (falls back to Fault meta for legacy rows). */

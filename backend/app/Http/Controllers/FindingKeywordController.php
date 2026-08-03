@@ -8,6 +8,7 @@ use App\Http\Resources\FindingKeywordResource;
 use App\Http\Resources\KeywordTermResource;
 use App\Models\FindingKeyword;
 use App\Models\KeywordTerm;
+use App\Models\MaintenanceTask;
 use App\Models\OntologyFeedback;
 use App\Services\KeywordAiEnrichmentService;
 use App\Services\KeywordOntologyService;
@@ -202,6 +203,29 @@ class FindingKeywordController extends Controller
      * bare similarity number ([[traceability-visibility-requirement]]). Also powers the "test the
      * matcher" box on the admin page, which is how you tell a thin keyword from a well-described one.
      */
+    /**
+     * Name what was actually matched. The old wording called every hit a "fault", which is how a matcher
+     * that happily returns "Oil Change" tells the reader it found a defect (audit H6).
+     *
+     * @param  \Illuminate\Support\Collection<int,array>  $matches
+     */
+    private function resolveMessage($matches): string
+    {
+        if ($matches->isEmpty()) {
+            return 'No match found';
+        }
+
+        $counts = $matches->countBy('kind');
+        $parts  = [];
+        foreach ([MaintenanceTask::KIND_FAULT => 'fault', MaintenanceTask::KIND_SERVICE => 'service'] as $kind => $noun) {
+            if ($n = (int) ($counts[$kind] ?? 0)) {
+                $parts[] = $n . ' ' . $noun . ($n === 1 ? '' : 's');
+            }
+        }
+
+        return 'Matched ' . implode(' and ', $parts);
+    }
+
     public function resolve(Request $request, KeywordOntologyService $ontology, MatchExplanationService $explainer)
     {
         $data = $request->validate([
@@ -242,6 +266,11 @@ class FindingKeywordController extends Controller
                     'confidence' => $m['confidence'],
                     'matches'    => $m['matches'],
 
+                    // WHICH LANE IS THIS? fault | service. The picker renders scheduled work differently
+                    // from a defect and must not present "Oil Change" as a diagnosis of the text typed.
+                    // The endpoint previously reported every match as a fault regardless (audit H6).
+                    'kind'       => $m['kind'],
+
                     // CAN THE PERSON READING THIS ACT ON IT?
                     //
                     // The ontology understands more faults than the findings catalog offers (garage
@@ -266,7 +295,7 @@ class FindingKeywordController extends Controller
                     'explanation' => $explainer->explain($m, $scopeChain),
                 ])->all(),
             ],
-            $matches->isEmpty() ? 'No matching fault found' : 'Matched '.$matches->count().' fault(s)',
+            $this->resolveMessage($matches),
             200
         );
     }

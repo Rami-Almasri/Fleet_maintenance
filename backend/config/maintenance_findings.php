@@ -286,6 +286,13 @@ return [
      * declared here, so a new ontology concept cannot quietly reintroduce the dead end.
      */
     'understanding_only' => [
+        // The scheduled visit AS A WHOLE. The matcher must recognise "periodic maintenance" — it is the
+        // commonest planned-work phrase in the corpus and the one the Event Type resolver most needs to
+        // read as SERVICE — but it is not a finding: an inspector records the ITEMS performed (Oil
+        // Change, Air Filter), never the visit itself. Offering it as a chip would let a whole visit be
+        // filed as one finding with nothing said about what was actually done.
+        'Periodic Maintenance',
+
         // Cooling — what a garage finds behind an Overheating report.
         'Cooling fan fault',
         'Water pump failure',
@@ -341,6 +348,24 @@ return [
         'noise', 'knocking', 'grinding', 'rattling', 'leak', 'overheat', 'smoke', 'warning light',
         'check engine', 'misfire', 'vibration', 'shaking', 'stall', 'dead', 'malfunction', 'damage',
         'cracked', 'worn out', 'stuck', 'loss of power', 'rough idle', 'burning', 'won\'t turn',
+
+        // ARABIC. The fleet reports faults in Arabic daily and this list was English-only, so every
+        // Arabic symptom fell through to "the ticket looks routine → it's a service" and was stored as
+        // planned work with needs_review=false. See docs/Service-Fault-Separation-Audit.md C1.
+        // This is the cheap first pass; the ontology (289 Arabic terms) is the real check behind it.
+        'عطل', 'خربان', 'خربانة', 'ما يشتغل', 'لا يعمل', 'مايشتغل', 'صوت', 'ضجيج', 'طقطقة',
+        'تسريب', 'تسرب', 'حرارة', 'يحما', 'دخان', 'اهتزاز', 'رجة', 'يرجف', 'مكسور', 'كسر',
+        'لمبة', 'تحذير', 'ما يبرد', 'مايبرد', 'ضعف', 'يخبط', 'بطارية فاضية', 'ما يشحن',
     ],
+
+    /**
+     * Ontology categories that are PLANNED WORK, not failures. The Event Type resolver asks the fault
+     * ontology which lane a symptom belongs to (KeywordOntologyService), and a confident match in one of
+     * these categories is service evidence; a confident match in any other category is fault evidence.
+     * Kept in config rather than hard-coded so the ontology can grow a second service category without a
+     * code change. Mirrors FaultVocabulary::NON_FAILURE_CATEGORIES minus the cosmetic ones (a scratch is
+     * still an unplanned defect — cosmetic is a severity question, not a type question).
+     */
+    'service_ontology_categories' => ['routine'],
 
 ];

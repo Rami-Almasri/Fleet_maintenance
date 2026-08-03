@@ -638,6 +638,26 @@ class NotificationScanner
      * Bounded to the last 30 days so the feed stays current; keyed per event so each new costly
      * repair nags once. Critical at 3× the threshold.
      */
+    /**
+     * "High repair cost" vs "High service cost" — decided from the visit's own labels through the one
+     * Service/Fault vocabulary, never from the amount. A visit carrying any fault label is a repair; a
+     * visit whose only labels are planned work is a service. Anything unlabelled stays "maintenance",
+     * which claims nothing.
+     */
+    private function costHeadline(Maintenance $m): string
+    {
+        $byKind = app(MaintenanceAnalyticsService::class)->sheetIssueTagsByKind($m);
+
+        if (! empty($byKind['fault'])) {
+            return 'High repair cost';
+        }
+        if (! empty($byKind['service'])) {
+            return 'High service cost';
+        }
+
+        return 'High maintenance cost';
+    }
+
     private function highMaintenanceCost(): Collection
     {
         $threshold = (float) config('fleet.maintenance_approval_threshold', 500);
@@ -657,7 +677,10 @@ class NotificationScanner
                 'type'     => 'high_maintenance_cost',
                 'category' => 'finance',
                 'severity' => (float) $m->cost >= $threshold * 3 ? 'critical' : 'warning',
-                'title'    => 'High repair cost · AED ' . number_format((float) $m->cost),
+                // The visit is typed before it is named: a bill for planned work is a high SERVICE cost,
+                // not a high REPAIR cost. Calling a periodic-service bundle "High repair cost" told
+                // finance a car was breaking down when it was being maintained on schedule (audit M3).
+                'title'    => $this->costHeadline($m) . ' · AED ' . number_format((float) $m->cost),
                 'body'     => trim(($m->vehicle ? trim($m->vehicle->make . ' ' . $m->vehicle->model) : 'Vehicle')
                                 . ($m->vehicle?->plate_no ? ' (' . $m->vehicle->plate_no . ')' : '')
                                 . ' — ' . ($m->service_main ?: 'repair')

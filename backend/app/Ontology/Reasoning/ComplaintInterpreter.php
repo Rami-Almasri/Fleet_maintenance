@@ -90,7 +90,12 @@ class ComplaintInterpreter
         }
 
         $conditions = $this->extractConditions($complaint);
-        $matches = $this->matcher->resolve($complaint, ['limit' => $limit + 2, 'scope' => $scopeChain]);
+        // FAULT LANE. A customer complaint is a report that something is WRONG; interpreting it into a
+        // scheduled service ("Battery Replacement" for "the car won't start") reads as a diagnosis and
+        // routes the ticket into the routine lane (audit H6).
+        $matches = $this->matcher->resolve($complaint, [
+            'limit' => $limit + 2, 'scope' => $scopeChain, 'kinds' => [\App\Models\MaintenanceTask::KIND_FAULT],
+        ]);
 
         if ($matches->isEmpty()) {
             return $this->empty($complaint, $conditions);

@@ -1328,7 +1328,7 @@ class DashboardService
                 ->whereNotIn('v.status', PlateResolver::GONE_STATUSES)
                 ->whereNotIn('t.status', MaintenanceTask::NON_REPAIR_TERMINAL)
                 // Event Type layer: once enforced, planned services stop being counted as faults.
-                ->when(\App\Support\EventKind::enforced(), fn ($q) => $q->where('t.kind', MaintenanceTask::KIND_FAULT))
+                ->whereIn('t.kind', MaintenanceTask::reliabilityKindsForMode())
                 ->whereNotNull('t.symptom')->where('t.symptom', '<>', '')
                 ->select('t.symptom', 't.severity', 't.vehicle_id', DB::raw('COUNT(*) AS c'))
                 ->groupBy('t.symptom', 't.severity', 't.vehicle_id')
@@ -1344,6 +1344,11 @@ class DashboardService
                 ->whereNull('v.deleted_at')
                 ->whereNotIn('v.status', PlateResolver::GONE_STATUSES)
                 ->whereIn('m.origin', Maintenance::WORKSHOP_LOG_ORIGINS)
+                // FAULTS ONLY — the sheet half of this chart counted every reason, so `Periodic
+                // Maintenance`, `Oil & Fillter Change`, `Cleaning` and `Testing` were ranked as fleet
+                // faults alongside real ones (86 of 2,813 reason-classified rows). Source A above is
+                // gated on `kind`; this is the same gate at the sheet's grain (audit H2).
+                ->whereIn('m.maintenance_reason_id', app(\App\Services\EventClassificationService::class)->faultReasonIds())
                 ->select('r.reason_en', 'r.level', 'm.vehicle_id', DB::raw('COUNT(*) AS c'))
                 ->groupBy('r.reason_en', 'r.level', 'm.vehicle_id')
                 ->get();
@@ -1429,7 +1434,7 @@ class DashboardService
                 ->whereNull('v.deleted_at')
                 ->whereNotIn('v.status', PlateResolver::GONE_STATUSES)
                 ->whereNotIn('t.status', MaintenanceTask::NON_REPAIR_TERMINAL)
-                ->when(\App\Support\EventKind::enforced(), fn ($q) => $q->where('t.kind', MaintenanceTask::KIND_FAULT))
+                ->whereIn('t.kind', MaintenanceTask::reliabilityKindsForMode())
                 ->whereNotNull('t.symptom')->where('t.symptom', '<>', '')
                 ->select('t.symptom', 't.severity', 't.vehicle_id', 'v.plate_no', 'v.make', 'v.model', DB::raw('MAX(t.created_at) AS last_at'), DB::raw('COUNT(*) AS c'))
                 ->groupBy('t.symptom', 't.severity', 't.vehicle_id', 'v.plate_no', 'v.make', 'v.model')
@@ -1448,6 +1453,9 @@ class DashboardService
                 ->whereNull('v.deleted_at')
                 ->whereNotIn('v.status', PlateResolver::GONE_STATUSES)
                 ->whereIn('m.origin', Maintenance::WORKSHOP_LOG_ORIGINS)
+                // Same fault-only gate as topFaults' sheet source — the drill-down must list the same
+                // visits the chart counted (audit H2).
+                ->whereIn('m.maintenance_reason_id', app(\App\Services\EventClassificationService::class)->faultReasonIds())
                 ->select('r.reason_en', 'r.level', 'm.vehicle_id', 'v.plate_no', 'v.make', 'v.model', DB::raw('MAX(m.out_date) AS last_at'), DB::raw('COUNT(*) AS c'))
                 ->groupBy('r.reason_en', 'r.level', 'm.vehicle_id', 'v.plate_no', 'v.make', 'v.model')
                 ->get()

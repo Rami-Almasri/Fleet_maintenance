@@ -8,10 +8,14 @@ import api from '../api/client';
 import { useI18n } from '../i18n/I18nContext';
 import Icon from '../components/ui/Icon';
 
-const KINDS = ['fault', 'service', 'inspection'];
+// The four operational kinds, mirroring MaintenanceTask::KINDS. `damage` belongs here as a first-class
+// choice: this queue exists to correct misclassification, and until it could offer damage a reviewer
+// looking at "Rim Scratch" had no right answer available.
+const KINDS = ['fault', 'service', 'damage', 'inspection'];
 const KIND_TONE = {
   fault: 'bg-red-100 text-red-800 ring-red-600/20',
   service: 'bg-blue-100 text-blue-800 ring-blue-600/20',
+  damage: 'bg-purple-100 text-purple-800 ring-purple-600/20',
   inspection: 'bg-amber-100 text-amber-800 ring-amber-600/20',
 };
 
