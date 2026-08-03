@@ -55,6 +55,7 @@ class NotificationCategories
         // owners (Waleed/Abdullah): a car in the workshop needs a progress update before it goes overdue.
         'progress' => [
             'maint_checkpoint',
+            'maint_invoice_missing', // the car already left the garage and the bill still hasn't landed
         ],
 
         // Test-drive / re-inspection events — the Inspector is asked to road-test a car.

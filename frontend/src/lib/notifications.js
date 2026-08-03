@@ -135,7 +135,7 @@ export const GROUPS = [
     blurb: 'Service-due cars, garage overruns & approvals',
     icon: 'wrench',
     tone: 'info',
-    types: ['overdue_maintenance', 'maint_checkpoint', 'maintenance_back_open', 'service_inspection', 'approval_pending', 'maint_recurring_fault_review'],
+    types: ['overdue_maintenance', 'maint_checkpoint', 'maint_invoice_missing', 'maintenance_back_open', 'service_inspection', 'approval_pending', 'maint_recurring_fault_review'],
   },
   {
     key: 'finance',
@@ -183,7 +183,7 @@ export const TABS = [
     icon: 'wrench',
     blurb: 'Service-due cars, repairs, diagnostics & approvals',
     empty: 'No maintenance notifications found',
-    types: ['overdue_maintenance', 'maint_checkpoint', 'maintenance_back_open', 'service_inspection', 'approval_pending', 'high_maintenance_cost', 'maint_recurring_fault_review'],
+    types: ['overdue_maintenance', 'maint_checkpoint', 'maint_invoice_missing', 'maintenance_back_open', 'service_inspection', 'approval_pending', 'high_maintenance_cost', 'maint_recurring_fault_review'],
   },
   {
     key: 'incidents',
@@ -240,9 +240,9 @@ export const INBOX_CATEGORIES = [
     key: 'progress',
     label: 'Progress',
     icon: 'wrench',
-    blurb: 'Workshop progress checkpoints owed before a car goes overdue',
+    blurb: 'Workshop progress checkpoints owed before a car goes overdue, and invoices still missing after a car left',
     empty: 'No progress notifications',
-    types: ['maint_checkpoint'],
+    types: ['maint_checkpoint', 'maint_invoice_missing'],
   },
   {
     key: 'test_drive',
@@ -270,7 +270,7 @@ export const inboxCategoryOf = (n) => n?.group || TYPE_TO_INBOX[n?.type] || 'oth
 //   • Inspector (Abu Maroof · maintenance.initiate):
 //       Complaints · Awaiting Test · Re-inspect · Car Received
 //   • Supervisor / Drivers (Waleed & Abdullah · delegate / logistics / checkpoint):
-//       Checkpoint · Assign Garage · Pickup / Dropoff
+//       Checkpoint · No Invoice · Assign Garage · Pickup / Dropoff
 //   • Controller (Lin · maintenance.manage):
 //       Test Approvals · Test Interrupted
 // Managers / super-admins hold every permission and therefore see every lane.
@@ -344,6 +344,19 @@ export const LANES = [
     blurb: 'Cars in the workshop that need you — progress updates owed',
     empty: 'No checkpoints owed',
     types: ['maint_checkpoint'],
+  },
+  {
+    // The money tail of a workshop job: the car is already back, the bill never came. Same owners as
+    // Checkpoint (maintenance.checkpoint.manage) but a lane of its own, because the action is different —
+    // you chase a garage for paperwork, you don't file a progress update.
+    key: 'invoice_missing',
+    group: 'workshop',
+    label: 'No Invoice',
+    icon: 'dollar',
+    permission: 'maintenance.checkpoint.manage',
+    blurb: 'Cars that left the garage with no invoice entered — chase the bill',
+    empty: 'No invoices outstanding',
+    types: ['maint_invoice_missing'],
   },
   {
     key: 'assign_garage',
@@ -422,6 +435,7 @@ export const TYPE_LABEL = {
   rental_expiring: 'Rental Expiring',
   overdue_maintenance: 'Overdue Maintenance',
   maint_checkpoint: 'Maintenance Progress',
+  maint_invoice_missing: 'Invoice Not Entered',
   maintenance_back_open: 'Return Reconciliation',
   booking_in_maintenance: 'Booking In Maintenance',
   booking_readiness: 'Booking Readiness',
@@ -516,6 +530,7 @@ export const ACTION_LABEL = {
   overdue_rental: 'View Contract',
   overdue_maintenance: 'View Maintenance',
   maint_checkpoint: 'Submit Checkpoint',
+  maint_invoice_missing: 'Chase Invoice',
   maintenance_back_open: 'Close Contract',
   document_expiry: 'Renew Document',
   service_inspection: 'Service & Inspection',

@@ -9,6 +9,7 @@ use App\Models\PartRequest;
 use App\Models\User;
 use App\Models\Vehicle;
 use App\Models\VehicleLogEvent;
+use App\Services\LeftGarageInvoiceService;
 use App\Services\VehicleLogService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -33,6 +34,8 @@ use Illuminate\Validation\Rule;
  */
 class WorkflowOversightController extends Controller
 {
+    public function __construct(private LeftGarageInvoiceService $leftGarageQueue) {}
+
     /**
      * The odometer capture points across a ticket's life, in lifecycle order. Each maps the JSON
      * `odometer_flags` key (written by MaintenanceWorkflowService::recordOdometerFlag) to a human
@@ -425,44 +428,9 @@ class WorkflowOversightController extends Controller
     public function leftGarage(Request $request)
     {
         try {
-            $tickets = Maintenance::query()
-                ->whereNotNull('picked_up_from_garage_at')
-                ->with(['vehicle:id,plate_no,make,model', 'vendor:id,name'])
-                ->withCount(['tasks'])
-                ->orderByDesc('picked_up_from_garage_at')
-                ->limit(400)
-                ->get();
-
-            $now  = now();
-            $rows = $tickets->map(function ($t) use ($now) {
-                $leftAt   = $t->picked_up_from_garage_at;
-                $hasCost  = $t->cost !== null && (float) $t->cost > 0;
-                $requested = $t->invoice_requested_at !== null;
-                // Received = we've closed the money side (cost is in) OR the ticket fully closed.
-                $received = $hasCost;
-                return [
-                    'ticket_id'          => $t->id,
-                    'vehicle_id'         => $t->vehicle_id,
-                    'plate_no'           => $t->vehicle?->plate_no,
-                    'car'                => trim(($t->vehicle?->make ?? '') . ' ' . ($t->vehicle?->model ?? '')) ?: null,
-                    'garage'             => $t->vendor?->name,
-                    'workflow_status'    => $t->workflow_status,
-                    'faults'             => $t->tasks_count,
-                    'left_at'            => optional($leftAt)->toIso8601String(),
-                    'days_since'         => $leftAt ? $leftAt->diffInDays($now) : null,
-                    'invoice_requested'  => $requested,
-                    'invoice_requested_at' => optional($t->invoice_requested_at)->toIso8601String(),
-                    'invoice_received'   => $received,
-                    'needs_request'      => ! $requested && ! $received,
-                ];
-            })
-            // Only the ones still owing an invoice — a finished (cost-in) ticket drops off the chase list.
-            ->filter(fn ($r) => ! $r['invoice_received'])
-            ->sortBy([
-                ['needs_request', 'desc'],
-                ['days_since', 'desc'],
-            ])
-            ->values();
+            // The rule itself lives in LeftGarageInvoiceService so this page and the Action Center's
+            // Checkpoint lane (which alerts on the same condition) read one definition.
+            $rows = $this->leftGarageQueue->rows();
 
             return ResponseHelper::SuccessResponse([
                 'rows'          => $rows,
