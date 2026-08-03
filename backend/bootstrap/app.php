@@ -24,8 +24,12 @@ return Application::configure(basePath: dirname(__DIR__))
         // Reject requests from suspended accounts on every API route (even with an
         // already-issued token). Resolves the user via the sanctum guard itself,
         // so ordering relative to per-route `auth:sanctum` doesn't matter.
+        // RecordUserAction appends one audit row per SUCCESSFUL write (insert /
+        // change / delete) to the same log the page views live in, so the
+        // Workforce drawer can show what an employee did, not just where he went.
         $middleware->api(append: [
             \App\Http\Middleware\EnsureUserActive::class,
+            \App\Http\Middleware\RecordUserAction::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

@@ -337,6 +337,86 @@ function AuditRow({ label, value }) {
   );
 }
 
+// A write the employee performed. The backend classifies from the HTTP method:
+// POST → inserted, PUT/PATCH (and POST on a named action) → changed, DELETE → deleted.
+const ACTION_META = {
+  create: { label: 'Inserted', tone: 'emerald' },
+  update: { label: 'Changed', tone: 'amber' },
+  delete: { label: 'Deleted', tone: 'red' },
+};
+
+// Timeline dot colour per event type — navigation vs. write reads at a glance.
+const EVENT_DOT = {
+  login: 'bg-emerald-500',
+  logout: 'bg-slate-400',
+  page: 'bg-blue-500',
+  create: 'bg-emerald-500',
+  update: 'bg-amber-500',
+  delete: 'bg-red-500',
+};
+
+// The write log: every insert / change / delete this account made on the selected
+// day, with the exact time, the screen it was done from and the endpoint that
+// proves it. Reads are NOT listed here — only actions that changed data.
+function ActionLog({ actions }) {
+  const [kind, setKind] = useState('all');
+
+  const counts = useMemo(() => ({
+    all: actions.length,
+    create: actions.filter((a) => a.type === 'create').length,
+    update: actions.filter((a) => a.type === 'update').length,
+    delete: actions.filter((a) => a.type === 'delete').length,
+  }), [actions]);
+
+  const shown = kind === 'all' ? actions : actions.filter((a) => a.type === kind);
+
+  return (
+    <div className="space-y-3">
+      <FilterChips
+        options={[
+          { key: 'all', label: 'All', count: counts.all },
+          { key: 'create', label: 'Inserted', count: counts.create, tone: 'emerald' },
+          { key: 'update', label: 'Changed', count: counts.update, tone: 'amber' },
+          { key: 'delete', label: 'Deleted', count: counts.delete, tone: 'red' },
+        ]}
+        value={kind}
+        onChange={setKind}
+      />
+
+      <div className="rounded-xl border border-slate-200/70 bg-white p-4">
+        {shown.length === 0 ? (
+          <p className="py-8 text-center text-sm text-slate-400">
+            {actions.length === 0 ? 'No data was inserted, changed or deleted on this day.' : 'Nothing of this kind on this day.'}
+          </p>
+        ) : (
+          <ul className="divide-y divide-slate-100">
+            {shown.map((a, i) => (
+              <li key={`${a.iso}-${i}`} className="flex items-start gap-3 py-2.5 first:pt-0 last:pb-0">
+                <span className="mt-0.5 font-mono text-xs font-semibold tabular-nums text-slate-500">{a.time}</span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge tone={(ACTION_META[a.type] || {}).tone || 'gray'}>{(ACTION_META[a.type] || {}).label || a.type}</Badge>
+                    <span className="text-sm font-medium text-slate-800">{a.description}</span>
+                  </div>
+                  <p className="mt-0.5 truncate text-[11px] text-slate-400">
+                    {a.on_page ? `from ${a.on_page} · ` : ''}
+                    <span className="font-mono">{a.method} {a.endpoint}</span>
+                    {a.ip ? ` · ${a.ip}` : ''}
+                  </p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <p className="text-[11px] text-slate-400">
+        Every successful write this account made through the app, in order. The endpoint and record id are stored as evidence — request contents are never logged.
+      </p>
+    </div>
+  );
+}
+
 function ActivityDrawer({ open, row, onClose, currentUserId, onEdit, onToggle, onDelete }) {
   const [date, setDate] = useState(todayStr());
   const [detail, setDetail] = useState(null);
@@ -363,6 +443,7 @@ function ActivityDrawer({ open, row, onClose, currentUserId, onEdit, onToggle, o
   const tabs = [
     { key: 'overview', label: 'Overview' },
     { key: 'timeline', label: 'Timeline' },
+    { key: 'actions', label: 'Actions' },
     { key: 'modules', label: 'Modules' },
     { key: 'productivity', label: 'Productivity' },
     { key: 'audit', label: 'Audit' },
@@ -448,6 +529,40 @@ function ActivityDrawer({ open, row, onClose, currentUserId, onEdit, onToggle, o
                   <ProgressBar value={daily.active_seconds} max={Math.max(1, daily.total_working_seconds)} tone="emerald" showPct />
                 </div>
               )}
+
+              {/* What he actually DID — writes, not just presence. */}
+              <div className="rounded-xl border border-slate-200/70 bg-white p-4">
+                <p className="mb-3 text-xs font-semibold text-slate-600">What he did on this day</p>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  {[
+                    { label: 'Pages opened', value: daily?.pages_visited ?? 0, tone: 'text-slate-800' },
+                    { label: 'Inserted', value: daily?.inserts ?? 0, tone: 'text-emerald-600' },
+                    { label: 'Changed', value: daily?.updates ?? 0, tone: 'text-amber-600' },
+                    { label: 'Deleted', value: daily?.deletes ?? 0, tone: 'text-red-600' },
+                  ].map((s) => (
+                    <div key={s.label} className="rounded-lg border border-slate-100 bg-slate-50/70 p-3">
+                      <p className="text-[11px] font-medium text-slate-400">{s.label}</p>
+                      <p className={`mt-1 text-lg font-bold tabular-nums ${s.tone}`}>{s.value}</p>
+                    </div>
+                  ))}
+                </div>
+                {(detail?.action_areas || []).length > 0 && (
+                  <div className="mt-3 space-y-1.5 border-t border-slate-100 pt-3">
+                    <p className="text-[11px] font-medium text-slate-400">Where he wrote</p>
+                    {detail.action_areas.slice(0, 6).map((a) => (
+                      <div key={a.entity} className="flex items-center justify-between text-xs">
+                        <span className="font-medium text-slate-700">{a.entity}</span>
+                        <span className="tabular-nums text-slate-400">
+                          {a.inserts > 0 && <span className="text-emerald-600">+{a.inserts} </span>}
+                          {a.updates > 0 && <span className="text-amber-600">~{a.updates} </span>}
+                          {a.deletes > 0 && <span className="text-red-600">−{a.deletes} </span>}
+                          <span className="ms-1">({a.total})</span>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -459,18 +574,29 @@ function ActivityDrawer({ open, row, onClose, currentUserId, onEdit, onToggle, o
                 <ol className="relative ms-2 border-s-2 border-slate-100">
                   {detail.timeline.map((e, i) => (
                     <li key={i} className="mb-4 ms-4 last:mb-0">
-                      <span className={`absolute -start-[7px] mt-1 h-3 w-3 rounded-full ring-2 ring-white ${
-                        e.type === 'login' ? 'bg-emerald-500' : e.type === 'logout' ? 'bg-slate-400' : 'bg-blue-500'
-                      }`} />
-                      <div className="flex items-center gap-2">
+                      <span className={`absolute -start-[7px] mt-1 h-3 w-3 rounded-full ring-2 ring-white ${EVENT_DOT[e.type] || 'bg-blue-500'}`} />
+                      <div className="flex flex-wrap items-center gap-2">
                         <span className="font-mono text-xs font-semibold text-slate-500">{e.time}</span>
                         <span className="text-sm font-medium text-slate-800">{e.label}</span>
+                        {ACTION_META[e.type] && (
+                          <Badge tone={ACTION_META[e.type].tone}>{ACTION_META[e.type].label}</Badge>
+                        )}
                       </div>
+                      {ACTION_META[e.type] && (
+                        <p className="mt-0.5 text-[11px] text-slate-400">
+                          {e.on_page ? `from ${e.on_page} · ` : ''}
+                          <span className="font-mono">{e.method} {e.endpoint}</span>
+                        </p>
+                      )}
                     </li>
                   ))}
                 </ol>
               )}
             </div>
+          )}
+
+          {tab === 'actions' && (
+            <ActionLog actions={detail?.actions || []} />
           )}
 
           {tab === 'modules' && (
@@ -699,6 +825,7 @@ export default function Users() {
           <MetricCard loading={loading} label="Logged in today" value={<CountUp value={kpis.logged_in_today} />} icon={<Icon.Check />} tone="cyan" />
           <MetricCard loading={loading} label="Avg session today" value={fmtDuration(kpis.avg_session_seconds)} icon={<Icon.Clock />} tone="indigo" tooltip="Mean length of today's sessions across the team" />
           <MetricCard loading={loading} label="Most active user" value={mostActive ? mostActive.name.split(' ')[0] : '—'} icon={<Icon.Gauge />} tone="violet" hint={mostActive ? fmtDuration(mostActive.seconds) : 'No activity yet'} />
+          <MetricCard loading={loading} label="Data changes today" value={<CountUp value={kpis.actions_today} />} icon={<Icon.Refresh />} tone="orange" hint={`${kpis.deletes_today || 0} deletion${(kpis.deletes_today || 0) === 1 ? '' : 's'}`} tooltip="Inserts, changes and deletions the team made today" />
           <MetricCard loading={loading} label="Pending tasks" value={<CountUp value={kpis.pending_tasks} />} icon={<Icon.Alert />} tone="amber" hint="Open logistics moves" />
           <MetricCard loading={loading} label="Disabled accounts" value={<CountUp value={kpis.disabled} />} icon={<Icon.Shield />} tone="red" hint={`${kpis.never_logged_in || 0} never logged in`} />
         </MetricGrid>

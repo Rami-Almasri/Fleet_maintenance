@@ -37,6 +37,18 @@ class UserActivityService
     /** Active-time credited for dwelling on a single page (caps "reading" time). */
     private const ACTIVE_CAP = 300;         // 5 min
 
+    /** Event types that represent a WRITE the employee performed. */
+    public const ACTION_TYPES = ['create', 'update', 'delete'];
+
+    /** Any event type that proves the user was actually working (not idling). */
+    private const WORKING_TYPES = ['page', 'login', 'create', 'update', 'delete'];
+
+    /** URL segments that are routing namespaces, never the thing being touched. */
+    private const PATH_NAMESPACES = ['auth', 'admin', 'api'];
+
+    /** Endpoints whose URL word isn't the record it creates. */
+    private const ENTITY_ALIASES = ['signup' => 'user'];
+
     // ---------------------------------------------------------------------
     //  Ingest
     // ---------------------------------------------------------------------
@@ -76,6 +88,149 @@ class UserActivityService
             'user_agent' => $request->userAgent(),
             'created_at' => $now,
         ]);
+    }
+
+    /**
+     * Record one successful WRITE (insert / change / delete), called by the
+     * RecordUserAction middleware. The endpoint, the record id, the HTTP method
+     * and the timestamp are stored — never the request body, which carries
+     * customer data and secrets. `page` is the module the user was standing on
+     * when he wrote (from his live snapshot), so the trail reads
+     * "he was on Workflow and deleted Maintenance #1698".
+     */
+    public function recordAction(User $user, Request $request, int $status): void
+    {
+        $shaped = $this->shapeAction($request);
+        if (! $shaped) {
+            return;
+        }
+
+        $now = now();
+        DB::table('users')->where('id', $user->id)->update(['last_seen_at' => $now]);
+
+        $user->activityEvents()->create([
+            'type' => $shaped['type'],
+            'method' => $request->method(),
+            'page' => $user->last_page,          // the SPA screen he was on
+            'path' => $shaped['path'],           // the endpoint he hit
+            'entity' => $shaped['entity'],
+            'entity_id' => $shaped['entity_id'],
+            'description' => $shaped['description'],
+            'status_code' => $status,
+            'ip' => $request->ip(),
+            'user_agent' => $request->userAgent(),
+            'created_at' => $now,
+        ]);
+    }
+
+    /**
+     * Turn a mutating request into an audit row: what kind of write it was, what
+     * it touched, and a sentence a manager can read.
+     *
+     *   DELETE /api/Vehicle/12            → delete · Vehicle #12 · "Deleted Vehicle #12"
+     *   POST   /api/Vehicle               → create · Vehicle     · "Added a new Vehicle"
+     *   PUT    /api/Vehicle/12            → update · Vehicle #12 · "Updated Vehicle #12"
+     *   POST   /api/Vehicle/12/condition  → update · Vehicle #12 · "Condition on Vehicle #12"
+     *
+     * A POST that ends in a verb segment is a state change, not an insert — it is
+     * classified `update` and the verb is kept in the sentence, so nothing is
+     * mislabelled as "inserted". The raw method + path are stored either way, so
+     * the classification is never the only record.
+     *
+     * @return array{type:string,path:string,entity:string,entity_id:?string,description:string}|null
+     */
+    private function shapeAction(Request $request): ?array
+    {
+        $path = ltrim(preg_replace('#^api/#', '', $request->path()), '/');
+        $segments = array_values(array_filter(explode('/', $path), fn ($s) => $s !== ''));
+        if (! $segments) {
+            return null;
+        }
+
+        // Drop routing namespaces ("auth/users/5" is about a User, not about Auth).
+        $segments = array_values(array_filter(
+            $segments,
+            fn ($s) => ! in_array(strtolower($s), self::PATH_NAMESPACES, true),
+        ));
+        if (! $segments) {
+            return null;
+        }
+
+        // Fold the URL into REST pairs: resource [+ its id]. The LAST pair is what
+        // the request is really about — so /Maintenance/1698/tasks/44 is a Task,
+        // not a Maintenance.
+        $pairs = [];
+        foreach ($segments as $seg) {
+            if (preg_match('/^\d+$/', $seg)) {
+                if ($pairs) { $pairs[count($pairs) - 1]['id'] = $seg; }
+                continue;
+            }
+            $pairs[] = ['name' => $seg, 'id' => null];
+        }
+        if (! $pairs) {
+            return null;
+        }
+
+        $lastPair = $pairs[count($pairs) - 1];
+        $verb = null;
+
+        if ($lastPair['id'] !== null) {
+            // …/{resource}/{id}  → acting on that record directly.
+            $subject = $lastPair;
+        } elseif ($request->method() === 'POST' && count($pairs) > 1 && $this->isPlural($lastPair['name'])) {
+            // …/{parent}/{id}/{children}  on POST → inserting into a collection.
+            $subject = $lastPair;
+        } elseif (count($pairs) > 1) {
+            // …/{resource}/{id}/{verb}  → a named action on the parent record.
+            $verb = $this->humanize($lastPair['name']);
+            $subject = $pairs[count($pairs) - 2];
+        } else {
+            $subject = $lastPair;
+        }
+
+        $entity = $this->humanize(self::ENTITY_ALIASES[strtolower($subject['name'])] ?? $subject['name'], singular: true);
+        $entityId = $subject['id'];
+        $target = $entity . ($entityId !== null ? " #{$entityId}" : '');
+
+        $type = match ($request->method()) {
+            'DELETE' => 'delete',
+            'PUT', 'PATCH' => 'update',
+            default => $verb ? 'update' : 'create',   // POST
+        };
+
+        $description = match (true) {
+            $type === 'delete' => "Deleted {$target}",
+            $type === 'create' => "Added a new {$entity}",
+            $verb !== null => "{$verb} on {$target}",
+            default => "Updated {$target}",
+        };
+
+        return [
+            'type' => $type,
+            'path' => mb_substr('/' . $path, 0, 255),
+            'entity' => mb_substr($entity, 0, 80),
+            'entity_id' => $entityId,
+            'description' => mb_substr($description, 0, 255),
+        ];
+    }
+
+    /** "part-requests" → "Part Request" (singular only for entity names). */
+    private function humanize(string $segment, bool $singular = false): string
+    {
+        $label = ucwords(str_replace(['-', '_'], ' ', $segment));
+        if (! $singular) {
+            return $label;
+        }
+        $words = explode(' ', $label);
+        $words[count($words) - 1] = \Illuminate\Support\Str::singular(end($words));
+        return implode(' ', $words);
+    }
+
+    /** True when a URL word is a genuine plural ("tasks"), i.e. a collection. */
+    private function isPlural(string $segment): bool
+    {
+        $singular = \Illuminate\Support\Str::singular($segment);
+        return strcasecmp($singular, $segment) !== 0;
     }
 
     public function stampLogin(User $user, Request $request): void
@@ -248,7 +403,7 @@ class UserActivityService
                 if ($openSession) {
                     $currentSession = max(0, now()->getTimestamp() - $openSession['start']->getTimestamp());
                 }
-                $lastNav = $events->last(fn ($e) => in_array($e->type, ['page', 'login'], true));
+                $lastNav = $events->last(fn ($e) => in_array($e->type, self::WORKING_TYPES, true));
                 $idleSeconds = $lastNav ? max(0, now()->getTimestamp() - $lastNav->created_at->getTimestamp()) : null;
             }
 
@@ -271,6 +426,9 @@ class UserActivityService
                 'current_session_seconds' => $currentSession,
                 'today_seconds' => $todaySeconds,
                 'week_seconds' => $weekSeconds,
+                // Real output typed into the system today, not just presence.
+                'today_actions' => $todayEvents->whereIn('type', self::ACTION_TYPES)->count(),
+                'today_deletes' => $todayEvents->where('type', 'delete')->count(),
                 'idle_seconds' => $idleSeconds,
                 'pending_tasks' => (int) ($pending[$u->id] ?? 0),
                 'never_logged_in' => $u->last_login_at === null,
@@ -312,6 +470,8 @@ class UserActivityService
                 'disabled' => count(array_filter($rows, fn ($r) => $r['account_status'] !== 'active')),
                 'never_logged_in' => count(array_filter($rows, fn ($r) => $r['never_logged_in'])),
                 'idle_now' => count(array_filter($rows, fn ($r) => $r['status'] === 'idle')),
+                'actions_today' => array_sum(array_column($rows, 'today_actions')),
+                'deletes_today' => array_sum(array_column($rows, 'today_deletes')),
             ],
             'users' => $rows,
             'charts' => $this->charts($date),
@@ -416,14 +576,27 @@ class UserActivityService
         $lastSession = $sessions ? end($sessions) : null;
         $logoutTime = ($lastSession && ! $lastSession['open']) ? $lastSession['end'] : null;
 
-        // Flat timeline for the drawer (login → pages → logout).
+        // Flat timeline for the drawer: navigation AND writes, in true time order,
+        // so "opened Workflow → deleted Maintenance #1698" reads as one story.
         $timeline = $events->map(fn ($e) => [
             'time' => $e->created_at->format('H:i'),
             'iso' => $e->created_at->toIso8601String(),
             'type' => $e->type,
-            'label' => $e->type === 'login' ? 'Login'
-                : ($e->type === 'logout' ? 'Logout' : ($e->page ?: $this->labelFromPath($e->path))),
+            'label' => match ($e->type) {
+                'login' => 'Login',
+                'logout' => 'Logout',
+                'create', 'update', 'delete' => $e->description ?: ucfirst($e->type),
+                default => $e->page ?: $this->labelFromPath($e->path),
+            },
+            // Present only on writes — the raw evidence behind the sentence.
+            'on_page' => in_array($e->type, self::ACTION_TYPES, true) ? $e->page : null,
+            'method' => $e->method,
+            'endpoint' => in_array($e->type, self::ACTION_TYPES, true) ? $e->path : null,
+            'entity' => $e->entity,
+            'entity_id' => $e->entity_id,
         ])->values()->all();
+
+        $actionEvents = $events->filter(fn ($e) => in_array($e->type, self::ACTION_TYPES, true))->values();
 
         return [
             'date' => $date,
@@ -434,8 +607,14 @@ class UserActivityService
                 'active_seconds' => $totalActive,
                 'idle_seconds' => $totalIdle,
                 'session_count' => count($sessions),
+                'pages_visited' => $events->where('type', 'page')->count(),
+                'inserts' => $actionEvents->where('type', 'create')->count(),
+                'updates' => $actionEvents->where('type', 'update')->count(),
+                'deletes' => $actionEvents->where('type', 'delete')->count(),
             ],
             'timeline' => $timeline,
+            'actions' => $this->shapeActionLog($actionEvents),
+            'action_areas' => $this->summarizeActionAreas($actionEvents),
             'module_usage' => $this->summarizeModules($events->where('type', 'page')),
             'productivity' => $this->productivity($user),
             'comparison' => $this->comparison($user),
@@ -695,6 +874,50 @@ class UserActivityService
             ->groupBy('assigned_to_id')
             ->selectRaw('assigned_to_id, count(*) as c')
             ->pluck('c', 'assigned_to_id')
+            ->all();
+    }
+
+    /**
+     * The write log for the drawer's Actions tab — one row per insert / change /
+     * delete, newest first, each with the exact time, the screen he was on and
+     * the endpoint that proves it.
+     */
+    private function shapeActionLog(Collection $actionEvents): array
+    {
+        return $actionEvents->sortByDesc(fn ($e) => $e->created_at->getTimestamp())->values()
+            ->map(fn ($e) => [
+                'time' => $e->created_at->format('H:i:s'),
+                'iso' => $e->created_at->toIso8601String(),
+                'type' => $e->type,                       // create | update | delete
+                'description' => $e->description ?: ucfirst($e->type),
+                'entity' => $e->entity,
+                'entity_id' => $e->entity_id,
+                'on_page' => $e->page,                    // the screen he did it from
+                'method' => $e->method,
+                'endpoint' => $e->path,
+                'status_code' => $e->status_code,
+                'ip' => $e->ip,
+            ])->all();
+    }
+
+    /** Where the writes landed: counts per touched resource, biggest first. */
+    private function summarizeActionAreas(Collection $actionEvents): array
+    {
+        if ($actionEvents->isEmpty()) {
+            return [];
+        }
+
+        return $actionEvents
+            ->groupBy(fn ($e) => $e->entity ?: $this->labelFromPath($e->path))
+            ->map(fn ($rows, $entity) => [
+                'entity' => $entity,
+                'total' => $rows->count(),
+                'inserts' => $rows->where('type', 'create')->count(),
+                'updates' => $rows->where('type', 'update')->count(),
+                'deletes' => $rows->where('type', 'delete')->count(),
+            ])
+            ->sortByDesc('total')
+            ->values()
             ->all();
     }
 
