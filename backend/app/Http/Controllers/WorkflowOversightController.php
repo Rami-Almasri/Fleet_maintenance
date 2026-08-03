@@ -838,7 +838,7 @@ class WorkflowOversightController extends Controller
             // where it has got to. See [[inspection-required-parts-split]].
             $awaitingParts = Maintenance::query()
                 ->whereIn('workflow_status', Maintenance::WF_TICKET_STATES)
-                ->whereHas('partRequests', fn ($q) => $q->whereNotIn('status', PartRequest::TERMINAL))
+                ->whereHas('partRequests', fn ($q) => $q->outstanding())
                 ->whereHas('vehicle', fn ($q) => $q->whereIn('status', Vehicle::ACTIVE_STATUSES))
                 ->count();
 

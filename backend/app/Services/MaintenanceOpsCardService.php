@@ -381,11 +381,11 @@ class MaintenanceOpsCardService
     // ── 5. Parts ──────────────────────────────────────────────────────────────
 
     /**
-     * Every part the car is still owed — the OPEN (non-terminal) part requests across its faults, named
-     * and staged, so the card can list them without opening the Parts board. `blocking` says whether THIS
-     * request is what's actually holding the repair up, taken from WorkflowStateResolver's verdict (a part
-     * that has arrived but isn't fitted yet is outstanding, but blocks nothing). Empty when nothing is
-     * outstanding or the part requests aren't eager-loaded.
+     * Every part the car is still WAITING on — PartRequest::isOutstanding() across its faults, named and
+     * staged, so the card can list them without opening the Parts board. The wait ends at DELIVERY, not at
+     * the fitting: a part that has landed drops off this list even though its request stays `purchased`.
+     * `blocking` says whether THIS request is what's holding the repair up, taken from
+     * WorkflowStateResolver's verdict. Empty when nothing is owed or the part requests aren't eager-loaded.
      *
      * @return array<int,array{id:int,name:string,status:string,quantity:?float,blocking:bool}>
      */
@@ -399,7 +399,7 @@ class MaintenanceOpsCardService
 
         return $t->tasks
             ->flatMap(fn (MaintenanceTask $task) => $task->relationLoaded('partRequests') ? $task->partRequests : collect())
-            ->reject(fn (PartRequest $r) => in_array($r->status, PartRequest::TERMINAL, true))
+            ->filter(fn (PartRequest $r) => $r->isOutstanding())
             ->filter(fn (PartRequest $r) => (bool) $r->part_name)
             ->unique('part_name')
             ->map(fn (PartRequest $r) => [

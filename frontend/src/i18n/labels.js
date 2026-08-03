@@ -1874,6 +1874,26 @@ const en = {
       sentBack: 'Sent back',
       partsWaiting: 'Waiting for parts · {n}',
       partsWaitingTip: 'Parts still owed on this ticket: {names}',
+      // Board card badge — a visual-only signal that the car is waiting on requested parts. It is
+      // derived from the ticket's open part requests; it is NOT a workflow status and the ticket
+      // stays in its own lane (e.g. Under Repair).
+      partsRequested: {
+        one: '1 Part Requested',
+        other: '{n} Parts Requested',
+      },
+      // Part-request lifecycle stages, as shown in the badge's hover list.
+      partStatus: {
+        requested: 'Requested',
+        under_review: 'Under review',
+        approved: 'Approved',
+        purchased: 'Purchased',
+        // Derived from the purchase's delivered_at — the part is on site; the car has stopped waiting.
+        delivered: 'Delivered',
+        installed: 'Installed',
+        completed: 'Installed',
+        rejected: 'Rejected',
+        cancelled: 'Cancelled',
+      },
       partsHd: 'Parts',
       expectedReturn: 'Back {date}',
       expectedOverdue: 'Due {date}',
@@ -5007,6 +5027,26 @@ const ar = {
       sentBack: 'أُعيدت',
       partsWaiting: 'بانتظار قطع · {n}',
       partsWaitingTip: 'القطع المطلوبة لهذه التذكرة: {names}',
+      // شارة مرئية فقط على بطاقة اللوحة — مشتقّة من طلبات القطع المفتوحة، وليست حالة سير عمل.
+      partsRequested: {
+        zero: 'لا قطع مطلوبة',
+        one: 'قطعة واحدة مطلوبة',
+        two: 'قطعتان مطلوبتان',
+        few: '{n} قطع مطلوبة',
+        many: '{n} قطعة مطلوبة',
+        other: '{n} قطعة مطلوبة',
+      },
+      partStatus: {
+        requested: 'مطلوبة',
+        under_review: 'قيد المراجعة',
+        approved: 'معتمدة',
+        purchased: 'تم شراؤها',
+        delivered: 'تم التسليم',
+        installed: 'مركّبة',
+        completed: 'مركّبة',
+        rejected: 'مرفوضة',
+        cancelled: 'ملغاة',
+      },
       partsHd: 'القطع',
       expectedReturn: 'العودة {date}',
       expectedOverdue: 'مستحقة {date}',

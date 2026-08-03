@@ -147,8 +147,10 @@ class MaintenanceWorkflowController extends Controller
         // MaintenanceOpsCardService.
         'tasks.partRequests', 'tasks.partRequests.purchases', 'tasks.partRequests.purchases.sourceVendor:id,name',
         // Ticket-level requests too — a part raised against the ticket with no fault attached would
-        // otherwise never reach the card (the per-fault walk above can't see it).
-        'partRequests',
+        // otherwise never reach the card (the per-fault walk above can't see it). Their purchases come
+        // along because the card's parts badge asks isOutstanding(), which reads delivered_at/installed_at
+        // off the purchase — without this the board would lazy-load one query per request.
+        'partRequests', 'partRequests.purchases',
         'checkpoints', 'responsibles:id,name',
         'activeMove',
     ];
