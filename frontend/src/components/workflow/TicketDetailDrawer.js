@@ -234,11 +234,6 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
 
   const footer = tk && (
     <div className="flex flex-wrap items-center justify-end gap-2">
-      {can('logistics.dispatch') && (
-        <Button size="sm" variant="secondary" onClick={() => onAct('logistics', tk)}>
-          <Icon.Truck className="h-3.5 w-3.5" /> {t('workflow.cardAction.dispatchCar')}
-        </Button>
-      )}
       {can('maintenance.delegate') && (
         <Button size="sm" variant="secondary" onClick={() => onAct('delegate', tk)}>{t('workflow.cardAction.delegate')}</Button>
       )}

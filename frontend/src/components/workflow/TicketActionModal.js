@@ -659,7 +659,6 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   // 'decide' (inspector symptoms) and 'finding' (garage tags) steps — only one action is live at a time.
   const [causes, setCauses] = useState({});
   const [driverId, setDriverId] = useState('');          // delegate: chosen logistics driver
-  const [delegationTask, setDelegationTask] = useState('pickup'); // delegate: pickup | dropoff
   const [recommended, setRecommended] = useState('');
   // "Requires Parts" — the inspector's TECHNICAL list of what the repair will need. Recorded with the
   // report but inert: it starts no procurement. The coordinator converts these into real part requests
@@ -978,7 +977,8 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
       case 'decide':
         return { url: `${base}/${ticket.id}/report`, body: { requires_maintenance: requiresMaintenance, symptoms, causes: buildCauses(symptoms), fault_severity: requiresMaintenance ? (faultSeverity || null) : null, recommended_action: recommended || null, notes: notes || null, maintenance_type: maintType || null, repair_location: requiresMaintenance ? repairLocation : null, report_odometer: odometer ? Number(odometer) : null, odometer_note: odoNote.trim() || null, odometer_confirmed: odoAckRequired ? odoConfirmed : null, required_parts: requiresMaintenance && requiresParts ? cleanRequiredParts(requiredParts) : null } };
       case 'delegate':
-        return { url: `${base}/${ticket.id}/delegate`, body: { driver_id: Number(driverId), delegation_task: delegationTask } };
+        // No task is sent — the backend derives pick-up vs drop-off from where the car physically is.
+        return { url: `${base}/${ticket.id}/delegate`, body: { driver_id: Number(driverId) } };
       case 'assign': {
         // Decision-support audit: record what the recommendation engine suggested and whether the
         // supervisor followed it, so the garage_assigned event can answer "why this garage?".
@@ -1175,7 +1175,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
     }
     // Garage findings: at least one tag, and every tag with preset causes must carry a diagnosed cause.
     if (action === 'finding') return findingTags.length === 0 || !rootCausesComplete(findingTags, faultCausesCatalog, causes);
-    if (action === 'delegate') return !driverId || !delegationTask;
+    if (action === 'delegate') return !driverId;
     if (action === 'assign') return !vendorId; // garage required; driver is optional (may go to the pool)
     // Supervisor Video-Review: a re-fix needs a reason; approval is blocked only when we KNOW there's no
     // video yet (has_video === false). When it's unknown (null) we let the server enforce the video rule.
@@ -2778,24 +2778,6 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
             <div>
               <span className="mb-1 block text-sm font-medium text-slate-700">{t('workflow.field.assignDriver')}<Req /></span>
               <SearchSelect value={driverId} onChange={setDriverId} options={driverOptions} placeholder={t('workflow.ph.searchDriver')} />
-            </div>
-            <div>
-              <span className="mb-1.5 block text-sm font-medium text-slate-700">{t('workflow.field.delegationTask')}<Req /></span>
-              <div className="grid grid-cols-2 gap-2">
-                {['pickup', 'dropoff'].map((tk) => {
-                  const active = delegationTask === tk;
-                  return (
-                    <button
-                      key={tk}
-                      type="button"
-                      onClick={() => setDelegationTask(tk)}
-                      className={`rounded-xl border px-3 py-2.5 text-sm font-semibold transition ${active ? 'border-indigo-500 bg-indigo-50 text-indigo-800 ring-1 ring-indigo-500' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'}`}
-                    >
-                      {t(`workflow.delegation.${tk}`)}
-                    </button>
-                  );
-                })}
-              </div>
             </div>
           </>
         )}

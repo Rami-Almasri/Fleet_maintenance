@@ -190,17 +190,30 @@ function SystemRulesPanel() {
   const [open, setOpen] = useState(false);
   const [book, setBook] = useState(null);
   const [state, setState] = useState('idle'); // idle | loading | error
+  // Fetch-once guard. It must be a ref, NOT the `state` value: setState('loading') re-renders, and an
+  // effect that re-runs tears down its own previous cleanup — an `alive` flag there would cancel the very
+  // request it just fired, leaving the panel on a blank skeleton forever.
+  const fetched = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => () => { mounted.current = false; }, []);
 
   // Fetched lazily on first expand — a Controller working the queue shouldn't pay for reference copy.
   useEffect(() => {
-    if (!open || book || state === 'loading') return;
-    let alive = true;
+    if (!open || fetched.current) return;
+    fetched.current = true;
     setState('loading');
     api.get('/maintenance-tickets/review-gate-rules')
-      .then((r) => { if (alive) { setBook(r.data?.data || null); setState('idle'); } })
-      .catch(() => { if (alive) setState('error'); });
-    return () => { alive = false; };
-  }, [open, book, state]);
+      .then((r) => {
+        if (!mounted.current) return;
+        setBook(r.data?.data || null);
+        setState('idle');
+      })
+      .catch(() => {
+        if (!mounted.current) return;
+        fetched.current = false; // let a re-open retry
+        setState('error');
+      });
+  }, [open]);
 
   return (
     <div className="overflow-hidden rounded-2xl border border-indigo-200 bg-indigo-50/40">
@@ -224,7 +237,10 @@ function SystemRulesPanel() {
         <div className="border-t border-indigo-100 bg-white px-4 py-4">
           {state === 'loading' && <Skeleton className="h-24 rounded-lg" />}
           {state === 'error' && (
-            <p className="text-xs text-rose-600">Could not load the rulebook. Refresh to try again.</p>
+            <p className="text-xs text-rose-600">Could not load the rulebook — collapse and re-open to try again.</p>
+          )}
+          {state === 'idle' && !book && (
+            <p className="text-xs text-slate-500">The rulebook came back empty — the diagnostic monitor may not be configured.</p>
           )}
 
           {book && (

@@ -2823,7 +2823,9 @@ class MaintenanceWorkflowController extends Controller
         return $this->run(function () use ($request, $ticket) {
             $data = $request->validate([
                 'driver_id'       => ['required', 'integer', Rule::exists('users', 'id')],
-                'delegation_task' => ['required', Rule::in(Maintenance::DELEGATION_TASKS)],
+                // Optional: the leg is derived from where the car physically is (see delegate()).
+                // Still accepted so an explicit caller can override the derivation.
+                'delegation_task' => ['sometimes', 'nullable', Rule::in(Maintenance::DELEGATION_TASKS)],
             ]);
             $ticket = $this->workflow->delegate($ticket, $data, $request->user());
             return ResponseHelper::SuccessResponse(MaintenanceWorkflowResource::make($ticket), 'Driver assigned — notified', 200);

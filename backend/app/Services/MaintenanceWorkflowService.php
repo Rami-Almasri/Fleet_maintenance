@@ -2722,9 +2722,15 @@ class MaintenanceWorkflowService
             ]);
         }
 
+        // The leg is NOT a question for the Supervisor — the ticket already knows it. A car still parked
+        // with us ('IN') has to be COLLECTED; a car physically out at a garage ('OUT') has to be BROUGHT
+        // BACK. Asking made the two answerable states look like a choice and let the wrong one be picked.
+        // An explicit task is still honoured (API callers / future edge cases).
         $task = $data['delegation_task'] ?? null;
         if (! in_array($task, Maintenance::DELEGATION_TASKS, true)) {
-            throw new WorkflowTransitionException('Choose a task: pickup or dropoff.', ['field' => 'delegation_task']);
+            $task = $ticket->event_status === 'OUT'
+                ? Maintenance::DELEGATION_DROPOFF
+                : Maintenance::DELEGATION_PICKUP;
         }
 
         $driverId = (int) ($data['driver_id'] ?? 0);
