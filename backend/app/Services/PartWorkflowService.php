@@ -381,6 +381,22 @@ class PartWorkflowService
                 try {
                     $this->components->installFromPurchase($purchase->fresh(), $data, $actor);
                 } catch (\Throwable $e) {
+                    // report() ALONE IS NOT ENOUGH HERE. Every guard in ComponentService rejects with
+                    // abort(4xx), i.e. an HttpException — which sits in the framework's internalDontReport
+                    // list and is therefore dropped without a line. That made the most common failure
+                    // (no component type picked, or a serialized part installed with no serial) totally
+                    // invisible: the part billed, the timeline logged it, and the vehicle's configuration
+                    // silently never updated. Shadow mode exists to MEASURE, so the measurement is
+                    // written explicitly, with the context needed to fix the row by hand.
+                    logger()->warning('asset_layer.install_failed', [
+                        'part_purchase_id' => $purchase->id,
+                        'vehicle_id'       => $purchase->vehicle_id,
+                        'maintenance_id'   => $purchase->maintenance_id,
+                        'part_name'        => $purchase->part_name,
+                        'catalog_id'       => data_get($data, 'component.component_catalog_id'),
+                        'reason'           => $e->getMessage(),
+                        'exception'        => get_class($e),
+                    ]);
                     report($e);
                 }
             }

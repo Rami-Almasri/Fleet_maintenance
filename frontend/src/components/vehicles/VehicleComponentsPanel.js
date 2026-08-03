@@ -290,8 +290,11 @@ export default function VehicleComponentsPanel({ vehicleId }) {
         title="Current configuration"
         subtitle="Derived from the maintenance workflow — components appear here only when a ticket installs them."
         actions={
-          <div className="flex items-center gap-2">
-            <SearchInput value={q} onChange={setQ} placeholder="Part, brand, number, supplier…" />
+          // The search box carries no intrinsic width, so as a flex sibling of the Segmented it
+          // shrank until the icon's padding swallowed the placeholder. Pin a width and let the row
+          // wrap instead of crushing both controls in a narrow card header.
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <SearchInput className="w-full sm:w-64" value={q} onChange={setQ} placeholder="Part, brand, number, supplier…" />
             <Segmented
               value={view}
               onChange={setView}
