@@ -3142,6 +3142,19 @@ class MaintenanceWorkflowService
     {
         $this->assertTransition($ticket, Maintenance::WF_IN_TRANSIT);
 
+        // Assigned-pickup gate. When the Supervisor named a driver for this pickup, the job is that
+        // driver's — anyone else asking to take the car is refused and told whose it is. A pickup with
+        // NO driver named stays open to the pool (that is how a garage transfer is raised: the leg is
+        // left unassigned so whoever is free claims it — see transferGarage()). The driver's queue hides
+        // the button under the same rule, so this only catches a stale tab or a direct API call.
+        if ($ticket->assigned_driver_id && (int) $ticket->assigned_driver_id !== $actor->id) {
+            $assignee = $ticket->loadMissing('assignedDriver')->assignedDriver?->name;
+            throw new WorkflowTransitionException(
+                'This pickup is assigned to ' . ($assignee ?: 'another driver') . ' — ask the supervisor to reassign it if you are taking the car.',
+                ['field' => 'assigned_driver_id', 'assigned_driver' => $assignee]
+            );
+        }
+
         $odometer = (int) ($data['dispatch_odometer'] ?? 0);
         if ($odometer <= 0) {
             throw new WorkflowTransitionException('Capture the odometer reading before dispatching the car.', [

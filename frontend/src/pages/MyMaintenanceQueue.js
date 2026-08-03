@@ -33,7 +33,7 @@ import {
 import TicketActionModal from '../components/workflow/TicketActionModal';
 import BreakdownIntakeModal from '../components/workflow/BreakdownIntakeModal';
 import ComplaintTriageModal from '../components/workflow/ComplaintTriageModal';
-import { resolveAction, stageAge, ago, custodyBlocked, custodyHolderName, ORIGIN_LABEL } from '../components/workflow/meta';
+import { resolveAction, stageAge, ago, custodyBlocked, custodyHolderName, assignmentBlocked, assignedDriverName, ORIGIN_LABEL } from '../components/workflow/meta';
 import './MyMaintenanceQueue.css';
 
 // Reason → chip class. The visible label comes from workflow.reasonShort.<value>.
@@ -119,6 +119,11 @@ function CardActions({ tk, can, userId, onAct, readonly, t }) {
     ? t('queue.custody.arrive', { name: custodyHolder || t('queue.custody.theCollector') })
     : t('queue.custody.checkin', { name: custodyHolder || t('queue.custody.theDriver') });
 
+  // Assigned pickup — the Supervisor named a driver, so the card is a status for everyone else. The
+  // named driver keeps the Pick up button; the rest are told whose job it is instead of racing for it.
+  const assignedElsewhere = allowed && assignmentBlocked(tk, userId);
+  const assignedTo = assignedDriverName(tk, userId);
+
   if (readonly) {
     return (
       <span className="opx-chip avail"><span className="cd" /><Icon.Check className="h-3 w-3" /> {t('queue.awaitingInspector')}</span>
@@ -131,7 +136,12 @@ function CardActions({ tk, can, userId, onAct, readonly, t }) {
           {t('workflow.cardAction.followup')}
         </button>
       )}
-      {custodyLocked ? (
+      {assignedElsewhere ? (
+        <span className="opx-chip paused" title={t('queue.assignedToHint')}>
+          <span className="cd" /><Icon.Truck className="h-3 w-3" />
+          {t('queue.assignedTo', { name: assignedTo || t('queue.custody.theDriver') })}
+        </span>
+      ) : custodyLocked ? (
         <span className="opx-hint">{custodyHint}</span>
       ) : allowed ? (
         <button
@@ -343,8 +353,9 @@ export default function MyMaintenanceQueue() {
     const needsAction = activeTickets.filter(({ tk, section }) => {
       if (section.readonly) return false;
       const act = resolveAction(tk);
-      // A custody-locked leg is another driver's to complete — not this user's action item.
-      return act && allows(can, act.perm) && !custodyBlocked(tk, user?.id);
+      // A custody-locked leg, or a pickup assigned to someone else, is another driver's to complete —
+      // not this user's action item.
+      return act && allows(can, act.perm) && !custodyBlocked(tk, user?.id) && !assignmentBlocked(tk, user?.id);
     }).length;
     const awaitingQa = (counts.final_reinspections ?? (sections.final_reinspections?.length || 0));
     return { total: tickets.length, vehicles: vehicleIds.size, critical, needsAction, awaitingQa };

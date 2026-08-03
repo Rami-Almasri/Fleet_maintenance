@@ -2275,6 +2275,9 @@ const en = {
       theDriver: 'the driver who picked up the car',
       theCollector: 'the driver who collected the car from the garage',
     },
+    // Assigned pickup — shown to every driver EXCEPT the one it was assigned to.
+    assignedTo: 'Assigned to {name}',
+    assignedToHint: 'The supervisor assigned this pickup to a specific driver',
     section: {
       complaint_triage:           { title: 'Complaint Triage',           hint: 'Customer complaints to handle — talk, resolve on-site, or send the car in' },
       pending_inspections:        { title: 'Pending Inspections',        hint: 'Requests to pick up and diagnostics to report on' },
@@ -5410,6 +5413,8 @@ const ar = {
       theDriver: 'السائق الذي استلم السيارة',
       theCollector: 'السائق الذي استلم السيارة من الكراج',
     },
+    assignedTo: 'مُسنَدة إلى {name}',
+    assignedToHint: 'أسند المشرف هذا الاستلام إلى سائق محدد',
     section: {
       complaint_triage:           { title: 'فرز الشكاوى',              hint: 'شكاوى عملاء للمعالجة — تحدّث أو حُلّ في الموقع أو أدخِل السيارة' },
       pending_inspections:        { title: 'فحوصات معلّقة',            hint: 'طلبات لاستلامها وتشخيصات لرفع تقريرها' },

@@ -116,6 +116,24 @@ export function custodyBlocked(tk, userId) {
   return false;
 }
 
+// Assigned-pickup gate — when the Supervisor named a driver for the pickup, that job is THAT driver's.
+// Every other driver sees "Assigned to <name>" instead of a Pick up button they'd bounce off (the
+// backend refuses them in MaintenanceWorkflowService::dispatch()). A pickup with NO driver named stays
+// open to the pool — first driver to claim it takes it — which is how garage transfers are raised.
+export function assignmentBlocked(tk, userId) {
+  if (!tk || tk.workflow_status !== 'awaiting_dispatch') return false;
+  const driverId = tk.delegation?.driver_id ?? tk.assigned_driver_id;
+  if (!driverId) return false;
+  return Number(driverId) !== Number(userId);
+}
+
+// The driver a pickup is assigned to, for the "Assigned to X" note. Null when it's the current user's
+// job or the pickup is open to the pool.
+export function assignedDriverName(tk, userId) {
+  if (!assignmentBlocked(tk, userId)) return null;
+  return tk.delegation?.driver_name || tk.assigned_driver_name || null;
+}
+
 // The name of the driver who holds custody on a gated leg (for the "in X's custody" note shown when the
 // action button is hidden). Returns null when the current user IS the custodian or the leg isn't gated.
 export function custodyHolderName(tk, userId) {
