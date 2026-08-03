@@ -27,10 +27,27 @@ class MaintenanceTaskResource extends JsonResource
             'maintenance_id' => $t->maintenance_id,
             'symptom'        => $t->symptom,
             'category_key'   => $t->category_key,
+
+            // ── EVENT TYPE (the primary domain classification) ────────────────────────────────────────
+            // What this event IS: fault | service | inspection. Read from the stored discriminator, never
+            // re-derived from the symptom. `kind_meta` carries the emoji/label/tone from the single
+            // backend source (MaintenanceTask::KIND_META) so every surface renders a type identically,
+            // and `catalog` names the row the type came from. See ADR §6 "API/Resources".
+            'kind'       => $t->kind,
+            'kind_meta'  => $t->kindMeta(),
+            'catalog'    => $this->catalogRef($t),
+            'needs_review'          => (bool) $t->needs_review,
+            'classification_source' => $t->classification_source,
+
             // Scheduled routine service (oil_change / battery / …) vs an ordinary fault. When set, fixing
             // this fault rolls the car's matching Service Reminder forward from the odometer at change — so
             // the UI prompts for that reading. Null for a normal fault.
-            'routine_service_type' => Maintenance::routineServiceTypeFor($t->symptom),
+            //
+            // Resolved from `kind` + the service catalog (MaintenanceTask::serviceReminderType), NOT by
+            // re-matching the symptom text at serialisation time — the API used to answer this question
+            // with a different classifier than the database, so the two could disagree about the same row
+            // (audit H4).
+            'routine_service_type' => $t->serviceReminderType(),
             // Vehicle-sync confirmation state for a routine/reminder service: once the technician has
             // PERFORMED it (status=completed) the vehicle record is NOT updated yet — it is
             // 'pending_confirmation' until the ticket is CLOSED, then 'confirmed'. Null for a fault with
@@ -157,6 +174,25 @@ class MaintenanceTaskResource extends JsonResource
     }
 
     /**
+     * The catalog row this event's type came from — {id, slug, name, kind} — or null for a legacy row
+     * classified by the resolver with no catalog match. Query-free: only serialised when the matching
+     * relation was eager-loaded, so a board listing never turns into N+1.
+     *
+     * @return array{id:int, slug:?string, name:?string, kind:string}|null
+     */
+    private function catalogRef(MaintenanceTask $t): ?array
+    {
+        $relation = MaintenanceTask::KIND_CATALOG_RELATIONS[$t->kind] ?? null;
+        if (! $relation || ! $t->relationLoaded($relation)) {
+            return null;
+        }
+
+        $row = $t->getRelation($relation);
+
+        return $row ? ['id' => $row->id, 'slug' => $row->slug ?? null, 'name' => $row->name ?? null, 'kind' => $t->kind] : null;
+    }
+
+    /**
      * The vehicle-sync confirmation state for a routine/reminder service fault. A performed
      * (status=completed) service is 'pending_confirmation' until its ticket is CLOSED — the single point
      * the vehicle record is updated (MaintenanceWorkflowService::confirmRoutineServices) — then 'confirmed'.
@@ -164,7 +200,9 @@ class MaintenanceTaskResource extends JsonResource
      */
     private function serviceConfirmation(MaintenanceTask $t): ?string
     {
-        if (! Maintenance::serviceTypeForSymptom($t->symptom)) {
+        // Same resolver the workflow uses to decide whether closing this rolls a reminder, so the badge
+        // the UI shows and the write that actually happens can never disagree (audit H4).
+        if (! $t->serviceReminderType()) {
             return null;
         }
         if ($t->status !== MaintenanceTask::STATUS_COMPLETED) {

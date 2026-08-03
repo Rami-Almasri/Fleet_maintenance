@@ -11,6 +11,7 @@ use App\Models\InspectionRecord;
 use App\Models\Maintenance;
 use App\Models\MaintenanceHandover;
 use App\Models\MaintenanceIncident;
+use App\Models\MaintenanceTask;
 use App\Models\MaintenanceTemporaryRelease;
 use App\Models\Vehicle;
 use App\Services\MaintenanceAnalyticsService;
@@ -93,6 +94,9 @@ class MaintenanceWorkflowController extends Controller
         // Multi-garage routing: the ticket's faults, each with its garage-stint timeline + current garage.
         // lastFailedVendor drives the "Unresolved at Garage X" blame badge on a re-inspection failure.
         'tasks.assignments.vendor:id,name', 'tasks.currentVendor:id,name', 'tasks.lastFailedVendor:id,name', 'tasks.media', 'tasks.markedIncorrectBy:id,name',
+        // Event Type layer — the catalog row each fault/service/inspection was typed from, so the resource
+        // can ship `catalog` (and resolve a service's reminder type) without an N+1 per task.
+        'tasks.faultCatalog:id,slug,name', 'tasks.serviceCatalog:id,slug,name,service_reminder_type', 'tasks.inspectionType:id,slug,name',
         // Per-fault parts (Parts Purchase workflow) — drawer/command only, so opening a fault lists its parts.
         // `partRequests` (ticket-level) additionally catches requests raised with no fault attached.
         'tasks.partRequests', 'partRequests',
@@ -138,6 +142,9 @@ class MaintenanceWorkflowController extends Controller
         'assignedDriver:id,name', 'delegatedBy:id,name',
         'recommendationReviewer:id,name', 'linkedContract:id,contract_no',
         'tasks.currentVendor:id,name', 'tasks.lastFailedVendor:id,name',
+        // Event Type layer — the card renders a type pill and filters by kind, so the catalog each task
+        // was typed from is loaded once for the whole board rather than per card.
+        'tasks.faultCatalog:id,slug,name', 'tasks.serviceCatalog:id,slug,name,service_reminder_type', 'tasks.inspectionType:id,slug,name',
         // Part requests per fault — so the board (and the Car Status stage board) can show whether a car
         // is still waiting on a part, without a second round-trip to the Parts board.
         // Operations Dashboard (Car Status) — the graph the State resolvers read (faults → part requests
@@ -964,6 +971,19 @@ class MaintenanceWorkflowController extends Controller
     {
         return $this->run(function () use ($vehicle, $gate) {
             return ResponseHelper::SuccessResponse($gate->idleInfo($vehicle), 'Vehicle idle info retrieved', 200);
+        });
+    }
+
+    /**
+     * The RULEBOOK behind system-generated inspection requests — when and why the Proactive Diagnostic
+     * Monitor asks for a test. Served live from DiagnosticGateService::rulebook() (thresholds read from
+     * config, not retyped) so the Inspection Review Queue's explainer can never describe rules other than
+     * the ones that actually fire. Read-only, vehicle-independent, safe to cache client-side.
+     */
+    public function reviewGateRules(\App\Services\DiagnosticGateService $gate)
+    {
+        return $this->run(function () use ($gate) {
+            return ResponseHelper::SuccessResponse($gate->rulebook(), 'Diagnostic rulebook retrieved', 200);
         });
     }
 
@@ -1949,6 +1969,36 @@ class MaintenanceWorkflowController extends Controller
         });
     }
 
+    /**
+     * Reject a findings payload whose declared type contradicts its catalog reference BEFORE anything is
+     * written, so the caller gets a 422 naming the finding rather than a 500 from the model guard
+     * halfway through promoting a report.
+     *
+     * @param  array<int,array<string,mixed>>  $findings
+     * @throws \Illuminate\Validation\ValidationException
+     */
+    private function assertFindingTypesAreCoherent(array $findings): void
+    {
+        $classifier = app(\App\Services\EventClassificationService::class);
+
+        foreach ($findings as $i => $f) {
+            if (empty($f['kind']) || (empty($f['catalog_id']) && empty($f['catalog_slug']))) {
+                continue;
+            }
+            try {
+                $classifier->classifyFromCatalog([
+                    'kind'         => $f['kind'],
+                    'catalog_id'   => $f['catalog_id'] ?? null,
+                    'catalog_slug' => $f['catalog_slug'] ?? null,
+                ]);
+            } catch (\InvalidArgumentException $e) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    "findings.{$i}.catalog_id" => $e->getMessage(),
+                ]);
+            }
+        }
+    }
+
     /** Stage 3 — append GARAGE-identified findings while the car is under repair (no state change). */
     public function addFindings(Request $request, Maintenance $ticket)
     {
@@ -1961,7 +2011,17 @@ class MaintenanceWorkflowController extends Controller
                 // missing root_cause_id (a typed cause) is recorded 'pending' for admin review.
                 'findings.*.root_cause'    => ['nullable', 'string', 'max:191'],
                 'findings.*.root_cause_id' => ['nullable', 'integer', Rule::exists('fault_causes', 'id')],
+
+                // Event Type layer. `kind` is optional (an unlabelled finding is still classified from
+                // its text), but if it IS sent it must be a real type and its catalog reference must
+                // match — the API refuses to accept a mixed pair rather than storing one and silently
+                // correcting the other. The model guard and DB CHECK are the two lines behind this.
+                'findings.*.kind'         => ['nullable', 'string', Rule::in(MaintenanceTask::KINDS)],
+                'findings.*.catalog_id'   => ['nullable', 'integer'],
+                'findings.*.catalog_slug' => ['nullable', 'string', 'max:80'],
             ]);
+
+            $this->assertFindingTypesAreCoherent($data['findings']);
 
             $ticket = $this->workflow->addGarageFindings($ticket, $data['findings'], $request->user());
 

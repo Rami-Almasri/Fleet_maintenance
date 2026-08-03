@@ -43,12 +43,35 @@ class RecurringFaultService
     }
 
     /**
+     * Is this event even a candidate for recurrence analysis? ONLY a fault is.
+     *
+     * A planned service RECURRING IS NORMAL — that is the defining difference between the two types
+     * (see the ADR §0 type table: service = "recurring is normal"). Flagging a second oil change as a
+     * "possible recurring fault" is not a display glitch: it persists `recurrence_flagged` on the row and
+     * opens a RecurringFaultReview case for management. So this guard is deliberately UNCONDITIONAL —
+     * it is not gated on EventKind::enforced(), because the rollout flag governs how fault ANALYTICS are
+     * READ, never whether a write is correct. Inspections are excluded for the same reason.
+     */
+    private function isRecurrenceEligible(MaintenanceTask $fault): bool
+    {
+        // Reads the RELIABILITY predicate rather than `isFault()` so the rule stays one decision as the
+        // domain grows. Damage is the reason this matters now: a car whose rims are kerbed twice is a
+        // statement about its drivers, not a returning fault, and opening a RecurringFaultReview for it
+        // would put a management case on the wrong table entirely.
+        return $fault->affectsReliability();
+    }
+
+    /**
      * REPORT-TIME background check. Silently marks the fault as a "possible recurring fault" when the same
      * fault was previously FIXED on this vehicle. Never throws, never blocks — safe to call on every new
      * fault created from a report.
      */
     public function flagPossibleRecurrence(MaintenanceTask $fault): void
     {
+        if (! $this->isRecurrenceEligible($fault)) {
+            return;
+        }
+
         $match = $this->detectPriorFix($fault);
         if (! $match) {
             return;
@@ -68,6 +91,10 @@ class RecurringFaultService
      */
     public function onFaultConfirmed(MaintenanceTask $fault, User $actor): ?RecurringFaultReview
     {
+        if (! $this->isRecurrenceEligible($fault)) {
+            return null;
+        }
+
         // Idempotent: one review per confirmed fault, even if it is re-confirmed.
         $existing = RecurringFaultReview::where('maintenance_task_id', $fault->id)->first();
         if ($existing) {
@@ -95,7 +122,7 @@ class RecurringFaultService
      */
     public function detectPriorFix(MaintenanceTask $fault): ?array
     {
-        if (! $fault->vehicle_id) {
+        if (! $fault->vehicle_id || ! $this->isRecurrenceEligible($fault)) {
             return null;
         }
 
@@ -107,7 +134,10 @@ class RecurringFaultService
             ->where('maintenance_id', '!=', $fault->maintenance_id) // never the current ticket
             ->where('status', MaintenanceTask::STATUS_COMPLETED)     // RULE: previous must be Fixed
             // Event Type layer: a recurring FAULT must not be "confirmed" by a prior planned service.
-            ->when(\App\Support\EventKind::enforced(), fn ($q) => $q->faults())
+            // UNCONDITIONAL — not gated on EventKind::enforced(). This detector WRITES (recurrence_flagged,
+            // recurrence_previous_task_id, recurring_fault_reviews), and a rollout flag must never decide
+            // whether persisted data is correct. See docs/Service-Fault-Separation-Audit.md C3.
+            ->whereIn('kind', MaintenanceTask::RELIABILITY_KINDS)
             ->whereNotNull('resolved_at')
             ->where('resolved_at', '>=', $since);
 

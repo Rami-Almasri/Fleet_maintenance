@@ -3,6 +3,7 @@
 namespace App\Ontology\Retrieval;
 
 use App\Models\EvidenceLink;
+use App\Models\MaintenanceTask;
 use App\Models\OntologyEdge;
 use App\Ontology\Contracts\KnowledgeRetriever;
 use App\Ontology\DTO\RetrievedPassage;
@@ -65,7 +66,12 @@ class FleetRetriever implements KnowledgeRetriever
         // Resolve the query to a fault concept through the ordinary matcher — the same path a
         // technician's search takes. If the ontology cannot recognise the query, we have no fleet
         // evidence to offer, and inventing a looser rule here would produce confident nonsense.
-        $match = $this->ontology->resolve($query, ['limit' => 1, 'min_score' => 55])->first();
+        // FAULT LANE. Fleet evidence answers "what has gone wrong with this before"; a planned service
+        // is not evidence of a failure, and at a 55 floor a service concept could otherwise outrank the
+        // fault the caller was actually asking about (audit H6).
+        $match = $this->ontology->resolve($query, [
+            'limit' => 1, 'min_score' => 55, 'kinds' => [MaintenanceTask::KIND_FAULT],
+        ])->first();
         $node = $match['keyword']->ontologyNode ?? null;
 
         if (! $node) {

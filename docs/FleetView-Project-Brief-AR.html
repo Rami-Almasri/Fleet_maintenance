@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FleetView — نبذة عن المشروع</title>
+<style>
+  :root{
+    --bg:#070b14;
+    --bg-2:#0b1220;
+    --panel:rgba(255,255,255,.035);
+    --panel-2:rgba(255,255,255,.06);
+    --line:rgba(255,255,255,.09);
+    --line-2:rgba(255,255,255,.16);
+    --ink:#e9eefb;
+    --ink-2:#a8b3cc;
+    --ink-3:#6d7b96;
+    --cy:#3ddad7;
+    --bl:#5b9dff;
+    --vi:#a681ff;
+    --am:#ffb454;
+    --gr:#4ade80;
+    --rd:#ff6b81;
+    --radius:16px;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0;background:var(--bg);color:var(--ink);
+    font:15.5px/1.85 "Segoe UI","Noto Naskh Arabic","Dubai",Tahoma,-apple-system,BlinkMacSystemFont,sans-serif;
+    -webkit-font-smoothing:antialiased;
+    background-image:
+      radial-gradient(900px 600px at 88% -8%, rgba(91,157,255,.20), transparent 60%),
+      radial-gradient(800px 520px at 8% 4%, rgba(166,129,255,.16), transparent 60%),
+      radial-gradient(700px 500px at 50% 100%, rgba(61,218,215,.09), transparent 65%);
+    background-attachment:fixed;
+  }
+  .wrap{max-width:1180px;margin:0 auto;padding:0 24px}
+  .ltr{direction:ltr;display:inline-block;unicode-bidi:isolate;font-family:var(--mono)}
+
+  /* ---------- nav ---------- */
+  nav{
+    position:sticky;top:0;z-index:50;
+    backdrop-filter:blur(14px);background:rgba(7,11,20,.72);
+    border-bottom:1px solid var(--line);
+  }
+  nav .wrap{display:flex;align-items:center;gap:18px;height:58px;overflow-x:auto;scrollbar-width:none}
+  nav .wrap::-webkit-scrollbar{display:none}
+  .brand{display:flex;align-items:center;gap:9px;font-weight:700;white-space:nowrap;direction:ltr}
+  .brand .dot{width:9px;height:9px;border-radius:50%;background:var(--cy);box-shadow:0 0 14px var(--cy)}
+  nav a{color:var(--ink-3);text-decoration:none;font-size:14px;white-space:nowrap;transition:color .15s}
+  nav a:hover{color:var(--ink)}
+  nav .spacer{flex:1}
+  nav .lang{border:1px solid var(--line-2);border-radius:999px;padding:4px 12px;font-size:12.5px;color:var(--cy)}
+
+  /* ---------- hero ---------- */
+  header{padding:86px 0 60px;position:relative}
+  .eyebrow{
+    display:inline-flex;align-items:center;gap:8px;
+    font-size:12.5px;letter-spacing:.04em;
+    color:var(--cy);border:1px solid rgba(61,218,215,.28);background:rgba(61,218,215,.07);
+    padding:5px 14px;border-radius:999px;
+  }
+  h1{
+    font-size:clamp(34px,5.6vw,62px);line-height:1.25;
+    margin:22px 0 0;font-weight:800;
+    background:linear-gradient(300deg,#fff 20%,#a8c6ff 60%,#7fe6e3 95%);
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+  }
+  .lede{font-size:clamp(16px,2vw,19px);color:var(--ink-2);max-width:66ch;margin:22px 0 0;line-height:2}
+  .lede strong{color:var(--ink);font-weight:700}
+
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;margin:46px 0 0;
+    background:var(--line);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+  .stat{background:var(--bg-2);padding:20px 18px}
+  .stat b{display:block;font-size:28px;font-weight:800;direction:ltr;
+    background:linear-gradient(120deg,#fff,#8fb8ff);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .stat span{display:block;font-size:12.5px;color:var(--ink-3);margin-top:6px}
+
+  /* ---------- sections ---------- */
+  section{padding:64px 0;border-top:1px solid var(--line)}
+  .kicker{font-size:12.5px;letter-spacing:.06em;color:var(--ink-3)}
+  h2{font-size:clamp(25px,3.4vw,36px);line-height:1.4;margin:10px 0 12px;font-weight:800}
+  .sub{color:var(--ink-2);max-width:74ch;margin:0 0 32px;line-height:2}
+
+  .grid{display:grid;gap:16px}
+  .g2{grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+  .g3{grid-template-columns:repeat(auto-fit,minmax(275px,1fr))}
+  .g4{grid-template-columns:repeat(auto-fit,minmax(215px,1fr))}
+
+  .card{
+    background:linear-gradient(180deg,var(--panel),rgba(255,255,255,.012));
+    border:1px solid var(--line);border-radius:var(--radius);padding:22px;
+    transition:border-color .18s,transform .18s,background .18s;
+  }
+  .card:hover{border-color:var(--line-2);transform:translateY(-2px)}
+  .card h3{margin:0 0 6px;font-size:17px;font-weight:700}
+  .card p{margin:0;color:var(--ink-2);font-size:14.5px;line-height:1.95}
+  .card .who{font-size:12px;color:var(--ink-3)}
+
+  .icon{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;font-size:16px;margin-bottom:12px;
+        border:1px solid var(--line-2);background:var(--panel-2)}
+
+  .tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px}
+  .tag{font-family:var(--mono);font-size:10.5px;padding:3px 8px;border-radius:6px;direction:ltr;
+       background:rgba(255,255,255,.05);border:1px solid var(--line);color:var(--ink-2)}
+  .tag.ar{font-family:inherit;font-size:11.5px}
+  .tag.cy{color:var(--cy);border-color:rgba(61,218,215,.3);background:rgba(61,218,215,.08)}
+  .tag.vi{color:var(--vi);border-color:rgba(166,129,255,.3);background:rgba(166,129,255,.08)}
+  .tag.am{color:var(--am);border-color:rgba(255,180,84,.3);background:rgba(255,180,84,.08)}
+  .tag.gr{color:var(--gr);border-color:rgba(74,222,128,.3);background:rgba(74,222,128,.08)}
+
+  /* ---------- workflow rail (RTL) ---------- */
+  .rail{position:relative;margin-top:14px;padding-right:34px}
+  .rail:before{content:"";position:absolute;right:11px;top:6px;bottom:6px;width:2px;
+    background:linear-gradient(180deg,var(--cy),var(--bl) 40%,var(--vi) 75%,var(--gr))}
+  .step{position:relative;margin-bottom:14px;background:var(--bg-2);border:1px solid var(--line);
+        border-radius:14px;padding:16px 18px;transition:border-color .18s,transform .18s}
+  .step:hover{border-color:var(--line-2);transform:translateX(-3px)}
+  .step:before{content:"";position:absolute;right:-28px;top:24px;width:11px;height:11px;border-radius:50%;
+    background:var(--bg);border:2px solid var(--bl);box-shadow:0 0 0 4px rgba(91,157,255,.12)}
+  .step .st{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px}
+  .step .n{font-size:12px;color:var(--bl)}
+  .step h4{margin:0;font-size:16.5px;font-weight:700}
+  .step .actor{font-size:12px;color:var(--ink-3);border:1px solid var(--line);padding:2px 10px;border-radius:999px}
+  .step p{margin:8px 0 0;color:var(--ink-2);font-size:14.3px;line-height:1.95}
+  .step code{font-family:var(--mono);font-size:11.5px;color:var(--cy);background:rgba(61,218,215,.08);
+    border:1px solid rgba(61,218,215,.18);padding:1px 6px;border-radius:5px;direction:ltr;display:inline-block}
+
+  /* ---------- pipeline ---------- */
+  .pipe{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-top:8px}
+  .pnode{background:var(--bg-2);border:1px solid var(--line);border-radius:14px;padding:18px}
+  .pnode .num{font-size:11.5px;color:var(--vi)}
+  .pnode h4{margin:8px 0 6px;font-size:16px;font-weight:700}
+  .pnode p{margin:0;font-size:13.8px;color:var(--ink-2);line-height:1.9}
+
+  .split{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:760px){.split{grid-template-columns:1fr}}
+
+  .note{border-right:3px solid var(--am);background:rgba(255,180,84,.06);border-radius:12px 0 0 12px;
+    padding:14px 18px;color:var(--ink-2);font-size:14.3px;line-height:1.95}
+  .note b{color:var(--am)}
+  .note.good{border-color:var(--gr);background:rgba(74,222,128,.06)}
+  .note.good b{color:var(--gr)}
+
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  .tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:var(--radius);background:var(--bg-2)}
+  th,td{padding:12px 16px;text-align:right;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-size:12.5px;color:var(--ink-3);background:rgba(255,255,255,.03);font-weight:600}
+  tr:last-child td{border-bottom:none}
+  td b{color:var(--ink)}
+  td span{color:var(--ink-2)}
+
+  .bars{display:grid;gap:12px;margin-top:6px}
+  .bar{display:grid;grid-template-columns:210px 1fr 66px;align-items:center;gap:14px;font-size:14px}
+  .bar .track{height:8px;border-radius:99px;background:rgba(255,255,255,.06);overflow:hidden;transform:scaleX(-1)}
+  .bar .fill{height:100%;border-radius:99px;background:linear-gradient(90deg,var(--bl),var(--cy))}
+  .bar .val{font-size:12.5px;color:var(--ink-2);text-align:left}
+  @media(max-width:640px){.bar{grid-template-columns:1fr;gap:5px}.bar .val{text-align:right}}
+
+  footer{padding:52px 0 70px;border-top:1px solid var(--line);color:var(--ink-3);font-size:13.5px}
+  .fl{display:flex;flex-wrap:wrap;gap:10px 26px;align-items:center}
+
+  @media print{
+    body{background:#fff;color:#111}
+    nav{display:none}
+    .card,.step,.pnode,.tablewrap{border-color:#ccc;background:#fff}
+    h1,.stat b{color:#111;-webkit-text-fill-color:#111}
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <div class="brand"><span class="dot"></span> FleetView</div>
+    <a href="#what">الفكرة</a>
+    <a href="#roles">الأدوار</a>
+    <a href="#workflow">مسار العمل</a>
+    <a href="#ai">الذكاء الاصطناعي</a>
+    <a href="#data">مصادر البيانات</a>
+    <a href="#quality">الاختبارات</a>
+    <a href="#stack">التقنيات</a>
+    <a href="#next">الخطوة القادمة</a>
+    <span class="spacer"></span>
+    <a class="lang" href="FleetView-Project-Brief.html">English</a>
+  </div>
+</nav>
+
+<header>
+  <div class="wrap">
+    <span class="eyebrow">نبذة عن المشروع · أغسطس ٢٠٢٦</span>
+    <h1>الأسطول لم يعد يُدار<br>من مجموعة واتساب.</h1>
+    <p class="lede">
+      <strong>FleetView</strong> هو نظام التشغيل الكامل لأسطول تأجير السيارات: كل سيارة، وكل عقد، وكل عطل، وكل زيارة
+      ورشة، وكل فاتورة، وكل إصلاح — في مكان واحد. ليس لوحة معلومات مربوطة على ملف إكسل، بل
+      <strong>محرّك مسار عمل</strong> يُفتح فيه العطل ويُرسَل ويُصلَّح ويُعاد فحصه ويُغلق بأيدي أشخاص محدّدين بصلاحيات
+      محدّدة، ومعه <strong>طبقة ذكاء</strong> تقرأ التاريخ النصّي لآلاف الإصلاحات السابقة لتخبرك ما هو العطل فعلاً في
+      هذه السيارة، وماذا ستفعل الورشة به.
+    </p>
+
+    <div class="stats">
+      <div class="stat"><b>28</b><span>حالة في مسار العمل</span></div>
+      <div class="stat"><b>9</b><span>أدوار · ٤٠ صلاحية</span></div>
+      <div class="stat"><b>94</b><span>اختبار آلي</span></div>
+      <div class="stat"><b>+100</b><span>خدمة في الواجهة الخلفية</span></div>
+      <div class="stat"><b>68</b><span>صفحة في التطبيق</span></div>
+      <div class="stat"><b>15</b><span>مجالاً في قاموس الأعطال</span></div>
+    </div>
+  </div>
+</header>
+
+<!-- ============ WHAT ============ -->
+<section id="what">
+  <div class="wrap">
+    <span class="kicker">٠١ — المشكلة</span>
+    <h2>أين كان يتسرّب المال والوقت</h2>
+    <p class="sub">
+      أسطول التأجير يخسر المال في ثلاثة أماكن لم يكن أحد يقيسها: سيارات تجلس في الورشة أطول ممّا وعد به أحد، وعطل واحد
+      يُدفع ثمنه مرّتين لأنه عاد بعد «الإصلاح»، وإصلاحات لم تُربط تكلفتها الحقيقية بالسيارة التي سبّبتها. الثلاثة كانت
+      غير مرئية لأن العملية كلها كانت تعيش في رسائل ومكالمات وجدول صيانة.
+    </p>
+
+    <div class="grid g3">
+      <div class="card">
+        <div class="icon" style="color:var(--rd)">⏱</div>
+        <h3>توقّف لا مالك له</h3>
+        <p>السيارة تذهب إلى الورشة وتعود «حين تعود». لا تاريخ موعود، ولا ساعة تعدّ، ولا تصعيد، ولا سجلّ يبيّن في أي
+        مرحلة تعطّلت.</p>
+      </div>
+      <div class="card">
+        <div class="icon" style="color:var(--am)">↻</div>
+        <h3>إصلاحات تعود</h3>
+        <p>نفس العطل، نفس السيارة، يُصلَّح مرّتين ويُدفع مرّتين — ولا أحد يرى ذلك لأن الزيارتين مجرّد سطرين لا رابط
+        بينهما.</p>
+      </div>
+      <div class="card">
+        <div class="icon" style="color:var(--vi)">🧾</div>
+        <h3>تكلفة بلا عنوان</h3>
+        <p>الفواتير موجودة، لكن لا شيء يربط الدرهم بسيارة وعطل وورشة. فصار سؤال «أي السيارات تكلّفنا؟» رأياً لا
+        رقماً.</p>
+      </div>
+    </div>
+
+    <div class="grid g3" style="margin-top:16px">
+      <div class="card">
+        <div class="icon" style="color:var(--cy)">🎯</div>
+        <h3>تذكرة واحدة، حقيقة واحدة</h3>
+        <p>التذكرة هي <b>حاوية أعطال</b> لسيارة واحدة في ورشة واحدة. كل تغيّر حالة يُختم بوقته وبالمستخدم الذي نفّذه
+        ويُكتب في سجلّ تدقيق. لا شيء يتحرّك باتفاق شفهي.</p>
+        <div class="tags"><span class="tag cy">workflow_status</span><span class="tag">last_state_change_at</span></div>
+      </div>
+      <div class="card">
+        <div class="icon" style="color:var(--bl)">🔍</div>
+        <h3>كل شاشة تُظهر مصدرها</h3>
+        <p>قاعدة حاكمة في المنتج: لا صناديق سوداء. كل رقم يحمل <b>مصدر بياناته</b> — أي جدول، أي استيراد، أي اجتهاد —
+        حتى تستطيع العمليات أن تناقش البيانات بدل أن تصدّقها على عماية.</p>
+        <div class="tags"><span class="tag ar">حقيقة</span><span class="tag ar">مشتق</span><span class="tag ar">اجتهاد</span></div>
+      </div>
+      <div class="card">
+        <div class="icon" style="color:var(--gr)">🧠</div>
+        <h3>التاريخ يتحوّل إلى نصيحة</h3>
+        <p>آلاف سطور الإصلاح القديمة، المكتوبة باختصارات الميكانيكيين وبلغتين، تُحلَّل إلى قاموس أعطال منظَّم — فتصبح
+        جملة «هذه السيارة تفعل هذا كل أربعة أشهر» استعلاماً يُنفَّذ، لا ذاكرة شخص.</p>
+        <div class="tags"><span class="tag ar gr">أنطولوجيا</span><span class="tag ar gr">تكرار الأعطال</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ ROLES ============ -->
+<section id="roles">
+  <div class="wrap">
+    <span class="kicker">٠٢ — الأشخاص</span>
+    <h2>تسعة أدوار، كل دور يملك خطوة بعينها</h2>
+    <p class="sub">
+      الصلاحيات ليست «مدير مقابل مستخدم». كل صلاحية معرَّفة بصيغة <span class="ltr">resource.action</span>، وكل مسار في
+      الواجهة البرمجية محمي بواحدة منها. الدور لا ينفّذ إلا الخطوات التي تخصّ جزءه من الرحلة — وهذا بالضبط ما يجعل سجلّ
+      التدقيق ذا معنى.
+    </p>
+
+    <div class="grid g3">
+      <div class="card">
+        <div class="icon" style="color:var(--bl)">🎧</div>
+        <span class="who">مكتب العمليات</span>
+        <h3>العمليات</h3>
+        <p>يدير جانب التأجير: العملاء، العقود، التسليم والاستلام، المدفوعات، جاهزية السيارة للاستلام، وطلب نقل
+        لوجستي. يرى الصيانة لكنه لا يديرها.</p>
+        <div class="tags"><span class="tag">contracts.manage</span><span class="tag">billing.manage</span><span class="tag">operations.manage</span></div>
+      </div>
+
+      <div class="card">
+        <div class="icon" style="color:var(--cy)">🔧</div>
+        <span class="who">التشخيص</span>
+        <h3>الفاحص</h3>
+        <p>البوابة إلى الصيانة. يجرّب السيارة على الطريق، ويسجّل تقرير التشخيص، ويقرّر إن كان هذا يستحقّ تذكرة أصلاً.
+        ويعيد الفحص عند العودة، ومن حقّه أن <b>يرفض</b> الإصلاح — فتُفتح التذكرة من جديد.</p>
+        <div class="tags"><span class="tag cy">maintenance.initiate</span><span class="tag">inspections.manage</span></div>
+      </div>
+
+      <div class="card">
+        <div class="icon" style="color:var(--vi)">🧭</div>
+        <span class="who">الموزِّع</span>
+        <h3>المشرف / المنسّق</h3>
+        <p>يقرأ التذكرة المفتوحة، ويختار الورشة، ويكلّف السائق، ويتابع التقدّم، ويسأل حين تصمت السيارة. يملك نقاط
+        المتابعة وتاريخ الإنجاز الموعود.</p>
+        <div class="tags"><span class="tag vi">maintenance.delegate</span><span class="tag">logistics.dispatch</span><span class="tag">checkpoint.manage</span></div>
+      </div>
+
+      <div class="card">
+        <div class="icon" style="color:var(--am)">🚚</div>
+        <span class="who">الميدان</span>
+        <h3>اللوجستيات / السائق</h3>
+        <p>يلتقط مهمة النقل من القائمة، ويسجّل العدّاد عند الاستلام والتسليم، ويقود السيارة إلى الورشة ومنها. سلسلة
+        العدّاد تُتحقَّق عند كل لمسة.</p>
+        <div class="tags"><span class="tag am">logistics.claim</span><span class="tag">maintenance.logistics</span></div>
+      </div>
+
+      <div class="card">
+        <div class="icon" style="color:var(--gr)">🏭</div>
+        <span class="who">مسار الورشة</span>
+        <h3>مدير الصيانة</h3>
+        <p>يعتمد الفاتورة، ويدير أحداث الورشة وقطع الغيار والمكوّنات المركّبة، ويراجع الأعطال المتكرّرة التي عادت بعد
+        «الإصلاح».</p>
+        <div class="tags"><span class="tag gr">maintenance.approve</span><span class="tag">parts.purchase</span><span class="tag">components.manage</span></div>
+      </div>
+
+      <div class="card">
+        <div class="icon" style="color:var(--am)">💰</div>
+        <span class="who">الدفاتر</span>
+        <h3>المالية</h3>
+        <p>الفواتير والمدفوعات والإيصالات ومحافظ العملاء ورؤية التكلفة لكل سيارة. كل واجهات المال خلف مفتاح تشغيل واحد،
+        فيستطيع التطبيق التشغيلي أن يُطلق من دونها.</p>
+        <div class="tags"><span class="tag">billing.manage</span><span class="tag">insights.view</span></div>
+      </div>
+
+      <div class="card">
+        <div class="icon">🛡</div>
+        <span class="who">القيادة</span>
+        <h3>المدير</h3>
+        <p>تحكّم تشغيلي كامل بالأسطول عدا إدارة المستخدمين — بما في ذلك التجاوز الذي يسمح بتنفيذ صيانة على سيارة
+        مؤجَّرة.</p>
+        <div class="tags"><span class="tag">operations.override</span></div>
+      </div>
+
+      <div class="card">
+        <div class="icon">👤</div>
+        <span class="who">المنصّة</span>
+        <h3>الأدمن / الأدمن الأعلى</h3>
+        <p>كل شيء، إضافةً إلى إدارة المستخدمين والأدوار وطابور اعتماد تعديلات العدّاد. الأدمن الأعلى يتجاوز كل
+        البوابات بحكم التصميم.</p>
+        <div class="tags"><span class="tag">users.manage</span><span class="tag">vehicles.approve_odometer</span></div>
+      </div>
+
+      <div class="card">
+        <div class="icon">👁</div>
+        <span class="who">الإشراف</span>
+        <h3>المشاهد</h3>
+        <p>قراءة فقط عبر المنصّة كلها. للملّاك والمدقّقين ولكل من يحتاج الصورة كاملة دون القدرة على تغييرها.</p>
+        <div class="tags"><span class="tag">*.view</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ WORKFLOW ============ -->
+<section id="workflow">
+  <div class="wrap">
+    <span class="kicker">٠٣ — الرحلة</span>
+    <h2>من «في شيء غلط» إلى «رجعت للخدمة»</h2>
+    <p class="sub">
+      ثماني وعشرون حالة، لكن عموداً فقرياً واحداً. انتبه إلى مواضع التفرّع: التشخيص قد ينتهي بلا تذكرة أصلاً، والإصلاح
+      قد <b>يُرفض</b> عند إعادة الفحص، والسيارة قد تُطلق للتأجير في منتصف الإصلاح دون أن تضيع التذكرة.
+    </p>
+
+    <div class="rail">
+      <div class="step">
+        <div class="st"><span class="n">المرحلة ٠</span><h4>بلاغ يصل</h4><span class="actor">سائق · عمليات · شكوى</span></div>
+        <p>سائق يطلب فحصاً، أو العمليات تسجّل شكوى عميل، أو يصل عطل من الطريق. النظام يختم <b>من أين جاء البلاغ</b>
+        و<b>لماذا</b> كحقيقتين منفصلتين — المصدر ليس هو السبب. البلاغ الطارئ يوقف السيارة فوراً ويفرض بوابة جودة.</p>
+      </div>
+
+      <div class="step">
+        <div class="st"><span class="n">المرحلة ١</span><h4>تجربة تشخيصية على الطريق</h4><span class="actor">الفاحص</span></div>
+        <p>الفاحص يقود السيارة ويسجّل الملاحظات من قاموس محدَّد — قائمة أعطال قابلة للاختيار، لا نصّاً حرّاً.
+        <code>inspection_diagnostic</code></p>
+      </div>
+
+      <div class="step">
+        <div class="st"><span class="n">المرحلة ٢</span><h4>تذكرة… أو لا تذكرة</h4><span class="actor">الفاحص</span></div>
+        <p>مخرجان اثنان. سيارة سليمة ← <code>diagnostic_cleared</code>، تُغلق ولم تُفتح تذكرة أصلاً. تحتاج عملاً ←
+        <b>تُفتح</b> التذكرة بأعطالها ودرجة خطورتها، وتنتظر قرار الإرسال. <code>inspection_pending</code></p>
+      </div>
+
+      <div class="step">
+        <div class="st"><span class="n">المرحلة ٣</span><h4>اختيار الورشة</h4><span class="actor">المشرف</span></div>
+        <p>هنا يثبت الذكاء الاصطناعي جدواه. يرى المشرف <b>ترشيحاً مرتَّباً للورش</b> مع سبب الترتيب ظاهراً أمامه،
+        والمدّة المتوقّعة للإصلاح، وقطع الغيار المرجّحة، وهل سبق أن دخلت هذه السيارة بهذا العطل من قبل. ثم يختار
+        الورشة، ويكلّف السائق، ويحدّد تاريخ العودة الموعود. <code>awaiting_dispatch</code></p>
+      </div>
+
+      <div class="step">
+        <div class="st"><span class="n">المرحلة ٤</span><h4>الاستلام والطريق</h4><span class="actor">السائق</span></div>
+        <p>يُسجَّل العدّاد، وتُثبَّت الورشة، وتتحرّك السيارة. ساعة التوقّف تبدأ من هنا — وتتوقّف مؤقتاً إذا أُعيدت
+        السيارة للتأجير. <code>in_transit</code> ← <code>under_repair</code></p>
+      </div>
+
+      <div class="step">
+        <div class="st"><span class="n">المرحلة ٥</span><h4>داخل الورشة</h4><span class="actor">المشرف · الورشة</span></div>
+        <p>نقاط متابعة مدعومة بأدلّة تُبقي التذكرة حيّة: ماذا أُنجز، وماذا ينتظر قطعة، وما الذي تغيّر في الوعد. والصمت
+        يُصعِّد من تلقاء نفسه — يعلو التنبيه كلما اقترب التاريخ الموعود ثم تجاوزه. قطع الغيار المطلوبة هنا تصير
+        مشتريات، والمشتريات تصير <b>مكوّنات مركّبة</b> على هذه السيارة بعينها.</p>
+      </div>
+
+      <div class="step">
+        <div class="st"><span class="n">المرحلة ٦</span><h4>الورشة تقول: انتهينا</h4><span class="actor">الورشة ← المشرف</span></div>
+        <p>لا يُقبل هذا على الثقة. مراجعة الإصلاح أولاً، ثم <code>ready_for_reinspection</code>. وكل عطل في التذكرة
+        يُغلق على حدة: <b>أُصلح</b> (مع دليل)، أو <b>غير موجود</b> (الورشة فحصت ولم تجده)، أو <b>مُلغى</b>. الثلاثة
+        بيانات مختلفة، لا مجرّد ألفاظ مختلفة.</p>
+      </div>
+
+      <div class="step">
+        <div class="st"><span class="n">المرحلة ٧</span><h4>إعادة الفحص — بوابة الجودة</h4><span class="actor">الفاحص</span></div>
+        <p>يقودها الفاحص مرّة أخرى. <b>نجاح</b> ← يُكتب سجلّ الخدمة وتمضي التذكرة. <b>رسوب</b> ←
+        <code>reinspection_failed</code>، وتعود مباشرةً إلى المشرف لإعادة الإرسال — وتُسجَّل هذه الجولة نهائياً في سجلّ
+        الورشة كـ«عودة».</p>
+      </div>
+
+      <div class="step">
+        <div class="st"><span class="n">المرحلة ٨</span><h4>عودة إلى الأسطول</h4><span class="actor">السائق · المالية</span></div>
+        <p>السائق يستلم من الورشة، ويُسجَّل العدّاد مجدّداً، وتعود السيارة إلى المخزون. تبقى التذكرة مفتوحة في
+        <code>awaiting_invoice</code> حتى تصل الفاتورة وتُنسَب التكلفة إلى السيارة وإلى العطل — ثم
+        <code>closed</code>.</p>
+      </div>
+    </div>
+
+    <div class="note" style="margin-top:22px">
+      <b>أهمّ تفرّع في المسار كلّه:</b> رسوب إعادة الفحص ليس إحراجاً يُخفى — بل هو أثمن إشارة في النظام. هو ما يحوّل
+      سؤال «أي ورشة نستخدم؟» من علاقة شخصية إلى رقم مقيس.
+    </div>
+  </div>
+</section>
+
+<!-- ============ AI ============ -->
+<section id="ai">
+  <div class="wrap">
+    <span class="kicker">٠٤ — الذكاء</span>
+    <h2>الذكاء الاصطناعي يقرأ العطل، ويتنبّأ بالإصلاح</h2>
+    <p class="sub">
+      سنوات من تاريخ الصيانة موجودة كنصّ حرّ: اختصارات ميكانيكيين، وخليط عربي وإنجليزي، ورموز، وأخطاء إملائية. لا
+      يستطيع إنسان قراءتها بهذا الحجم، ولا تفهمها قاعدة بيانات. طبقة الذكاء تحوّل هذا النصّ إلى معرفة منظَّمة، ثم
+      تستخدمه للإجابة عن الأسئلة الثلاثة التي يسألها المشرف فعلاً.
+    </p>
+
+    <div class="pipe">
+      <div class="pnode">
+        <div class="num">الخطوة ٠١</div>
+        <h4>قراءة النصّ</h4>
+        <p>كل سطر إصلاح قديم، وكل ملاحظة فاتورة، وكل تقرير فحص، يُمسح مقابل <b>أنطولوجيا أعطال</b> مُعدَّة يدوياً — ١٥
+        مجالاً (محرّك، فرامل، كهرباء، تكييف، ناقل حركة، تعليق…) يحمل كلٌّ منها مفاهيمه والمصطلحات التي يكتبها
+        الميكانيكيون فعلاً.</p>
+      </div>
+      <div class="pnode">
+        <div class="num">الخطوة ٠٢</div>
+        <h4>تسمية العطل</h4>
+        <p>يتحوّل النصّ إلى <b>مفهوم</b>: «لمبة المحرّك»، «التكييف لا يبرّد»، «تحذير الوسادة الهوائية». والأهم أن
+        المحرّك يفرّق بين <b>خدمة</b> (تغيير زيت) و<b>عطل</b> (تسريب زيت) و<b>سياق</b> — لأن احتساب صيانة دورية كعطل
+        يفسد كل مؤشّر بعده.</p>
+      </div>
+      <div class="pnode">
+        <div class="num">الخطوة ٠٣</div>
+        <h4>بناء البصمة</h4>
+        <p>يصير الإصلاح بصمةً: هذا العطل، على هذا الموديل، في هذه الورشة، بهذه المدّة، بهذه التكلفة، بهذه القطع.
+        البصمات هي ما يجعل زيارتين بينهما ثلاث سنوات قابلتين للمقارنة.</p>
+      </div>
+      <div class="pnode">
+        <div class="num">الخطوة ٠٤</div>
+        <h4>الإجابة</h4>
+        <p>عند تذكرة جديدة، يبحث عن الإصلاحات المشابهة ويعيد التوزيع الصادق: الوسيط والمئين التسعين للمدّة، ونطاق
+        التكلفة، والقطع التي استُخدمت فعلاً، وأي ورشة أنهته من المرّة الأولى.</p>
+      </div>
+    </div>
+
+    <div class="grid g2" style="margin-top:28px">
+      <div class="card">
+        <div class="icon" style="color:var(--cy)">🩺</div>
+        <h3>«ما العطل الحقيقي في هذه السيارة؟»</h3>
+        <p>كشف الأعطال المتكرّرة يربط الزيارات المعادة لنفس السيارة في قصّة واحدة. إذا عادت سيارة بنفس العطل الكهربائي
+        ثلاث مرّات خلال ثمانية أشهر، فهذه ليست ثلاث تذاكر — بل مشكلة واحدة لم تُحلّ ولها نمط، وتُصعَّد كواحدة. ويُولَّد
+        لكل سيارة <b>«فحوص مقترحة»</b> من أعطالها المتكرّرة، فيبدأ الفحص التالي وهو يعرف تاريخ السيارة مسبقاً.</p>
+        <div class="tags"><span class="tag">RecurringFaultService</span><span class="tag">VehicleFaultRecurrenceService</span></div>
+      </div>
+
+      <div class="card">
+        <div class="icon" style="color:var(--vi)">🏭</div>
+        <h3>«ماذا ستفعل الورشة، وكم ستستغرق؟»</h3>
+        <p>قبل الإرسال، يتنبّأ النظام بالإصلاح: المدّة المتوقّعة من إحصاءات حالات حقيقية مشابهة، وقطع الغيار المرجّحة،
+        ونطاق التكلفة المتوقّع، وترشيح مرتَّب للورش مبني على معدّل الإصلاح من أول مرّة، ونسبة العودة، وزمن الدوران،
+        والتكلفة — موزوناً بحسب خطورة العطل. يرى المشرف الدرجة <b>والسبب وراءها</b> في شاشة واحدة قبل أن يلتزم
+        بالسيارة.</p>
+        <div class="tags"><span class="tag">GarageRecommendationService</span><span class="tag">RepairDurationQuery</span><span class="tag">PartIntelligence</span></div>
+      </div>
+
+      <div class="card">
+        <div class="icon" style="color:var(--bl)">💬</div>
+        <h3>يتكلّم لغة العمليات، لا لغة المحرّك</h3>
+        <p>قاعدة صارمة في هذا النظام: المحرّك يُصدر <b>رموز أسباب</b>، لا جملاً جاهزة. والواجهة تترجمها إلى لغة تشغيلية
+        بسيطة — «هذه الورشة أصلحت هذا العطل من أول مرّة في ٨ من آخر ٩ سيارات» — مع طيّ التفاصيل الفنّية تحت
+        «تفاصيل تقنية». نفس المخرَج، جمهوران، ومصدر حقيقة واحد. والواجهة كلها عربية/إنجليزية.</p>
+        <div class="tags"><span class="tag ar">رموز الأسباب</span><span class="tag">EN / AR</span></div>
+      </div>
+
+      <div class="card">
+        <div class="icon" style="color:var(--gr)">📐</div>
+        <h3>يُظهر عمله… وحدوده</h3>
+        <p>كل ترشيح مسنود <b>برسم بياني للتفسير</b>: العُقد والأدلّة التي أنتجت الرقم، قابلة للفحص من الواجهة. والمنصّة
+        تقيس ثقتها بنفسها — فحيث يكون التاريخ ضعيفاً تقول ذلك بدل أن تخترع يقيناً. ويوجد نظام اختبار رجعي يُقيّم
+        المتنبّئ مقابل ما حدث فعلاً بعد ذلك.</p>
+        <div class="tags"><span class="tag">ExplanationEngine</span><span class="tag">ConfidenceScorer</span><span class="tag">intelligence:backtest</span></div>
+      </div>
+    </div>
+
+    <div class="note" style="margin-top:22px">
+      <b>ملاحظة صريحة عن الذكاء الاصطناعي:</b> أنطولوجيا الأعطال تُشحن <i>معدّة ومحدَّدة سلفاً</i> — المطابقة تعمل بكود
+      عادي دون مفتاح واجهة برمجية ودون استدعاء نموذج مع كل طلب، ولهذا هي سريعة وقابلة للتدقيق وقابلة لإعادة الإنتاج
+      بنفس النتيجة. نسبة التقاط المفاهيم المقيسة عالية، لكن تقرير التغطية يقول بوضوح إن نسبة كبيرة من السجلّات
+      التاريخية تجميلية لا ميكانيكية، وإن <i>درجة الثقة التنبّؤية</i> لم تستحقّ بعد أن تُعرض كرقم. هذه البوابة مقصودة:
+      المنصّة لا تعرض رقماً لا تستطيع الدفاع عنه.
+    </div>
+  </div>
+</section>
+
+<!-- ============ DATA ============ -->
+<section id="data">
+  <div class="wrap">
+    <span class="kicker">٠٥ — الأساس</span>
+    <h2>من أين تأتي كل حقيقة</h2>
+    <p class="sub">
+      أصعب هندسة في هذا المشروع ليست الواجهة، بل أن تقرّر — لكل حقيقة — أي نظام يحقّ له أن يكون على صواب بشأنها. هذه
+      قرارات محسومة ومفروضة داخل الكود.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>الحقيقة</th><th>مصدر الحقيقة الوحيد</th><th>لماذا هي مقفلة</th></tr></thead>
+        <tbody>
+          <tr><td><b>ما السيارات الموجودة</b></td><td><span>واجهة OfficeManager (بمعرّف الأسطول، لا برقم اللوحة)</span></td>
+              <td><span>اللوحات تُنقل بين السيارات؛ الهوية يجب أن تنجو من ذلك.</span></td></tr>
+          <tr><td><b>الإيرادات والعقود</b></td><td><span>عقود OfficeManager (نسخة للقراءة فقط)</span></td>
+              <td><span>دخل التأجير يُسجَّل في نظام آخر؛ نحن نعكسه ولا نخترعه.</span></td></tr>
+          <tr><td><b>تكلفة الإصلاح</b></td><td><span>الفاتورة — مجمّعة على مستوى التذكرة</span></td>
+              <td><span>التذكرة الواحدة قد تنتج عدّة فواتير؛ التكلفة هي المجموع منسوباً إلى العطل.</span></td></tr>
+          <tr><td><b>مصاريف السيارة</b></td><td><span>VehicleExpenseProvider، مصنَّفة من نصّ الملاحظة</span></td>
+              <td><span>نوع المصروف يُشتقّ من الملاحظة؛ والتأجير من الغير مستثنى من التكلفة.</span></td></tr>
+          <tr><td><b>العدّاد</b></td><td><span>سلسلة متحقَّق من اتصالها مع بوابة اعتماد</span></td>
+              <td><span>سبعة أنظمة تكتب المسافة؛ والتعديلات اليدوية الكبيرة تحتاج اعتماد أدمن.</span></td></tr>
+          <tr><td><b>أيام الصيانة</b></td><td><span>تقرير استغلال الأسطول — دالّة واحدة</span></td>
+              <td><span>كانت هناك ستّ تعريفات متنافسة لـ«التوقّف». الآن تعريف واحد.</span></td></tr>
+          <tr><td><b>تحرّكات السيارات</b></td><td><span>LogisticsTask</span></td>
+              <td><span>كل حركة فعلية للسيارة لها بيت واحد لا غير.</span></td></tr>
+          <tr><td><b>اسم العطل</b></td><td><span>كتالوج الملاحظات + أنطولوجيا الأعطال</span></td>
+              <td><span>الكتالوج يحدّد ما يمكن اختياره؛ والأنطولوجيا تفهم ما كُتب فعلاً.</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="grid g4" style="margin-top:20px">
+      <div class="card"><h3 style="font-size:15px">🔌 OfficeManager</h3><p>الأسطول والعقود والعملاء، بمزامنة مستمرّة ومعها تدقيق وتصحيح تلقائي.</p></div>
+      <div class="card"><h3 style="font-size:15px">📊 جداول الصيانة</h3><p>سنوات من تاريخ الورش، مستوردة ومُنقَّبة — وهي المتن الذي تتعلّم منه طبقة الذكاء.</p></div>
+      <div class="card"><h3 style="font-size:15px">🧾 فواتير الورش</h3><p>رابط مؤمَّن للورشة ← ترفع الفاتورة ← طابور مراجعة ← تكلفة منسوبة.</p></div>
+      <div class="card"><h3 style="font-size:15px">📱 التطبيق نفسه</h3><p>الفحوص ونقاط المتابعة والصور وقراءات العدّاد — البيانات الجديدة المنظَّمة من المصدر.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ QUALITY ============ -->
+<section id="quality">
+  <div class="wrap">
+    <span class="kicker">٠٦ — الثقة</span>
+    <h2>ماذا تحمي الاختبارات فعلاً</h2>
+    <p class="sub">
+      ٩٤ ملف اختبار آلي، تعمل على قاعدة بيانات اختبار <b>مستنسخة من المخطّط الحقيقي</b> لا مبنيّة من الصفر. الهدف ليس
+      ملاحقة نسبة تغطية — بل إن كل مجموعة تحرس طريقة بعينها قد يبدأ بها النظام في الكذب بهدوء.
+    </p>
+
+    <div class="grid g3">
+      <div class="card">
+        <div class="icon" style="color:var(--cy)">🔄</div>
+        <h3>المسار ودورة الحياة</h3>
+        <p>أن التذكرة لا تقفز مرحلة، وأن رسوب إعادة الفحص يفتحها فعلاً من جديد، وأن إيقاف الإصلاح لتأجير السيارة لا
+        يُضيّع التذكرة، وأن حذف سجلّ صيانة يُبقي الخطّ الزمني سليماً.</p>
+        <div class="tags"><span class="tag">ReinspectionReopen</span><span class="tag">PauseResume</span><span class="tag">DeletionLifecycle</span></div>
+      </div>
+      <div class="card">
+        <div class="icon" style="color:var(--am)">💵</div>
+        <h3>نسبة التكلفة</h3>
+        <p>أن تكلفة الإصلاح تقع على السيارة الصحيحة حتى لو نُقلت السيارة بين ورشتين في منتصف الإصلاح، وأن التفصيل
+        المالي يتوازن، وأن تصنيف المصاريف ثابت.</p>
+        <div class="tags"><span class="tag">RepairCostAttribution</span><span class="tag">GarageTransferInvoice</span><span class="tag">ExpenseClassifier</span></div>
+      </div>
+      <div class="card">
+        <div class="icon" style="color:var(--vi)">🧠</div>
+        <h3>صدق الذكاء</h3>
+        <p>أن مستخرج الأعطال يلتقط المفهوم الصحيح من نصّ حقيقي، وأن أي قدرة ترفض الإجابة حين تكون أدلّتها قديمة أو
+        ناقصة، وأن الثقة تُقاس لا تُدَّعى.</p>
+        <div class="tags"><span class="tag">FaultExtraction</span><span class="tag">EvidenceFreshness</span><span class="tag">CapabilityPolicy</span></div>
+      </div>
+      <div class="card">
+        <div class="icon" style="color:var(--rd)">🔐</div>
+        <h3>الصلاحيات والتدقيق</h3>
+        <p>أن الدور لا يصل إلى مسار لم يُمنح له، وأن منع تعديل العدّاد يُسجَّل، وأن التنبيهات تصل فعلاً إلى الشخص
+        الصحيح عند الحدث الصحيح.</p>
+        <div class="tags"><span class="tag">ComponentApiAccess</span><span class="tag">OdometerBlockAudit</span><span class="tag">Notification</span></div>
+      </div>
+      <div class="card">
+        <div class="icon" style="color:var(--gr)">⚡</div>
+        <h3>تراجع الأداء</h3>
+        <p>اختبارات صريحة تمنع لوحة العمليات من الانحدار إلى استعلامات N+1 مع نموّ الأسطول — وهي فئة أخطاء لا تفشل، بل
+        تبطئ حتى تصير غير قابلة للاستخدام.</p>
+        <div class="tags"><span class="tag">NoNPlusOne</span><span class="tag">ReadEndpointsSmoke</span></div>
+      </div>
+      <div class="card">
+        <div class="icon" style="color:var(--bl)">📏</div>
+        <h3>حرّاس المفردات</h3>
+        <p>أوامر دائمة تفشل بصوت عالٍ عند أي انحراف: فحص قاموس الملاحظات، وفحص صحّة الأدلّة، وفحص تغطية الترجمة،
+        والاختبار الرجعي للتكرار.</p>
+        <div class="tags"><span class="tag">findings:vocabulary-check</span><span class="tag">evidence:health</span><span class="tag">check:i18n</span></div>
+      </div>
+    </div>
+
+    <div class="note good" style="margin-top:22px">
+      <b>خطّ الأساس المقيس.</b> قبل أي عمل على الذكاء، جُمّدت الأرقام التشغيلية الحقيقية للأسطول — معدّل الإصلاح من أول
+      مرّة، ونسبة العودة، ومتوسّط زمن الدوران — حتى يُقارَن كل تحسّن لاحق بما كان صحيحاً فعلاً، لا بتقدير متفائل. وهذه
+      هي الأرقام التي يُقيَّم محرّك الترشيح مقابلها.
+    </div>
+  </div>
+</section>
+
+<!-- ============ STACK ============ -->
+<section id="stack">
+  <div class="wrap">
+    <span class="kicker">٠٧ — البناء</span>
+    <h2>كيف بُني النظام</h2>
+
+    <div class="split">
+      <div class="card">
+        <h3>🖥 الواجهة الخلفية</h3>
+        <p style="margin-top:8px">Laravel 12 / PHP. ٧١ متحكّماً في الواجهة البرمجية، وأكثر من ١٠٠ خدمة نطاق، و٢٢٩
+        ترحيل قاعدة بيانات. صلاحيات قائمة على الأدوار عبر Spatie مع حماية صريحة لكل مسار. ومهامّ مجدولة تتولّى
+        المزامنة والتذكيرات وفحوص الانتهاء واللقطات الدورية.</p>
+        <div class="tags">
+          <span class="tag">Laravel 12</span><span class="tag">MySQL 8</span><span class="tag">Spatie RBAC</span>
+          <span class="tag">Artisan</span><span class="tag">PHPUnit</span>
+        </div>
+      </div>
+      <div class="card">
+        <h3>🎨 الواجهة الأمامية</h3>
+        <p style="margin-top:8px">React 19، و٦٨ صفحة مبنيّة على نظام تصميم موحّد. تعريب كامل عربي/إنجليزي مع حارس في
+        خطّ البناء يُفشل الإصدار عند وجود نصوص غير مترجمة. وتنبيهات لحظية ومركز إجراءات يعرف دور المستخدم، فيهبط كل
+        شخص مباشرةً على طابور عمله.</p>
+        <div class="tags">
+          <span class="tag">React 19</span><span class="tag">Cockpit+ DS</span><span class="tag">i18n AR/EN</span>
+          <span class="tag ar">تنبيهات لحظية</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid g3" style="margin-top:16px">
+      <div class="card"><h3 style="font-size:16px">مفاتيح الميزات</h3><p>كل واجهات المال خلف مفتاح واحد، فيصل المنتج التشغيلي إلى الموظّفين قبل اكتمال الطبقة المالية.</p></div>
+      <div class="card"><h3 style="font-size:16px">وضع الظلّ</h3><p>الأنظمة الفرعية الجديدة (مثل سجلّ المكوّنات المركّبة) تعمل بجانب المسار القديم وتُقارَن به قبل أن يُوثق بها.</p></div>
+      <div class="card"><h3 style="font-size:16px">لوحة المحاكاة</h3><p>بيئة كاملة لتمرير سيارة عبر دورة حياتها كلها — للتدريب ولعرض المسار دون المساس بالبيانات الحيّة.</p></div>
+    </div>
+
+    <h3 style="margin:34px 0 10px;font-size:18px">أين ذهب الجهد</h3>
+    <div class="bars">
+      <div class="bar"><span>محرّك مسار الصيانة</span><span class="track"><span class="fill" style="width:100%"></span></span><span class="val">الأساس</span></div>
+      <div class="bar"><span>المزامنة ومصادر الحقيقة</span><span class="track"><span class="fill" style="width:88%"></span></span><span class="val">مكثّف</span></div>
+      <div class="bar"><span>طبقة الذكاء والمعرفة</span><span class="track"><span class="fill" style="width:76%"></span></span><span class="val">مكثّف</span></div>
+      <div class="bar"><span>نسبة التكاليف المالية</span><span class="track"><span class="fill" style="width:64%"></span></span><span class="val">جارٍ</span></div>
+      <div class="bar"><span>اللوجستيات والفحوص</span><span class="track"><span class="fill" style="width:58%"></span></span><span class="val">مُطلق</span></div>
+      <div class="bar"><span>سجلّ المكوّنات</span><span class="track"><span class="fill" style="width:34%"></span></span><span class="val">ظلّ</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ NEXT ============ -->
+<section id="next">
+  <div class="wrap">
+    <span class="kicker">٠٨ — الاتجاه</span>
+    <h2>ما الذي نبنيه بعد ذلك</h2>
+    <p class="sub">
+      الخطّة مرتَّبة عن قصد: نثبّت ما يستخدمه الناس كل يوم، ثم نُكمل أساس المعرفة، وبعد ذلك فقط نسمح للمنصّة بأن تدّعي
+      شيئاً عن المستقبل.
+    </p>
+
+    <div class="grid g3">
+      <div class="card">
+        <div class="icon" style="color:var(--gr)">١</div>
+        <h3>التثبيت والإطلاق</h3>
+        <p>إيصال المسار الحالي إلى أيدي الموظّفين يومياً. كل يوم يعمل فيه ينتج البيانات المنظَّمة من المصدر التي كانت
+        طبقة الذكاء جائعة إليها.</p>
+        <div class="tags"><span class="tag ar gr">جارٍ الآن</span></div>
+      </div>
+      <div class="card">
+        <div class="icon" style="color:var(--bl)">٢</div>
+        <h3>سدّ فجوة التوثيق</h3>
+        <p>توثيق الإصلاح من المستوى الأول داخل الورشة: ماذا نُفِّذ فعلاً، وأي قطعة، وكم استغرق. هذا أعلى بند رافعةً على
+        الإطلاق — فجودة التوثيق تحرّك مباشرةً المؤشّرات التي يقرأها محرّك الترشيح.</p>
+        <div class="tags"><span class="tag ar">الأولوية الأولى</span></div>
+      </div>
+      <div class="card">
+        <div class="icon" style="color:var(--vi)">٣</div>
+        <h3>استحقاق التنبّؤ</h3>
+        <p>إبقاء درجة الثقة خلف بوّابة الاختبار الرجعي حتى تتفوّق على خطّ الأساس بصدق. وعندها فقط تُفعَّل الصيانة
+        التنبّؤية الاستباقية.</p>
+        <div class="tags"><span class="tag ar vi">مُقفل مؤقتاً</span></div>
+      </div>
+    </div>
+
+    <div class="grid g2" style="margin-top:16px">
+      <div class="card">
+        <h3>💡 ما يستحقّ عرضه على أصحاب القرار</h3>
+        <p style="margin-top:8px">ثلاث شاشات تحكي القصّة كاملةً أفضل من أي عرض تقديمي: <b>تفاصيل التذكرة</b> بسجلّ
+        تدقيقها الحيّ؛ و<b>خطوة الإرسال</b> حيث يظهر ترشيح الورشة وسببه جنباً إلى جنب؛ و<b>الخطّ الزمني للسيارة</b>
+        حيث تُقرأ حياة السيارة كلها — تأجير وأعطال وإصلاحات وتكاليف وعدّاد — كتحقيق واحد متّصل.</p>
+      </div>
+      <div class="card">
+        <h3>🧭 المبدأ الذي يقوم عليه كل هذا</h3>
+        <p style="margin-top:8px">ارسم البيانات كما هي؛ ولا تستنتج ما لا تستطيع إثباته. كل حقل موسوم: حقيقة، أو اشتقاق،
+        أو اجتهاد. وكل شاشة تُظهر مصدرها. وحيث تكون الأدلّة ضعيفة، تقولها المنصّة بصوت مسموع. هذا الانضباط هو سبب
+        إمكانية الوثوق بالأرقام أصلاً.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="fl">
+      <span class="brand"><span class="dot"></span> FleetView</span>
+      <span>عمليات الأسطول · مسار الصيانة · ذكاء الإصلاح</span>
+      <span class="spacer" style="flex:1"></span>
+      <span style="font-size:12.5px">نبذة عن المشروع · ٢٠٢٦-٠٨-٠٣</span>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -343,6 +343,9 @@ Route::middleware('auth:sanctum')->prefix('maintenance-tickets')->controller(Mai
     Route::get('/pending-invoices', 'pendingInvoices')->middleware('permission:maintenance.view');
     // Inspection Request Review Gate — Controllers' (Lin & Marwa) queue. STATIC — must precede /{ticket}.
     Route::get('/pending-review', 'reviewQueue')->middleware('permission:maintenance.manage');
+    // The rules behind system-raised requests — powers the queue's "when & why the system asks for a
+    // test" explainer with the LIVE thresholds. STATIC — must precede /{ticket}.
+    Route::get('/review-gate-rules', 'reviewGateRules')->middleware('permission:maintenance.manage');
     // Repair Quality Tracking — fleet-wide per-garage success rate + Possible Part Failure signals.
     // STATIC — must precede /{ticket}.
     Route::get('/repair-quality', 'repairQuality')->middleware('permission:maintenance.view');
@@ -990,6 +993,8 @@ Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard
 // Maintenance Progress: the workshop monitoring centre (cars in maintenance + checkpoint status + ETA)
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/maintenance-progress', [DashboardController::class, 'maintenanceProgress']);
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/fault-cars', [DashboardController::class, 'faultCars']);
+// Damage dashboard — externally-caused damage, the events deliberately excluded from every fault figure.
+Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/damage', [DashboardController::class, 'damage']);
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/maintenance-history', [DashboardController::class, 'maintenanceHistory']);
 Route::middleware(['auth:sanctum', 'permission:dashboard.view'])->get('Dashboard/maintenance-history/{vehicle}/visits', [DashboardController::class, 'maintenanceHistoryVisits']);
 

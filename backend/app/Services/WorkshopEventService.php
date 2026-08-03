@@ -386,6 +386,9 @@ class WorkshopEventService
     protected function displaySnapshot(Maintenance $event): array
     {
         $issues   = $this->analytics->sheetIssueTags($event);
+        $byKind   = $this->analytics->sheetIssueTagsByKind($event);
+        // Priority is scored from the FAULT labels only — an oil change on the same visit must not set
+        // the ghost row's severity (audit M8).
         $priority = ($event->maintenance_reason_id && $event->reason)
             ? ['level' => $event->reason->level, 'matched' => $event->reason->reason_en]
             : $this->analytics->classifyPriority($issues, $event->maintenance_notes);
@@ -397,6 +400,10 @@ class WorkshopEventService
             'stage'                => $event->event_status,
             'garage'               => $event->vendor?->name ?: $event->garage,
             'issues'               => $issues,
+            'fault_tags'           => $byKind['fault'],
+            'service_tags'         => $byKind['service'],
+            'damage_tags'          => $byKind['damage'],
+            'context_tags'         => $byKind['context'],
             'maintenance_type'     => $event->maintenance_type,
             'out_date'             => optional($event->out_date)->toDateString(),
             'expected_return_date' => optional($event->expected_return_date)->toDateString(),

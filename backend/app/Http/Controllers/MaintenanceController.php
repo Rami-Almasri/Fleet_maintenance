@@ -319,7 +319,7 @@ class MaintenanceController extends Controller
                     $latest  = $run->last();
                     $vehicle = $latest->vehicle;
 
-                    $tags     = $analytics->sheetIssueTags($latest);
+                    $tags      = $analytics->sheetIssueTags($latest);
                     $notes    = $latest->maintenance_notes;
                     $garage   = $latest->vendor?->name ?: $latest->garage;
                     $expected = $latest->expected_return_date;

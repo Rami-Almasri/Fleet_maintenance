@@ -64,9 +64,23 @@ final class FaultVocabulary
     }
 
     /**
-     * Category keys that are NOT a breakdown story — cosmetic damage and planned upkeep. A fault landing
-     * in one of these is excluded from recurrence analysis.
+     * @deprecated RETIRED as a rule, kept only so any lingering caller still compiles.
+     *
+     * These two constants encoded "bodywork and interior are not real failures", which was the platform's
+     * stand-in for a Damage concept it did not have. It was too coarse in both directions:
+     *
+     *   • it EXCLUDED real faults — `interior` holds Dashboard fault, Door lock fault, Interior light
+     *     fault, Seat adjustment fault, Infotainment issue and Water leakage into cabin; `bodywork` holds
+     *     Rust / corrosion. 132 rows of genuine interior faults were being dropped from recurrence.
+     *   • it INCLUDED damage that lives elsewhere — a kerbed rim files under `tyres`, not `bodywork`.
+     *
+     * Damage is now its own kind, typed per CONCEPT from `damage_catalog`, so exclusion happens on the
+     * type where it belongs and these lists decide nothing.
+     *
+     * @see config/damage_catalog.php
+     * @see \App\Services\EventClassificationService::labelKind()
      */
+    public const COSMETIC_CATEGORIES = ['bodywork', 'interior'];
     public const NON_FAILURE_CATEGORIES = ['bodywork', 'interior', 'routine'];
 
     /**
@@ -120,14 +134,28 @@ final class FaultVocabulary
             return self::describe($index['exact'][$needle]);
         }
 
-        // 2. Otherwise the most SPECIFIC alias contained in the wording wins (aliases are length-sorted).
+        // 2. Otherwise match aliases on WHOLE WORDS, and let the EARLIEST one win (ties → the longer,
+        //    more specific alias).
+        //
+        //    This used to be a bare `str_contains($needle, $alias)`, which let the two-letter alias `ac`
+        //    match inside unrelated words: "Accessories" (186 rows), "Glass Chip / Crack", "Mirror Glass
+        //    Crack" and "LED / Light Accessory Issue" all resolved to the A/C category, so accessory and
+        //    glass damage joined A/C fault chains in the recurrence engine and the foresight view.
+        //    Earliest-wins additionally fixes the head-noun: "AC Not Cooling" is an A/C fault, but
+        //    length-ordering matched `cooling` first and filed it under fluids, while "Cooling System
+        //    Issues" (which genuinely leads with cooling) still resolves to fluids.
+        $best = null;
         foreach ($index['aliases'] as $alias => $key) {
-            if (str_contains(" $needle ", " $alias ") || str_contains($needle, $alias)) {
-                return self::describe($key);
+            if (! preg_match('/(?<![a-z0-9])' . preg_quote($alias, '/') . '(?![a-z0-9])/u', $needle, $m, PREG_OFFSET_CAPTURE)) {
+                continue;
+            }
+            $pos = $m[0][1];
+            if ($best === null || $pos < $best['pos'] || ($pos === $best['pos'] && strlen($alias) > $best['len'])) {
+                $best = ['key' => $key, 'pos' => $pos, 'len' => strlen($alias)];
             }
         }
 
-        return null;
+        return $best ? self::describe($best['key']) : null;
     }
 
     /** The display name for a canonical category key. */
@@ -137,10 +165,20 @@ final class FaultVocabulary
             ?? ucwords(str_replace(['_', '-'], ' ', $key));
     }
 
-    /** True when a canonical category represents an actual FAILURE (not cosmetic damage or planned upkeep). */
+    /**
+     * True when a canonical category represents an actual FAILURE — neither cosmetic damage nor planned
+     * upkeep.
+     *
+     * Two independent rules, deliberately kept separate:
+     *   • PLANNED WORK is decided by EventClassificationService — the ONE owner of the Service/Fault
+     *     boundary in this codebase. This class used to keep its own 'routine' entry and could therefore
+     *     disagree with the sheet-label map and the service catalog about the same word (audit H7).
+     *   • COSMETIC is this class's own call, and a different question: a scratch is an unplanned defect
+     *     (a fault) that simply carries no mechanical-failure signal.
+     */
     public static function isFailureCategory(string $key): bool
     {
-        return ! in_array($key, self::NON_FAILURE_CATEGORIES, true);
+        return ! app(\App\Services\EventClassificationService::class)->isServiceCategory($key);
     }
 
     /** @return array{key:string,label:string} */

@@ -177,6 +177,31 @@ class DashboardController extends Controller
     }
 
     /**
+     * DAMAGE dashboard — externally-caused damage, which is deliberately absent from every fault figure.
+     *
+     * Damage is not a reliability signal, so it never appears in Top Faults, health, recurrence or
+     * forecasting. That exclusion is only defensible because the events remain fully visible HERE:
+     * counts, exposed vehicles, cost, damage type and the chargeable/insurable split. Excluding damage
+     * from the fault charts without giving it its own surface would have been hiding it, not modelling
+     * it. Optional ?from= / ?to= (Y-m-d) window; all-time by default.
+     */
+    public function damage(Request $request, \App\Services\DamageAnalyticsService $damage)
+    {
+        try {
+            return ResponseHelper::SuccessResponse(
+                $damage->report(
+                    $request->query('from') ? (string) $request->query('from') : null,
+                    $request->query('to') ? (string) $request->query('to') : null,
+                ),
+                'Damage analytics retrieved successfully',
+                200
+            );
+        } catch (\Exception $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
      * Fault Leaderboard drill-down — "which cars fixed this fault the most". For one canonical fault
      * category (?fault=Brakes) returns the vehicles ranked by how many times that fault hit them,
      * combining our system + the historical workshop sheet exactly as the leaderboard bar does.

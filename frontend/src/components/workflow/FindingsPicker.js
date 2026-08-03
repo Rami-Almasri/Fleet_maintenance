@@ -38,6 +38,12 @@ const FALLBACK = [
 // Risk tone → dot colour (matches Badge tones used in the Keyword Risk Library).
 const RISK_DOT = { red: 'bg-red-500', amber: 'bg-amber-500', green: 'bg-emerald-500' };
 
+// Catalog categories that are PLANNED WORK rather than defects. Mirrors the backend's single authority,
+// EventClassificationService::isServiceCategory (config `maintenance_findings.service_ontology_categories`).
+// Kept as one named constant rather than an inline string so the next service category is a one-line
+// change in two files instead of a hunt through JSX.
+const SERVICE_CATEGORIES = new Set(['routine']);
+
 // Which live diagnostic condition (see DiagnosticGateService::context — 'oil' | 'battery' | 'tyres')
 // backs each monitored routine keyword. Mirrors the backend's Maintenance::routineServiceTypeFor /
 // DiagnosticGateService::routineStatus mapping — used here to warn in real time, before submission,
@@ -397,7 +403,17 @@ export default function FindingsPicker({ catalog, keywordMeta = {}, value = [], 
                 className={`flex w-full items-center gap-2 px-3 py-2.5 text-start transition ${open ? 'bg-slate-50/80' : 'hover:bg-slate-50'}`}
               >
                 <Icon.ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${open ? '' : '-rotate-90 rtl:rotate-90'}`} />
-                <span className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-700">{catLabel(cat)}</span>
+                <span className="min-w-0 truncate text-sm font-semibold text-slate-700">{catLabel(cat)}</span>
+                {/* PLANNED WORK, NOT A DEFECT. Routine servicing sits in the same picker as the fault
+                    categories, so without a marker an inspector reads "Oil Change" as something found
+                    wrong with the car. The backend types these as kind=service from the catalog; this is
+                    the same statement made visible at the point of selection (audit M9). */}
+                {SERVICE_CATEGORIES.has(cat.key) && (
+                  <span className="shrink-0 rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-700 ring-1 ring-inset ring-sky-200">
+                    {t('findingsPicker.plannedService')}
+                  </span>
+                )}
+                <span className="min-w-0 flex-1" />
                 {picked > 0 && (
                   <span className="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-indigo-600 px-1.5 text-[10px] font-bold text-white">
                     {picked}

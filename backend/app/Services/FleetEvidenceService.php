@@ -370,7 +370,11 @@ class FleetEvidenceService
 
         // A high floor on purpose: fleet evidence is the strongest thing in the graph, so a shaky
         // match must not be allowed to mint it. Unmatched rows are counted and reported instead.
-        $match = $this->ontology->resolve($text, ['limit' => 1, 'min_score' => 60])->first();
+        // FAULT LANE — fleet evidence links a repair history to the FAULT it was about; a service
+        // concept minted as evidence would teach the graph that planned work is a failure (audit H6).
+        $match = $this->ontology->resolve($text, [
+            'limit' => 1, 'min_score' => 60, 'kinds' => [\App\Models\MaintenanceTask::KIND_FAULT],
+        ])->first();
 
         return $this->conceptCache[$key] = $match['keyword'] ?? null;
     }

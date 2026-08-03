@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Helpers\ResponseHelper;
+use App\Models\DamageCatalog;
 use App\Models\FaultCatalog;
 use App\Models\InspectionType;
 use App\Models\MaintenanceTask;
@@ -43,13 +44,12 @@ class EventClassificationReviewController extends Controller
                     'id'                => $t->id,
                     'symptom'           => $t->symptom,              // ORIGINAL text
                     'category_key'      => $t->category_key,
-                    'current'           => [                          // CURRENT classification
-                        'kind'               => $t->kind,
-                        'fault_catalog_id'   => $t->fault_catalog_id,
-                        'service_catalog_id' => $t->service_catalog_id,
-                        'inspection_type_id' => $t->inspection_type_id,
-                        'source'             => $t->classification_source,
-                    ],
+                    // CURRENT classification. The catalog ids are walked from KIND_CATALOG_FK so a new
+                    // kind cannot be omitted from the reviewer's view of what the row actually holds.
+                    'current'           => collect(MaintenanceTask::KIND_CATALOG_FK)
+                        ->mapWithKeys(fn ($column) => [$column => $t->{$column}])
+                        ->merge(['kind' => $t->kind, 'source' => $t->classification_source])
+                        ->all(),
                     // SUGGESTED — re-run the resolver now (it may be smarter than when this row was written).
                     'suggested_kind'    => $this->classifier->resolveLegacyKind($t)['kind'],
                     'vehicle'           => $t->vehicle ? [
@@ -72,6 +72,10 @@ class EventClassificationReviewController extends Controller
                     'fault'      => FaultCatalog::query()->where('is_active', true)->orderBy('sort_order')->get(['id', 'name', 'category_key']),
                     'service'    => ServiceCatalog::query()->orderBy('name')->get(['id', 'name', 'category_key']),
                     'inspection' => InspectionType::query()->orderBy('name')->get(['id', 'name']),
+                    // Without this the reviewer could pick the DAMAGE kind but never a damage row, so the
+                    // one queue that exists to correct misclassification could not fully express the
+                    // third operational kind.
+                    'damage'     => DamageCatalog::query()->where('is_active', true)->orderBy('sort_order')->get(['id', 'name', 'category_key']),
                 ],
             ], 'Classification review queue retrieved', 200);
         } catch (\Throwable $e) {
@@ -95,11 +99,13 @@ class EventClassificationReviewController extends Controller
                 $attrs = $this->classifier->classifyFromCatalog(['kind' => $data['kind'], 'catalog_id' => (int) $catalogId]);
             } else {
                 // A plain kind confirmation with no catalog row (allowed by the CHECK: all catalog ids null).
-                $attrs = [
+                //
+                // EVERY catalog FK is cleared, derived from KIND_CATALOG_FK. This update goes through the
+                // query builder and so bypasses the model's exactly-one-catalog guard: hand-listing the
+                // columns meant a row that already carried, say, a damage catalog id would keep it while
+                // being relabelled `fault` — a combination the application considers impossible.
+                $attrs = array_fill_keys(array_values(MaintenanceTask::KIND_CATALOG_FK), null) + [
                     'kind'                  => $data['kind'],
-                    'fault_catalog_id'      => null,
-                    'service_catalog_id'    => null,
-                    'inspection_type_id'    => null,
                     'classification_source' => MaintenanceTask::CLS_MANUAL,
                 ];
             }

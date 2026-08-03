@@ -123,7 +123,13 @@ class SemanticStage implements MatchStage
             $label = $passage->meta['related_label'] ?? null;
             if (! $related && $label) {
                 $resolved = $this->ontology()->resolve($label, ['limit' => 1, 'min_score' => 70])->first();
-                $related = $resolved['keyword']->id ?? null;
+                // Only a FAULT joins the candidate set — this stage widens a fault search using prose
+                // that mentions related faults, so pulling in a scheduled service would put planned work
+                // on a diagnosis shortlist. Read from the result's own lane rather than re-querying with
+                // a `kinds` filter, which would over-fetch inside an already-recursive path (audit H6).
+                $related = ($resolved && ($resolved['kind'] ?? null) === \App\Models\MaintenanceTask::KIND_FAULT)
+                    ? ($resolved['keyword']->id ?? null)
+                    : null;
             }
 
             if (! $related) {

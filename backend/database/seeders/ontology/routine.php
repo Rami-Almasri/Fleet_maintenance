@@ -107,4 +107,37 @@ return [
                          'Shorten the interval for cars working in dust'],
         'actions' => ['replace_air_filter', 'visual_inspection'],
     ],
+    [
+        // The whole scheduled visit, as opposed to any one item on it. This wording is everywhere in the
+        // corpus — `Periodic Maintenance` is a maintenance_reason, a sheet service label, and the
+        // commonest thing written on a routine ticket — and the ontology matched NONE of it, so the one
+        // phrase that most clearly means "planned work" was invisible to the matcher (audit M10).
+        'name' => 'Periodic Maintenance', 'name_ar' => 'الصيانة الدورية',
+        'category' => 'routine', 'category_label' => 'Routine Maintenance', 'category_label_ar' => 'الصيانة الدورية',
+        'system' => 'Vehicle', 'subsystem' => 'Scheduled servicing', 'discipline' => 'mechanical', 'risk' => 'routine',
+        'description' => 'The scheduled service visit itself — the mileage/time interval service, whatever items it turns out to include.',
+        'en' => [
+            'syn'      => ['periodic maintenance', 'periodic service', 'scheduled maintenance',
+                           'scheduled service', 'routine maintenance', 'routine service',
+                           'regular maintenance', 'service due', 'general service', 'full service',
+                           'major service', 'minor service', 'interval service'],
+            'workshop' => ['carried out periodic maintenance', 'service done and reset',
+                           'full service completed', 'service light reset'],
+            'customer' => ['the car is due for its service', 'time for the periodic maintenance',
+                           'it needs its regular service'],
+            'miss'     => ['periodic maintainance', 'periodic mantenance', 'peridoic maintenance',
+                           'periodic maintenence', 'periodc maintenance', 'preiodic maintenance'],
+        ],
+        'ar' => [
+            'formal'   => ['الصيانة الدورية'],
+            'workshop' => ['صيانة دورية', 'سوينا الصيانة الدورية', 'صيانة عامة', 'الصيانة على الوقت'],
+        ],
+        'components' => ['Engine oil', 'Oil filter', 'Air filter'],
+        'causes' => ['Scheduled service interval', 'Odometer reached the service point',
+                     'Time since the last service'],
+        'inspection' => ['Read the odometer against the service schedule',
+                         'Check which items fall due at this interval',
+                         'Reset the service indicator once complete'],
+        'actions' => ['replace_engine_oil', 'replace_oil_filter', 'visual_inspection'],
+    ],
 ];

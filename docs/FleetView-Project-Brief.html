@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FleetView — Project Brief</title>
+<style>
+  :root{
+    --bg:#070b14;
+    --bg-2:#0b1220;
+    --panel:rgba(255,255,255,.035);
+    --panel-2:rgba(255,255,255,.06);
+    --line:rgba(255,255,255,.09);
+    --line-2:rgba(255,255,255,.16);
+    --ink:#e9eefb;
+    --ink-2:#a8b3cc;
+    --ink-3:#6d7b96;
+    --cy:#3ddad7;
+    --bl:#5b9dff;
+    --vi:#a681ff;
+    --am:#ffb454;
+    --gr:#4ade80;
+    --rd:#ff6b81;
+    --radius:16px;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased;
+    background-image:
+      radial-gradient(900px 600px at 12% -8%, rgba(91,157,255,.20), transparent 60%),
+      radial-gradient(800px 520px at 92% 4%, rgba(166,129,255,.16), transparent 60%),
+      radial-gradient(700px 500px at 50% 100%, rgba(61,218,215,.09), transparent 65%);
+    background-attachment:fixed;
+  }
+  .wrap{max-width:1180px;margin:0 auto;padding:0 24px}
+
+  /* ---------- nav ---------- */
+  nav{
+    position:sticky;top:0;z-index:50;
+    backdrop-filter:blur(14px);background:rgba(7,11,20,.72);
+    border-bottom:1px solid var(--line);
+  }
+  nav .wrap{display:flex;align-items:center;gap:18px;height:58px;overflow-x:auto;scrollbar-width:none}
+  nav .wrap::-webkit-scrollbar{display:none}
+  .brand{display:flex;align-items:center;gap:9px;font-weight:700;letter-spacing:-.2px;white-space:nowrap}
+  .brand .dot{width:9px;height:9px;border-radius:50%;background:var(--cy);box-shadow:0 0 14px var(--cy)}
+  nav a{color:var(--ink-3);text-decoration:none;font-size:13.5px;white-space:nowrap;transition:color .15s}
+  nav a:hover{color:var(--ink)}
+  nav .spacer{flex:1}
+  nav .lang{border:1px solid var(--line-2);border-radius:999px;padding:4px 12px;font-size:13px;color:var(--cy)}
+
+  /* ---------- hero ---------- */
+  header{padding:86px 0 60px;position:relative}
+  .eyebrow{
+    display:inline-flex;align-items:center;gap:8px;
+    font-family:var(--mono);font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--cy);border:1px solid rgba(61,218,215,.28);background:rgba(61,218,215,.07);
+    padding:5px 12px;border-radius:999px;
+  }
+  h1{
+    font-size:clamp(38px,6.2vw,68px);line-height:1.02;letter-spacing:-.035em;
+    margin:22px 0 0;font-weight:760;
+    background:linear-gradient(120deg,#fff 20%,#a8c6ff 60%,#7fe6e3 95%);
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+  }
+  .lede{font-size:clamp(16px,2vw,19px);color:var(--ink-2);max-width:70ch;margin:22px 0 0}
+  .lede strong{color:var(--ink);font-weight:600}
+
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;margin:46px 0 0;
+    background:var(--line);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+  .stat{background:var(--bg-2);padding:20px 18px}
+  .stat b{display:block;font-size:28px;font-weight:700;letter-spacing:-.03em;
+    background:linear-gradient(120deg,#fff,#8fb8ff);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .stat span{display:block;font-size:11.5px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.09em;margin-top:6px}
+
+  /* ---------- sections ---------- */
+  section{padding:64px 0;border-top:1px solid var(--line)}
+  .kicker{font-family:var(--mono);font-size:11.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-3)}
+  h2{font-size:clamp(26px,3.6vw,38px);letter-spacing:-.028em;margin:10px 0 12px;font-weight:700}
+  .sub{color:var(--ink-2);max-width:78ch;margin:0 0 32px}
+
+  .grid{display:grid;gap:16px}
+  .g2{grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+  .g3{grid-template-columns:repeat(auto-fit,minmax(268px,1fr))}
+  .g4{grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}
+
+  .card{
+    background:linear-gradient(180deg,var(--panel),rgba(255,255,255,.012));
+    border:1px solid var(--line);border-radius:var(--radius);padding:22px;
+    transition:border-color .18s,transform .18s,background .18s;
+  }
+  .card:hover{border-color:var(--line-2);transform:translateY(-2px)}
+  .card h3{margin:0 0 6px;font-size:16.5px;letter-spacing:-.01em}
+  .card p{margin:0;color:var(--ink-2);font-size:14px}
+  .card .who{font-family:var(--mono);font-size:11px;color:var(--ink-3);letter-spacing:.05em;text-transform:uppercase}
+
+  .icon{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;font-size:16px;margin-bottom:12px;
+        border:1px solid var(--line-2);background:var(--panel-2)}
+
+  .tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px}
+  .tag{font-family:var(--mono);font-size:10.5px;padding:3px 8px;border-radius:6px;
+       background:rgba(255,255,255,.05);border:1px solid var(--line);color:var(--ink-2)}
+  .tag.cy{color:var(--cy);border-color:rgba(61,218,215,.3);background:rgba(61,218,215,.08)}
+  .tag.vi{color:var(--vi);border-color:rgba(166,129,255,.3);background:rgba(166,129,255,.08)}
+  .tag.am{color:var(--am);border-color:rgba(255,180,84,.3);background:rgba(255,180,84,.08)}
+  .tag.gr{color:var(--gr);border-color:rgba(74,222,128,.3);background:rgba(74,222,128,.08)}
+
+  /* ---------- workflow rail ---------- */
+  .rail{position:relative;margin-top:14px;padding-left:34px}
+  .rail:before{content:"";position:absolute;left:11px;top:6px;bottom:6px;width:2px;
+    background:linear-gradient(180deg,var(--cy),var(--bl) 40%,var(--vi) 75%,var(--gr))}
+  .step{position:relative;margin-bottom:14px;background:var(--bg-2);border:1px solid var(--line);
+        border-radius:14px;padding:16px 18px;transition:border-color .18s,transform .18s}
+  .step:hover{border-color:var(--line-2);transform:translateX(3px)}
+  .step:before{content:"";position:absolute;left:-28px;top:22px;width:11px;height:11px;border-radius:50%;
+    background:var(--bg);border:2px solid var(--bl);box-shadow:0 0 0 4px rgba(91,157,255,.12)}
+  .step .st{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px}
+  .step .n{font-family:var(--mono);font-size:11px;color:var(--bl);letter-spacing:.08em}
+  .step h4{margin:0;font-size:15.5px;letter-spacing:-.01em}
+  .step .actor{font-size:11.5px;font-family:var(--mono);color:var(--ink-3);
+    border:1px solid var(--line);padding:2px 8px;border-radius:999px}
+  .step p{margin:8px 0 0;color:var(--ink-2);font-size:13.8px}
+  .step code{font-family:var(--mono);font-size:11.5px;color:var(--cy);background:rgba(61,218,215,.08);
+    border:1px solid rgba(61,218,215,.18);padding:1px 6px;border-radius:5px}
+
+  /* ---------- pipeline ---------- */
+  .pipe{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:8px}
+  .pnode{background:var(--bg-2);border:1px solid var(--line);border-radius:14px;padding:18px;position:relative}
+  .pnode .num{font-family:var(--mono);font-size:10.5px;color:var(--vi);letter-spacing:.14em}
+  .pnode h4{margin:8px 0 6px;font-size:15px}
+  .pnode p{margin:0;font-size:13.2px;color:var(--ink-2)}
+  .arrowrow{display:flex;justify-content:center;color:var(--ink-3);font-size:18px;margin:2px 0}
+
+  .split{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:760px){.split{grid-template-columns:1fr}}
+
+  .note{border-left:3px solid var(--am);background:rgba(255,180,84,.06);border-radius:0 12px 12px 0;
+    padding:14px 18px;color:var(--ink-2);font-size:13.8px}
+  .note b{color:var(--am)}
+  .note.good{border-color:var(--gr);background:rgba(74,222,128,.06)}
+  .note.good b{color:var(--gr)}
+
+  table{width:100%;border-collapse:collapse;font-size:13.6px}
+  .tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:var(--radius);background:var(--bg-2)}
+  th,td{padding:12px 16px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);
+     background:rgba(255,255,255,.03)}
+  tr:last-child td{border-bottom:none}
+  td b{color:var(--ink)}
+  td span{color:var(--ink-2)}
+
+  .bars{display:grid;gap:12px;margin-top:6px}
+  .bar{display:grid;grid-template-columns:190px 1fr 56px;align-items:center;gap:14px;font-size:13.4px}
+  .bar .track{height:8px;border-radius:99px;background:rgba(255,255,255,.06);overflow:hidden}
+  .bar .fill{height:100%;border-radius:99px;background:linear-gradient(90deg,var(--bl),var(--cy))}
+  .bar .val{font-family:var(--mono);font-size:12px;color:var(--ink-2);text-align:right}
+  @media(max-width:640px){.bar{grid-template-columns:1fr;gap:5px}.bar .val{text-align:left}}
+
+  footer{padding:52px 0 70px;border-top:1px solid var(--line);color:var(--ink-3);font-size:13px}
+  .fl{display:flex;flex-wrap:wrap;gap:10px 26px;align-items:center}
+
+  @media print{
+    body{background:#fff;color:#111}
+    nav{display:none}
+    .card,.step,.pnode,.tablewrap{border-color:#ccc;background:#fff}
+    h1,.stat b{color:#111;-webkit-text-fill-color:#111}
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <div class="brand"><span class="dot"></span> FleetView</div>
+    <a href="#what">What it is</a>
+    <a href="#roles">Roles</a>
+    <a href="#workflow">Workflow</a>
+    <a href="#ai">The AI layer</a>
+    <a href="#data">Data</a>
+    <a href="#quality">Testing</a>
+    <a href="#stack">Stack</a>
+    <a href="#next">What's next</a>
+    <span class="spacer"></span>
+    <a class="lang" href="FleetView-Project-Brief-AR.html">العربية</a>
+  </div>
+</nav>
+
+<header>
+  <div class="wrap">
+    <span class="eyebrow">Project Brief · Aug 2026</span>
+    <h1>The fleet stopped living<br>in WhatsApp.</h1>
+    <p class="lede">
+      FleetView is the operating system for a rental fleet: every car, contract, breakdown, garage visit,
+      invoice and repair in one place. Not a dashboard bolted onto a spreadsheet — a
+      <strong>workflow engine</strong> where a fault is opened, dispatched, repaired, re-inspected and closed
+      by named people with permissions, plus an <strong>intelligence layer</strong> that reads the free-text
+      history of thousands of past repairs and tells you what is actually wrong with the car and what the
+      garage is about to do about it.
+    </p>
+
+    <div class="stats">
+      <div class="stat"><b>28</b><span>Workflow states</span></div>
+      <div class="stat"><b>9</b><span>Roles · 40 permissions</span></div>
+      <div class="stat"><b>94</b><span>Automated tests</span></div>
+      <div class="stat"><b>100+</b><span>Backend services</span></div>
+      <div class="stat"><b>68</b><span>App pages</span></div>
+      <div class="stat"><b>15</b><span>Fault ontology domains</span></div>
+    </div>
+  </div>
+</header>
+
+<!-- ============ WHAT ============ -->
+<section id="what">
+  <div class="wrap">
+    <span class="kicker">01 — The problem</span>
+    <h2>Where the money and the time were leaking</h2>
+    <p class="sub">
+      A rental fleet loses money in three places nobody was measuring: cars sitting in a garage longer than
+      anyone promised, the same fault being paid for twice because it came back, and repairs whose real cost
+      was never attached to the car that caused it. All three were invisible because the process lived in
+      chat messages, phone calls and a maintenance sheet.
+    </p>
+
+    <div class="grid g3">
+      <div class="card">
+        <div class="icon" style="color:var(--rd)">⏱</div>
+        <h3>Downtime nobody owned</h3>
+        <p>A car went to a garage and came back "when it came back." No promised date, no clock, no escalation, no
+        record of which stage it was stuck in.</p>
+      </div>
+      <div class="card">
+        <div class="icon" style="color:var(--am)">↻</div>
+        <h3>Repairs that came back</h3>
+        <p>The same fault on the same car, fixed twice, paid twice — and no one could see it because the two visits
+        were two unrelated rows.</p>
+      </div>
+      <div class="card">
+        <div class="icon" style="color:var(--vi)">🧾</div>
+        <h3>Cost with no address</h3>
+        <p>Invoices existed, but nothing bound a dirham to a vehicle, a fault and a garage. So "which cars cost us
+        money" was an opinion.</p>
+      </div>
+    </div>
+
+    <div class="grid g3" style="margin-top:16px">
+      <div class="card">
+        <div class="icon" style="color:var(--cy)">🎯</div>
+        <h3>One ticket, one truth</h3>
+        <p>A ticket is a <b>container of faults</b> on one car at one garage. Every state change is stamped, attributed
+        to a user, and written to an audit trail. Nothing moves by verbal agreement.</p>
+        <div class="tags"><span class="tag cy">workflow_status</span><span class="tag">last_state_change_at</span></div>
+      </div>
+      <div class="card">
+        <div class="icon" style="color:var(--bl)">🔍</div>
+        <h3>Every screen shows its source</h3>
+        <p>A governing rule of the product: no black boxes. Every number carries a <b>Data Origin</b> — which table,
+        which import, which judgement — so operations can argue with the data instead of trusting it blindly.</p>
+        <div class="tags"><span class="tag">Fact</span><span class="tag">Derived</span><span class="tag">Judgement</span></div>
+      </div>
+      <div class="card">
+        <div class="icon" style="color:var(--gr)">🧠</div>
+        <h3>History becomes advice</h3>
+        <p>Thousands of past repair lines, written in mechanic shorthand across two languages, are parsed into a fault
+        vocabulary — which makes "this car does this every 4 months" a query, not a memory.</p>
+        <div class="tags"><span class="tag gr">ontology</span><span class="tag gr">recurrence</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ ROLES ============ -->
+<section id="roles">
+  <div class="wrap">
+    <span class="kicker">02 — People</span>
+    <h2>Nine roles. Each one owns a specific move.</h2>
+    <p class="sub">
+      Access is not "admin vs user." Permissions are declared as <code style="font-family:var(--mono);color:var(--cy)">resource.action</code>
+      and every API route is gated by one of them. A role can only perform the steps that belong to its part of the
+      journey — which is also what makes the audit trail meaningful.
+    </p>
+
+    <div class="grid g3">
+      <div class="card">
+        <div class="icon" style="color:var(--bl)">🎧</div>
+        <span class="who">Operations desk</span>
+        <h3>Operations</h3>
+        <p>Runs the rental side: customers, contracts, handovers, payments, readiness for pickup, and raising a
+        logistics move. Sees maintenance, doesn't run it.</p>
+        <div class="tags"><span class="tag">contracts.manage</span><span class="tag">billing.manage</span><span class="tag">operations.manage</span></div>
+      </div>
+
+      <div class="card">
+        <div class="icon" style="color:var(--cy)">🔧</div>
+        <span class="who">The diagnosis</span>
+        <h3>Inspector</h3>
+        <p>The gate into maintenance. Test-drives the car, files the diagnostic report, and decides whether this is a
+        ticket at all. Re-inspects on return and can <b>fail</b> the repair — which reopens it.</p>
+        <div class="tags"><span class="tag cy">maintenance.initiate</span><span class="tag">inspections.manage</span></div>
+      </div>
+
+      <div class="card">
+        <div class="icon" style="color:var(--vi)">🧭</div>
+        <span class="who">The dispatcher</span>
+        <h3>Supervisor / Coordinator</h3>
+        <p>Reads the open ticket, picks the destination garage, assigns the driver, chases progress and pings when a
+        car goes quiet. Owns checkpoints and the promised completion date.</p>
+        <div class="tags"><span class="tag vi">maintenance.delegate</span><span class="tag">logistics.dispatch</span><span class="tag">checkpoint.manage</span></div>
+      </div>
+
+      <div class="card">
+        <div class="icon" style="color:var(--am)">🚚</div>
+        <span class="who">The field</span>
+        <h3>Logistics / Driver</h3>
+        <p>Claims a pooled move, captures the odometer at pickup and drop-off, drives the car to the garage and back.
+        The odometer chain is validated at every touch.</p>
+        <div class="tags"><span class="tag am">logistics.claim</span><span class="tag">maintenance.logistics</span></div>
+      </div>
+
+      <div class="card">
+        <div class="icon" style="color:var(--gr)">🏭</div>
+        <span class="who">The workshop lane</span>
+        <h3>Maintenance manager</h3>
+        <p>Approves the bill, manages workshop events, curates parts and installed components, and reviews recurring
+        faults that came back after a "fix."</p>
+        <div class="tags"><span class="tag gr">maintenance.approve</span><span class="tag">parts.purchase</span><span class="tag">components.manage</span></div>
+      </div>
+
+      <div class="card">
+        <div class="icon" style="color:var(--am)">💰</div>
+        <span class="who">The books</span>
+        <h3>Finance</h3>
+        <p>Invoices, payments, receipts, customer wallets and cost visibility per vehicle. All money UI sits behind a
+        single feature flag so the operational app can ship without it.</p>
+        <div class="tags"><span class="tag">billing.manage</span><span class="tag">insights.view</span></div>
+      </div>
+
+      <div class="card">
+        <div class="icon">🛡</div>
+        <span class="who">Command</span>
+        <h3>Manager</h3>
+        <p>Full operational control of the fleet minus user administration — including the override that lets a
+        maintenance job proceed on a rented car.</p>
+        <div class="tags"><span class="tag">operations.override</span></div>
+      </div>
+
+      <div class="card">
+        <div class="icon">👤</div>
+        <span class="who">Platform</span>
+        <h3>Admin / Super-admin</h3>
+        <p>Everything, plus user and role administration and the odometer-change approval queue. Super-admin bypasses
+        every gate by design.</p>
+        <div class="tags"><span class="tag">users.manage</span><span class="tag">vehicles.approve_odometer</span></div>
+      </div>
+
+      <div class="card">
+        <div class="icon">👁</div>
+        <span class="who">Oversight</span>
+        <h3>Viewer</h3>
+        <p>Read-only across the whole platform. For owners, auditors and anyone who needs the picture without the
+        ability to change it.</p>
+        <div class="tags"><span class="tag">*.view</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ WORKFLOW ============ -->
+<section id="workflow">
+  <div class="wrap">
+    <span class="kicker">03 — The journey</span>
+    <h2>From "something's wrong" to "back on the road"</h2>
+    <p class="sub">
+      Twenty-eight distinct states, but one spine. Notice where the branches are: a diagnosis can end without a
+      ticket, a repair can be <b>rejected</b> at re-inspection, and the car can be released back to rental mid-repair
+      without losing the ticket.
+    </p>
+
+    <div class="rail">
+      <div class="step">
+        <div class="st"><span class="n">STAGE 0</span><h4>Something is reported</h4><span class="actor">Driver · Ops · Complaint</span></div>
+        <p>A driver requests an inspection, ops logs a customer complaint, or a breakdown comes in from the road.
+        The system stamps <b>where it came from</b> and <b>why</b> as two separate facts — origin ≠ reason.
+        A breakdown immediately grounds the car and forces a QA gate.</p>
+      </div>
+
+      <div class="step">
+        <div class="st"><span class="n">STAGE 1</span><h4>Diagnostic test-drive</h4><span class="actor">Inspector</span></div>
+        <p>The inspector drives the car and files findings against a controlled vocabulary — a catalog of selectable
+        faults, not free text. <code>inspection_diagnostic</code></p>
+      </div>
+
+      <div class="step">
+        <div class="st"><span class="n">STAGE 2</span><h4>Ticket, or no ticket</h4><span class="actor">Inspector</span></div>
+        <p>Two exits. Clean car → <code>diagnostic_cleared</code>, closed, no ticket ever existed. Needs work →
+        the ticket <b>opens</b> with its faults attached and severity set, and waits for a dispatch decision.
+        <code>inspection_pending</code></p>
+      </div>
+
+      <div class="step">
+        <div class="st"><span class="n">STAGE 3</span><h4>Assign the garage</h4><span class="actor">Supervisor</span></div>
+        <p>This is where the AI earns its place. The supervisor sees a <b>ranked garage recommendation</b> with the
+        reasoning shown, the expected repair duration, the likely parts, and whether this car has been here for this
+        fault before. They pick the garage, assign a driver, and set the promised return date.
+        <code>awaiting_dispatch</code></p>
+      </div>
+
+      <div class="step">
+        <div class="st"><span class="n">STAGE 4</span><h4>Pickup and transit</h4><span class="actor">Driver</span></div>
+        <p>Odometer captured, garage confirmed, car en route. The downtime clock starts here — and pauses when the
+        car is temporarily released back to rental. <code>in_transit</code> → <code>under_repair</code></p>
+      </div>
+
+      <div class="step">
+        <div class="st"><span class="n">STAGE 5</span><h4>Inside the workshop</h4><span class="actor">Supervisor · Garage</span></div>
+        <p>Checkpoints with evidence keep the ticket alive: what's been done, what's waiting on a part, what changed
+        about the promise. Silence escalates on its own — the reminder gets louder as the promised date approaches
+        and passes. Parts requested here become purchases, and purchases become <b>installed components</b> on that
+        specific car.</p>
+      </div>
+
+      <div class="step">
+        <div class="st"><span class="n">STAGE 6</span><h4>The garage says it's done</h4><span class="actor">Garage → Supervisor</span></div>
+        <p>Not accepted on faith. Repair review, then <code>ready_for_reinspection</code>. Each fault on the ticket is
+        individually resolved: <b>fixed</b> (with evidence), <b>not found</b> (the workshop checked, it doesn't
+        exist), or <b>cancelled</b>. Those three outcomes are different data, not different words.</p>
+      </div>
+
+      <div class="step">
+        <div class="st"><span class="n">STAGE 7</span><h4>Re-inspection — the QC gate</h4><span class="actor">Inspector</span></div>
+        <p>The inspector drives it again. <b>Pass</b> → the service log is written and the ticket moves on.
+        <b>Fail</b> → <code>reinspection_failed</code>, straight back to the supervisor for re-dispatch, and that
+        round trip is now permanently on the garage's record as a comeback.</p>
+      </div>
+
+      <div class="step">
+        <div class="st"><span class="n">STAGE 8</span><h4>Back in the fleet</h4><span class="actor">Driver · Finance</span></div>
+        <p>Driver collects from the garage, odometer captured again, car returns to the pool. The ticket stays open
+        through <code>awaiting_invoice</code> until the bill lands and the cost is attributed to the vehicle and the
+        fault — then <code>closed</code>.</p>
+      </div>
+    </div>
+
+    <div class="note" style="margin-top:22px">
+      <b>The branch that matters most:</b> a failed re-inspection is not an embarrassment to be hidden — it's the
+      single most valuable signal in the system. It's what turns "which garage should we use" from a relationship
+      question into a measured one.
+    </div>
+  </div>
+</section>
+
+<!-- ============ AI ============ -->
+<section id="ai">
+  <div class="wrap">
+    <span class="kicker">04 — Intelligence</span>
+    <h2>The AI reads the fault, and predicts the repair</h2>
+    <p class="sub">
+      Years of maintenance history exist as free text: mechanic shorthand, mixed Arabic and English, abbreviations,
+      misspellings. Useless to a human at scale, and useless to a database. The intelligence layer turns that text
+      into structured knowledge — and then uses it to answer the three questions a supervisor actually asks.
+    </p>
+
+    <div class="pipe">
+      <div class="pnode">
+        <div class="num">STEP 01</div>
+        <h4>Read the text</h4>
+        <p>Every historical repair line, invoice remark and inspection note is scanned against a curated
+        <b>fault ontology</b> — 15 domains (engine, brakes, electrical, HVAC, transmission, suspension…) each holding
+        concepts and the real-world terms mechanics actually type.</p>
+      </div>
+      <div class="pnode">
+        <div class="num">STEP 02</div>
+        <h4>Name the fault</h4>
+        <p>Text becomes a <b>concept</b>: "check-engine light", "A/C not cooling", "airbag warning". Crucially the
+        engine also separates a <b>service</b> (oil change) from a <b>fault</b> (oil leak) from mere
+        <b>context</b> — counting a routine service as a breakdown poisons every metric downstream.</p>
+      </div>
+      <div class="pnode">
+        <div class="num">STEP 03</div>
+        <h4>Build the signature</h4>
+        <p>A repair becomes a signature: this fault, on this model, at this garage, for this duration, at this cost,
+        with these parts. Signatures are what make two visits three years apart comparable.</p>
+      </div>
+      <div class="pnode">
+        <div class="num">STEP 04</div>
+        <h4>Answer the question</h4>
+        <p>Given a new ticket, find similar past repairs and return the honest distribution: median and p90 duration,
+        cost range, the parts that were actually used, and which garage resolved it first time.</p>
+      </div>
+    </div>
+
+    <div class="grid g2" style="margin-top:28px">
+      <div class="card">
+        <div class="icon" style="color:var(--cy)">🩺</div>
+        <h3>"What is actually wrong with this car?"</h3>
+        <p>Recurring-fault detection chains repeat visits on the same vehicle into a single story. If a car has come
+        back for the same electrical fault three times in eight months, that's not three tickets — that's one
+        unresolved problem with a pattern, and it's escalated as one. A per-vehicle <b>Suggested Checks</b> list is
+        generated from its own repeat faults, so the next inspection starts already knowing the car's history.</p>
+        <div class="tags"><span class="tag cy">RecurringFaultService</span><span class="tag cy">VehicleFaultRecurrenceService</span></div>
+      </div>
+
+      <div class="card">
+        <div class="icon" style="color:var(--vi)">🏭</div>
+        <h3>"What will the garage do, and how long?"</h3>
+        <p>Before dispatch, the system predicts the repair: expected duration from real cohort statistics, likely
+        parts, expected cost band, and a ranked garage recommendation scored on measured first-time-fix rate,
+        comeback rate, turnaround and cost — weighted by how critical the fault is. The supervisor sees the score
+        <b>and the reasoning behind it</b>, on one screen, before committing the car.</p>
+        <div class="tags"><span class="tag vi">GarageRecommendationService</span><span class="tag vi">RepairDurationQuery</span><span class="tag vi">PartIntelligence</span></div>
+      </div>
+
+      <div class="card">
+        <div class="icon" style="color:var(--bl)">💬</div>
+        <h3>It speaks operations, not engine</h3>
+        <p>A hard rule in this codebase: the engine emits <b>reason codes</b>, never English sentences. The interface
+        renders them as plain operational language — "this garage fixed this fault first time on 8 of the last 9
+        cars" — with the technical scoring folded away under <i>Technical details</i>. Same output, two audiences,
+        one source of truth.</p>
+        <div class="tags"><span class="tag">reason codes</span><span class="tag">EN / AR</span></div>
+      </div>
+
+      <div class="card">
+        <div class="icon" style="color:var(--gr)">📐</div>
+        <h3>It shows its work — and its limits</h3>
+        <p>Every recommendation is backed by an <b>explainability graph</b>: the nodes and evidence that produced the
+        number, inspectable from the UI. And the platform grades its own confidence — where the history is thin, it
+        says so rather than inventing certainty. A backtest harness scores the predictor against what actually
+        happened afterwards.</p>
+        <div class="tags"><span class="tag gr">ExplanationEngine</span><span class="tag gr">ConfidenceScorer</span><span class="tag gr">intelligence:backtest</span></div>
+      </div>
+    </div>
+
+    <div class="note" style="margin-top:22px">
+      <b>An honest note on the AI:</b> the fault ontology ships <i>seeded and deterministic</i> — the matching runs in
+      plain code with no API key and no per-request model call, which is why it is fast, auditable and reproducible.
+      The measured concept recall is high, but the coverage report is explicit that a large share of historical
+      records are cosmetic rather than mechanical, and that predictive <i>confidence scoring</i> has not yet earned
+      the right to be shown as a number. That gate is deliberate: the platform doesn't display a score it can't
+      defend.
+    </div>
+  </div>
+</section>
+
+<!-- ============ DATA ============ -->
+<section id="data">
+  <div class="wrap">
+    <span class="kicker">05 — Foundations</span>
+    <h2>Where every fact comes from</h2>
+    <p class="sub">
+      The hardest engineering in this project isn't the UI — it's deciding, for each fact, which system is allowed
+      to be right about it. These are settled rulings, enforced in code.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>The fact</th><th>Single source of truth</th><th>Why it's locked</th></tr></thead>
+        <tbody>
+          <tr><td><b>Which cars exist</b></td><td><span>OfficeManager API (fleet identity key, not plate)</span></td>
+              <td><span>Plates get reassigned between cars; identity must survive that.</span></td></tr>
+          <tr><td><b>Revenue &amp; contracts</b></td><td><span>OfficeManager contracts (read-only replica)</span></td>
+              <td><span>Rental income is booked elsewhere; we mirror, we never invent.</span></td></tr>
+          <tr><td><b>Repair cost</b></td><td><span>The invoice — rolled up per ticket</span></td>
+              <td><span>One ticket can produce several invoices; cost is the sum, attributed to the fault.</span></td></tr>
+          <tr><td><b>Vehicle expenses</b></td><td><span>VehicleExpenseProvider, classified by remark</span></td>
+              <td><span>Expense <i>type</i> is derived from the remark text; sub-rentals are excluded from cost.</span></td></tr>
+          <tr><td><b>Odometer</b></td><td><span>Continuity-validated chain with an approval gate</span></td>
+              <td><span>Seven systems write mileage; large manual edits require admin approval.</span></td></tr>
+          <tr><td><b>Maintenance days</b></td><td><span>Fleet utilization report — one function</span></td>
+              <td><span>Six competing definitions of "downtime" existed. Now there's one.</span></td></tr>
+          <tr><td><b>Vehicle movements</b></td><td><span>LogisticsTask</span></td>
+              <td><span>Every physical move of a car has exactly one home.</span></td></tr>
+          <tr><td><b>What a fault is called</b></td><td><span>Findings catalog + fault ontology</span></td>
+              <td><span>The catalog defines what's selectable; the ontology understands what was written.</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="grid g4" style="margin-top:20px">
+      <div class="card"><h3 style="font-size:14.5px">🔌 OfficeManager</h3><p>Fleet + contracts + customers, synced continuously with an audit-and-autocorrect pass.</p></div>
+      <div class="card"><h3 style="font-size:14.5px">📊 Maintenance sheets</h3><p>Years of legacy workshop history, imported and mined — the corpus the intelligence layer learns from.</p></div>
+      <div class="card"><h3 style="font-size:14.5px">🧾 Garage invoices</h3><p>Tokenised portal link → garage submits → review queue → attributed cost.</p></div>
+      <div class="card"><h3 style="font-size:14.5px">📱 The app itself</h3><p>Inspections, checkpoints, photos, odometer captures — the new, structured, first-party data.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ QUALITY ============ -->
+<section id="quality">
+  <div class="wrap">
+    <span class="kicker">06 — Confidence</span>
+    <h2>What the tests actually protect</h2>
+    <p class="sub">
+      94 automated test files, run against a dedicated test database that is <b>cloned from the real schema</b> rather
+      than rebuilt from scratch. The suite isn't chasing a coverage percentage — each group guards a specific way this
+      system could quietly start lying.
+    </p>
+
+    <div class="grid g3">
+      <div class="card">
+        <div class="icon" style="color:var(--cy)">🔄</div>
+        <h3>Workflow &amp; lifecycle</h3>
+        <p>That a ticket can't skip a stage, that a failed re-inspection genuinely reopens it, that pausing a repair
+        to rent the car doesn't lose the ticket, and that deleting a maintenance record leaves the timeline intact.</p>
+        <div class="tags"><span class="tag">ReinspectionReopen</span><span class="tag">PauseResume</span><span class="tag">DeletionLifecycle</span></div>
+      </div>
+      <div class="card">
+        <div class="icon" style="color:var(--am)">💵</div>
+        <h3>Money attribution</h3>
+        <p>That a repair's cost lands on the right vehicle even when the car was transferred between garages
+        mid-repair, that the financial breakdown reconciles, and that expense classification is stable.</p>
+        <div class="tags"><span class="tag">RepairCostAttribution</span><span class="tag">GarageTransferInvoice</span><span class="tag">ExpenseClassifier</span></div>
+      </div>
+      <div class="card">
+        <div class="icon" style="color:var(--vi)">🧠</div>
+        <h3>Intelligence honesty</h3>
+        <p>That the fault extractor pulls the right concept from real text, that a capability refuses to answer when
+        its evidence is stale or missing, and that confidence is scored rather than asserted.</p>
+        <div class="tags"><span class="tag">FaultExtraction</span><span class="tag">EvidenceFreshness</span><span class="tag">CapabilityPolicy</span></div>
+      </div>
+      <div class="card">
+        <div class="icon" style="color:var(--rd)">🔐</div>
+        <h3>Access &amp; audit</h3>
+        <p>That a role cannot reach an endpoint it wasn't granted, that odometer blocks are recorded, and that
+        notifications actually fire to the right person on the right event.</p>
+        <div class="tags"><span class="tag">ComponentApiAccess</span><span class="tag">OdometerBlockAudit</span><span class="tag">Notification</span></div>
+      </div>
+      <div class="card">
+        <div class="icon" style="color:var(--gr)">⚡</div>
+        <h3>Performance regressions</h3>
+        <p>Explicit tests that the operational board doesn't degrade into N+1 queries as the fleet grows — a bug class
+        that doesn't fail, it just gets slower until it's unusable.</p>
+        <div class="tags"><span class="tag">NoNPlusOne</span><span class="tag">ReadEndpointsSmoke</span></div>
+      </div>
+      <div class="card">
+        <div class="icon" style="color:var(--bl)">📏</div>
+        <h3>Vocabulary guardrails</h3>
+        <p>Standing commands that fail loudly on drift: the findings vocabulary check, the evidence-health check, the
+        i18n coverage check, and the recurrence backtest.</p>
+        <div class="tags"><span class="tag">findings:vocabulary-check</span><span class="tag">evidence:health</span><span class="tag">check:i18n</span></div>
+      </div>
+    </div>
+
+    <div class="note good" style="margin-top:22px">
+      <b>The measured baseline.</b> Before any of the intelligence work, the platform froze the fleet's real operational
+      numbers — first-time fix rate, comeback rate, average turnaround — so that every later improvement is compared
+      against what was actually true, not against a hopeful estimate. Those are the numbers the recommendation engine
+      is scored against.
+    </div>
+  </div>
+</section>
+
+<!-- ============ STACK ============ -->
+<section id="stack">
+  <div class="wrap">
+    <span class="kicker">07 — Build</span>
+    <h2>How it's put together</h2>
+
+    <div class="split">
+      <div class="card">
+        <h3>🖥 Backend</h3>
+        <p style="margin-top:8px">Laravel 12 / PHP. 71 API controllers, 100+ domain services, 229 migrations. Role-based
+        access via Spatie permissions with every route explicitly gated. Scheduled jobs handle sync, reminders,
+        expiry checks and snapshots.</p>
+        <div class="tags">
+          <span class="tag">Laravel 12</span><span class="tag">MySQL 8</span><span class="tag">Spatie RBAC</span>
+          <span class="tag">Artisan commands</span><span class="tag">PHPUnit</span>
+        </div>
+      </div>
+      <div class="card">
+        <h3>🎨 Frontend</h3>
+        <p style="margin-top:8px">React 19, 68 pages built on a shared "Cockpit+" design system. Full EN/AR
+        internationalisation with a CI guardrail that fails the build on untranslated strings. Realtime notifications
+        and a role-aware action centre so each user lands on their own queue.</p>
+        <div class="tags">
+          <span class="tag">React 19</span><span class="tag">Cockpit+ DS</span><span class="tag">i18n EN/AR</span>
+          <span class="tag">Realtime</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid g3" style="margin-top:16px">
+      <div class="card"><h3 style="font-size:15px">Feature flags</h3><p>All financial UI sits behind a single flag, so the operational product can ship to staff before the money layer is finished.</p></div>
+      <div class="card"><h3 style="font-size:15px">Shadow mode</h3><p>New subsystems (like the installed-components asset layer) run alongside the old path and are compared before they're trusted.</p></div>
+      <div class="card"><h3 style="font-size:15px">Simulation panel</h3><p>A lossless environment for walking a car through the whole lifecycle — used for training and for demoing the workflow without touching live data.</p></div>
+    </div>
+
+    <h3 style="margin:34px 0 10px;font-size:17px">Where the effort went</h3>
+    <div class="bars">
+      <div class="bar"><span>Maintenance workflow engine</span><span class="track"><span class="fill" style="width:100%"></span></span><span class="val">core</span></div>
+      <div class="bar"><span>Data sync &amp; sources of truth</span><span class="track"><span class="fill" style="width:88%"></span></span><span class="val">heavy</span></div>
+      <div class="bar"><span>Intelligence &amp; knowledge layer</span><span class="track"><span class="fill" style="width:76%"></span></span><span class="val">heavy</span></div>
+      <div class="bar"><span>Financial attribution</span><span class="track"><span class="fill" style="width:64%"></span></span><span class="val">active</span></div>
+      <div class="bar"><span>Logistics &amp; inspections</span><span class="track"><span class="fill" style="width:58%"></span></span><span class="val">shipped</span></div>
+      <div class="bar"><span>Asset / component ledger</span><span class="track"><span class="fill" style="width:34%"></span></span><span class="val">shadow</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ NEXT ============ -->
+<section id="next">
+  <div class="wrap">
+    <span class="kicker">08 — Direction</span>
+    <h2>What we're building next</h2>
+    <p class="sub">
+      The plan is deliberately sequenced: stabilise what people use every day, finish the knowledge foundation, and
+      only then let the platform make claims about the future.
+    </p>
+
+    <div class="grid g3">
+      <div class="card">
+        <div class="icon" style="color:var(--gr)">1</div>
+        <h3>Stabilise &amp; roll out</h3>
+        <p>Get the current workflow into employees' hands daily. Every day it runs, it produces the structured
+        first-party data the intelligence layer has been starved of.</p>
+        <div class="tags"><span class="tag gr">in progress</span></div>
+      </div>
+      <div class="card">
+        <div class="icon" style="color:var(--bl)">2</div>
+        <h3>Close the capture gap</h3>
+        <p>Tier-1 repair capture at the workshop: what was actually done, which part, how long. This is the single
+        highest-leverage item — richer capture directly moves the KPIs the recommendation engine reads.</p>
+        <div class="tags"><span class="tag">priority 1</span></div>
+      </div>
+      <div class="card">
+        <div class="icon" style="color:var(--vi)">3</div>
+        <h3>Earn the prediction</h3>
+        <p>Keep the confidence score gated behind the backtest until it beats the baseline honestly. Then, and only
+        then, turn on forward-looking predictive maintenance.</p>
+        <div class="tags"><span class="tag vi">gated</span></div>
+      </div>
+    </div>
+
+    <div class="grid g2" style="margin-top:16px">
+      <div class="card">
+        <h3>💡 Worth showing stakeholders</h3>
+        <p style="margin-top:8px">Three screens tell the whole story better than any deck: the <b>ticket detail</b>
+        with its live audit trail; the <b>dispatch step</b> where the garage recommendation and its reasoning appear
+        side by side; and a <b>vehicle timeline</b> where a car's entire life — rentals, faults, repairs, costs,
+        odometer — reads as one continuous investigation.</p>
+      </div>
+      <div class="card">
+        <h3>🧭 The principle underneath all of it</h3>
+        <p style="margin-top:8px">Map the data as it is; don't infer what you can't prove. Every field is labelled a
+        fact, a derivation, or a judgement. Every screen shows its origin. Where the evidence is thin, the platform
+        says so out loud. That restraint is why the numbers can be trusted at all.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="fl">
+      <span class="brand"><span class="dot"></span> FleetView</span>
+      <span>Fleet operations, maintenance workflow &amp; repair intelligence</span>
+      <span class="spacer" style="flex:1"></span>
+      <span style="font-family:var(--mono);font-size:11.5px">Project brief · generated 2026-08-03</span>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -426,7 +426,7 @@ class CarStatusService
             ->map(function ($g) {
                 $vehicle   = $g->first()->vehicle;
                 // Event Type layer: repeat-FAULT detection ignores planned services once enforced.
-                $catCounts = $g->flatMap(fn ($t) => (\App\Support\EventKind::enforced() ? $t->tasks->where('kind', MaintenanceTask::KIND_FAULT) : $t->tasks)->pluck('category_key'))->filter()->countBy();
+                $catCounts = $g->flatMap(fn ($t) => $t->tasks->whereIn('kind', MaintenanceTask::reliabilityKindsForMode())->pluck('category_key'))->filter()->countBy();
                 return [
                     'vehicle_id'    => $g->first()->vehicle_id,
                     'plate_no'      => $vehicle?->plate_no,
@@ -651,7 +651,9 @@ class CarStatusService
         // Event Type layer: once enforced, the FAULT metrics (health, KPIs, analytics, reliability, fault
         // history) count only kind=fault — planned services drop out. Cost + the "why in shop" headline keep
         // ALL tasks (a service still has cost and can be the reason a car is in the shop).
-        $faultTasks  = \App\Support\EventKind::enforced() ? $tasks->where('kind', MaintenanceTask::KIND_FAULT)->values() : $tasks;
+        // Reliability evidence only. DAMAGE is always excluded (a kerbed rim is a fact about a driver,
+        // not about the car); services follow the rollout flag. One rule, in one place.
+        $faultTasks  = $tasks->whereIn('kind', MaintenanceTask::reliabilityKindsForMode())->values();
         $inspections = RepairInspection::query()
             ->where('vehicle_id', $vehicle->id)
             ->orderByDesc('inspection_date')

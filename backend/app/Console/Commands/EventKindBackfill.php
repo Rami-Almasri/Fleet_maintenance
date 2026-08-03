@@ -64,11 +64,9 @@ class EventKindBackfill extends Command
         $total = (clone $query)->count();
         $this->info(($dryRun ? '[DRY-RUN] ' : '') . "Classifying {$total} maintenance_task(s)...");
 
-        $tally = [
-            MaintenanceTask::KIND_FAULT      => 0,
-            MaintenanceTask::KIND_SERVICE    => 0,
-            MaintenanceTask::KIND_INSPECTION => 0,
-        ];
+        // Derived from KINDS, never hand-listed: a hard-coded three-kind tally hit an undefined index the
+        // moment the resolver learned to return `damage`, and silently under-reported it.
+        $tally = array_fill_keys(MaintenanceTask::KINDS, 0);
         $changed = 0;
         $needsReview = 0;
 
@@ -84,12 +82,15 @@ class EventKindBackfill extends Command
                     }
 
                     // Write only when something actually differs (keeps the second run a true no-op).
+                    // The catalog columns are walked from KIND_CATALOG_FK rather than listed, so a new
+                    // kind cannot be forgotten here and quietly make the backfill non-idempotent.
                     $differs = $task->kind !== $attrs['kind']
-                        || (int) $task->fault_catalog_id !== (int) $attrs['fault_catalog_id']
-                        || (int) $task->service_catalog_id !== (int) $attrs['service_catalog_id']
-                        || (int) $task->inspection_type_id !== (int) $attrs['inspection_type_id']
                         || (bool) $task->needs_review !== (bool) $attrs['needs_review']
                         || $task->classification_source !== $attrs['classification_source'];
+
+                    foreach (MaintenanceTask::KIND_CATALOG_FK as $column) {
+                        $differs = $differs || (int) $task->{$column} !== (int) ($attrs[$column] ?? null);
+                    }
 
                     if ($differs) {
                         DB::table('maintenance_tasks')->where('id', $task->id)->update($attrs);

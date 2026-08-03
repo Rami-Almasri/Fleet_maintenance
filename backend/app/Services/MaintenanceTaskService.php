@@ -68,7 +68,13 @@ class MaintenanceTaskService
                 continue;
             }
 
-            $task = new MaintenanceTask([
+            // TYPE FROM THE CATALOG, not from a guess. When the finding names a catalog row (or carries an
+            // explicit kind from a type-first intake) the event is born authoritatively classified and
+            // `classification_source` says `catalog`. Only findings the catalogs do not recognise fall
+            // through to the shield in MaintenanceTask::creating. See audit H5.
+            $classification = app(EventClassificationService::class)->classifyFromFinding($f + ['text' => $text]);
+
+            $task = new MaintenanceTask(array_merge([
                 'maintenance_id' => $ticket->id,
                 'vehicle_id'     => $ticket->vehicle_id,
                 'symptom'        => $text,
@@ -81,14 +87,17 @@ class MaintenanceTaskService
                 'status'         => MaintenanceTask::STATUS_PENDING,
                 'identified_by'  => $ticket->inspected_by,
                 'identified_at'  => $this->parseDate($f['at'] ?? null) ?? Carbon::now(),
-            ]);
+            ], $classification ?? []));
             $task->save();
             $existing->put($this->key($text), $task);
             $newTasks[] = $task;
             $created++;
 
             $this->log->recordTask($task, VehicleLogEvent::EVENT_TASK_IDENTIFIED, $actor, [
-                'description' => 'Fault identified: ' . $text,
+                // Name the event by its own type. The trail used to read "Fault identified: Oil Change"
+                // for a service, which is the audit log asserting the very thing the type layer exists
+                // to deny (audit H5).
+                'description' => $task->kindMeta()['label'] . ' identified: ' . $text,
                 'source_tag'  => $task->source,
             ]);
 
