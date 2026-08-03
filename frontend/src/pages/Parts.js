@@ -331,8 +331,11 @@ function InstallModal({ open, request, onClose, onDone }) {
   // The Asset Layer fields ride along with the install: this step is the ONLY moment the system can
   // learn what physically went on the car and what happened to the part it displaced. Asking here is
   // why no "Add Component" screen has to exist anywhere else.
+  // Installing is a confirmation, not a form. Odometer / warranty / result / notes are no longer asked
+  // for here — the backend defaults them (result → success, the rest → null / whatever the purchase
+  // already carried), so fitting a part is one click. What remains is the Asset Layer block, which is
+  // the ONLY moment the system can learn what physically went on the car.
   const BLANK = {
-    installed_odometer: '', warranty_months: '', result: 'success', notes: '',
     component_catalog_id: '', brand: '', serial_no: '', position: '',
     removal_reason: '', disposition: '',
   };
@@ -379,16 +382,39 @@ function InstallModal({ open, request, onClose, onDone }) {
 
   const set = (field, value) => setForm((f) => ({ ...f, [field]: value }));
 
+  /**
+   * The two ways this install can be accepted, billed, and still never reach the vehicle's Installed
+   * Components tab. Both are refused by the backend with a 422 — but under shadow mode that 422 is
+   * caught and swallowed so it can never roll back the billing write, which means an unguarded submit
+   * looks like a complete success while the asset ledger silently skips the part. Catching it here is
+   * what turns a silent no-op into a fixable field error.
+   */
+  const assetErrors = () => {
+    const e = {};
+    if (!form.component_catalog_id) {
+      e['component.component_catalog_id'] = ['Pick a component type — without it the part cannot join the vehicle’s configuration.'];
+    } else if (selectedType?.requires_serial && !form.serial_no.trim()) {
+      e['component.serial_no'] = [`${selectedType.name} is serialized — enter its serial number.`];
+    }
+    return e;
+  };
+
   const submit = async () => {
     if (!purchase) { toast.error('No purchase found to install'); return; }
+
+    const blocking = assetErrors();
+    if (Object.keys(blocking).length) {
+      setErrors(blocking);
+      toast.error('Please fix the highlighted fields');
+      return;
+    }
+
     setSaving(true);
     setErrors({});
     try {
       await api.post(`/part-purchases/${purchase.id}/install`, {
-        installed_odometer: form.installed_odometer === '' ? null : Number(form.installed_odometer),
-        warranty_months: form.warranty_months === '' ? null : Number(form.warranty_months),
-        result: form.result,
-        notes: form.notes.trim() || null,
+        // No odometer / warranty / result / notes: omitted entirely so installPurchase() applies its own
+        // defaults (result → success). The API still accepts them for any other caller.
 
         // Asset Layer. Blank fields are omitted rather than sent as empty strings so the backend's
         // "nullable" rules see a genuinely absent value and its own defaults apply.
@@ -431,39 +457,11 @@ function InstallModal({ open, request, onClose, onDone }) {
       }
     >
       <div className="space-y-4">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Input
-            label="Installed odometer (km)"
-            type="number"
-            min={0}
-            placeholder="Optional"
-            value={form.installed_odometer}
-            error={errors.installed_odometer?.[0]}
-            onChange={(e) => set('installed_odometer', e.target.value)}
-          />
-          <Input
-            label="Warranty (months)"
-            type="number"
-            min={0}
-            placeholder="Optional"
-            value={form.warranty_months}
-            error={errors.warranty_months?.[0]}
-            onChange={(e) => set('warranty_months', e.target.value)}
-          />
-        </div>
-        <Select label="Result" value={form.result} error={errors.result?.[0]} onChange={(e) => set('result', e.target.value)}>
-          <option value="success">Success</option>
-          <option value="failed">Failed</option>
-          <option value="pending">Pending</option>
-        </Select>
-        <Textarea
-          label="Notes"
-          rows={2}
-          placeholder="Optional"
-          value={form.notes}
-          error={errors.notes?.[0]}
-          onChange={(e) => set('notes', e.target.value)}
-        />
+        {/* Fitting the part is the confirmation itself — the button below is the whole action. */}
+        <p className="text-sm text-slate-600">
+          Record <span className="font-medium text-slate-800">{request?.part_name}</span> as fitted to{' '}
+          <span className="font-medium text-slate-800">{request?.vehicle?.plate || `#${request?.vehicle?.id}`}</span>?
+        </p>
 
         {/* ── Vehicle configuration ─────────────────────────────────────────────────────────────
             Recording the install here is what puts the part on the vehicle's Installed Components
@@ -488,9 +486,9 @@ function InstallModal({ open, request, onClose, onDone }) {
                 <option key={c.id} value={c.id}>{c.name}</option>
               ))}
             </Select>
-            {!form.component_catalog_id && (
+            {!form.component_catalog_id && !errors['component.component_catalog_id'] && (
               <p className="mt-1 text-xs text-amber-600">
-                Pick a type, or this part will be billed but won’t appear on the vehicle’s Installed Components tab.
+                Required — the type is what puts this part on the vehicle’s Installed Components tab.
               </p>
             )}
           </div>

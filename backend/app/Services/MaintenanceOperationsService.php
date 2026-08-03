@@ -100,7 +100,15 @@ class MaintenanceOperationsService
                 'responsibles:id,name',
                 'activeMove',
                 'transferToVendor:id,name',
-                'tasks' => fn ($q) => $q->with(['identifiedBy:id,name', 'resolvedBy:id,name', 'partRequests:id,maintenance_task_id,part_name,status']),
+                // partRequests.purchases carries delivered_at/installed_at, which PartRequest::isOutstanding()
+                // needs to tell "still waiting" from "already landed" — without it this would lazy-load once
+                // per request across up to 500 tickets.
+                'tasks' => fn ($q) => $q->with([
+                    'identifiedBy:id,name',
+                    'resolvedBy:id,name',
+                    'partRequests:id,maintenance_task_id,part_name,status',
+                    'partRequests.purchases:id,part_request_id,delivered_at,installed_at',
+                ]),
                 'checkpoints' => fn ($q) => $q->with('submitter:id,name'),
             ])
             ->orderByDesc('last_state_change_at')
@@ -391,8 +399,10 @@ class MaintenanceOperationsService
             ->map(function (MaintenanceTask $task) use ($t) {
                 $sev  = Maintenance::FAULT_SEVERITY_META[$task->severity] ?? null;
                 $open = ! in_array($task->status, MaintenanceTask::TERMINAL, true);
+                // Waiting ends at DELIVERY, not at the fitting — isOutstanding() reads the purchase's
+                // delivered_at, so a landed part stops raising this even while its request says `purchased`.
                 $waitingParts = $task->relationLoaded('partRequests')
-                    ? $task->partRequests->contains(fn (PartRequest $r) => ! in_array($r->status, PartRequest::TERMINAL, true))
+                    ? $task->partRequests->contains(fn (PartRequest $r) => $r->isOutstanding())
                     : false;
 
                 return [
@@ -419,12 +429,16 @@ class MaintenanceOperationsService
             ->all();
     }
 
-    /** Open (non-terminal) part names still owed on the ticket — the "waiting for these parts" list. */
+    /**
+     * The part names the ticket is still WAITING on — the "waiting for these parts" list. Same rule as
+     * every other surface (PartRequest::isOutstanding): the wait ends when the part lands, not when it
+     * is fitted.
+     */
     private function missingParts(Maintenance $t): array
     {
         return $t->tasks
             ->flatMap(fn ($task) => $task->relationLoaded('partRequests') ? $task->partRequests : collect())
-            ->reject(fn (PartRequest $r) => in_array($r->status, PartRequest::TERMINAL, true))
+            ->filter(fn (PartRequest $r) => $r->isOutstanding())
             ->pluck('part_name')->filter()->unique()->values()->all();
     }
 
@@ -542,7 +556,15 @@ class MaintenanceOperationsService
                 'assignedDriver:id,name',
                 'inspector:id,name',
                 'responsibles:id,name',
-                'tasks' => fn ($q) => $q->with(['identifiedBy:id,name', 'resolvedBy:id,name', 'partRequests:id,maintenance_task_id,part_name,status']),
+                // partRequests.purchases carries delivered_at/installed_at, which PartRequest::isOutstanding()
+                // needs to tell "still waiting" from "already landed" — without it this would lazy-load once
+                // per request across up to 500 tickets.
+                'tasks' => fn ($q) => $q->with([
+                    'identifiedBy:id,name',
+                    'resolvedBy:id,name',
+                    'partRequests:id,maintenance_task_id,part_name,status',
+                    'partRequests.purchases:id,part_request_id,delivered_at,installed_at',
+                ]),
                 'checkpoints' => fn ($q) => $q->with('submitter:id,name', 'media'),
                 'activeMove',
                 'transferToVendor:id,name',

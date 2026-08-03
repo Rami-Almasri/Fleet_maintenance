@@ -294,6 +294,11 @@ class MaintenanceWorkflowResource extends JsonResource
             // ticket level (no maintenance_task_id — e.g. an ad-hoc procurement request) is invisible to
             // the per-fault `tasks[].parts` list, so the card reads THIS to show it. Present only when the
             // ticket's own partRequests relation is eager-loaded.
+            // `delivered` / `outstanding` are DERIVED, never stored: delivery is not a request status (the
+            // request stays `purchased` after markDelivered), it lives on part_purchases.delivered_at. The
+            // board's parts badge reads `outstanding` so it clears the moment a part LANDS, without waiting
+            // for someone to fit it and move the status. Both come from PartRequest::isOutstanding(), the
+            // same rule WorkflowStateResolver uses, so board and state can't disagree.
             'parts' => $this->whenLoaded('partRequests', fn () => $t->partRequests->map(fn (PartRequest $p) => [
                 'id'          => $p->id,
                 'part_name'   => $p->part_name,
@@ -301,6 +306,8 @@ class MaintenanceWorkflowResource extends JsonResource
                 'quantity'    => $p->quantity,
                 'status'      => $p->status,
                 'task_id'     => $p->maintenance_task_id,
+                'delivered'   => $p->relationLoaded('purchases') ? $p->isOnSite() : null,
+                'outstanding' => $p->relationLoaded('purchases') ? $p->isOutstanding() : null,
             ])->values()),
 
             // OPERATIONS CARD — the "what is happening to this car right now" block the Car Status
@@ -559,9 +566,10 @@ class MaintenanceWorkflowResource extends JsonResource
     }
 
     /**
-     * The distinct names of every OPEN (non-terminal) part request across this ticket's faults — the
-     * parts the car is still waiting on. Empty when the tasks / their part requests aren't eager-loaded
-     * (so it never fires a lazy query) or nothing is outstanding.
+     * The distinct names of every part this ticket is still WAITING on — PartRequest::isOutstanding(),
+     * the same rule the board badge and WorkflowStateResolver use. The wait ends at DELIVERY, not at the
+     * fitting, so a part that has landed drops off this list even though its request stays `purchased`.
+     * Empty when the tasks / their part requests aren't eager-loaded (so it never fires a lazy query).
      *
      * @return array<int,string>
      */
@@ -576,7 +584,7 @@ class MaintenanceWorkflowResource extends JsonResource
                 : collect());
 
         return $requests
-            ->reject(fn (PartRequest $r) => in_array($r->status, PartRequest::TERMINAL, true))
+            ->filter(fn (PartRequest $r) => $r->isOutstanding())
             ->pluck('part_name')
             ->filter()
             ->unique()

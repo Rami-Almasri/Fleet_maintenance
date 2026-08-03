@@ -136,6 +136,10 @@ class MaintenanceTaskResource extends JsonResource
                 'part_number' => $p->part_number,
                 'quantity'   => $p->quantity,
                 'status'     => $p->status,
+                // Delivery is not a status — it's part_purchases.delivered_at. Surfaced so a part that has
+                // LANDED but isn't fitted yet reads "Delivered" instead of a stale "Purchased".
+                'delivered'  => $p->relationLoaded('purchases') ? $p->isOnSite() : null,
+                'outstanding' => $p->relationLoaded('purchases') ? $p->isOutstanding() : null,
             ])->values()),
 
             // The garage "stints" — the transfer history / per-fault timeline (when eager-loaded).

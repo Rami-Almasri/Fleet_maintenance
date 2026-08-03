@@ -4,7 +4,6 @@ namespace App\Services\State;
 
 use App\Models\Maintenance;
 use App\Models\MaintenanceTask;
-use App\Models\PartPurchase;
 use App\Models\PartRequest;
 
 /**
@@ -39,14 +38,6 @@ final class WorkflowStateResolver
     private const ACTIVE_FAULT_STATUSES = [
         MaintenanceTask::STATUS_PENDING,
         MaintenanceTask::STATUS_IN_PROGRESS,
-    ];
-
-    /** Part-request statuses that mean the part is done/dropped and therefore never blocks. */
-    private const FULFILLED_OR_DROPPED = [
-        PartRequest::STATUS_INSTALLED,
-        PartRequest::STATUS_COMPLETED,
-        PartRequest::STATUS_REJECTED,
-        PartRequest::STATUS_CANCELLED,
     ];
 
     public function resolve(Maintenance $ticket): RepairState
@@ -96,22 +87,9 @@ final class WorkflowStateResolver
     {
         return array_values(
             $fault->partRequests
-                ->filter(fn (PartRequest $request) => $this->blocks($request))
+                ->filter(fn (PartRequest $request) => $request->isOutstanding())
                 ->pluck('id')
                 ->all()
         );
-    }
-
-    private function blocks(PartRequest $request): bool
-    {
-        if (in_array($request->status, self::FULFILLED_OR_DROPPED, true)) {
-            return false;
-        }
-
-        $onSite = $request->purchases->contains(
-            fn (PartPurchase $purchase) => $purchase->delivered_at !== null || $purchase->installed_at !== null
-        );
-
-        return ! $onSite;
     }
 }
