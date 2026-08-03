@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Vehicle;
+use App\Services\Expenses\ExpenseCategoryClassifier;
 
 /**
  * Financial EXPLANATION tree — the recursive "explain every number down to the original record" layer
@@ -298,30 +299,96 @@ class FinancialExplanationService
         $maint  = (float) $d['totals']['maintenance'];
         $source = $d['maintenance']['source']['label'] ?? 'Expenses sheet';
         $entries = [];
+        $dropped = [];   // lines the total deliberately leaves out — shown, never hidden
+        $tally   = [];   // category key → ['count' => n, 'total' => AED], counted lines only
+
+        // Reason text per excluded category, so an excluded line can say why it is out.
+        $reasons = [];
+        foreach ($d['maintenance']['exclusions'] ?? [] as $ex) {
+            $reasons[$ex['key']] = $ex['reason'];
+        }
 
         // Every expense line straight from the provider — its own remarks / date / amount, verbatim.
         foreach ($d['maintenance']['rows'] as $ln) {
-            $entries[] = $this->put([
+            $catKey   = $ln['category'] ?? ExpenseCategoryClassifier::UNCATEGORISED;
+            $catLabel = $ln['category_label'] ?? 'Uncategorised';
+            $isOut    = (bool) ($ln['excluded'] ?? false);
+
+            if (! $isOut) {
+                $tally[$catKey]['count'] = ($tally[$catKey]['count'] ?? 0) + 1;
+                $tally[$catKey]['total'] = ($tally[$catKey]['total'] ?? 0.0) + (float) $ln['amount'];
+            }
+
+            $id = $this->put([
                 'id'       => 'exp:' . $ln['id'],
                 'label'    => $ln['remarks'] ?: 'Expense',
                 'subtitle' => trim((string) ($ln['date'] ?: '') . ($ln['account_type'] ? ' · ' . $ln['account_type'] : '')) ?: null,
                 'kind'     => 'record',
                 'value'    => $ln['amount'], 'unit' => 'AED',
-                'record'   => [
+                // The bucket this line was filed under, and the one word that put it there — the filter
+                // reads `group.key`, the record card shows the reasoning so no bucket is a black box.
+                'group'    => ['key' => $catKey, 'label' => $catLabel],
+                'excluded' => $isOut,
+                'note'     => $isOut ? ($reasons[$catKey] ?? 'Not counted as cost for this vehicle.') : null,
+                'record'   => array_filter([
                     'Date'         => $ln['date'],
                     'Remarks'      => $ln['remarks'],
                     'Account type' => $ln['account_type'],
                     'Amount'       => $ln['amount'],
-                ],
+                    'Type'         => $catLabel,
+                    'Type matched on' => $ln['category_matched'] ? '"' . $ln['category_matched'] . '" in the remark' : null,
+                    'Counted as cost' => $isOut ? 'No — excluded' : 'Yes',
+                ], fn ($v) => $v !== null),
                 'source_module' => $source,
             ]);
+
+            if ($isOut) {
+                $dropped[] = $id;
+            } else {
+                $entries[] = $id;
+            }
         }
+
+        // Facets in the classifier's canonical order, empty buckets dropped. Counts and subtotals come
+        // from the same lines the list renders, so a filtered view always ties back to the whole.
+        $facets = [];
+        foreach (ExpenseCategoryClassifier::categories() as $cat) {
+            if (! isset($tally[$cat['key']])) {
+                continue;
+            }
+            $facets[] = [
+                'key'   => $cat['key'],
+                'label' => $cat['label'],
+                'count' => $tally[$cat['key']]['count'],
+                'total' => round($tally[$cat['key']]['total'], 2),
+            ];
+        }
+
+        $droppedSum = $this->sumValues($dropped);
+        $reasonText = implode(' ', array_map(
+            fn ($ex) => $ex['label'] . ' — ' . $ex['reason'],
+            $d['maintenance']['exclusions'] ?? [],
+        ));
 
         return $this->put([
             'id' => 'maint', 'label' => 'Maintenance Cost', 'kind' => 'metric',
             'value' => round($maint, 2), 'unit' => 'AED',
             'children' => $entries, 'children_label' => 'Expense entries (' . count($entries) . ')',
-            'reconciliation' => $this->recon(round($maint, 2), $this->sumValues($entries), 'Σ expense lines (' . $source . ')'),
+            'children_facets' => $facets,
+            'children_facet_label' => 'Type',
+            'children_facet_note' => 'Type is read from each line\'s own remark — the ledger stores one account type ("Expence") for every row, so the remark is the only thing that distinguishes them. Open a line to see the word it matched.',
+            // Lines that exist on this vehicle but are NOT cost. Carried as their own drillable list so
+            // the shrunken total can always name what came out of it.
+            'excluded_children' => $dropped,
+            'excluded_children_label' => $dropped
+                ? 'Excluded from this total (' . count($dropped) . ' line' . (count($dropped) === 1 ? '' : 's') . ' · ' . number_format($droppedSum, 2) . ' AED)'
+                : null,
+            'excluded_note' => $dropped ? $reasonText : null,
+            'reconciliation' => $this->recon(
+                round($maint, 2),
+                $this->sumValues($entries),
+                'Σ expense lines (' . $source . ')' . ($dropped ? ', excluding ' . count($dropped) . ' non-cost line' . (count($dropped) === 1 ? '' : 's') : ''),
+            ),
             'source_module'  => $source,
         ]);
     }

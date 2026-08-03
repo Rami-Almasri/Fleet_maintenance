@@ -55,6 +55,12 @@ class RepairCostAttributionTest extends TestCase
                 return ['label' => 'test', 'available' => true, 'as_of' => null, 'lines' => 0];
             }
 
+            public function exclusions(): array
+            {
+                // The stub hands back pre-filtered lines, so nothing is excluded at this seam.
+                return [];
+            }
+
             public function freshness(): array
             {
                 return [

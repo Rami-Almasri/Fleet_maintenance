@@ -6,6 +6,7 @@ use App\Contracts\VehicleExpenseProvider;
 use App\Models\Contract;
 use App\Models\Payment;
 use App\Models\Vehicle;
+use App\Services\Expenses\ExpenseCategoryClassifier;
 
 /**
  * Financial traceability for ONE vehicle — the drill-down behind every number on the Fleet
@@ -130,6 +131,13 @@ class VehicleFinancialBreakdownService
                 'remarks'      => $ln['remarks'],
                 'amount'       => round((float) $ln['amount'], 2),
                 'account_type' => $ln['account_type'],
+                // Operational bucket + the term that decided it, so the drawer can filter 262 lines
+                // down to "insurance" or "tyres" and still show why each line landed there.
+                'category'         => $ln['category'] ?? ExpenseCategoryClassifier::UNCATEGORISED,
+                'category_label'   => $ln['category_label'] ?? 'Uncategorised',
+                'category_matched' => $ln['category_matched'] ?? null,
+                // history() returns EVERY line; the ones the total leaves out are flagged, never hidden.
+                'excluded'         => (bool) ($ln['excluded'] ?? false),
                 'source_module' => $expenseSource['label'] ?? 'Expenses sheet',
             ];
         }
@@ -157,7 +165,15 @@ class VehicleFinancialBreakdownService
         //      field lists the engine uses, and must tie back to the engine's headline exactly.
         $grossComputed     = round($sumRents - $sumDisc + $sumUsage, 2);
         $operatingComputed = round($sumComm + $sumDriver, 2);
-        $maintCostSum      = round(array_sum(array_map(fn ($r) => (float) $r['amount'], $maintRows)), 2);
+        // The maintenance total counts only the lines that ARE cost — excluded categories (sub-rental
+        // recharges) sit in $maintRows so the drawer can show them, but must not enter the sum or the
+        // reconciliation would fail against a total that never included them.
+        $maintCostSum      = round(array_sum(array_map(
+            fn ($r) => $r['excluded'] ? 0.0 : (float) $r['amount'],
+            $maintRows,
+        )), 2);
+        $excludedRows      = array_values(array_filter($maintRows, fn ($r) => $r['excluded']));
+        $excludedSum       = round(array_sum(array_map(fn ($r) => (float) $r['amount'], $excludedRows)), 2);
         $netComputed       = round($grossComputed - $operatingComputed - $maintCostSum, 2);
 
         $meta = [
@@ -245,10 +261,15 @@ class VehicleFinancialBreakdownService
             'maintenance' => [
                 'total'          => $maint,
                 'rows'           => $maintRows,
-                'calculation'    => 'Σ expense lines (' . ($expenseSource['label'] ?? 'expenses sheet') . ')',
+                'calculation'    => 'Σ expense lines (' . ($expenseSource['label'] ?? 'expenses sheet') . ')'
+                    . ($excludedRows ? ', excluding categories that are not spend on this vehicle' : ''),
                 'formula'        => ['maintenance' => $maint],
                 'reconciliation' => $this->reconcile($maint, $maintCostSum),
                 'source'         => $expenseSource,
+                // What the total deliberately leaves out — the policy, and what it cost this vehicle.
+                'exclusions'       => $this->expenses->exclusions(),
+                'excluded_lines'   => count($excludedRows),
+                'excluded_amount'  => $excludedSum,
             ],
             // The explicit formula behind Net Profit, so the number is self-documenting.
             'net_formula' => [
