@@ -234,7 +234,10 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
 
   const footer = tk && (
     <div className="flex flex-wrap items-center justify-end gap-2">
-      {can('maintenance.delegate') && (
+      {/* Assign driver — ONLY at Awaiting Pickup. That is the one stage where the car is parked with us,
+          a garage is already picked, and the open question is WHO collects it. Everywhere else the driver
+          is already settled (or the move is a different action entirely), so the button was noise. */}
+      {tk.workflow_status === 'awaiting_dispatch' && can('maintenance.delegate') && (
         <Button size="sm" variant="secondary" onClick={() => onAct('delegate', tk)}>{t('workflow.cardAction.delegate')}</Button>
       )}
       {tk.workflow_status === 'under_repair' && can('maintenance.logistics') && (
@@ -272,16 +275,13 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
           <span aria-hidden>🔧</span> {t('workflow.cardAction.returnFromRelease')}
         </Button>
       )}
-      {/* Recovery (towing) — offered as a SECONDARY button only when it isn't already the PRIMARY action
-          below (resolveAction() makes Recovery primary for any Breakdown ticket at inspection_pending or
-          awaiting_dispatch — it can't be driven in, so towing outranks the classic garage assignment).
-          This covers the rarer case: a NON-breakdown car, already classically assigned, that turns out to
-          need towing after all. */}
-      {tk.workflow_status === 'awaiting_dispatch' && tk.maintenance_type !== 'breakdown' && (can('maintenance.logistics') || can('maintenance.delegate')) && (
-        <Button size="sm" variant="secondary" onClick={() => onAct('recovery', tk)}>
-          <span aria-hidden>🛻</span> {t('workflow.cardAction.recovery')}
-        </Button>
-      )}
+      {/* Recovery (towing) is NOT offered here. It stays the PRIMARY action for a Breakdown ticket
+          (resolveAction() — a broken-down car can't be driven in, so towing outranks the classic garage
+          assignment) and for a transfer whose pickup leg was set to Recovery Truck. It used to also
+          appear as a secondary button on NON-breakdown tickets, covering the rare car that drives itself
+          in and then turns out to need towing after all — that case never happened in practice and the
+          button was pure clutter on routine/service tickets, so it was dropped. A non-breakdown car that
+          genuinely needs a tow is handled by reclassifying the ticket. */}
       {/* Assign Garage escape hatch — a Breakdown's PRIMARY action is now Recovery, but a supervisor who
           realizes on the spot that the car is actually driveable can still assign it the classic way
           without first reclassifying the ticket's type. */}
