@@ -2817,15 +2817,15 @@ class MaintenanceWorkflowController extends Controller
         });
     }
 
-    /** Supervisor delegates a specific driver to pick up / drop off the car (→ "Driver Assigned"). */
+    /**
+     * Supervisor names the driver who collects the car (→ "Driver Assigned"). Awaiting-Pickup only;
+     * the leg is always a pickup at that stage, so no task is asked for or accepted.
+     */
     public function delegate(Request $request, Maintenance $ticket)
     {
         return $this->run(function () use ($request, $ticket) {
             $data = $request->validate([
-                'driver_id'       => ['required', 'integer', Rule::exists('users', 'id')],
-                // Optional: the leg is derived from where the car physically is (see delegate()).
-                // Still accepted so an explicit caller can override the derivation.
-                'delegation_task' => ['sometimes', 'nullable', Rule::in(Maintenance::DELEGATION_TASKS)],
+                'driver_id' => ['required', 'integer', Rule::exists('users', 'id')],
             ]);
             $ticket = $this->workflow->delegate($ticket, $data, $request->user());
             return ResponseHelper::SuccessResponse(MaintenanceWorkflowResource::make($ticket), 'Driver assigned — notified', 200);

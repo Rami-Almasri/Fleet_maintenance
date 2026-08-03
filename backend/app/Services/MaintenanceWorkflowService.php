@@ -2706,32 +2706,28 @@ class MaintenanceWorkflowService
     // ── Supervisor Delegation — delegate a driver ───────────────────────────────
 
     /**
-     * DELEGATION — a Supervisor assigns a specific Logistics driver to pick up / drop off the car.
+     * DELEGATION — a Supervisor names the Logistics driver who collects the car for its garage run.
      * The driver reuses the "Where is the car?" assignment (assigned_driver_id) so pings + status
      * follow them; the overlay marks the task + flips the ticket to "Driver Assigned" and stamps who
      * delegated. The assigned driver is notified directly, carrying the fault-severity colour/symbol, and is
      * added as a watcher so they keep getting the ticket's updates.
      *
-     * @param array{driver_id:int, delegation_task:string} $data
+     * ONLY valid at Awaiting Pickup — the single stage where the garage is decided, the car is still parked
+     * with us, and the open question is WHO drives it. Before that there is nothing to collect; after it the
+     * car has already moved and its custody is owned by the dispatch/collect actions. `delegation_task` is
+     * therefore never asked for: at this stage the leg is always a PICKUP.
+     *
+     * @param array{driver_id:int} $data
      */
     public function delegate(Maintenance $ticket, array $data, User $actor): Maintenance
     {
-        if (in_array($ticket->workflow_status, Maintenance::WF_TERMINAL, true)) {
-            throw new WorkflowTransitionException('Cannot delegate a closed or cleared ticket.', [
+        if ($ticket->workflow_status !== Maintenance::WF_AWAITING_DISPATCH) {
+            throw new WorkflowTransitionException('A driver can only be assigned while the ticket is Awaiting Pickup.', [
                 'workflow_status' => $ticket->workflow_status,
             ]);
         }
 
-        // The leg is NOT a question for the Supervisor — the ticket already knows it. A car still parked
-        // with us ('IN') has to be COLLECTED; a car physically out at a garage ('OUT') has to be BROUGHT
-        // BACK. Asking made the two answerable states look like a choice and let the wrong one be picked.
-        // An explicit task is still honoured (API callers / future edge cases).
-        $task = $data['delegation_task'] ?? null;
-        if (! in_array($task, Maintenance::DELEGATION_TASKS, true)) {
-            $task = $ticket->event_status === 'OUT'
-                ? Maintenance::DELEGATION_DROPOFF
-                : Maintenance::DELEGATION_PICKUP;
-        }
+        $task = Maintenance::DELEGATION_PICKUP;
 
         $driverId = (int) ($data['driver_id'] ?? 0);
         $driver   = $driverId ? User::find($driverId) : null;
