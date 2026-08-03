@@ -328,6 +328,7 @@ function PurchaseModal({ open, request, onClose, onDone, vendors }) {
 function InstallModal({ open, request, onClose, onDone }) {
   const toast = useToast();
   const purchase = request?.purchases?.find((p) => !p.installed_at) || request?.purchases?.[request.purchases.length - 1];
+  const vehicleId = request?.vehicle?.id || request?.vehicle_id || purchase?.vehicle_id || null;
   // The Asset Layer fields ride along with the install: this step is the ONLY moment the system can
   // learn what physically went on the car and what happened to the part it displaced. Asking here is
   // why no "Add Component" screen has to exist anywhere else.
@@ -362,6 +363,22 @@ function InstallModal({ open, request, onClose, onDone }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  // What is ALREADY on this car. A live component of the same type means this fitting is a
+  // replacement, and the backend refuses to let the old part just vanish — it wants a reason and a
+  // destination. Under shadow mode that refusal is swallowed, so without knowing this up front the
+  // modal would happily submit an install that silently never reaches the components tab.
+  // A failed/forbidden fetch leaves the list empty, which only means "don't block" — never a false
+  // requirement on the operator.
+  const [installed, setInstalled] = useState([]);
+  useEffect(() => {
+    if (!open || !vehicleId) { setInstalled([]); return undefined; }
+    let alive = true;
+    api.get(`/Vehicle/${vehicleId}/components`)
+      .then((r) => { if (alive) setInstalled(payload(r)?.installed || []); })
+      .catch(() => { if (alive) setInstalled([]); });
+    return () => { alive = false; };
+  }, [open, vehicleId]);
+
   // Best-guess the type from the part name so the common case is one confirming glance, not a hunt
   // through 30 options. Longest catalog name that appears in the part name wins ("Brake Discs (set)"
   // beats "Brake Pads (set)" for "front brake discs"), so a partial match can't shadow a fuller one.
@@ -379,6 +396,12 @@ function InstallModal({ open, request, onClose, onDone }) {
   // Positions are per type: a radiator takes none, a tyre takes four corners. Offering all of them
   // always invites a 422 ("… does not take a position") that shadow mode would swallow.
   const positions = selectedType?.positions || [];
+  // The live part this fitting would displace, if any — matched on the catalog slug the components
+  // read model exposes. Its presence turns the "Replacing an existing part?" block from optional
+  // into required.
+  const replacing = selectedType
+    ? installed.find((c) => c.catalog_slug === selectedType.slug && c.kind !== 'consumable') || null
+    : null;
 
   const set = (field, value) => setForm((f) => ({ ...f, [field]: value }));
 
@@ -393,8 +416,16 @@ function InstallModal({ open, request, onClose, onDone }) {
     const e = {};
     if (!form.component_catalog_id) {
       e['component.component_catalog_id'] = ['Pick a component type — without it the part cannot join the vehicle’s configuration.'];
-    } else if (selectedType?.requires_serial && !form.serial_no.trim()) {
+      return e;
+    }
+    if (selectedType?.requires_serial && !form.serial_no.trim()) {
       e['component.serial_no'] = [`${selectedType.name} is serialized — enter its serial number.`];
+    }
+    // Replacing a live part of the same type: the old one needs a reason AND a destination, or the
+    // backend refuses the whole component write.
+    if (replacing && !(form.removal_reason && form.disposition)) {
+      if (!form.removal_reason) e['predecessor.removal_reason'] = [`This car already has a ${selectedType.name} fitted — say why it came off.`];
+      if (!form.disposition) e['predecessor.disposition'] = ['Say where the old part went.'];
     }
     return e;
   };
@@ -529,9 +560,13 @@ function InstallModal({ open, request, onClose, onDone }) {
           {/* The old part is never allowed to just vanish: if this fitting replaces something, the
               system needs a reason AND a destination before it will retire the previous record. */}
           <div className="mt-4 border-t border-slate-200 pt-3">
-            <p className="text-xs font-medium text-slate-600">Replacing an existing part?</p>
-            <p className="mt-0.5 text-xs text-slate-400">
-              Answer both and the old part is retired automatically, linked to this one as its successor. Leave blank if nothing was removed.
+            <p className="text-xs font-medium text-slate-600">
+              {replacing ? 'Replacing an existing part — both answers required' : 'Replacing an existing part?'}
+            </p>
+            <p className={`mt-0.5 text-xs ${replacing ? 'text-amber-600' : 'text-slate-400'}`}>
+              {replacing
+                ? `This car already has a ${replacing.part_name || selectedType?.name} fitted${replacing.installed_at ? ` since ${String(replacing.installed_at).slice(0, 10)}` : ''}. Say why it came off and where it went, or the fitting cannot be recorded.`
+                : 'Answer both and the old part is retired automatically, linked to this one as its successor. Leave blank if nothing was removed.'}
             </p>
             <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Select
