@@ -66,6 +66,7 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
   const [tasks, setTasks] = useState(ticket?.tasks || []);
   const [garage, setGarage] = useState(ticket?.garage || null);
   const [wfStatus, setWfStatus] = useState(ticket?.workflow_status); // tracks live stage so a transfer flips it at once
+  const [isRecovery, setIsRecovery] = useState(!!ticket?.is_recovery); // live: a transfer can put the car on/off a tow
   const [transferOpen, setTransferOpen] = useState(false);
   // "How will the vehicle be transferred?" — asked BEFORE the transfer form itself; null = not chosen
   // yet (shows the choice, not the form). The rest of the transfer form/API call is unchanged either way.
@@ -108,9 +109,23 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
   const [disputeBusy, setDisputeBusy] = useState(false);
   const [disputeError, setDisputeError] = useState(null);
 
-  // The car's last recorded mileage (newest link in the chain) — the anchor the transfer reading is
-  // checked against for a live "does this make sense?" verdict before submit.
-  const prevOdometer = ticket?.receive_odometer ?? ticket?.return_odometer
+  // The car's last recorded mileage — the anchor the transfer reading is checked against for a live
+  // "does this make sense?" verdict before submit. This MUST be the vehicle's live authoritative
+  // odometer, because that is exactly what the server's transfer gate compares against
+  // (MaintenanceWorkflowService::recordGarageTransferOdometer reads $vehicle->odometer). Anchoring on
+  // this ticket's own chain instead let the car's mileage move on elsewhere (a rental return, a later
+  // stage, another ticket) while this modal still showed the stale arrival reading — so a reading the
+  // server rejected as running backwards was shown here as "Verified — lines up with the last recorded
+  // mileage" against a different, older number. The ticket chain stays only as a fallback for payloads
+  // that didn't eager-load the vehicle column.
+  //
+  // It is STATE, re-seeded from every action response (see apply), not a read of the `ticket` prop: this
+  // panel stays open after a transfer so the car can be re-routed again, and the transfer just healed the
+  // vehicle's odometer forward to the reading that was entered. Reading the frozen prop would anchor the
+  // SECOND transfer to the mileage from before the first one — the same "Verified here, rejected by the
+  // server" contradiction, one move later.
+  const [vehicleOdo, setVehicleOdo] = useState(ticket?.vehicle_odometer ?? null);
+  const prevOdometer = vehicleOdo ?? ticket?.receive_odometer ?? ticket?.return_odometer
     ?? ticket?.dispatch_odometer ?? ticket?.test_odometer ?? null;
   const continuity = evaluateContinuity(odometer, prevOdometer, STAGE.TRANSFER);
   // A transfer IS a road trip — the car is driven from one garage to the next, so a forward mileage
@@ -140,15 +155,22 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
   // Only offer the "how will it be transferred?" choice when the car's CURRENT leg is a recovery tow —
   // it may or may not still need a tow onward, so it's a real decision. A car that arrived by a normal
   // driver is presumably still drivable, so a further transfer goes straight through the driver flow
-  // with no dialog. ticket.is_recovery always reflects the current leg (dispatch() clears it on pickup).
-  const offerTransportChoice = carAtGarage && !!ticket?.is_recovery;
+  // with no dialog. is_recovery always reflects the current leg (dispatch() clears it on pickup), and it
+  // is tracked as live state for the same reason as the odometer anchor above — a transfer that switched
+  // the car onto (or off) a tow changes the answer while this panel is still open.
+  const offerTransportChoice = carAtGarage && isRecovery;
 
-  // Pull the refreshed ticket (faults + current garage + stage) out of any action response.
+  // Pull the refreshed ticket (faults + current garage + stage + the mileage anchor and tow flag the
+  // transfer form reads) out of any action response. This panel outlives the actions taken inside it —
+  // it stays open after a transfer so the car can be re-routed again — so everything it decides with has
+  // to come from here, never from the frozen `ticket` prop.
   const apply = (res) => {
     const tk = res?.data?.data;
     if (tk?.tasks) setTasks(tk.tasks);
     if (tk) setGarage(tk.garage ?? null);
     if (tk?.workflow_status) setWfStatus(tk.workflow_status);
+    if (tk?.vehicle_odometer != null) setVehicleOdo(tk.vehicle_odometer);
+    if (tk) setIsRecovery(!!tk.is_recovery);
     onDone?.(); // reloads the board behind the modal
   };
 

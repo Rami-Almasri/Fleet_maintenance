@@ -90,7 +90,10 @@ class MaintenanceWorkflowController extends Controller
         'paused' => [Maintenance::WF_PAUSED_RETURNED_TO_SERVICE],
     ];
 
-    private const EAGER = ['vendor', 'transferToVendor:id,name', 'vehicle:id,plate_no,make,model,operational_status', 'inspector:id,name', 'requester:id,name', 'assignedDriver:id,name', 'delegatedBy:id,name', 'recommendationReviewer:id,name', 'watchers:id,name', 'linkedContract:id,contract_no', 'lineItems',
+    // `vehicle.odometer` is selected because it IS the anchor the transfer/release odometer gates compare
+    // against server-side; without it the resource's `vehicle_odometer` silently serializes as null and the
+    // modal falls back to a stale ticket-chain reading, contradicting the server's own verdict.
+    private const EAGER = ['vendor', 'transferToVendor:id,name', 'vehicle:id,plate_no,make,model,operational_status,odometer', 'inspector:id,name', 'requester:id,name', 'assignedDriver:id,name', 'delegatedBy:id,name', 'recommendationReviewer:id,name', 'watchers:id,name', 'linkedContract:id,contract_no', 'lineItems',
         // Multi-garage routing: the ticket's faults, each with its garage-stint timeline + current garage.
         // lastFailedVendor drives the "Unresolved at Garage X" blame badge on a re-inspection failure.
         'tasks.assignments.vendor:id,name', 'tasks.currentVendor:id,name', 'tasks.lastFailedVendor:id,name', 'tasks.media', 'tasks.markedIncorrectBy:id,name',
@@ -137,7 +140,7 @@ class MaintenanceWorkflowController extends Controller
     // opens. Cheap belongsTo(:id,name) loads are kept so no card field ever silently drops.
     private const BOARD_EAGER = [
         'vendor', 'transferToVendor:id,name',
-        'vehicle:id,plate_no,make,model,operational_status',
+        'vehicle:id,plate_no,make,model,operational_status,odometer',
         'inspector:id,name', 'requester:id,name', 'pickedUpFromGarageBy:id,name',
         'assignedDriver:id,name', 'delegatedBy:id,name',
         'recommendationReviewer:id,name', 'linkedContract:id,contract_no',
