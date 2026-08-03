@@ -2796,16 +2796,25 @@ class MaintenanceWorkflowController extends Controller
     // ── Supervisor Notification & Delegation ───────────────────────────────────
 
     /**
-     * The drivers a Supervisor can delegate to: every ACTIVE user holding maintenance.logistics —
-     * the people who physically pick up / drop off cars (and can be notified in-app). Feeds the
-     * Delegate picker. Returns a flat {id, name, email} list.
+     * The drivers a Supervisor can assign: ACTIVE users in the DRIVER role (`logistics`) — the field
+     * pool that actually collects cars. Deliberately NOT `permission('maintenance.logistics')`: that
+     * permission is also carried by supervisors, workshop managers and admins so they CAN move a car
+     * themselves, and listing them turned the picker into a staff directory where the real driver was
+     * one name in nine.
+     *
+     * The requesting supervisor is excluded from their own list. Assigning the job to yourself is not
+     * a delegation — if they want to take the car they press "Pick up" on the ticket, which records
+     * them as the custodian directly instead of routing a notification back to themselves.
+     *
+     * Feeds the Assign-driver picker. Returns a flat {id, name, email} list.
      */
-    public function assignableDrivers()
+    public function assignableDrivers(Request $request)
     {
-        return $this->run(function () {
+        return $this->run(function () use ($request) {
             $hasStatus = \Illuminate\Support\Facades\Schema::hasColumn('users', 'status');
-            $drivers = \App\Models\User::permission('maintenance.logistics')
+            $drivers = \App\Models\User::role('logistics')
                 ->when($hasStatus, fn ($q) => $q->where('status', 'active'))
+                ->where('id', '!=', $request->user()->id)
                 ->orderBy('name')
                 ->get(['id', 'name', 'email']);
 

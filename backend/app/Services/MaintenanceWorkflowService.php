@@ -2734,8 +2734,19 @@ class MaintenanceWorkflowService
         if (! $driver) {
             throw new WorkflowTransitionException('Select a driver to delegate to.', ['field' => 'driver_id']);
         }
-        if (! $driver->can('maintenance.logistics')) {
-            throw new WorkflowTransitionException('That user is not a logistics driver — pick someone who can pick up / drop off cars.', [
+        // Assigning it to yourself is not a delegation — it would notify the supervisor of their own
+        // decision and leave the ticket reading "Driver Assigned" when nobody was actually briefed.
+        // A supervisor who wants to take the car presses "Pick up" and becomes the custodian directly.
+        if ($driver->id === $actor->id) {
+            throw new WorkflowTransitionException('You cannot assign the car to yourself — use "Pick up" to take it yourself.', [
+                'field' => 'driver_id',
+            ]);
+        }
+        // The DRIVER role (`logistics`), not the maintenance.logistics permission: supervisors and
+        // managers hold that permission so they can move a car themselves, but they are not the pool
+        // a job is handed to. Mirrors the assignableDrivers() picker exactly.
+        if (! $driver->hasRole('logistics')) {
+            throw new WorkflowTransitionException('That user is not a driver — pick someone from the driver pool.', [
                 'field' => 'driver_id',
             ]);
         }

@@ -35,18 +35,23 @@ class DelegateDriverStageGateTest extends CrudTestCase
         return $ticket;
     }
 
-    /** A user who may actually pick up / drop off cars. */
-    private function logisticsDriver(): User
+    /** A member of the field driver pool — the `logistics` ROLE, not just the permission. */
+    private function logisticsDriver(string $name = 'Driver Abdullah'): User
     {
-        $driver = User::create([
-            'name'     => 'Driver Abdullah',
-            'email'    => 'drv.' . uniqid() . '@fleet.test',
+        $driver = $this->makeUser($name);
+        $driver->assignRole('logistics');
+
+        return $driver;
+    }
+
+    private function makeUser(string $name): User
+    {
+        return User::create([
+            'name'     => $name,
+            'email'    => 'u.' . uniqid() . '@fleet.test',
             'password' => Hash::make('password'),
             'status'   => 'active',
         ]);
-        $driver->givePermissionTo('maintenance.logistics');
-
-        return $driver;
     }
 
     public function test_a_driver_can_be_assigned_at_awaiting_pickup(): void
@@ -104,23 +109,84 @@ class DelegateDriverStageGateTest extends CrudTestCase
         ];
     }
 
-    /** The driver still has to be a logistics driver — the stage gate did not replace that check. */
-    public function test_a_non_logistics_user_is_still_rejected(): void
+    /** The target still has to be a driver — the stage gate did not replace that check. */
+    public function test_a_non_driver_user_is_still_rejected(): void
     {
         $ticket = $this->ticketAt(Maintenance::WF_AWAITING_DISPATCH);
 
-        $officeUser = User::create([
-            'name'     => 'Office Clerk',
-            'email'    => 'clerk.' . uniqid() . '@fleet.test',
-            'password' => Hash::make('password'),
-            'status'   => 'active',
-        ]);
-
         $res = $this->postJson("/api/maintenance-tickets/{$ticket->id}/delegate", [
-            'driver_id' => $officeUser->id,
+            'driver_id' => $this->makeUser('Office Clerk')->id,
         ]);
 
         $res->assertStatus(422);
         $this->assertNull($ticket->refresh()->assigned_driver_id);
+    }
+
+    /**
+     * A SUPERVISOR holds maintenance.logistics so they can move a car themselves — that does not make
+     * them assignable. The job goes to the driver pool, or the supervisor takes it via "Pick up".
+     */
+    public function test_a_supervisor_is_not_an_assignable_driver(): void
+    {
+        $ticket = $this->ticketAt(Maintenance::WF_AWAITING_DISPATCH);
+
+        $supervisor = $this->makeUser('Supervisor Waleed');
+        $supervisor->assignRole('supervisor');
+        $this->assertTrue($supervisor->can('maintenance.logistics'), 'guard: a supervisor does carry the permission');
+
+        $res = $this->postJson("/api/maintenance-tickets/{$ticket->id}/delegate", [
+            'driver_id' => $supervisor->id,
+        ]);
+
+        $res->assertStatus(422);
+        $this->assertNull($ticket->refresh()->assigned_driver_id);
+    }
+
+    /** Nobody assigns the car to themselves — that is "Pick up", not a delegation. */
+    public function test_you_cannot_assign_the_car_to_yourself(): void
+    {
+        $ticket = $this->ticketAt(Maintenance::WF_AWAITING_DISPATCH);
+        $this->admin->assignRole('logistics'); // even when the actor IS in the driver pool
+
+        $res = $this->postJson("/api/maintenance-tickets/{$ticket->id}/delegate", [
+            'driver_id' => $this->admin->id,
+        ]);
+
+        $res->assertStatus(422);
+        $this->assertNull($ticket->refresh()->assigned_driver_id);
+    }
+
+    /** The picker lists the driver pool only — no supervisors, no managers, and never yourself. */
+    public function test_the_picker_lists_only_other_drivers(): void
+    {
+        $driver     = $this->logisticsDriver('Driver Abdullah');
+        $supervisor = $this->makeUser('Supervisor Waleed');
+        $supervisor->assignRole('supervisor');
+        $manager = $this->makeUser('Workshop Lin');
+        $manager->assignRole('maintenance');
+        $this->admin->assignRole('logistics'); // the actor is in the pool too — still excluded from their own list
+
+        $ids = collect($this->getJson('/api/maintenance-tickets/assignable-drivers')->assertSuccessful()->json('data'))
+            ->pluck('id')->all();
+
+        $this->assertContains($driver->id, $ids);
+        $this->assertNotContains($supervisor->id, $ids);
+        $this->assertNotContains($manager->id, $ids);
+        $this->assertNotContains($this->admin->id, $ids);
+    }
+
+    /** A suspended driver is off the roster and must not be offered. */
+    public function test_the_picker_skips_suspended_drivers(): void
+    {
+        $active = $this->logisticsDriver('Driver Active');
+        $gone   = $this->logisticsDriver('Driver Suspended');
+        $gone->status = 'suspended';
+        $gone->save();
+
+        $ids = collect($this->getJson('/api/maintenance-tickets/assignable-drivers')->assertSuccessful()->json('data'))
+            ->pluck('id')->all();
+
+        $this->assertContains($active->id, $ids);
+        $this->assertNotContains($gone->id, $ids);
     }
 }
