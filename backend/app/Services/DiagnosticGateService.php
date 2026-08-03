@@ -126,7 +126,8 @@ class DiagnosticGateService
                 'The car is with us and working — Ready or Rented. Sold, suspended and office cars are never checked.',
                 'The car is not up for sale.',
                 'The car is not already in the workshop or waiting for one — so nobody is asked twice for the same car.',
-                'At least one of the limits below has actually been passed.',
+                // No "above"/"below" here — this list is rendered beside the rules, not under them.
+                'At least one of the limits has actually been passed.',
             ],
 
             'rules' => [

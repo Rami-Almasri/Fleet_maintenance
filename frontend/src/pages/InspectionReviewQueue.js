@@ -277,8 +277,14 @@ function SystemRulesPanel() {
   // effect that re-runs tears down its own previous cleanup — an `alive` flag there would cancel the very
   // request it just fired, leaving the panel on a blank skeleton forever.
   const fetched = useRef(false);
+  // Set to true on EVERY mount, not just at declaration: React 18 StrictMode mounts, unmounts and
+  // re-mounts in dev, so a ref initialised once to `true` is left `false` by that first simulated
+  // unmount — and every later response gets thrown away as "component is gone".
   const mounted = useRef(true);
-  useEffect(() => () => { mounted.current = false; }, []);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
 
   // Fetched lazily on first expand — a Controller working the queue shouldn't pay for reference copy.
   useEffect(() => {
