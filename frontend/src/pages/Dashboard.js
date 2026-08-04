@@ -14,6 +14,7 @@ import LineChart from '../components/ui/LineChart';
 import CountUp from '../components/ui/CountUp';
 import FleetPulseGrid from '../components/FleetPulseGrid';
 import RecentlyFixedCard from '../components/RecentlyFixedCard';
+import RepeatPartPurchases from '../components/dashboard/RepeatPartPurchases';
 import MaintenanceWorkflowAnalyticsPanel from '../components/analytics/MaintenanceWorkflowAnalyticsPanel';
 import { aed, fmtDate } from '../lib/format';
 import { delayReasonLabel } from '../lib/maintenanceCheckpoints';
@@ -1152,6 +1153,11 @@ export default function Dashboard() {
             inspections due) surfaced before they become problems. Same source lists as the
             notification bell; every row deep-links to its record. */}
         <ProactiveFlags data={proactive} loading={loading} />
+
+        {/* Bought Again — the same part fitted to the same car twice inside the window, with the
+            approval behind each buy. Self-fetching and permission-gated (renders nothing without
+            `parts.view`), so it costs nothing for a user who can't see the parts ledger. */}
+        <RepeatPartPurchases />
 
         {/* Recently Fixed — the cars that came back working: the problem, the fix, the garage and the
             downtime. The good-news counterpart to the pipeline cards above; the full ledger (with the

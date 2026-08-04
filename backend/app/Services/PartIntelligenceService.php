@@ -7,6 +7,7 @@ use App\Models\PartInvestigation;
 use App\Models\PartPurchase;
 use App\Models\PartRequest;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 
 /**
  * The brain of the Parts Purchase + Repair Intelligence workflow. Three pure, side-effect-free reads that
@@ -441,6 +442,247 @@ class PartIntelligenceService
             'avg_price'    => ($price && $price->c) ? round((float) $price->avg_p, 2) : null,
             'min_price'    => ($price && $price->c) ? round((float) $price->min_p, 2) : null,
             'max_price'    => ($price && $price->c) ? round((float) $price->max_p, 2) : null,
+        ];
+    }
+
+    // ───────────────────────────── fleet-wide repeat buys ─────────────────────────────
+
+    /**
+     * "We bought this part for this car — and then bought it again." The FLEET-WIDE sweep behind the
+     * dashboard card, and the answer to the second half of the question: WHO APPROVED each buy.
+     *
+     * Class **D (Derived)** — computed on read from `part_purchases` (F) + `part_requests` (J, the
+     * approval ruling) and never persisted. Delete it and nothing is lost; it recomputes.
+     * Consumes: the purchase ledger + the request lifecycle. Produces: nothing.
+     *
+     * detectDuplicate() answers "should I warn this buyer, right now?" — one vehicle, one part, at the
+     * moment of purchase. This answers the supervisor's question instead: "show me every car in the fleet
+     * that received the same part twice inside `windowDays`, and tell me who signed each one off." It is
+     * therefore retrospective (it reads what WAS bought, not what is about to be) and it does not care
+     * whether the alert engine fired at the time — a repeat that slipped through unflagged is exactly the
+     * row this list exists to surface.
+     *
+     * ⚠️ Identity is the part NAME, not the SKU. Matching on part_number looks stricter but is wrong here:
+     * SKUs are hand-typed, differ per supplier for the same component, and are sometimes placeholders — on
+     * this database 3,550 of 3,552 purchases carry a distinct part_number, so a SKU-keyed sweep reports a
+     * clean fleet while the same tyre goes on the same car twice in a fortnight. Each pair still reports
+     * `matched_by`: 'part_number' when the two SKUs agree as well (the stronger evidence), else 'part_name'.
+     * This mirrors the same fallback partHistory() already makes.
+     *
+     * @param int  $windowDays        max days between the two buys for the pair to count (the "again" window)
+     * @param int  $lookbackDays      how far back the SECOND buy may be (how much history the card shows)
+     * @param bool $includeConsumables consumables repeat by design (filters, wipers); off by default
+     *
+     * @return array{rows: array, summary: array, truncated: bool}
+     */
+    public function repeatPurchases(
+        int $windowDays = 30,
+        int $lookbackDays = 365,
+        int $limit = 50,
+        ?int $vehicleId = null,
+        bool $includeConsumables = false
+    ): array {
+        // Clamped, then interpolated: these land inside INTERVAL/LIMIT clauses where a bound parameter is
+        // not portable. Casting to int is what makes that safe — do not relax it to raw request input.
+        $windowDays   = max(1, min(3650, $windowDays));
+        $lookbackDays = max(1, min(3650, $lookbackDays));
+        $limit        = max(1, min(200, $limit));
+
+        // One pass over the ledger: LAG() hands every purchase its immediately preceding buy of the same
+        // part on the same car. The alternative (a self-join plus a NOT EXISTS "is this the nearest prior")
+        // reads the table three times for the same answer. Supported on MariaDB 10.2+ / MySQL 8.
+        $pairs = DB::select("
+            SELECT id, prev_id, TIMESTAMPDIFF(DAY, prev_at, at_) AS days_between
+            FROM (
+                SELECT p.id,
+                       COALESCE(p.purchased_at, p.created_at) AS at_,
+                       LAG(p.id) OVER w AS prev_id,
+                       LAG(COALESCE(p.purchased_at, p.created_at)) OVER w AS prev_at
+                FROM part_purchases p
+                " . ($vehicleId ? 'WHERE p.vehicle_id = ' . (int) $vehicleId : '') . "
+                WINDOW w AS (
+                    PARTITION BY p.vehicle_id, LOWER(TRIM(p.part_name))
+                    ORDER BY COALESCE(p.purchased_at, p.created_at), p.id
+                )
+            ) z
+            WHERE prev_at IS NOT NULL
+              AND TIMESTAMPDIFF(DAY, prev_at, at_) <= {$windowDays}
+              AND at_ >= DATE_SUB(NOW(), INTERVAL {$lookbackDays} DAY)
+            ORDER BY at_ DESC, id DESC
+            LIMIT " . ($limit + 1));
+
+        if (! $pairs) {
+            return ['rows' => [], 'summary' => $this->repeatSummary([], $windowDays, $lookbackDays), 'truncated' => false];
+        }
+
+        $truncated = count($pairs) > $limit;
+        $pairs     = array_slice($pairs, 0, $limit);
+
+        $ids = array_merge(array_column($pairs, 'id'), array_column($pairs, 'prev_id'));
+        $by  = PartPurchase::whereIn('id', $ids)
+            ->with([
+                'vehicle:id,plate_no,make,model',
+                'sourceVendor:id,name',
+                'task:id,symptom,category_key,root_cause',
+                // The approval ruling itself — who signed this buy off, and when.
+                'request:id,status,requested_by_name,requested_at,reviewed_by_name,reviewed_at,approved_by_name,approved_at,rejected_by_name,estimated_price,reason',
+            ])
+            ->get()->keyBy('id');
+
+        $today = Carbon::now()->startOfDay();
+        $rows  = [];
+
+        foreach ($pairs as $pair) {
+            $cur  = $by->get($pair->id);
+            $prev = $by->get($pair->prev_id);
+            if (! $cur || ! $prev) {
+                continue; // deleted between the sweep and the hydrate — skip rather than half-render
+            }
+
+            $partClass = $cur->part_class ?: $this->classify($cur->part_name, $cur->part_number, $cur->category_key);
+            if (! $includeConsumables && $partClass === PartRequest::CLASS_CONSUMABLE) {
+                continue;
+            }
+
+            $days = (int) $pair->days_between;
+
+            $rows[] = [
+                'vehicle' => [
+                    'id'    => $cur->vehicle_id,
+                    'plate' => $cur->vehicle?->plate_no,
+                    'car'   => trim(($cur->vehicle?->make ?? '') . ' ' . ($cur->vehicle?->model ?? '')) ?: null,
+                ],
+                'part_name'    => $cur->part_name,
+                'part_number'  => $cur->part_number,
+                'part_class'   => $partClass,
+                // Which identity actually matched, so a reader can weigh the evidence: two agreeing SKUs is
+                // a stronger claim of "the same part" than two matching names.
+                'matched_by'   => $this->sameSku($cur, $prev) ? 'part_number' : 'part_name',
+                'days_between' => $days,
+                // The same verdict the buy-time alert would have reached, recomputed here — so this list and
+                // the modal warning can never grade the same repeat differently. Null = no alert was owed.
+                'priority'     => $this->duplicatePriority($partClass, $days),
+                // Graver than a plain repeat: the same part bought twice for the SAME fault, i.e. a fix that
+                // did not hold. Only claimable when both purchases are actually linked to a fault.
+                'same_fault'   => $this->sameFault($cur, $prev),
+                'current'      => $this->repeatSide($cur, $today),
+                'previous'     => $this->repeatSide($prev, $today),
+            ];
+        }
+
+        return [
+            'rows'      => $rows,
+            'summary'   => $this->repeatSummary($rows, $windowDays, $lookbackDays),
+            'truncated' => $truncated,
+        ];
+    }
+
+    /** One half of a repeat pair — the buy, its money, its ticket, and the approval that authorised it. */
+    private function repeatSide(PartPurchase $p, Carbon $today): array
+    {
+        $at  = $p->purchased_at ?: $p->created_at;
+        $qty = (float) ($p->quantity ?: 1);
+
+        return [
+            'purchase_id'     => $p->id,
+            'purchased_at'    => optional($at)->toDateString(),
+            'days_ago'        => $at ? (int) $at->copy()->startOfDay()->diffInDays($today) : null,
+            'quantity'        => $qty,
+            'unit_price'      => $p->purchase_price === null ? null : (float) $p->purchase_price,
+            'total_price'     => $p->purchase_price === null ? null : round((float) $p->purchase_price * $qty, 2),
+            'currency'        => $p->currency,
+            'purchase_source' => $p->purchase_source,
+            'source_name'     => $p->sourceVendor?->name ?: $p->source_name,
+            'maintenance_id'  => $p->maintenance_id,
+            'fault'           => $p->task?->symptom,
+            'fault_category'  => $p->task?->category_key,
+            'purchased_by'    => $p->purchased_by_name,
+            'installed_at'    => optional($p->installed_at)->toDateString(),
+            'result'          => $p->result,
+            'flagged'         => (bool) $p->requires_review,
+            'approval'        => $this->approvalOf($p),
+            // Data origin. Every component/purchase row seeded for the demo carries the tag in `notes`;
+            // saying so on the row is cheaper than a colleague building a case on invented history.
+            'is_demo'         => $p->notes !== null && str_contains(strtoupper($p->notes), 'DEMO'),
+        ];
+    }
+
+    /**
+     * WHO approved this buy. A purchase reached through the workflow carries its request, and the request
+     * carries the approver. A purchase with NO request was bought without ever passing an approval step —
+     * that is not missing data, it is the finding, so it gets its own state rather than a blank.
+     */
+    private function approvalOf(PartPurchase $p): array
+    {
+        $req = $p->request;
+
+        if (! $req) {
+            return ['state' => 'no_request', 'approved_by' => null, 'approved_at' => null,
+                    'requested_by' => null, 'requested_at' => null, 'request_id' => null, 'request_status' => null];
+        }
+
+        return [
+            'state'          => $req->approved_at ? 'approved' : 'not_approved',
+            'request_id'     => $req->id,
+            'request_status' => $req->status,
+            'approved_by'    => $req->approved_by_name,
+            'approved_at'    => optional($req->approved_at)->toDateString(),
+            'requested_by'   => $req->requested_by_name,
+            'requested_at'   => optional($req->requested_at)->toDateString(),
+            'reviewed_by'    => $req->reviewed_by_name,
+            'reason'         => $req->reason,
+        ];
+    }
+
+    /** True when both rows carry a part_number and the two collapse to the same string. */
+    private function sameSku(PartPurchase $a, PartPurchase $b): bool
+    {
+        $norm = fn (?string $s) => $s === null ? '' : strtolower(preg_replace('/\s+/', '', $s));
+        $x = $norm($a->part_number);
+
+        return $x !== '' && $x === $norm($b->part_number);
+    }
+
+    /** True when both buys hang off the same fault — same category_key, else the same normalised symptom. */
+    private function sameFault(PartPurchase $a, PartPurchase $b): bool
+    {
+        if (! $a->task || ! $b->task) {
+            return false;
+        }
+        if ($a->task->category_key && $b->task->category_key) {
+            return strtolower(trim($a->task->category_key)) === strtolower(trim($b->task->category_key));
+        }
+        if ($a->task->symptom && $b->task->symptom) {
+            return strtolower(trim($a->task->symptom)) === strtolower(trim($b->task->symptom));
+        }
+
+        return false;
+    }
+
+    /** The one-line verdict above the list — how many repeats, on how many cars, and how many went unapproved. */
+    private function repeatSummary(array $rows, int $windowDays, int $lookbackDays): array
+    {
+        $base   = (string) $this->cfg['base_currency'];
+        // Spend counts the REPEAT buy only (the second one) and only in the base currency — the first buy
+        // was legitimate spend; the question this card asks is what the repeat cost.
+        $priced = array_filter($rows, fn ($r) => $r['current']['total_price'] !== null
+            && ($r['current']['currency'] === null || $r['current']['currency'] === $base));
+
+        return [
+            'pairs'         => count($rows),
+            'vehicles'      => count(array_unique(array_column(array_column($rows, 'vehicle'), 'id'))),
+            'high'          => count(array_filter($rows, fn ($r) => $r['priority'] === PartInvestigation::PRIORITY_HIGH)),
+            'medium'        => count(array_filter($rows, fn ($r) => $r['priority'] === PartInvestigation::PRIORITY_MEDIUM)),
+            'same_fault'    => count(array_filter($rows, fn ($r) => $r['same_fault'])),
+            // Repeat buys that never passed an approval step — the accountability gap, counted separately
+            // from repeats that WERE approved (where the question is who signed it, not whether anyone did).
+            'no_approval'   => count(array_filter($rows, fn ($r) => $r['current']['approval']['state'] !== 'approved')),
+            'demo_rows'     => count(array_filter($rows, fn ($r) => $r['current']['is_demo'] || $r['previous']['is_demo'])),
+            'repeat_spend'  => $priced ? round(array_sum(array_column(array_column($priced, 'current'), 'total_price')), 2) : null,
+            'spend_covers'  => count($priced),
+            'currency'      => $base,
+            'window_days'   => $windowDays,
+            'lookback_days' => $lookbackDays,
         ];
     }
 

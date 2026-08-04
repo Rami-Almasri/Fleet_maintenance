@@ -101,6 +101,40 @@ class PartPurchaseController extends Controller
     }
 
     /**
+     * FLEET-WIDE repeat buys: every car that received the same part twice inside `window_days`, newest
+     * first, each pair carrying the approval that authorised it. Backs the dashboard's "Bought Again"
+     * card — the supervisor's retrospective view, as opposed to duplicateCheck()'s pre-buy warning.
+     */
+    public function repeats(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                // The "again" window — how close the two buys must be to count as a repeat.
+                'window_days'   => ['nullable', 'integer', 'min:1', 'max:3650'],
+                // How far back the SECOND buy may be — how much history the card lists.
+                'lookback_days' => ['nullable', 'integer', 'min:1', 'max:3650'],
+                'limit'         => ['nullable', 'integer', 'min:1', 'max:200'],
+                'vehicle_id'    => ['nullable', 'integer', 'exists:vehicles,id'],
+                // Filters, wipers and oil are MEANT to be re-bought; off unless explicitly asked for.
+                'include_consumables' => ['nullable', 'boolean'],
+            ]);
+
+            return ResponseHelper::SuccessResponse(
+                $this->intel->repeatPurchases(
+                    (int) ($data['window_days'] ?? 30),
+                    (int) ($data['lookback_days'] ?? 365),
+                    (int) ($data['limit'] ?? 50),
+                    isset($data['vehicle_id']) ? (int) $data['vehicle_id'] : null,
+                    $request->boolean('include_consumables')
+                ),
+                'Repeat purchases retrieved'
+            );
+        } catch (\Throwable $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
      * The unified repair-intelligence history for one vehicle (Part 8 admin view): every purchase with its
      * Vehicle + Fault + Repair + Part + Purchase Source + Technician + Result — the SAME projection across
      * all four garage/supplier × in-shop/on-site cases — plus the vehicle's open investigations.
