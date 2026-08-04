@@ -43,7 +43,7 @@ const SIMPLE = {
   weak: { bg: 'bg-red-500', text: 'text-white', key: 'weak' },
 };
 
-export default function DomainMatrix({ garages = [], domains = [], onPick }) {
+export default function DomainMatrix({ garages = [], domains = [], onPick, onEvidence }) {
   const { t } = useI18n();
   const g = (k, v) => t(`garages.${k}`, v);
   const [view, setView] = useState('simple');
@@ -157,14 +157,32 @@ export default function DomainMatrix({ garages = [], domains = [], onPick }) {
                     ? (graded ? (pts > 0 ? `+${Math.round(pts)}` : Math.round(pts)) : '·')
                     : (simple ? g(`matrix.cell.${simple.key}`) : '·');
 
+                  // A GRADED cell opens onto the repairs behind it. An ungraded one stays inert —
+                  // there is nothing to show, and a button that opens an empty drawer teaches people
+                  // the drawer is not worth clicking.
+                  const canDrill = graded && cell?.evidence_query_id && onEvidence;
+
+                  const face = (
+                    <span
+                      className={`flex h-9 w-full min-w-[3.5rem] items-center justify-center rounded-md text-xs font-semibold tabular-nums ${style.bg} ${style.text} ${canDrill ? 'cursor-pointer ring-offset-1 transition hover:ring-2 hover:ring-blue-400' : ''}`}
+                    >
+                      {label}
+                    </span>
+                  );
+
                   return (
                     <td key={c.key} className="px-0.5">
                       <Tooltip content={tip} className="w-full">
-                        <span
-                          className={`flex h-9 w-full min-w-[3.5rem] items-center justify-center rounded-md text-xs font-semibold tabular-nums ${style.bg} ${style.text}`}
-                        >
-                          {label}
-                        </span>
+                        {canDrill ? (
+                          <button
+                            type="button"
+                            onClick={() => onEvidence(cell.evidence_query_id)}
+                            className="block w-full"
+                            aria-label={g('matrix.tip.head', { area: c.label, garage: r.garage })}
+                          >
+                            {face}
+                          </button>
+                        ) : face}
                       </Tooltip>
                     </td>
                   );

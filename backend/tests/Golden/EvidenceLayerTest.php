@@ -223,4 +223,40 @@ class EvidenceLayerTest extends GoldenTestCase
 
         $this->assertGreaterThan(20, $checked);
     }
+
+    /**
+     * Leaderboard rows carry the SAME evidence id as the matrix cell they came from.
+     *
+     * Rebuilding the id on the leaderboard would have been a second place that knows how evidence is
+     * addressed — and the first time the scheme changed, one of the two would have silently rotted.
+     */
+    public function test_leaderboard_rows_reuse_the_cell_evidence_id(): void
+    {
+        $svc = app(\App\Services\Garage\GarageScorecardService::class);
+        $svc->forget();
+        $report = $svc->report();
+
+        $cellIds = [];
+        foreach ($report['garages'] as $card) {
+            foreach ($card['domains'] as $d) {
+                $cellIds["{$card['vendor_id']}:{$d['key']}"] = $d['evidence_query_id'];
+            }
+        }
+
+        $checked = 0;
+        foreach ($report['leaderboard'] as $domainKey => $board) {
+            foreach (array_merge($board['best'], $board['worst']) as $row) {
+                $this->assertNotEmpty($row['evidence_query_id'], 'every leaderboard row must be drillable');
+                $this->assertSame(
+                    $cellIds["{$row['vendor_id']}:{$domainKey}"] ?? null,
+                    $row['evidence_query_id'],
+                    'a leaderboard row must open the same evidence as its matrix cell',
+                );
+                $this->assertTrue($this->registry->knows($row['evidence_query_id']));
+                $checked++;
+            }
+        }
+
+        $this->assertGreaterThan(10, $checked);
+    }
 }

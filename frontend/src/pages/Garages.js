@@ -154,7 +154,7 @@ export default function Garages() {
                 {scoreData && (
                   <>
                     <GarageScoreboard garages={cards} fleet={fleet} onPick={pick} />
-                    <DomainMatrix garages={cards} domains={scoreData.domains} onPick={pick} />
+                    <DomainMatrix garages={cards} domains={scoreData.domains} onPick={pick} onEvidence={evidence.open} />
                     <ScorecardOrigin provenance={scoreData.provenance} fleet={scoreData.fleet} />
                   </>
                 )}
@@ -165,8 +165,8 @@ export default function Garages() {
               <div className="space-y-6">
                 {scoreData && (
                   <>
-                    <DomainLeaderboard leaderboard={scoreData.leaderboard} domains={scoreData.domains} onPick={pick} />
-                    <DomainMatrix garages={cards} domains={scoreData.domains} onPick={pick} />
+                    <DomainLeaderboard leaderboard={scoreData.leaderboard} domains={scoreData.domains} onPick={pick} onEvidence={evidence.open} />
+                    <DomainMatrix garages={cards} domains={scoreData.domains} onPick={pick} onEvidence={evidence.open} />
                     <ScorecardOrigin provenance={scoreData.provenance} fleet={scoreData.fleet} />
                   </>
                 )}

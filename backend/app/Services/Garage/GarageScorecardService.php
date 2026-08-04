@@ -786,6 +786,10 @@ class GarageScorecardService
                     'turnaround_days' => $d['turnaround_days'],
                     'rank'         => $d['rank'],
                     'grade'        => $d['grade'],
+                    // Carried through from the cell rather than rebuilt, so a leaderboard row and the
+                    // matrix cell it came from open the same evidence. The frontend never assembles
+                    // an id: the moment it does, it owns knowledge of how evidence is addressed.
+                    'evidence_query_id' => $d['evidence_query_id'],
                 ];
             }
         }
