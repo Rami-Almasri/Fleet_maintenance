@@ -1645,6 +1645,8 @@ class MaintenanceWorkflowController extends Controller
                 // Procurement starts only when the coordinator converts these, after the garage is chosen
                 // (POST /{ticket}/required-parts/request). See MaintenanceRequiredPartService.
                 'required_parts'             => ['nullable', 'array'],
+                'required_parts.*.component_catalog_id' => ['nullable', 'integer', 'exists:component_catalog,id'],
+
                 'required_parts.*.part_name' => ['required_with:required_parts', 'string', 'max:255'],
                 'required_parts.*.quantity'  => ['nullable', 'numeric', 'min:0.01', 'max:9999'],
                 'required_parts.*.priority'  => ['nullable', Rule::in(\App\Models\MaintenanceRequiredPart::PRIORITIES)],

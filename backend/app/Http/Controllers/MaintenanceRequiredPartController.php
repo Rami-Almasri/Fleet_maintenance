@@ -54,6 +54,8 @@ class MaintenanceRequiredPartController extends Controller
         try {
             $data = $request->validate([
                 'required_parts'             => ['required', 'array', 'min:1'],
+                'required_parts.*.component_catalog_id' => ['nullable', 'integer', 'exists:component_catalog,id'],
+
                 'required_parts.*.part_name' => ['required', 'string', 'max:255'],
                 'required_parts.*.quantity'  => ['nullable', 'numeric', 'min:0.01', 'max:9999'],
                 'required_parts.*.priority'  => ['nullable', Rule::in(MaintenanceRequiredPart::PRIORITIES)],

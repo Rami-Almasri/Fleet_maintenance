@@ -41,6 +41,10 @@ class MaintenanceRequiredPart extends Model
 
     protected $fillable = [
         'maintenance_id', 'vehicle_id', 'maintenance_task_id', 'finding_key', 'finding_text',
+        // The catalog reference is the identity; `part_name` beside it is the inspector's own
+        // wording, kept as evidence. Both are fillable — omitting the reference here silently
+        // dropped it on every create while the service believed it had been written.
+        'component_catalog_id', 'catalog_matched_by',
         'part_name', 'notes', 'quantity', 'priority', 'status',
         'recorded_by', 'recorded_by_name', 'recorded_at',
         'actioned_by', 'actioned_by_name', 'actioned_at', 'dismissal_reason',
