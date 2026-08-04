@@ -107,6 +107,10 @@ class ComponentReadModel
             'consumables' => $consumables,
             'history'     => $history->all(),
             'summary'     => $this->vehicleSummary($installed, $history),
+            // "This car keeps eating the same part" — computed from the SAME rows already loaded
+            // above, so the banner on the overview tab and the table on the components tab can
+            // never disagree about how many times something was replaced.
+            'repeat_replacements' => $this->repeatReplacements($rows),
             'data_origin' => 'Derived from the maintenance workflow: parts installed on a ticket (vehicle_components) '
                 . 'and routine services performed at close (service_records). Nothing on this tab is entered by hand.',
         ];
@@ -489,6 +493,7 @@ class ComponentReadModel
             'plate_no'    => $c->vehicle?->plate_no,
 
             // Identity
+            'component_catalog_id' => $c->component_catalog_id,
             'category'      => $catalog?->category_key,
             'type'          => $catalog?->name,
             'catalog_slug'  => $catalog?->slug,
@@ -682,6 +687,147 @@ class ComponentReadModel
     }
 
     // ───────────────────────────── roll-ups ─────────────────────────────
+
+    /** One SLOT must have been replaced at least this many times on ONE car before we say anything. */
+    public const REPEAT_THRESHOLD = 2;
+
+    /**
+     * Repeat replacements ON THIS CAR — which part types this vehicle has consumed more than once.
+     *
+     * This is a COUNT, not a diagnosis. It says "the same slot has been replaced N times here" and
+     * shows the life each fitting achieved next to the life the catalog expects; whether that means
+     * a bad part, a bad garage or a bad driver is a question for the tickets behind it, and the rows
+     * carry the ids so a user can go and read them.
+     *
+     * Only removals that are REPAIRS count. A part that left because the car was sold or because it
+     * was moved to another vehicle was not consumed by this car, and counting it would manufacture a
+     * warning out of paperwork.
+     *
+     * The threshold is PER SLOT, not per type, and that distinction is the whole difference between
+     * a useful warning and a false one. A car whose four tyres were changed together once has four
+     * removals of type "Tyre" — a per-type count would call that "replaced 4×" and cry wolf on a
+     * single routine job. Counting per position instead asks the real question — "has the SAME
+     * corner of this car been done again?" — and only that fires. Where position was never recorded
+     * (about half the rows), every removal falls into one unnamed slot, which is the most the data
+     * supports; the payload says how many slots a row spans so the UI can tell the two apart.
+     *
+     * @param Collection<int,VehicleComponent> $rows every component this vehicle has ever carried
+     */
+    private function repeatReplacements(Collection $rows): array
+    {
+        $notARepair = [VehicleComponent::REASON_TRANSFER, VehicleComponent::REASON_VEHICLE_SOLD];
+
+        $removed = $rows->filter(fn (VehicleComponent $c) => $c->removed_at !== null
+            && ! in_array($c->removal_reason, $notARepair, true));
+
+        // Group by catalog type where there is one; a row with no catalog still has a label, and a
+        // label repeated three times is the same signal — falling back on it keeps legacy rows in.
+        $groups = $removed->groupBy(fn (VehicleComponent $c) => $c->component_catalog_id
+            ? 'cat:' . $c->component_catalog_id
+            : 'label:' . mb_strtolower(trim((string) ($c->label ?: 'unknown'))));
+
+        // Per-slot counts inside each type. A row survives only if ONE slot was done twice or more.
+        $bySlot = fn (Collection $g) => $g->groupBy(fn (VehicleComponent $c) => $c->position ?: '_');
+
+        $out = $groups
+            ->filter(fn (Collection $g) => $bySlot($g)->max(fn (Collection $s) => $s->count()) >= self::REPEAT_THRESHOLD)
+            ->map(function (Collection $g) use ($rows, $bySlot) {
+                $slots       = $bySlot($g);
+                $maxPerSlot  = (int) $slots->max(fn (Collection $s) => $s->count());
+                // The headline number: how many times the worst slot was done. "Replaced 3×" must
+                // mean three rounds, not twelve wheels.
+                $repeatRounds = $maxPerSlot;
+                /** @var VehicleComponent $first */
+                $first   = $g->first();
+                $catalog = $first->catalog;
+
+                $lifeDays = $g->map(fn (VehicleComponent $c) => $c->installed_at && $c->removed_at
+                    ? (int) $c->installed_at->diffInDays($c->removed_at)
+                    : null)->filter(fn ($v) => $v !== null);
+
+                $lifeKm = $g->map(fn (VehicleComponent $c) => (
+                    $c->installed_odometer !== null && $c->removed_odometer !== null
+                    && $c->removed_odometer >= $c->installed_odometer
+                ) ? $c->removed_odometer - $c->installed_odometer : null)->filter(fn ($v) => $v !== null);
+
+                $avgKm   = $lifeKm->isEmpty() ? null : (int) round($lifeKm->avg());
+                $avgDays = $lifeDays->isEmpty() ? null : (int) round($lifeDays->avg());
+
+                $expectedKm     = $catalog?->expected_life_km;
+                $expectedMonths = $catalog?->expected_life_months;
+
+                // "Early" = the average fitting did not reach 60% of the life the catalog expects.
+                // Distance is the better measure where both exist, because a car that sits still
+                // ages a part without using it.
+                $earlyByKm   = $expectedKm && $avgKm !== null ? $avgKm < 0.6 * $expectedKm : null;
+                $earlyByDays = $expectedMonths && $avgDays !== null
+                    ? $avgDays < 0.6 * ($expectedMonths * 30.44)
+                    : null;
+                $early = $earlyByKm ?? $earlyByDays;
+
+                $removals = $g->sortByDesc('removed_at')->values();
+
+                // The part fitted in that slot right now, if any — the banner should say whether the
+                // car is currently running on yet another one of these.
+                $current = $rows->first(fn (VehicleComponent $c) => $c->status === VehicleComponent::STATUS_ACTIVE
+                    && $c->component_catalog_id !== null
+                    && $c->component_catalog_id === $first->component_catalog_id);
+
+                return [
+                    'component_catalog_id' => $first->component_catalog_id,
+                    'type'                 => $catalog?->name ?: $first->label,
+                    'slug'                 => $catalog?->slug,
+                    'category'             => $catalog?->category_key,
+                    // `replacements` is the per-slot figure the banner leads with; `total_removals`
+                    // is every unit that came off, which for a 4-wheel job is 4× larger. Both are
+                    // on the wire because a user WILL ask why the numbers differ.
+                    'replacements'         => $repeatRounds,
+                    'total_removals'       => $g->count(),
+                    'slots'                => $slots->count(),
+                    'positioned'           => ! $slots->has('_'),
+                    'first_removed_at'     => optional($removals->last()->removed_at)->toIso8601String(),
+                    'last_removed_at'      => optional($removals->first()->removed_at)->toIso8601String(),
+                    'avg_life_km'          => $avgKm,
+                    'avg_life_days'        => $avgDays,
+                    'expected_life_km'     => $expectedKm,
+                    'expected_life_months' => $expectedMonths,
+                    'failing_early'        => $early,
+                    // Money only over the fittings whose cost is known — same rule as everywhere
+                    // else on this tab: a blank cost is not a zero.
+                    'known_spend'          => round((float) $g->sum(fn (VehicleComponent $c) => (float) ($c->purchase_cost ?? 0)), 2),
+                    'costed_count'         => $g->whereNotNull('purchase_cost')->count(),
+                    // How urgent this reads: the same slot done three-plus times, or twice with
+                    // both fittings dying early.
+                    'severity'             => ($repeatRounds >= 3 || $early === true) ? 'high' : 'watch',
+                    'currently_fitted'     => $current ? [
+                        'id'           => $current->id,
+                        'installed_at' => optional($current->installed_at)->toIso8601String(),
+                        'age_days'     => $current->installed_at ? (int) $current->installed_at->diffInDays(Carbon::now()) : null,
+                    ] : null,
+                    // Every removal behind the count, so the number can be opened and audited.
+                    'events' => $removals->map(fn (VehicleComponent $c) => [
+                        'component_id'   => $c->id,
+                        'removed_at'     => optional($c->removed_at)->toIso8601String(),
+                        'installed_at'   => optional($c->installed_at)->toIso8601String(),
+                        'removal_reason' => $c->removal_reason,
+                        'maintenance_id' => $c->removal_maintenance_id,
+                    ])->all(),
+                ];
+            })
+            ->sortByDesc('replacements')
+            ->values()
+            ->all();
+
+        return [
+            'threshold' => self::REPEAT_THRESHOLD,
+            'count'     => count($out),
+            'rows'      => $out,
+            'basis'     => 'Counted PER FITTING POSITION over every removal recorded on this vehicle, so changing '
+                . 'four tyres at once counts as one round, not four. Parts that left because they were transferred '
+                . 'to another car or the car was sold are excluded — they were not consumed here. Expected life comes '
+                . 'from the component catalog; where the catalog sets none, no "early" judgement is made.',
+        ];
+    }
 
     /** @param Collection<int,array> $installed @param Collection<int,array> $history */
     private function vehicleSummary(Collection $installed, Collection $history): array

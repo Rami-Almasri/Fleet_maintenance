@@ -19,6 +19,7 @@ import VehicleCheckpointsPanel from '../../components/vehicles/VehicleCheckpoint
 import VehicleComplaintsPanel from '../../components/vehicles/VehicleComplaintsPanel';
 import VehicleInvestigationTimeline from '../../components/vehicles/VehicleInvestigationTimeline';
 import VehicleComponentsPanel from '../../components/vehicles/VehicleComponentsPanel';
+import ComponentRepeatAlert from '../../components/vehicles/ComponentRepeatAlert';
 import { aed2, fmtDate, fmtClock, num } from '../../lib/format';
 import CompositionDonut from '../../components/ui/CompositionDonut';
 import { faultTagSegments, isServiceOnlyVisit } from '../../lib/faultCategories';
@@ -790,6 +791,11 @@ export default function VehicleProfile() {
         {/* ── OVERVIEW ─────────────────────────────────────────────── core KPIs at a glance */}
         {activeTab === 'overview' && (
         <div role="tabpanel" id="panel-overview" aria-labelledby="tab-overview" className="space-y-6">
+        {/* Repeat replacements — the one thing about this car's hardware a manager must see WITHOUT
+            opening a tab: the same part has been fitted here more than once. Renders nothing when
+            there is no repeat, so it costs no space on a healthy car. */}
+        <ComponentRepeatAlert vehicleId={id} onOpenComponents={() => changeTab('components')} />
+
         {/* Executive overview dashboard — Quick KPIs, vehicle health, revenue/expense
             architecture, repair trends & fault distribution, all off the loaded payload.
             Money surfaces are gated by SHOW_FINANCIALS inside the component. */}

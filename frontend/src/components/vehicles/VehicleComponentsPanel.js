@@ -10,6 +10,8 @@ import MetricCard, { MetricGrid } from '../../components/ui/MetricCard';
 import { MetricGridSkeleton } from '../../components/ui/Skeleton';
 import { EmptyState, ErrorState, SearchInput } from '../../components/ui/Misc';
 import Segmented from '../../components/ui/Segmented';
+import DateRangePicker from '../../components/ui/DateRangePicker';
+import ComponentRepeatAlert from './ComponentRepeatAlert';
 import { aed2, fmtDate, num } from '../../lib/format';
 
 /**
@@ -64,10 +66,50 @@ function humanAge(days) {
   return `${Math.floor(months / 12)} y ${months % 12} mo`;
 }
 
+/**
+ * Keep the rows whose `field` date falls inside the window {days, from, to} — the same shape
+ * DateRangePicker emits. `days: 0` with no from/to means all time and returns the list untouched.
+ *
+ * A row with NO date on that field is DROPPED once a window is set, deliberately: an undated row
+ * cannot be shown to belong to a period, and silently keeping it would let "replaced last month"
+ * include a replacement nobody dated.
+ */
+function filterByRange(rows, field, { days, from, to }) {
+  if (!days && !from && !to) return rows;
+
+  const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const parse = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
+
+  let start = null;
+  let end = null;
+
+  if (from || to) {
+    start = from ? parse(from) : null;
+    // Inclusive end: the whole of the chosen day counts.
+    end = to ? new Date(parse(to).getTime() + 86400000 - 1) : null;
+  } else {
+    const today = startOfDay(new Date());
+    start = new Date(today.getTime() - (days - 1) * 86400000);
+  }
+
+  return rows.filter((r) => {
+    const raw = r[field];
+    if (!raw) return false;
+    const t = new Date(raw).getTime();
+    if (Number.isNaN(t)) return false;
+    if (start && t < start.getTime()) return false;
+    if (end && t > end.getTime()) return false;
+    return true;
+  });
+}
+
 export default function VehicleComponentsPanel({ vehicleId }) {
   const [selectedId, setSelectedId] = useState(null);
   const [view, setView] = useState('installed');
   const [q, setQ] = useState('');
+  // Time window over the TABLE only. `days: 0` = all time; from/to override it with an explicit
+  // range. The whole history is already in the payload, so this filters in place — no refetch.
+  const [range, setRange] = useState({ days: 0, from: null, to: null });
 
   const fetcher = useCallback(
     async () => (await api.get(`/Vehicle/${vehicleId}/components`)).data.data,
@@ -90,15 +132,34 @@ export default function VehicleComponentsPanel({ vehicleId }) {
 
   const rows = view === 'installed' ? currentRows : history;
 
+  // The window means a different thing in each view, and it has to: on "Installed" the question is
+  // "what was FITTED in this period", on "Replaced" it is "what came OFF in this period". Filtering
+  // both on the same column would make the Replaced tab answer a question nobody asked.
+  const dateField = view === 'installed' ? 'installed_at' : 'removed_at';
+
+  const windowed = useMemo(() => filterByRange(rows, dateField, range), [rows, dateField, range]);
+
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    if (!needle) return rows;
-    return rows.filter((r) =>
+    if (!needle) return windowed;
+    return windowed.filter((r) =>
       [r.type, r.part_name, r.brand, r.part_number, r.serial_no, r.supplier?.name, CATEGORY_LABEL[r.category] || r.category]
         .filter(Boolean)
         .some((v) => String(v).toLowerCase().includes(needle))
     );
-  }, [rows, q]);
+  }, [windowed, q]);
+
+  const windowActive = range.days > 0 || !!range.from || !!range.to;
+
+  // Both tab counts under the SAME window, so switching views never surprises with a jump.
+  const installedInWindow = useMemo(
+    () => filterByRange(currentRows, 'installed_at', range).length,
+    [currentRows, range]
+  );
+  const historyInWindow = useMemo(
+    () => filterByRange(history, 'removed_at', range).length,
+    [history, range]
+  );
 
   const columns = useMemo(() => {
     const base = [
@@ -239,6 +300,10 @@ export default function VehicleComponentsPanel({ vehicleId }) {
 
   return (
     <div className="space-y-6">
+      {/* Fed from the payload already in hand — no second request, and the same numbers the
+          overview tab's banner shows. */}
+      <ComponentRepeatAlert data={data?.repeat_replacements ?? null} />
+
       {loading && !data ? (
         <MetricGridSkeleton count={5} />
       ) : (
@@ -288,19 +353,30 @@ export default function VehicleComponentsPanel({ vehicleId }) {
 
       <SectionCard
         title="Current configuration"
-        subtitle="Derived from the maintenance workflow — components appear here only when a ticket installs them."
+        subtitle={
+          windowActive
+            ? `Showing parts ${view === 'installed' ? 'FITTED' : 'REMOVED'} in the selected window — ${num(windowed.length)} of ${num(rows.length)}. The cards above always describe the car as it stands today.`
+            : 'Derived from the maintenance workflow — components appear here only when a ticket installs them.'
+        }
         actions={
           // The search box carries no intrinsic width, so as a flex sibling of the Segmented it
           // shrank until the icon's padding swallowed the placeholder. Pin a width and let the row
           // wrap instead of crushing both controls in a narrow card header.
           <div className="flex flex-wrap items-center justify-end gap-2">
             <SearchInput className="w-full sm:w-64" value={q} onChange={setQ} placeholder="Part, brand, number, supplier…" />
+            <DateRangePicker
+              days={range.days}
+              from={range.from}
+              to={range.to}
+              onChange={(next) => setRange({ days: next.days ?? 0, from: next.from || null, to: next.to || null })}
+            />
             <Segmented
               value={view}
               onChange={setView}
               options={[
-                { key: 'installed', label: `Installed (${currentRows.length})` },
-                { key: 'history', label: `Replaced (${history.length})` },
+                // Counts follow the window, so a tab never advertises rows the window has hidden.
+                { key: 'installed', label: `Installed (${installedInWindow})` },
+                { key: 'history', label: `Replaced (${historyInWindow})` },
               ]}
             />
           </div>
@@ -324,7 +400,11 @@ export default function VehicleComponentsPanel({ vehicleId }) {
             // A consumable has no asset record behind it, so there is nothing to drill into.
             onRowClick={(r) => r.kind !== 'consumable' && setSelectedId(r.id)}
             highlightRow={(r) => r.service_life?.status === 'overdue' || r.warranty?.status === 'expiring_soon'}
-            empty="Nothing matches that search."
+            empty={
+              windowActive && windowed.length === 0
+                ? `Nothing was ${view === 'installed' ? 'fitted' : 'removed'} in this window. Widen the date range to see more.`
+                : 'Nothing matches that search.'
+            }
             stickyHeader
           />
         )}
