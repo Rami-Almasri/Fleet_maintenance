@@ -39,6 +39,8 @@ import MaintenanceSwap from './pages/MaintenanceSwap';
 import LogisticsDispatch from './pages/LogisticsDispatch';
 import QuickCostInput from './pages/QuickCostInput';
 import Garages from './pages/Garages';
+import GarageProfile from './pages/intelligence/GarageProfile';
+import GarageCompare from './pages/intelligence/GarageCompare';
 import FindingKeywords from './pages/FindingKeywords';
 import Parts from './pages/Parts';
 import RecurringFaultReviews from './pages/RecurringFaultReviews';
@@ -243,6 +245,8 @@ export default function App() {
                       on the fleet list rather than a dead route. */}
                   <Route path="/maintenance-foresight" element={<Navigate to="/vehicles" replace />} />
                   <Route path="/garages" element={<Garages />} />
+                  <Route path="/intelligence/garages/compare" element={<GarageCompare />} />
+                  <Route path="/intelligence/garages/:id" element={<GarageProfile />} />
                   <Route path="/finding-keywords" element={<FindingKeywords />} />
                   {/* Maintenance Analytics is marked "Coming Soon" in the module registry —
                       redirect the old URL so the unfinished page isn't reachable directly. */}

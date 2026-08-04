@@ -260,6 +260,40 @@ const en = {
     status: { open: 'Open', inspection_requested: 'Inspection requested', dismissed: 'Dismissed' },
   },
   intelligence: {
+    confidence: {
+      sample: 'n={n}',
+      coverage: 'Measured over {pct}% of the corpus — {missing} repairs are too recent to judge yet.',
+      asOf: 'Repair history to {date}.',
+      band: {
+        high: { label: 'strong evidence', title: 'Strong evidence', body: 'Based on {n} measured repairs.' },
+        medium: { label: 'moderate', title: 'Moderate evidence', body: 'Based on {n} measured repairs — enough to act on, not enough to be certain.' },
+        low: { label: 'thin', title: 'Thin evidence', body: 'Only {n} measured repairs. Treat this as a signal, not a verdict.' },
+      },
+    },
+    metric: {
+      notEnough: 'Not enough repairs',
+    },
+    profile: {
+      back: 'Back to garages',
+      notFound: 'This garage has no measured repair history.',
+      summary: '{jobs} jobs · {repairs} graded repairs',
+      rank: 'ranked {rank} of {of} measured garages',
+      scoredOn: 'Scored on: {axes}',
+      expectedHint: 'The fleet averages {exp}% on this mix of work.',
+      expectedDaysHint: 'The fleet averages {exp} days on this mix of work.',
+      areas: 'Performance by repair area',
+      col: { area: 'Area', jobs: 'Jobs', comeback: 'Came back', fleet: 'Fleet', days: 'Typical return', verdict: 'Verdict' },
+    },
+    compare: {
+      title: 'Compare garages',
+      needTwo: 'Pick at least two measured garages to compare.',
+      openEvidence: 'Repairs',
+      row: { metric: 'Measure', score: 'Score', expected: 'Expected for its mix', repairs: 'Graded repairs', fleet: 'Fleet', mix: 'What it mostly does' },
+      caveat: {
+        title: 'Read this before comparing.',
+        body: 'Each garage is measured fairly against the fleet on its OWN mix of work. Comparing two garages to each other is only approximate when they do different work — so their mix is shown below. A shop doing mostly interior work and one doing mostly suspension are not directly comparable, however close their scores look.',
+      },
+    },
     evidence: {
       eyebrow: 'Evidence',
       title: 'The repairs behind this number',
@@ -3502,6 +3536,40 @@ const ar = {
     status: { open: 'مفتوحة', inspection_requested: 'طُلب فحص', dismissed: 'متجاهَلة' },
   },
   intelligence: {
+    confidence: {
+      sample: 'ن={n}',
+      coverage: 'مقيس على {pct}٪ من السجل — {missing} إصلاحًا حديثة جدًا للحكم عليها.',
+      asOf: 'سجل الإصلاحات حتى {date}.',
+      band: {
+        high: { label: 'أدلة قوية', title: 'أدلة قوية', body: 'مبني على {n} إصلاحًا مقيسًا.' },
+        medium: { label: 'متوسطة', title: 'أدلة متوسطة', body: 'مبني على {n} إصلاحًا — كافٍ للتصرف، لا للجزم.' },
+        low: { label: 'ضعيفة', title: 'أدلة ضعيفة', body: 'فقط {n} إصلاحًا مقيسًا. اعتبره مؤشرًا لا حكمًا.' },
+      },
+    },
+    metric: {
+      notEnough: 'إصلاحات غير كافية',
+    },
+    profile: {
+      back: 'العودة إلى الورش',
+      notFound: 'لا يوجد سجل إصلاحات مقيس لهذا الكراج.',
+      summary: '{jobs} عملًا · {repairs} إصلاحًا مصنّفًا',
+      rank: 'الترتيب {rank} من {of} كراجًا مقيسًا',
+      scoredOn: 'قُيّم على: {axes}',
+      expectedHint: 'متوسط الأسطول {exp}٪ على هذا المزيج من العمل.',
+      expectedDaysHint: 'متوسط الأسطول {exp} يومًا على هذا المزيج من العمل.',
+      areas: 'الأداء حسب مجال الإصلاح',
+      col: { area: 'المجال', jobs: 'الأعمال', comeback: 'عاد', fleet: 'الأسطول', days: 'العودة النموذجية', verdict: 'الحكم' },
+    },
+    compare: {
+      title: 'مقارنة الورش',
+      needTwo: 'اختر كراجين مقيسين على الأقل للمقارنة.',
+      openEvidence: 'الإصلاحات',
+      row: { metric: 'المقياس', score: 'الدرجة', expected: 'المتوقع لمزيجه', repairs: 'إصلاحات مصنّفة', fleet: 'الأسطول', mix: 'ما يقوم به غالبًا' },
+      caveat: {
+        title: 'اقرأ هذا قبل المقارنة.',
+        body: 'يُقاس كل كراج بإنصاف مقابل الأسطول على مزيج عمله هو. مقارنة كراجين ببعضهما تقريبية فقط عندما يؤديان أعمالًا مختلفة — لذلك يظهر مزيج كل منهما أدناه. ورشة تعمل غالبًا على المقصورة وأخرى على التعليق ليستا قابلتين للمقارنة المباشرة، مهما تقاربت درجاتهما.',
+      },
+    },
     evidence: {
       eyebrow: 'الدليل',
       title: 'الإصلاحات وراء هذا الرقم',

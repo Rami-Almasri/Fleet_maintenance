@@ -819,6 +819,13 @@ Route::middleware(['auth:sanctum', 'permission:intelligence.view'])
     ->group(function () {
         Route::get('evidence/{queryId}', [\App\Http\Controllers\Intelligence\EvidenceController::class, 'show'])
             ->where('queryId', '[A-Za-z0-9_.:-]+');
+
+        // Garage Intelligence. `compare` is declared BEFORE `{vendor}` — a static segment behind a
+        // wildcard resolves to the wildcard, and the bug is silent: /garages/compare would arrive as
+        // a profile lookup for garage "compare".
+        Route::get('garages/compare', [\App\Http\Controllers\Intelligence\GarageIntelligenceController::class, 'compare']);
+        Route::get('garages/{vendor}', [\App\Http\Controllers\Intelligence\GarageIntelligenceController::class, 'show'])
+            ->whereNumber('vendor');
     });
 
 // Workshop events CRUD — the dashboard owning the garage log (origin = 'manual'); the
