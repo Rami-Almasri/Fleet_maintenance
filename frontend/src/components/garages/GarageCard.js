@@ -44,14 +44,30 @@ function TipBlock({ title, lines, tail }) {
 
 // Spans, not divs — a hinted stat is wrapped in <Tooltip>, whose trigger is a <span>, and block
 // elements inside it would be invalid markup that React silently renders and browsers reflow oddly.
-function Stat({ label, value, tone = 'text-slate-900', hint }) {
+function Stat({ label, value, tone = 'text-slate-900', hint, onEvidence, evidenceLabel }) {
   const body = (
     <span className="block">
       <span className="block text-xs font-medium text-slate-500">{label}</span>
       <span className={`mt-0.5 block text-lg font-bold tracking-tight ${tone}`}>{value}</span>
+      {/* The affordance is deliberately quiet: a supervisor scanning six stats should not be pulled
+          towards the one that happens to be auditable. It is there when they go looking for it. */}
+      {onEvidence && (
+        <span className="mt-0.5 block text-[11px] font-semibold text-blue-600 underline decoration-blue-300 underline-offset-2 group-hover/stat:text-blue-700">
+          {evidenceLabel}
+        </span>
+      )}
     </span>
   );
-  return hint ? <Tooltip content={hint} className="w-full">{body}</Tooltip> : body;
+
+  const wrapped = hint ? <Tooltip content={hint} className="w-full">{body}</Tooltip> : body;
+
+  if (!onEvidence) return wrapped;
+
+  return (
+    <button type="button" onClick={onEvidence} className="group/stat block w-full text-start" aria-label={evidenceLabel}>
+      {wrapped}
+    </button>
+  );
 }
 
 /** The 0–100 headline, drawn as a ring so it reads as a rating rather than a count. */
@@ -95,7 +111,7 @@ function ScoreDial({ score, t }) {
   );
 }
 
-export default function GarageCard({ perf, card, defaultOpen = false }) {
+export default function GarageCard({ perf, card, defaultOpen = false, onEvidence }) {
   const { t, isRTL } = useI18n();
   const g = (k, v) => t(`garages.${k}`, v);
   const [open, setOpen] = useState(defaultOpen);
@@ -172,6 +188,10 @@ export default function GarageCard({ perf, card, defaultOpen = false }) {
           hint={card?.reliability?.expected_pct != null
             ? g('stat.comebackHint', { exp: Math.round(card.reliability.expected_pct), n: num(card.reliability.n) })
             : card?.reliability?.reason}
+          // THE number this garage is graded on, so it is the one that must open onto its repairs.
+          // A grade nobody can audit is a grade that gets argued with instead of acted on.
+          onEvidence={card?.evidence_query_id && onEvidence ? () => onEvidence(card.evidence_query_id) : undefined}
+          evidenceLabel={t('intelligence.evidence.showRepairs')}
         />
         <Stat
           label={g('stat.turnaround')}

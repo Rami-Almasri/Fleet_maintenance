@@ -25,6 +25,8 @@ import GarageScoreboard from '../components/garages/GarageScoreboard';
 import DomainMatrix from '../components/garages/DomainMatrix';
 import DomainLeaderboard from '../components/garages/DomainLeaderboard';
 import GarageCard from '../components/garages/GarageCard';
+import EvidenceDrawer from '../components/intelligence/EvidenceDrawer';
+import useEvidence from '../hooks/useEvidence';
 import FaultGarageFinder from '../components/garages/FaultGarageFinder';
 import ScorecardOrigin from '../components/garages/ScorecardOrigin';
 import { num } from '../lib/format';
@@ -64,6 +66,10 @@ export default function Garages() {
 
   const garages = useMemo(() => perfData || [], [perfData]);
   const cards = useMemo(() => scoreData?.garages || [], [scoreData]);
+
+  // One drawer for the whole page. Every figure carries its own evidence id, so opening the proof
+  // is the same gesture wherever the number appears — the card, the matrix cell, the leaderboard.
+  const evidence = useEvidence();
   const byVendor = useMemo(() => Object.fromEntries(cards.map((c) => [c.vendor_id, c])), [cards]);
 
   // Jump from any chart into the garage it names. Charts that cannot be drilled into make people
@@ -177,6 +183,7 @@ export default function Garages() {
                       perf={perf}
                       card={card}
                       defaultOpen={focus === perf.vendor_id}
+                      onEvidence={evidence.open}
                     />
                   ))}
                 </div>
@@ -185,6 +192,16 @@ export default function Garages() {
           </>
         )}
       </div>
+
+      <EvidenceDrawer
+        open={evidence.isOpen}
+        onClose={evidence.close}
+        evidence={evidence.evidence}
+        loading={evidence.loading}
+        error={evidence.error}
+        page={evidence.page}
+        onPage={evidence.goToPage}
+      />
     </div>
   );
 }
