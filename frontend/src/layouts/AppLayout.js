@@ -137,6 +137,7 @@ const NAV_SECTIONS = [
     title: 'Parts & Suppliers',
     items: [
       { name: 'Parts Purchase', to: '/parts', icon: 'M20 7h-9M14 17H5M17 20a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM7 10a3 3 0 1 0 0-6 3 3 0 0 0 0 6z', desc: 'The Parts Purchase + Repair Intelligence board: request a part (customer or garage), approve, buy (garage or supplier) and install it — with duplicate-purchase detection and repair history.' },
+      { name: 'Parts Catalog', to: '/parts-catalog', icon: 'M4 6h16M4 12h16M4 18h10M18 15v6m3-3h-6', desc: 'The list of part names the whole app selects from, in English and Arabic. Each part also carries the other names and the problem wording people use for it, so a technician who types "battery not charging" still finds the alternator. Set the default supplier warranty for each part (months and kilometres) here.' },
       { name: 'Garages', to: '/garages', icon: 'M3 9l9-6 9 6v11a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z', desc: 'Garage ratings by repair area — who is strong at what, who has a problem, and what is in each workshop now.' },
       { name: 'Vendors', to: '/vendors', icon: 'M3 9l1-5h16l1 5M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M3 9h18M9 20v-6h6v6', desc: 'Suppliers and service vendors referenced by maintenance and contracts.' },
     ],
@@ -226,6 +227,7 @@ const NAV_PERMISSIONS = {
   '/maintenance-history': 'dashboard.view',
   '/finding-keywords': 'maintenance.view',
   '/parts': 'parts.view',
+  '/parts-catalog': 'parts.view',
   '/recurring-fault-reviews': 'maintenance.recurring.view',
   '/vehicles': 'vehicles.view',
   '/odometer-approvals': 'vehicles.approve_odometer',

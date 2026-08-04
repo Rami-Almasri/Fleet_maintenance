@@ -138,6 +138,61 @@ Route::middleware(['auth:sanctum', 'permission:components.view'])->controller(\A
     Route::get('Vehicle/{vehicle}/components', 'forVehicle');    // one car's current configuration + history
 });
 
+// Parts Catalog — the WRITE side of component_catalog: the one list of part names the whole app
+// selects from (required parts, purchases, installs), in English and Arabic, with the search
+// aliases that let someone find a part by the symptom instead of the part name.
+//
+// This is the deliberate exception to the read-only rule above. A component INSTANCE may only be
+// created by the workflow (that rule stands), but the VOCABULARY of part types is reference data
+// the operation must be able to curate — the alternative, which we lived with, is a free-text box
+// and a hundred spellings of the same part. Every write stamps `edited_in_app`, after which the
+// config seeder leaves the row alone for good; see PartsCatalogController.
+//
+// Reading is wider than writing on purpose: anyone who can raise a part request needs the list, or
+// the picker is empty for exactly the people it exists for. Curation stays at components.manage,
+// which already means "curate the catalog" in the permission seeder.
+Route::middleware('auth:sanctum')->prefix('parts-catalog')->controller(\App\Http\Controllers\PartsCatalogController::class)->group(function () {
+    Route::get('/', 'index')->middleware('permission:parts.view|components.view|maintenance.view');
+    Route::post('/', 'store')->middleware('permission:components.manage');
+    Route::post('/{part}', 'update')->middleware('permission:components.manage');          // POST like Vendor/FindingKeyword
+    Route::post('/{part}/restore', 'restore')->middleware('permission:components.manage'); // un-retire
+    Route::delete('/{part}', 'destroy')->middleware('permission:components.manage');       // retires when in use
+});
+
+// Warranties — the promises suppliers and garages made us, and every claim made against them.
+//
+// TWO KINDS, ONE TABLE: kind=part is owed by the SUPPLIER (anchored to the purchase or the fitted
+// component); kind=repair is owed by the GARAGE (anchored to the FAULT, which is what makes a
+// comeback provable). Both carry BOTH expiry legs — months and kilometres, whichever runs out
+// first — and whether one is still live is COMPUTED per read against the car's current odometer,
+// never stored. See the create_warranties_table migration and WarrantyService.
+//
+// Permissions: reading rides with parts.view (the people chasing a warranty are the people who
+// bought the part). Recording and claiming is parts.purchase — the same bar as spending money,
+// because a warranty is the other side of that transaction. Voiding a warranty and adjudicating a
+// claim's outcome is parts.investigate: those are the two actions that decide whether money is
+// recoverable, and they are the ones a supplier would dispute.
+Route::middleware('auth:sanctum')->prefix('warranties')->controller(\App\Http\Controllers\WarrantyController::class)->group(function () {
+    Route::get('/', 'index')->middleware('permission:parts.view|maintenance.view');
+    Route::post('/', 'store')->middleware('permission:parts.purchase|maintenance.manage');
+    // Static segment BEFORE /{warranty} so "vehicle" is never swallowed as a model binding.
+    Route::get('/vehicle/{vehicle}', 'forVehicle')->middleware('permission:parts.view|maintenance.view');
+    Route::get('/{warranty}', 'show')->middleware('permission:parts.view|maintenance.view');
+    Route::post('/{warranty}', 'update')->middleware('permission:parts.purchase|maintenance.manage');
+    Route::delete('/{warranty}', 'destroy')->middleware('permission:parts.investigate|maintenance.manage');
+
+    Route::post('/{warranty}/void', 'void')->middleware('permission:parts.investigate|maintenance.manage');
+    Route::post('/{warranty}/reinstate', 'reinstate')->middleware('permission:parts.investigate|maintenance.manage');
+
+    Route::get('/{warranty}/claims', 'claims')->middleware('permission:parts.view|maintenance.view');
+    Route::post('/{warranty}/claims', 'storeClaim')->middleware('permission:parts.purchase|maintenance.manage');
+});
+
+// A claim's outcome is adjudication, not data entry — it sits outside the /warranties tree because
+// the claim id is enough to find it and the permission bar is different.
+Route::middleware(['auth:sanctum', 'permission:parts.investigate|maintenance.manage'])
+    ->post('warranty-claims/{claim}/resolve', [\App\Http\Controllers\WarrantyController::class, 'resolveClaim']);
+
 // Vehicle Status Dashboard — the team's all-day follow-up board (one derived row per car: status,
 // current owner, last/next action, days-in-status, blocked). Read-only aggregation (insights.view);
 // the Supervisor's "Set to Ready" sign-off reuses the same authority that closes a workflow ticket.

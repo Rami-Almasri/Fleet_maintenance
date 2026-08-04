@@ -43,6 +43,7 @@ import GarageProfile from './pages/intelligence/GarageProfile';
 import GarageCompare from './pages/intelligence/GarageCompare';
 import FindingKeywords from './pages/FindingKeywords';
 import Parts from './pages/Parts';
+import PartsCatalog from './pages/PartsCatalog';
 import RecurringFaultReviews from './pages/RecurringFaultReviews';
 import DamageAccidents from './pages/DamageAccidents';
 import CostIntelligence from './pages/CostIntelligence';
@@ -259,6 +260,10 @@ export default function App() {
                     (e.g. finance with parts.view) sees the board without needing maintenance.view. */}
                 <Route element={<RequirePermission permission="parts.view" />}>
                   <Route path="/parts" element={<Parts />} />
+                  {/* The parts VOCABULARY (names, Arabic terms, search aliases, warranty defaults).
+                      Viewing sits with parts.view like the board above; editing is gated inside the
+                      page on components.manage, which already means "curate the catalog". */}
+                  <Route path="/parts-catalog" element={<PartsCatalog />} />
                 </Route>
                 {/* Recurring Fault Reviews — management inbox for confirmed faults that came back after a fix. */}
                 <Route element={<RequirePermission permission="maintenance.recurring.view" />}>
