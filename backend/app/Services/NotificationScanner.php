@@ -49,6 +49,7 @@ class NotificationScanner
         'rental_expiring:', 'invoice_overdue:', 'inspection_due:',
         'booking_in_maintenance:', 'booking_readiness:', 'deferred_maint_return:',
         'part_delivery_overdue:', 'test_interrupted:',
+        'oil_projection:', // carries the projection ANCHOR, so a new mileage reading rotates it and re-arms the chase
     ];
 
     /**
@@ -83,6 +84,16 @@ class NotificationScanner
         'part_delivery_overdue'       => 'parts.view',          // parts desk: a purchased part is past its promised delivery date
         'test_interrupted'            => 'maintenance.manage',   // controllers (Leen): a recommended test lapsed because the car went back on rent
         'maint_invoice_missing'       => 'maintenance.checkpoint.manage', // the Checkpoint lane's owners: car left the garage, bill never arrived
+        'oil_projection'              => 'reminders.manage',              // ask the customer for a mileage reading — further narrowed by an allow-list, see userMayReceive()
+    ];
+
+    /**
+     * Alert types whose audience is an explicit list of people rather than "everyone holding a
+     * permission", mapped to the config key holding that list. See userMayReceive(): a configured
+     * list REPLACES the permission gate; an empty one falls back to it.
+     */
+    private const ALERT_RECIPIENT_ALLOW_LISTS = [
+        'oil_projection' => 'maintenance.oil_projection.recipient_user_ids', // Leen & Marwa make these calls
     ];
 
     /** Days a garage is given to send its bill before the missing invoice becomes an alert. */
@@ -98,6 +109,7 @@ class NotificationScanner
         private OperationalStateLoader $loader,
         private MaintenanceDelayResolver $delayResolver,
         private LeftGarageInvoiceService $leftGarageQueue,
+        private OilChangeProjectionService $oilProjection,
     ) {}
 
     /**
@@ -314,6 +326,7 @@ class NotificationScanner
             ->concat($this->partsAwaitingDelivery())
             ->concat($this->testRecommendationsInterrupted())
             ->concat($this->leftGarageInvoiceMissing())
+            ->concat($this->oilProjectionChases())
             ->all();
     }
 
@@ -521,6 +534,77 @@ class NotificationScanner
         });
 
         return $due;
+    }
+
+    /**
+     * Cars OUT ON RENTAL whose oil limit the projection says they have probably now reached.
+     *
+     * This is the mid-rental half of the oil story: serviceDue()/serviceDueSoon() look at the
+     * odometer we last recorded, which for a car that left three weeks ago is exactly as stale as
+     * the day it drove off. Here we project forward from the newest anchor at a flat 200 km/day
+     * and, when the projection crosses the service point + grace, ask ops to get a REAL reading
+     * from the customer.
+     *
+     * Scope is every currently-open rental — `currentlyOpen()` keys off a null `in_date`, so a
+     * contract the customer extends through OfficeManager simply stays in scope, and one returned
+     * early drops out, with no schedule to rebuild.
+     *
+     * Anti-spam: the key carries the anchor (see OilChangeProjectionService::dedupKey). The
+     * condition stays true every day until someone acts, so without that the chase would re-nag
+     * daily; with it, ops are asked ONCE per anchor and entering a reading is what re-arms it.
+     */
+    private function oilProjectionChases(): Collection
+    {
+        $chases = collect();
+
+        Contract::query()
+            ->currentlyOpen()
+            ->where('contract_type', 'C')       // rentals only; 'U' is a maintenance contract, 'R' a booking
+            ->whereNotNull('vehicle_id')
+            ->with('vehicle')
+            ->orderBy('id')
+            ->chunkById(500, function ($contracts) use ($chases) {
+                foreach ($contracts as $contract) {
+                    if ($chases->count() >= self::CAP) {
+                        return false;
+                    }
+
+                    $p = $this->oilProjection->project($contract);
+                    if ($p['status'] !== 'chase_due') {
+                        continue; // 'ok' = still inside the limit · 'no_data' = no anchor, we never guess
+                    }
+
+                    $v     = $contract->vehicle;
+                    $car   = trim(($v->code ? '#' . $v->code . ' ' : '') . trim($v->make . ' ' . $v->model)
+                                . ($v->plate_no ? ' (' . $v->plate_no . ')' : ''));
+                    $over  = $p['expected'] - $p['threshold'];
+
+                    $chases->push([
+                        'type'     => 'oil_projection',
+                        'category' => 'maintenance',
+                        'severity' => $over >= 500 ? 'warning' : 'info',
+                        'title'    => 'Get mileage from customer · oil limit reached',
+                        'body'     => trim($car . ' — out ' . $p['days_elapsed'] . ' days, projected '
+                                    . number_format($p['expected']) . ' km against a '
+                                    . number_format($p['threshold']) . ' km limit. Ask the customer for the'
+                                    . ' actual odometer so we can recalculate.'),
+                        'url'      => '/contracts/' . $contract->id . '?mileageReading=1',
+                        'key'      => $p['key'],
+                        'icon'     => 'oil',
+                        'meta'     => [
+                            'contract_id'   => $contract->id,
+                            'vehicle_id'    => $v->id,
+                            'plate'         => $v->plate_no,
+                            'expected_km'   => $p['expected'],
+                            'threshold_km'  => $p['threshold'],
+                            'anchor_on'     => $p['anchor_on'],
+                            'anchor_source' => $p['anchor_source'],
+                        ],
+                    ]);
+                }
+            });
+
+        return $chases;
     }
 
     /**
@@ -1101,7 +1185,22 @@ class NotificationScanner
      */
     private function userMayReceive(User $user, array $alert): bool
     {
-        $permission = self::ALERT_PERMISSIONS[$alert['type'] ?? ''] ?? null;
+        $type = $alert['type'] ?? '';
+
+        // A few alert types name their audience explicitly instead of fanning out to everyone who
+        // happens to hold a permission. When such an allow-list is configured it is the WHOLE
+        // rule — holding the permission is not enough, because the point of the list is to keep a
+        // recurring operational chase pointed at the two or three people who actually do the work.
+        // An empty list means "not configured", and we fall back to the permission gate.
+        $allowList = self::ALERT_RECIPIENT_ALLOW_LISTS[$type] ?? null;
+        if ($allowList !== null) {
+            $ids = (array) config($allowList, []);
+            if ($ids !== []) {
+                return in_array((int) $user->id, array_map('intval', $ids), true);
+            }
+        }
+
+        $permission = self::ALERT_PERMISSIONS[$type] ?? null;
 
         return $permission === null ? true : $user->can($permission);
     }

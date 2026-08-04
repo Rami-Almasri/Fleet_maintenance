@@ -85,4 +85,39 @@ return [
         'stale_days'          => (int) env('MAINT_CHECKPOINT_STALE_DAYS', 3),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Oil-change projection (cars out on rental)
+    |--------------------------------------------------------------------------
+    | Drives OilChangeProjectionService. A car on a long rental can burn through
+    | its oil interval days after it leaves, so each day we project where its
+    | odometer has probably reached and chase ops for a real reading before the
+    | limit is crossed. See the service docblock for the full model.
+    */
+
+    'oil_projection' => [
+        // Prediction rate — a flat BUSINESS ASSUMPTION, not a per-customer model. Kept fixed so
+        // the behaviour is deterministic, explainable and testable. Every reported reading simply
+        // becomes the new anchor and we carry on projecting at this same rate.
+        'rate_km_per_day'      => (int) env('OIL_PROJECTION_RATE_KM', 200),
+
+        // How far past the service point a car may run before it actually has to be changed.
+        // Fleet-wide (the interval itself is already per-car, from the Oil Change sheet).
+        'grace_km'             => (int) env('OIL_PROJECTION_GRACE_KM', 500),
+
+        // What a customer is ALLOWED to drive per day. Used only by the pre-handover release
+        // decision, which is a worst-case call and so is made against the permitted maximum
+        // rather than the prediction rate. A contract's own `miles_allowed_pd` overrides it.
+        'allowance_km_per_day' => (int) env('OIL_PROJECTION_ALLOWANCE_KM', 250),
+
+        // WHO gets chased for a customer mileage reading. An allow-list of real people (Leen and
+        // Marwa) is the safest production setting. When it is empty we fall back to the permission
+        // gate below — deliberately narrow, because a daily nag sent to everyone holding a broad
+        // permission is how a fleet learns to ignore the bell.
+        'recipient_user_ids'   => array_values(array_filter(array_map(
+            fn ($v) => (int) trim($v),
+            explode(',', (string) env('OIL_PROJECTION_USER_IDS', ''))
+        ))),
+    ],
+
 ];

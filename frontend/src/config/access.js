@@ -44,6 +44,7 @@ export const ROLE_BLOCKED_PATHS = {
     '/inspection-review',
     '/inspections/schedules',
     '/service-reminders',
+    '/oil-projection',          // the controllers' mid-rental oil chase
     '/complaints',              // Customer Care — the inspector's lane, not his
     '/driver-observations',     // he files these in the field; he doesn't triage
     '/completed-repairs',
@@ -131,6 +132,7 @@ export const ROLE_BLOCKED_PATHS = {
     '/maintenance-workflow$',
     '/completed-repairs',
     '/service-reminders',
+    '/oil-projection',          // the controllers' mid-rental oil chase
     '/finding-keywords',
     '/parts',
     '/components',
@@ -226,6 +228,7 @@ export const ROLE_BLOCKED_PATHS = {
     '/inspection-review',
     '/inspections/schedules',
     '/service-reminders',
+    '/oil-projection',          // the controllers' mid-rental oil chase
     '/maintenance-swap',
     '/finding-keywords',
     '/recurring-fault-reviews',

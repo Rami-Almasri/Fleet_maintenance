@@ -82,6 +82,7 @@ export const MODULES = [
       { name: 'Driver Observations', route: '/driver-observations', permission: 'maintenance.view', icon: Icon.Search, desc: 'Internal handover notes from drivers — escalate to an inspection only when needed.' },
       { name: 'Completed Repairs', route: '/completed-repairs', permission: 'maintenance.view', icon: Icon.Check, desc: 'The signed-off ledger — who, where, what was found and fixed, and what it cost.' },
       { name: 'Service Reminders', route: '/service-reminders', permission: 'reminders.view', icon: Icon.Clock, desc: 'Recurring service due points per car — oil, filters, brakes, tires — with notify and schedule.' },
+      { name: 'Oil Mileage Follow-up', route: '/oil-projection', permission: 'reminders.view', icon: Icon.Clock, desc: 'Cars out on rental heading for their oil limit — call the customer, enter the mileage they report, and the next check recalculates from it.' },
       { name: 'Parts', route: '/parts', permission: 'parts.view', icon: Icon.Coins, desc: 'Request, approve, buy and install parts — with duplicate-spend and recurrence detection.' },
       { name: 'Parts Catalog', route: '/parts-catalog', permission: 'parts.view', icon: Icon.Coins, desc: 'The part names the app selects from, in English and Arabic, with warranty defaults.' },
       { name: 'Garages', route: '/garages', permission: 'maintenance.view', icon: Icon.Wrench, desc: 'Which garage is good at which repair, where each one has a problem, and what is in every workshop now.' },

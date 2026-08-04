@@ -104,6 +104,7 @@ const NAV_SECTIONS = [
       { name: 'Inspection Review', to: '/inspection-review', icon: 'M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Controllers (Lin & Marwa) review inspection requests before they reach Abu Maroof — approve to send it on, or reject with a reason.' },
       { name: 'Garage Finder', to: '/garage-finder', icon: 'M21 21l-4.35-4.35M11 19a8 8 0 1 1 0-16 8 8 0 0 1 0 16z', desc: 'Pick a car and the faults it has, and get the same fault-by-fault garage report the assign step shows — before any ticket exists. Each fault names its strongest garage, the best alternative, and the trade-off between them, with the repair history behind every figure. Read-only: it answers the question, it does not dispatch the car.' },
       { name: 'Service Reminders', to: '/service-reminders', icon: 'M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Every car’s recurring service due points — oil change, filters, brakes, tires, battery — with how far each is from due in km or days. Oil and tire reminders are seeded per car from the Oil Change intervals; add or edit any of them. Notify alerts the drivers and technicians; Schedule opens the maintenance ticket that performs the work.' },
+      { name: 'Oil Mileage Follow-up', to: '/oil-projection', icon: 'M12 3v4m0 10v4m9-9h-4M7 12H3m2.6-6.4 2.8 2.8m7.2 7.2 2.8 2.8m0-12.8-2.8 2.8m-7.2 7.2-2.8 2.8', desc: 'Cars that are OUT on rental and heading for their oil limit. Service Reminders reads the odometer we hold, which stops being true the moment a car drives off; this page projects forward from the mileage recorded at handover at 200 km/day and lists the cars that have probably passed the limit. Controllers (Lin & Marwa) call the customer, enter the odometer they report, and the projection re-anchors on that real number — a customer-reported reading is stored against the contract and never changes the car’s odometer.' },
     ],
   },
   // Customer Care — the two intake surfaces that feed the pipeline from outside
@@ -238,6 +239,7 @@ const NAV_PERMISSIONS = {
   '/inspections/schedules': 'inspections.view',
   '/reminders/service': 'reminders.view',
   '/service-reminders': 'reminders.view',
+  '/oil-projection': 'reminders.view',
   '/registrations': 'registration.view',
   '/maintenance': 'maintenance.view',
   '/maintenance-hub': 'maintenance.view',

@@ -219,6 +219,15 @@ class Contract extends Model
         return $this->hasMany(Payment::class);
     }
 
+    /**
+     * Customer-reported mileage readings taken mid-rental. Hearsay by nature — they anchor the
+     * oil-change projection and nothing else, and never touch the odometer chain.
+     */
+    public function mileageReadings(): HasMany
+    {
+        return $this->hasMany(ContractMileageReading::class);
+    }
+
     // ---- Exchange chaining ---------------------------------------------------
 
     /** The contract this one replaced (the car the customer returned to swap). NULL = chain root. */

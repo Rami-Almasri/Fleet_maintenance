@@ -273,6 +273,18 @@ Route::middleware('auth:sanctum')->prefix('Contract')->controller(ContractContro
     Route::delete('/{contract}', 'destroy')->middleware('permission:contracts.manage');
 });
 
+// Mid-rental oil-change projection: where a rented-out car's odometer has probably reached, and
+// the customer-reported readings that re-anchor it. The 2-segment Contract routes are registered
+// after the 1-segment `Contract/{contract}` group above, which is safe (see the Exchange note).
+Route::middleware('auth:sanctum')->group(function () {
+    Route::get('OilProjection', [\App\Http\Controllers\OilProjectionController::class, 'index'])
+        ->middleware('permission:reminders.view');
+    Route::get('Contract/{contract}/oil-projection', [\App\Http\Controllers\OilProjectionController::class, 'show'])
+        ->middleware('permission:reminders.view');
+    Route::post('Contract/{contract}/mileage-reading', [\App\Http\Controllers\OilProjectionController::class, 'reading'])
+        ->middleware('permission:reminders.manage');
+});
+
 // Invoices CRUD — website-created (manual) invoices coexist with OfficeManager-synced ones.
 // Reads return both ledgers; writes only ever touch manual invoices (the controller guards
 // origin). ?contract_id= scopes the list to one contract (the Contract Detail panel).

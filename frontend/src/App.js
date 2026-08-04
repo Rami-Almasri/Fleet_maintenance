@@ -49,6 +49,7 @@ import DamageAccidents from './pages/DamageAccidents';
 import CostIntelligence from './pages/CostIntelligence';
 import RecommendationIntelligence from './pages/RecommendationIntelligence';
 import ServiceReminders from './pages/reminders/ServiceReminders';
+import OilProjection from './pages/reminders/OilProjection';
 import GarageFinder from './pages/GarageFinder';
 import EventClassificationReview from './pages/EventClassificationReview';
 import ConceptBridgeReview from './pages/ConceptBridgeReview';
@@ -187,6 +188,10 @@ export default function App() {
                       Also mounted as a tab inside the Fleet Health hub; both paths render the same page. */}
                   <Route path="/service-reminders" element={<ServiceReminders />} />
                   <Route path="/reminders/service" element={<Navigate to="/service-reminders" replace />} />
+                  {/* Oil Mileage Follow-up — the mid-rental half of the oil story: cars already out
+                      whose projected mileage is nearing the oil limit, and the customer-reported
+                      readings that re-anchor the projection. */}
+                  <Route path="/oil-projection" element={<OilProjection />} />
                 </Route>
 
                 {/* Registrations now lives inside the Fleet Health hub — keep the old path working
