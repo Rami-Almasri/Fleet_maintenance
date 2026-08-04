@@ -8,12 +8,22 @@
 //
 // Read-only. The fix is filing the answer, so every row deep-links to the car's checkpoint form.
 // Backed by GET /Oversight/checkpoint-compliance.
+//
+// Presentation notes, because this page is deliberately louder than its siblings:
+//   • The header is a fixed dark band (navy/steel — the one palette that never inverts) so the page reads
+//     as a control board, and so the one number that matters fleet-wide — the share of reminders that ever
+//     got an answer — is the largest object on screen.
+//   • Silence is the finding, so it is quantised into four buckets (today / 1 day / 2–3 / 4+) that colour
+//     the row rail, drive the header histogram, and double as the filter. One vocabulary, three surfaces.
+//   • Every row carries a chase strip: one mark per day the supervisor was pushed. Six unanswered marks
+//     reads as neglect in a way "days_reminded: 6" never does.
 
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import Icon from '../../components/ui/Icon';
 import { Skeleton } from '../../components/ui/Skeleton';
-import { Card, PageHeader, SearchInput, EmptyState, ErrorState } from '../../components/ui/Misc';
+import { Card, SearchInput, EmptyState, ErrorState } from '../../components/ui/Misc';
+import CountUp from '../../components/ui/CountUp';
 import { getCheckpointCompliance, delayReasonLabel } from '../../lib/maintenanceCheckpoints';
 import { fmtDate } from '../../lib/format';
 
@@ -25,6 +35,20 @@ const LEVEL_META = {
   overdue:   { label: 'Overdue',    chip: 'bg-red-50 text-red-700 ring-red-200' },
 };
 
+// The single silence vocabulary: bucket → colour, used by the histogram, the filter and the row rail.
+// `test` runs on days_unanswered, which is 0 on the day the first unanswered reminder went out.
+const BUCKETS = [
+  { key: 'today', label: 'Today',   hint: 'Asked today, no answer yet', test: (d) => d === 0,
+    rail: 'bg-sky-400',    dot: 'bg-sky-400',    text: 'text-sky-700',    soft: 'bg-sky-50 ring-sky-200' },
+  { key: 'd1',    label: '1 day',   hint: 'Silent since yesterday',     test: (d) => d === 1,
+    rail: 'bg-amber-400',  dot: 'bg-amber-400',  text: 'text-amber-700',  soft: 'bg-amber-50 ring-amber-200' },
+  { key: 'd23',   label: '2–3 days', hint: 'Silent two to three days',  test: (d) => d >= 2 && d <= 3,
+    rail: 'bg-orange-500', dot: 'bg-orange-500', text: 'text-orange-700', soft: 'bg-orange-50 ring-orange-200' },
+  { key: 'd4',    label: '4+ days', hint: 'Silent four days or more',   test: (d) => d >= 4,
+    rail: 'bg-rose-500',   dot: 'bg-rose-500',   text: 'text-rose-700',   soft: 'bg-rose-50 ring-rose-200' },
+];
+const bucketOf = (days) => BUCKETS.find((b) => b.test(days || 0)) || BUCKETS[0];
+
 const reasonText = (r) => (r.delay_reason === 'other'
   ? (r.reason_other || 'Other')
   : (delayReasonLabel(r.delay_reason) || '—'));
@@ -32,15 +56,293 @@ const reasonText = (r) => (r.delay_reason === 'other'
 // Has this car's promised date actually shifted? Drives the struck-through "originally" line.
 const moved = (r) => !!r.original_promised_on && r.original_promised_on !== r.current_promised_on;
 
-function Stat({ value, label, tone = 'slate' }) {
-  const colour = tone === 'red' ? 'text-red-600' : tone === 'emerald' ? 'text-emerald-600' : 'text-slate-900';
+// How far the promise slipped, in whole days — the number the "originally → now" track is really about.
+const slipDays = (r) => {
+  if (!moved(r)) return 0;
+  const a = new Date(r.original_promised_on);
+  const b = new Date(r.current_promised_on);
+  if (isNaN(a) || isNaN(b)) return 0;
+  return Math.round((b - a) / 86400000);
+};
+
+const initials = (name) => String(name || '?').trim().split(/\s+/).slice(0, 2)
+  .map((w) => w[0]).join('').toUpperCase();
+
+/* ------------------------------------------------------------------ header */
+
+// The one fleet-wide number, drawn as an arc. Lives on the dark band, so its colours are literal
+// rather than themed — the band never inverts.
+function ResponseArc({ pct }) {
+  const size = 148, stroke = 10, r = (size - stroke) / 2, c = 2 * Math.PI * r;
+  const known = pct != null;
+  const [shown, setShown] = useState(0);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setShown(known ? Math.max(0, Math.min(100, pct)) : 0));
+    return () => cancelAnimationFrame(id);
+  }, [pct, known]);
+  const tone = !known ? '#7c8aa3' : pct >= 85 ? '#34d399' : pct >= 60 ? '#fbbf24' : '#fb7185';
   return (
-    <div className="rounded-2xl border border-slate-200/60 bg-white px-4 py-3 text-center shadow-soft">
-      <p className={`text-2xl font-bold tabular-nums ${colour}`}>{value}</p>
-      <p className="text-[11px] uppercase tracking-wide text-slate-400">{label}</p>
+    <div className="relative inline-flex shrink-0 items-center justify-center" style={{ width: size, height: size }}>
+      <svg width={size} height={size} className="-rotate-90">
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgb(255 255 255 / 0.09)" strokeWidth={stroke} />
+        <circle
+          cx={size / 2} cy={size / 2} r={r} fill="none" stroke={tone} strokeWidth={stroke} strokeLinecap="round"
+          strokeDasharray={c} strokeDashoffset={c * (1 - shown / 100)}
+          style={{ transition: 'stroke-dashoffset 1.1s cubic-bezier(.21,1.02,.73,1)' }}
+        />
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
+        <span className="font-display text-3xl font-bold tabular-nums text-white">
+          {known ? <CountUp value={pct} format={(n) => `${Math.round(n)}%`} /> : '—'}
+        </span>
+        <span className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-steel-400">Answered</span>
+      </div>
     </div>
   );
 }
+
+// A metric cell on the dark band. `tone` is only ever spent on the numbers that mean something is wrong.
+function BandStat({ value, label, hint, tone = 'plain', pulse = false }) {
+  const colour = tone === 'bad' ? 'text-rose-400' : tone === 'warn' ? 'text-amber-300' : 'text-white';
+  return (
+    <div className="min-w-0 px-5 py-4">
+      <div className="flex items-center gap-2">
+        {pulse && <span className="relative flex h-2 w-2 shrink-0">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-400 opacity-70" />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-rose-500" />
+        </span>}
+        <p className="truncate text-[10px] font-semibold uppercase tracking-[0.14em] text-steel-400">{label}</p>
+      </div>
+      <p className={`mt-1 font-display text-3xl font-bold tabular-nums ${colour}`}>
+        <CountUp value={value} format={(n) => Math.round(n).toLocaleString()} />
+      </p>
+      {hint && <p className="mt-0.5 truncate text-[11px] text-steel-400">{hint}</p>}
+    </div>
+  );
+}
+
+// Where the silence sits. Purely derived from the rows on screen, so it can never disagree with them.
+function SilenceHistogram({ counts, total, active, onPick }) {
+  if (!total) return null;
+  return (
+    <div className="px-5 pb-5">
+      <div className="mb-2 flex items-baseline justify-between">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-steel-400">How long they have been silent</p>
+        <p className="text-[11px] text-steel-400">{total} car{total === 1 ? '' : 's'} waiting on an answer</p>
+      </div>
+      <div className="flex h-2 w-full overflow-hidden rounded-full bg-white/5">
+        {BUCKETS.map((b) => {
+          const n = counts[b.key] || 0;
+          if (!n) return null;
+          return (
+            <button
+              key={b.key} type="button" onClick={() => onPick(active === b.key ? null : b.key)}
+              title={`${n} · ${b.hint}`} aria-label={`${n} cars — ${b.hint}`}
+              style={{ width: `${(n / total) * 100}%` }}
+              className={`h-full transition-opacity ${b.rail} ${active && active !== b.key ? 'opacity-30' : 'opacity-100'} hover:opacity-80`}
+            />
+          );
+        })}
+      </div>
+      <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1.5">
+        {BUCKETS.map((b) => (
+          <button
+            key={b.key} type="button" onClick={() => onPick(active === b.key ? null : b.key)}
+            aria-pressed={active === b.key}
+            className={`inline-flex items-center gap-1.5 text-[11px] transition ${
+              active === b.key ? 'text-white' : 'text-steel-400 hover:text-steel-200'}`}
+          >
+            <span className={`h-1.5 w-1.5 rounded-full ${b.dot} ${counts[b.key] ? '' : 'opacity-30'}`} />
+            {b.label}
+            <span className="font-semibold tabular-nums text-white/80">{counts[b.key] || 0}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* --------------------------------------------------------------------- row */
+
+// One mark per day the supervisor was pushed and said nothing. Reads as neglect at a glance in a way
+// a count never does; capped so a badly-stuck car doesn't stretch the row.
+function ChaseStrip({ days, tone }) {
+  const shown = Math.min(days || 0, 12);
+  return (
+    <div className="flex items-center gap-[3px]" title={`Reminded on ${days} day(s)`}>
+      {Array.from({ length: shown }).map((_, i) => (
+        <span key={i} className={`h-3.5 w-1.5 rounded-[2px] ${tone}`} style={{ opacity: 0.45 + (0.55 * (i + 1)) / shown }} />
+      ))}
+      {days > 12 && <span className="ms-1 text-[10px] font-semibold text-slate-400">+{days - 12}</span>}
+    </div>
+  );
+}
+
+// The three dates, named. Collapsing them into one "promised back" reads as a contradiction the
+// moment a car has been rescheduled.
+function PromiseTrack({ r }) {
+  const slip = slipDays(r);
+  return (
+    <div>
+      <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Promised back</p>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        {moved(r) && (
+          <>
+            <span className="text-xs font-medium text-slate-400 line-through decoration-slate-300">
+              {fmtDate(r.original_promised_on)}
+            </span>
+            <Icon.ArrowRight className="h-3 w-3 shrink-0 text-slate-300 rtl:rotate-180" />
+          </>
+        )}
+        <span className="text-sm font-bold text-slate-900">
+          {r.current_promised_on ? fmtDate(r.current_promised_on) : '—'}
+        </span>
+        {slip > 0 && (
+          <span className="inline-flex items-center rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-700 ring-1 ring-inset ring-amber-200">
+            +{slip}d
+          </span>
+        )}
+      </div>
+      <div className="mt-1 space-y-0.5">
+        {r.reminded_about_on && r.reminded_about_on !== r.current_promised_on && (
+          <p className="text-[11px] text-slate-400">Chased about {fmtDate(r.reminded_about_on)}</p>
+        )}
+        {r.last_rescheduled_at && (
+          <p className="text-[11px] text-amber-700">Last moved {fmtDate(r.last_rescheduled_at)}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Row({ r, open, onToggle }) {
+  const level = LEVEL_META[r.last_level]
+    || { label: r.last_level || '—', chip: 'bg-slate-50 text-slate-600 ring-slate-200' };
+  const b = bucketOf(r.days_unanswered);
+  const notified = r.notified || [];
+
+  return (
+    <div className={`group relative overflow-hidden rounded-2xl border bg-white shadow-soft transition
+                     hover:shadow-card ${r.breached ? 'border-rose-200' : 'border-slate-200/60'}`}>
+      {/* Silence rail — the row's severity, in the page's one colour vocabulary. */}
+      <span className={`absolute inset-y-0 start-0 w-1 ${b.rail}`} aria-hidden />
+
+      <div className="ps-5 pe-4 py-4">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
+          {/* Vehicle */}
+          <div className="min-w-0 lg:w-52 lg:shrink-0">
+            <div className="flex items-center gap-2">
+              <Link
+                to={`/maintenance-progress?ticket=${r.ticket_id}`}
+                className="font-mono text-base font-bold tracking-tight text-slate-900 transition-colors hover:text-indigo-600"
+              >
+                {r.plate_no || `#${r.ticket_id}`}
+              </Link>
+              <Icon.ArrowUpRight className="h-3.5 w-3.5 shrink-0 text-slate-300 opacity-0 transition-opacity group-hover:opacity-100" />
+            </div>
+            {r.car && <p className="truncate text-xs text-slate-500">{r.car}</p>}
+            {r.garage && (
+              <p className="mt-1.5 inline-flex max-w-full items-center gap-1 rounded-md bg-slate-50 px-1.5 py-0.5 text-[11px] font-medium text-slate-600 ring-1 ring-inset ring-slate-200/70">
+                <Icon.Wrench className="h-3 w-3 shrink-0 text-slate-400" />
+                <span className="truncate">{r.garage}</span>
+              </p>
+            )}
+          </div>
+
+          <div className="lg:w-52 lg:shrink-0"><PromiseTrack r={r} /></div>
+
+          {/* The silence — the finding itself */}
+          <div className="lg:w-60 lg:shrink-0">
+            <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Unanswered</p>
+            <div className="flex items-baseline gap-1.5">
+              <span className={`font-display text-2xl font-bold tabular-nums ${b.text}`}>
+                {r.days_unanswered === 0 ? 'Today' : r.days_unanswered}
+              </span>
+              {r.days_unanswered > 0 && (
+                <span className={`text-xs font-semibold ${b.text}`}>day{r.days_unanswered === 1 ? '' : 's'}</span>
+              )}
+              <span className={`ms-1 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ring-1 ring-inset ${level.chip}`}>
+                {level.label}
+              </span>
+            </div>
+            <div className="mt-1.5 flex items-center gap-2">
+              <ChaseStrip days={r.days_reminded} tone={b.rail} />
+              <span className="text-[11px] text-slate-400">
+                {r.days_reminded} push{r.days_reminded === 1 ? '' : 'es'} · {fmtDate(r.first_reminder_on)} → {fmtDate(r.last_reminder_on)}
+              </span>
+            </div>
+          </div>
+
+          {/* Who was told, and what this car has answered before */}
+          <div className="min-w-0 flex-1">
+            <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Notified · never replied</p>
+            {notified.length === 0 ? (
+              <span className="text-xs text-slate-400">—</span>
+            ) : (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {notified.map((n) => (
+                  <span
+                    key={n} title={n}
+                    className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 py-0.5 pe-2.5 ps-0.5 text-xs font-medium text-indigo-700 ring-1 ring-inset ring-indigo-100"
+                  >
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-indigo-600 text-[9px] font-bold text-white">
+                      {initials(n)}
+                    </span>
+                    {n}
+                  </span>
+                ))}
+              </div>
+            )}
+            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
+              <span>{r.checkpoint_count} answer{r.checkpoint_count === 1 ? '' : 's'} on record</span>
+              <span className="text-slate-300">·</span>
+              <span className={r.reschedule_count > 0 ? 'font-semibold text-amber-700' : ''}>
+                Date moved {r.reschedule_count}×
+              </span>
+              {r.reasons?.length > 0 && (
+                <button
+                  type="button" onClick={onToggle} aria-expanded={open}
+                  className="inline-flex items-center gap-1 font-semibold text-indigo-600 transition-colors hover:text-indigo-700"
+                >
+                  {open ? 'Hide reasons' : 'Why it moved'}
+                  <Icon.ChevronDown className={`h-3 w-3 transition-transform ${open ? 'rotate-180' : ''}`} />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* The fix is filing the answer, so the row ends in the door to the form. */}
+          <div className="lg:shrink-0 lg:self-center">
+            <Link
+              to={`/maintenance-progress?ticket=${r.ticket_id}`}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700"
+            >
+              Chase it
+              <Icon.ArrowRight className="h-3.5 w-3.5 rtl:rotate-180" />
+            </Link>
+          </div>
+        </div>
+
+        {/* Every reason this car's date has moved for — newest first. */}
+        {open && r.reasons?.length > 0 && (
+          <ol className="mt-4 space-y-2 border-t border-slate-100 pt-4 animate-fade">
+            {r.reasons.map((x, i) => (
+              <li key={i} className="relative flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-amber-50/60 py-2 pe-3 ps-3 text-xs ring-1 ring-inset ring-amber-100">
+                <span className="font-semibold text-amber-800">{reasonText(x)}</span>
+                <span className="text-slate-500">
+                  {x.previous_date ? `${fmtDate(x.previous_date)} → ` : ''}{fmtDate(x.next_date)}
+                </span>
+                <span className="ms-auto text-slate-400">{x.by || 'Unknown'} · {fmtDate(x.at)}</span>
+              </li>
+            ))}
+          </ol>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------- page */
 
 export default function CheckpointCompliance() {
   const [data, setData] = useState(null);
@@ -48,6 +350,7 @@ export default function CheckpointCompliance() {
   const [error, setError] = useState(false);
   const [q, setQ] = useState('');
   const [breachedOnly, setBreachedOnly] = useState(false);
+  const [bucket, setBucket] = useState(null);
   const [expanded, setExpanded] = useState(null);
 
   useEffect(() => {
@@ -59,79 +362,194 @@ export default function CheckpointCompliance() {
     return () => { alive = false; };
   }, []);
 
+  const all = useMemo(() => data?.rows || [], [data]);
+
+  const counts = useMemo(() => {
+    const c = {};
+    all.forEach((r) => { const k = bucketOf(r.days_unanswered).key; c[k] = (c[k] || 0) + 1; });
+    return c;
+  }, [all]);
+
   const rows = useMemo(() => {
-    let r = data?.rows || [];
+    let r = all;
     if (breachedOnly) r = r.filter((x) => x.breached);
+    if (bucket) r = r.filter((x) => bucketOf(x.days_unanswered).key === bucket);
     const term = q.trim().toLowerCase();
     if (term) {
       r = r.filter((x) => `${x.plate_no || ''} ${x.car || ''} ${x.garage || ''} ${(x.notified || []).join(' ')}`
         .toLowerCase().includes(term));
     }
     return r;
-  }, [data, breachedOnly, q]);
+  }, [all, breachedOnly, bucket, q]);
 
   const summary = data?.summary || {};
   const alertDays = data?.alert_days ?? 1;
   const unassigned = data?.unassigned || [];
+  const filtered = rows.length !== all.length;
 
   return (
     <div className="py-8">
-      <div className="mx-auto max-w-[1200px] space-y-6 px-4 sm:px-6 lg:px-8">
-        <div>
-          <Link to="/apps/reports" className="mb-2 inline-flex items-center gap-1 text-xs font-medium text-slate-400 transition-colors hover:text-slate-600">
-            <Icon.ArrowRight className="h-3 w-3 rotate-180" /> Reports
-          </Link>
-          <PageHeader
-            title="Checkpoint Compliance"
-            subtitle="Cars whose supervisor was reminded the car is due back and never answered — no confirmation, no new date, no reason."
-          >
-            <div className="flex flex-wrap gap-3">
-              <Stat value={summary.open ?? 0} label="Awaiting answer" />
-              <Stat value={summary.breached ?? 0} label={`Silent ${alertDays}+ day`} tone="red" />
-              <Stat value={summary.unassigned ?? 0} label="No owner" tone={summary.unassigned ? 'red' : 'slate'} />
-              <Stat
-                value={summary.response_rate == null ? '—' : `${summary.response_rate}%`}
-                label="Reminders answered" tone="emerald"
+      <div className="mx-auto max-w-[1240px] space-y-5 px-4 sm:px-6 lg:px-8">
+        <Link to="/apps/reports" className="inline-flex items-center gap-1 text-xs font-medium text-slate-400 transition-colors hover:text-slate-600">
+          <Icon.ArrowRight className="h-3 w-3 rotate-180 rtl:rotate-0" /> Reports
+        </Link>
+
+        {/* ---- The command band. Fixed navy/steel chrome: it must read the same in either theme. ---- */}
+        <section className="relative overflow-hidden rounded-3xl bg-navy-900 shadow-card ring-1 ring-white/10">
+          {/* Depth: one warm bloom behind the arc, one cool bloom behind the title, a faint grid over both. */}
+          <div className="pointer-events-none absolute -end-24 -top-28 h-72 w-72 rounded-full bg-rose-500/10 blur-3xl" aria-hidden />
+          <div className="pointer-events-none absolute -start-32 bottom-0 h-64 w-96 rounded-full bg-indigo-500/10 blur-3xl" aria-hidden />
+          <div
+            className="pointer-events-none absolute inset-0 opacity-[0.35]"
+            style={{
+              backgroundImage: 'linear-gradient(rgb(255 255 255 / .04) 1px, transparent 1px), linear-gradient(90deg, rgb(255 255 255 / .04) 1px, transparent 1px)',
+              backgroundSize: '46px 46px',
+            }}
+            aria-hidden
+          />
+
+          <div className="relative flex flex-col gap-6 p-6 lg:flex-row lg:items-start lg:gap-10">
+            <div className="min-w-0 flex-1">
+              <p className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-steel-400">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                Oversight · the daily chase
+              </p>
+              <h1 className="mt-2 font-display text-[26px] font-bold leading-tight tracking-tight text-white sm:text-3xl">
+                Reminders nobody answered
+              </h1>
+              <p className="mt-2 max-w-2xl text-sm leading-relaxed text-steel-300">
+                Every car below had its supervisor reminded that it was due back — and nothing came back.
+                No confirmation, no new date, no reason. Silence past {alertDays} day{alertDays === 1 ? '' : 's'} is
+                treated as a breach.
+              </p>
+              <p className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-white/5 px-2.5 py-1 text-[11px] text-steel-300 ring-1 ring-inset ring-white/10">
+                <Icon.Info className="h-3.5 w-3.5 shrink-0 text-steel-400" />
+                Source: reminder delivery receipts, live. Answering closes the row.
+              </p>
+            </div>
+
+            <div className="flex shrink-0 items-center gap-5">
+              <ResponseArc pct={summary.response_rate ?? null} />
+              <div className="min-w-0">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-steel-400">All time</p>
+                <p className="mt-1 font-display text-lg font-bold tabular-nums text-white">
+                  {(summary.answered_total ?? 0).toLocaleString()}
+                  <span className="text-steel-400"> / {(summary.sent_total ?? 0).toLocaleString()}</span>
+                </p>
+                <p className="text-[11px] text-steel-400">reminders answered</p>
+              </div>
+            </div>
+          </div>
+
+          {/* The three live counts, in a hairline-divided strip. */}
+          <div className="relative grid grid-cols-1 gap-px border-t border-white/10 bg-white/5 sm:grid-cols-3">
+            <div className="bg-navy-900">
+              <BandStat value={summary.open ?? 0} label="Awaiting an answer" hint="cars with an open reminder" />
+            </div>
+            <div className="bg-navy-900">
+              <BandStat
+                value={summary.breached ?? 0} label={`Silent ${alertDays}+ day${alertDays === 1 ? '' : 's'}`}
+                hint="past the tolerated silence" tone={summary.breached ? 'bad' : 'plain'} pulse={!!summary.breached}
               />
             </div>
-          </PageHeader>
-        </div>
+            <div className="bg-navy-900">
+              <BandStat
+                value={summary.unassigned ?? 0} label="Nobody responsible" hint="no reminder could be sent"
+                tone={summary.unassigned ? 'warn' : 'plain'}
+              />
+            </div>
+          </div>
 
-        <div className="flex flex-wrap items-center gap-3">
-          <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-slate-600">
-            <input type="checkbox" checked={breachedOnly} onChange={(e) => setBreachedOnly(e.target.checked)}
-                   className="h-4 w-4 rounded border-slate-300 text-red-600 focus:ring-red-500" />
-            Only silent {alertDays}+ day
-          </label>
-          <SearchInput value={q} onChange={setQ} placeholder="Plate, garage or supervisor…" className="ms-auto w-72" />
-        </div>
+          {!loading && !error && all.length > 0 && (
+            <div className="relative border-t border-white/10">
+              <SilenceHistogram counts={counts} total={all.length} active={bucket} onPick={setBucket} />
+            </div>
+          )}
+        </section>
 
-        {/* Cars needing a chase that NOBODY owns. The reminder is deliberately withheld rather than
-            broadcast to every permission holder, so this list is the only place the gap shows up —
-            it has to be loud, and it sits above the normal rows. */}
+        {/* ---- Cars needing a chase that NOBODY owns. The reminder is deliberately withheld rather than
+             broadcast to every permission holder, so this list is the only place the gap shows up —
+             it has to be loud, and it sits above the normal rows. ---- */}
         {!loading && !error && unassigned.length > 0 && (
-          <div className="rounded-2xl border border-red-200 bg-red-50/50 p-5">
-            <h2 className="text-sm font-bold text-red-800">
-              {unassigned.length} car(s) need a checkpoint but have no responsible owner
-            </h2>
-            <p className="mt-0.5 text-xs text-red-700">
-              No reminder was sent for these — nobody is assigned to chase them. Open each car and set a
-              responsible user, or configure the supervisor fallback.
-            </p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {unassigned.map((u) => (
-                <Link key={u.ticket_id} to={`/maintenance-progress?ticket=${u.ticket_id}`}
-                      className="inline-flex items-center gap-2 rounded-lg bg-white px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-red-200 hover:bg-red-50">
-                  <span className="font-mono font-bold">{u.plate_no || `#${u.ticket_id}`}</span>
-                  <span className="text-slate-400">
-                    {u.expected_on ? fmtDate(u.expected_on) : 'no ETA'}
-                    {u.days_over > 0 ? ` · ${u.days_over}d over` : ''}
-                  </span>
-                </Link>
-              ))}
+          <div className="overflow-hidden rounded-2xl border border-rose-200 bg-rose-50/60">
+            <div className="flex items-start gap-3 p-5">
+              <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-rose-100 text-rose-600 ring-1 ring-inset ring-rose-200">
+                <Icon.Alert className="h-4 w-4" />
+              </span>
+              <div className="min-w-0">
+                <h2 className="text-sm font-bold text-rose-900">
+                  {unassigned.length} car{unassigned.length === 1 ? '' : 's'} need a checkpoint but have no responsible owner
+                </h2>
+                <p className="mt-0.5 text-xs text-rose-700">
+                  No reminder was sent for these — nobody is assigned to chase them. Open each car and set a
+                  responsible user, or configure the supervisor fallback.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {unassigned.map((u) => (
+                    <Link
+                      key={u.ticket_id} to={`/maintenance-progress?ticket=${u.ticket_id}`}
+                      className="inline-flex items-center gap-2 rounded-lg bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm ring-1 ring-inset ring-rose-200 transition hover:bg-rose-50"
+                    >
+                      <span className="font-mono font-bold">{u.plate_no || `#${u.ticket_id}`}</span>
+                      <span className="text-slate-400">
+                        {u.expected_on ? fmtDate(u.expected_on) : 'no ETA'}
+                        {u.days_over > 0 ? ` · ${u.days_over}d over` : ''}
+                      </span>
+                    </Link>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
         )}
+
+        {/* ---- Toolbar. Sticky, because the list is the page and the filters have to stay reachable. ---- */}
+        <div className="sticky top-2 z-10 flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200/60 bg-white/90 px-4 py-2.5 shadow-soft backdrop-blur">
+          <button
+            type="button" onClick={() => setBreachedOnly(!breachedOnly)} aria-pressed={breachedOnly}
+            className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition ring-1 ring-inset ${
+              breachedOnly
+                ? 'bg-rose-50 text-rose-700 ring-rose-200'
+                : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'}`}
+          >
+            <Icon.Alert className="h-3.5 w-3.5" />
+            Breaches only
+          </button>
+
+          <span className="h-5 w-px bg-slate-200" aria-hidden />
+
+          <div className="flex flex-wrap items-center gap-1.5">
+            {BUCKETS.map((b) => {
+              const on = bucket === b.key;
+              const n = counts[b.key] || 0;
+              return (
+                <button
+                  key={b.key} type="button" disabled={!n} title={b.hint} aria-pressed={on}
+                  onClick={() => setBucket(on ? null : b.key)}
+                  className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition ring-1 ring-inset ${
+                    on ? `${b.soft} ${b.text}`
+                       : n ? 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'
+                           : 'cursor-default bg-white text-slate-300 ring-slate-100'}`}
+                >
+                  <span className={`h-1.5 w-1.5 rounded-full ${b.dot} ${n ? '' : 'opacity-30'}`} />
+                  {b.label}
+                  <span className="tabular-nums">{n}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {filtered && (
+            <button
+              type="button" onClick={() => { setBucket(null); setBreachedOnly(false); setQ(''); }}
+              className="text-xs font-medium text-slate-400 transition-colors hover:text-slate-600"
+            >
+              Clear
+            </button>
+          )}
+
+          <SearchInput value={q} onChange={setQ} placeholder="Plate, garage or supervisor…" className="ms-auto w-full sm:w-72" />
+        </div>
 
         {loading ? (
           <div className="space-y-3">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-32 rounded-2xl" />)}</div>
@@ -139,120 +557,37 @@ export default function CheckpointCompliance() {
           <Card><ErrorState /></Card>
         ) : rows.length === 0 ? (
           <Card>
-            <EmptyState
-              icon={<Icon.Check className="h-6 w-6 text-emerald-500" />}
-              title="Every reminder has been answered"
-              message="No supervisor is currently sitting on an unanswered checkpoint reminder."
-            />
+            {all.length === 0 ? (
+              <EmptyState
+                icon={<Icon.Check className="h-6 w-6 text-emerald-500" />}
+                title="Every reminder has been answered"
+                message="No supervisor is currently sitting on an unanswered checkpoint reminder."
+              />
+            ) : (
+              <EmptyState
+                icon={<Icon.Search className="h-6 w-6 text-slate-400" />}
+                title="No cars match these filters"
+                message={`${all.length} unanswered reminder${all.length === 1 ? '' : 's'} are hidden by the current filter.`}
+                action={(
+                  <button
+                    type="button" onClick={() => { setBucket(null); setBreachedOnly(false); setQ(''); }}
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+                  >
+                    Clear filters
+                  </button>
+                )}
+              />
+            )}
           </Card>
         ) : (
-          <div className="stagger space-y-3">
-            {rows.map((r) => {
-              const level = LEVEL_META[r.last_level] || { label: r.last_level || '—', chip: 'bg-slate-50 text-slate-600 ring-slate-200' };
-              const open = expanded === r.ticket_id;
-              return (
-                <div key={r.ticket_id}
-                     className={`rounded-2xl border bg-white p-5 shadow-soft ${r.breached ? 'border-red-200' : 'border-slate-200/60'}`}>
-                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
-                    {/* Vehicle */}
-                    <div className="sm:w-44 sm:flex-shrink-0">
-                      <Link to={`/maintenance-progress?ticket=${r.ticket_id}`}
-                            className="font-mono text-base font-bold text-slate-900 hover:text-indigo-600">
-                        {r.plate_no || `#${r.ticket_id}`}
-                      </Link>
-                      {r.car && <p className="text-xs text-slate-400">{r.car}</p>}
-                      {r.garage && <p className="mt-1 text-[11px] text-slate-400">{r.garage}</p>}
-                    </div>
-
-                    {/* The three dates, named. Collapsing them into one "promised back" reads as a
-                        contradiction the moment a car has been rescheduled. */}
-                    <div className="sm:w-56 sm:flex-shrink-0">
-                      <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Promised date</p>
-                      <dl className="space-y-0.5 text-[11px]">
-                        <div className="flex justify-between gap-2">
-                          <dt className="text-slate-400">Originally</dt>
-                          <dd className={`font-medium ${moved(r) ? 'text-slate-400 line-through' : 'text-slate-700'}`}>
-                            {r.original_promised_on ? fmtDate(r.original_promised_on) : '—'}
-                          </dd>
-                        </div>
-                        <div className="flex justify-between gap-2">
-                          <dt className="text-slate-500">Now</dt>
-                          <dd className="font-semibold text-slate-900">
-                            {r.current_promised_on ? fmtDate(r.current_promised_on) : '—'}
-                          </dd>
-                        </div>
-                        {r.reminded_about_on && r.reminded_about_on !== r.current_promised_on && (
-                          <div className="flex justify-between gap-2">
-                            <dt className="text-slate-400">Chased about</dt>
-                            <dd className="font-medium text-slate-600">{fmtDate(r.reminded_about_on)}</dd>
-                          </div>
-                        )}
-                      </dl>
-                      {r.last_rescheduled_at && (
-                        <p className="mt-1 text-[11px] text-amber-700">
-                          Last moved {fmtDate(r.last_rescheduled_at)}
-                        </p>
-                      )}
-                    </div>
-
-                    {/* The silence — the finding itself */}
-                    <div className="sm:w-72 sm:flex-shrink-0">
-                      <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Unanswered</p>
-                      <p className={`text-lg font-bold ${r.breached ? 'text-red-600' : 'text-slate-900'}`}>
-                        {r.days_unanswered === 0 ? 'Since today' : `${r.days_unanswered} day(s)`}
-                      </p>
-                      <div className="mt-1.5 flex flex-wrap items-center gap-2">
-                        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ${level.chip}`}>
-                          {level.label}
-                        </span>
-                        <span className="text-[11px] text-slate-400">
-                          Reminded on {r.days_reminded} day(s) — {fmtDate(r.first_reminder_on)} → {fmtDate(r.last_reminder_on)}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Who was told, and what this car has answered before */}
-                    <div className="min-w-0 flex-1">
-                      <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Notified</p>
-                      <div className="flex flex-wrap gap-1.5">
-                        {(r.notified || []).length === 0
-                          ? <span className="text-xs text-slate-400">—</span>
-                          : r.notified.map((n) => (
-                              <span key={n} className="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700 ring-1 ring-indigo-100">{n}</span>
-                            ))}
-                      </div>
-                      <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px] text-slate-500">
-                        <span>{r.checkpoint_count} answer(s) on record</span>
-                        <span className={r.reschedule_count > 0 ? 'font-semibold text-amber-700' : ''}>
-                          Date moved {r.reschedule_count}×
-                        </span>
-                        {r.reasons?.length > 0 && (
-                          <button type="button" onClick={() => setExpanded(open ? null : r.ticket_id)}
-                                  className="font-medium text-indigo-600 hover:text-indigo-700">
-                            {open ? 'Hide reason history' : 'Reason history'}
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Every reason this car's date has moved for — newest first. */}
-                  {open && r.reasons?.length > 0 && (
-                    <ol className="mt-4 space-y-2 border-t border-slate-100 pt-4">
-                      {r.reasons.map((x, i) => (
-                        <li key={i} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-amber-50/60 px-3 py-2 text-xs ring-1 ring-amber-100">
-                          <span className="font-semibold text-amber-800">{reasonText(x)}</span>
-                          <span className="text-slate-500">
-                            {x.previous_date ? `${fmtDate(x.previous_date)} → ` : ''}{fmtDate(x.next_date)}
-                          </span>
-                          <span className="ms-auto text-slate-400">{x.by || 'Unknown'} · {fmtDate(x.at)}</span>
-                        </li>
-                      ))}
-                    </ol>
-                  )}
-                </div>
-              );
-            })}
+          <div className="stagger space-y-2.5">
+            {rows.map((r) => (
+              <Row
+                key={r.ticket_id} r={r}
+                open={expanded === r.ticket_id}
+                onToggle={() => setExpanded(expanded === r.ticket_id ? null : r.ticket_id)}
+              />
+            ))}
           </div>
         )}
       </div>
