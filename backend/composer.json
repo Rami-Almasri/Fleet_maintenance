@@ -56,7 +56,7 @@
         "verify": [
             "@php artisan config:clear --ansi",
             "@php artisan schema:verify-fresh --seed",
-            "@php artisan schema:health --json",
+            "@php artisan schema:health --drift --json",
             "@php artisan test"
         ],
         "pre-autoload-dump": [

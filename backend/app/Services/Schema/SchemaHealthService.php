@@ -286,10 +286,29 @@ class SchemaHealthService
             return $this->row('schema', 'schema.drift', 'Schema drift', 'ok', 'Live schema matches a clean migration run exactly.', null);
         }
 
-        return $this->row('schema', 'schema.drift', 'Schema drift', 'warn',
-            count($diff) . ' difference(s) vs a clean migration run: ' . implode(' | ', array_slice($diff, 0, 5)) . (count($diff) > 5 ? ' …' : ''),
-            'Each difference is a change that never went through a migration. Capture it in one, or the next fresh deploy will not have it.',
-            ['differences' => $diff]);
+        // Known, investigated drift is still REPORTED but does not fail the build. Matching is exact,
+        // so an accepted difference that drifts further stops matching and goes red — an entry can only
+        // excuse the exact state it was written for. See config/schema.php.
+        $accepted = (array) config('schema.accepted_drift', []);
+        $unaccepted = array_values(array_diff($diff, $accepted));
+        $knownCount = count($diff) - count($unaccepted);
+
+        if (empty($unaccepted)) {
+            return $this->row('schema', 'schema.drift', 'Schema drift', 'warn',
+                $knownCount.' known difference(s) vs a clean migration run, all accepted in config/schema.php.',
+                'Accepted drift is debt, not a decision — each entry names what removes it.',
+                ['differences' => $diff, 'accepted' => $knownCount, 'unaccepted' => 0]);
+        }
+
+        // Anything not on the list is a schema change that never went through a migration. That is a
+        // FAILURE, not a warning: the next fresh deploy simply will not have it, and only a non-zero
+        // exit stops a build (see SchemaHealthCommand — 'warn' never blocks).
+        return $this->row('schema', 'schema.drift', 'Schema drift', 'fail',
+            count($unaccepted).' unaccepted difference(s) vs a clean migration run'
+                .($knownCount > 0 ? " ({$knownCount} known, accepted)" : '').': '
+                .implode(' | ', array_slice($unaccepted, 0, 5)).(count($unaccepted) > 5 ? ' …' : ''),
+            'Each difference is a change that never went through a migration. Capture it in one, or the next fresh deploy will not have it. If it is intentional and cannot be fixed yet, add the exact message to config/schema.php with a reason.',
+            ['differences' => $diff, 'accepted' => $knownCount, 'unaccepted' => $unaccepted]);
     }
 
     /**
@@ -300,44 +319,142 @@ class SchemaHealthService
     private function describe(string $database): array
     {
         $out = [];
-        foreach (DB::select('SELECT table_name AS t, column_name AS c FROM information_schema.columns WHERE table_schema = ?', [$database]) as $r) {
-            $out[$r->t]['columns'][] = $r->c;
+
+        // COLUMNS — the full definition, not just the name.
+        //
+        // Comparing names alone was a real blind spot: `invoices.discount` was decimal(12,2) live and
+        // decimal(14,2) in a clean build for weeks while this check reported "matches exactly", because
+        // a column called `discount` existed on both sides. Precision, nullability, default, signedness
+        // and collation are all part of what a migration promises, so all of them are compared.
+        //
+        // `column_type` carries type + precision + scale + unsigned in one string
+        // ("decimal(14,2) unsigned"), which is exactly the granularity that was missing.
+        foreach (DB::select(
+            'SELECT table_name AS t, column_name AS c, column_type AS ctype, is_nullable AS nullable,
+                    column_default AS cdefault, extra, collation_name AS collation
+             FROM information_schema.columns WHERE table_schema = ?',
+            [$database]
+        ) as $r) {
+            $out[$r->t]['columns'][$r->c] = [
+                'type'      => (string) $r->ctype,
+                'nullable'  => (string) $r->nullable,
+                'default'   => $r->cdefault === null ? '∅' : (string) $r->cdefault,
+                'extra'     => (string) $r->extra,
+                'collation' => (string) ($r->collation ?? ''),
+            ];
         }
-        foreach (DB::select('SELECT table_name AS t, index_name AS i FROM information_schema.statistics WHERE table_schema = ? GROUP BY table_name, index_name', [$database]) as $r) {
-            $out[$r->t]['indexes'][] = $r->i;
+
+        // INDEXES — uniqueness and the ORDERED column list. An index on (a,b) is not the index on
+        // (b,a): they serve different queries, and a rebuilt-by-hand index that reversed the order
+        // would silently stop covering the query it was created for.
+        foreach (DB::select(
+            'SELECT table_name AS t, index_name AS i, non_unique, seq_in_index, column_name AS c
+             FROM information_schema.statistics WHERE table_schema = ?
+             ORDER BY table_name, index_name, seq_in_index',
+            [$database]
+        ) as $r) {
+            $out[$r->t]['indexes'][$r->i]['unique'] = ((int) $r->non_unique === 0) ? 'yes' : 'no';
+            $out[$r->t]['indexes'][$r->i]['columns'][] = $r->c;
         }
-        foreach (DB::select('SELECT table_name AS t, constraint_name AS k FROM information_schema.key_column_usage WHERE table_schema = ? AND referenced_table_name IS NOT NULL', [$database]) as $r) {
-            $out[$r->t]['foreign_keys'][] = $r->k;
+        foreach ($out as $t => $shape) {
+            foreach ($shape['indexes'] ?? [] as $name => $ix) {
+                $out[$t]['indexes'][$name] = [
+                    'unique'  => $ix['unique'],
+                    'columns' => implode(',', $ix['columns']),
+                ];
+            }
         }
+
+        // FOREIGN KEYS — including the referenced table/columns and the ON UPDATE / ON DELETE rules.
+        // A cascade quietly downgraded to RESTRICT (or the reverse) changes what a delete DOES to the
+        // rest of the database, which is the most consequential drift of all and was entirely invisible.
+        foreach (DB::select(
+            'SELECT k.table_name AS t, k.constraint_name AS k_name, k.column_name AS c,
+                    k.referenced_table_name AS ref_t, k.referenced_column_name AS ref_c,
+                    r.update_rule, r.delete_rule
+             FROM information_schema.key_column_usage k
+             JOIN information_schema.referential_constraints r
+               ON r.constraint_schema = k.table_schema AND r.constraint_name = k.constraint_name
+             WHERE k.table_schema = ? AND k.referenced_table_name IS NOT NULL
+             ORDER BY k.table_name, k.constraint_name, k.ordinal_position',
+            [$database]
+        ) as $r) {
+            $fk = &$out[$r->t]['foreign_keys'][$r->k_name];
+            $fk['columns'][] = $r->c;
+            $fk['references'] = $r->ref_t.'('.$r->ref_c.')';
+            $fk['on_update'] = (string) $r->update_rule;
+            $fk['on_delete'] = (string) $r->delete_rule;
+            unset($fk);
+        }
+        foreach ($out as $t => $shape) {
+            foreach ($shape['foreign_keys'] ?? [] as $name => $fk) {
+                $out[$t]['foreign_keys'][$name] = [
+                    'columns'    => implode(',', $fk['columns']),
+                    'references' => $fk['references'],
+                    'on_update'  => $fk['on_update'],
+                    'on_delete'  => $fk['on_delete'],
+                ];
+            }
+        }
+
         // `migrations` itself legitimately differs (row content aside, it exists in both) — keep it.
         return $out;
     }
 
-    /** @return array<int, string> human-readable differences */
+    /**
+     * Compare two described schemas.
+     *
+     * Reports three kinds of difference, not two: present-live-only, missing-from-live, and — the one
+     * that used to be invisible — SAME NAME, DIFFERENT DEFINITION. Each changed attribute is named
+     * individually ("type: clean decimal(14,2), live decimal(12,2)") because "invoices.discount
+     * differs" tells nobody what to write in the corrective migration.
+     *
+     * @return array<int, string> human-readable differences
+     */
     private function diff(array $expected, array $actual): array
     {
         $diff = [];
+
         foreach (array_diff(array_keys($actual), array_keys($expected)) as $extra) {
             $diff[] = "table {$extra} exists live but not in a clean build";
         }
         foreach (array_diff(array_keys($expected), array_keys($actual)) as $absent) {
             $diff[] = "table {$absent} missing from live";
         }
+
         foreach ($expected as $table => $shape) {
             if (! isset($actual[$table])) {
                 continue;
             }
-            foreach (['columns', 'indexes', 'foreign_keys'] as $kind) {
+
+            // Explicit labels, not a naive rtrim($kind, 's') — that turns "indexes" into "indexe".
+            // These strings are part of the message that config/schema.php matches EXACTLY, so they
+            // are contract, not cosmetics.
+            $labels = ['columns' => 'column', 'indexes' => 'index', 'foreign_keys' => 'foreign key'];
+
+            foreach ($labels as $kind => $singular) {
                 $e = $shape[$kind] ?? [];
                 $a = $actual[$table][$kind] ?? [];
-                foreach (array_diff($a, $e) as $x) {
-                    $diff[] = "{$table}.{$x} ({$kind}) exists live but not in a clean build";
+
+                foreach (array_diff(array_keys($a), array_keys($e)) as $x) {
+                    $diff[] = "{$table}.{$x} ({$singular}) exists live but not in a clean build";
                 }
-                foreach (array_diff($e, $a) as $x) {
-                    $diff[] = "{$table}.{$x} ({$kind}) missing from live";
+                foreach (array_diff(array_keys($e), array_keys($a)) as $x) {
+                    $diff[] = "{$table}.{$x} ({$singular}) missing from live";
+                }
+
+                // Same name on both sides — compare what it actually IS.
+                foreach (array_intersect_key($e, $a) as $name => $expectedAttrs) {
+                    foreach ($expectedAttrs as $attr => $want) {
+                        $got = $a[$name][$attr] ?? null;
+                        if ((string) $got !== (string) $want) {
+                            $diff[] = "{$table}.{$name} ({$singular}) {$attr}: clean {$want}, live {$got}";
+                        }
+                    }
                 }
             }
         }
+
         return $diff;
     }
 
