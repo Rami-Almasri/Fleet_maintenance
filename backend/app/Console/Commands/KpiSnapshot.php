@@ -17,7 +17,8 @@ use Illuminate\Support\Facades\DB;
 class KpiSnapshot extends Command
 {
     protected $signature = 'kpi:snapshot {--save : Store this snapshot as a baseline for later comparison}
-                                         {--label= : A name for the snapshot, e.g. "before-capture-workflow"}';
+                                         {--label= : A name for the snapshot, e.g. "before-capture-workflow"}
+                                         {--reason= : WHY this baseline was taken — required when a metric definition changed}';
 
     protected $description = 'Report the operational KPIs, with sample sizes and what is not yet measurable';
 
@@ -78,17 +79,49 @@ class KpiSnapshot extends Command
 
         $source = $this->sourceFingerprint();
 
+        // The metric version is what makes two snapshots comparable — or proves they are not.
+        // Without it, a reader comparing 59.37% with 53.49% cannot tell whether the fleet changed
+        // or the definition did, and every before/after argument becomes unfalsifiable.
+        $version   = (string) config('metrics.recurrence.version', 'unknown');
+        $supersede = DB::table('kpi_snapshots')->orderByDesc('id')->value('id');
+
         DB::table('kpi_snapshots')->insert([
-            'label'       => $label,
-            'metrics'     => json_encode(array_map(fn (Kpi $k) => $k->toArray(), $all)),
-            'source_state' => json_encode($source),
-            'captured_at' => now(),
-            'created_at'  => now(),
-            'updated_at'  => now(),
+            'label'          => $label,
+            'metric_version' => $version,
+            'reason'         => $this->option('reason'),
+            'supersedes_snapshot_id' => $supersede,
+            'commit_ref'     => $this->commitRef(),
+            'metrics'        => json_encode(array_map(fn (Kpi $k) => $k->toArray(), $all)),
+            'source_state'   => json_encode($source),
+            'captured_at'    => now(),
+            'created_at'     => now(),
+            'updated_at'     => now(),
         ]);
 
-        $this->info("Baseline stored as '{$label}'.");
+        $this->info("Baseline stored as '{$label}' (metric v{$version}).");
+        if ($supersede) {
+            $this->line("  <fg=gray>supersedes snapshot #{$supersede} — the earlier row is KEPT, never rewritten</>");
+        }
+        if (! $this->option('reason')) {
+            $this->warn('  No --reason given. A baseline without a stated reason is hard to argue from later.');
+        }
         $this->line('  <fg=gray>source state: '.collect($source)->map(fn ($v, $k) => "{$k}={$v}")->implode(' · ').'</>');
+    }
+
+    /** The commit this baseline was taken at, so a figure can always be traced to the code that made it. */
+    private function commitRef(): ?string
+    {
+        $head = base_path('../.git/HEAD');
+        if (! is_readable($head)) {
+            return null;
+        }
+        $ref = trim((string) file_get_contents($head));
+        if (str_starts_with($ref, 'ref: ')) {
+            $path = base_path('../.git/'.substr($ref, 5));
+            $ref  = is_readable($path) ? trim((string) file_get_contents($path)) : $ref;
+        }
+
+        return substr($ref, 0, 40) ?: null;
     }
 
     /**

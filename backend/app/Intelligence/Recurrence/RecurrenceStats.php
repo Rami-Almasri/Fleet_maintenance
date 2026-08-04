@@ -34,8 +34,15 @@ final class RecurrenceStats
         public readonly int $back30,
         /** Came back between 31 and 90 days. */
         public readonly int $back90,
-        /** Median days to return, over the ones that returned. Null when none did. */
-        public readonly ?float $medianGapDays,
+        /**
+         * MEAN days to return, over the ones that returned inside the window. Null when none did.
+         *
+         * Deliberately the mean and deliberately named so: it is what a single grouped aggregate can
+         * produce in one pass. Time-to-return is right-skewed, so anything reported to a user should
+         * be the MEDIAN — ask RecurrenceRepository::medianGap() for the grain you actually want.
+         * This field exists for cheap internal comparison, never for display.
+         */
+        public readonly ?float $meanGapDays,
         public readonly Coverage $coverage,
         public readonly ?DateTimeInterface $asOf,
         public readonly RecurrenceWindow $window,
@@ -81,7 +88,7 @@ final class RecurrenceStats
             back90:        $this->back90 + $other->back90,
             // Medians do not sum. A rolled-up group reports no median rather than a wrong one;
             // whoever needs it asks the repository for the level they actually want.
-            medianGapDays: null,
+            meanGapDays: null,
             coverage:      new Coverage(
                 $this->coverage->covered + $other->coverage->covered,
                 $this->coverage->total + $other->coverage->total,
@@ -102,7 +109,7 @@ final class RecurrenceStats
             'back_90'         => $this->back90,
             'rate_pct'        => $this->rate(),
             'held_pct'        => $this->heldRate(),
-            'median_gap_days' => $this->medianGapDays,
+            'mean_gap_days'   => $this->meanGapDays,
             'coverage'        => $this->coverage->toArray(),
             'as_of'           => $this->asOf?->format('Y-m-d'),
             'window'          => $this->window->toArray(),

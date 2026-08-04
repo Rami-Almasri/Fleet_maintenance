@@ -177,7 +177,7 @@ class RecurrenceContractTest extends TestCase
 
     public function test_the_rate_is_returned_over_fully_observed_events(): void
     {
-        $stats = $this->stats(n: 100, returned: 46, held: 54, back30: 20, back90: 26, median: 41.0);
+        $stats = $this->stats(n: 100, returned: 46, held: 54, back30: 20, back90: 26, meanGap: 41.0);
 
         $this->assertSame(46.0, $stats->rate());
         $this->assertSame(54.0, $stats->heldRate());
@@ -200,8 +200,8 @@ class RecurrenceContractTest extends TestCase
 
     public function test_merging_sums_the_counts_and_drops_the_median(): void
     {
-        $a = $this->stats(n: 60, returned: 30, held: 30, back30: 10, back90: 20, median: 40.0);
-        $b = $this->stats(n: 40, returned: 10, held: 30, back30: 4, back90: 6, median: 70.0);
+        $a = $this->stats(n: 60, returned: 30, held: 30, back30: 10, back90: 20, meanGap: 40.0);
+        $b = $this->stats(n: 40, returned: 10, held: 30, back30: 4, back90: 6, meanGap: 70.0);
 
         $merged = $a->merge($b);
 
@@ -209,15 +209,15 @@ class RecurrenceContractTest extends TestCase
         $this->assertSame(40, $merged->returned);
         $this->assertSame(60, $merged->held);
         $this->assertSame(14, $merged->back30);
-        $this->assertNull($merged->medianGapDays, 'medians do not sum — report none rather than a wrong one');
+        $this->assertNull($merged->meanGapDays, 'gap averages do not sum — report none rather than a wrong one');
     }
 
     private function stats(
         int $n = 10, int $returned = 5, int $held = 5,
-        int $back30 = 2, int $back90 = 3, ?float $median = 30.0,
+        int $back30 = 2, int $back90 = 3, ?float $meanGap = 30.0,
     ): RecurrenceStats {
         return new RecurrenceStats(
-            $n, $returned, $held, $back30, $back90, $median,
+            $n, $returned, $held, $back30, $back90, $meanGap,
             new Coverage($n, $n), null, RecurrenceWindow::fromContract(),
         );
     }

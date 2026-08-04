@@ -216,7 +216,7 @@ class RecurrenceRepositoryTest extends GoldenTestCase
         $w = RecurrenceWindow::fromContract();
 
         $median = $this->repo->medianGap($w);
-        $mean   = $this->repo->fleet($w)->medianGapDays;
+        $mean   = $this->repo->fleet($w)->meanGapDays;
 
         $this->assertNotNull($median);
         $this->assertNotNull($mean);

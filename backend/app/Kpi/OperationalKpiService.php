@@ -2,6 +2,9 @@
 
 namespace App\Kpi;
 
+use App\Intelligence\Recurrence\RecurrenceRepository;
+use App\Intelligence\Recurrence\RecurrenceStats;
+use App\Intelligence\Recurrence\RecurrenceWindow;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -32,6 +35,37 @@ use Illuminate\Support\Facades\DB;
  * That is the opposite of the rule for operational surfaces (a retired ticket must vanish from the
  * board at once). The split is the point: LIVE reads ask "what is true now", these ask "what happened".
  * If a metric here ever needs the live-only population instead, it must say so and filter explicitly.
+ *
+ * ── MIGRATION NOTE — THE BASELINE MOVED ON 2026-08-04, THE FLEET DID NOT ─────────────────────────
+ *
+ *   first-time fix   59.37%  →  53.49%
+ *   comeback rate    40.63%  →  46.51%
+ *   sample           33,040  →  10,595
+ *
+ * NO REPAIR CHANGED. NO GARAGE GOT WORSE. This is a measurement correction, and anyone reading a
+ * report across the boundary needs to know that before drawing a conclusion from the movement.
+ *
+ * Two structural faults were corrected at once:
+ *
+ *   DEDUPLICATION (+5.22 pts). The old query counted rows in `maintenance_signatures`, which holds
+ *   2–8 rows for the same fault on the same car on the same day — a `derived` label and a `human`
+ *   one, several matched terms, several tickets sharing a date. It was measuring LABELS, not
+ *   repairs. And the distortion was not neutral: an event labelled eight times that did NOT recur
+ *   contributed eight "held" rows, so duplication had been diluting the rate DOWNWARD all along.
+ *   One garage was inflated 38.75×.
+ *
+ *   RIGHT-CENSORING (+0.67 pts). The old query counted repairs completed last week as repairs that
+ *   held, when they had not yet had 90 days in which to fail. That flatters every garage, and
+ *   flatters the busiest ones most, because they have the most recent work.
+ *
+ * The sample fell by two thirds because 33,040 was never 33,040 repairs. It was ~12,600 repairs
+ * counted 2.62 times each, of which 10,595 have actually been observed long enough to judge.
+ *
+ * The pre-correction baseline is RETAINED in `kpi_snapshots` — a baseline you delete is a baseline
+ * you cannot argue from. Every snapshot is now stamped with the metric version that produced it.
+ *
+ * @see docs/Metric-Specification-Recurrence.md            the governed definition
+ * @see docs/evidence/recurrence-comparison-2026-08-04.json  the per-garage decomposition
  */
 class OperationalKpiService
 {
@@ -39,14 +73,26 @@ class OperationalKpiService
     private const MIN_SAMPLE = 30;
 
     /**
-     * The window that defines a comeback.
+     * The window that defines a comeback — NOW READ FROM THE GOVERNED CONTRACT.
      *
-     * Declared here rather than imported, because this service must not depend on the
-     * maintenance-owned repair-intelligence layer — the dependency runs one way. If a shared
-     * definition is ever needed, it belongs in config so both sides read one value; duplicating the
-     * number across two owners with no link between them is the failure mode to avoid.
+     * This used to be a private constant here, with a comment warning that three other places held
+     * the same number and had to be kept in step by hand. They were not: the platform ended up
+     * publishing 40.62%, 40.96% and 46.51% for the same question because each implementation paired
+     * that window with a different observation horizon.
+     *
+     * The value now lives in config/metrics/recurrence.php and reaches every consumer at once.
+     *
+     * @deprecated Use RecurrenceWindow::fromContract(). Kept only so any external reader of this
+     *             constant still resolves to the governed value rather than a stale copy.
      */
     private const COMEBACK_WINDOW_DAYS = 90;
+
+    public function __construct(
+        // Nullable + resolved lazily so `new OperationalKpiService()` keeps working for any caller
+        // that constructs it directly. The container injects the shared instance.
+        private ?RecurrenceRepository $recurrence = null,
+    ) {
+    }
 
     /** @return array<int,Kpi> */
     public function all(): array
@@ -99,21 +145,25 @@ class OperationalKpiService
         $r = $this->recurrenceStats();
 
         if ($r->n < self::MIN_SAMPLE) {
-            return Kpi::insufficient('first_time_fix_rate', 'First-time fix rate', (int) $r->n, self::MIN_SAMPLE);
+            return Kpi::insufficient('first_time_fix_rate', 'First-time fix rate', $r->n, self::MIN_SAMPLE);
         }
 
         return Kpi::measured(
             'first_time_fix_rate',
             'First-time fix rate',
-            100 - ($r->returned / $r->n * 100),
+            $r->heldRate(),
             'percent',
-            (int) $r->n,
+            $r->n,
             Kpi::HIGHER_BETTER,
-            [
-                'window_days' => self::COMEBACK_WINDOW_DAYS,
-                'method'      => 'proxy: same fault signature did not recur on the same vehicle within the window',
-                'excludes'    => 'exposure damage (body, rim) — customer-caused, not repair quality',
+            $this->recurrenceContext($r) + [
+                'method'   => 'proxy: same fault signature did not recur on the same vehicle within the window',
+                'excludes' => 'exposure damage (body, rim) — customer-caused, not repair quality',
             ],
+            // Coverage is the censored tail: repairs too recent to have had a chance to fail. Published
+            // rather than silently applied, because a rate over 84% of the corpus is a different claim
+            // from a rate over all of it.
+            coverage: $r->coverage,
+            asOf:     $r->asOf,
         );
     }
 
@@ -122,18 +172,41 @@ class OperationalKpiService
         $r = $this->recurrenceStats();
 
         if ($r->n < self::MIN_SAMPLE) {
-            return Kpi::insufficient('comeback_rate', 'Comeback rate', (int) $r->n, self::MIN_SAMPLE, 'percent', Kpi::LOWER_BETTER);
+            return Kpi::insufficient('comeback_rate', 'Comeback rate', $r->n, self::MIN_SAMPLE, 'percent', Kpi::LOWER_BETTER);
         }
 
         return Kpi::measured(
             'comeback_rate',
             'Comeback rate',
-            $r->returned / $r->n * 100,
+            $r->rate(),
             'percent',
-            (int) $r->n,
+            $r->n,
             Kpi::LOWER_BETTER,
-            ['window_days' => self::COMEBACK_WINDOW_DAYS],
+            $this->recurrenceContext($r),
+            coverage: $r->coverage,
+            asOf:     $r->asOf,
         );
+    }
+
+    /**
+     * The provenance every recurrence KPI carries.
+     *
+     * The metric version is the important field. A historical snapshot that does not say which
+     * definition produced it cannot be compared with a later one — and this baseline has now been
+     * produced by two different definitions, so an unversioned number is an unanswerable question.
+     *
+     * @return array<string, mixed>
+     */
+    private function recurrenceContext(RecurrenceStats $r): array
+    {
+        return [
+            'window_days'      => $r->window->windowDays,
+            'metric_version'   => $r->window->version,
+            'metric_contract'  => 'config/metrics/recurrence.php',
+            'source'           => 'fault_recurrence_pairs (deduplicated repair events)',
+            'observed_horizon' => $r->window->horizonMode,
+            'censored_events'  => $r->coverage->missing(),
+        ];
     }
 
     /**
@@ -589,22 +662,35 @@ class OperationalKpiService
 
     // =============================================================================================
 
-    /** Shared recurrence numbers — one query behind both the fix rate and the comeback rate. */
-    private function recurrenceStats(): object
+    /**
+     * Shared recurrence numbers, from the CANONICAL repository.
+     *
+     * ── WHAT THIS USED TO BE, AND WHY IT MOVED ───────────────────────────────────────────────────
+     * This method used to run its own `EXISTS` self-join over `maintenance_signatures`. So did
+     * GarageScorecardService, GarageOutcomeForecaster, ForecastCalibration and
+     * ProjectionRepairHistoryQuery — five implementations of one business question, each with a
+     * comment asking the next person to keep it in step with the others. They did not stay in step.
+     *
+     * Two structural faults were shared by all of them:
+     *
+     *   1. They counted LABEL ROWS, not repairs. `maintenance_signatures` holds 2–8 rows for the
+     *      same fault on the same car on the same day. Because a heavily-labelled event that did NOT
+     *      recur contributed several "held" rows, this DILUTED the rate downward.
+     *   2. They counted repairs too recent to have failed as repairs that HELD — right-censoring,
+     *      which flatters every garage and flatters the busiest ones most.
+     *
+     * Correcting both moves this baseline from 40.62% to 46.51%. The fleet did not get worse; it was
+     * always this. See docs/Metric-Specification-Recurrence.md §10 for the full decomposition.
+     *
+     * HISTORICAL SCOPE IS UNCHANGED. The canonical dataset is built from soft-deleted tickets too,
+     * for exactly the reason stated in this class's docblock: a retired ticket is a repair that
+     * really happened.
+     */
+    private function recurrenceStats(): RecurrenceStats
     {
         static $cached = null;
 
-        return $cached ??= DB::selectOne('
-            SELECT COUNT(*) AS n,
-                   SUM(CASE WHEN EXISTS (
-                        SELECT 1 FROM maintenance_signatures b
-                        WHERE b.vehicle_id = a.vehicle_id
-                          AND b.signature  = a.signature
-                          AND b.occurred_at >  a.occurred_at
-                          AND b.occurred_at <= DATE_ADD(a.occurred_at, INTERVAL ? DAY)
-                   ) THEN 1 ELSE 0 END) AS returned
-            FROM maintenance_signatures a
-            WHERE a.vehicle_id IS NOT NULL AND a.occurred_at IS NOT NULL AND a.is_exposure = 0',
-            [self::COMEBACK_WINDOW_DAYS]);
+        return $cached ??= ($this->recurrence ?? app(RecurrenceRepository::class))
+            ->fleet(RecurrenceWindow::fromContract());
     }
 }

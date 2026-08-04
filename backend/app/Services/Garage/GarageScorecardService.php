@@ -2,6 +2,8 @@
 
 namespace App\Services\Garage;
 
+use App\Intelligence\Recurrence\RecurrenceRepository;
+use App\Intelligence\Recurrence\RecurrenceWindow;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
@@ -15,12 +17,15 @@ use Illuminate\Support\Facades\DB;
  * behind that sentence.
  *
  * ── WHAT IS MEASURED, AND WHY THESE SOURCES ──────────────────────────────────────────────────────
- * RELIABILITY (do the repairs hold) is the recurrence proxy: a repair "came back" if the same fault
- * signature recurred on the same vehicle within 90 days. This is the EXACT query
- * App\Kpi\OperationalKpiService publishes as the fleet baseline and GarageOutcomeForecaster uses per
- * garage — same window, same strict `>`, same `is_exposure = 0` exclusion — attributed to the garage
- * that did the repair and split by repair domain. Diverging from it would put three different
- * "comeback rates" in one product.
+ * RELIABILITY (do the repairs hold) is the GOVERNED recurrence metric, read from
+ * App\Intelligence\Recurrence\RecurrenceRepository. This service no longer computes recurrence at all.
+ *
+ * It used to. So did OperationalKpiService, GarageOutcomeForecaster, ForecastCalibration and
+ * ProjectionRepairHistoryQuery — five implementations of one question, each carrying a comment
+ * asking the next person to keep it in step with the others. They did not stay in step: measured
+ * together on the live corpus they published 40.62%, 40.96% and 46.51% for the same question.
+ *
+ * The definition now lives in config/metrics/recurrence.php, and every consumer inherits it.
  *
  * SPEED is `out_date → actual_in_date` on the same events. Not the workflow timestamps
  * (`repair_started_at`/`ready_at`), which exist on a handful of tickets and cannot segment 44 garages.
@@ -39,8 +44,20 @@ use Illuminate\Support\Facades\DB;
  * visible rather than buried in a coefficient.
  *
  * Body and rim damage are excluded from every quality figure and shown as volume only. They recur
- * because customers keep scraping cars, not because repairs fail — the same exclusion
- * `maintenance_signatures.is_exposure` exists for.
+ * because customers keep scraping cars, not because repairs fail — the exclusion is applied when the
+ * canonical dataset is built, so it cannot be forgotten by a reader.
+ *
+ * ── WHAT CHANGED WHEN THIS SERVICE WAS REPOINTED (2026-08-04) ────────────────────────────────────
+ * Scored garages fell from 57 to 33, and no garage got worse. The old query counted rows in
+ * `maintenance_signatures`, which holds 2–8 rows per fault-day, so `min_n.garage = 30` was really
+ * enforcing about six real repairs. One garage was inflated 38.75×: it carried a score built on 310
+ * label rows representing eight observed repairs.
+ *
+ * Twenty-four garages did not lose a score they had earned. They lost one they had never earned.
+ *
+ * The REASONING here did not change: case-mix expectation, exposure exclusion, domain weighting,
+ * the grading bands, the floors and the composite are all untouched. The repository measures; this
+ * service interprets. That split is exactly why the numbers moved and the judgement did not.
  *
  * ── HONESTY RULES ────────────────────────────────────────────────────────────────────────────────
  *   · Nothing is graded below its sample floor (config `min_n`). It reads "not enough repairs", never 0%.
@@ -65,6 +82,14 @@ class GarageScorecardService
     public const GRADE_WEAK   = 'weak';
     public const GRADE_THIN   = 'thin';
     public const GRADE_EXPOSURE = 'not_graded_exposure';
+
+    public function __construct(
+        // Nullable + lazily resolved so `new GarageScorecardService()` keeps working for any caller
+        // that constructs it directly (GarageScorecardServiceTest pins composite() without a DB).
+        private ?RecurrenceRepository $recurrence = null,
+    ) {
+        $this->recurrence ??= app(RecurrenceRepository::class);
+    }
 
     /**
      * The whole report: every garage with a score, its domain profile and its ranked strengths and
@@ -97,12 +122,22 @@ class GarageScorecardService
     {
         $labels = $this->domainLabels();
         $cells  = $this->cells($cfg);                    // vendor => domain => raw tallies
+        // Medians do not sum, so a garage's typical return time is measured at the GARAGE grain
+        // rather than rolled up from its per-domain medians — that rollup would be a number nobody
+        // ever measured.
+        $window = RecurrenceWindow::fromContract((int) ($cfg['comeback_window_days'] ?? 90));
+        $garageMedians = $this->recurrence->medianGapsByGarage($window);
+
+        // Published alongside this page's own baseline so the two figures can be reconciled on
+        // sight rather than looking like two surfaces disagreeing (see the 'fleet' block below).
+        $platform = $this->recurrence->fleet($window);
+        $coverage = $this->recurrence->coverage($window);
         $fleet  = $this->fleetBaselines($cells);         // domain => fleet comeback / turnaround
         $ranks  = $this->domainRanks($cells, $cfg);      // domain => [vendor_id => rank], plus counts
 
         $garages = [];
         foreach ($cells as $vid => $byDomain) {
-            $garages[] = $this->scorecard((int) $vid, $byDomain, $fleet, $ranks, $labels, $cfg);
+            $garages[] = $this->scorecard((int) $vid, $byDomain, $fleet, $ranks, $labels, $cfg, $garageMedians[(int) $vid] ?? null);
         }
 
         // Best first, but a garage without a score must never sit above one with a bad score — an
@@ -121,7 +156,25 @@ class GarageScorecardService
                 'turnaround_n'    => $fleet['__all']['turnaround_n'] ?? 0,
                 'garages_scored'  => count(array_filter($garages, fn ($g) => $g['score']['value'] !== null)),
                 'garages_total'   => count($garages),
+
+                // ── WHY THIS DIFFERS FROM THE PLATFORM BASELINE, AND WHY THAT IS CORRECT ────────
+                // The Executive dashboard publishes the fleet comeback rate over EVERY repair
+                // event. This page publishes it over every ATTRIBUTABLE one — 635 events carry no
+                // garage, and a garage cannot sensibly be compared against an average that includes
+                // repairs no garage did.
+                //
+                // Same definition, same dataset, same window: a narrower population, stated rather
+                // than left to look like a contradiction between two pages.
+                'population'      => 'attributable',
+                'population_note' => 'Measured over repairs that name a garage. The fleet-wide figure '
+                    . 'on the Executive dashboard also counts repairs with no garage recorded, so it '
+                    . 'is slightly different by design.',
+                'platform_comeback_pct' => $platform->rate(),
+                'platform_comeback_n'   => $platform->n,
+                'unattributed_n'        => max(0, $platform->n - (int) ($fleet['__all']['comeback_n'] ?? 0)),
             ],
+            'coverage'    => $coverage->toArray(),
+            'as_of'       => $coverage->asOf?->format('Y-m-d'),
             'provenance'  => $this->provenance($cfg, $cells),
         ];
     }
@@ -133,7 +186,7 @@ class GarageScorecardService
      * @param  array<string, array<string, mixed>>  $byDomain
      * @return array<string, mixed>
      */
-    private function scorecard(int $vid, array $byDomain, array $fleet, array $ranks, array $labels, array $cfg): array
+    private function scorecard(int $vid, array $byDomain, array $fleet, array $ranks, array $labels, array $cfg, ?float $garageMedian = null): array
     {
         $minDomain = (int) ($cfg['min_n']['domain'] ?? 20);
         $material  = (float) ($cfg['material_pts'] ?? 8);
@@ -145,7 +198,6 @@ class GarageScorecardService
         $held = 0;
         $back30 = 0;
         $back90 = 0;
-        $gaps = [];
         $expected = 0.0;       // case-mix-adjusted expectation, in repairs
         $durDays = 0.0;
         $durN = 0;
@@ -167,7 +219,6 @@ class GarageScorecardService
                 $held += (int) $c['held'];
                 $back30 += (int) $c['back_30'];
                 $back90 += (int) $c['back_90'];
-                $gaps = array_merge($gaps, $c['gaps']);
                 $expected += $n * (($fleetRow['comeback_pct'] ?? 0) / 100);
             }
             if (! $exposure && (int) $c['duration_n'] > 0) {
@@ -176,7 +227,8 @@ class GarageScorecardService
                 $expDurDays += (int) $c['duration_n'] * (float) ($fleetRow['turnaround_days'] ?? 0);
             }
 
-            $cb = $n > 0 ? round((int) $c['returned'] / $n * 100, 1) : null;
+            // Canonical value, not a re-derivation. One measurement, rounded once, everywhere.
+            $cb = $c['rate_pct'];
             $fleetCb = $fleetRow['comeback_pct'] ?? null;
             $delta = ($cb !== null && $fleetCb !== null) ? round($cb - $fleetCb, 1) : null;
 
@@ -200,7 +252,7 @@ class GarageScorecardService
                 'held'             => $exposure ? null : (int) $c['held'],
                 'back_30'          => $exposure ? null : (int) $c['back_30'],
                 'back_90'          => $exposure ? null : (int) $c['back_90'],
-                'return_days'      => $exposure ? null : $this->median($c['gaps']),
+                'return_days'      => $exposure ? null : $c['median_gap'],
                 'fleet_comeback_pct' => $exposure ? null : $fleetCb,
                 'vs_fleet_pts'     => $exposure ? null : $delta,
                 'turnaround_days'  => (int) $c['duration_n'] > 0 ? round((float) $c['duration_sum'] / (int) $c['duration_n'], 1) : null,
@@ -213,6 +265,12 @@ class GarageScorecardService
                     : null,
                 'grade'            => $grade,
                 'graded'           => in_array($grade, [self::GRADE_STRONG, self::GRADE_ON_PAR, self::GRADE_WEAK], true),
+                'evidence_query_id' => 'recurrence.garage_domain:' . $vid . ':' . $key,
+                // What the cell's rate was measured OVER — 'n out of the corpus', not just 'n'.
+                'coverage'         => $exposure ? null : [
+                    'covered' => (int) $c['coverage_covered'],
+                    'total'   => (int) $c['coverage_total'],
+                ],
                 // Why this cell is not graded, said out loud. An ungraded cell with no reason reads
                 // as a broken page rather than an honest one.
                 'not_graded_reason' => match ($grade) {
@@ -232,8 +290,10 @@ class GarageScorecardService
         }
         unset($share);
 
-        $actual = $repairs > 0 ? round($returned / $repairs * 100, 1) : null;
-        $expectedPct = $repairs > 0 ? round($expected / $repairs * 100, 1) : null;
+        // Rounded to the same 2dp the repository publishes, so the garage card, the leaderboard
+        // and the Executive dashboard cannot disagree in the last decimal.
+        $actual = $repairs > 0 ? round($returned / $repairs * 100, 2) : null;
+        $expectedPct = $repairs > 0 ? round($expected / $repairs * 100, 2) : null;
 
         $reliability = [
             'measured'      => $repairs >= (int) ($cfg['min_n']['garage'] ?? 30) && $expectedPct !== null,
@@ -244,7 +304,9 @@ class GarageScorecardService
             'held'          => $held,
             'back_30'       => $back30,
             'back_90'       => $back90,
-            'return_days'   => $this->median($gaps),
+            // Garage-level median comes from the repository at the garage grain: medians do not
+            // sum, so rolling per-domain medians together would produce a number nobody measured.
+            'return_days'   => $garageMedian,
             'reason'        => $repairs >= (int) ($cfg['min_n']['garage'] ?? 30)
                 ? null
                 : "Only {$repairs} attributable repairs — under the " . (int) ($cfg['min_n']['garage'] ?? 30) . ' needed to score a garage.',
@@ -290,6 +352,10 @@ class GarageScorecardService
         return [
             'vendor_id'   => $vid,
             'garage'      => $name ?: ('#' . $vid),
+            // Every displayed rate must be walkable back to the repairs behind it — a page that
+            // grades suppliers has to show its working on demand. This id resolves through the
+            // evidence layer to the paired tickets that produced the number.
+            'evidence_query_id' => 'recurrence.garage:' . $vid,
             'repairs'     => $repairs,
             'volume'      => $volume,
             'score'       => $score,
@@ -448,7 +514,16 @@ class GarageScorecardService
                 'back_30'      => 0,
                 'back_90'      => 0,
                 'held'         => 0,
-                'gaps'         => [],   // days-to-return per returning repair, for the median
+                // The median arrives PRECOMPUTED from the repository, which owns how a right-skewed
+                // distribution is summarised. This service no longer carries a bag of raw gaps —
+                // measurement belongs to the repository, interpretation belongs here.
+                'median_gap'       => null,
+                'coverage_covered' => 0,
+                'coverage_total'   => 0,
+                // The repository's rate, carried verbatim. Recomputing returned/n here would round a
+                // second time and put 30.2 on this page against 30.23 on the Executive dashboard —
+                // a small instance of the exact problem this convergence exists to remove.
+                'rate_pct'         => null,
                 'duration_sum' => 0.0,
                 'duration_n'   => 0,
                 // Domains whose recurrence is customer exposure, not workshop quality. Read off the
@@ -476,53 +551,57 @@ class GarageScorecardService
             $cells[$vid][$key]['volume'] += (int) $r->n;
         }
 
-        // ── Recurrence: the same proxy OperationalKpiService publishes, split by domain AND BY TIME ──
+        // ── Recurrence: from the CANONICAL repository, never computed here ───────────────────────
         //
-        // Same population, same window, same `is_exposure = 0` exclusion — but it returns the GAP to
-        // the next occurrence rather than a yes/no, so the card can say "12 came back within a month,
-        // 6 more within three, the other 72 never did" instead of "20% comeback rate".
+        // This block used to run its own correlated subquery over `maintenance_signatures`. So did
+        // OperationalKpiService, GarageOutcomeForecaster, ForecastCalibration and
+        // ProjectionRepairHistoryQuery — five implementations of one business question, each with a
+        // comment asking the next person to keep it in step. They did not stay in step: measured
+        // together they published 40.62%, 40.96% and 46.51% for the same question.
         //
-        // ONLY FULLY-OBSERVED REPAIRS COUNT. A repair done last week cannot have come back within 90
-        // days yet, so counting it as one that held is a free pass that flatters every garage — and
-        // flatters the busiest ones most, since they have the most recent work. Excluding the tail
-        // costs 4,524 of 31,106 rows and moves the fleet rate by 0.1 points, so it reconciles with the
-        // published baseline while removing a bias that would have grown every quarter the corpus did.
-        $horizon = DB::table('maintenance_signatures')->max('occurred_at');
+        // Two structural faults were shared by all of them, and the canonical dataset fixes both:
+        //
+        //   · They counted LABEL ROWS, not repairs. `maintenance_signatures` holds 2–8 rows for one
+        //     fault on one car on one day, and because a heavily-labelled event that did NOT recur
+        //     contributed several "held" rows, the duplication was DILUTING every rate downward.
+        //     This service was hit hardest of all: one garage was inflated 38.75×.
+        //   · The observation horizon (which THIS service had and the others lacked) is now part of
+        //     the contract, so every consumer inherits it instead of one service getting it right.
+        //
+        // WHAT DID NOT MOVE: everything below this block. Case-mix expectation, exposure exclusion,
+        // domain weighting, the grading bands, the sample floors, the leaderboards and the composite
+        // are all judgements about garages and they stay here. The repository measures; this service
+        // interprets. That split is why the numbers changed and the reasoning did not.
+        //
+        // @see docs/Metric-Specification-Recurrence.md
+        $recurrenceWindow = RecurrenceWindow::fromContract($window);
+        $byCell   = $this->recurrence->byGarageAndDomain($recurrenceWindow);
+        $medians  = $this->recurrence->medianGapsByGarageAndDomain($recurrenceWindow);
 
-        $gapRows = DB::select('
-            SELECT g.vendor_id, g.signature, g.gap
-            FROM (
-                SELECT m.vendor_id, a.signature,
-                       (SELECT MIN(DATEDIFF(b.occurred_at, a.occurred_at))
-                          FROM maintenance_signatures b
-                         WHERE b.vehicle_id  = a.vehicle_id
-                           AND b.signature   = a.signature
-                           AND b.occurred_at > a.occurred_at
-                           AND b.occurred_at <= DATE_ADD(a.occurred_at, INTERVAL ? DAY)) AS gap
-                  FROM maintenance_signatures a
-                  JOIN maintenances m ON m.id = a.maintenance_id
-                 WHERE a.vehicle_id IS NOT NULL AND a.occurred_at IS NOT NULL AND a.is_exposure = 0
-                   AND m.vendor_id IS NOT NULL
-                   AND a.occurred_at <= DATE_SUB(?, INTERVAL ? DAY)
-            ) g', [$window, $horizon, $window]);
+        foreach ($byCell as $vid => $byDomain) {
+            foreach ($byDomain as $key => $stats) {
+                $cell($cells, (int) $vid, $key);
+                $c = &$cells[$vid][$key];
 
-        foreach ($gapRows as $r) {
-            $key = $map[$r->signature] ?? null;
-            if ($key === null) {
-                continue;
+                $c['n']        += $stats->n;
+                $c['returned'] += $stats->returned;
+                $c['held']     += $stats->held;
+                $c['back_30']  += $stats->back30;
+                $c['back_90']  += $stats->back90;
+
+                // The median arrives precomputed per cell rather than as a bag of gaps: the
+                // repository owns the measurement, including how a skewed distribution is summarised.
+                $c['median_gap'] = $medians[$vid][$key] ?? null;
+
+                // Coverage travels with the cell so a card can say WHAT the rate was measured over,
+                // not just what it was. A rate over 84% of the corpus is a different claim from a
+                // rate over all of it.
+                $c['coverage_covered'] = $stats->coverage->covered;
+                $c['coverage_total']   = $stats->coverage->total;
+                $c['rate_pct']         = $stats->rate();
+
+                unset($c);
             }
-            $vid = (int) $r->vendor_id;
-            $cell($cells, $vid, $key);
-            $c = &$cells[$vid][$key];
-            $c['n']++;
-            if ($r->gap === null) {
-                $c['held']++;
-            } else {
-                $c['returned']++;
-                $c['gaps'][] = (int) $r->gap;
-                ((int) $r->gap <= 30) ? $c['back_30']++ : $c['back_90']++;
-            }
-            unset($c);
         }
 
         // ── Turnaround on the same events, where both dates exist and are sane ───────────────────
@@ -586,7 +665,7 @@ class GarageScorecardService
         foreach ($acc as $key => $a) {
             $out[$key] = [
                 'volume'          => (int) $a['volume'],
-                'comeback_pct'    => $a['n'] > 0 && ! $a['exposure'] ? round($a['returned'] / $a['n'] * 100, 1) : null,
+                'comeback_pct'    => $a['n'] > 0 && ! $a['exposure'] ? round($a['returned'] / $a['n'] * 100, 2) : null,
                 'comeback_n'      => $a['exposure'] ? 0 : (int) $a['n'],
                 'held'            => (int) $a['held'],
                 'back_30'         => (int) $a['back_30'],
@@ -604,7 +683,7 @@ class GarageScorecardService
         }
 
         $out['__all'] = [
-            'comeback_pct'    => $allN > 0 ? round($allRet / $allN * 100, 1) : null,
+            'comeback_pct'    => $allN > 0 ? round($allRet / $allN * 100, 2) : null,
             'comeback_n'      => $allN,
             'turnaround_days' => $allDurN > 0 ? round($allDur / $allDurN, 1) : null,
             'turnaround_n'    => $allDurN,
@@ -798,14 +877,15 @@ class GarageScorecardService
             'sources' => [
                 [
                     'measure' => 'Repairs that came back',
-                    'table'   => 'maintenance_signatures → maintenances',
+                    'table'   => 'fault_recurrence_pairs (canonical, deduplicated repair events)',
                     'method'  => 'The same fault recorded again on the same car within '
                         . (int) ($cfg['comeback_window_days'] ?? 90)
                         . ' days, credited to the garage that did the first repair. Split by how soon it came back.',
                     'note'    => 'Body and rim damage are excluded — they recur because cars get scraped. '
                         . 'Repairs from the last ' . (int) ($cfg['comeback_window_days'] ?? 90)
                         . ' days are excluded too: they have not had time to come back yet, and counting them '
-                        . 'as repairs that held would flatter every garage.',
+                        . 'as repairs that held would flatter every garage. '
+                        . 'One fault on one car on one day counts once, however many times it was labelled.',
                 ],
                 [
                     'measure' => 'Days in the workshop',
@@ -830,6 +910,11 @@ class GarageScorecardService
             'pairs_total'     => $pairs,
             'pairs_graded'    => $graded,
             'classifier_version' => \App\Services\Knowledge\RepairSignatureClassifier::VERSION,
+            // Which governed definition produced every number on this page. Two reports without
+            // this stamp cannot be compared once a metric has been corrected — and this one has.
+            'metric_version'     => (string) config('metrics.recurrence.version'),
+            'metric_contract'    => 'config/metrics/recurrence.php',
+            'metric_spec'        => 'docs/Metric-Specification-Recurrence.md',
             'generated_at'    => now()->toIso8601String(),
         ];
     }

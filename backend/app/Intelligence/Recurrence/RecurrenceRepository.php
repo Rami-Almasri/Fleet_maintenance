@@ -172,6 +172,99 @@ class RecurrenceRepository
         return $this->hydrate($row, $window, $this->coverageFor($row));
     }
 
+    // ── Episode retrieval (not measurement) ─────────────────────────────────────────────────────
+
+    /**
+     * The distinct times a given fault happened on ONE car, inside a date range.
+     *
+     * ── RETRIEVAL, NOT A RATE — SO NO WINDOW OBJECT ──────────────────────────────────────────────
+     * This answers "has this car had this fault before, and when?", which is a lookup rather than a
+     * statistic. It therefore takes a plain date range and deliberately does NOT apply the
+     * observation horizon: censoring exists so that a repair too recent to have failed is not
+     * counted as one that HELD, and that reasoning has nothing to do with looking backwards. An
+     * episode from last week is a real prior episode.
+     *
+     * ── WHY IT MUST READ THE CANONICAL DATASET ANYWAY ────────────────────────────────────────────
+     * Reading raw signatures returns one row per LABEL. On the live corpus one episode reaches 54
+     * rows — vehicle 1743, ENGINE_MECH, 2025-04-10 — so a card that counts what it gets back reports
+     * fifty-four prior episodes for a fault that happened once. Deduplication is not a nicety here;
+     * it is the difference between a true sentence and a false one.
+     *
+     * Exposure is already excluded by the dataset, which matches the quality-relevant scope this
+     * replaces.
+     *
+     * @param  string[]  $signatures
+     * @return \Illuminate\Support\Collection<int, object>  newest first
+     */
+    public function episodesBefore(
+        int $vehicleId,
+        array $signatures,
+        string $from,
+        string $before,
+        ?int $excludeMaintenanceId = null,
+    ) {
+        // Strictly earlier than the pivot, never same-day: a row sharing the pivot's date is far
+        // more likely to be the same event recorded twice than a repair that failed within hours.
+        return $this->episodes($vehicleId, $signatures, $from, '>=', $before, '<', $excludeMaintenanceId, 'desc');
+    }
+
+    /**
+     * The distinct times a fault happened on one car AFTER a given date — comeback detection.
+     *
+     * Consumed by outcome learning, which asks "did the fault we recommended a repair for come back?"
+     * Reading raw labels there meant one comeback could be counted many times, and the answer fed
+     * straight into whether a recommendation was judged a success.
+     *
+     * @param  string[]  $signatures
+     */
+    public function episodesBetween(
+        int $vehicleId,
+        array $signatures,
+        string $after,
+        string $to,
+        ?int $excludeMaintenanceId = null,
+    ) {
+        // Strictly after `from`, for the mirror of the reason above: a same-date row is one event on
+        // two tickets, not a repair that failed the same day.
+        return $this->episodes($vehicleId, $signatures, $after, '>', $to, '<=', $excludeMaintenanceId, 'asc');
+    }
+
+    /** @return \Illuminate\Support\Collection<int, object> */
+    private function episodes(
+        int $vehicleId,
+        array $signatures,
+        string $lower,
+        string $lowerOp,
+        string $upper,
+        string $upperOp,
+        ?int $excludeMaintenanceId,
+        string $direction,
+    ) {
+        $signatures = array_values(array_filter($signatures));
+
+        if ($signatures === []) {
+            return collect();
+        }
+
+        return DB::table(self::TABLE)
+            ->where('vehicle_id', $vehicleId)
+            ->whereIn('signature', $signatures)
+            ->where('occurred_at', $lowerOp, $lower)
+            ->where('occurred_at', $upperOp, $upper)
+            ->when($excludeMaintenanceId, fn ($q) => $q->where('first_maintenance_id', '!=', $excludeMaintenanceId))
+            ->orderBy('occurred_at', $direction)
+            ->get([
+                'id',
+                'first_maintenance_id as maintenance_id',
+                'signature',
+                'occurred_at',
+                'label_source as source',
+                // How many labels collapsed into this one episode — the audit trail for the very
+                // duplication these methods exist to stop reporting.
+                'source_row_count',
+            ]);
+    }
+
     // ── Evidence ────────────────────────────────────────────────────────────────────────────────
 
     /**
@@ -279,10 +372,10 @@ class RecurrenceRepository
             held:          (int) $row->held,
             back30:        (int) $row->back_30,
             back90:        (int) $row->back_90,
-            // The MEAN is what the aggregate can produce in one pass. Time-to-return is
-            // right-skewed, so a caller that needs the median asks medianGap() for its own grain
-            // rather than being handed a mean labelled as a median.
-            medianGapDays: $row->mean_gap === null ? null : round((float) $row->mean_gap, 1),
+            // The MEAN is what a grouped aggregate can produce in one pass. Time-to-return is
+            // right-skewed, so a caller that needs the median asks medianGap() / medianGapsByCell()
+            // for its own grain rather than being handed a mean wearing the median's name.
+            meanGapDays: $row->mean_gap === null ? null : round((float) $row->mean_gap, 1),
             coverage:      $coverage,
             asOf:          $this->asOf(),
             window:        $window,
@@ -316,6 +409,90 @@ class RecurrenceRepository
         }
 
         $mid = intdiv($count, 2);
+
+        return round($count % 2
+            ? (float) $values[$mid]
+            : ((float) $values[$mid - 1] + (float) $values[$mid]) / 2, 1);
+    }
+
+    /**
+     * Median days-to-return for every (garage, domain) cell, in one pass.
+     *
+     * The scorecard shows "typically back in N days" per cell, and that N must be a MEDIAN:
+     * time-to-return is right-skewed, so a handful of repairs limping back on day 89 drags a mean
+     * well past what actually happens.
+     *
+     * Computed in PHP rather than SQL on purpose. MariaDB has MEDIAN() as a window function and
+     * MySQL 8 does not, and this project runs MariaDB locally against MySQL 8 in production — a
+     * percentile expression that passes review here would fail on the server. Ten thousand integers
+     * sorted in PHP is cheaper than that class of bug.
+     *
+     * @return array<int, array<string, float|null>>  [vendor_id][domain] => median days
+     */
+    public function medianGapsByGarageAndDomain(RecurrenceWindow $window, array $vendorIds = []): array
+    {
+        $q = $this->base($window)
+            ->whereNotNull('first_vendor_id')
+            ->whereNotNull('next_occurred_at')
+            ->where('days_to_return', '<=', $window->windowDays)
+            ->select('first_vendor_id', 'signature', 'days_to_return');
+
+        if ($vendorIds !== []) {
+            $q->whereIn('first_vendor_id', $vendorIds);
+        }
+
+        $map  = $this->domainMap();
+        $gaps = [];
+
+        foreach ($q->cursor() as $row) {
+            $domain = $map[$row->signature] ?? null;
+            if ($domain === null) {
+                continue;
+            }
+            $gaps[(int) $row->first_vendor_id][$domain][] = (int) $row->days_to_return;
+        }
+
+        $out = [];
+        foreach ($gaps as $vid => $byDomain) {
+            foreach ($byDomain as $domain => $values) {
+                $out[$vid][$domain] = $this->median($values);
+            }
+        }
+
+        return $out;
+    }
+
+    /** Median gap per garage, rolled across every domain it works in. */
+    public function medianGapsByGarage(RecurrenceWindow $window, array $vendorIds = []): array
+    {
+        $q = $this->base($window)
+            ->whereNotNull('first_vendor_id')
+            ->whereNotNull('next_occurred_at')
+            ->where('days_to_return', '<=', $window->windowDays)
+            ->select('first_vendor_id', 'days_to_return');
+
+        if ($vendorIds !== []) {
+            $q->whereIn('first_vendor_id', $vendorIds);
+        }
+
+        $gaps = [];
+        foreach ($q->cursor() as $row) {
+            $gaps[(int) $row->first_vendor_id][] = (int) $row->days_to_return;
+        }
+
+        return array_map(fn (array $v) => $this->median($v), $gaps);
+    }
+
+    /** @param array<int, int|float> $values */
+    private function median(array $values): ?float
+    {
+        if ($values === []) {
+            return null;
+        }
+
+        sort($values);
+        $count = count($values);
+        $mid   = intdiv($count, 2);
 
         return round($count % 2
             ? (float) $values[$mid]

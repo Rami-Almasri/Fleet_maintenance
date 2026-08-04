@@ -2,6 +2,8 @@
 
 namespace App\Services\RepairIntelligence\Query;
 
+use App\Intelligence\Recurrence\RecurrenceRepository;
+use App\Intelligence\Recurrence\RecurrenceWindow;
 use App\Models\MaintenanceSignature;
 use App\Models\RepairInspection;
 use App\Services\Intelligence\Evidence;
@@ -29,11 +31,23 @@ class ProjectionRepairHistoryQuery implements RepairHistoryQuery
     /** The window that defines a comeback. 90 days is the fleet's measured quality clock. */
     public const WINDOW_DAYS = 90;
 
-    /** @see RepairHistoryQuery::version() — the semantics of the answers, not the storage. */
-    public const VERSION = 'v1';
+    /**
+     * @see RepairHistoryQuery::version() — the semantics of the answers, not the storage.
+     *
+     * v2: recurrence answers now come from the canonical, DEDUPLICATED dataset. v1 counted label
+     * rows, so one episode could be reported as many as fifty-four. Any stored answer stamped v1 was
+     * computed on a different population and must not be compared with a v2 one.
+     */
+    public const VERSION = 'v2';
 
     /** Signature labels the corpus carries a human-written original for. Measured on the projection. */
     private const HUMAN_LABEL_SHARE = 0.787;
+
+    public function __construct(
+        private ?RecurrenceRepository $recurrence = null,
+    ) {
+        $this->recurrence ??= app(RecurrenceRepository::class);
+    }
 
     public function version(): string
     {
@@ -56,23 +70,25 @@ class ProjectionRepairHistoryQuery implements RepairHistoryQuery
 
         $pivot = $asOf ? Carbon::parse($asOf) : now();
 
-        $rows = MaintenanceSignature::query()
-            ->qualityRelevant()
-            ->where('vehicle_id', $vehicleId)
-            ->whereIn('signature', $signatures)
-            ->whereNotNull('occurred_at')
-            // STRICTLY EARLIER, never same-day. Two signature rows sharing a date are far more
-            // likely to be one event recorded on two tickets than a repair that failed and returned
-            // within hours — counting them would inflate every card and produce the nonsense
-            // "a comeback 0 days after the last one". This also keeps the answer aligned with the
-            // methodology behind the 46.7% / 56.9% baselines it will be quoted against, which
-            // required a positive day gap; a card must never cite a statistic it was not computed
-            // the same way as.
-            ->where('occurred_at', '>=', $pivot->copy()->subDays($window)->toDateString())
-            ->where('occurred_at', '<', $pivot->toDateString())
-            ->when($excludeTicketId, fn ($q) => $q->where('maintenance_id', '!=', $excludeTicketId))
-            ->orderByDesc('occurred_at')
-            ->get(['id', 'maintenance_id', 'signature', 'occurred_at', 'source']);
+        // ── From the CANONICAL dataset — one row per EPISODE, not per label ──────────────────────
+        //
+        // This used to read `maintenance_signatures` directly, which returns one row per LABEL. On
+        // the live corpus a single episode reaches 54 rows (vehicle 1743, ENGINE_MECH, 2025-04-10),
+        // and since `sampleSize` below is the row count, a card built on this reported fifty-four
+        // prior episodes for a fault that happened once. That is not an imprecise number, it is a
+        // false sentence — and it was being shown to the person deciding what to do about the car.
+        //
+        // The strictly-earlier rule is preserved and now enforced by the dataset's own grain: one
+        // fault, on one car, on one day, is one row. There is no same-day pair left to exclude.
+        //
+        // Exposure is excluded when the dataset is built, which is what `qualityRelevant()` did here.
+        $rows = $this->recurrence->episodesBefore(
+            vehicleId:            $vehicleId,
+            signatures:           $signatures,
+            from:                 $pivot->copy()->subDays($window)->toDateString(),
+            before:               $pivot->toDateString(),
+            excludeMaintenanceId: $excludeTicketId,
+        );
 
         if ($rows->isEmpty()) {
             return HistoricalAnswer::empty();
@@ -100,7 +116,17 @@ class ProjectionRepairHistoryQuery implements RepairHistoryQuery
         $window = $windowDays ?? self::WINDOW_DAYS;
 
         $stats = Cache::remember(
-            "repair-intel:return-rate:{$signature}:{$window}",
+            // The VERSION and the metric contract version are both in the key. Without them a
+            // deploy would keep serving day-old answers computed under the retired definition, and
+            // the platform would disagree with itself for exactly as long as the TTL — the hardest
+            // kind of divergence to diagnose, because it heals on its own before anyone looks.
+            sprintf(
+                'repair-intel:return-rate:%s:%d:%s:m%s',
+                $signature,
+                $window,
+                self::VERSION,
+                config('metrics.recurrence.version', 'unknown'),
+            ),
             now()->addDay(),
             fn () => $this->computeReturnRate($signature, $window),
         );
@@ -213,18 +239,21 @@ class ProjectionRepairHistoryQuery implements RepairHistoryQuery
             return HistoricalAnswer::empty();
         }
 
-        $rows = MaintenanceSignature::query()
-            ->qualityRelevant()
-            ->where('vehicle_id', $vehicleId)
-            ->whereIn('signature', $signatures)
-            ->whereNotNull('occurred_at')
-            // Strictly after `from`, for the same reason findPreviousEpisodes() is strictly before its
-            // pivot: same-date rows are one event on two tickets, not a repair that failed same-day.
-            ->where('occurred_at', '>', Carbon::parse($from)->toDateString())
-            ->where('occurred_at', '<=', Carbon::parse($to)->toDateString())
-            ->when($excludeTicketId, fn ($q) => $q->where('maintenance_id', '!=', $excludeTicketId))
-            ->orderBy('occurred_at')
-            ->get(['id', 'maintenance_id', 'signature', 'occurred_at', 'source']);
+        // ── CANONICAL: one row per EPISODE ───────────────────────────────────────────────────
+        //
+        // This is comeback detection, and its answer decides whether outcome learning records a
+        // recommendation as having succeeded. Reading raw labels meant a single comeback could be
+        // counted many times over — on this corpus one episode reaches 54 rows — so a repair that
+        // failed once could be judged as having failed repeatedly.
+        //
+        // The strictly-after rule is preserved and is now inherent to the dataset's grain.
+        $rows = $this->recurrence->episodesBetween(
+            vehicleId:            $vehicleId,
+            signatures:           $signatures,
+            after:                Carbon::parse($from)->toDateString(),
+            to:                   Carbon::parse($to)->toDateString(),
+            excludeMaintenanceId: $excludeTicketId,
+        );
 
         if ($rows->isEmpty()) {
             return HistoricalAnswer::empty();
@@ -275,29 +304,34 @@ class ProjectionRepairHistoryQuery implements RepairHistoryQuery
     }
 
     /**
+     * The fleet-wide return rate for one fault, from the CANONICAL repository.
+     *
+     * ── WHAT THIS USED TO BE ─────────────────────────────────────────────────────────────────────
+     * Its own `EXISTS` self-join over raw signatures — the fifth implementation of one business
+     * question. It differed from the other four in two further ways nobody had noticed: it applied
+     * NO observation horizon, and it did not filter `is_exposure`, relying on the signature name to
+     * do that implicitly.
+     *
+     * Both are now the contract's business, not this class's. The rate this returns is the same
+     * measurement the Executive dashboard and /garages publish, narrowed to one signature.
+     *
      * @return array{n:int, returned:int, rate:float}
      */
     private function computeReturnRate(string $signature, int $window): array
     {
-        $sql = 'SELECT COUNT(*) AS n,
-                       SUM(CASE WHEN EXISTS (
-                             SELECT 1 FROM maintenance_signatures b
-                             WHERE b.vehicle_id = a.vehicle_id
-                               AND b.signature  = a.signature
-                               AND b.occurred_at >  a.occurred_at
-                               AND b.occurred_at <= DATE_ADD(a.occurred_at, INTERVAL ? DAY)
-                           ) THEN 1 ELSE 0 END) AS returned
-                FROM maintenance_signatures a
-                WHERE a.signature = ?
-                  AND a.vehicle_id IS NOT NULL
-                  AND a.occurred_at IS NOT NULL';
+        $stats = $this->recurrence->bySignature(
+            RecurrenceWindow::fromContract($window),
+            $signature,
+        );
 
-        $row = DB::selectOne($sql, [$window, $signature]);
-
-        $n        = (int) ($row->n ?? 0);
-        $returned = (int) ($row->returned ?? 0);
-
-        return ['n' => $n, 'returned' => $returned, 'rate' => $n > 0 ? $returned / $n : 0.0];
+        return [
+            'n'        => $stats->n,
+            'returned' => $stats->returned,
+            // A proportion, not a percentage — the caller's existing contract. Null rate on an empty
+            // sample collapses to 0.0 here because HistoricalAnswer carries the sample separately
+            // and every consumer already gates on it.
+            'rate'     => $stats->n > 0 ? $stats->returned / $stats->n : 0.0,
+        ];
     }
 
     /**
