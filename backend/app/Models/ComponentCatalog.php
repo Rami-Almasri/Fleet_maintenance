@@ -66,6 +66,24 @@ class ComponentCatalog extends Model
         return $this->hasMany(VehicleComponent::class, 'component_catalog_id');
     }
 
+    /**
+     * Everything else that points at this part type with a restrictOnDelete foreign key.
+     *
+     * These exist so the app can REFUSE a delete with a sentence naming what is in the way, instead
+     * of letting MySQL reject it with an integrity-constraint error the user cannot act on. Any new
+     * table that references component_catalog must be added here AND to
+     * PartsCatalogController::referenceCounts(), or deleting a part will start throwing SQL again.
+     */
+    public function warranties(): HasMany
+    {
+        return $this->hasMany(Warranty::class, 'component_catalog_id');
+    }
+
+    public function requiredParts(): HasMany
+    {
+        return $this->hasMany(MaintenanceRequiredPart::class, 'component_catalog_id');
+    }
+
     public function scopeActive(Builder $query): Builder
     {
         return $query->where('is_active', true);

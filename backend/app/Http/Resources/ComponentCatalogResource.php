@@ -39,8 +39,21 @@ class ComponentCatalogResource extends JsonResource
             'is_active' => $this->is_active,
             'notes'     => $this->notes,
 
-            // How many physical components exist of this type. Drives delete-vs-retire on the page.
+            // How many physical components exist of this type. Kept as the headline number because
+            // "fitted to N cars" is what the page shows in its In-use column.
             'usage_count' => $this->whenCounted('components', default: 0),
+
+            // Everything holding a restrictOnDelete key to this row, so the page can grey out Delete
+            // and offer Retire BEFORE the user clicks and gets a 422. The server still refuses
+            // independently — this is the courtesy, not the guard.
+            'references' => [
+                'fitted_components' => $this->whenCounted('components', default: 0),
+                'warranties'        => $this->whenCounted('warranties', default: 0),
+                'required_parts'    => $this->whenCounted('requiredParts', default: 0),
+            ],
+            'can_delete' => ($this->components_count ?? 0) === 0
+                && ($this->warranties_count ?? 0) === 0
+                && ($this->required_parts_count ?? 0) === 0,
 
             // Provenance, so the page can show what is still shipping-default and what a human owns.
             // A user-edited row is one the seeder will never touch again — worth saying out loud.

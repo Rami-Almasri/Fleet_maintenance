@@ -24,11 +24,13 @@ use Illuminate\Validation\Rule;
  *    in the app. This is one-way on purpose — there is no "give it back to the config" action,
  *    because the only thing that could mean is "discard my correction".
  *
- * 2. RETIRE, NEVER DELETE — when the type is in use. Every physical component holds a
- *    restrictOnDelete FK to its catalog row, and so does every warranty. Deleting a type that is
- *    fitted to cars would either fail at the database or, worse, orphan the history that says what
- *    those cars are made of. `destroy` therefore deletes only a type that was never used, and
- *    retires anything else — reporting honestly which of the two it did.
+ * 2. RETIRE, NEVER DELETE — when the type is in use. Three tables hold a restrictOnDelete foreign
+ *    key to a catalog row: vehicle_components, warranties and maintenance_required_parts. Deleting
+ *    a referenced type would orphan the history that says what those cars are made of, so the
+ *    database refuses it. `destroy` makes that refusal a BUSINESS answer instead of a SQL error: it
+ *    counts the references first and returns 422 naming them. Retiring is its own action
+ *    ({@see retire()}) because the user asked to delete, and quietly doing something else while
+ *    reporting success is not an answer.
  *
  * Read access is deliberately wider than write: anyone who can raise a part request needs to SEE
  * the list, or the picker is empty for exactly the people it was built for.
@@ -53,7 +55,7 @@ class PartsCatalogController extends Controller
     public function index(Request $request)
     {
         $rows = ComponentCatalog::query()
-            ->withCount('components')
+            ->withCount(['components', 'warranties', 'requiredParts'])
             ->when($request->filled('q'), fn ($q) => $q->search($request->string('q')))
             ->when($request->filled('category'), fn ($q) => $q->where('category_key', $request->string('category')))
             ->when($request->filled('tracking_mode'), fn ($q) => $q->where('tracking_mode', $request->string('tracking_mode')))
@@ -126,29 +128,62 @@ class PartsCatalogController extends Controller
     }
 
     /**
-     * Remove a part type — by retiring it if anything depends on it, by deleting it if nothing does.
+     * Delete a part type — only when nothing references it.
      *
-     * The distinction matters to the user, so the response says which happened rather than
-     * reporting a generic success. A retired type stops appearing in pickers but keeps answering
-     * "what is fitted to this car" for every component that already points at it.
+     * Three tables point at component_catalog with restrictOnDelete: vehicle_components (what is
+     * fitted to the cars), warranties (promises made about this part) and maintenance_required_parts
+     * (what inspectors asked for). Deleting a referenced row is refused BY THE DATABASE, which
+     * surfaced as a raw integrity-constraint error — a 500-shaped answer to a business question the
+     * user could have been told plainly.
+     *
+     * So the check happens here, first, and the refusal is a 422 that NAMES what is in the way and
+     * how much of it there is. "Fitted to 51 cars" is something a person can act on; SQLSTATE[23000]
+     * is not. The alternative — retiring silently instead of deleting — was worse: the user asked to
+     * delete and would have been told "done" about a row that is still there.
+     *
+     * Retiring stays available as its own deliberate action ({@see retire()}), which is what the
+     * refusal points at.
      */
     public function destroy(Request $request, ComponentCatalog $part)
     {
-        $count = $part->components()->count();
+        $references = $this->referenceCounts($part);
 
-        if ($count > 0) {
-            $part->update(['is_active' => false] + $this->editStamp($request));
-
-            return ResponseHelper::SuccessResponse(
-                new ComponentCatalogResource($part->fresh()->loadCount('components')),
-                "Retired — hidden from pickers, but kept because {$count} fitted component(s) still refer to it",
-                200
+        if ($references !== []) {
+            return ResponseHelper::FailureResponse(
+                [
+                    'references' => $references,
+                    // What the caller should do instead, as data rather than prose to parse.
+                    'can_retire' => true,
+                    'retire_url' => "/api/parts-catalog/{$part->id}/retire",
+                ],
+                sprintf(
+                    'Cannot delete "%s" — it is still referenced by %s. Retire it instead: it disappears from the pickers and the history keeps its meaning.',
+                    $part->name,
+                    $this->describeReferences($references)
+                ),
+                422
             );
         }
 
         $part->delete();
 
         return ResponseHelper::SuccessResponse(null, 'Part removed from the catalog', 200);
+    }
+
+    /**
+     * Retire a part type: hide it from every picker while every row that already points at it keeps
+     * working. This is the correct end state for a part the fleet has stopped using but once fitted.
+     * Idempotent — retiring an already-retired type is a no-op that still succeeds.
+     */
+    public function retire(Request $request, ComponentCatalog $part)
+    {
+        $part->update(['is_active' => false] + $this->editStamp($request));
+
+        return ResponseHelper::SuccessResponse(
+            new ComponentCatalogResource($part->fresh()->loadCount('components')),
+            'Retired — hidden from the pickers, and the history that refers to it is untouched',
+            200
+        );
     }
 
     /** Bring a retired type back into the pickers. */
@@ -165,6 +200,54 @@ class PartsCatalogController extends Controller
 
     // ── internals ────────────────────────────────────────────────────────────────────────────────
 
+    /**
+     * Every row that would make a delete fail, counted, keyed by what it is.
+     *
+     * MUST list every table holding a restrictOnDelete foreign key to component_catalog. A new one
+     * added without being registered here reintroduces exactly the bug this replaced: the app says
+     * "deleting…" and the database answers with an integrity-constraint error.
+     *
+     * Zero counts are dropped so an empty array means "nothing is in the way" and the caller needs
+     * no further interpretation.
+     *
+     * @return array<string, int>
+     */
+    private function referenceCounts(ComponentCatalog $part): array
+    {
+        return array_filter([
+            'fitted_components' => $part->components()->count(),
+            'warranties'        => $part->warranties()->count(),
+            'required_parts'    => $part->requiredParts()->count(),
+        ]);
+    }
+
+    /** "51 fitted components and 2 warranties" — the sentence half of the refusal. */
+    private function describeReferences(array $references): string
+    {
+        $labels = [
+            'fitted_components' => 'fitted component',
+            'warranties'        => 'warranty',
+            'required_parts'    => 'required-part line',
+        ];
+        $plurals = ['warranties' => 'warranties'];
+
+        $parts = [];
+        foreach ($references as $key => $count) {
+            $word = $count === 1
+                ? $labels[$key]
+                : ($plurals[$key] ?? $labels[$key].'s');
+            $parts[] = "{$count} {$word}";
+        }
+
+        if (count($parts) === 1) {
+            return $parts[0];
+        }
+
+        $last = array_pop($parts);
+
+        return implode(', ', $parts).' and '.$last;
+    }
+
     private function validatePayload(Request $request, ?ComponentCatalog $existing = null): array
     {
         $categories = array_column(config('maintenance_findings.categories', []), 'key');
@@ -174,7 +257,11 @@ class PartsCatalogController extends Controller
             'name_ar'       => ['nullable', 'string', 'max:160'],
             // Sent as an array by the page; each entry is one thing someone might type.
             'aliases'       => ['nullable', 'array', 'max:40'],
-            'aliases.*'     => ['string', 'max:120'],
+            // `nullable` because Laravel's ConvertEmptyStringsToNull middleware turns a blank alias
+            // row — which a UI with an empty input line sends routinely — into null. Rejecting the
+            // whole request over one empty row would be a validation error the user cannot see the
+            // cause of; the normaliser below drops blanks anyway.
+            'aliases.*'     => ['nullable', 'string', 'max:120'],
             'category_key'  => ['required', Rule::in($categories)],
             'tracking_mode' => ['required', Rule::in(ComponentCatalog::TRACKING_MODES)],
             'default_part_number'     => ['nullable', 'string', 'max:80'],
