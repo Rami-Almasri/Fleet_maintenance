@@ -82,14 +82,43 @@ read and written, the corpus edge it saw, and the metric contract version that p
 **"Never rebuilt" counts as stale.** Treating an absent record as healthy is exactly how a dead
 scheduler stays invisible.
 
-### Recommended alert
+### The alert — installed in two places, on purpose
+
+`--alert` does two things: it **notifies the maintenance managers in-app** and **exits non-zero**. It
+works whether a person or a monitor is watching, and the in-app half matters because an exit code
+only helps if something is checking for it.
+
+**1 · Laravel scheduler** — registered in `routes/console.php`, daily 06:00.
+
+> ⚠ **A watchdog inside the thing it watches is only half a watchdog.** If the scheduler itself
+> stops, this entry stops with it and the silence is indistinguishable from health. It is registered
+> anyway because it catches the far likelier failure — a rebuild that runs and *fails*, or a source
+> import that stalls.
+
+**2 · OS-level task** — the half that survives the scheduler dying:
 
 ```
-0 6 * * *  cd /path/to/backend && php artisan intelligence:rebuild-health --alert
+cd backend
+install-health-watchdog.cmd          REM run once, elevated, on the server
 ```
 
-Fires at 06:00, ninety minutes after the rebuild window, so a failed or skipped night is caught
-before anyone opens a dashboard.
+Registers a Windows Scheduled Task at 06:05, resolving PHP and the project path so it does not depend
+on `PATH` or on the working directory. Remove with `install-health-watchdog.cmd /remove`.
+
+On Linux the equivalent is:
+
+```
+5 6 * * *  cd /path/to/backend && php artisan intelligence:rebuild-health --alert
+```
+
+### Noise control
+
+The alert is **keyed by day**. A persistent outage raises once each morning rather than on every run
+— an hourly monitor would otherwise send six managers 144 notifications in a day, and an alert that
+noisy gets muted, which costs more than never having built it.
+
+`notifyByPermission()` is event-driven and does *not* deduplicate by design, so the guard lives in the
+command. Covered by `RebuildHealthAlertTest`.
 
 ---
 
@@ -134,8 +163,9 @@ than those pages rendering old analytics as current. Every backend piece exists 
 health API, and `as_of` already travelling on every `Kpi` and on the scorecard payload — but the
 frontend does not yet read them.
 
-**Until that lands, the CLI alert in §3 is the only protection.** It should be scheduled before this
-is considered operationally complete.
+**The alert now reaches people**: managers get an in-app notification, and monitors get an exit code.
+The remaining gap is passive discovery — a manager who does not read the bell will not see it on the
+page whose numbers are stale.
 
 | Piece | Status |
 |---|---|
@@ -143,6 +173,8 @@ is considered operationally complete.
 | `health()` / `anyStale()` API | ✅ |
 | CLI inspection + `--alert` exit code | ✅ |
 | `as_of` on every KPI and on the scorecard payload | ✅ |
-| **Cron alert scheduled on the server** | ❌ **do this** |
+| Laravel schedule entry (06:00, --alert) | ✅ |
+| OS-level watchdog installer | ✅ `install-health-watchdog.cmd` |
+| **Task registered on the SERVER** | ⚠️ **run the installer once, elevated** |
 | **Data Health page shows `built_at` + staleness banner** | ❌ **outstanding** |
 | **Dashboards banner when the corpus is stale** | ❌ **outstanding** |

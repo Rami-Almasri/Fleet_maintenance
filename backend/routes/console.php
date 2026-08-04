@@ -193,3 +193,21 @@ Schedule::command('intelligence:rebuild-visits')
 Schedule::command('intelligence:rebuild-recurrence')
     ->dailyAt('04:35')
     ->withoutOverlapping();
+
+// ── Freshness watchdog ──────────────────────────────────────────────────────────────────────────
+//
+// ⚠ A WATCHDOG INSIDE THE THING IT WATCHES IS ONLY HALF A WATCHDOG. If the scheduler itself stops,
+// this entry stops with it and the silence is indistinguishable from health. It is registered here
+// anyway because it catches the FAR more likely failure — a rebuild that runs and fails, or a source
+// import that stalls — and because it costs nothing.
+//
+// The other half belongs OUTSIDE Laravel: an OS-level task (Windows Task Scheduler / cron) running
+// the same command. Only that survives the scheduler dying. See
+// docs/Intelligence-Rebuild-Operations.md §3.
+//
+// 06:00 — ninety minutes after the rebuild window, so a failed or skipped night is caught before
+// anyone opens a dashboard. --alert notifies the maintenance managers AND exits non-zero, so it
+// works whether a human or a monitor is watching.
+Schedule::command('intelligence:rebuild-health --alert')
+    ->dailyAt('06:00')
+    ->withoutOverlapping();

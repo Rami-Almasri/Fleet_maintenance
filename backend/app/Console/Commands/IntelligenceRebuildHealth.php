@@ -3,7 +3,9 @@
 namespace App\Console\Commands;
 
 use App\Intelligence\Health\RebuildLedger;
+use App\Services\NotificationScanner;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Is the intelligence layer's data actually fresh?
@@ -28,12 +30,12 @@ use Illuminate\Console\Command;
 class IntelligenceRebuildHealth extends Command
 {
     protected $signature = 'intelligence:rebuild-health
-                            {--alert : Exit non-zero when any derived table is stale}
+                            {--alert : Notify the managers and exit non-zero when any derived table is stale}
                             {--json= : Write the health report to this path}';
 
     protected $description = 'Report freshness of the derived intelligence tables (recurrence, visits)';
 
-    public function handle(RebuildLedger $ledger): int
+    public function handle(RebuildLedger $ledger, NotificationScanner $notifier): int
     {
         $all   = $ledger->healthAll();
         $stale = false;
@@ -82,6 +84,8 @@ class IntelligenceRebuildHealth extends Command
             $this->newLine();
             $this->line('  Fix:  php artisan intelligence:rebuild-visits && php artisan intelligence:rebuild-recurrence');
             $this->line('  Then: check the scheduler is firing — schedule:list shows 04:20 and 04:35 daily.');
+            $this->newLine();
+            $this->notifyIfAsked($notifier, $all);
         } else {
             $this->newLine();
             $this->info('All derived intelligence tables are fresh.');
@@ -97,5 +101,79 @@ class IntelligenceRebuildHealth extends Command
         }
 
         return ($this->option('alert') && $stale) ? self::FAILURE : self::SUCCESS;
+    }
+
+    /**
+     * Reach a human, not just an exit code.
+     *
+     * An exit code only helps if something is watching for it. This platform already has a path to
+     * the people who can act — the same one the evidence-health gate uses — so a stale corpus lands
+     * in the bell as well as in a monitoring log. Belt and braces, deliberately: the failure mode
+     * here is silence, and silence is exactly what a missing exit-code watcher produces.
+     *
+     * Managers, not inspectors: the fix is a scheduling decision, and paging the people already
+     * doing the work would be noise to them.
+     *
+     * @param  array<int, array<string, mixed>>  $all
+     */
+    private function notifyIfAsked(NotificationScanner $notifier, array $all): void
+    {
+        if (! $this->option('alert')) {
+            $this->line('  <fg=gray>(run with --alert to notify the maintenance managers)</>');
+
+            return;
+        }
+
+        $staleTables = array_values(array_filter($all, fn ($h) => $h['is_stale'] ?? true));
+        $names       = implode(', ', array_column($staleTables, 'target_table'));
+        $oldest      = max(array_map(fn ($h) => (float) ($h['age_hours'] ?? 9999), $staleTables));
+        $neverBuilt  = (bool) array_filter($staleTables, fn ($h) => $h['never_rebuilt'] ?? false);
+
+        $key = 'intel:rebuild-stale:' . now()->toDateString();
+
+        // DEDUPE, BECAUSE notifyByPermission DOES NOT.
+        //
+        // That method is documented as event-driven — it fires on a real state change and delivers
+        // immediately with no dedup loop, which is right for "the ticket moved to dispatch". This is
+        // the opposite shape: a recurring check of a CONDITION that persists. Without a guard, an
+        // outage lasting a day would page six managers on every run — 144 notifications from an
+        // hourly monitor — and an alert that noisy gets muted, which costs more than never having
+        // built it.
+        //
+        // Keyed by day: silent for the rest of today, speaks again tomorrow if still broken.
+        if (DB::table('notifications')->where('data', 'like', '%"' . $key . '"%')->exists()) {
+            $this->line('  <fg=gray>already raised today — staying quiet so the alert keeps its meaning</>');
+
+            return;
+        }
+
+        $sent = $notifier->notifyByPermission('maintenance.manage', [
+            'type'     => 'intel_rebuild_stale',
+            'category' => 'maintenance',
+            'severity' => 'critical',
+            'title'    => $neverBuilt
+                ? 'Intelligence data has never been built'
+                : 'Intelligence data is out of date',
+            // Says what it MEANS, not what broke. "fault_recurrence_pairs is stale" is a sentence
+            // for us; "every garage score is showing old numbers" is one a manager can act on.
+            'body'     => $neverBuilt
+                ? 'The nightly rebuild has never completed, so garage scores and repair history are not being measured at all.'
+                : sprintf(
+                    'The nightly rebuild last completed %d hours ago. Every garage score, the fleet comeback rate and Repair Intelligence are showing figures from before then. Nothing will look broken — the numbers are simply out of date.',
+                    (int) round($oldest),
+                ),
+            'url'      => '/data-health',
+            // Keyed by DAY so a persistent outage re-raises each morning rather than either spamming
+            // hourly or being deduplicated into silence for the whole outage.
+            'key'      => $key,
+            'icon'     => 'alert',
+            'meta'     => [
+                'stale_tables' => $names,
+                'age_hours'    => round($oldest, 1),
+                'never_built'  => $neverBuilt,
+            ],
+        ]);
+
+        $this->line(sprintf('  <fg=gray>notified %d manager%s</>', $sent, $sent === 1 ? '' : 's'));
     }
 }
