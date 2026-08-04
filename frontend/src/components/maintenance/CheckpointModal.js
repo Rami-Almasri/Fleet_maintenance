@@ -104,11 +104,12 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
       setExpDate(d.monitor?.expected_on || '');
       // Prefill the date with the promise currently in force. The supervisor answers the question first
       // ("still coming back that day?"); confirming keeps this date, rescheduling replaces it.
-      setNextDate(d.monitor?.expected_on || '');
       // A car with no promised date yet has nothing to confirm — the only possible answer is to set one.
       // Neither has a car whose promised day has already gone by: that promise is spent, so the only
-      // honest answer left is a new date.
-      const spent = !d.monitor?.expected_on || d.monitor?.eta_status === 'overdue';
+      // honest answer left is a new date, and a spent date is no longer a sensible prefill.
+      const expired = d.monitor?.eta_status === 'overdue';
+      const spent = !d.monitor?.expected_on || expired;
+      setNextDate(expired ? '' : (d.monitor?.expected_on || ''));
       setAnswer(spent ? RESPONSE_RESCHEDULED : '');
     } catch (e) {
       setErr(e?.response?.data?.message || 'Failed to load checkpoints.');
@@ -153,7 +154,7 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
   const resetForm = () => {
     setAnswer(currentEta && !missed ? '' : RESPONSE_RESCHEDULED);
     setStatus(''); setDelayReason(''); setDelayReasonOther('');
-    setSummary(''); setNextDate(currentEta); setFiles([]);
+    setSummary(''); setNextDate(missed ? '' : currentEta); setFiles([]);
     if (fileRef.current) fileRef.current.value = '';
   };
 
@@ -308,8 +309,8 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
               {missed && (
                 <div className="rounded-lg bg-red-50/70 p-3 ring-1 ring-red-200">
                   <p className="text-sm font-semibold text-red-800">
-                    The car did not come back on {fmtDate(currentEta)}
-                    {daysOver > 0 && ` — ${daysOver} day(s) ago`}.
+                    The car was promised back on {fmtDate(currentEta)}
+                    {daysOver > 0 && ` — ${daysOver} day(s) ago`} and it is still in the shop.
                   </p>
                   <p className="mt-1 text-sm text-red-700">
                     That date has passed, so there is nothing left to confirm. Give the new date the car is
@@ -358,7 +359,7 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
                 <div className="grid grid-cols-1 gap-3 rounded-lg bg-amber-50/60 p-3 ring-1 ring-amber-100 sm:grid-cols-2">
                   <Input
                     label={currentEta ? 'New date the car is expected back' : 'Date the car is expected back'}
-                    required type="date" value={nextDate} onChange={(e) => setNextDate(e.target.value)}
+                    required type="date" min={todayIso} value={nextDate} onChange={(e) => setNextDate(e.target.value)}
                   />
                   <Select label="Reason it moved" required value={delayReason} onChange={(e) => setDelayReason(e.target.value)}>
                     <option value="">— Select —</option>
@@ -369,7 +370,10 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
                   )}
                   {currentEta && (
                     <p className="text-[11px] text-amber-700 sm:col-span-2">
-                      Moving the completion date from {fmtDate(currentEta)} to {nextDate && nextDate !== currentEta ? fmtDate(nextDate) : '—'}.
+                      {missed
+                        ? `Replacing the missed date ${fmtDate(currentEta)} with `
+                        : `Moving the completion date from ${fmtDate(currentEta)} to `}
+                      {nextDate && nextDate !== currentEta ? fmtDate(nextDate) : '—'}.
                       The next reminder will run one day before the new date.
                     </p>
                   )}
