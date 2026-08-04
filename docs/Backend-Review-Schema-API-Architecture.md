@@ -319,17 +319,66 @@ Mitigation status:
 
 ## 5 · Prioritised actions
 
-| # | Finding | Severity | Effort | Recommendation |
+| # | Finding | Severity | Effort | Status |
 |---|---|---|---|---|
-| S4 | `maintenances.contract_id` CASCADE contradicts a documented guarantee | **High if it fires** (0 rows exposed today) | Small | Change to `ON DELETE SET NULL` |
-| S1 | Money precision drift, incl. within `invoices` | Medium | Small | Standardise on `decimal(14,2)`; widen only |
-| S3 | 3 unindexed columns on the evidence drill-down path | Medium | Trivial | Index in next rebuild migration |
-| S2 | Missing FKs on complaints / observations / logistics | Medium | Medium | Audit orphans, then add `SET NULL` FKs |
-| A1 | `POST api/notifications/demo` ungated | Low | Trivial | Gate or restrict to `local` |
+| S4 | `maintenances.contract_id` CASCADE contradicts a documented guarantee | **High if it fires** (0 rows exposed today) | Small | ✅ **FIXED** — `b18dcd1` |
+| S3 | 3 unindexed columns on the evidence drill-down path | Medium | Trivial | ✅ **FIXED** — `b18dcd1` |
+| S1 | Money precision drift, incl. within `invoices` | Medium | Small | Open — standardise on `decimal(14,2)`; widen only |
+| S2 | Missing FKs on complaints / observations / logistics | Medium | Medium | Open — audit orphans, then add `SET NULL` FKs |
+| A1 | `POST api/notifications/demo` ungated | Low | Trivial | Open — gate or restrict to `local` |
 
-**None of these block the frontend work.** S4 and S3 are the two I would take first: S4 because a
-silent-data-loss path should not be left armed regardless of current exposure, and S3 because it is a
-defect I introduced and it costs one line per column to fix.
+**None of these block the frontend work.**
+
+### S4 / S3 — verification evidence
+
+Both migrations were applied and proven on the disposable `laravel_test` clone; the live database was
+not touched.
+
+**S4, measured both ways** — one sheet contract deleted, one `manual`-origin ticket linked to it:
+
+| Delete rule | Manual ticket | Its tasks |
+|---|---|---|
+| `CASCADE` (before) | 1 → **0** | 1 → **0** |
+| `SET NULL` (after) | 1 → **1** | 1 → **1**, `contract_id` nulled |
+
+The counterfactual was run by rolling the migration back, so the destructive behaviour is
+demonstrated rather than inferred.
+
+**S3** — `CREATE TABLE <staging> LIKE <live>` was executed directly and confirmed to inherit all three
+new indexes, which is what allows a plain migration to survive the nightly atomic `RENAME`. Had the
+rebuild used `CREATE TABLE ... AS SELECT`, indexes would **not** be copied and this would have had to
+live inside the command instead.
+
+Regression check after both: unit **559** ✅ · golden **93** ✅.
+
+---
+
+## 6 · Deployment gap — the intelligence layer has never been built on live
+
+Discovered while re-running the convergence audit, which correctly reported `NOT CONVERGED`:
+
+| Database | rebuild runs | `fault_recurrence_pairs` | `repair_visits` |
+|---|---:|---:|---:|
+| `laravel_golden` (clone) | 12 | 12,608 | 9,828 |
+| **`laravel` (live)** | **0** | **0** | **0** |
+
+Every freshness figure reported during this work was measured on the golden clone — correct, because
+live was deliberately never written to. But it means the derived tables exist on live (created by
+migration) and have **never been populated**. Verified not to be damage: no orphaned `_old` or
+`_staging` tables, and the source corpus is intact (49,487 signatures, 26,944 tickets).
+
+**Required before any intelligence surface is used against live:**
+
+```bash
+php artisan migrate                        # applies S4 + S3
+php artisan intelligence:rebuild-visits
+php artisan intelligence:rebuild-recurrence
+php artisan intelligence:rebuild-health    # expect: both tables fresh
+php artisan intelligence:convergence-audit --strict
+```
+
+This is a **write to live derived data**, so it is left for an explicit decision rather than performed
+as part of a review.
 
 ---
 
