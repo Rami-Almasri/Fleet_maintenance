@@ -25,6 +25,7 @@
 // readable in greyscale and to a colourblind reader. Cells below the sample floor are drawn empty
 // rather than tinted, because a grade we did not earn must not look like one.
 
+import { Link } from 'react-router-dom';
 import { useMemo, useState } from 'react';
 import { Tooltip } from '../ui/Tooltip';
 import { SectionCard } from '../ui/Table';
@@ -119,14 +120,15 @@ export default function DomainMatrix({ garages = [], domains = [], onPick, onEvi
             {rows.map((r) => (
               <tr key={r.vendor_id}>
                 <td className="sticky start-0 z-10 bg-white pe-3">
-                  <button
-                    type="button"
-                    onClick={() => onPick?.(r.vendor_id)}
-                    className="block w-40 truncate text-start text-sm font-medium text-slate-800 hover:text-indigo-600"
+                  {/* Straight to the profile. onPick (scroll to the card below) predates the profile
+                      page and is kept on the scoreboard, where staying on the page is the point. */}
+                  <Link
+                    to={`/intelligence/garages/${r.vendor_id}`}
+                    className="block w-40 truncate text-start text-sm font-medium text-slate-800 hover:text-indigo-600 hover:underline"
                     title={r.garage}
                   >
                     {r.garage}
-                  </button>
+                  </Link>
                   <span className="text-[10px] text-slate-400">{g('matrix.score', { n: r.score.value })}</span>
                 </td>
                 {cols.map((c) => {

@@ -25,6 +25,7 @@ import GarageScoreboard from '../components/garages/GarageScoreboard';
 import DomainMatrix from '../components/garages/DomainMatrix';
 import DomainLeaderboard from '../components/garages/DomainLeaderboard';
 import GarageCard from '../components/garages/GarageCard';
+import { useNavigate } from 'react-router-dom';
 import EvidenceDrawer from '../components/intelligence/EvidenceDrawer';
 import useEvidence from '../hooks/useEvidence';
 import FaultGarageFinder from '../components/garages/FaultGarageFinder';
@@ -70,6 +71,20 @@ export default function Garages() {
   // One drawer for the whole page. Every figure carries its own evidence id, so opening the proof
   // is the same gesture wherever the number appears — the card, the matrix cell, the leaderboard.
   const evidence = useEvidence();
+  const navigate = useNavigate();
+
+  // Comparison selection. Capped at four because the comparison table stops being readable beyond
+  // that, and because the endpoint caps there too — a UI that lets you pick six and silently drops
+  // two is worse than one that stops you.
+  const [selected, setSelected] = useState([]);
+  const toggleSelect = useCallback((vendorId) => {
+    setSelected((prev) =>
+      prev.includes(vendorId) ? prev.filter((v) => v !== vendorId) : prev.length >= 4 ? prev : [...prev, vendorId]
+    );
+  }, []);
+  const goCompare = useCallback(() => {
+    if (selected.length >= 2) navigate(`/intelligence/garages/compare?ids=${selected.join(',')}`);
+  }, [selected, navigate]);
   const byVendor = useMemo(() => Object.fromEntries(cards.map((c) => [c.vendor_id, c])), [cards]);
 
   // Jump from any chart into the garage it names. Charts that cannot be drilled into make people
@@ -153,7 +168,7 @@ export default function Garages() {
                 <FaultGarageFinder />
                 {scoreData && (
                   <>
-                    <GarageScoreboard garages={cards} fleet={fleet} onPick={pick} />
+                    <GarageScoreboard garages={cards} fleet={fleet} onPick={pick} selected={selected} onToggleSelect={toggleSelect} onCompare={goCompare} />
                     <DomainMatrix garages={cards} domains={scoreData.domains} onPick={pick} onEvidence={evidence.open} />
                     <ScorecardOrigin provenance={scoreData.provenance} fleet={scoreData.fleet} />
                   </>
