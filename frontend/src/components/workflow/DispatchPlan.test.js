@@ -1,9 +1,15 @@
-// Stage 3 — the Dispatch Plan. These lock the four layers and, more importantly, the ORDER of them:
-// the call before the plan, the plan before the impact, the evidence last and collapsed. That ordering
-// is the entire redesign; a change that quietly restores the old "evidence first" layout should fail here.
+// Stage 3 — the Dispatch Plan. These lock the ORDER the card is read in: the call, then what to
+// expect, then fault by fault, with the evidence last and collapsed. That ordering is the entire
+// redesign; a change that quietly restores the old "evidence first" layout should fail here.
+//
+// They also lock what the card DOESN'T say. The dense version printed a "Recommended dispatch"
+// eyebrow, a "/100" score, a "The plan, fault by fault" heading over three column headings, a
+// criticality weight multiplier on every fault and a greyed "vs recommended" under every figure that
+// had nothing to compare. Each of those has a test here asserting its absence, because every one of
+// them is the kind of thing that creeps back one commit at a time.
 //
 // Labels resolve against the REAL English table rather than echoing keys, so a dropped label is a
-// failing test rather than a page that renders `workflow.garageRec.dispatchPlan.plan.title`.
+// failing test rather than a page that renders `workflow.garageRec.dispatchPlan.plan.overridden`.
 
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import DispatchPlan from './DispatchPlan';
@@ -101,175 +107,64 @@ const renderPlan = (props = {}) => render(
 
 beforeEach(() => jest.clearAllMocks());
 
-test('leads with the call — one sentence naming the garage, before any evidence', async () => {
+test('the dispatch card is gone — the step no longer asserts a call at the top', async () => {
+  // Everything the deleted block locked lived on one white card: "Send all 2 faults to X", the
+  // confidence word, the one-line trade-off, the expected downtime and repairs-hold figures, the
+  // override line, and a row per fault with its coverage percentage and criticality chip. It was
+  // removed by request, so this asserts its ABSENCE — the same way the old suite asserted the absence
+  // of the eyebrow and the /100 score, and for the same reason: it creeps back one commit at a time.
   load();
-  renderPlan();
+  renderPlan({ selectedVendorId: 223 });
+  await screen.findByText('The evidence behind this call');
 
-  expect(await screen.findByText('Send all 2 faults to Deals On Wheels auto')).toBeInTheDocument();
-  // The evidence is the thing the redesign demoted: offered, but not rendered until asked for.
-  expect(screen.queryByText('At a glance')).not.toBeInTheDocument();
-  expect(screen.getByText('The evidence behind this call')).toBeInTheDocument();
-});
-
-test('an untouched form is never framed as an override', async () => {
-  // The bug this locks: the plan falls back to describing the recommendation when nothing is selected.
-  // Sharing one flag with "has the supervisor accepted?" made that fallback accuse them of a choice
-  // they had not made — "· your choice", "What your choice changes" — on a form they had not touched.
-  load();
-  renderPlan({ selectedVendorId: null });
-  await screen.findByText('The plan, fault by fault');
-
-  expect(screen.queryByText('· your choice')).not.toBeInTheDocument();
-  expect(screen.getByText('What to expect')).toBeInTheDocument();
-  expect(screen.queryByText('What your choice changes')).not.toBeInTheDocument();
-  // …and nothing claims a confirmation either, because nothing has been committed.
+  expect(screen.queryByText(/Send all 2 faults to/)).not.toBeInTheDocument();
+  expect(screen.queryByText('Strong record')).not.toBeInTheDocument();
+  expect(screen.queryByText(/Best available record for these faults/)).not.toBeInTheDocument();
+  // The "what to expect" strip, both surviving figures.
+  expect(screen.queryByText('Off the road')).not.toBeInTheDocument();
+  expect(screen.queryByText('Repairs that hold')).not.toBeInTheDocument();
+  // The fault-by-fault list: symptoms, coverage percentages, criticality words, "strongest for this".
+  expect(screen.queryByText('Engine noise')).not.toBeInTheDocument();
+  expect(screen.queryByText('Major mechanical')).not.toBeInTheDocument();
+  expect(screen.queryByText('Strongest for this')).not.toBeInTheDocument();
+  expect(screen.queryByText('84%')).not.toBeInTheDocument();
+  // And the warnings that hung off it.
+  expect(screen.queryByText(/measurably weaker on/)).not.toBeInTheDocument();
   expect(screen.queryByText(/This garage is selected/)).not.toBeInTheDocument();
 });
 
-test('a single-fault ticket does not say "all 1 faults"', async () => {
-  load({
-    ...PAYLOAD,
-    per_fault: [PAYLOAD.per_fault[0]],
-    criteria: { ...PAYLOAD.criteria, faults: ['engine'], fault_labels: ['Engine'] },
-  });
-  renderPlan();
-
-  expect(await screen.findByText('Send this fault to Deals On Wheels auto')).toBeInTheDocument();
-  expect(screen.queryByText(/all 1 faults/)).not.toBeInTheDocument();
-});
-
-test('a one-day turnaround reads as a singular', async () => {
+test('no money survives anywhere on the step', async () => {
+  // The cost tile went first, then the card that carried it. Nothing here quotes or estimates a price,
+  // and no override is priced against the recommendation either.
   load();
-  renderPlan({ selectedVendorId: 223 });   // Deals On Wheels: duration 1
-  await screen.findByText('What to expect');
+  renderPlan({ selectedVendorId: 501 });
+  await screen.findByText('The evidence behind this call');
 
-  const tile = screen.getByText('Off the road').closest('div');
-  expect(tile).toHaveTextContent('one day');
-  expect(tile).not.toHaveTextContent('1 days');
+  expect(screen.queryByText('Estimated cost')).not.toBeInTheDocument();
+  expect(screen.queryByText(/Estimated repair budget/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/AED/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/than recommended/)).not.toBeInTheDocument();
 });
 
-test('a garage that only just edges ahead is called comparable, not named as a rival', async () => {
-  // The real-world failure: Layer 0 recommended FUTURE TYRES while this column named a garage 4 points
-  // ahead — on WEAKER evidence — so the panel argued with itself. per_fault.winner ranks on fault
-  // points, the ticket-level call ranks on overall fit, and on one fault they can disagree trivially.
-  load({
-    ...PAYLOAD,
-    per_fault: [{
-      ...PAYLOAD.per_fault[0],
-      // Ahead by 4 points, and only on garage-wide history against the chosen garage's same-model record.
-      winner: { vendor_id: 501, garage: '7 CYLINDER', coverage_pct: 55, tier: 'domain', same_model: 0, at_garage: 48, confidence: 'medium', evidence: [] },
-    }],
-  });
-  renderPlan({ selectedVendorId: 223 }); // chosen is exact/84 on engine
-  await screen.findByText('The plan, fault by fault');
-
-  expect(screen.getByText('Comparable to 7 CYLINDER')).toBeInTheDocument();
-  expect(screen.queryByText(/pts better/)).not.toBeInTheDocument();
-  // …and no weak-spot warning either — the two must agree.
-  expect(screen.queryByText(/measurably weaker on/)).not.toBeInTheDocument();
-});
-
-test('a low-confidence call carries a warning, not just a grey chip', async () => {
+test('a low-confidence call no longer warns on the step — the working is in the evidence', async () => {
   load({
     ...PAYLOAD,
     primary: [{ ...PAYLOAD.primary[0], confidence: 'low', match_score: 66 }, PAYLOAD.primary[1]],
   });
   renderPlan();
+  await screen.findByText('The evidence behind this call');
 
-  expect(await screen.findByText(/Limited history behind this call/)).toBeInTheDocument();
+  expect(screen.queryByText(/Limited history behind this call/)).not.toBeInTheDocument();
 });
 
-test('the call states the recommendation without offering to commit it', async () => {
-  // There is ONE control that sets the garage — the picker below the plan. A second button that also
-  // set it, pre-filled with the engine's answer, left the supervisor accepting a call and then facing
-  // a dropdown that looked like it was asking again.
-  load();
-  const onPick = jest.fn();
-  renderPlan({ onPick });
-
-  expect(await screen.findByText('Send all 2 faults to Deals On Wheels auto')).toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: /Send to Deals On Wheels auto/ })).not.toBeInTheDocument();
-  expect(onPick).not.toHaveBeenCalled();
-});
-
-test('once the recommended garage is picked, the call says so', async () => {
-  load();
-  renderPlan({ selectedVendorId: 223 });
-
-  expect(await screen.findByText(/This garage is selected/)).toBeInTheDocument();
-});
-
-test('the plan grades every fault under the CHOSEN garage, not the best one', async () => {
-  load();
-  renderPlan({ selectedVendorId: 223 });
-  await screen.findByText('The plan, fault by fault');
-
-  // Deals On Wheels is exact on Engine but only domain on Interior — both stated, per fault.
-  const rows = screen.getAllByRole('row').slice(1); // drop the header
-  expect(rows).toHaveLength(2);
-  expect(rows[0]).toHaveTextContent('Engine noise');
-  expect(rows[0]).toHaveTextContent('84%');
-  expect(rows[1]).toHaveTextContent('Dashboard fault');
-  expect(rows[1]).toHaveTextContent('55%');
-});
-
-test('a fault someone else is better at names them and the size of the gap', async () => {
-  load();
-  renderPlan({ selectedVendorId: 223 });
-  await screen.findByText('The plan, fault by fault');
-
-  // Engine: the chosen garage IS the strongest.
-  expect(screen.getByText('Best available')).toBeInTheDocument();
-  // Interior: 7 CYLINDER is 35 points better, and the row says so.
-  expect(screen.getByText('7 CYLINDER')).toBeInTheDocument();
-  expect(screen.getByText(/35 pts better/)).toBeInTheDocument();
-});
-
-test('the weak-spot warning names the faults this choice is worse at', async () => {
-  load();
-  renderPlan({ selectedVendorId: 223 });
-
-  expect(await screen.findByText(/measurably weaker on: Dashboard fault/)).toBeInTheDocument();
-});
-
-test('the impact strip states cost, downtime and first-time-fix for the plan as it stands', async () => {
-  load();
-  renderPlan({ selectedVendorId: 223 });
-  await screen.findByText('What to expect');
-
-  expect(screen.getByText('Estimated cost')).toBeInTheDocument();
-  expect(screen.getByText('Off the road')).toBeInTheDocument();
-  const hold = screen.getByText('Repairs that hold').closest('div');
-  expect(hold).toHaveTextContent('55%');
-});
-
-test('choosing a different garage shows what the choice costs, signed by whether it is better', async () => {
-  load();
-  renderPlan({ selectedVendorId: 501 });
-  await screen.findByText('What your choice changes');
-
-  // 7 CYLINDER: 250 cheaper, a day slower, 20 points better at holding.
-  expect(screen.getByText(/−250/)).toBeInTheDocument();
-  expect(screen.getByText(/\+1\b/)).toBeInTheDocument();
-  expect(screen.getByText(/\+20/)).toBeInTheDocument();
-});
-
-test('no deltas are shown while the recommendation itself is selected', async () => {
-  load();
-  renderPlan({ selectedVendorId: 223 });
-  await screen.findByText('What to expect');
-
-  expect(screen.getAllByText('vs recommended')).toHaveLength(3);  // the label is on all three tiles…
-  expect(screen.queryByText(/^[+−]\d/)).not.toBeInTheDocument();  // …but there is nothing to compare
-});
-
-test('the evidence stays collapsed until asked for, then opens in place', async () => {
+test('the evidence is offered but stays collapsed until asked for, then opens in place', async () => {
   // In place, not on another page: sending the supervisor away to read the working would unmount the
-  // form they were filling in. The fix for "too cramped" was the modal WIDTH, not the location.
+  // form they were filling in. With the card gone this disclosure is the only place the engine's
+  // ranking is stated at all, so it has to survive.
   load();
   renderPlan({ selectedVendorId: 223 });
-  await screen.findByText('The plan, fault by fault');
 
+  expect(await screen.findByText('The evidence behind this call')).toBeInTheDocument();
   expect(screen.queryByText('At a glance')).not.toBeInTheDocument();
   fireEvent.click(screen.getByText('The evidence behind this call'));
   await waitFor(() => expect(screen.getByText('At a glance')).toBeInTheDocument());
@@ -293,12 +188,9 @@ test('a split the engine wanted is stated as advice, never as an action', async 
   expect(screen.getByText(/shown as advice, not an action/)).toBeInTheDocument();
 });
 
-test('a garage the engine never scored is called out instead of rendering a blank plan', async () => {
-  load();
-  renderPlan({ selectedVendorId: 999, garages: [{ id: 999, name: 'Brand New Garage' }] });
-
-  expect(await screen.findByText(/Brand New Garage has no recorded history/)).toBeInTheDocument();
-});
+// REMOVED with the card: an unscored garage used to be called out on the plan header ("X has no
+// recorded history"). There is no plan header any more, so it is simply a garage the evidence panel
+// has nothing to say about.
 
 test('degrades to the no-recommendation notice when nothing was scored', async () => {
   load({ ...PAYLOAD, primary: [], per_fault: [] });
@@ -333,38 +225,63 @@ test('prior repairs are offered but collapsed — the call is not buried under t
   load(withFaults());
   renderPlan();
 
-  expect(await screen.findByText('Previous Similar Repairs')).toBeInTheDocument();
+  expect(await screen.findByText('About these faults')).toBeInTheDocument();
   expect(screen.queryByText('Rough idle / misfire')).not.toBeInTheDocument();
 
-  fireEvent.click(screen.getByText('Previous Similar Repairs'));
+  fireEvent.click(screen.getByText('About these faults'));
   expect(screen.getByText('Rough idle / misfire')).toBeInTheDocument();
 });
 
-test('every fault gets its own panel, including a second one in the same category', async () => {
+test('the first click lists the faults and opens NONE of their detail', async () => {
+  // Four faults meant four knowledge cards — match scores, matched wording, co-occurrence, causes,
+  // fixes — rendered in one go. The list is the answer to "which faults"; the detail is a second ask.
   load(withFaults());
   renderPlan();
-  fireEvent.click(await screen.findByText('Previous Similar Repairs'));
+  fireEvent.click(await screen.findByText('About these faults'));
 
+  expect(screen.getByText('Rough idle / misfire')).toBeInTheDocument();
   expect(screen.getByText('Overheating')).toBeInTheDocument();
-  expect(screen.getAllByTestId('repair-intel')).toHaveLength(3);
+  expect(screen.queryAllByTestId('repair-intel')).toHaveLength(0);
+});
+
+test('opening one fault shows that fault alone, and closes the one before it', async () => {
+  load(withFaults());
+  renderPlan();
+  fireEvent.click(await screen.findByText('About these faults'));
+
+  fireEvent.click(screen.getByText('Rough idle / misfire'));
+  let panels = screen.getAllByTestId('repair-intel');
+  expect(panels).toHaveLength(1);
+  expect(panels[0]).toHaveAttribute('data-task', '41');
+
+  // A SECOND fault in the same category — the reason this block is keyed per finding rather than per
+  // category, which would have collapsed the two engine faults into one and dropped this symptom.
+  fireEvent.click(screen.getByText('Overheating'));
+  panels = screen.getAllByTestId('repair-intel');
+  expect(panels).toHaveLength(1);
+  expect(panels[0]).toHaveAttribute('data-task', '42');
+
+  // …and clicking the open one closes it again.
+  fireEvent.click(screen.getByText('Overheating'));
+  expect(screen.queryAllByTestId('repair-intel')).toHaveLength(0);
 });
 
 test('a fault that never became a task falls back to a symptom preview', async () => {
   // Without the fallback the hand-written finding would render an empty panel bound to `undefined`.
   load(withFaults());
   renderPlan();
-  fireEvent.click(await screen.findByText('Previous Similar Repairs'));
+  fireEvent.click(await screen.findByText('About these faults'));
+  fireEvent.click(screen.getByText('weird clunk i heard'));
 
-  const panels = screen.getAllByTestId('repair-intel');
-  expect(panels[0]).toHaveAttribute('data-task', '41');
-  expect(panels[2]).toHaveAttribute('data-task', '');
-  expect(panels[2]).toHaveAttribute('data-preview', '12|weird clunk i heard');
+  const panel = screen.getByTestId('repair-intel');
+  expect(panel).toHaveAttribute('data-task', '');
+  expect(panel).toHaveAttribute('data-preview', '12|weird clunk i heard');
 });
 
 test('no prior-repairs block at all when the ticket reports no faults', async () => {
   load();
   renderPlan();
-  await screen.findByText('Send all 2 faults to Deals On Wheels auto');
+  await screen.findByText('The evidence behind this call');
 
-  expect(screen.queryByText('Previous Similar Repairs')).not.toBeInTheDocument();
+  expect(screen.queryByText('About these faults')).not.toBeInTheDocument();
 });

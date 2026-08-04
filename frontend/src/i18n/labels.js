@@ -2853,9 +2853,12 @@ const en = {
     viewVehicle: 'Open vehicle history',
   },
   repairIntel: {
-    title: 'Previous Similar Repairs',
+    // Was "Previous Similar Repairs". The panel behind this header no longer lists past repairs or
+    // recommends a garage — the dispatch card above makes that call once, with the whole ticket in
+    // view. What is left is what the platform knows about the FAULTS themselves.
+    title: 'About these faults',
     // Sub-line on the assign step, where the panels are collapsed behind one header.
-    dispatchSubtitle: 'What happened the last time we repaired {n} of these faults.',
+    dispatchSubtitle: 'What we know about {n} of these faults — causes, common fixes, related faults.',
     confidence: 'Confidence',
     confidenceBand: { high: 'High', medium: 'Medium', low: 'Low' },
     likelyCause: 'Likely cause',
@@ -6110,8 +6113,8 @@ const ar = {
     viewVehicle: 'فتح سجل المركبة',
   },
   repairIntel: {
-    title: 'إصلاحات سابقة مشابهة',
-    dispatchSubtitle: 'ما حدث آخر مرة أصلحنا فيها {n} من هذه الأعطال.',
+    title: 'عن هذه الأعطال',
+    dispatchSubtitle: 'ما نعرفه عن {n} من هذه الأعطال — الأسباب والإصلاحات الشائعة والأعطال المرتبطة.',
     confidence: 'الثقة',
     confidenceBand: { high: 'عالية', medium: 'متوسطة', low: 'منخفضة' },
     likelyCause: 'السبب المرجّح',
