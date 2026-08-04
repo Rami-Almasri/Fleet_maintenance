@@ -394,6 +394,11 @@ const en = {
       title: 'Where these numbers come from',
       summary: '{graded} of {total} garage-and-area combinations have enough repairs to grade',
       fairTitle: 'How the comparison is kept fair.',
+      scopeTitle: 'Why this differs from the fleet figure.',
+      scopeBody:
+        'This page measures {page}% over {pageN} repairs that name a garage. The fleet figure elsewhere is '
+        + '{platform}% over {platformN}, because it also counts {unattributed} repairs with no garage recorded. '
+        + 'Same definition and same data — a garage is simply not compared against work no garage did.',
       col: { measure: 'Measure', source: 'Source', method: 'How it is worked out' },
       domainFloor: 'Minimum per area',
       garageFloor: 'Minimum per garage',
@@ -1009,12 +1014,16 @@ const en = {
       // its items together with و and no comma before it.
       listComma: ', ',
       listAnd: ' and ',
-      // STAGE 3 — the Dispatch Plan. Four layers: the call, the plan, the impact, the evidence.
+      // STAGE 3 — the Dispatch Plan. ONE card: the call, what to expect, fault by fault — then the
+      // evidence, collapsed. No `eyebrow`: a card with one headline does not need a label above it
+      // saying what the headline is.
       dispatchPlan: {
         call: {
-          eyebrow: 'Recommended dispatch',
           headline: 'Send all {n} faults to {garage}',
           headlineOne: 'Send this fault to {garage}',
+          // The word, not the score. "High · 90/100" asked a supervisor to grade a number they have
+          // no scale for; the score lives in the evidence with the working behind it.
+          confidence: { high: 'Strong record', medium: 'Some record', low: 'Thin record' },
           // No `accept`. The card no longer carries a button — the garage picker below is the one
           // control that sets the garage. See [[DispatchPlan]].
           confirmed: 'This garage is selected. Complete the form below to dispatch.',
@@ -1024,28 +1033,32 @@ const en = {
           title: 'The work would ideally be split',
           note: 'A ticket goes to one garage, so this is shown as advice, not an action. To split it, close this ticket into separate ones.',
         },
+        // The fault lines. No column headings any more: three headings over three columns of numbers
+        // was the densest thing on the card, and each line now reads as a phrase instead.
         plan: {
-          title: 'The plan, fault by fault',
-          overridden: '· your choice',
-          noGarage: 'No garage chosen',
-          unscored: '{garage} has no recorded history for this vehicle and these faults, so none of the figures below apply to it.',
-          colFault: 'Fault',
-          colHere: 'At this garage',
-          colBest: 'Strongest for this fault',
-          bestAlready: 'Best available',
-          noRecord: 'No record',
+          // Stated only when the supervisor has moved off the recommendation — an untouched form is
+          // never framed as an override. See [[DispatchPlan]].
+          overridden: 'Showing this plan for {garage} — your choice, not the recommendation.',
+          noGarage: 'no garage chosen',
+          unscored: '{garage} has no recorded history for this vehicle and these faults, so none of the figures here apply to it.',
+          bestAlready: 'Strongest for this',
+          noRecord: 'No record here',
           noAlternative: 'No alternative',
+          betterElsewhere: '{garage} is better at this',
           comparable: 'Comparable to {garage}',
-          gap: '{n} pts better',
           weakWarning: 'This garage is measurably weaker on: {faults}. Watch those at re-inspection.',
         },
         impact: {
-          title: 'What to expect',
-          titleOverride: 'What your choice changes',
           cost: 'Estimated cost',
           duration: 'Off the road',
           success: 'Repairs that hold',
-          vsRec: 'vs recommended',
+          // The delta, said as a sentence rather than a signed number against a "vs recommended"
+          // caption. A supervisor should not have to work out which direction is the good one.
+          more: '{n} {unit} more than recommended',
+          less: '{n} {unit} less than recommended',
+          unitAed: 'AED',
+          unitDays: 'days',
+          unitPts: 'points',
         },
         // What the job IS, as opposed to which garage should do it. Deliberately free of percentages,
         // scores and tiers — this is the block a supervisor repeats down the phone.
@@ -3583,6 +3596,11 @@ const ar = {
       title: 'من أين تأتي هذه الأرقام',
       summary: '{graded} من {total} تركيبة ورشة-ومجال لديها إصلاحات كافية للتقييم',
       fairTitle: 'كيف تبقى المقارنة عادلة.',
+      scopeTitle: 'لماذا يختلف هذا عن رقم الأسطول.',
+      scopeBody:
+        'تقيس هذه الصفحة {page}٪ على {pageN} إصلاحًا تحمل اسم كراج. رقم الأسطول في مكان آخر هو {platform}٪ على '
+        + '{platformN}، لأنه يحتسب أيضًا {unattributed} إصلاحًا بدون كراج مسجّل. التعريف نفسه والبيانات نفسها — '
+        + 'الكراج ببساطة لا يُقارن بعمل لم يقم به أي كراج.',
       col: { measure: 'المقياس', source: 'المصدر', method: 'كيف يُحتسب' },
       domainFloor: 'الحد الأدنى لكل مجال',
       garageFloor: 'الحد الأدنى لكل ورشة',
@@ -4385,9 +4403,9 @@ const ar = {
       listAnd: ' و',
       dispatchPlan: {
         call: {
-          eyebrow: 'الإسناد الموصى به',
           headline: 'أرسل الأعطال الـ{n} جميعها إلى {garage}',
           headlineOne: 'أرسل هذا العطل إلى {garage}',
+          confidence: { high: 'سجل قوي', medium: 'سجل جزئي', low: 'سجل ضعيف' },
           confirmed: 'تم اختيار هذا الكراج. أكمل النموذج أدناه للإرسال.',
           lowConfidence: 'السجل وراء هذه التوصية محدود — يُستحسن فتح الأدلة قبل الإرسال.',
         },
@@ -4396,27 +4414,25 @@ const ar = {
           note: 'التذكرة تذهب إلى كراج واحد، لذا يظهر هذا كنصيحة لا كإجراء. للتقسيم، أغلق هذه التذكرة إلى تذاكر منفصلة.',
         },
         plan: {
-          title: 'الخطة، عطلًا بعطل',
-          overridden: '· اختيارك',
+          overridden: 'هذه الخطة معروضة لـ{garage} — اختيارك، لا التوصية.',
           noGarage: 'لم يُختَر كراج',
-          unscored: 'لا يوجد لـ{garage} سجل مُسجَّل لهذه السيارة وهذه الأعطال، لذا لا ينطبق عليه أي من الأرقام أدناه.',
-          colFault: 'العطل',
-          colHere: 'في هذا الكراج',
-          colBest: 'الأقوى في هذا العطل',
-          bestAlready: 'الأفضل المتاح',
-          noRecord: 'لا سجل',
+          unscored: 'لا يوجد لـ{garage} سجل مُسجَّل لهذه السيارة وهذه الأعطال، لذا لا ينطبق عليه أي من الأرقام هنا.',
+          bestAlready: 'الأقوى في هذا',
+          noRecord: 'لا سجل هنا',
           noAlternative: 'لا بديل',
+          betterElsewhere: '{garage} أفضل في هذا',
           comparable: 'مقارب لـ{garage}',
-          gap: 'أفضل بـ{n} نقطة',
           weakWarning: 'هذا الكراج أضعف بشكل ملموس في: {faults}. راقبها عند إعادة الفحص.',
         },
         impact: {
-          title: 'المتوقَّع',
-          titleOverride: 'ما الذي يغيّره اختيارك',
           cost: 'التكلفة التقديرية',
           duration: 'خارج الخدمة',
           success: 'الإصلاحات التي تدوم',
-          vsRec: 'مقابل الموصى به',
+          more: 'أكثر بـ{n} {unit} من الموصى به',
+          less: 'أقل بـ{n} {unit} من الموصى به',
+          unitAed: 'درهم',
+          unitDays: 'يوم',
+          unitPts: 'نقطة',
         },
         outlook: {
           title: 'ما الذي سيقوم به الكراج',

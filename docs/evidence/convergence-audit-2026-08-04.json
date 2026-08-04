@@ -1,0 +1,185 @@
+{
+    "generated_at": "2026-08-04T08:48:57+00:00",
+    "metric_version": "2.0.0",
+    "canonical": {
+        "rate_pct": 46.51,
+        "n": 10595,
+        "as_of": "2026-07-29"
+    },
+    "surfaces": [
+        {
+            "surface": "Executive \u00b7 fleet comeback card",
+            "consumer": "C1 OperationalKpiService",
+            "source": "fault_recurrence_pairs (deduplicated repair events)",
+            "version": "2.0.0",
+            "n": "10,595",
+            "value": "46.51%",
+            "status": "CANONICAL",
+            "note": "exact match with repository"
+        },
+        {
+            "surface": "Executive \u00b7 first-time-fix card",
+            "consumer": "C1 OperationalKpiService",
+            "source": "fault_recurrence_pairs (deduplicated repair events)",
+            "version": "2.0.0",
+            "n": "10,595",
+            "value": "53.49%",
+            "status": "CANONICAL",
+            "note": "complement of the same measurement"
+        },
+        {
+            "surface": "\/garages \u00b7 garage cards",
+            "consumer": "C2 GarageScorecardService",
+            "source": "fault_recurrence_pairs",
+            "version": "2.0.0",
+            "n": "9,960",
+            "value": "45.2%",
+            "status": "CANONICAL",
+            "note": "170 garages compared individually, all exact"
+        },
+        {
+            "surface": "\/garages \u00b7 Garage \u00d7 Fault matrix",
+            "consumer": "C2 GarageScorecardService",
+            "source": "fault_recurrence_pairs",
+            "version": "2.0.0",
+            "n": "1,003",
+            "value": "12 domains",
+            "status": "CANONICAL",
+            "note": "same cells as the cards"
+        },
+        {
+            "surface": "\/garages \u00b7 domain leaderboards",
+            "consumer": "C2 GarageScorecardService",
+            "source": "fault_recurrence_pairs",
+            "version": "2.0.0",
+            "n": "11",
+            "value": "\u2014",
+            "status": "CANONICAL",
+            "note": "derived from the same cells"
+        },
+        {
+            "surface": "\/garages \u00b7 fleet baseline (attributed scope)",
+            "consumer": "C2 GarageScorecardService",
+            "source": "fault_recurrence_pairs",
+            "version": "2.0.0",
+            "n": "9,960",
+            "value": "45.2%",
+            "status": "CANONICAL",
+            "note": "narrower population by design \u2014 635 repairs name no garage"
+        },
+        {
+            "surface": "API \u00b7 GET Maintenance\/garage-scorecards",
+            "consumer": "C2 GarageScorecardService",
+            "source": "fault_recurrence_pairs",
+            "version": "2.0.0",
+            "n": "9,960",
+            "value": "45.2%",
+            "status": "CANONICAL",
+            "note": "same service, payload unmodified"
+        },
+        {
+            "surface": "Repair Intelligence \u00b7 signature return rate",
+            "consumer": "C5 ProjectionRepairHistoryQuery",
+            "source": "fault_recurrence_pairs",
+            "version": "v2",
+            "n": "10,595",
+            "value": "20 signatures",
+            "status": "CANONICAL",
+            "note": "all 20 signatures exact"
+        },
+        {
+            "surface": "Repair Intelligence \u00b7 prior-episode cards",
+            "consumer": "C5 ProjectionRepairHistoryQuery",
+            "source": "fault_recurrence_pairs",
+            "version": "v2",
+            "n": "10 vehicles",
+            "value": "0 duplicate days",
+            "status": "CANONICAL",
+            "note": "one episode per day, never per label"
+        },
+        {
+            "surface": "Export \u00b7 kpi:snapshot baselines",
+            "consumer": "C1 OperationalKpiService",
+            "source": "kpi_snapshots",
+            "version": "2.0.0",
+            "n": "2 snapshots",
+            "value": "baseline-recurrence-v2-convergence",
+            "status": "CANONICAL",
+            "note": "every snapshot stamped with the definition that produced it"
+        },
+        {
+            "surface": "Job \u00b7 intelligence:rebuild-recurrence",
+            "consumer": "C6 RecurrencePairBuilder",
+            "source": "maintenance_signatures \u2192 fault_recurrence_pairs",
+            "version": "2.0.0",
+            "n": "12,608",
+            "value": "fresh",
+            "status": "CANONICAL",
+            "note": "last rebuilt 2026-08-04T08:43:02+00:00"
+        },
+        {
+            "surface": "Job \u00b7 RecordRecommendationOutcomes",
+            "consumer": "C5 ProjectionRepairHistoryQuery",
+            "source": "fault_recurrence_pairs (via occurrencesBetween)",
+            "version": "v2",
+            "n": "0 events",
+            "value": "\u2014",
+            "status": "CANONICAL",
+            "note": "comeback detection deduplicated \u2014 one comeback counts once"
+        },
+        {
+            "surface": "Cache \u00b7 repair-intel return rates",
+            "consumer": "C5 ProjectionRepairHistoryQuery",
+            "source": "cache key",
+            "version": "2.0.0",
+            "n": "0",
+            "value": "version-aware",
+            "status": "CANONICAL",
+            "note": "key carries query + contract version, so a deploy cannot serve a retired definition"
+        },
+        {
+            "surface": "Cache \u00b7 garage scorecard report",
+            "consumer": "C2 GarageScorecardService",
+            "source": "cache key",
+            "version": "2.0.0",
+            "n": "0",
+            "value": "versioned key",
+            "status": "CANONICAL",
+            "note": "flushed by forget(); key is version-bumped on shape change"
+        },
+        {
+            "surface": "Routing \u00b7 GarageOutcomeForecaster",
+            "consumer": "C3 GarageOutcomeForecaster",
+            "source": "maintenance_signatures (legacy)",
+            "version": "1.0.0",
+            "n": "\u2014",
+            "value": "\u2014",
+            "status": "EXEMPT",
+            "note": "C3 \u2014 feeds the assign step and Garage Finder. Repointing moves where cars are physically sent, so it needs its own routing-impact proposal (Phase 2)."
+        },
+        {
+            "surface": "Routing \u00b7 ForecastCalibration",
+            "consumer": "C4 ForecastCalibration",
+            "source": "maintenance_signatures (legacy)",
+            "version": "1.0.0",
+            "n": "\u2014",
+            "value": "\u2014",
+            "status": "EXEMPT",
+            "note": "C4 \u2014 checks C3's claims. Must move WITH C3 or calibration would check a forecast against a different definition than the one that produced it (Phase 2)."
+        },
+        {
+            "surface": "Vehicle timeline \u00b7 vehicleHistory()",
+            "consumer": "C5 ProjectionRepairHistoryQuery",
+            "source": "maintenance_signatures (raw, by design)",
+            "version": "n\/a",
+            "n": "\u2014",
+            "value": "\u2014",
+            "status": "EXEMPT",
+            "note": "RETRIEVAL, not a measurement. Returns the full timeline INCLUDING exposure damage, which the canonical dataset excludes by contract \u2014 chronic-vehicle and repair-vs-replace questions need accident history. Computes no rate."
+        }
+    ],
+    "quarantined": {
+        "app\/Services\/Garage\/GarageOutcomeForecaster.php": "C3 \u2014 feeds the assign step and Garage Finder. Repointing moves where cars are physically sent, so it needs its own routing-impact proposal (Phase 2).",
+        "app\/Services\/Garage\/ForecastCalibration.php": "C4 \u2014 checks C3's claims. Must move WITH C3 or calibration would check a forecast against a different definition than the one that produced it (Phase 2)."
+    }
+}

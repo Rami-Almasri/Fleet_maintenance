@@ -149,7 +149,7 @@ export default function Garages() {
                   <>
                     <GarageScoreboard garages={cards} fleet={fleet} onPick={pick} />
                     <DomainMatrix garages={cards} domains={scoreData.domains} onPick={pick} />
-                    <ScorecardOrigin provenance={scoreData.provenance} />
+                    <ScorecardOrigin provenance={scoreData.provenance} fleet={scoreData.fleet} />
                   </>
                 )}
               </div>
@@ -161,7 +161,7 @@ export default function Garages() {
                   <>
                     <DomainLeaderboard leaderboard={scoreData.leaderboard} domains={scoreData.domains} onPick={pick} />
                     <DomainMatrix garages={cards} domains={scoreData.domains} onPick={pick} />
-                    <ScorecardOrigin provenance={scoreData.provenance} />
+                    <ScorecardOrigin provenance={scoreData.provenance} fleet={scoreData.fleet} />
                   </>
                 )}
               </div>

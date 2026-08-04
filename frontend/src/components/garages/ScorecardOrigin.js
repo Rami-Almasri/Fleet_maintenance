@@ -15,12 +15,27 @@ import Icon from '../ui/Icon';
 import { num } from '../../lib/format';
 import { useI18n } from '../../i18n/I18nContext';
 
-export default function ScorecardOrigin({ provenance }) {
+export default function ScorecardOrigin({ provenance, fleet }) {
   const { t } = useI18n();
   const g = (k, v) => t(`garages.${k}`, v);
   const [open, setOpen] = useState(false);
 
   if (!provenance) return null;
+
+  // THE TWO NUMBERS THAT LOOK LIKE A CONTRADICTION AND ARE NOT.
+  //
+  // This page says 45.2%. The Executive dashboard says 46.5%. Same definition, same data, same
+  // window — different POPULATION: 635 repairs name no garage, and a garage cannot be compared
+  // against an average that includes work no garage did.
+  //
+  // Explaining that here is not optional politeness. Two dashboards disagreeing by a point is
+  // exactly what makes someone stop trusting both, and they will notice it long before they find
+  // the document that would have explained it.
+  const scopeDiffers =
+    fleet &&
+    fleet.platform_comeback_pct != null &&
+    fleet.comeback_pct != null &&
+    fleet.platform_comeback_pct !== fleet.comeback_pct;
 
   return (
     <div className="rounded-2xl border border-slate-200/60 bg-white shadow-soft">
@@ -46,6 +61,19 @@ export default function ScorecardOrigin({ provenance }) {
             <span className="font-semibold text-slate-700">{g('origin.fairTitle')} </span>
             {provenance.fair_comparison}
           </p>
+
+          {scopeDiffers && (
+            <p className="rounded-xl bg-amber-50 px-3 py-2.5 text-xs leading-relaxed text-amber-900 ring-1 ring-inset ring-amber-200">
+              <span className="font-semibold">{g('origin.scopeTitle')} </span>
+              {g('origin.scopeBody', {
+                page: fleet.comeback_pct,
+                pageN: num(fleet.comeback_n),
+                platform: fleet.platform_comeback_pct,
+                platformN: num(fleet.platform_comeback_n),
+                unattributed: num(fleet.unattributed_n),
+              })}
+            </p>
+          )}
 
           <div className="overflow-x-auto">
             <table className="w-full min-w-[34rem] text-xs">
