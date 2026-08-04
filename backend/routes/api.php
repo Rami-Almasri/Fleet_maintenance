@@ -155,6 +155,10 @@ Route::middleware('auth:sanctum')->prefix('parts-catalog')->controller(\App\Http
     Route::get('/', 'index')->middleware('permission:parts.view|components.view|maintenance.view');
     Route::post('/', 'store')->middleware('permission:components.manage');
     Route::post('/{part}', 'update')->middleware('permission:components.manage');          // POST like Vendor/FindingKeyword
+    // Retire and restore are the pair that matter operationally: a part type is almost never
+    // deleted (anything ever fitted, warranted or asked for is referenced forever), so retiring is
+    // the real "stop offering this" action and DELETE is reserved for a row created by mistake.
+    Route::post('/{part}/retire', 'retire')->middleware('permission:components.manage');   // hide from pickers
     Route::post('/{part}/restore', 'restore')->middleware('permission:components.manage'); // un-retire
     Route::delete('/{part}', 'destroy')->middleware('permission:components.manage');       // retires when in use
 });
