@@ -31,6 +31,15 @@ return Application::configure(basePath: dirname(__DIR__))
             \App\Http\Middleware\EnsureUserActive::class,
             \App\Http\Middleware\RecordUserAction::class,
         ]);
+
+        // There is no server-rendered login page — the React SPA owns sign-in — so the named
+        // route `login` does not exist. Laravel still installs a default guest redirect of
+        // `fn () => route('login')` whenever web routes are registered, and that closure runs
+        // INSIDE Authenticate::unauthenticated(), i.e. before the exception reaches the
+        // handler below. It threw RouteNotFoundException, which replaced the
+        // AuthenticationException and surfaced as a logged 500 instead of a 401. Redirect
+        // guests nowhere: the AuthenticationException then survives intact for the renderer.
+        $middleware->redirectGuestsTo(fn () => null);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         // Any exception that bubbles uncaught out of an API route is shaped through the SAME unified
@@ -43,6 +52,14 @@ return Application::configure(basePath: dirname(__DIR__))
             // that shape. Everything else on an API route flows through the unified envelope.
             if ($e instanceof \Illuminate\Validation\ValidationException) {
                 return null;
+            }
+
+            // Answer every guest request with the 401 envelope, whatever the path or headers.
+            // Laravel's fallback for this exception is `redirect()->guest(… ?? route('login'))`,
+            // and this application has no `login` route to build — reaching that fallback is a
+            // guaranteed 500. There is no HTML area to redirect to, so JSON is the honest answer.
+            if ($e instanceof \Illuminate\Auth\AuthenticationException) {
+                return \App\Helpers\ResponseHelper::fromException($e);
             }
 
             if ($request->is('api/*') || $request->expectsJson()) {

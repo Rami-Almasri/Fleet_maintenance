@@ -30,6 +30,13 @@ export default function Login() {
       // `msg` may be a string ("Invalid credentials") OR a Laravel validation bag
       // ({ email: [...], password: [...] }). Flatten the bag to its first message so we
       // never render an object as a React child.
+      // No `response` at all means the request never reached the API (backend down,
+      // wrong port, DNS). Saying "check your credentials" there sends people hunting
+      // for a password problem that doesn't exist — name the real cause instead.
+      if (!err.response) {
+        setError(t('login.unreachable'));
+        return;
+      }
       let msg = err.response?.data?.msg;
       if (msg && typeof msg === 'object') msg = Object.values(msg).flat()[0];
       setError(msg || t('login.failed'));
