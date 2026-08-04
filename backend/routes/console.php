@@ -166,3 +166,30 @@ Schedule::command('intelligence:record-outcomes')
 Schedule::command('intelligence:evidence-health --promote --alert')
     ->weeklyOn(1, '04:00')
     ->withoutOverlapping();
+
+// ── Fleet Intelligence materialised tables ──────────────────────────────────────────────────────
+//
+// Two derived tables carry the whole intelligence platform: `repair_visits` collapses maintenance
+// EVENTS into real garage VISITS (only 23% of same-day groups are a single row, so counting raw
+// rows as repairs overstates volume by ~2×), and `fault_recurrence_pairs` answers "when did this
+// fault next come back?" — the number behind every garage quality judgement.
+//
+// ORDER MATTERS: recurrence reads the same corpus visits does and is sequenced after it so a
+// half-built night never mixes one table's view of the data with the other's. Both are placed after
+// om:sync (03:00), import:vehicle-status (03:15) and rebuild-signatures (03:05), so they see the
+// day's rows and the day's fault labels.
+//
+// Both are FULL rebuilds into a staging table, validated before an atomic swap: if validation fails
+// the previous known-good table is still serving. A stale number is recoverable; a silently wrong
+// one is not.
+//
+// ⚠ The scheduler is dead on dev machines and unverified on the server. Both commands are designed
+// to be run by hand, and Data Health surfaces `built_at` so a scheduler that stops firing shows up
+// as ageing data rather than as numbers that quietly drift.
+Schedule::command('intelligence:rebuild-visits')
+    ->dailyAt('04:20')
+    ->withoutOverlapping();
+
+Schedule::command('intelligence:rebuild-recurrence')
+    ->dailyAt('04:35')
+    ->withoutOverlapping();
