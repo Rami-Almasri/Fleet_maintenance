@@ -11,7 +11,6 @@ import Modal from '../ui/Modal';
 import Button from '../ui/Button';
 import { Textarea, Select, Input } from '../ui/Field';
 import CheckpointTimeline from './CheckpointTimeline';
-import RepairIntelligencePanel from '../knowledge/RepairIntelligencePanel';
 import { fmtDate } from '../../lib/format';
 import {
   STATUS_OPTIONS, DELAY_REASONS, RESPONSE_CONFIRMED, RESPONSE_RESCHEDULED,
@@ -107,7 +106,10 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
       // ("still coming back that day?"); confirming keeps this date, rescheduling replaces it.
       setNextDate(d.monitor?.expected_on || '');
       // A car with no promised date yet has nothing to confirm — the only possible answer is to set one.
-      setAnswer(d.monitor?.expected_on ? '' : RESPONSE_RESCHEDULED);
+      // Neither has a car whose promised day has already gone by: that promise is spent, so the only
+      // honest answer left is a new date.
+      const spent = !d.monitor?.expected_on || d.monitor?.eta_status === 'overdue';
+      setAnswer(spent ? RESPONSE_RESCHEDULED : '');
     } catch (e) {
       setErr(e?.response?.data?.message || 'Failed to load checkpoints.');
     } finally {
@@ -136,8 +138,20 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
   const rescheduling = answer === RESPONSE_RESCHEDULED;
   const submittedDate = rescheduling ? nextDate : currentEta;
 
+  // The promised day has already gone by and the car is still in the shop. "Is it still coming back on
+  // 19 Jul?" is unanswerable once 19 Jul is in the past — there is nothing left to confirm, so the
+  // question changes from "does the promise hold?" to "what is the new promise?". Date fact, not chase
+  // state: eta_status is computed from the date alone, so it stays true after today's answer is filed.
+  const missed = !!currentEta && data?.monitor?.eta_status === 'overdue';
+  const daysOver = Number(data?.monitor?.days_over || 0);
+  // A replacement promise cannot itself be in the past.
+  const todayIso = useMemo(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }, []);
+
   const resetForm = () => {
-    setAnswer(currentEta ? '' : RESPONSE_RESCHEDULED);
+    setAnswer(currentEta && !missed ? '' : RESPONSE_RESCHEDULED);
     setStatus(''); setDelayReason(''); setDelayReasonOther('');
     setSummary(''); setNextDate(currentEta); setFiles([]);
     if (fileRef.current) fileRef.current.value = '';
@@ -161,7 +175,13 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
     if (!answer) { setErr('Answer the question: is the car still coming back on the promised date?'); return; }
     if (!submittedDate) { setErr('Set the date the car is expected back.'); return; }
     if (rescheduling && currentEta && nextDate === currentEta) {
-      setErr('Pick the NEW date the car is expected back — or answer "Yes" to confirm the current one.');
+      setErr(missed
+        ? `${fmtDate(currentEta)} has already passed. Pick the new date the car is expected back.`
+        : 'Pick the NEW date the car is expected back — or answer "Yes" to confirm the current one.');
+      return;
+    }
+    if (rescheduling && nextDate && nextDate < todayIso) {
+      setErr('The new date is in the past. Pick the date the car is actually expected back.');
       return;
     }
     if (rescheduling && !delayReason) { setErr('Select a reason for the changed completion date.'); return; }
@@ -283,8 +303,28 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
           {/* Submit form — a progress update, not a classification. The status is derived from the ETA. */}
           {canSubmit ? (
             <form onSubmit={submit} className="space-y-4 rounded-xl border border-slate-200 p-4">
-              {/* The daily question, asked outright. Everything below follows from the answer. */}
-              {currentEta && (
+              {/* The promised day came and went. Nothing to confirm, so no Yes/No — the form states the
+                  miss and asks the one question that is still open: when IS it coming back? */}
+              {missed && (
+                <div className="rounded-lg bg-red-50/70 p-3 ring-1 ring-red-200">
+                  <p className="text-sm font-semibold text-red-800">
+                    The car did not come back on {fmtDate(currentEta)}
+                    {daysOver > 0 && ` — ${daysOver} day(s) ago`}.
+                  </p>
+                  <p className="mt-1 text-sm text-red-700">
+                    That date has passed, so there is nothing left to confirm. Give the new date the car is
+                    coming back and the reason it moved.
+                  </p>
+                  <p className="mt-1 text-[11px] text-red-600/90">
+                    If the car is already back, don't file a date here — close it on the maintenance board
+                    so the ticket stops being chased.
+                  </p>
+                </div>
+              )}
+
+              {/* The daily question, asked outright — only while the promised day is still ahead of us.
+                  Everything below follows from the answer. */}
+              {currentEta && !missed && (
                 <div>
                   <p className="text-sm font-semibold text-slate-700">
                     Is the car still coming back on {fmtDate(currentEta)}?
@@ -372,14 +412,11 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
             <CheckpointTimeline checkpoints={data?.checkpoints || []} canManage={canManage} onDelete={removeCheckpoint} />
           </div>
 
-          {/* Repair intelligence per fault — the SAME reusable panel used in the drawer (read-only). */}
-          {data?.faults?.length > 0 && (
-            <div className="space-y-2">
-              {data.faults.map((f) => (
-                <RepairIntelligencePanel key={f.id} taskId={f.id} />
-              ))}
-            </div>
-          )}
+          {/* No repair intelligence here on purpose. The checkpoint asks one question — is the car still
+              coming back on the promised date — and it is asked AFTER dispatch, when the garage choice
+              and the likely cause are already decided. "Previous Similar Repairs" answers a question
+              nobody is asking at this point, and repeating it per fault buried the actual answer form.
+              It still lives where the decision is made: DispatchPlan and TicketActionModal. */}
         </div>
       )}
     </Modal>
