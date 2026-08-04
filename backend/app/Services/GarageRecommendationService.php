@@ -932,8 +932,12 @@ class GarageRecommendationService
             'components'     => $components,
             'fault_points'   => $faultPoints,
             'redistributed'  => count($applicable) < count($components),
+            // Plain enough to read without decoding. "Points were redistributed over the rest" is an
+            // accurate description of the arithmetic and an alarming one to a supervisor, who reads it
+            // as something having gone wrong rather than as the score simply being out of what we could
+            // actually measure. See [[operational-language-over-engine-vocabulary]].
             'budget_note'    => count($applicable) < count($components)
-                ? 'Some factors could not be measured for this ticket; their points were redistributed over the rest.'
+                ? 'We could not measure everything for this car, so the score is out of what we could measure.'
                 : null,
         ];
     }
@@ -1082,7 +1086,12 @@ class GarageRecommendationService
             $parts[] = round((1 - $comeback) * 100) . "% re-inspection pass rate ({$failures} of {$attempts} came back)";
         } else {
             $quality = $unknown;
-            $parts[] = 'comeback rate not measured (' . $attempts . ' concluded re-inspections)';
+            // NAMES THE RE-INSPECTION SOURCE, not "comeback rate". The card above this one already
+            // quotes a comeback figure from the repair corpus — a far larger source — so a clause
+            // reading "comeback rate not measured" sat directly under "66% first-time fix rate" and
+            // read as the panel contradicting itself. Two different measurements need two different
+            // names, or the reader concludes the whole card is unreliable.
+            $parts[] = 'no re-inspection results recorded here yet';
         }
 
         // Turnaround, relative to the fleet median. Faster than the fleet = full credit.
@@ -1096,7 +1105,7 @@ class GarageRecommendationService
             $parts[] = round($avg, 1) . ' days average repair (fleet ' . round($median, 1) . ')';
         } else {
             $duration = $unknown;
-            $parts[] = 'repair duration not measured';
+            $parts[] = 'no repair times recorded here yet';
         }
 
         $credit = (float) ($s['volume_share'] ?? 0.50) * $volume

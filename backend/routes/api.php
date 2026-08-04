@@ -799,6 +799,10 @@ Route::middleware(['auth:sanctum', 'permission:maintenance.view'])->get('Mainten
 Route::middleware(['auth:sanctum', 'permission:maintenance.view'])->get('Maintenance/reasons', [MaintenanceController::class, 'reasons']);
 // Garage directory + performance (delays, on-time rate, spend, cars in now)
 Route::middleware(['auth:sanctum', 'permission:maintenance.view'])->get('Maintenance/garages', [MaintenanceController::class, 'garages']);
+// Garage scorecards — score, per-domain strengths and problems, and the leaderboard per repair area.
+// Split from the directory above because it reads the whole repair corpus and is cached; the
+// directory is live state and must stay fast. See GarageScorecardController.
+Route::middleware(['auth:sanctum', 'permission:maintenance.view'])->get('Maintenance/garage-scorecards', [\App\Http\Controllers\GarageScorecardController::class, 'index']);
 
 // Workshop events CRUD — the dashboard owning the garage log (origin = 'manual'); the
 // Google-Sheet import is now an optional, non-destructive sync. Reads return synced +
@@ -836,11 +840,11 @@ Route::middleware(['auth:sanctum', 'permission:insights.view'])->prefix('Oversig
     Route::get('/severity-review', 'severityReview');
     Route::get('/misdiagnoses', 'misdiagnoses'); // faults the inspector called that a supervisor overruled
     Route::get('/resolved-transfers', 'resolvedTransfers'); // car moved to another garage with all faults already fixed
+    Route::get('/checkpoint-compliance', 'checkpointCompliance'); // supervisor reminded a car is due back, never answered
 });
 
 // Severity Review write action — a supervisor's Quality-Control decision on an under-graded ticket
 // (upgrade the grade, or keep it and dismiss the recommendation). A grading change, so it needs the
-    Route::get('/checkpoint-compliance', 'checkpointCompliance'); // supervisor reminded a car is due back, never answered
 // stronger maintenance.manage permission, not the read-only insights.view of the surface above.
 Route::middleware(['auth:sanctum', 'permission:maintenance.manage'])->prefix('Oversight')
     ->controller(\App\Http\Controllers\WorkflowOversightController::class)->group(function () {

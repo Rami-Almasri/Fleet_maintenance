@@ -161,6 +161,9 @@ const en = {
     signIn: 'Sign in',
     signingIn: 'Signing in…',
     failed: 'Login failed. Check your credentials.',
+    // Shown when the request never reached the API at all. Distinct from `failed`,
+    // which blames the credentials — a dead backend is not a wrong password.
+    unreachable: 'Cannot reach the server. Is the backend running?',
     footer: '© {year} Faster · Fleet Maintenance',
     chips: { vehicles: 'Vehicles', maintenance: 'Maintenance', contracts: 'Contracts', dataHealth: 'Data Health' },
   },
@@ -258,18 +261,146 @@ const en = {
   },
   garages: {
     title: 'Garages',
-    subtitle: 'Track every garage’s workload, delays and reliability — and act on cars stuck too long.',
+    subtitle: 'Who is good at what, where each garage has a problem, and what is sitting in every workshop right now.',
     board: 'Maintenance board',
     emptyTitle: 'No garage activity',
     emptyMessage: 'Once maintenance visits have a garage assigned, they’ll show here.',
     carsHereNow: 'Cars here now',
     recentCars: 'Recent cars handled',
     lateBy: '+{n} late',
-    kpi: { garages: 'Garages', inNow: 'Cars in garages now', overdue: 'Overdue now' },
+    askFinder: 'Ask which garage suits a specific car and fault',
+    scoreUnavailable: 'The garage record could not be loaded, so scores and repair-area comparisons are unavailable. Live workload below is unaffected.',
+    tab: { quality: 'Who is good at what', areas: 'By repair area', directory: 'Every garage' },
+    kpi: {
+      garages: 'Garages', inNow: 'Cars in garages now', overdue: 'Overdue now',
+      comeback: 'Fleet repeat rate',
+      comebackHint: 'Repairs that came back within 90 days, over {n} repairs',
+      scored: 'Garages rated',
+      scoredHint: 'The rest have too few repairs to judge',
+    },
     badge: { inGarage: '{n} in garage', overdue: '{n} overdue', onTime: '{pct}% on-time' },
     stat: {
       jobs: 'Total jobs', inNow: 'In garage now', lateReturns: 'Late returns',
       avgDelay: 'Avg delay', totalSpent: 'Total spent',
+      comeback: 'Repeat repairs',
+      comebackHint: 'The fleet averages {exp}% on the same mix of work. Based on {n} repairs here.',
+      turnaround: 'Days per repair',
+      turnaroundHint: 'The fleet averages {exp} days on the same mix of work. Based on {n} timed repairs.',
+      lateHint: 'Shown as a fact, never scored — the expected return date is unreliable in the records.',
+    },
+    score: {
+      label: 'Rating',
+      meaning: '50 = exactly what the fleet averages',
+      boardTitle: 'Garage rating',
+      boardSubtitle: 'Measured against what the fleet averages on the same mix of work. Fleet repeat rate {pct}% over {n} repairs.',
+      noneScored: 'No garage has enough completed repairs to be rated yet.',
+      unscored: '{n} garages are not rated',
+      unscoredWhy: 'They have too few repairs we can attribute and follow up on. That is not a bad result — it is no result, and it is shown as one.',
+      band: { high: 'strong evidence', medium: 'some evidence', low: 'thin evidence' },
+      legend: { better: 'Better than the fleet', average: 'About the same', worse: 'Worse than the fleet', midline: 'Fleet average' },
+    },
+    matrix: {
+      title: 'Strengths and problems by repair area',
+      subtitle: 'How far each garage sits from the fleet in every area — the question an overall rating hides.',
+      empty: 'Not enough repairs yet to compare garages area by area.',
+      simple: 'Simple', numbers: 'Numbers',
+      cell: { good: 'Good', ok: 'OK', weak: 'Weak' },
+      keySimple: 'Read across a row to see what a garage is good at. “Good” means repairs in that area come back less often here than at other garages; “Weak” means they come back more often. Blank means too few repairs to judge.',
+      keyNumbers: 'Each number is how far this garage sits from the fleet in that area, in points of repeat-repair rate. Below zero is better — fewer repairs come back. Blank means too few repairs to judge.',
+      garage: 'Garage',
+      fleetPct: 'fleet {pct}%',
+      score: 'rating {n}',
+      legendTitle: 'Repeat repairs vs the fleet:',
+      legend: { better: 'fewer come back', same: 'about the same', worse: 'more come back', thin: 'too few repairs' },
+      readingRule: 'Each cell compares this garage to the fleet IN THAT AREA, not to the fleet overall — so a tyre shop is not marked down for a fault type that recurs more than average everywhere.',
+      // ONE NUMBER PER SENTENCE. This used to carry six (17, 100, 90, 43, 26, 30) and was a
+      // paragraph to parse for one cell of a grid. The exact percentages live in the Numbers view
+      // and in the area table on each garage card.
+      // COUNTED REPAIRS, ONE PER LINE. This used to be a single sentence carrying six figures
+      // (17, 100, 90, 43, 26, 30) — a paragraph to parse for one cell of a grid.
+      tip: {
+        none: '{garage} has no recorded {area} work.',
+        head: '{area} at {garage}',
+        tail: 'Repairs here {cmp}.',
+      },
+    },
+    leaderboard: {
+      title: 'Best and worst by repair area',
+      subtitle: 'Pick an area to see who has the record for it.',
+      empty: 'Not enough repairs in this area to rank garages.',
+      best: 'Fewest repeat repairs', worst: 'Most repeat repairs',
+      over: 'of {n}',
+      fleetRate: 'Fleet {pct}%',
+      comparedAcross: 'across {n} garages with enough repairs to compare',
+      footnote: 'This is the record, not a routing decision — it knows nothing about the car, how urgent the fault is, the garage’s queue or the price. Use “Which garage for this fault?” above when you have a car in hand.',
+    },
+    chip: { weakAt: 'Problem with {area}', strongAt: 'Strong on {area}' },
+    // The comparison, as a ratio in words. Derived from the GRADE first and the ratio second, so a
+    // cell coloured "OK" can never be captioned "less than half as often".
+    cmp: {
+      halfLess: 'come back less than half as often as at other garages',
+      muchLess: 'come back much less often than at other garages',
+      less: 'come back less often than at other garages',
+      same: 'come back about as often as at other garages',
+      more: 'come back more often than at other garages',
+      muchMore: 'come back much more often than at other garages',
+      twiceMore: 'come back about twice as often as at other garages',
+      wayMore: 'come back more than twice as often as at other garages',
+    },
+    // What happened to a set of repairs, in whole cars. One fact per line.
+    outcome: {
+      total: '{n} repairs',
+      held: '{n} never came back',
+      back90: '{n} came back within three months',
+      back30: '{n} came back within a month',
+      typical: 'usually about {d} days before it came back',
+    },
+    headline: {
+      unrated: 'Not enough completed repairs to judge this garage yet.',
+      weakest: 'Weakest on {area} — {back} of its {n} repairs came back within three months.',
+      alsoStrong: 'Strongest on {area}.',
+      strongest: 'Strongest on {area} — only {back} of its {n} repairs came back within three months.',
+      overall: 'No single area stands out, but repairs here {cmp}. From {n} repairs.',
+      flat: 'No area stands out either way — this garage does about as well as the others on the work it takes on. From {n} repairs.',
+    },
+    grade: {
+      strong: 'strong', on_par: 'on par', weak: 'problem',
+      thin: 'too few repairs', not_graded_exposure: 'not graded',
+    },
+    area: {
+      tip: 'Repairs here {cmp}.',
+      breakdown: 'Repair areas ({n})',
+      share: '{pct}% of its work',
+      rankOf: '{rank} of {of}',
+      gradedOn: '({n} rated)',
+      gradedHint: 'The repeat-repair figure is worked out from {n} of these {total} jobs. The rest are damage or rim work, which is left out because it comes back when a car gets scraped, not when a repair fails.',
+      footnote: 'Damage and rim work is counted as volume but never graded — it comes back because cars get scraped, not because the repair failed.',
+      col: {
+        area: 'Repair area', jobs: 'Jobs', happened: 'What happened', comeback: 'Come back', fleet: 'Fleet',
+        days: 'Days', rank: 'Rank', verdict: 'Verdict',
+      },
+    },
+    finder: {
+      title: 'Which garage for this fault?',
+      subtitle: 'The same answer the assign step gives — before there is a ticket.',
+      full: 'Full Garage Finder',
+      modelPlaceholder: 'Model (optional)',
+      submit: 'Find the best garage',
+      needFault: 'Pick at least one fault.',
+      modelHint: 'Adding the model sharpens the answer.',
+      readOnly: 'Read-only. A car is still routed at the assign step, where the decision is recorded against a ticket.',
+    },
+    origin: {
+      title: 'Where these numbers come from',
+      summary: '{graded} of {total} garage-and-area combinations have enough repairs to grade',
+      fairTitle: 'How the comparison is kept fair.',
+      col: { measure: 'Measure', source: 'Source', method: 'How it is worked out' },
+      domainFloor: 'Minimum per area',
+      garageFloor: 'Minimum per garage',
+      material: 'Counts as a difference',
+      vocabulary: 'Fault vocabulary',
+      repairs: '{n} repairs',
+      points: '{n} points',
     },
   },
   settings: {
@@ -1017,6 +1148,16 @@ const en = {
         // going to. A green tick on a garage the Send button won't use is the contradiction this whole
         // reconciliation exists to remove.
         strongestHere: 'Strongest record for this repair: {garage}',
+        // Used INSTEAD of "Recommended" when NO garage in the fleet has ever done this repair. A
+        // suggestion made on general record is a different claim from a recommendation made on
+        // evidence, and a green tick over "we have never seen this garage repair this fault" reads
+        // as the system inventing experience it does not have.
+        suggested: 'Suggested: {garage}',
+        otherOption: 'Other option: {garage}',
+        noHistoryTitle: 'No garage has repaired this before',
+        noHistoryBody: 'Nothing in the repair history matches this fault, so there is nothing to compare garages on. Pick the garage on the ticket as you normally would.',
+        showSuggestions: 'Suggest one anyway',
+        hideSuggestions: 'Hide suggestions',
         pickDisplaced: '{garage} has a clearly stronger record for this particular repair than the garage this ticket is heading to. Worth sending this fault here instead.',
         pickAbsent: 'The garage this ticket is heading to has never done this repair. {garage} has the strongest record for it.',
         noAlternative: 'No other garage has a usable record for this repair, so there is nothing to compare against.',
@@ -1037,8 +1178,10 @@ const en = {
         repairedNever: 'We have never seen this garage repair this fault.',
         onModel: '{n} of those were on a {model}.',
         onModelNone: 'None of those were on a {model}.',
-        onModelGeneric: '{n} of those were on the same model.',
-        onModelNoneGeneric: 'None of those were on the same model.',
+        // No `onModelGeneric` / `onModelNoneGeneric`. They were the no-model-supplied fallbacks, and
+        // `same_model` is zero by construction when no model was asked — so the "none" variant fired
+        // on every card as a finding that could never be true, and the other was unreachable. The
+        // model line is now simply omitted; there is no fact to state when the question wasn't asked.
 
         // How long the car is off the road.
         takesAbout: 'The repair usually takes about {d}.',
@@ -1059,19 +1202,28 @@ const en = {
         // panel is "Predicted first-time resolution" — a repairs-HOLD number — while this sentence used to
         // count only the failures, so the two read as opposing claims about the same garage and left the
         // supervisor to work out 100 − x. {s} and {c} are the two sides of one measurement; they sum to 100.
-        holds: '{s}% first-time fix rate — {c}% needed the same repair again within 3 months.',
+        // JUDGED AGAINST THE FLEET, and the baseline travels in the sentence. The old wording graded a
+        // garage against a fixed 25% comeback while the fleet's own rate is about 40%, so it opened by
+        // calling the recommended garage bad on a figure that was better than average. Every one of
+        // these carries the fleet number beside the garage's, so the reader can judge it themselves.
+        holdsBetter: '{s}% of repairs here hold first time — better than the fleet’s {fs}%.',
+        holdsSame: '{s}% of repairs here hold first time — about the same as the fleet’s {fs}%.',
+        holdsWorse: '{s}% of repairs here hold first time, below the fleet’s {fs}% — {c}% needed the same repair again within 3 months.',
+        // Used only when we have no fleet baseline to compare against: state it, don't grade it.
+        holdsPlain: '{s}% of repairs here hold first time; {c}% needed the same repair again within 3 months.',
         holdsRarely: 'Repairs here almost always hold — cars practically never need this repair again within 3 months.',
-        returns: 'Only a {s}% first-time fix rate — {c}% needed the same repair again within 3 months.',
         holdsFleet: 'This garage hasn\'t done enough of this work for us to say whether its repairs last. Across the fleet the first-time fix rate is {s}%, with a {c}% comeback rate within 3 months.',
         holdsRarelyFleet: 'This garage hasn\'t done enough of this work for us to say whether its repairs last. Across the fleet, repairs almost always hold — cars practically never come back within 3 months.',
         holdsUnknown: 'We can\'t yet tell whether repairs here last.',
-        // The same measurement in whole cars, kept underneath the percentage rather than instead of it.
-        holdsFraction: 'About {h} in 10 stayed fixed, {n} in 10 came back.',
 
         // What it costs, and how much of a claim about THIS garage the price really is.
         costs: 'Expect to pay about AED {n}.',
         costFaultNote: 'Based on {n} past repairs of this kind here.',
         costGarageNote: 'Based on this garage\'s other work, not this repair specifically.',
+        // The same caveat for turnaround and durability. Without it a card could open with "we have
+        // never seen this garage repair this fault" and then quote a repair time, a hold rate and a
+        // price as if all three were about that repair — see scopeNote() in FaultDecision.js.
+        garageWideNote: 'Based on all work at this garage, not this repair specifically.',
         costFleetNote: 'This is the fleet-wide average — this garage has no price of its own yet.',
         costUnknown: 'We have no pricing history for this garage.',
 
@@ -1093,9 +1245,12 @@ const en = {
         // arithmetic is only visible to someone reading PHP is the black box the whole panel exists to
         // remove, and it is worse when every operational figure on screen argues the other way.
         score: {
-          title: 'How this garage scored',
+          // Phrased as an offer to look, not as a verdict already delivered. The block behind it is
+          // collapsed by default — see ScoreCard.
+          title: 'How this was scored',
           total: 'Total score',
-          notMeasured: 'not measurable here',
+          outOf: '{n} of {max}',
+          notMeasured: 'not part of this score',
           // Said out loud whenever it is true. The score weighs every fault on the ticket, so on a
           // three-fault car it is NOT a verdict on the fault this card is about, and letting the reader
           // assume otherwise is the same failure as hiding it.
@@ -3179,6 +3334,7 @@ const ar = {
         'diagnostic-review': { name: 'المراجعة التشخيصية', desc: 'بوابة جودة لخطورة الأعطال — أبقِ التقييم أو ارفعه، مع عرض المبرّرات.' },
         'mis-diagnosis': { name: 'التشخيص الخاطئ', desc: 'أعطال وُسمت لاحقًا بأنها غير صحيحة — أثر التشخيص الخاطئ المدقَّق.' },
         'transferred-faults-fixed': { name: 'محوَّلة — والأعطال مُصلَحة', desc: 'سيارات نُقلت وكل أعطالها مُصلَحة — كل تحويل موثَّق ومسجَّل.' },
+        'checkpoint-compliance': { name: 'الالتزام بنقاط المتابعة', desc: 'مشرفون جاءهم تذكير بأن السيارة مستحقة الرجوع ولم يؤكّدوا تاريخًا ولم يذكروا سببًا.' },
         'data-health': { name: 'سلامة البيانات', desc: 'جودة البيانات الإجمالية — السجلات الناقصة وتعارضات الحالة.' },
         'intelligence-center': { name: 'مركز الذكاء', desc: 'ما الذي يعرفه النظام ومدى ثقته به — جاهزية الأدلة، ومعدّل ضبط الجودة، وقرارات الترقية، وما الذي يعيق كل قدرة.' },
         'mileage-fuel': { name: 'المسافات والوقود', desc: 'كل أدوات العدّاد والوقود — المسافة مقابل كيلومترات العقد، والتسرّب، وتدقيق السلسلة.' },
@@ -3208,6 +3364,7 @@ const ar = {
     signIn: 'تسجيل الدخول',
     signingIn: 'جارٍ تسجيل الدخول…',
     failed: 'فشل تسجيل الدخول. تحقّق من بياناتك.',
+    unreachable: 'تعذّر الوصول إلى الخادم. تأكّد من تشغيل الخادم الخلفي.',
     footer: '© {year} Faster · صيانة الأساطيل',
     chips: { vehicles: 'المركبات', maintenance: 'الصيانة', contracts: 'العقود', dataHealth: 'سلامة البيانات' },
   },
@@ -3301,18 +3458,138 @@ const ar = {
   },
   garages: {
     title: 'الورش',
-    subtitle: 'تابع عبء العمل والتأخيرات والموثوقية لكل ورشة — وتصرّف حيال السيارات العالقة مدة طويلة.',
+    subtitle: 'من يجيد ماذا، وأين تكمن مشكلة كل ورشة، وما الموجود في كل ورشة الآن.',
     board: 'لوحة الصيانة',
     emptyTitle: 'لا يوجد نشاط ورش',
     emptyMessage: 'بمجرد إسناد ورشة لزيارات الصيانة، ستظهر هنا.',
     carsHereNow: 'السيارات الموجودة الآن',
     recentCars: 'سيارات جرى التعامل معها مؤخرًا',
     lateBy: 'متأخرة {n}',
-    kpi: { garages: 'الورش', inNow: 'السيارات في الورش الآن', overdue: 'المتأخرة الآن' },
+    askFinder: 'اسأل عن الورشة المناسبة لسيارة وعطل محددين',
+    scoreUnavailable: 'تعذّر تحميل سجل الورش، لذا التقييمات ومقارنات مجالات الإصلاح غير متاحة. عبء العمل الحيّ في الأسفل غير متأثر.',
+    tab: { quality: 'من يجيد ماذا', areas: 'حسب مجال الإصلاح', directory: 'كل الورش' },
+    kpi: {
+      garages: 'الورش', inNow: 'السيارات في الورش الآن', overdue: 'المتأخرة الآن',
+      comeback: 'نسبة تكرار الأعطال',
+      comebackHint: 'إصلاحات عادت خلال ٩٠ يومًا، من أصل {n} إصلاح',
+      scored: 'الورش المُقيّمة',
+      scoredHint: 'البقية لديها إصلاحات أقل من أن نحكم عليها',
+    },
     badge: { inGarage: '{n} في الورشة', overdue: '{n} متأخرة', onTime: '{pct}٪ في الموعد' },
     stat: {
       jobs: 'إجمالي الأعمال', inNow: 'في الورشة الآن', lateReturns: 'إعادات متأخرة',
       avgDelay: 'متوسط التأخير', totalSpent: 'إجمالي الإنفاق',
+      comeback: 'الإصلاحات المتكررة',
+      comebackHint: 'متوسط الأسطول {exp}٪ على نفس مزيج الأعمال. بناءً على {n} إصلاح هنا.',
+      turnaround: 'الأيام لكل إصلاح',
+      turnaroundHint: 'متوسط الأسطول {exp} يوم على نفس مزيج الأعمال. بناءً على {n} إصلاح موقّت.',
+      lateHint: 'يُعرض كحقيقة ولا يدخل التقييم — تاريخ الإعادة المتوقع غير موثوق في السجلات.',
+    },
+    score: {
+      label: 'التقييم',
+      meaning: '٥٠ = تمامًا كمتوسط الأسطول',
+      boardTitle: 'تقييم الورش',
+      boardSubtitle: 'مقيسًا على متوسط الأسطول لنفس مزيج الأعمال. نسبة تكرار الأعطال في الأسطول {pct}٪ من أصل {n} إصلاح.',
+      noneScored: 'لا توجد ورشة لديها إصلاحات مكتملة كافية للتقييم بعد.',
+      unscored: '{n} ورشة غير مُقيّمة',
+      unscoredWhy: 'لديها إصلاحات موثّقة أقل من أن نتتبعها. هذه ليست نتيجة سيئة — إنها لا نتيجة، وتُعرض كذلك.',
+      band: { high: 'أدلة قوية', medium: 'أدلة متوسطة', low: 'أدلة ضعيفة' },
+      legend: { better: 'أفضل من الأسطول', average: 'قريب من المتوسط', worse: 'أسوأ من الأسطول', midline: 'متوسط الأسطول' },
+    },
+    matrix: {
+      title: 'نقاط القوة والمشكلات حسب مجال الإصلاح',
+      subtitle: 'كم تبتعد كل ورشة عن الأسطول في كل مجال — وهو ما يخفيه التقييم العام.',
+      empty: 'لا توجد إصلاحات كافية بعد لمقارنة الورش مجالًا بمجال.',
+      simple: 'مبسّط', numbers: 'أرقام',
+      cell: { good: 'جيد', ok: 'عادي', weak: 'ضعيف' },
+      keySimple: 'اقرأ الصف أفقيًا لترى ما تجيده الورشة. «جيد» تعني أن الإصلاحات في ذلك المجال تعود أقل هنا مقارنةً ببقية الورش؛ «ضعيف» تعني أنها تعود أكثر. والفراغ يعني أن الإصلاحات أقل من أن نحكم عليها.',
+      keyNumbers: 'كل رقم يوضح كم تبتعد هذه الورشة عن الأسطول في ذلك المجال، بنقاط نسبة تكرار الإصلاح. ما دون الصفر أفضل — أي عودة أقل للإصلاحات. والفراغ يعني إصلاحات أقل من أن نحكم عليها.',
+      garage: 'الورشة',
+      fleetPct: 'الأسطول {pct}٪',
+      score: 'تقييم {n}',
+      legendTitle: 'الإصلاحات المتكررة مقابل الأسطول:',
+      legend: { better: 'عودة أقل', same: 'قريب من المتوسط', worse: 'عودة أكثر', thin: 'إصلاحات قليلة' },
+      readingRule: 'كل خانة تقارن هذه الورشة بالأسطول في ذلك المجال تحديدًا، لا بالأسطول إجمالًا — فلا تُخصم نقاط ورشة إطارات بسبب نوع عطل يتكرر أكثر من المتوسط في كل مكان.',
+      tip: {
+        none: 'لا يوجد لدى {garage} أعمال مسجّلة في {area}.',
+        head: '{area} لدى {garage}',
+        tail: 'الإصلاحات هنا {cmp}.',
+      },
+    },
+    leaderboard: {
+      title: 'الأفضل والأسوأ حسب مجال الإصلاح',
+      subtitle: 'اختر مجالًا لترى من يملك السجل فيه.',
+      empty: 'لا توجد إصلاحات كافية في هذا المجال لترتيب الورش.',
+      best: 'الأقل تكرارًا للأعطال', worst: 'الأكثر تكرارًا للأعطال',
+      over: 'من {n}',
+      fleetRate: 'الأسطول {pct}٪',
+      comparedAcross: 'عبر {n} ورشة لديها إصلاحات كافية للمقارنة',
+      footnote: 'هذا هو السجل، لا قرار توجيه — فهو لا يعرف شيئًا عن السيارة ولا درجة إلحاح العطل ولا طابور الورشة ولا السعر. استخدم «أي ورشة لهذا العطل؟» بالأعلى عندما تكون السيارة بين يديك.',
+    },
+    chip: { weakAt: 'مشكلة في {area}', strongAt: 'قوي في {area}' },
+    cmp: {
+      halfLess: 'تعود بأقل من نصف معدل بقية الورش',
+      muchLess: 'تعود أقل بكثير من بقية الورش',
+      less: 'تعود أقل من بقية الورش',
+      same: 'تعود بنفس معدل بقية الورش تقريبًا',
+      more: 'تعود أكثر من بقية الورش',
+      muchMore: 'تعود أكثر بكثير من بقية الورش',
+      twiceMore: 'تعود بنحو ضعف معدل بقية الورش',
+      wayMore: 'تعود بأكثر من ضعف معدل بقية الورش',
+    },
+    outcome: {
+      total: '{n} إصلاح',
+      held: '{n} لم تعد أبدًا',
+      back90: '{n} عادت خلال ثلاثة أشهر',
+      back30: '{n} عادت خلال شهر',
+      typical: 'عادةً نحو {d} يومًا قبل أن تعود',
+    },
+    headline: {
+      unrated: 'لا توجد إصلاحات مكتملة كافية للحكم على هذه الورشة بعد.',
+      weakest: 'الأضعف في {area} — {back} من أصل {n} إصلاح عادت خلال ثلاثة أشهر.',
+      alsoStrong: 'والأقوى في {area}.',
+      strongest: 'الأقوى في {area} — {back} فقط من أصل {n} إصلاح عادت خلال ثلاثة أشهر.',
+      overall: 'لا يبرز مجال بعينه، لكن الإصلاحات هنا {cmp}. من {n} إصلاح.',
+      flat: 'لا يبرز أي مجال في الاتجاهين — أداء هذه الورشة قريب من غيرها في العمل الذي تتولاه. من {n} إصلاح.',
+    },
+    grade: {
+      strong: 'قوي', on_par: 'مطابق للمتوسط', weak: 'مشكلة',
+      thin: 'إصلاحات قليلة', not_graded_exposure: 'غير مُقيَّم',
+    },
+    area: {
+      tip: 'الإصلاحات هنا {cmp}.',
+      breakdown: 'مجالات الإصلاح ({n})',
+      share: '{pct}٪ من أعمالها',
+      rankOf: '{rank} من {of}',
+      gradedOn: '({n} مُقيَّمة)',
+      gradedHint: 'رقم تكرار الإصلاح محسوب من {n} من أصل {total} عمل. الباقي أعمال أضرار أو جنوط، وهي مستبعدة لأنها تتكرر عند خدش السيارة لا عند فشل الإصلاح.',
+      footnote: 'أعمال الأضرار والجنوط تُحتسب كحجم عمل ولا تُقيَّم — فهي تتكرر لأن السيارات تتعرض للخدش، لا لأن الإصلاح فشل.',
+      col: {
+        area: 'مجال الإصلاح', jobs: 'الأعمال', happened: 'ماذا حدث', comeback: 'تعود', fleet: 'الأسطول',
+        days: 'الأيام', rank: 'الترتيب', verdict: 'الحكم',
+      },
+    },
+    finder: {
+      title: 'أي ورشة لهذا العطل؟',
+      subtitle: 'نفس الإجابة التي تعطيها خطوة الإسناد — قبل وجود تذكرة.',
+      full: 'باحث الورش الكامل',
+      modelPlaceholder: 'الطراز (اختياري)',
+      submit: 'ابحث عن أفضل ورشة',
+      needFault: 'اختر عطلًا واحدًا على الأقل.',
+      modelHint: 'إضافة الطراز تجعل الإجابة أدق.',
+      readOnly: 'للعرض فقط. توجيه السيارة يبقى في خطوة الإسناد، حيث يُسجَّل القرار على التذكرة.',
+    },
+    origin: {
+      title: 'من أين تأتي هذه الأرقام',
+      summary: '{graded} من {total} تركيبة ورشة-ومجال لديها إصلاحات كافية للتقييم',
+      fairTitle: 'كيف تبقى المقارنة عادلة.',
+      col: { measure: 'المقياس', source: 'المصدر', method: 'كيف يُحتسب' },
+      domainFloor: 'الحد الأدنى لكل مجال',
+      garageFloor: 'الحد الأدنى لكل ورشة',
+      material: 'يُعتبر فرقًا',
+      vocabulary: 'مفردات الأعطال',
+      repairs: '{n} إصلاح',
+      points: '{n} نقطة',
     },
   },
   settings: {
@@ -3322,7 +3599,6 @@ const ar = {
       title: 'المظهر',
       subtitle: 'اضبط شكل Faster وطريقة عرضه على جهازك',
       theme: 'السمة',
-        'checkpoint-compliance': { name: 'الالتزام بنقاط المتابعة', desc: 'مشرفون جاءهم تذكير بأن السيارة مستحقة الرجوع ولم يؤكّدوا تاريخًا ولم يذكروا سببًا.' },
       themeDesc: 'الحالية {theme} — بدّل بين الواجهة النهارية والليلية.',
       light: 'Platinum (فاتحة)', dark: 'Cockpit (داكنة)',
       lightShort: 'Platinum', darkShort: 'Cockpit',
@@ -4220,6 +4496,12 @@ const ar = {
         recommended: 'الموصى به: {garage}',
         alternative: 'أفضل بديل: {garage}',
         strongestHere: 'أقوى سجل لهذا الإصلاح: {garage}',
+        suggested: 'مقترح: {garage}',
+        otherOption: 'خيار آخر: {garage}',
+        noHistoryTitle: 'لم تنفّذ أي ورشة هذا الإصلاح من قبل',
+        noHistoryBody: 'لا يوجد في سجل الإصلاحات ما يطابق هذا العطل، فلا يوجد ما تُقارَن عليه الورش. اختر الورشة على التذكرة كالمعتاد.',
+        showSuggestions: 'اقترح واحدة على أي حال',
+        hideSuggestions: 'إخفاء المقترحات',
         pickDisplaced: '{garage} لديه سجل أقوى بوضوح لهذا الإصلاح تحديدًا من الكراج الذي تتجه إليه هذه التذكرة. يستحق إرسال هذا العطل إليه بدلًا من ذلك.',
         pickAbsent: 'الكراج الذي تتجه إليه هذه التذكرة لم ينفّذ هذا الإصلاح من قبل. {garage} لديه أقوى سجل له.',
         noAlternative: 'لا يوجد كراج آخر له سجل صالح لهذا الإصلاح، فلا شيء للمقارنة به.',
@@ -4239,8 +4521,6 @@ const ar = {
         repairedNever: 'لم نرَ هذا الكراج يصلح هذا العطل من قبل.',
         onModel: '{n} منها كانت على {model}.',
         onModelNone: 'لا شيء منها كان على {model}.',
-        onModelGeneric: '{n} منها كانت على نفس الموديل.',
-        onModelNoneGeneric: 'لا شيء منها كان على نفس الموديل.',
 
         takesAbout: 'يستغرق الإصلاح عادةً نحو {d}.',
         takesAboutFleet: 'لا نملك أزمنة إصلاح من هذا الكراج — على مستوى الأسطول يستغرق هذا الإصلاح نحو {d}.',
@@ -4248,17 +4528,19 @@ const ar = {
         sameDayFleet: 'لا نملك أزمنة إصلاح من هذا الكراج — على مستوى الأسطول تعود السيارة عادةً في نفس اليوم.',
         timeUnknown: 'لا نعرف كم يستغرق هذا الكراج في هذا الإصلاح.',
 
-        holds: 'نسبة الإصلاح من المرة الأولى {s}% — و{c}% احتاجت الإصلاح نفسه مجددًا خلال 3 أشهر.',
+        holdsBetter: '{s}% من الإصلاحات هنا تنجح من المرة الأولى — أفضل من {fs}% على مستوى الأسطول.',
+        holdsSame: '{s}% من الإصلاحات هنا تنجح من المرة الأولى — قريب من {fs}% على مستوى الأسطول.',
+        holdsWorse: '{s}% من الإصلاحات هنا تنجح من المرة الأولى، أقل من {fs}% على مستوى الأسطول — و{c}% احتاجت الإصلاح نفسه مجددًا خلال 3 أشهر.',
+        holdsPlain: '{s}% من الإصلاحات هنا تنجح من المرة الأولى؛ و{c}% احتاجت الإصلاح نفسه مجددًا خلال 3 أشهر.',
         holdsRarely: 'الإصلاحات هنا تدوم دائمًا تقريبًا — لا تكاد السيارات تحتاج هذا الإصلاح مجددًا خلال 3 أشهر.',
-        returns: 'نسبة الإصلاح من المرة الأولى {s}% فقط — و{c}% احتاجت الإصلاح نفسه مجددًا خلال 3 أشهر.',
         holdsFleet: 'لم ينجز هذا الكراج ما يكفي من هذا العمل لنقول إن إصلاحاته تدوم. على مستوى الأسطول نسبة الإصلاح من المرة الأولى {s}%، ونسبة العودة {c}% خلال 3 أشهر.',
         holdsRarelyFleet: 'لم ينجز هذا الكراج ما يكفي من هذا العمل لنقول إن إصلاحاته تدوم. على مستوى الأسطول، الإصلاحات تدوم دائمًا تقريبًا — لا تكاد السيارات تعود خلال 3 أشهر.',
         holdsUnknown: 'لا نستطيع بعد تحديد ما إذا كانت الإصلاحات هنا تدوم.',
-        holdsFraction: 'نحو {h} من كل 10 بقيت مُصلحة، و{n} من كل 10 عادت.',
 
         costs: 'توقّع دفع نحو {n} درهم.',
         costFaultNote: 'استنادًا إلى {n} إصلاح سابق من هذا النوع هنا.',
         costGarageNote: 'استنادًا إلى أعمال الكراج الأخرى، لا إلى هذا الإصلاح تحديدًا.',
+        garageWideNote: 'استنادًا إلى كل أعمال هذا الكراج، لا إلى هذا الإصلاح تحديدًا.',
         costFleetNote: 'هذا متوسط الأسطول — لا يملك هذا الكراج سعرًا خاصًا به بعد.',
         costUnknown: 'لا نملك سجل أسعار لهذا الكراج.',
 
@@ -4274,9 +4556,10 @@ const ar = {
         },
 
         score: {
-          title: 'كيف حصل هذا الكراج على درجته',
+          title: 'كيف احتُسبت هذه الدرجة',
           total: 'الدرجة النهائية',
-          notMeasured: 'غير قابل للقياس هنا',
+          outOf: '{n} من {max}',
+          notMeasured: 'غير داخل في هذه الدرجة',
           ticketWide: 'هذه الدرجة تغطي كل الأعطال الـ{n} في هذه التذكرة، لا هذا الإصلاح وحده.',
           comp: {
             fault_matching:     'الخبرة بالعطل',

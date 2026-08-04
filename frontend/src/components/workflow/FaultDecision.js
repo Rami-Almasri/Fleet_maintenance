@@ -20,6 +20,7 @@
 // the material differences are all arrive from App\Services\Garage\PerFaultRecommender as reason codes.
 // This module only chooses the sentence — see [[reason-code-contract]].
 
+import { useState } from 'react';
 import { days } from './format';
 
 const CRIT_STYLE = {
@@ -44,29 +45,65 @@ function priceFor(g) {
   return null;
 }
 
-/** How often this garage has actually done this repair, and how much of that was on this car's model. */
+/**
+ * How often this garage has actually done this repair, and how much of that was on this car's model.
+ *
+ * THE MODEL LINE IS OMITTED WHEN NO MODEL WAS ASKED ABOUT.
+ *
+ * It used to fall back to "None of those were on the same model." — which reads as a gap in the
+ * garage's experience and is nothing of the kind. `same_model` is only ever incremented against a
+ * model that was actually supplied (GarageRecommendationService::scoreRows keys it on
+ * `$modelL !== null`), so with no model in the query it is zero BY CONSTRUCTION, for every garage,
+ * always. The sentence could never have been true, and on the Garage Finder — where the model is
+ * optional — it was printed on every card as if it were a finding.
+ *
+ * Nothing replaces it. There is no fact here to state: the question was never asked.
+ */
 function historyLines(g, model, gr) {
   const n = g.at_garage || 0;
   if (n === 0) return [{ text: gr('plain.repairedNever') }];
 
   const lines = [{ text: n === 1 ? gr('plain.repairedOnce') : gr('plain.repairedTimes', { n }) }];
+  if (!model) return lines;
+
   const sm = g.same_model || 0;
-  if (model) {
-    lines.push({ text: sm > 0 ? gr('plain.onModel', { n: sm, model }) : gr('plain.onModelNone', { model }) });
-  } else {
-    lines.push({ text: sm > 0 ? gr('plain.onModelGeneric', { n: sm }) : gr('plain.onModelNoneGeneric') });
-  }
+  lines.push({ text: sm > 0 ? gr('plain.onModel', { n: sm, model }) : gr('plain.onModelNone', { model }) });
+
   return lines;
 }
 
-/** How long the car is off the road — with the fleet fallback stated, never merely implied. */
+/**
+ * THE SCOPE CAVEAT, for any figure that is about the GARAGE rather than about THIS REPAIR.
+ *
+ * The forecaster degrades down a ladder — garage+fault → garage → fleet — and only the bottom rung
+ * used to announce itself. The middle one was silent, which produced the card that got questioned:
+ *
+ *     • We have never seen this garage repair this fault.
+ *     • The repair usually takes about one day.
+ *     • 60% of repairs here hold first time — about the same as the fleet's 60%.
+ *     • Expect to pay about AED 865.
+ *
+ * Every line after the first is the garage's OVERALL record, borrowed because there is no record of
+ * this fault to read. Only the price said so (`costGarageNote`), because cost was the one measure
+ * whose ladder had been written out in full. The reader is left to conclude either that the first
+ * line is wrong or that the system is guessing — and it was neither.
+ *
+ * Comeback has NO fault-level grain at all (GarageOutcomeForecaster only ever computes it per
+ * garage), so this caveat is the normal case for durability, not an edge case.
+ */
+function scopeNote(stat, gr) {
+  return stat?.basis === 'garage' ? gr('plain.garageWideNote') : null;
+}
+
+/** How long the car is off the road — with the fallback stated, never merely implied. */
 function durationLine(g, gr) {
   const d = g.duration_days;
   if (!d || d.value == null || d.basis === 'unavailable') return { text: gr('plain.timeUnknown') };
   const fleet = d.basis === 'fleet';
+  const note = scopeNote(d, gr);
   // A same-day median is a real measurement, but "about same day" is not a sentence.
-  if (d.value < 0.5) return { text: gr(fleet ? 'plain.sameDayFleet' : 'plain.sameDay') };
-  return { text: gr(fleet ? 'plain.takesAboutFleet' : 'plain.takesAbout', { d: days(d.value, gr) }) };
+  if (d.value < 0.5) return { text: gr(fleet ? 'plain.sameDayFleet' : 'plain.sameDay'), note };
+  return { text: gr(fleet ? 'plain.takesAboutFleet' : 'plain.takesAbout', { d: days(d.value, gr) }), note };
 }
 
 /**
@@ -75,30 +112,49 @@ function durationLine(g, gr) {
  * The measurement underneath is a 90-day recurrence rate, so the sentence is bounded by that window on
  * purpose — "comes back after about 40 days" would be a claim the data cannot make.
  *
+ * IT IS JUDGED AGAINST THE FLEET, NOT AGAINST A ROUND NUMBER. This line used to read "Only a 66%
+ * first-time fix rate" for anything above a hardcoded 25% comeback — and the fleet's own comeback rate
+ * is about 40%. So the panel opened by disparaging the garage it was recommending, on a figure that was
+ * in fact BETTER than the fleet average, and every garage in the fleet read as bad. A quality figure
+ * with no baseline beside it cannot be judged by the reader, so the sentence carries the baseline.
+ *
  * THE PERCENTAGE IS THE PRIMARY FIGURE. This line exists to be compared against the identical line on
  * the garage next to it, and "8 in 10" against "6 in 10" makes the reader do arithmetic before they can
- * rank two numbers that were percentages to begin with. So the percentage leads and the fraction stays
- * underneath for whoever prefers to think in whole cars.
+ * rank two numbers that were percentages to begin with.
  *
- * BOTH halves are named, holding side first, because this sentence sits on the same screen as the
- * "Predicted first-time resolution" figure — which counts the repairs that HELD. A line counting only
- * the ones that came back reads as a second, contradictory verdict on the same garage. `s` is derived
- * from the rounded `c` rather than from the raw complement, so the two always sum to 100 on screen.
+ * The "about N in 10 stayed fixed" restatement is GONE. Once the sentence carries the fleet baseline it
+ * already holds two numbers to compare, and a third rounding of the same measurement underneath it was
+ * the line readers pointed at as noise. Two readings of one number are not two facts.
+ *
+ * `s` is derived from the rounded `c` so the two always sum to 100 on screen.
  */
-function durabilityLine(g, gr) {
+const MATERIAL_PTS = 8;   // below this, "better" and "worse" are noise — say "about the same"
+
+function durabilityLine(g, gr, fleet) {
   const cb = g.comeback_pct;
   if (!cb || cb.value == null || cb.basis === 'unavailable') return { text: gr('plain.holdsUnknown') };
-  const fleet = cb.basis === 'fleet';
+  const borrowed = cb.basis === 'fleet';
   const c = Math.round(cb.value);
   const s = 100 - c;
-  const n = Math.round(c / 10);
-  const h = 10 - n;
-  if (n === 0) return { text: gr(fleet ? 'plain.holdsRarelyFleet' : 'plain.holdsRarely') };
-  // The fraction rounds to tenths and the percentage does not, so they are two readings of one number
-  // rather than two numbers — which is exactly why the looser one is the secondary line.
-  const note = gr('plain.holdsFraction', { h, n });
-  if (fleet) return { text: gr('plain.holdsFleet', { s, c }), note };
-  return { text: gr(cb.value < 25 ? 'plain.holds' : 'plain.returns', { s, c }), note };
+  // ALWAYS present when the figure is the garage's own — the forecaster has no fault-level comeback
+  // grain, so "60% of repairs here hold first time" is never a claim about this repair alone.
+  const note = scopeNote(cb, gr);
+
+  // Under 5% rounds to "none in ten", and "almost always hold" is a better sentence than "96% of
+  // repairs hold first time; 4% needed the repair again" — same fact, one less number to parse.
+  if (Math.round(c / 10) === 0) return { text: gr(borrowed ? 'plain.holdsRarelyFleet' : 'plain.holdsRarely'), note };
+  if (borrowed) return { text: gr('plain.holdsFleet', { s, c }) };
+
+  // The fleet's own comeback rate over the same corpus — the only thing that makes this number mean
+  // anything. Absent it, state the figure plainly rather than grading it against an invented target.
+  const f = fleet?.comeback_pct;
+  if (f == null) return { text: gr('plain.holdsPlain', { s, c }), note };
+
+  const fs = Math.round(100 - f);
+  const delta = Math.round(f) - c;         // positive = fewer come back here than fleet-wide
+  if (delta >= MATERIAL_PTS) return { text: gr('plain.holdsBetter', { s, fs }), note };
+  if (delta <= -MATERIAL_PTS) return { text: gr('plain.holdsWorse', { s, fs, c }), note };
+  return { text: gr('plain.holdsSame', { s, fs }), note };
 }
 
 /** What it is likely to cost, and how much of a claim about THIS garage that figure really is. */
@@ -112,8 +168,8 @@ function priceLine(g, gr) {
 }
 
 /** The five operational facts about one garage, in the order a supervisor asks for them. */
-export function garageLines(g, model, gr) {
-  return [...historyLines(g, model, gr), durationLine(g, gr), durabilityLine(g, gr), priceLine(g, gr)];
+export function garageLines(g, model, gr, fleet) {
+  return [...historyLines(g, model, gr), durationLine(g, gr), durabilityLine(g, gr, fleet), priceLine(g, gr)];
 }
 
 /**
@@ -186,10 +242,30 @@ function compLabel(c, gr) {
 function ScoreCard({ breakdown, faultCount, gr }) {
   if (!breakdown?.components?.length) return null;
 
+  const total = breakdown.total;
+  // Bands around the same idea the strip uses: a score is a comparison, so the colour is a reading of
+  // the number rather than decoration. Deliberately generous at the low end — this bar sits on the
+  // garage the panel is RECOMMENDING, and painting it red is the panel arguing with itself.
+  const tone = total >= 70 ? 'bg-emerald-500' : total >= 45 ? 'bg-sky-500' : 'bg-amber-400';
+
   return (
-    <div className="mt-2.5 rounded-lg bg-white/70 p-2 ring-1 ring-inset ring-slate-200">
-      <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-500">{gr('plain.score.title')}</p>
-      <div className="space-y-1.5">
+    <details className="group mt-2.5 rounded-lg bg-white/70 ring-1 ring-inset ring-slate-200">
+      {/* CLOSED BY DEFAULT. The five sentences above are the answer; this is the audit trail behind
+          them. Presenting a five-row arithmetic table as the first thing under a recommendation made
+          the panel read as a test result the reader had to pass, which is exactly the reaction that
+          sent this back for a rewrite. The headline stays visible — nothing is hidden, it is ranked. */}
+      <summary className="flex cursor-pointer list-none items-center gap-2 p-2 [&::-webkit-details-marker]:hidden">
+        <span className="shrink-0 text-[11px] font-semibold text-slate-500">{gr('plain.score.title')}</span>
+        <span className="h-1.5 min-w-8 flex-1 overflow-hidden rounded-full bg-slate-100">
+          <span className={`block h-full rounded-full ${tone}`} style={{ width: `${Math.max(total, 2)}%` }} />
+        </span>
+        <span className="shrink-0 text-[12px] font-bold tabular-nums text-slate-800">
+          {total}<span className="font-medium text-slate-400"> / 100</span>
+        </span>
+        <span aria-hidden className="shrink-0 text-slate-400 transition-transform group-open:rotate-180">▾</span>
+      </summary>
+
+      <div className="space-y-1.5 border-t border-slate-200 p-2">
         {breakdown.components.map((c) => {
           const pct = c.applicable && c.max > 0 ? Math.round((c.awarded / c.max) * 100) : 0;
           return (
@@ -198,8 +274,10 @@ function ScoreCard({ breakdown, faultCount, gr }) {
                 <span className="shrink-0 text-[12px] font-medium text-slate-700">{compLabel(c, gr)}</span>
                 <span aria-hidden className="min-w-4 flex-1 translate-y-[-3px] border-b border-dotted border-slate-300" />
                 {c.applicable ? (
-                  <span className="shrink-0 text-[12px] font-bold tabular-nums text-slate-800">
-                    {c.awarded}<span className="font-medium text-slate-400"> / {c.max}</span>
+                  // Muted, and phrased "of" rather than "/" — an exam-style fraction in bold is what
+                  // makes a breakdown read like a grade being handed down.
+                  <span className="shrink-0 text-[11px] font-medium tabular-nums text-slate-500">
+                    {gr('plain.score.outOf', { n: c.awarded, max: c.max })}
                   </span>
                 ) : (
                   <span className="shrink-0 text-[11px] font-medium text-slate-400">{gr('plain.score.notMeasured')}</span>
@@ -208,7 +286,7 @@ function ScoreCard({ breakdown, faultCount, gr }) {
               {c.applicable && (
                 <div className="mt-0.5 h-1 overflow-hidden rounded-full bg-slate-100">
                   <div
-                    className={`h-full rounded-full ${pct >= 75 ? 'bg-emerald-500' : pct >= 40 ? 'bg-amber-400' : 'bg-rose-400'}`}
+                    className={`h-full rounded-full ${pct >= 70 ? 'bg-emerald-500' : pct >= 40 ? 'bg-sky-400' : 'bg-slate-300'}`}
                     style={{ width: `${Math.max(pct, 2)}%` }}
                   />
                 </div>
@@ -218,19 +296,17 @@ function ScoreCard({ breakdown, faultCount, gr }) {
             </div>
           );
         })}
+
+        {/* Slate, not amber. This note explains the score's denominator; in warning colours it read as
+            a defect report on a car that simply has less history than average. */}
+        {breakdown.note && <p className="pt-0.5 text-[11px] leading-snug text-slate-500">{breakdown.note}</p>}
+        {/* On a multi-fault ticket this score is not a verdict on THIS fault, and the reader will
+            assume it is unless told. */}
+        {faultCount > 1 && (
+          <p className="text-[11px] leading-snug text-slate-500">{gr('plain.score.ticketWide', { n: faultCount })}</p>
+        )}
       </div>
-      <div className="mt-1.5 flex items-baseline gap-1.5 border-t border-slate-200 pt-1.5">
-        <span className="shrink-0 text-[12px] font-bold text-slate-800">{gr('plain.score.total')}</span>
-        <span aria-hidden className="min-w-4 flex-1 translate-y-[-3px] border-b border-dotted border-slate-300" />
-        <span className="shrink-0 text-[13px] font-extrabold tabular-nums text-slate-900">{breakdown.total} / 100</span>
-      </div>
-      {breakdown.note && <p className="mt-1 text-[11px] leading-snug text-amber-700">{breakdown.note}</p>}
-      {/* On a multi-fault ticket this score is not a verdict on THIS fault, and the reader will assume
-          it is unless told. */}
-      {faultCount > 1 && (
-        <p className="mt-1 text-[11px] leading-snug text-slate-500">{gr('plain.score.ticketWide', { n: faultCount })}</p>
-      )}
-    </div>
+    </details>
   );
 }
 
@@ -247,12 +323,19 @@ function ScoreCard({ breakdown, faultCount, gr }) {
 // numbers in front of them. The backend stopped emitting `score_gap` with it, rather than leaving a
 // computed field with no consumer ([[evidence-layer-governance]]).
 
-/** A garage's block: who it is, the five facts, and how it scored. */
-function Side({ g, lines, title, primary, onPick, isSel, gr, faultCount }) {
+/**
+ * A garage's block: who it is, the five facts, and how it scored.
+ *
+ * `primary` marks the pick; `proven` says whether that pick rests on any record of THIS repair. The
+ * two used to be one flag, which is how a fault nobody in the fleet has ever repaired still got a
+ * green tick and the word "Recommended" — see the banner in FaultDecision.
+ */
+function Side({ g, lines, title, primary, proven = true, onPick, isSel, gr, faultCount }) {
+  const led = primary && proven;
   return (
-    <div className={`flex-1 rounded-xl p-3 ring-1 ring-inset ${primary ? 'bg-emerald-50/60 ring-emerald-300' : 'bg-white ring-slate-200'}`}>
-      <p className={`flex items-center gap-1.5 text-[14px] font-bold ${primary ? 'text-emerald-800' : 'text-slate-700'}`}>
-        {primary && <span aria-hidden>✅</span>}
+    <div className={`flex-1 rounded-xl p-3 ring-1 ring-inset ${led ? 'bg-emerald-50/60 ring-emerald-300' : primary ? 'bg-slate-50 ring-slate-300' : 'bg-white ring-slate-200'}`}>
+      <p className={`flex items-center gap-1.5 text-[14px] font-bold ${led ? 'text-emerald-800' : 'text-slate-700'}`}>
+        {led && <span aria-hidden>✅</span>}
         <span className="truncate">{title}</span>
       </p>
       {/* Tagged so the no-engine-vocabulary test can assert on the SENTENCES specifically. The score
@@ -275,7 +358,7 @@ function Side({ g, lines, title, primary, onPick, isSel, gr, faultCount }) {
         onClick={() => onPick(g.vendor_id)}
         className={`mt-2.5 w-full rounded-lg px-3 py-1.5 text-[13px] font-semibold transition ${
           isSel(g.vendor_id) ? 'bg-emerald-600 text-white'
-            : primary ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+            : led ? 'bg-emerald-600 text-white hover:bg-emerald-700'
               : 'bg-white text-slate-700 ring-1 ring-inset ring-slate-300 hover:bg-slate-50'}`}
       >
         {isSel(g.vendor_id) ? gr('plain.isSelected', { garage: g.garage }) : gr('plain.sendTo', { garage: g.garage })}
@@ -291,8 +374,10 @@ function Side({ g, lines, title, primary, onPick, isSel, gr, faultCount }) {
  * @param model       the vehicle model, so "none of those were on a YUKON" can name the car
  * @param faultCount  how many faults the ticket carries — the match score weighs all of them, so on a
  *                    multi-fault ticket the card has to say the score is not about this fault alone
+ * @param fleet       the fleet's own outcome baselines, so a quality figure can be judged against what
+ *                    the fleet actually achieves instead of against a round number
  */
-export default function FaultDecision({ fault, model, onPick, isSel, t, faultCount = 1 }) {
+export default function FaultDecision({ fault, model, onPick, isSel, t, faultCount = 1, fleet = null }) {
   const gr = (k, v) => t(`workflow.garageRec.${k}`, v);
   const { winner, alternative } = fault;
   const trades = tradeLines(fault, gr);
@@ -301,6 +386,30 @@ export default function FaultDecision({ fault, model, onPick, isSel, t, faultCou
   // fault elsewhere, the other is an admission that the chosen garage has never done this repair.
   const standing = fault.standing || 'agrees';
   const displaced = standing === 'displaced' || standing === 'pick_absent';
+
+  // NOBODY HAS EVER REPAIRED THIS FAULT.
+  //
+  // The per-fault winner is chosen by fault coverage, so if IT has none, no garage does. That happens
+  // for real: `Safety & Driver Assist` is the one catalogue category with no mapping into the
+  // historical corpus at all — the sheet never separated airbags, belts and ADAS from general
+  // electrical work — so every garage scores zero on it and the ranking falls through to general fit.
+  //
+  // The card used to draw a green tick and the word "Recommended" over "We have never seen this
+  // garage repair this fault" — a contradiction, or worse, the system appearing to invent experience.
+  //
+  // Naming a garage is now not even the default. Once the reader knows nobody has done this repair,
+  // two columns of borrowed figures and a trade-off computed from them are ten sentences that cannot
+  // answer the question they appear to answer: every number in them is about the garage's OTHER work,
+  // and comparing two garages on work unrelated to this fault is a comparison of nothing in
+  // particular. The suggestion stays one click away for whoever wants a starting point.
+  //
+  // BOTH sides must be empty before the comparison is suppressed. The per-fault winner is picked by
+  // fault coverage, so in practice a winner with no record means nobody has one — but "No garage has
+  // repaired this before" is a claim about every garage, and it must not be made while a named
+  // alternative on the same card has thirty of them.
+  const proven = (winner?.at_garage || 0) > 0 || (alternative?.at_garage || 0) > 0;
+  const [showAnyway, setShowAnyway] = useState(false);
+  const compare = proven || showAnyway;
   // How much the two PRICES can be leaned on is a separate question from how good either one is, and
   // it is the one place a plain-language panel must not stay silent: "AED 300 cheaper" reads identically
   // whether it rests on sixty matching repairs or nine assorted ones.
@@ -319,30 +428,50 @@ export default function FaultDecision({ fault, model, onPick, isSel, t, faultCou
 
       {/* When this fault disagrees with the ticket's garage, the disagreement is the headline — stated
           before either column, in the words that make it actionable. */}
-      {displaced && (
+      {displaced && proven && (
         <p className="mb-2 rounded-lg bg-amber-50 px-2.5 py-2 text-[12px] leading-snug text-amber-900 ring-1 ring-inset ring-amber-300">
           {gr(standing === 'pick_absent' ? 'plain.pickAbsent' : 'plain.pickDisplaced', { garage: winner.garage })}
         </p>
       )}
 
-      <div className="flex flex-col gap-2 sm:flex-row">
+      {/* Slate, not amber. Nothing has gone wrong — we simply have no history for this repair, and a
+          warning colour would tell the supervisor to hesitate over a car that still has to go
+          somewhere today. */}
+      {!proven && (
+        <div className="rounded-lg bg-slate-100 px-2.5 py-2 ring-1 ring-inset ring-slate-300">
+          <p className="text-[12px] font-semibold text-slate-800">{gr('plain.noHistoryTitle')}</p>
+          <p className="mt-0.5 text-[12px] leading-snug text-slate-600">{gr('plain.noHistoryBody')}</p>
+          <button
+            type="button"
+            onClick={() => setShowAnyway((v) => !v)}
+            className="mt-1.5 text-[12px] font-semibold text-slate-500 underline decoration-dotted hover:text-slate-700"
+            aria-expanded={showAnyway}
+          >
+            {gr(showAnyway ? 'plain.hideSuggestions' : 'plain.showSuggestions')}
+          </button>
+        </div>
+      )}
+
+      {compare && (
+      <div className={`flex flex-col gap-2 sm:flex-row${proven ? '' : ' mt-2'}`}>
         <Side
-          g={winner} primary gr={gr} onPick={onPick} isSel={isSel} faultCount={faultCount}
-          title={gr(displaced ? 'plain.strongestHere' : 'plain.recommended', { garage: winner.garage })}
-          lines={garageLines(winner, model, gr)}
+          g={winner} primary proven={proven} gr={gr} onPick={onPick} isSel={isSel} faultCount={faultCount}
+          title={gr(!proven ? 'plain.suggested' : displaced ? 'plain.strongestHere' : 'plain.recommended', { garage: winner.garage })}
+          lines={garageLines(winner, model, gr, fleet)}
         />
         {alternative
           ? <Side
               g={alternative} gr={gr} onPick={onPick} isSel={isSel} faultCount={faultCount}
-              title={gr('plain.alternative', { garage: alternative.garage })}
-              lines={garageLines(alternative, model, gr)}
+              title={gr(proven ? 'plain.alternative' : 'plain.otherOption', { garage: alternative.garage })}
+              lines={garageLines(alternative, model, gr, fleet)}
             />
           : <div className="flex-1 rounded-xl bg-slate-50 p-3 text-[13px] leading-snug text-slate-500 ring-1 ring-inset ring-slate-200">
               {gr('plain.noAlternative')}
             </div>}
       </div>
+      )}
 
-      {alternative && (
+      {compare && alternative && (
         <div className="mt-2 rounded-lg bg-slate-50 p-2.5 ring-1 ring-inset ring-slate-200">
           <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-slate-500">{gr('plain.tradeoff')}</p>
           {trades.length > 0 ? (

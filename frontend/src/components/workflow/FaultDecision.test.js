@@ -3,7 +3,7 @@
 // the sentence said something wrong, unreadable, or nothing at all — and "the supervisor can understand
 // this in ten seconds" is precisely a claim about the sentence, not about the key.
 
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { LABELS } from '../../i18n/labels';
 import FaultDecision from './FaultDecision';
 
@@ -83,8 +83,11 @@ const FAULT = {
   },
 };
 
-const draw = (fault, model = 'GMC Yukon', faultCount = 1) =>
-  render(<FaultDecision fault={fault} model={model} onPick={() => {}} isSel={() => false} t={t} faultCount={faultCount} />);
+// The fleet's real baseline (comeback ~40%), because every durability sentence is judged against it.
+const FLEET = { duration_days: 1, comeback_pct: 39.9, cost_median: 391 };
+
+const draw = (fault, model = 'GMC Yukon', faultCount = 1, fleet = null) =>
+  render(<FaultDecision fault={fault} model={model} onPick={() => {}} isSel={() => false} t={t} faultCount={faultCount} fleet={fleet} />);
 
 const deep = (o) => JSON.parse(JSON.stringify(o));
 
@@ -101,14 +104,13 @@ test('each garage is described in five plain sentences, not percentages', () => 
   expect(screen.getByText('The repair usually takes about one day.')).toBeInTheDocument();
   expect(screen.getByText('The repair usually takes about 3 days.')).toBeInTheDocument();
 
-  // Durability, bounded by the window the measurement actually uses — and stated in BOTH directions,
-  // so the sentence cannot contradict the "Predicted first-time resolution" figure beside it. The
-  // PERCENTAGE is the primary figure (it is what the reader compares against the other garage) and the
-  // two halves are pinned together here: 60 + 40 is the check that they still sum to 100.
+  // Durability, bounded by the window the measurement actually uses. With no fleet baseline passed the
+  // sentence STATES the figure and does not grade it — 60 + 40 pins that the two halves sum to 100.
   expect(screen.getByText('Repairs here almost always hold — cars practically never need this repair again within 3 months.')).toBeInTheDocument();
-  expect(screen.getByText('Only a 60% first-time fix rate — 40% needed the same repair again within 3 months.')).toBeInTheDocument();
-  // The fraction survives, demoted to the secondary line rather than deleted.
-  expect(screen.getByText('About 6 in 10 stayed fixed, 4 in 10 came back.')).toBeInTheDocument();
+  expect(screen.getByText('60% of repairs here hold first time; 40% needed the same repair again within 3 months.')).toBeInTheDocument();
+  // The "about 6 in 10 stayed fixed" restatement is GONE. It was a third rounding of one measurement
+  // sitting under the two numbers that already carry it, and readers named it as noise.
+  expect(screen.queryByText(/in 10 stayed fixed/)).not.toBeInTheDocument();
 
   // Money, with what the price is a price OF.
   expect(screen.getByText('Expect to pay about AED 550.')).toBeInTheDocument();
@@ -144,9 +146,9 @@ test('every garage shows the full derivation of its score, with the facts that e
   draw(FAULT);
 
   // Both sides, not just the winner — a breakdown only the recommended garage carries is advocacy.
-  expect(screen.getAllByText('How this garage scored')).toHaveLength(2);
-  expect(screen.getByText('92 / 100')).toBeInTheDocument();
-  expect(screen.getByText('62 / 100')).toBeInTheDocument();
+  expect(screen.getAllByText('How this was scored')).toHaveLength(2);
+  expect(screen.getByText('92')).toBeInTheDocument();
+  expect(screen.getByText('62')).toBeInTheDocument();
 
   // Components are named in the supervisor's words, not the engine's storage keys.
   expect(screen.getAllByText('Fault experience').length).toBeGreaterThan(0);
@@ -157,6 +159,149 @@ test('every garage shows the full derivation of its score, with the facts that e
   // Each component carries WHY it scored that — the counted events, not a restatement of the number.
   expect(screen.getAllByText('48 Suspension repairs, 6 on this model').length).toBeGreaterThan(0);
   expect(screen.getAllByText(/60% re-inspection pass rate \(8 of 20 came back\)/).length).toBeGreaterThan(0);
+});
+
+// ── Durability is judged against the FLEET, never against a round number ────────────────────────────
+//
+// The failure this guards is the one that got the panel sent back: a garage with a 34% comeback rate
+// was described as "Only a 66% first-time fix rate", because the copy graded anything over a hardcoded
+// 25% comeback as bad. The fleet's own comeback rate is about 40% — so the panel opened by disparaging
+// the garage it was recommending, on a figure that was BETTER than the fleet average, and every garage
+// in the fleet read as a bad choice.
+
+test('the reported case: a 34% comeback rate is level with the fleet, not "only 66%"', () => {
+  // The exact figures from the card that was rejected. 34% against a fleet rate of ~40% is an
+  // ordinary garage, and the panel has to say so — this is the assertion that keeps the old
+  // hardcoded-threshold copy from creeping back.
+  const f = deep(FAULT);
+  f.alternative.comeback_pct = { value: 34, basis: 'garage', sample: 130 };
+  draw(f, 'GMC Yukon', 1, FLEET);
+
+  expect(screen.getByText('66% of repairs here hold first time — about the same as the fleet’s 60%.')).toBeInTheDocument();
+  expect(screen.queryByText(/Only a/)).not.toBeInTheDocument();
+});
+
+test('a garage that genuinely beats the fleet is described as beating it', () => {
+  const f = deep(FAULT);
+  f.alternative.comeback_pct = { value: 20, basis: 'garage', sample: 130 };
+  draw(f, 'GMC Yukon', 1, FLEET);
+
+  expect(screen.getByText('80% of repairs here hold first time — better than the fleet’s 60%.')).toBeInTheDocument();
+});
+
+test('a garage genuinely worse than the fleet still says so, with the baseline beside it', () => {
+  const f = deep(FAULT);
+  f.alternative.comeback_pct = { value: 62, basis: 'garage', sample: 130 };
+  draw(f, 'GMC Yukon', 1, FLEET);
+
+  expect(screen.getByText('38% of repairs here hold first time, below the fleet’s 60% — 62% needed the same repair again within 3 months.')).toBeInTheDocument();
+});
+
+test('a garage that has never done this fault does not quote fault-specific figures as if it had', () => {
+  // The reported card: "We have never seen this garage repair this fault." followed by a repair
+  // time, a hold rate and a price — three figures that are the garage's OVERALL record, borrowed
+  // because there is no record of this fault. Only the price said so; the other two read as claims
+  // about a repair the garage has never performed.
+  const f = deep(FAULT);
+  f.alternative.at_garage = 0;
+  f.alternative.same_model = 0;
+  f.alternative.duration_days = { value: 1, basis: 'garage', sample: 120 };
+  f.alternative.comeback_pct = { value: 40, basis: 'garage', sample: 120 };
+  f.alternative.fault_cost = null;
+  f.alternative.cost_aed = { value: 865, basis: 'garage', sample: 120 };
+  draw(f, 'GMC Yukon', 1, FLEET);
+
+  // Asserted on the ALTERNATIVE's own column, not the whole card — the winner carries garage-wide
+  // figures too, and counting notes across both would pass on the wrong garage's caveats.
+  const alt = within(screen.getAllByTestId('garage-facts')[1]);
+  expect(alt.getByText('We have never seen this garage repair this fault.')).toBeInTheDocument();
+  // Every borrowed figure now carries the same caveat — the turnaround and the hold rate, not only
+  // the price, which was the one that always had it.
+  expect(alt.getAllByText('Based on all work at this garage, not this repair specifically.')).toHaveLength(2);
+  expect(alt.getByText('Based on this garage\'s other work, not this repair specifically.')).toBeInTheDocument();
+});
+
+test('a fault-level figure carries no borrowed-scope caveat', () => {
+  // The winner HAS done this repair, and its turnaround is measured on this fault — so the caveat
+  // must not fire on that line. A note under every figure teaches people to ignore notes.
+  const f = deep(FAULT);
+  f.winner.duration_days = { value: 2, basis: 'garage_fault', sample: 40 };
+  draw(f, 'GMC Yukon', 1, FLEET);
+
+  const win = within(screen.getAllByTestId('garage-facts')[0]);
+  expect(win.getByText('The repair usually takes about 2 days.')).toBeInTheDocument();
+  // Its comeback figure is still garage-wide (the forecaster has no fault grain for it), so exactly
+  // one caveat survives in that column — not two, and not none.
+  expect(win.getAllByText('Based on all work at this garage, not this repair specifically.')).toHaveLength(1);
+});
+
+// ── A fault NOBODY has ever repaired ────────────────────────────────────────────────────────────────
+//
+// Real case: `Safety & Driver Assist` is the one catalogue category with no mapping into the
+// historical corpus — the sheet never separated airbags, belts and ADAS from general electrical — so
+// every garage scores zero on it and the engine returns no primary recommendations at all. The
+// per-fault card still named a winner, put a green tick on it and called it "Recommended", directly
+// above "We have never seen this garage repair this fault".
+
+test('a fault no garage has ever repaired shows the finding ALONE, not a comparison', () => {
+  const f = deep(FAULT);
+  f.winner.at_garage = 0;
+  f.winner.same_model = 0;
+  f.alternative.at_garage = 0;
+  f.alternative.same_model = 0;
+  draw(f, 'GMC Yukon', 1, FLEET);
+
+  expect(screen.getByText('No garage has repaired this before')).toBeInTheDocument();
+
+  // Nothing else. Two columns of borrowed figures and a trade-off computed from them are ten
+  // sentences that cannot answer the question they appear to answer — every number in them is about
+  // the garages' OTHER work.
+  expect(screen.queryByTestId('garage-facts')).not.toBeInTheDocument();
+  expect(screen.queryByText('Trade-off')).not.toBeInTheDocument();
+  expect(screen.queryByText(/^Recommended:/)).not.toBeInTheDocument();
+  expect(screen.queryByText('✅')).not.toBeInTheDocument();
+});
+
+test('the suggestion is still reachable in one click for whoever wants a starting point', () => {
+  const f = deep(FAULT);
+  f.winner.at_garage = 0;
+  f.winner.same_model = 0;
+  f.alternative.at_garage = 0;
+  f.alternative.same_model = 0;
+  draw(f, 'GMC Yukon', 1, FLEET);
+
+  fireEvent.click(screen.getByText('Suggest one anyway'));
+
+  // Downgraded in the heading, not merely footnoted — and still no tick.
+  expect(screen.getByText('Suggested: Deals On Wheels')).toBeInTheDocument();
+  expect(screen.getByText('Other option: RMR')).toBeInTheDocument();
+  expect(screen.queryByText('✅')).not.toBeInTheDocument();
+});
+
+test('a fault the garage HAS repaired keeps its recommendation and its tick', () => {
+  draw(FAULT, 'GMC Yukon', 1, FLEET);
+
+  expect(screen.getByText('Recommended: Deals On Wheels')).toBeInTheDocument();
+  expect(screen.getByText('✅')).toBeInTheDocument();
+  expect(screen.queryByText('No garage has repaired this before')).not.toBeInTheDocument();
+});
+
+test('no model asked about means no model line — not "none were on the same model"', () => {
+  // The Garage Finder makes the model optional. `same_model` is only ever counted against a model
+  // that was supplied, so with none it is zero for every garage — and the card used to print "None
+  // of those were on the same model." as though the garage had been checked and found wanting.
+  draw(FAULT, '', 1, FLEET);
+
+  expect(screen.getByText('We have seen this garage repair this fault 48 times.')).toBeInTheDocument();
+  expect(screen.queryByText(/on the same model/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/None of those/)).not.toBeInTheDocument();
+});
+
+test('a model that WAS asked about still gets its line, either way', () => {
+  draw(FAULT, 'GMC Yukon', 1, FLEET);
+
+  expect(screen.getByText('6 of those were on a GMC Yukon.')).toBeInTheDocument();
+  expect(screen.getByText('None of those were on a GMC Yukon.')).toBeInTheDocument();
 });
 
 test('the card does not re-tell the comparison as point arithmetic', () => {
@@ -170,9 +315,11 @@ test('the card does not re-tell the comparison as point arithmetic', () => {
   expect(screen.queryByText('+14 points')).not.toBeInTheDocument();
   expect(screen.queryByText('−3 points')).not.toBeInTheDocument();
 
-  // What replaced it is what was always underneath: both totals, both derivations.
-  expect(screen.getByText('92 / 100')).toBeInTheDocument();
-  expect(screen.getByText('62 / 100')).toBeInTheDocument();
+  // What replaced it is what was always underneath: both totals, both derivations. The total is split
+  // across two spans so the "/ 100" can be muted — it is a scale, not a second number.
+  expect(screen.getByText('92')).toBeInTheDocument();
+  expect(screen.getByText('62')).toBeInTheDocument();
+  expect(screen.getAllByText('/ 100')).toHaveLength(2);
 });
 
 test('a score covering several faults says so, rather than posing as a verdict on this one', () => {
@@ -286,8 +433,8 @@ test('when the fault and the ticket agree, the tick is unqualified', () => {
   expect(screen.queryByText(/heading to/)).not.toBeInTheDocument();
 });
 
-test('with no model on the ticket the same-model line stays grammatical', () => {
-  draw(FAULT, '');
-  expect(screen.getByText('6 of those were on the same model.')).toBeInTheDocument();
-  expect(screen.getByText('None of those were on the same model.')).toBeInTheDocument();
-});
+// REPLACED: "with no model on the ticket the same-model line stays grammatical" asserted that the
+// no-model fallbacks read as proper sentences. They did — and they were false. `same_model` is only
+// counted against a model that was supplied, so with none it is zero for every garage and "None of
+// those were on the same model." was printed on every card as a finding that could never be true.
+// A test can pin correct grammar on a wrong sentence; see the two tests above, which pin the fact.
