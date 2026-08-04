@@ -23,6 +23,17 @@ export const STATUS_OPTIONS = [
   { value: 'other', label: 'Other' },
 ];
 
+// The supervisor's ANSWER to the daily question — "is this car still coming back on the date we promised?".
+// The form asks it outright; the backend derives the same value from whether the date moved, so the two
+// can never disagree. Keep in lock-step with MaintenanceCheckpoint::RESPONSE_*.
+export const RESPONSE_CONFIRMED = 'confirmed';
+export const RESPONSE_RESCHEDULED = 'rescheduled';
+
+export const RESPONSE_META = {
+  [RESPONSE_CONFIRMED]:   { label: 'Date confirmed', chip: 'bg-emerald-50 text-emerald-700 ring-emerald-200', dot: 'bg-emerald-500' },
+  [RESPONSE_RESCHEDULED]: { label: 'Date moved',     chip: 'bg-amber-50 text-amber-700 ring-amber-200',       dot: 'bg-amber-500' },
+};
+
 // Structured reasons the ETA moved (required only when the new completion date differs from the old one).
 export const DELAY_REASONS = [
   { value: 'waiting_parts', label: 'Waiting Parts' },
@@ -78,6 +89,15 @@ export async function getCheckpointCandidates() {
 export async function getMaintenanceProgress() {
   const res = await api.get('/Dashboard/maintenance-progress');
   return res.data.data; // { summary, items }
+}
+
+/**
+ * Checkpoint Compliance (admin) — every car whose supervisor was reminded it is due back and never
+ * answered, with who was notified, how many days the silence has run, and that car's reason history.
+ */
+export async function getCheckpointCompliance() {
+  const res = await api.get('/Oversight/checkpoint-compliance');
+  return res.data.data; // { rows, total, summary, alert_days }
 }
 
 // A Maintenance-Progress row's provenance → a small badge the queue shows so a car in the shop is

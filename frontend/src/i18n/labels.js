@@ -3322,6 +3322,7 @@ const ar = {
       title: 'المظهر',
       subtitle: 'اضبط شكل Faster وطريقة عرضه على جهازك',
       theme: 'السمة',
+        'checkpoint-compliance': { name: 'الالتزام بنقاط المتابعة', desc: 'مشرفون جاءهم تذكير بأن السيارة مستحقة الرجوع ولم يؤكّدوا تاريخًا ولم يذكروا سببًا.' },
       themeDesc: 'الحالية {theme} — بدّل بين الواجهة النهارية والليلية.',
       light: 'Platinum (فاتحة)', dark: 'Cockpit (داكنة)',
       lightShort: 'Platinum', darkShort: 'Cockpit',

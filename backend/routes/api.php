@@ -840,6 +840,7 @@ Route::middleware(['auth:sanctum', 'permission:insights.view'])->prefix('Oversig
 
 // Severity Review write action — a supervisor's Quality-Control decision on an under-graded ticket
 // (upgrade the grade, or keep it and dismiss the recommendation). A grading change, so it needs the
+    Route::get('/checkpoint-compliance', 'checkpointCompliance'); // supervisor reminded a car is due back, never answered
 // stronger maintenance.manage permission, not the read-only insights.view of the surface above.
 Route::middleware(['auth:sanctum', 'permission:maintenance.manage'])->prefix('Oversight')
     ->controller(\App\Http\Controllers\WorkflowOversightController::class)->group(function () {

@@ -28,7 +28,9 @@ use Illuminate\Validation\Rule;
  *      outstanding, so the team knows exactly which garages to chase for a bill.
  *   4. severityReview()       — tickets whose fault-severity grade looks UNDER-graded versus the signals
  *      (a critical-risk keyword / a breakdown / a red-graded car scored only Routine or Moderate).
- *   5. overview()             — the four counts in one call for the section landing page.
+ *   5. checkpointCompliance() — cars whose supervisor was reminded that the car is due back and never
+ *      answered: who was notified, for how many days running, and the reason history behind that car.
+ *   6. overview()             — the counts in one call for the section landing page.
  *
  * Nothing here mutates state — every fix is applied on the ticket itself (deep-linked from each row).
  */
@@ -789,6 +791,33 @@ class WorkflowOversightController extends Controller
         }
     }
 
+    /**
+     * Checkpoint Compliance — did the daily chase actually get answered? Every car whose supervisor was
+     * notified ("this one is due back, confirm the date or give a new one") and never replied. Each row
+     * carries who was notified, on which days, how long the silence has run, and every reason that car's
+     * date has moved for before, so an admin sees both the miss and the pattern behind it.
+     *
+     * Read-only; the fix is filing the checkpoint itself, deep-linked from each row.
+     * See [[maintenance-checkpoint-feature]].
+     */
+    public function checkpointCompliance(Request $request, \App\Services\MaintenanceCheckpointService $checkpoints)
+    {
+        try {
+            $report = $checkpoints->complianceReport();
+
+            return ResponseHelper::SuccessResponse([
+                'rows'       => $report['rows'],
+                'total'      => count($report['rows']),
+                // Cars that need chasing but have nobody assigned — the reminder was withheld on purpose.
+                'unassigned' => $report['unassigned'],
+                'summary'    => $report['summary'],
+                'alert_days' => $report['alert_days'],
+            ], 'Checkpoint compliance retrieved', 200);
+        } catch (\Throwable $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
     // ── Overview roll-up ────────────────────────────────────────────────────────────────────────
     /** The six counts in one call, for the section landing page. */
     public function overview(Request $request)
@@ -799,6 +828,8 @@ class WorkflowOversightController extends Controller
             $severity = $this->severityReview($request)->getData(true)['data'] ?? [];
             $misdiag  = $this->misdiagnoses($request)->getData(true)['data'] ?? [];
             $resolved = $this->resolvedTransfers($request)->getData(true)['data'] ?? [];
+            $chase    = $this->checkpointCompliance($request, app(\App\Services\MaintenanceCheckpointService::class))
+                ->getData(true)['data'] ?? [];
 
             // Open tickets whose repair is waiting on a part. This used to read the recommendation queue's
             // own awaiting_parts state; that state is gone, because "are we waiting on a part?" now has
@@ -823,6 +854,10 @@ class WorkflowOversightController extends Controller
                 'misdiagnoses'         => $misdiag['total'] ?? 0,
                 'diagnosed_total'      => $misdiag['diagnosed_total'] ?? 0,
                 'resolved_transfers'   => $resolved['total'] ?? 0,
+                // The landing card counts cars whose supervisor has been silent past the tolerated day,
+                // not every open reminder — a reminder sent this morning isn't yet a finding.
+                'checkpoint_silent'    => $chase['summary']['breached'] ?? 0,
+                'checkpoint_open'      => $chase['summary']['open'] ?? 0,
                 'awaiting_parts'       => $awaitingParts,
             ], 'Workflow oversight overview retrieved', 200);
         } catch (\Throwable $e) {

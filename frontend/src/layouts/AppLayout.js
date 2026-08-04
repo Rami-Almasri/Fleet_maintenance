@@ -260,6 +260,7 @@ const NAV_PERMISSIONS = {
   '/oversight/left-garage': 'insights.view',
   '/oversight/severity': 'insights.view',
   '/oversight/misdiagnoses': 'insights.view',
+  '/oversight/checkpoint-compliance': 'insights.view',
   '/sync-audit': 'sync.run',
   '/simulation': 'users.manage',
   '/users': 'users.manage',

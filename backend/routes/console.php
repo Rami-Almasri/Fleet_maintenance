@@ -95,10 +95,12 @@ Schedule::command('invoices:scan-overdue')
     ->dailyAt('08:05')
     ->withoutOverlapping();
 
-// Maintenance Checkpoint Scan — chase workshop progress updates before a car goes overdue. Runs at 08:00
-// and 20:00 (the 12-hour gap the request→reminder escalation needs) so the responsible follow-up owners
-// (Waleed/Abdullah) are nudged a day before the promised completion, again 12h later, on the due day, and
-// daily once overdue. Idempotent (level+date keys), so it never spams and clears when a checkpoint lands.
+// Maintenance Checkpoint Scan — the DAILY chase. From a day before the promised completion the responsible
+// follow-up owners (Waleed/Abdullah) are asked every day whether the car is still coming back on that date,
+// and keep being asked until they answer or the car leaves the shop. The morning run is the day's ask; the
+// evening run catches a car that only crossed into due/overdue during the day (and, because the reminder
+// receipt is keyed on the DAY, re-pushes nothing that already went out). Answering settles today only —
+// pushing the date back moves the window, so the chase goes quiet until a day before the NEW date.
 Schedule::command('checkpoints:scan')
     ->twiceDailyAt(8, 20, 10)
     ->withoutOverlapping();

@@ -65,6 +65,7 @@ import GarageInvoiceQueue from './pages/oversight/GarageInvoiceQueue';
 import SeverityReview from './pages/oversight/SeverityReview';
 import Misdiagnoses from './pages/oversight/Misdiagnoses';
 import ResolvedTransfers from './pages/oversight/ResolvedTransfers';
+import CheckpointCompliance from './pages/oversight/CheckpointCompliance';
 import CleaningCapture from './pages/cleaning/CleaningCapture';
 import FleetHealth from './pages/inspections/FleetHealth';
 
@@ -293,6 +294,7 @@ export default function App() {
                   <Route path="/oversight/severity" element={<SeverityReview />} />
                   <Route path="/oversight/misdiagnoses" element={<Misdiagnoses />} />
                   <Route path="/oversight/resolved-transfers" element={<ResolvedTransfers />} />
+                  <Route path="/oversight/checkpoint-compliance" element={<CheckpointCompliance />} />
                 </Route>
 
                 <Route element={<RequirePermission permission="sync.run" />}>

@@ -147,6 +147,7 @@ export const MODULES = [
       { name: 'Diagnostic Review', route: '/oversight/severity', permission: 'insights.view', icon: Icon.Flag, desc: 'QC gate for fault severity — keep the call or upgrade it, with the reasoning shown.' },
       { name: 'Mis-Diagnosis', route: '/oversight/misdiagnoses', permission: 'insights.view', icon: Icon.XCircle, desc: 'Faults later marked incorrect — the audited mis-diagnosis trail.' },
       { name: 'Transferred — Faults Fixed', route: '/oversight/resolved-transfers', permission: 'insights.view', icon: Icon.ArrowRight, desc: 'Cars moved on with all faults fixed — each transfer noted and logged.' },
+      { name: 'Checkpoint Compliance', route: '/oversight/checkpoint-compliance', permission: 'insights.view', icon: Icon.Clock, desc: 'Supervisors reminded a car is due back who never confirmed a date or gave a reason.' },
       { name: 'Data Health', route: '/data-health', permission: 'insights.view', icon: Icon.Activity, desc: 'Overall data quality — incomplete records and status mismatches.' },
       { name: 'Intelligence Center', route: '/intelligence-center', permission: 'insights.view', icon: Icon.Activity, desc: 'What the platform knows and how sure it is — evidence readiness, QC throughput, promotion decisions and what is blocking each capability.' },
       { name: 'Mileage & Fuel', route: '/mileage', permission: 'insights.view', icon: Icon.Gauge, desc: 'Every odometer and fuel tool — travel vs. contract km, leakage and chain audit.' },

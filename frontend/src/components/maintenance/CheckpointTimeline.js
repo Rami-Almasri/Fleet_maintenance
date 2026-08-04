@@ -1,11 +1,13 @@
-// Maintenance Checkpoint timeline — a chronological feed of progress updates. Each entry is an ETA
-// update: it shows the previous → new expected completion date, the reason it moved, a workshop status,
-// a progress note, photos/videos, and who filed it when. Shared by the CheckpointModal history and the
-// Vehicle Profile "Maintenance Progress" tab. Presentation only; data comes from the checkpoints API.
+// Maintenance Checkpoint timeline — every answer a car has given to the daily "is it still coming back on
+// that date?" question, newest first. Each entry is either a CONFIRMATION of the promised date or a MOVE
+// (previous → new date + the reason it moved), plus a workshop status, a note, photos/videos, and who
+// filed it when. Nothing is ever overwritten, so a car chased for a week shows all seven answers and all
+// seven reasons — that record is the point. Shared by the CheckpointModal history and the Vehicle Profile
+// "Maintenance Progress" tab. Presentation only; data comes from the checkpoints API.
 //
 // There is NO manual "outcome" — a job's On Schedule / Overdue status is derived from the ETA elsewhere.
 
-import { statusLabel, delayReasonLabel } from '../../lib/maintenanceCheckpoints';
+import { statusLabel, delayReasonLabel, RESPONSE_RESCHEDULED } from '../../lib/maintenanceCheckpoints';
 import { fmtDate } from '../../lib/format';
 
 function when(iso) {
@@ -38,9 +40,12 @@ export default function CheckpointTimeline({ checkpoints = [], onDelete = null, 
       {checkpoints.map((c) => {
         const images = (c.media || []).filter((m) => m.kind === 'image');
         const videos = (c.media || []).filter((m) => m.kind === 'video');
-        // The ETA moved when a new date is present that differs from the previous one.
-        const etaChanged = !!c.next_expected_date
-          && (!c.previous_expected_date || c.previous_expected_date !== c.next_expected_date);
+        // The recorded ANSWER: did the supervisor stand by the promised date, or move it? Read from the
+        // stored response, falling back to the dates for rows filed before the answer was captured.
+        const etaChanged = c.response
+          ? c.response === RESPONSE_RESCHEDULED
+          : (!!c.next_expected_date
+            && (!c.previous_expected_date || c.previous_expected_date !== c.next_expected_date));
         const tone = etaChanged
           ? { dot: 'bg-amber-500', ring: 'ring-amber-100' }
           : { dot: 'bg-slate-300', ring: 'ring-slate-100' };
@@ -53,7 +58,7 @@ export default function CheckpointTimeline({ checkpoints = [], onDelete = null, 
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                   <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ${etaChanged ? 'bg-amber-50 text-amber-700 ring-amber-200' : 'bg-slate-50 text-slate-600 ring-slate-200'}`}>
-                    {etaChanged ? 'ETA changed' : 'Progress update'}
+                    {etaChanged ? 'Date moved' : 'Date confirmed'}
                   </span>
                   {c.status && (
                     <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
@@ -81,7 +86,7 @@ export default function CheckpointTimeline({ checkpoints = [], onDelete = null, 
               ) : (
                 c.next_expected_date && (
                   <p className="mt-2 text-xs text-slate-500">
-                    Expected completion confirmed: <span className="font-semibold text-slate-700">{fmtDate(c.next_expected_date)}</span>
+                    Confirmed still coming back on <span className="font-semibold text-slate-700">{fmtDate(c.next_expected_date)}</span>
                   </p>
                 )
               )}

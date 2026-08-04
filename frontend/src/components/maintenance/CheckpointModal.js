@@ -1,7 +1,10 @@
-// Maintenance Checkpoint modal — the one place a responsible user files a workshop progress update and
-// reviews the ticket's checkpoint timeline. Also lets a manager set the promised completion (duration or
-// date) and the responsible follow-up owners. Opened from the dashboard "Maintenance Progress" widget and
-// the Vehicle Profile tab. Backend: MaintenanceCheckpointController.
+// Maintenance Checkpoint modal — where a responsible user answers the daily question the reminder asks:
+// "is this car still coming back on the date we promised?". Yes files a dated confirmation; No demands a
+// new date AND the reason it moved (and moves the whole reminder window with it — the next chase runs one
+// day before the new date). Every answer is its own row, so a car chased for days keeps every reason it
+// ever gave. Also reviews the timeline and lets a manager set the promised completion + the responsible
+// follow-up owners. Opened from the Maintenance Progress queue, the dashboard widget and the Vehicle
+// Profile tab. Backend: MaintenanceCheckpointController.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Modal from '../ui/Modal';
@@ -11,7 +14,7 @@ import CheckpointTimeline from './CheckpointTimeline';
 import RepairIntelligencePanel from '../knowledge/RepairIntelligencePanel';
 import { fmtDate } from '../../lib/format';
 import {
-  STATUS_OPTIONS, DELAY_REASONS,
+  STATUS_OPTIONS, DELAY_REASONS, RESPONSE_CONFIRMED, RESPONSE_RESCHEDULED,
   getTicketCheckpoints, submitCheckpoint, deleteCheckpoint,
   setExpectedCompletion, setResponsibles, getCheckpointCandidates,
 } from '../../lib/maintenanceCheckpoints';
@@ -34,7 +37,36 @@ function MonitorBar({ monitor }) {
           Expected {fmtDate(expected_on)}{is_estimated ? ' (estimated)' : ''}
         </span>
       )}
-      {needs_update && <span className="text-xs font-medium">· Checkpoint required</span>}
+      {needs_update && <span className="text-xs font-medium">· Answer needed today</span>}
+    </div>
+  );
+}
+
+/**
+ * The chase record for this car — the supervisor answering sees exactly what an admin sees: how long a
+ * reminder has been sitting unanswered, and how many times this car's date has already moved. Silent when
+ * there is nothing to report, so a car running to plan carries no noise.
+ */
+function ChaseBar({ chase }) {
+  if (!chase) return null;
+  const unanswered = chase.reminders_open > 0;
+  const slipped = chase.reschedule_count > 0;
+  if (!unanswered && !slipped) return null;
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-xs">
+      {unanswered && (
+        <span className="inline-flex items-center rounded-full bg-red-50 px-2.5 py-1 font-medium text-red-700 ring-1 ring-red-200">
+          {chase.days_unanswered > 0
+            ? `Reminder unanswered for ${chase.days_unanswered} day(s) — since ${fmtDate(chase.first_reminder_on)}`
+            : 'Reminded today — not yet answered'}
+        </span>
+      )}
+      {slipped && (
+        <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-1 font-medium text-amber-700 ring-1 ring-amber-200">
+          Date already moved {chase.reschedule_count}×
+        </span>
+      )}
     </div>
   );
 }
@@ -45,7 +77,9 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
-  // Submit form — a progress update centred on the ETA (no manual "outcome").
+  // Submit form — the answer to the daily question, then the date it implies (no manual "outcome").
+  // answer: '' (not chosen yet) | RESPONSE_CONFIRMED | RESPONSE_RESCHEDULED.
+  const [answer, setAnswer] = useState('');
   const [status, setStatus] = useState('');
   const [delayReason, setDelayReason] = useState('');
   const [delayReasonOther, setDelayReasonOther] = useState('');
@@ -69,9 +103,11 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
       setData(d);
       setAssigned(d.assigned || []);
       setExpDate(d.monitor?.expected_on || '');
-      // Prefill the update's ETA with the promise currently in force, so leaving it untouched files a
-      // plain progress note; changing it flags an extension (and requires a reason).
+      // Prefill the date with the promise currently in force. The supervisor answers the question first
+      // ("still coming back that day?"); confirming keeps this date, rescheduling replaces it.
       setNextDate(d.monitor?.expected_on || '');
+      // A car with no promised date yet has nothing to confirm — the only possible answer is to set one.
+      setAnswer(d.monitor?.expected_on ? '' : RESPONSE_RESCHEDULED);
     } catch (e) {
       setErr(e?.response?.data?.message || 'Failed to load checkpoints.');
     } finally {
@@ -94,30 +130,49 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
   const canSubmit = data?.can_submit;
   const canManage = data?.can_manage;
 
-  // The promise currently in force + whether this update moves it (→ a reason becomes mandatory).
+  // The promise currently in force. Confirming files it back unchanged; rescheduling replaces it (and a
+  // reason becomes mandatory) — so the answer, not the date field, is what the supervisor chooses first.
   const currentEta = data?.monitor?.expected_on || '';
-  const etaChanged = !!nextDate && nextDate !== currentEta;
+  const rescheduling = answer === RESPONSE_RESCHEDULED;
+  const submittedDate = rescheduling ? nextDate : currentEta;
 
   const resetForm = () => {
+    setAnswer(currentEta ? '' : RESPONSE_RESCHEDULED);
     setStatus(''); setDelayReason(''); setDelayReasonOther('');
     setSummary(''); setNextDate(currentEta); setFiles([]);
     if (fileRef.current) fileRef.current.value = '';
+  };
+
+  // Choosing an answer resets the half of the form the other answer owns, so a reason can never ride
+  // along on a confirmation (or a stale date on a reschedule).
+  const chooseAnswer = (value) => {
+    setAnswer(value);
+    setErr('');
+    if (value === RESPONSE_CONFIRMED) {
+      setNextDate(currentEta);
+      setDelayReason(''); setDelayReasonOther('');
+    }
   };
 
   const submit = async (e) => {
     e.preventDefault();
     if (busy) return;
     setErr('');
-    if (!nextDate) { setErr('Set the expected completion date.'); return; }
-    if (etaChanged && !delayReason) { setErr('Select a reason for the changed completion date.'); return; }
-    if (etaChanged && delayReason === 'other' && !delayReasonOther.trim()) { setErr('Explain the reason for the change.'); return; }
+    if (!answer) { setErr('Answer the question: is the car still coming back on the promised date?'); return; }
+    if (!submittedDate) { setErr('Set the date the car is expected back.'); return; }
+    if (rescheduling && currentEta && nextDate === currentEta) {
+      setErr('Pick the NEW date the car is expected back — or answer "Yes" to confirm the current one.');
+      return;
+    }
+    if (rescheduling && !delayReason) { setErr('Select a reason for the changed completion date.'); return; }
+    if (rescheduling && delayReason === 'other' && !delayReasonOther.trim()) { setErr('Explain the reason for the change.'); return; }
     setBusy(true);
     try {
       await submitCheckpoint(ticketId, {
         status,
-        delayReason: etaChanged ? delayReason : '',
-        delayReasonOther: etaChanged && delayReason === 'other' ? delayReasonOther.trim() : '',
-        summary: summary.trim(), nextExpectedDate: nextDate, files,
+        delayReason: rescheduling ? delayReason : '',
+        delayReasonOther: rescheduling && delayReason === 'other' ? delayReasonOther.trim() : '',
+        summary: summary.trim(), nextExpectedDate: submittedDate, files,
       });
       resetForm();
       await load();
@@ -174,8 +229,9 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
       ) : (
         <div className="space-y-5">
           <MonitorBar monitor={data?.monitor} />
+          <ChaseBar chase={data?.chase} />
 
-          {err && <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-200">{err}</div>}
+          {err &&<div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-200">{err}</div>}
 
           {/* Responsible follow-up owners */}
           <div className="flex flex-wrap items-center gap-2">
@@ -227,21 +283,44 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
           {/* Submit form — a progress update, not a classification. The status is derived from the ETA. */}
           {canSubmit ? (
             <form onSubmit={submit} className="space-y-4 rounded-xl border border-slate-200 p-4">
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <Input
-                  label="Expected completion date" required
-                  type="date" value={nextDate} onChange={(e) => setNextDate(e.target.value)}
-                />
-                <Select label="Workshop status" value={status} onChange={(e) => setStatus(e.target.value)}>
-                  <option value="">— Select —</option>
-                  {STATUS_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-                </Select>
-              </div>
+              {/* The daily question, asked outright. Everything below follows from the answer. */}
+              {currentEta && (
+                <div>
+                  <p className="text-sm font-semibold text-slate-700">
+                    Is the car still coming back on {fmtDate(currentEta)}?
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button
+                      type="button" onClick={() => chooseAnswer(RESPONSE_CONFIRMED)}
+                      className={`rounded-lg px-3 py-2 text-sm font-medium ring-1 transition ${
+                        answer === RESPONSE_CONFIRMED
+                          ? 'bg-emerald-600 text-white ring-emerald-600'
+                          : 'bg-white text-slate-700 ring-slate-300 hover:bg-emerald-50'}`}
+                    >
+                      Yes — back on {fmtDate(currentEta)}
+                    </button>
+                    <button
+                      type="button" onClick={() => chooseAnswer(RESPONSE_RESCHEDULED)}
+                      className={`rounded-lg px-3 py-2 text-sm font-medium ring-1 transition ${
+                        answer === RESPONSE_RESCHEDULED
+                          ? 'bg-amber-600 text-white ring-amber-600'
+                          : 'bg-white text-slate-700 ring-slate-300 hover:bg-amber-50'}`}
+                    >
+                      No — it moved to a new date
+                    </button>
+                  </div>
+                </div>
+              )}
 
-              {/* The reason is asked for only when the completion date actually moves. */}
-              {etaChanged && (
+              {/* The new date + WHY — asked only when the answer is "no". A reschedule without a reason is
+                  what the whole chase exists to prevent, so both are mandatory together. */}
+              {rescheduling && (
                 <div className="grid grid-cols-1 gap-3 rounded-lg bg-amber-50/60 p-3 ring-1 ring-amber-100 sm:grid-cols-2">
-                  <Select label="Reason for ETA change" required value={delayReason} onChange={(e) => setDelayReason(e.target.value)}>
+                  <Input
+                    label={currentEta ? 'New date the car is expected back' : 'Date the car is expected back'}
+                    required type="date" value={nextDate} onChange={(e) => setNextDate(e.target.value)}
+                  />
+                  <Select label="Reason it moved" required value={delayReason} onChange={(e) => setDelayReason(e.target.value)}>
                     <option value="">— Select —</option>
                     {DELAY_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
                   </Select>
@@ -250,11 +329,23 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
                   )}
                   {currentEta && (
                     <p className="text-[11px] text-amber-700 sm:col-span-2">
-                      Moving the completion date from {fmtDate(currentEta)} to {nextDate ? fmtDate(nextDate) : '—'}.
+                      Moving the completion date from {fmtDate(currentEta)} to {nextDate && nextDate !== currentEta ? fmtDate(nextDate) : '—'}.
+                      The next reminder will run one day before the new date.
                     </p>
                   )}
                 </div>
               )}
+
+              {answer === RESPONSE_CONFIRMED && (
+                <p className="rounded-lg bg-emerald-50/70 px-3 py-2 text-[11px] text-emerald-700 ring-1 ring-emerald-100">
+                  Recorded as confirmed for {fmtDate(currentEta)}. You will be asked again tomorrow while the car is still in the shop.
+                </p>
+              )}
+
+              <Select label="Workshop status" value={status} onChange={(e) => setStatus(e.target.value)}>
+                <option value="">— Select —</option>
+                {STATUS_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+              </Select>
 
               <Textarea label="Progress note" rows={3} value={summary} onChange={(e) => setSummary(e.target.value)} placeholder="What was done since the last update? What's next?" />
 
@@ -266,7 +357,7 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
               </div>
 
               <div className="flex justify-end">
-                <Button type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save update'}</Button>
+                <Button type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save answer'}</Button>
               </div>
             </form>
           ) : (

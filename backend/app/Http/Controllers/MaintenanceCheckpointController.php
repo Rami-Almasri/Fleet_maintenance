@@ -37,6 +37,10 @@ class MaintenanceCheckpointController extends Controller
             return ResponseHelper::SuccessResponse([
                 'ticket_id'     => $ticket->id,
                 'monitor'       => $this->checkpoints->monitorState($ticket),
+                // The chase record for THIS car: how many times the date has been pushed back (so the
+                // supervisor filling the form sees the car's own history), and whether a reminder is
+                // currently sitting unanswered.
+                'chase'         => $this->chaseSummary($ticket, $items),
                 'responsibles'  => $this->checkpoints->recipientsFor($ticket)
                     ->map(fn ($u) => ['id' => $u->id, 'name' => $u->name])->values()->all(),
                 'assigned'      => $ticket->responsibles()->pluck('users.id')->all(),
@@ -296,12 +300,47 @@ class MaintenanceCheckpointController extends Controller
         ]);
     }
 
+    /**
+     * The chase record for one ticket: how many answers it has given, how many of those pushed the date
+     * back, and whether a daily reminder is currently sitting unanswered (and for how long). Shown on the
+     * checkpoint form so the person answering sees the same accountability an admin sees.
+     */
+    private function chaseSummary(Maintenance $ticket, array $items): array
+    {
+        $open = \App\Models\MaintenanceCheckpointReminder::query()
+            ->where('maintenance_id', $ticket->id)
+            ->unanswered()
+            ->orderBy('sent_on')
+            ->get();
+
+        $first = $open->first();
+
+        return [
+            'checkpoint_count' => count($items),
+            'reschedule_count' => count(array_filter(
+                $items,
+                fn ($c) => ($c['response'] ?? null) === MaintenanceCheckpoint::RESPONSE_RESCHEDULED
+            )),
+            'reminders_open'    => $open->count(),
+            'first_reminder_on' => optional($first?->sent_on)->toDateString(),
+            'days_unanswered'   => $first ? (int) $first->sent_on->copy()->startOfDay()->diffInDays(today()) : 0,
+        ];
+    }
+
     /** Serialise one checkpoint (+ its media) for the timeline. */
     private function checkpointArray(MaintenanceCheckpoint $c): array
     {
         return [
             'id'                     => $c->id,
             'status'                 => $c->status,
+            // The supervisor's answer to the daily question: confirmed the date, or rescheduled it.
+            // Older rows (pre-`response`) fall back to the dates, which is exactly how they were read then.
+            'response'               => $c->response ?: (
+                $c->previous_expected_date && $c->next_expected_date
+                && ! $c->previous_expected_date->equalTo($c->next_expected_date)
+                    ? MaintenanceCheckpoint::RESPONSE_RESCHEDULED
+                    : MaintenanceCheckpoint::RESPONSE_CONFIRMED
+            ),
             'delay_reason'           => $c->delay_reason,
             'delay_reason_other'     => $c->delay_reason_other,
             'summary'                => $c->summary,

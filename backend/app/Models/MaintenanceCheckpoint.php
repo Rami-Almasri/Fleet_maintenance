@@ -33,9 +33,18 @@ class MaintenanceCheckpoint extends Model
         'insurance_approval', 'vendor_delay', 'other',
     ];
 
+    /**
+     * The supervisor's ANSWER to the daily question "will this car be back on the date we promised?".
+     * DERIVED at submit from whether the date actually moved — never chosen independently of the date, so
+     * the two can't disagree. `rescheduled` always carries a delay_reason; `confirmed` never does.
+     */
+    public const RESPONSE_CONFIRMED   = 'confirmed';
+    public const RESPONSE_RESCHEDULED = 'rescheduled';
+
     protected $fillable = [
         'maintenance_id', 'vehicle_id', 'status', 'delay_reason', 'delay_reason_other',
-        'summary', 'previous_expected_date', 'next_expected_date', 'submitted_by', 'submitted_by_name',
+        'summary', 'response', 'previous_expected_date', 'next_expected_date',
+        'submitted_by', 'submitted_by_name',
     ];
 
     protected $casts = [
@@ -57,6 +66,18 @@ class MaintenanceCheckpoint extends Model
     public function submitter(): BelongsTo
     {
         return $this->belongsTo(User::class, 'submitted_by');
+    }
+
+    /** Did this update push the promised date back (as opposed to confirming it)? */
+    public function isReschedule(): bool
+    {
+        return $this->response === self::RESPONSE_RESCHEDULED;
+    }
+
+    /** The daily reminders this checkpoint answered. */
+    public function remindersAnswered(): HasMany
+    {
+        return $this->hasMany(MaintenanceCheckpointReminder::class, 'responded_checkpoint_id');
     }
 
     /** The photos/videos captured with this checkpoint. */
