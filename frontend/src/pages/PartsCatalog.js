@@ -99,6 +99,11 @@ export default function PartsCatalog() {
   // delete / retire confirm
   const [toDelete, setToDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [toRetire, setToRetire] = useState(null);
+  const [retiring, setRetiring] = useState(false);
+  // Set when the server refused a delete: { part, references, canRetire }. Drives the explanation
+  // dialog, which is the whole point of the 422 carrying counts.
+  const [blocked, setBlocked] = useState(null);
 
   const openCreate = () => {
     setEditing(null);
@@ -216,19 +221,70 @@ export default function PartsCatalog() {
     }
   };
 
+  /**
+   * One place that turns a failed request into something a person can act on.
+   *
+   * A missing `response` is the network, not the API — telling someone "could not remove" when the
+   * request never arrived sends them looking for a problem in their data. 403 is a permissions
+   * answer and deserves its own sentence rather than the endpoint's generic message.
+   */
+  const apiErrorMessage = (err, fallback) => {
+    if (!err?.response) return t('partsCatalog.networkError');
+    if (err.response.status === 403) return t('partsCatalog.permissionDenied');
+    return err.response.data?.message || fallback;
+  };
+
+  /**
+   * Delete means delete. The server refuses while the part is still referenced, and the frontend
+   * does not paper over that: it explains it and offers the action that IS available.
+   */
   const confirmDelete = async () => {
     setDeleting(true);
     try {
-      // The server decides delete-vs-retire (a type fitted to cars can only be retired) and says
-      // which it did — so the message shown is the server's, not a guess made here.
-      const { data: res } = await api.delete(`/parts-catalog/${toDelete.id}`);
-      toast.success(res?.message || t('partsCatalog.removed'));
+      await api.delete(`/parts-catalog/${toDelete.id}`);
+      toast.success(t('partsCatalog.removed'));
       setToDelete(null);
       reload();
     } catch (err) {
-      toast.error(err.response?.data?.message || t('partsCatalog.removeError'));
+      const payload = err?.response?.data?.data;
+
+      // 422 here is NOT a generic failure: it is the server saying why, with the counts. Showing
+      // "could not remove" would throw away the only useful part of the answer.
+      if (err?.response?.status === 422 && payload?.references) {
+        setBlocked({
+          part: toDelete,
+          references: payload.references,
+          canRetire: payload.can_retire !== false,
+        });
+        setToDelete(null);
+        // Reaching this means the list was loaded before something started referencing the part,
+        // so what is on screen is already stale.
+        reload();
+      } else {
+        toast.error(apiErrorMessage(err, t('partsCatalog.removeError')));
+      }
     } finally {
       setDeleting(false);
+    }
+  };
+
+  /**
+   * Retire: stop offering the part while every row that already points at it keeps working.
+   * Idempotent on the server, so a double click — or a part someone else retired a moment ago —
+   * both succeed rather than erroring at the user.
+   */
+  const confirmRetire = async () => {
+    setRetiring(true);
+    try {
+      await api.post(`/parts-catalog/${toRetire.id}/retire`);
+      toast.success(t('partsCatalog.retired'));
+      setToRetire(null);
+      setBlocked(null);
+      reload();
+    } catch (err) {
+      toast.error(apiErrorMessage(err, t('partsCatalog.retireError')));
+    } finally {
+      setRetiring(false);
     }
   };
 
@@ -238,9 +294,21 @@ export default function PartsCatalog() {
       toast.success(t('partsCatalog.restored'));
       reload();
     } catch (err) {
-      toast.error(err.response?.data?.message || t('partsCatalog.restoreError'));
+      toast.error(apiErrorMessage(err, t('partsCatalog.restoreError')));
     }
   };
+
+  /**
+   * What is in the way, as countable lines. Only non-zero references appear, so an empty result
+   * genuinely means nothing blocks the delete.
+   */
+  const referenceLines = (references = {}) =>
+    Object.entries(references)
+      .filter(([, n]) => Number(n) > 0)
+      .map(([key, n]) => ({ key, count: Number(n), label: t(`partsCatalog.ref.${key}`) }));
+
+  /** Older payloads (before the references contract) only knew the fitted-component count. */
+  const canDelete = (p) => (p.can_delete !== undefined ? p.can_delete : (p.usage_count || 0) === 0);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -396,23 +464,53 @@ export default function PartsCatalog() {
                             </span>
                           ) : <span className="text-slate-300">—</span>}
                         </td>
-                        {/* Why Delete may become Retire, stated as a fact rather than as a disabled button. */}
+                        {/* Everything that would block a delete, named. This is why the action on the
+                            right is Retire and not Remove — stated as a fact, so the constraint reads
+                            as a reason rather than as a button that mysteriously does something else. */}
                         <td className="border-b border-slate-100 px-5 py-3.5 text-slate-600">
-                          {p.usage_count > 0
-                            ? t('partsCatalog.onNCars', { n: num(p.usage_count) })
-                            : <span className="text-slate-300">{t('partsCatalog.unused')}</span>}
+                          {(() => {
+                            const lines = referenceLines(p.references || { fitted_components: p.usage_count || 0 });
+                            if (! lines.length) {
+                              return <span className="text-slate-300">{t('partsCatalog.unused')}</span>;
+                            }
+                            return (
+                              <span title={lines.map((l) => `${l.count} ${l.label}`).join(' · ')}>
+                                {lines.map((l) => `${num(l.count)} ${l.label}`).join(' · ')}
+                              </span>
+                            );
+                          })()}
                         </td>
                         <td className="border-b border-slate-100 px-5 py-3.5">
                           <div className="flex justify-end gap-2">
                             {canManage && (
                               <>
                                 <Button variant="secondary" size="sm" onClick={() => openEdit(p)}>{t('common.edit')}</Button>
-                                {p.is_active ? (
+
+                                {/* Delete is offered ONLY when the server would allow it. When it
+                                    would not, Retire is offered instead — the recommended action,
+                                    not a disguised delete. The server still refuses independently. */}
+                                {p.is_active && canDelete(p) && (
                                   <Button variant="ghost" size="sm" className="text-red-600 hover:bg-red-50" onClick={() => setToDelete(p)}>
-                                    {p.usage_count > 0 ? t('partsCatalog.retire') : t('partsCatalog.remove')}
+                                    {t('partsCatalog.remove')}
                                   </Button>
-                                ) : (
-                                  <Button variant="ghost" size="sm" onClick={() => restore(p)}>{t('partsCatalog.restore')}</Button>
+                                )}
+                                {p.is_active && ! canDelete(p) && (
+                                  <Button variant="ghost" size="sm" onClick={() => setToRetire(p)}>
+                                    {t('partsCatalog.retire')}
+                                  </Button>
+                                )}
+
+                                {/* A retired part can still be deleted if nothing ever referenced it
+                                    — retiring is not a one-way trip into permanence. */}
+                                {! p.is_active && (
+                                  <>
+                                    <Button variant="ghost" size="sm" onClick={() => restore(p)}>{t('partsCatalog.restore')}</Button>
+                                    {canDelete(p) && (
+                                      <Button variant="ghost" size="sm" className="text-red-600 hover:bg-red-50" onClick={() => setToDelete(p)}>
+                                        {t('partsCatalog.remove')}
+                                      </Button>
+                                    )}
+                                  </>
                                 )}
                               </>
                             )}
@@ -603,22 +701,63 @@ export default function PartsCatalog() {
         </div>
       </Modal>
 
-      {/* Delete / retire confirm — the wording tells the user which of the two will actually happen. */}
+      {/* Delete confirm. Only ever reached for a part the server should accept deleting — and it is
+          still a confirmation, because deletion is permanent. */}
       <ConfirmDialog
         open={!!toDelete}
         onClose={() => !deleting && setToDelete(null)}
         onConfirm={confirmDelete}
         loading={deleting}
-        title={toDelete?.usage_count > 0 ? t('partsCatalog.retireTitle') : t('partsCatalog.removeTitle')}
-        confirmText={toDelete?.usage_count > 0 ? t('partsCatalog.retire') : t('partsCatalog.remove')}
-        message={
-          toDelete
-            ? toDelete.usage_count > 0
-              ? t('partsCatalog.retireMsg', { part: partPrimary(toDelete), n: num(toDelete.usage_count) })
-              : t('partsCatalog.removeMsg', { part: partPrimary(toDelete) })
-            : ''
-        }
+        title={t('partsCatalog.removeTitle')}
+        confirmText={t('partsCatalog.remove')}
+        message={toDelete ? t('partsCatalog.removeMsg', { part: partPrimary(toDelete) }) : ''}
       />
+
+      {/* Retire confirm — its own deliberate action, never a delete in disguise. */}
+      <ConfirmDialog
+        open={!!toRetire}
+        onClose={() => !retiring && setToRetire(null)}
+        onConfirm={confirmRetire}
+        loading={retiring}
+        title={t('partsCatalog.retireTitle')}
+        confirmText={t('partsCatalog.retire')}
+        message={toRetire ? t('partsCatalog.retireMsg', { part: partPrimary(toRetire) }) : ''}
+      />
+
+      {/* THE 422, RENDERED AS AN ANSWER. The server refused the delete and said exactly what is in
+          the way; showing a red "could not remove" toast would discard the useful half of that.
+          Reached only when the list was stale — the row hides Delete once references are known. */}
+      <Modal
+        open={!!blocked}
+        onClose={() => setBlocked(null)}
+        title={t('partsCatalog.blockedTitle')}
+        subtitle={blocked ? partPrimary(blocked.part) : ''}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setBlocked(null)}>{t('common.close')}</Button>
+            {blocked?.canRetire && (
+              <Button onClick={() => { setToRetire(blocked.part); setBlocked(null); }}>
+                {t('partsCatalog.retire')}
+              </Button>
+            )}
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-slate-700">{t('partsCatalog.blockedIntro')}</p>
+
+          <ul className="space-y-1 rounded-lg bg-slate-50 px-4 py-3 text-sm text-slate-700 ring-1 ring-inset ring-slate-200">
+            {referenceLines(blocked?.references).map((line) => (
+              <li key={line.key} className="flex items-center justify-between gap-4">
+                <span>{line.label}</span>
+                <span className="font-medium text-slate-900">{num(line.count)}</span>
+              </li>
+            ))}
+          </ul>
+
+          <p className="text-xs text-slate-500">{t('partsCatalog.blockedHint')}</p>
+        </div>
+      </Modal>
     </div>
   );
 }

@@ -2747,7 +2747,22 @@ const en = {
     removeTitle: 'Remove this part?',
     removeMsg: '“{part}” is not used by any car, so it will be deleted from the catalog.',
     retireTitle: 'Retire this part?',
-    retireMsg: '“{part}” is fitted to {n} car(s), so it cannot be deleted. It will be hidden from the pickers, and the history of those cars stays intact.',
+    retireMsg: '“{part}” will stop appearing in the pickers. Everything that already refers to it — fitted components, warranties, past requests — keeps working exactly as it does now.',
+    retired: 'Part retired',
+    retireError: 'Could not retire this part',
+
+    // The delete refusal, rendered as an answer rather than a red toast.
+    blockedTitle: 'This part cannot be deleted',
+    blockedIntro: 'It is still referenced by records that would lose their meaning without it:',
+    blockedHint: 'Retiring hides the part from every picker while these records keep working. Deletion stays available only for a part nothing has ever used.',
+    ref: {
+      fitted_components: 'fitted components',
+      warranties: 'warranties',
+      required_parts: 'required-part lines',
+    },
+
+    permissionDenied: 'You do not have permission to change the parts catalog.',
+    networkError: 'Could not reach the server. Check your connection and try again.',
 
     empty: 'No parts match',
     emptyHint: 'Try a different search, or clear the filters.',
@@ -6162,7 +6177,21 @@ const ar = {
     removeTitle: 'حذف هذه القطعة؟',
     removeMsg: '«{part}» غير مستخدمة على أي سيارة، لذلك سيتم حذفها من الكتالوج.',
     retireTitle: 'إيقاف هذه القطعة؟',
-    retireMsg: '«{part}» مركّبة على {n} سيارة، لذلك لا يمكن حذفها. سيتم إخفاؤها من قوائم الاختيار مع بقاء سجل تلك السيارات كما هو.',
+    retireMsg: '«{part}» لن تظهر بعد الآن في قوائم الاختيار. وكل ما يشير إليها حاليًا — القطع المركّبة والضمانات والطلبات السابقة — يبقى كما هو تمامًا.',
+    retired: 'تم إيقاف القطعة',
+    retireError: 'تعذّر إيقاف هذه القطعة',
+
+    blockedTitle: 'لا يمكن حذف هذه القطعة',
+    blockedIntro: 'ما زالت مرتبطة بسجلات تفقد معناها بدونها:',
+    blockedHint: 'الإيقاف يخفي القطعة من كل قوائم الاختيار مع بقاء هذه السجلات تعمل. الحذف متاح فقط لقطعة لم تُستخدم قط.',
+    ref: {
+      fitted_components: 'قطع مركّبة',
+      warranties: 'ضمانات',
+      required_parts: 'سطور قطع مطلوبة',
+    },
+
+    permissionDenied: 'ليست لديك صلاحية تعديل كتالوج قطع الغيار.',
+    networkError: 'تعذّر الوصول إلى الخادم. تحقّق من الاتصال ثم أعد المحاولة.',
 
     empty: 'لا توجد قطع مطابقة',
     emptyHint: 'جرّب بحثًا آخر أو امسح عوامل التصفية.',
