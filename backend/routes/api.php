@@ -308,6 +308,8 @@ Route::middleware('auth:sanctum')->prefix('part-purchases')->controller(PartPurc
     Route::get('/', 'index')->middleware('permission:parts.view');
     Route::get('/duplicate-check', 'duplicateCheck')->middleware('permission:parts.purchase|parts.request|parts.view');
     Route::get('/recurrence-check', 'recurrenceCheck')->middleware('permission:parts.view|maintenance.view');
+    // Fleet-wide "bought again for the same car" sweep + who approved each buy (dashboard card).
+    Route::get('/repeats', 'repeats')->middleware('permission:parts.view');
     Route::get('/vehicle/{vehicle}/history', 'vehicleHistory')->middleware('permission:parts.view');
     Route::post('/{partPurchase}/install', 'install')->middleware('permission:parts.purchase|maintenance.logistics');
     Route::post('/{partPurchase}/delivered', 'markDelivered')->middleware('permission:parts.purchase|maintenance.logistics');
@@ -803,6 +805,21 @@ Route::middleware(['auth:sanctum', 'permission:maintenance.view'])->get('Mainten
 // Split from the directory above because it reads the whole repair corpus and is cached; the
 // directory is live state and must stay fast. See GarageScorecardController.
 Route::middleware(['auth:sanctum', 'permission:maintenance.view'])->get('Maintenance/garage-scorecards', [\App\Http\Controllers\GarageScorecardController::class, 'index']);
+
+// ── FLEET INTELLIGENCE ──────────────────────────────────────────────────────────────────────────
+//
+// The evidence drawer: any figure the platform publishes, opened up to the repairs behind it. ONE
+// endpoint for every metric — a card emits the evidence id for its own number and the drawer asks
+// here, so the frontend never needs to know how a particular figure was computed.
+//
+// This platform grades suppliers. The first time a score goes against a garage somebody will dispute
+// it, and the only acceptable answer is the repairs themselves, on screen.
+Route::middleware(['auth:sanctum', 'permission:intelligence.view'])
+    ->prefix('intelligence')
+    ->group(function () {
+        Route::get('evidence/{queryId}', [\App\Http\Controllers\Intelligence\EvidenceController::class, 'show'])
+            ->where('queryId', '[A-Za-z0-9_.:-]+');
+    });
 
 // Workshop events CRUD — the dashboard owning the garage log (origin = 'manual'); the
 // Google-Sheet import is now an optional, non-destructive sync. Reads return synced +

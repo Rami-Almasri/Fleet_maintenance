@@ -54,6 +54,10 @@ class RolesAndPermissionsSeeder extends Seeder
         'components.backfill',               // Asset Layer: run the legacy-data backfill (super-admin/admin only)
         'registration.view', 'registration.manage',
         'insights.view',                     // anomalies, data-health, status-mismatch
+        // Fleet Intelligence: the governed-metric surfaces (garage scorecards, profiles, comparison)
+        // and the evidence drawer behind every figure on them. Separate from insights.view because
+        // this grades SUPPLIERS — the drill-down names garages and the repairs they did.
+        'intelligence.view',
         'dashboard.view',                    // dashboard KPIs + fleet expiring
         'sync.run',                          // run/monitor data syncs
         'users.manage',                      // manage users & role assignments (admin only)
@@ -85,7 +89,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'parts.view', 'parts.request', 'parts.purchase', 'parts.investigate',
             'components.view', 'components.manage', // Asset Layer: full operational control includes asset custody
             'registration.view', 'registration.manage',
-            'insights.view', 'dashboard.view', 'sync.run',
+            'insights.view', 'intelligence.view', 'dashboard.view', 'sync.run',
         ],
         // Day-to-day desk: rentals, customers, moving cars in/out, taking payments.
         'operations' => [
@@ -120,7 +124,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'parts.view', 'parts.request', 'parts.purchase', 'parts.investigate',
             'components.view', 'components.manage', // Asset Layer: the workshop-manager role owns install/remove/transfer
             'logistics.view',
-            'registration.view', 'insights.view', 'dashboard.view',
+            'registration.view', 'insights.view', 'intelligence.view', 'dashboard.view',
         ],
         // Supervisor / Coordinator (e.g. Waleed Medhat, Abdullah Asham): the DISPATCHER. After the
         // inspector files a report, the supervisor reviews the open ticket, picks the destination
@@ -136,6 +140,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'parts.view', 'parts.request',
             'components.view', 'components.manage', // Asset Layer: authorized maintenance delegates hold asset custody
             'logistics.view', 'logistics.dispatch',
+            'intelligence.view',   // picks the destination garage — needs to see who is good at what
             'dashboard.view',
         ],
         // Inspector (e.g. Abu Maroof): opens tickets, files the test-drive report, re-inspects on return.
