@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\ComponentCatalog;
 use App\Models\Maintenance;
 use App\Models\MaintenanceRequiredPart;
 use App\Models\MaintenanceTask;
@@ -10,6 +11,7 @@ use App\Models\User;
 use App\Models\VehicleLogEvent;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 /**
  * The inspector's required parts, and the Part Requests they raise.
@@ -40,6 +42,7 @@ class MaintenanceRequiredPartService
         private PartWorkflowService $parts,
         private VehicleLogService $log,
         private NotificationScanner $notifier,
+        private PartCatalogMatcher $catalogMatcher,
     ) {}
 
     // ───────────────────────────── 1. inspector: record the requirement ─────────────────────────────
@@ -69,6 +72,11 @@ class MaintenanceRequiredPartService
                     continue; // an empty row in the UI is not a requirement
                 }
 
+                // Which catalog part this line means. An explicit id (the picker) always wins and is
+                // recorded as 'manual' — a person chose it. Without one we fall back to matching the
+                // typed text, which is exact-only and may legitimately find nothing.
+                [$catalogId, $matchedBy] = $this->resolveCatalog($line, $partName);
+
                 $findingKey = MaintenanceRequiredPart::findingKey($line['finding'] ?? null);
                 $quantity   = $this->quantity($line['quantity'] ?? null) ?? 1.0;
                 $priority   = in_array(($line['priority'] ?? null), MaintenanceRequiredPart::PRIORITIES, true)
@@ -77,7 +85,13 @@ class MaintenanceRequiredPartService
                 $notes      = $this->clean($line['notes'] ?? null);
 
                 if ($existing = $pending->get($this->lineKey($partName, $findingKey))) {
-                    $existing->fill(['quantity' => $quantity, 'priority' => $priority, 'notes' => $notes])->save();
+                    $existing->fill([
+                        'quantity' => $quantity, 'priority' => $priority, 'notes' => $notes,
+                        // Re-submitting can only ever IMPROVE the link: a line already tied to a
+                        // catalog part keeps that tie rather than losing it to a weaker re-match.
+                        'component_catalog_id' => $existing->component_catalog_id ?: $catalogId,
+                        'catalog_matched_by'   => $existing->component_catalog_id ? $existing->catalog_matched_by : $matchedBy,
+                    ])->save();
                     continue;
                 }
 
@@ -90,6 +104,9 @@ class MaintenanceRequiredPartService
                     // the car is mid-repair); otherwise bindToTasks() resolves it after findings promotion.
                     'maintenance_task_id' => $findingKey ? $this->taskIdFor($ticket, $findingKey) : null,
                     'part_name'         => $partName,
+                    // The structured answer, beside the inspector's own words (which stay verbatim).
+                    'component_catalog_id' => $catalogId,
+                    'catalog_matched_by'   => $matchedBy,
                     'notes'             => $notes,
                     'quantity'          => $quantity,
                     'priority'          => $priority,
@@ -239,6 +256,44 @@ class MaintenanceRequiredPartService
     }
 
     /** Identity of a requirement line: the same part for the same fault is the same requirement. */
+    /**
+     * Which catalog part a line refers to, and how we know.
+     *
+     * Order of trust: an explicit id from the picker ('manual' — a human chose it) beats matching
+     * the typed text, which is exact-only and refuses to guess (see PartCatalogMatcher).
+     *
+     * THE CUTOVER. The long-term rule is that every required part references the catalog rather
+     * than free text. Enforcing that the day the column appeared would have broken the live
+     * inspection flow, where reports are still filed with typed names and no picker exists yet — an
+     * inspector mid-report would simply be unable to submit. So enforcement is behind
+     * `parts.require_catalog_link`, off by default: today an unresolved line is recorded with a
+     * null link and listed by `parts:link-required`; the day the picker ships, the flag goes on and
+     * a line that names no known part is refused at the door.
+     *
+     * @return array{0:int|null, 1:string|null} [catalog id, how it was matched]
+     */
+    private function resolveCatalog(array $line, string $partName): array
+    {
+        $explicit = $line['component_catalog_id'] ?? null;
+
+        if ($explicit && ComponentCatalog::whereKey($explicit)->exists()) {
+            return [(int) $explicit, 'manual'];
+        }
+
+        $hit = $this->catalogMatcher->resolve($partName);
+
+        if ($hit['catalog_id'] === null && config('parts.require_catalog_link', false)) {
+            throw ValidationException::withMessages([
+                'required_parts' => sprintf(
+                    '"%s" does not match any part in the catalog. Pick the part from the list, or add it to the catalog first.',
+                    $partName
+                ),
+            ]);
+        }
+
+        return [$hit['catalog_id'], $hit['catalog_id'] ? $hit['matched_by'] : null];
+    }
+
     private function lineKey(string $partName, ?string $findingKey): string
     {
         return strtolower(trim($partName)) . '|' . ($findingKey ?? '');

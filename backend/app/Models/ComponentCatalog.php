@@ -43,17 +43,22 @@ class ComponentCatalog extends Model
     ];
 
     protected $fillable = [
-        'slug', 'name', 'category_key', 'action_target', 'tracking_mode',
-        'default_part_number', 'default_warranty_months',
+        'slug', 'name', 'name_ar', 'aliases', 'category_key', 'action_target', 'tracking_mode',
+        'default_part_number', 'default_warranty_months', 'default_warranty_km',
         'expected_life_km', 'expected_life_months',
         'position_scheme', 'is_active', 'notes',
+        'edited_in_app', 'edited_at', 'edited_by', 'edited_by_name',
     ];
 
     protected $casts = [
+        'aliases'                 => 'array',
         'default_warranty_months' => 'integer',
+        'default_warranty_km'     => 'integer',
         'expected_life_km'        => 'integer',
         'expected_life_months'    => 'integer',
         'is_active'               => 'boolean',
+        'edited_in_app'           => 'boolean',
+        'edited_at'               => 'datetime',
     ];
 
     public function components(): HasMany
@@ -64,6 +69,49 @@ class ComponentCatalog extends Model
     public function scopeActive(Builder $query): Builder
     {
         return $query->where('is_active', true);
+    }
+
+    /**
+     * The picker's search: one box, any language, part name OR the words someone uses instead of it.
+     *
+     * Four columns are searched because a technician looking for the alternator may type "alternator",
+     * "دينمو", "dynamo" or "battery not charging" — and all four have to land on the same row, or he
+     * gives up and types free text again, which is the problem this catalog exists to end.
+     *
+     * `aliases` is a JSON column matched with a plain LIKE against its raw text rather than with
+     * JSON_CONTAINS. Deliberate, for two reasons: JSON_CONTAINS needs an exact element match, so it
+     * cannot do the substring matching a search box needs ("not cooling" would miss "ac not cooling");
+     * and the JSON functions differ between the local MariaDB and the production MySQL 8, which is a
+     * trap this codebase has been caught by before. LIKE behaves identically on both.
+     *
+     * The cost of LIKE-on-JSON is that a search could in principle match the JSON syntax itself — but
+     * the needle is a word a human typed, and no human searches for '","'. Worst case it surfaces one
+     * extra row in a dropdown.
+     */
+    public function scopeSearch(Builder $query, ?string $term): Builder
+    {
+        $term = trim((string) $term);
+
+        if ($term === '') {
+            return $query;
+        }
+
+        // Escape the LIKE wildcards so a part number containing '%' or '_' searches literally.
+        $needle = '%' . str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $term) . '%';
+
+        return $query->where(function (Builder $q) use ($needle) {
+            $q->where('name', 'like', $needle)
+                ->orWhere('name_ar', 'like', $needle)
+                ->orWhere('aliases', 'like', $needle)
+                ->orWhere('slug', 'like', $needle)
+                ->orWhere('default_part_number', 'like', $needle);
+        });
+    }
+
+    /** Display name in the caller's language, falling back to English when no Arabic term is set. */
+    public function displayName(string $locale = 'en'): string
+    {
+        return $locale === 'ar' && $this->name_ar ? $this->name_ar : $this->name;
     }
 
     public function isConsumable(): bool

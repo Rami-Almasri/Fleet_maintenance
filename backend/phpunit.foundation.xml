@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The FOUNDATION suite (tests/Foundation) — schema, seeder, Parts Catalog and Warranty rules.
+
+  WHY THIS EXISTS SEPARATELY FROM phpunit.crud.xml
+
+  The CRUD suite uses RefreshDatabase, which runs `migrate:fresh` (drop every table, then rebuild)
+  before the first test. On this machine that cycle is BROKEN AT THE DATABASE LEVEL: MySQL drops the
+  tables from its dictionary but does not release the InnoDB tablespace files, so the immediate
+  re-CREATE fails with "Base table or view already exists: 1050" for a table that no longer exists.
+  Once that happens the schema is poisoned — `migrations` itself becomes a phantom — and every later
+  run fails the same way. It reproduces in a brand-new database, so it is not specific to any one
+  schema name, and it is an environment fault, NOT a code fault. Migrating from EMPTY works
+  perfectly (247 migrations, 123 tables, verified).
+
+  So this suite never drops anything. It runs against a pre-migrated schema (`fleet_test`, built
+  once with `php artisan migrate`) and wraps each test in a transaction that is rolled back, which
+  gives the same isolation without touching DDL.
+
+  SETUP (once) and RUN: see tests/Foundation/README.md, which carries the exact commands.
+  Briefly: create the `fleet_test` schema, run `artisan migrate` against it (never migrate:fresh),
+  seed RolesAndPermissionsSeeder and ComponentCatalogSeeder into it, then run this config.
+
+  If the schema ever drifts behind the migrations, run `artisan migrate` against it again. Never
+  migrate:fresh, until the MySQL install is repaired.
+-->
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         colors="true"
+>
+    <testsuites>
+        <testsuite name="Foundation">
+            <directory>tests/Foundation</directory>
+        </testsuite>
+    </testsuites>
+    <php>
+        <env name="APP_ENV" value="testing"/>
+        <env name="APP_MAINTENANCE_DRIVER" value="file"/>
+        <env name="BCRYPT_ROUNDS" value="4"/>
+        <env name="BROADCAST_CONNECTION" value="null"/>
+        <env name="CACHE_STORE" value="array"/>
+        <env name="DB_CONNECTION" value="mysql"/>
+        <env name="DB_HOST" value="127.0.0.1"/>
+        <env name="DB_PORT" value="3306"/>
+        <env name="DB_DATABASE" value="fleet_test"/>
+        <env name="DB_USERNAME" value="root"/>
+        <env name="DB_PASSWORD" value=""/>
+        <env name="DB_URL" value=""/>
+        <env name="MAIL_MAILER" value="array"/>
+        <env name="QUEUE_CONNECTION" value="sync"/>
+        <env name="SESSION_DRIVER" value="array"/>
+        <env name="ASSET_LAYER_MODE" value="off"/>
+        <env name="PULSE_ENABLED" value="false"/>
+        <env name="TELESCOPE_ENABLED" value="false"/>
+        <env name="NIGHTWATCH_ENABLED" value="false"/>
+    </php>
+</phpunit>
