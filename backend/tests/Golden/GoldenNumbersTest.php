@@ -293,6 +293,105 @@ class GoldenNumbersTest extends GoldenTestCase
         $this->assertEquals($before['pairs']->c, $after['pairs']->c, 'G20: fault_recurrence_pairs content changed on rebuild.');
     }
 
+    // ─────────────────────────────────────────────────────────────────────────────────────────────
+    // G21–G24 · The governed recurrence metric (contract v2.0.0)
+    // ─────────────────────────────────────────────────────────────────────────────────────────────
+
+    /**
+     * G21 — the canonical fleet comeback rate.
+     *
+     * This is the number that replaces the six that disagreed. It is deduplicated (one fault-day =
+     * one repair) and right-censored (a repair too recent to have failed is not counted as one that
+     * held). The retired v1.0.0 definition published 40.63% over n=33,040.
+     */
+    public function test_g21_canonical_fleet_comeback_rate(): void
+    {
+        $row = DB::table('fault_recurrence_pairs')
+            ->selectRaw('COUNT(*) AS n, SUM(returned_90) AS returned')
+            ->where('days_observed', '>=', 90)
+            ->first();
+
+        $this->assertGolden('G21.n', 10595, (int) $row->n);
+        $this->assertGolden('G21.comeback_pct', 46.51, round($row->returned / $row->n * 100, 2), 0.05);
+
+        // The first-time-fix proxy is its complement — they must never be sourced separately.
+        $this->assertGolden('G21.first_time_fix_pct', 53.49, round(100 - $row->returned / $row->n * 100, 2), 0.05);
+    }
+
+    /**
+     * G22 — how many garages clear the honest floor.
+     *
+     * The contract's floor of 30 is stated in REAL repairs. Under the retired definition it was
+     * enforcing roughly 6, which is why 63 garages carried a score. Lowering the floor to restore
+     * that count would re-import the bug as a setting.
+     *
+     * EXPECTATION CORRECTED 2026-08-04, before any consumer was repointed: the convergence plan
+     * projected 36 from deduplication alone. Applying the governed observation horizon as well
+     * removes a further 3, giving 33. The plan's figure was measured without censoring; this is the
+     * governed number. Documents updated in the same commit.
+     */
+    public function test_g22_garages_clearing_the_sample_floor(): void
+    {
+        $floor = (int) config('metrics.recurrence.min_sample.garage', 30);
+
+        $scored = DB::table('fault_recurrence_pairs')
+            ->select('first_vendor_id')
+            ->whereNotNull('first_vendor_id')
+            ->where('days_observed', '>=', 90)
+            ->groupBy('first_vendor_id')
+            ->havingRaw('COUNT(*) >= ?', [$floor])
+            ->get()
+            ->count();
+
+        $this->assertGolden('G22.floor', 30, $floor);
+        $this->assertGolden('G22.scored_garages', 33, $scored);
+    }
+
+    /**
+     * G24 — right-censoring is stamped on every row.
+     *
+     * A null `days_observed` would make an event invisible to every governed read, silently
+     * shrinking the corpus instead of failing loudly.
+     */
+    public function test_g24_right_censoring_is_complete(): void
+    {
+        $nulls = DB::table('fault_recurrence_pairs')->whereNull('days_observed')->count();
+        $this->assertGolden('G24.nulls', 0, $nulls);
+
+        $negative = DB::table('fault_recurrence_pairs')->where('days_observed', '<', 0)->count();
+        $this->assertGolden('G24.negative', 0, $negative);
+
+        // The censored share must stay a minority: a 90-day window over a three-year corpus
+        // should exclude only recent work. A majority would mean the horizon is wrong.
+        $total    = DB::table('fault_recurrence_pairs')->count();
+        $censored = DB::table('fault_recurrence_pairs')->where('days_observed', '<', 90)->count();
+
+        $this->assertGolden('G24.censored', 2013, $censored);
+        $this->assertLessThan(0.5, $censored / $total, 'G24: censoring most of the corpus means the horizon is wrong.');
+    }
+
+    /**
+     * The rebuild ledger records every run.
+     *
+     * Convergence concentrates risk: one table now feeds every recurrence figure, so a rebuild that
+     * silently stops is a platform-wide failure with no symptom. The ledger is what gives it one.
+     */
+    public function test_every_rebuild_is_recorded_with_its_health(): void
+    {
+        $run = DB::table('intelligence_rebuild_runs')
+            ->where('target_table', 'fault_recurrence_pairs')
+            ->where('status', 'success')
+            ->orderByDesc('id')
+            ->first();
+
+        $this->assertNotNull($run, 'a successful rebuild must leave a health record');
+        $this->assertNotNull($run->duration_ms);
+        $this->assertNotNull($run->rows_read);
+        $this->assertNotNull($run->rows_written);
+        $this->assertNotNull($run->corpus_max_date, 'the horizon this build used must be recorded');
+        $this->assertSame(config('metrics.recurrence.version'), $run->metric_version);
+    }
+
     /** Event conservation: every dated source row is accounted for by exactly one visit. */
     public function test_visit_rebuild_conserves_every_dated_source_row(): void
     {

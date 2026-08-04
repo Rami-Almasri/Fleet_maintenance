@@ -185,7 +185,7 @@ Below the floor a surface reads **"not enough repairs"** — never a percentage,
 
 > **⚠ Do not lower a floor to restore the old count of scored garages.**
 > Before deduplication, a garage floor of 30 was enforcing roughly 6 real repairs. That is why 63
-> garages carried a score and only **36** clear the honest bar. Lowering the floor would re-import
+> garages carried a score and only **33** clear the honest bar. Lowering the floor would re-import
 > the bug as a setting.
 
 ### Coverage
@@ -238,7 +238,7 @@ monitoring a release requirement.
 | Horizon | `corpus_max − 90d` |
 | **Fleet comeback** | **46.51%** (n = 10,595) |
 | First-time-fix proxy | ≈53.5% |
-| Garages scored at n≥30 | 36 |
+| Garages scored at n≥30 | 33 |
 
 **Reason for change:** one repair must count once, and a repair too recent to have failed must not
 count as one that held. Six implementations had drifted to a 5.9-point spread on the same question.

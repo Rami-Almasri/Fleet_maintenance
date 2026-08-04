@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Intelligence\Health\RebuildLedger;
 use App\Intelligence\Support\VisitCollapser;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -38,7 +39,7 @@ class IntelligenceRebuildVisits extends Command
     private const TABLE   = 'repair_visits';
     private const STAGING = 'repair_visits_rebuild';
 
-    public function handle(): int
+    public function handle(RebuildLedger $ledger): int
     {
         if (! Schema::hasTable(self::TABLE)) {
             $this->error('repair_visits does not exist — run the migrations first.');
@@ -48,6 +49,10 @@ class IntelligenceRebuildVisits extends Command
 
         $started = microtime(true);
         $builtAt = now();
+
+        // Recorded like the recurrence rebuild: a derived table that silently stops updating has no
+        // symptom at all, it just keeps serving yesterday's answer with today's confidence.
+        $runId = $ledger->start('intelligence:rebuild-visits', self::TABLE);
 
         try {
             $this->createStaging();
@@ -63,6 +68,7 @@ class IntelligenceRebuildVisits extends Command
                     $this->error('  • ' . $f);
                 }
                 $this->dropStaging();
+                $ledger->validationFailed($runId, $stats, implode(' | ', $failures));
 
                 return self::FAILURE;
             }
@@ -72,17 +78,20 @@ class IntelligenceRebuildVisits extends Command
             if ($this->option('dry-run')) {
                 $this->warn('--dry-run: staging discarded, live table unchanged.');
                 $this->dropStaging();
+                $ledger->succeed($runId, $stats + ['dry_run' => true]);
 
                 return self::SUCCESS;
             }
 
             $this->swap();
             $this->info('Swapped into place.');
+            $ledger->succeed($runId, $stats);
 
             return self::SUCCESS;
         } catch (Throwable $e) {
             $this->error('Rebuild failed: ' . $e->getMessage());
             $this->dropStaging();
+            $ledger->fail($runId, $e->getMessage());
 
             return self::FAILURE;
         }

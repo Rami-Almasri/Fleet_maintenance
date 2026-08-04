@@ -39,13 +39,27 @@ use Generator;
  * Callers must pre-filter `is_exposure = 0` — exposure rows record that a car was exposed to a
  * system, not that the system failed, and counting them roughly doubles every fault number.
  *
+ * ── RIGHT-CENSORING ─────────────────────────────────────────────────────────────────────────────
+ * Each event also carries `days_observed` — how long it has been watched, measured against the
+ * corpus edge rather than the wall clock. A repair completed last week cannot have come back within
+ * 90 days yet, and counting it as one that HELD flatters every garage, the busiest ones most.
+ * Consumers filter `days_observed >= window` rather than each deriving a horizon of their own, which
+ * is how the platform previously ended up with three different ones.
+ *
  * HISTORICAL: includes soft-deleted tickets, for the reason given in VisitCollapser.
  */
 final class RecurrencePairBuilder
 {
-    /** @param iterable<array|object> $rows pre-sorted signature rows */
-    public function build(iterable $rows): Generator
+    /**
+     * @param  iterable<array|object>  $rows       pre-sorted signature rows
+     * @param  string|null             $corpusMax  MAX(occurred_at) across the whole corpus, for
+     *                                             right-censoring. Null leaves days_observed null,
+     *                                             which the rebuild's validation then rejects.
+     */
+    public function build(iterable $rows, ?string $corpusMax = null): Generator
     {
+        $this->corpusMax = $corpusMax === null ? null : substr($corpusMax, 0, 10);
+
         $partition = null;   // [vehicle_id, signature]
         $events    = [];     // deduplicated events for the current partition
 
@@ -135,6 +149,13 @@ final class RecurrencePairBuilder
                 $days = (int) round((strtotime($next['occurred_at']) - strtotime($event['occurred_at'])) / 86400);
             }
 
+            // How long this event has been watched. Anchored on the corpus edge, not CURDATE():
+            // the corpus ends before today (signatures lag a sheet import), so the clock would
+            // silently discard several hundred fully-observed rows.
+            $observed = $this->corpusMax === null ? null : max(0, (int) round(
+                (strtotime($this->corpusMax) - strtotime($event['occurred_at'])) / 86400
+            ));
+
             $labels = array_keys($event['label_sources']);
             sort($labels);
 
@@ -148,6 +169,7 @@ final class RecurrencePairBuilder
                 'next_maintenance_id'  => $next['maintenance_id'] ?? null,
                 'next_vendor_id'       => $next['vendor_id'] ?? null,
                 'days_to_return'       => $days,
+                'days_observed'        => $observed,
                 'returned_30'          => $days !== null && $days <= 30,
                 'returned_60'          => $days !== null && $days <= 60,
                 'returned_90'          => $days !== null && $days <= 90,
@@ -162,6 +184,9 @@ final class RecurrencePairBuilder
             ];
         }
     }
+
+    /** The corpus edge every event is censored against; null disables censoring. */
+    private ?string $corpusMax = null;
 
     private function normalise(array|object $raw): array
     {

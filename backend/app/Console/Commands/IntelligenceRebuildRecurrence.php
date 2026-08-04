@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Intelligence\Health\RebuildLedger;
 use App\Intelligence\Support\RecurrencePairBuilder;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -43,7 +44,7 @@ class IntelligenceRebuildRecurrence extends Command
     private const TABLE   = 'fault_recurrence_pairs';
     private const STAGING = 'fault_recurrence_pairs_rebuild';
 
-    public function handle(): int
+    public function handle(RebuildLedger $ledger): int
     {
         if (! Schema::hasTable(self::TABLE)) {
             $this->error('fault_recurrence_pairs does not exist — run the migrations first.');
@@ -53,6 +54,10 @@ class IntelligenceRebuildRecurrence extends Command
 
         $started = microtime(true);
         $builtAt = now();
+
+        // Every run is recorded, success or failure. A rebuild that silently stops has no symptom:
+        // the table keeps serving and every page keeps looking authoritative.
+        $runId = $ledger->start('intelligence:rebuild-recurrence', self::TABLE);
 
         try {
             DB::statement('DROP TABLE IF EXISTS ' . self::STAGING);
@@ -69,6 +74,7 @@ class IntelligenceRebuildRecurrence extends Command
                     $this->error('  • ' . $f);
                 }
                 DB::statement('DROP TABLE IF EXISTS ' . self::STAGING);
+                $ledger->validationFailed($runId, $stats, implode(' | ', $failures));
 
                 return self::FAILURE;
             }
@@ -78,6 +84,7 @@ class IntelligenceRebuildRecurrence extends Command
             if ($this->option('dry-run')) {
                 $this->warn('--dry-run: staging discarded, live table unchanged.');
                 DB::statement('DROP TABLE IF EXISTS ' . self::STAGING);
+                $ledger->succeed($runId, $stats + ['dry_run' => true], $stats['corpus_max']);
 
                 return self::SUCCESS;
             }
@@ -88,11 +95,13 @@ class IntelligenceRebuildRecurrence extends Command
             DB::statement('DROP TABLE IF EXISTS ' . self::TABLE . '_old');
 
             $this->info('Swapped into place.');
+            $ledger->succeed($runId, $stats, $stats['corpus_max']);
 
             return self::SUCCESS;
         } catch (Throwable $e) {
             $this->error('Rebuild failed: ' . $e->getMessage());
             DB::statement('DROP TABLE IF EXISTS ' . self::STAGING);
+            $ledger->fail($runId, $e->getMessage());
 
             return self::FAILURE;
         }
@@ -107,6 +116,17 @@ class IntelligenceRebuildRecurrence extends Command
      */
     private function build($builtAt, int $chunkSize): array
     {
+        // The corpus edge every event is censored against. Read once, stamped on every row, so no
+        // consumer ever has to derive a horizon of its own — which is how three different ones
+        // (none, CURDATE()-90, corpusMax-90) came to coexist.
+        $corpusMax = DB::table('maintenance_signatures')
+            ->where('is_exposure', 0)
+            ->whereNotNull('occurred_at')
+            ->max('occurred_at');
+        $corpusMax = $corpusMax === null ? null : substr((string) $corpusMax, 0, 10);
+
+        $window = (int) config('metrics.recurrence.window_days', 90);
+
         $stats = [
             'raw_rows'       => 0,
             'events'         => 0,
@@ -116,6 +136,10 @@ class IntelligenceRebuildRecurrence extends Command
             'multi_vendor'   => 0,
             'both_labels'    => 0,
             'min_days'       => null,
+            'corpus_max'     => $corpusMax,
+            'fully_observed' => 0,
+            'censored'       => 0,
+            'metric_version' => (string) config('metrics.recurrence.version', 'unknown'),
         ];
 
         // HISTORICAL, faults only (is_exposure = 0). Joined to `maintenances` for the vendor.
@@ -144,8 +168,14 @@ class IntelligenceRebuildRecurrence extends Command
         $builder = new RecurrencePairBuilder();
         $buffer  = [];
 
-        foreach ($builder->build($rows) as $pair) {
+        foreach ($builder->build($rows, $corpusMax) as $pair) {
             $stats['events']++;
+
+            if ($pair['days_observed'] !== null && $pair['days_observed'] >= $window) {
+                $stats['fully_observed']++;
+            } else {
+                $stats['censored']++;
+            }
 
             if ($pair['next_occurred_at'] !== null) {
                 $stats['recurred']++;
@@ -170,6 +200,7 @@ class IntelligenceRebuildRecurrence extends Command
                 'next_maintenance_id'  => $pair['next_maintenance_id'],
                 'next_vendor_id'       => $pair['next_vendor_id'],
                 'days_to_return'       => $pair['days_to_return'],
+                'days_observed'        => $pair['days_observed'],
                 'returned_30'          => $pair['returned_30'],
                 'returned_60'          => $pair['returned_60'],
                 'returned_90'          => $pair['returned_90'],
@@ -235,6 +266,25 @@ class IntelligenceRebuildRecurrence extends Command
             $fail[] = 'R7 events produced from zero source rows.';
         }
 
+        // R8 — right-censoring is stamped on every row. A null days_observed would make an event
+        // invisible to every governed read, silently shrinking the corpus rather than erroring.
+        $nullObserved = DB::table(self::STAGING)->whereNull('days_observed')->count();
+        if ($nullObserved > 0) {
+            $fail[] = "R8 {$nullObserved} row(s) have no days_observed — the corpus horizon was not stamped.";
+        }
+
+        // R9 — the censored share must be plausible. A window of 90 days over a three-year corpus
+        // should censor a small minority; censoring most of it means the corpus max is wrong.
+        if ($stats['events'] > 0) {
+            $censoredPct = $stats['censored'] / $stats['events'] * 100;
+            if ($censoredPct > 50) {
+                $fail[] = sprintf(
+                    'R9 %.1f%% of events are censored as too recent — the corpus horizon (%s) looks wrong.',
+                    $censoredPct, $stats['corpus_max'] ?? 'null'
+                );
+            }
+        }
+
         return $fail;
     }
 
@@ -250,6 +300,9 @@ class IntelligenceRebuildRecurrence extends Command
             ['duplication factor', sprintf('%.2fx', $dupFactor)],
             ['events that recurred', number_format($stats['recurred'])],
             ['open chains (never returned)', number_format($stats['open_chains'])],
+            ['corpus horizon', $stats['corpus_max'] ?? '—'],
+            ['fully observed (gradeable)', number_format($stats['fully_observed'])],
+            ['censored — too recent to judge', number_format($stats['censored'])],
             ['events with no garage', number_format($stats['no_vendor'])],
             ['multi-vendor days', number_format($stats['multi_vendor'])],
             ['labelled derived+human', number_format($stats['both_labels'])],

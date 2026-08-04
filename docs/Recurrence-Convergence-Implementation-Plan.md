@@ -289,7 +289,7 @@ That is the exact failure being fixed. Rollback is `git revert`, not a runtime s
 | Fleet comeback rate | 40.62% | **≈46.5%** | dedupe removes downward dilution; horizon removes right-censoring |
 | Fleet first-time-fix | 59.6% | **≈53.5%** | complement of the above |
 | Fleet n (recurrence) | 33,026 | **10,595** | label rows → real events, fully observed only |
-| Garages with a score | 63 | **36** | `min_n=30` now means 30 real repairs |
+| Garages with a score | 63 | **33** | `min_n=30` now means 30 real repairs |
 | Per-garage n | — | ÷1.33 to ÷6.93 | uneven duplication |
 | Garage × domain graded cells | 296 | fewer | same floor, honest n |
 | Turnaround days | 2.7 | **unchanged** | not a recurrence metric |
@@ -364,7 +364,7 @@ but it makes `built_at` monitoring a release requirement, not a nice-to-have.
 
 ### Golden
 - [ ] G21 fleet comeback 46.51% ±0.1, n=10,595
-- [ ] G22 scored garages = 36
+- [ ] G22 scored garages = 33
 - [ ] G23 zero raw-recurrence implementations outside the allowlist
 - [ ] G24 `days_observed` complete
 - [ ] G01–G20 still green

@@ -95,6 +95,12 @@ baseline understates recurrence by roughly six points.
 Inflation ranges **1.33× to 6.93×** per garage (Deals On Wheels 5.07×, POWER POINT 1.51×). Any
 garage-vs-garage comparison on raw rows is comparing differently-inflated numbers.
 
+> **Note added 2026-08-04, after implementation.** The counts in this section measure *deduplication
+> alone*, which is what the audit tested. The governed metric also applies the observation horizon
+> (§2.3), which removes a further 3 garages: the implemented figure is **33 scored garages**, not 36.
+> The audit's numbers are left as measured — this is the record of what was found, and the governed
+> figures live in `docs/Metric-Specification-Recurrence.md`.
+
 **Reason 4 — sample floors stop meaning what they say.**
 `min_n.garage = 30` on 5× inflated data enforces ~6 real repairs. **63 garages are scored today;
 only 36 clear the floor on honest counts.** Twenty-seven garages carry a score built on less evidence

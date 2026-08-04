@@ -205,4 +205,54 @@ class RecurrencePairBuilderTest extends TestCase
     {
         $this->assertSame([], $this->build([]));
     }
+
+    // ── Right-censoring (days_observed) ─────────────────────────────────────────────────────────
+
+    /**
+     * A repair too recent to have failed must be distinguishable from one that held.
+     *
+     * Without this, an event recorded yesterday counts as a success, which flatters every garage —
+     * and flatters the busiest ones most, because they have the most recent work.
+     */
+    public function test_events_are_stamped_with_how_long_they_have_been_watched(): void
+    {
+        $events = iterator_to_array((new RecurrencePairBuilder())->build([
+            $this->row(['maintenance_id' => 1, 'occurred_at' => '2026-01-01']),
+            $this->row(['maintenance_id' => 2, 'occurred_at' => '2026-06-30']),
+        ], '2026-07-29'), false);
+
+        $this->assertSame(209, $events[0]['days_observed'], 'Jan 1 → Jul 29');
+        $this->assertSame(29, $events[1]['days_observed'], 'Jun 30 → Jul 29 — not yet judgeable at 90d');
+    }
+
+    public function test_the_horizon_is_the_corpus_edge_not_the_wall_clock(): void
+    {
+        // The corpus ends before today (signatures lag a sheet import). Anchoring on CURDATE()
+        // silently discards fully-observed rows — one of the three horizons that had to be unified.
+        $events = iterator_to_array((new RecurrencePairBuilder())->build([
+            $this->row(['occurred_at' => '2026-07-29']),
+        ], '2026-07-29'), false);
+
+        $this->assertSame(0, $events[0]['days_observed'], 'an event on the corpus edge has been watched zero days');
+    }
+
+    public function test_days_observed_is_never_negative(): void
+    {
+        // A signature dated after the computed corpus max (clock skew, a late import) clamps to zero
+        // rather than producing a negative that would pass a `>= window` filter as a huge number.
+        $events = iterator_to_array((new RecurrencePairBuilder())->build([
+            $this->row(['occurred_at' => '2026-08-15']),
+        ], '2026-07-29'), false);
+
+        $this->assertSame(0, $events[0]['days_observed']);
+    }
+
+    public function test_without_a_corpus_max_censoring_is_left_unstamped(): void
+    {
+        // The rebuild's validation rejects nulls, so this can never reach the table — but the builder
+        // must not invent a horizon of its own when it was not given one.
+        $events = $this->build([$this->row()]);
+
+        $this->assertNull($events[0]['days_observed']);
+    }
 }
