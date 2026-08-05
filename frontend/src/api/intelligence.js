@@ -29,3 +29,14 @@ export async function getEvidence(queryId, { page = 1, perPage = 50 } = {}) {
 export async function getGarageScorecards() {
   return data(await api.get('/Maintenance/garage-scorecards'));
 }
+
+/**
+ * Executive Home — the whole page in one call.
+ *
+ * Deliberately NOT one request per panel. Six calls would let panels land in a different order on
+ * every load, and — the real risk — could straddle a nightly rebuild, so the spend card and the
+ * garage table would quietly describe two different corpora. One payload, one `as_of`.
+ */
+export async function getExecutiveDashboard() {
+  return data(await api.get('/intelligence/executive'));
+}

@@ -363,6 +363,76 @@ Route::middleware('auth:sanctum')->prefix('logistics')->controller(LogisticsDisp
 // Parts Purchase + Repair Intelligence — the part-request lifecycle (Requested → … → Completed), the
 // purchase ledger + install cost-bridge, and the admin duplicate/recurrence investigation inbox. Reads
 // are parts.view; requests parts.request; buying/installing parts.purchase; adjudication parts.investigate.
+// Supplier parts invoices — the paper behind what a part cost. SUPPLIER purchases only: a garage-supplied
+// part is billed on that garage's maintenance invoice, and attaching it here too would charge the ticket
+// twice (PartInvoiceService refuses it). Reads parts.view; keying paper is a money action → parts.purchase.
+Route::middleware('auth:sanctum')->prefix('part-invoices')->controller(\App\Http\Controllers\PartInvoiceController::class)->group(function () {
+    Route::get('/', 'index')->middleware('permission:parts.view');
+    // Static path BEFORE /{partInvoice} so "unbilled" is never swallowed as an id.
+    Route::get('/unbilled', 'unbilled')->middleware('permission:parts.view|parts.purchase');
+    Route::get('/{partInvoice}', 'show')->middleware('permission:parts.view');
+    Route::post('/', 'store')->middleware('permission:parts.purchase');
+    Route::post('/{partInvoice}', 'update')->middleware('permission:parts.purchase');   // POST: multipart photo
+    Route::delete('/{partInvoice}', 'destroy')->middleware('permission:parts.purchase');
+});
+
+// Part returns — a part sent back is an EVENT beside the purchase, never a deletion. Only the refund step
+// credits the ticket (a negative line item); requested/sent move no money. Money actions → parts.purchase.
+Route::middleware('auth:sanctum')->prefix('part-returns')->controller(\App\Http\Controllers\PartReturnController::class)->group(function () {
+    Route::get('/', 'index')->middleware('permission:parts.view');
+    Route::post('/{partReturn}/sent', 'markSent')->middleware('permission:parts.purchase');
+    Route::post('/{partReturn}/refund', 'refund')->middleware('permission:parts.purchase');
+    Route::post('/{partReturn}/reject', 'reject')->middleware('permission:parts.purchase');
+});
+
+// The financial-document lifecycle, shared by supplier and garage invoices: draft → pending → approved
+// → paid, with cancel as the off-ramp. `{type}` is 'supplier-invoice' or 'garage-invoice'. Reading the
+// vocabulary is open to any authed user; every transition is a money action → maintenance.manage.
+Route::middleware('auth:sanctum')->prefix('financial-documents')->controller(\App\Http\Controllers\FinancialDocumentController::class)->group(function () {
+    Route::get('/vocabulary', 'vocabulary');
+    Route::middleware('permission:maintenance.manage')->group(function () {
+        Route::post('/{type}/{id}/submit', 'submit');
+        Route::post('/{type}/{id}/approve', 'approve');
+        Route::post('/{type}/{id}/unapprove', 'unapprove');
+        Route::post('/{type}/{id}/pay', 'pay');
+        Route::post('/{type}/{id}/cancel', 'cancel');
+    });
+});
+
+// Supplier payments — money leaving the account, recorded once and split across the bills it settles.
+// An invoice's paid_amount is DERIVED from these allocations, so settlement is never typed twice.
+// Recording/voiding is a money action → maintenance.manage; the reports are readable by maintenance.view
+// because "what do we owe" is an operational question, not only a finance one.
+Route::middleware('auth:sanctum')->prefix('supplier-payments')->controller(\App\Http\Controllers\SupplierPaymentController::class)->group(function () {
+    Route::get('/', 'index')->middleware('permission:maintenance.view');
+    Route::post('/', 'store')->middleware('permission:maintenance.manage');
+    Route::post('/{supplierPayment}/allocate', 'allocate')->middleware('permission:maintenance.manage');
+    Route::post('/{supplierPayment}/cancel', 'cancel')->middleware('permission:maintenance.manage');
+});
+
+// Procurement reporting — payables aging, supplier performance, payments made. Built on the structured
+// origin, so every figure can be opened and checked rather than merely believed.
+Route::middleware(['auth:sanctum', 'permission:maintenance.view'])->prefix('procurement')
+    ->controller(\App\Http\Controllers\SupplierPaymentController::class)->group(function () {
+        Route::get('/overview', 'overview');
+        Route::get('/payables', 'payables');
+        Route::get('/suppliers', 'suppliers');
+        Route::get('/payments', 'paymentsReport');
+    });
+
+// Financial traceability — how much of the fleet's cost can be proved, how much is legacy backlog, and
+// whether the gap is closing. Read-only reporting; the cleanup itself happens on the tickets.
+Route::middleware(['auth:sanctum', 'permission:maintenance.view'])->prefix('cost-verification')
+    ->controller(\App\Http\Controllers\CostVerificationController::class)->group(function () {
+        Route::get('/summary', 'summary');
+        Route::get('/queue', 'queue');                       // the legacy migration worklist
+        Route::get('/spend-by-category', 'spendByCategory');  // documented vs undocumented, per category
+    });
+
+// Reversing a cost adjustment — the record survives, its money comes off the ticket. Money action.
+Route::middleware(['auth:sanctum', 'permission:maintenance.manage'])
+    ->post('cost-adjustments/{costAdjustment}/reverse', [\App\Http\Controllers\CostAdjustmentController::class, 'reverse']);
+
 Route::middleware('auth:sanctum')->prefix('part-requests')->controller(PartRequestController::class)->group(function () {
     Route::get('/', 'index')->middleware('permission:parts.view');
     Route::post('/', 'store')->middleware('permission:parts.request');
@@ -382,6 +452,8 @@ Route::middleware('auth:sanctum')->prefix('part-purchases')->controller(PartPurc
     // Fleet-wide "bought again for the same car" sweep + who approved each buy (dashboard card).
     Route::get('/repeats', 'repeats')->middleware('permission:parts.view');
     Route::get('/vehicle/{vehicle}/history', 'vehicleHistory')->middleware('permission:parts.view');
+    // Send a part back. Never deletes the buy — logs a return next to it (PartReturnController).
+    Route::post('/{partPurchase}/returns', [\App\Http\Controllers\PartReturnController::class, 'store'])->middleware('permission:parts.purchase');
     Route::post('/{partPurchase}/install', 'install')->middleware('permission:parts.purchase|maintenance.logistics');
     Route::post('/{partPurchase}/delivered', 'markDelivered')->middleware('permission:parts.purchase|maintenance.logistics');
 });
@@ -488,6 +560,20 @@ Route::middleware('auth:sanctum')->prefix('maintenance-tickets')->controller(Mai
     // decision from the moment the request exists. See MaintenanceRequiredPartService.
     Route::get('/{ticket}/required-parts', [\App\Http\Controllers\MaintenanceRequiredPartController::class, 'index'])->middleware('permission:maintenance.view');
     Route::post('/{ticket}/required-parts', [\App\Http\Controllers\MaintenanceRequiredPartController::class, 'store'])->middleware('permission:maintenance.initiate');
+    // The ticket's whole cost story: fault → required part → purchase source → invoice → labour → total,
+    // with supplier and garage money kept apart so neither can double-count the other. Read-only.
+    Route::get('/{ticket}/cost-journey', [\App\Http\Controllers\TicketCostJourneyController::class, 'show'])->middleware('permission:maintenance.view');
+    // The whole financial story in one call: ordered timeline + what is still owed before the ticket can
+    // close + the audit verdict. One question, one round trip, so no two panels can disagree.
+    Route::get('/{ticket}/financial-story', [\App\Http\Controllers\TicketCostJourneyController::class, 'story'])->middleware('permission:maintenance.view');
+    // The accounting lifecycle per part: request → PO → invoice → received → installed → return → paid
+    // → closed. Answers what is ORDERED / RECEIVED / FITTED / RETURNED / OWED, not merely what it cost.
+    Route::get('/{ticket}/lifecycle', [\App\Http\Controllers\FinancialDocumentController::class, 'lifecycle'])->middleware('permission:maintenance.view');
+    // Cost adjustments — the fourth source document, for money that moved without supplier or garage
+    // paper (a labour refund, a goodwill discount, a keying error). Reason + approver are mandatory, so
+    // recording one is a money action → maintenance.manage.
+    Route::get('/{ticket}/adjustments', [\App\Http\Controllers\CostAdjustmentController::class, 'index'])->middleware('permission:maintenance.view');
+    Route::post('/{ticket}/adjustments', [\App\Http\Controllers\CostAdjustmentController::class, 'store'])->middleware('permission:maintenance.manage');
     // Supervisor Delegation — a supervisor delegates a specific driver to pickup/dropoff
     // (→ "Driver Assigned"). Fault severity itself is set by the inspector at /report, not here.
     Route::post('/{ticket}/delegate', 'delegate')->middleware('permission:maintenance.delegate');
@@ -897,6 +983,9 @@ Route::middleware(['auth:sanctum', 'permission:intelligence.view'])
         Route::get('garages/compare', [\App\Http\Controllers\Intelligence\GarageIntelligenceController::class, 'compare']);
         Route::get('garages/{vendor}', [\App\Http\Controllers\Intelligence\GarageIntelligenceController::class, 'show'])
             ->whereNumber('vendor');
+
+        // Executive Home (Basem). Whole page in one payload so every panel shares one `as_of`.
+        Route::get('executive', [\App\Http\Controllers\Intelligence\ExecutiveDashboardController::class, 'show']);
     });
 
 // Workshop events CRUD — the dashboard owning the garage log (origin = 'manual'); the

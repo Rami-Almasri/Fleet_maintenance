@@ -41,10 +41,13 @@ import QuickCostInput from './pages/QuickCostInput';
 import Garages from './pages/Garages';
 import GarageProfile from './pages/intelligence/GarageProfile';
 import GarageCompare from './pages/intelligence/GarageCompare';
+import Executive from './pages/intelligence/Executive';
 import FindingKeywords from './pages/FindingKeywords';
 import Parts from './pages/Parts';
 import PartsCatalog from './pages/PartsCatalog';
 import Warranties from './pages/Warranties';
+import PartInvoices from './pages/PartInvoices';
+import Procurement from './pages/Procurement';
 import RecurringFaultReviews from './pages/RecurringFaultReviews';
 import DamageAccidents from './pages/DamageAccidents';
 import CostIntelligence from './pages/CostIntelligence';
@@ -216,6 +219,10 @@ export default function App() {
                 </Route>
 
                 <Route element={<RequirePermission permission="maintenance.view" />}>
+                  {/* Procurement — payables aging, supplier performance and payments made. Reading is a
+                      maintenance.view question ("what do we owe?"); recording a payment is gated to
+                      maintenance.manage on the API, so a viewer sees the reports without the actions. */}
+                  <Route path="/procurement" element={<Procurement />} />
                   {/* Garage Finder — "this car has this fault; who is best at it?", asked BEFORE a ticket
                       exists. Same engine as the assign step, read-only: it answers, it does not dispatch. */}
                   <Route path="/garage-finder" element={<GarageFinder />} />
@@ -252,6 +259,7 @@ export default function App() {
                       on the fleet list rather than a dead route. */}
                   <Route path="/maintenance-foresight" element={<Navigate to="/vehicles" replace />} />
                   <Route path="/garages" element={<Garages />} />
+                  <Route path="/executive" element={<Executive />} />
                   <Route path="/intelligence/garages/compare" element={<GarageCompare />} />
                   <Route path="/intelligence/garages/:id" element={<GarageProfile />} />
                   <Route path="/finding-keywords" element={<FindingKeywords />} />
@@ -274,6 +282,10 @@ export default function App() {
                       warranty are the people who bought the part; recording and adjudicating are
                       gated per-action on the API. */}
                   <Route path="/warranties" element={<Warranties />} />
+                  {/* Supplier parts invoices — the paper behind what a part cost. Reading sits with
+                      parts.view like the board; keying an invoice is a money action and is gated on the
+                      API with parts.purchase, so a viewer sees the ledger without the write buttons. */}
+                  <Route path="/part-invoices" element={<PartInvoices />} />
                 </Route>
                 {/* Recurring Fault Reviews — management inbox for confirmed faults that came back after a fix. */}
                 <Route element={<RequirePermission permission="maintenance.recurring.view" />}>
