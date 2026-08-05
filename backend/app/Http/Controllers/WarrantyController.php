@@ -68,8 +68,51 @@ class WarrantyController extends Controller
                 'current_page' => $page->currentPage(),
                 'last_page'    => $page->lastPage(),
             ],
+            'summary'      => $this->summarise(clone $query),
             'filters_note' => 'expiring_days matches the date leg only. A warranty can already be finished on distance while its date leg still looks healthy — read verdict.state on each row for the real answer.',
         ], 'Warranties retrieved');
+    }
+
+    /**
+     * Counts across the WHOLE filtered set, not the page on screen.
+     *
+     * A dashboard tile counting only the current page is a lie that looks like a number, and this is
+     * the one place a user forms an impression of total exposure. So the verdicts are evaluated over
+     * every matching row.
+     *
+     * That means loading them, because "is it live" cannot be answered in SQL: the distance leg needs
+     * each car's odometer. Acceptable here — a warranty per part per car is thousands of rows at
+     * fleet scale, not millions — and it is the only way the tiles can be true. `expiring_soon` is a
+     * subset of active, deliberately: something expiring in 20 days is still live today.
+     */
+    private function summarise($query): array
+    {
+        $rows = $query->reorder()->with('vehicle:id,odometer')->get();
+
+        $counts = ['total' => $rows->count(), 'active' => 0, 'expiring_soon' => 0, 'expired' => 0, 'void' => 0, 'distance_unknown' => 0];
+        $soon = now()->addDays(30);
+
+        foreach ($rows as $w) {
+            $verdict = $w->evaluate(null, $w->vehicle?->odometer !== null ? (int) $w->vehicle->odometer : null);
+
+            if ($verdict['distance_unknown']) {
+                $counts['distance_unknown']++;
+            }
+
+            match ($verdict['state']) {
+                Warranty::STATE_VOID    => $counts['void']++,
+                Warranty::STATE_EXPIRED => $counts['expired']++,
+                default                 => $counts['active']++,
+            };
+
+            if ($verdict['state'] === Warranty::STATE_ACTIVE
+                && $w->expires_on
+                && $w->expires_on->lte($soon)) {
+                $counts['expiring_soon']++;
+            }
+        }
+
+        return $counts;
     }
 
     public function show(Warranty $warranty)

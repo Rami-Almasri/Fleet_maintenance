@@ -44,6 +44,7 @@ import GarageCompare from './pages/intelligence/GarageCompare';
 import FindingKeywords from './pages/FindingKeywords';
 import Parts from './pages/Parts';
 import PartsCatalog from './pages/PartsCatalog';
+import Warranties from './pages/Warranties';
 import RecurringFaultReviews from './pages/RecurringFaultReviews';
 import DamageAccidents from './pages/DamageAccidents';
 import CostIntelligence from './pages/CostIntelligence';
@@ -269,6 +270,10 @@ export default function App() {
                       Viewing sits with parts.view like the board above; editing is gated inside the
                       page on components.manage, which already means "curate the catalog". */}
                   <Route path="/parts-catalog" element={<PartsCatalog />} />
+                  {/* The warranty register. Reading rides with parts.view — the people chasing a
+                      warranty are the people who bought the part; recording and adjudicating are
+                      gated per-action on the API. */}
+                  <Route path="/warranties" element={<Warranties />} />
                 </Route>
                 {/* Recurring Fault Reviews — management inbox for confirmed faults that came back after a fix. */}
                 <Route element={<RequirePermission permission="maintenance.recurring.view" />}>

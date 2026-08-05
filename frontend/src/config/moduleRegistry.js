@@ -85,6 +85,7 @@ export const MODULES = [
       { name: 'Oil Mileage Follow-up', route: '/oil-projection', permission: 'reminders.view', icon: Icon.Clock, desc: 'Cars out on rental heading for their oil limit — call the customer, enter the mileage they report, and the next check recalculates from it.' },
       { name: 'Parts', route: '/parts', permission: 'parts.view', icon: Icon.Coins, desc: 'Request, approve, buy and install parts — with duplicate-spend and recurrence detection.' },
       { name: 'Parts Catalog', route: '/parts-catalog', permission: 'parts.view', icon: Icon.Coins, desc: 'The part names the app selects from, in English and Arabic, with warranty defaults.' },
+      { name: 'Warranties', route: '/warranties', permission: 'parts.view', icon: Icon.Shield, desc: 'Supplier and garage promises, and whether each still holds — on months or kilometres, whichever ends first.' },
       { name: 'Garages', route: '/garages', permission: 'maintenance.view', icon: Icon.Wrench, desc: 'Which garage is good at which repair, where each one has a problem, and what is in every workshop now.' },
       { name: 'History', route: '/maintenance-history', permission: 'maintenance.view', icon: Icon.Clock, desc: 'Every workshop visit per car — how often and how long, trip by trip.' },
       // Coming Soon tabs sit last so the 12 live sections lead.
