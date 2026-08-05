@@ -131,10 +131,18 @@ class GarageScorecardConvergenceTest extends GoldenTestCase
         $this->assertGreaterThan(0, $withheld);
     }
 
+    /**
+     * RE-BASELINED for metric contract v2.1.0 (2026-08-05): 33 → 29 scored garages.
+     *
+     * Services left the denominator, so four garages fell back under the 30-repair floor. They were
+     * over it on a mix that included oil changes — which is exactly the case the floor exists to
+     * catch: a shop scored on scheduled work was never scored on 30 repairs whose quality we can
+     * judge. Losing a score they had not earned is the correction working, not a regression.
+     */
     public function test_scored_garages_are_the_expected_count(): void
     {
         // 57 -> 33. The 24 that fell were scored on duplicated label rows, never on 30 real repairs.
-        $this->assertGolden('C2.garages_scored', 33, $this->report['fleet']['garages_scored']);
+        $this->assertGolden('C2.garages_scored', 29, $this->report['fleet']['garages_scored']);
         $this->assertGolden('C2.garages_total', 170, $this->report['fleet']['garages_total']);
     }
 

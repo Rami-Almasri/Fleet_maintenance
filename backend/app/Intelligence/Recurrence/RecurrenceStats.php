@@ -28,12 +28,27 @@ final class RecurrenceStats
         public readonly int $n,
         /** Of those, how many saw the same fault again inside the window. */
         public readonly int $returned,
-        /** Events that made it through the window without the fault returning. */
+        /**
+         * Events that made it through the window without the fault returning.
+         *
+         * THE SCORING COMPLEMENT, NOT "never came back". It includes repairs whose fault returned
+         * AFTER the window, because those are not charged to the garage. Anything that puts a WORD
+         * on this bucket must say so — the UI once rendered it as "{n} never came back" while it
+         * carried 3,705 fleet-wide repairs that demonstrably did. Use neverReturned() for that
+         * sentence; keep this one for the rate.
+         */
         public readonly int $held,
         /** Came back within 30 days. */
         public readonly int $back30,
         /** Came back between 31 and 90 days. */
         public readonly int $back90,
+        /**
+         * Came back, but after the window closed — inside `held` for scoring, and never "never".
+         *
+         * Carried separately so a display can be honest without the rate moving: only a repair with
+         * NO successor on record can be described as having lasted.
+         */
+        public readonly int $backLater,
         /**
          * MEAN days to return, over the ones that returned inside the window. Null when none did.
          *
@@ -52,7 +67,19 @@ final class RecurrenceStats
     /** An in-scope group with no fully-observed events — measured, and empty. Not zero. */
     public static function empty(RecurrenceWindow $window, Coverage $coverage, ?DateTimeInterface $asOf = null): self
     {
-        return new self(0, 0, 0, 0, 0, null, $coverage, $asOf, $window);
+        return new self(0, 0, 0, 0, 0, 0, null, $coverage, $asOf, $window);
+    }
+
+    /**
+     * Repairs with NO recurrence on record — the only ones that can honestly be called lasting.
+     *
+     * `held` minus the ones that came back after the window. A fault on a car is a chain of repairs
+     * and only the newest link can still be holding; every earlier one was disproven by the repair
+     * that followed it, however long the gap.
+     */
+    public function neverReturned(): int
+    {
+        return max(0, $this->held - $this->backLater);
     }
 
     /**
@@ -86,6 +113,7 @@ final class RecurrenceStats
             held:          $this->held + $other->held,
             back30:        $this->back30 + $other->back30,
             back90:        $this->back90 + $other->back90,
+            backLater:     $this->backLater + $other->backLater,
             // Medians do not sum. A rolled-up group reports no median rather than a wrong one;
             // whoever needs it asks the repository for the level they actually want.
             meanGapDays: null,
@@ -107,6 +135,8 @@ final class RecurrenceStats
             'held'            => $this->held,
             'back_30'         => $this->back30,
             'back_90'         => $this->back90,
+            'back_later'      => $this->backLater,
+            'never_returned'  => $this->neverReturned(),
             'rate_pct'        => $this->rate(),
             'held_pct'        => $this->heldRate(),
             'mean_gap_days'   => $this->meanGapDays,

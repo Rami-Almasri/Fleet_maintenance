@@ -3,6 +3,7 @@
 namespace App\Intelligence\Evidence\Queries;
 
 use App\Intelligence\Evidence\EvidenceQuery;
+use App\Intelligence\Evidence\Queries\Concerns\LabelsRecurrenceOutcome;
 use App\Intelligence\Recurrence\RecurrenceRepository;
 use App\Intelligence\Recurrence\RecurrenceWindow;
 use Illuminate\Support\Facades\DB;
@@ -16,6 +17,8 @@ use Illuminate\Support\Facades\DB;
  */
 class GarageDomainRecurrenceQuery implements EvidenceQuery
 {
+    use LabelsRecurrenceOutcome;
+
     /** @var string[]|null signatures that map into this domain */
     private ?array $signatures = null;
 
@@ -39,6 +42,30 @@ class GarageDomainRecurrenceQuery implements EvidenceQuery
             return sprintf('%s has no measured %s repairs in this window.', $this->garageName(), $this->domainLabel());
         }
 
+        // BELOW THE FLOOR THE COUNTS ARE THE CLAIM, not a percentage.
+        //
+        // This drawer now opens on ungraded cells too — a supervisor asking "what did they actually
+        // do on brakes?" deserves the repairs whether or not there are enough to grade anybody. But
+        // the sample floor is the whole reason the matrix refuses to colour those cells, and printing
+        // "1 of 2 came back (50%)" one click later would hand back the anecdote the page just
+        // declined to publish. So under the floor we state the counts and say plainly that they do
+        // not add up to a verdict.
+        $min = (int) (config('garage_scorecard.min_n.domain') ?? 20);
+
+        if ($agg->n < $min) {
+            return sprintf(
+                '%s — %s work: %s of %s repairs saw the same fault return within %d days. '
+                . 'Too few to grade this garage on %s (%d needed) — these are the repairs, not a verdict.',
+                $this->garageName(),
+                $this->domainLabel(),
+                number_format($agg->returned),
+                number_format($agg->n),
+                $this->window()->windowDays,
+                $this->domainLabel(),
+                $min,
+            );
+        }
+
         return sprintf(
             '%s — %s work: %s of %s repairs saw the same fault return within %d days (%s%%).',
             $this->garageName(),
@@ -60,7 +87,14 @@ class GarageDomainRecurrenceQuery implements EvidenceQuery
             $this->domainLabel(),
             implode(', ', $this->signatures()),
             $this->window()->windowDays,
-        );
+        )
+            // The gap between "336 jobs" on the profile and a handful of rows here is the first thing
+            // a reader notices and the fastest way to lose them. Said out loud, it is a method; left
+            // unsaid, it looks like missing data.
+            . ' The row count here is smaller than the job count on the profile: jobs are everything '
+            . 'the garage worked on, while these are the repairs old enough and clean enough to judge '
+            . '— one row per fault per car per day, damage excluded, nothing from the last '
+            . $this->window()->windowDays . ' days.';
     }
 
     public function technicalNote(): ?string
@@ -90,8 +124,11 @@ class GarageDomainRecurrenceQuery implements EvidenceQuery
             return ['total' => 0, 'rows' => []];
         }
 
+        // kind scope included — see GarageRecurrenceQuery. The drawer must read the same population
+        // the rate was computed over, or it disproves the number it exists to prove.
         $base = fn () => DB::table('fault_recurrence_pairs as p')
             ->where('p.first_vendor_id', $this->vendorId)
+            ->where('p.kind', RecurrenceRepository::KIND_FAULT)
             ->whereIn('p.signature', $sigs)
             ->where('p.days_observed', '>=', $window->windowDays);
 
@@ -122,9 +159,9 @@ class GarageDomainRecurrenceQuery implements EvidenceQuery
                 'repaired_on'      => $r->occurred_at,
                 'came_back_on'     => $r->next_occurred_at,
                 'days_between'     => $r->days_to_return === null ? null : (int) $r->days_to_return,
-                'outcome'          => $r->next_occurred_at === null
-                    ? 'held'
-                    : ((int) $r->days_to_return <= 30 ? 'back within a month' : 'came back'),
+                // See Concerns\LabelsRecurrenceOutcome — a return outside the window is HELD under this
+                // metric, and this drawer must agree with the rate it is explaining.
+                'outcome'          => $this->outcome($r->next_occurred_at, $r->days_to_return, $window),
                 'went_back_to'     => $r->next_vendor,
                 'ticket_id'        => (int) $r->first_maintenance_id,
                 'return_ticket_id' => $r->next_maintenance_id === null ? null : (int) $r->next_maintenance_id,

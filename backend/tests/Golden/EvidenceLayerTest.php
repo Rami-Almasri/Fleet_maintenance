@@ -3,6 +3,7 @@
 namespace Tests\Golden;
 
 use App\Intelligence\Evidence\EvidenceRegistry;
+use App\Intelligence\Evidence\Queries\GarageRecurrenceQuery;
 use App\Intelligence\Recurrence\RecurrenceRepository;
 use App\Intelligence\Recurrence\RecurrenceWindow;
 use Illuminate\Support\Facades\Artisan;
@@ -81,6 +82,71 @@ class EvidenceLayerTest extends GoldenTestCase
         // denominator — the rate is returns over opportunities, and both halves belong on screen.
         $this->assertNotEmpty($returned, 'the returns must be visible');
         $this->assertNotEmpty($held, 'the repairs that held must be visible too, or the rate is unreadable');
+    }
+
+    /**
+     * The CHIPS must tally to the numerator, not merely the row count to the denominator — and the
+     * three states must stay three, because collapsing them is how this broke twice.
+     *
+     * v1 labelled every non-null return "came back", including 402-day gaps, so the red chips could
+     * never add up to the published numerator. v2 fixed the tally by calling those returns "held" —
+     * printing that word beside a return date and a 253-day gap. Only the newest repair in a chain
+     * can be holding; everything behind it was disproven by the repair that followed.
+     *
+     * See Queries\Concerns\LabelsRecurrenceOutcome.
+     */
+    public function test_the_outcome_chips_tally_to_the_published_numerator(): void
+    {
+        $window = RecurrenceWindow::fromContract();
+        $stats  = (new RecurrenceRepository())->byGarage($window, [$this->vendorId])[$this->vendorId];
+
+        $evidence = $this->registry->resolve("recurrence.garage:{$this->vendorId}");
+
+        $rows = [];
+        for ($page = 1; count($rows) < $stats->n; $page++) {
+            $batch = $evidence->rows($page, 200)['rows'];
+            if ($batch === []) {
+                break;
+            }
+            $rows = array_merge($rows, $batch);
+        }
+
+        $scored = count(array_filter(
+            $rows,
+            // Read off the consuming class: PHP forbids reaching a trait constant through the trait.
+            fn ($r) => in_array($r['outcome'], GarageRecurrenceQuery::SCORED_AS_COMEBACK, true),
+        ));
+
+        $this->assertSame(
+            $stats->returned,
+            $scored,
+            'the rows a reader counts as comebacks must be exactly the ones the rate counted',
+        );
+
+        foreach ($rows as $row) {
+            // HELD IS A STATEMENT ABOUT THE CHAIN, NOT THE GAP. A repair with any successor on record
+            // has been disproven, however long it took.
+            if ($row['came_back_on'] !== null) {
+                $this->assertNotSame(
+                    'held',
+                    $row['outcome'],
+                    'a repair with a recorded return can never read as held — only the newest repair holds',
+                );
+            }
+
+            // ...and a return outside the window is named, not counted.
+            if ($row['days_between'] !== null && $row['days_between'] > $window->windowDays) {
+                $this->assertSame(
+                    'came back later',
+                    $row['outcome'],
+                    "a return after {$row['days_between']} days is outside the {$window->windowDays}-day window: it came back later, and must not be scored",
+                );
+            }
+
+            if ($row['came_back_on'] === null) {
+                $this->assertSame('held', $row['outcome'], 'no recurrence on record is exactly what held means');
+            }
+        }
     }
 
     public function test_every_row_pairs_two_real_tickets(): void

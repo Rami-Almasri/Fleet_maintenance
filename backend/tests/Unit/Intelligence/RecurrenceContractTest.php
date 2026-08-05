@@ -67,6 +67,50 @@ class RecurrenceContractTest extends TestCase
         );
     }
 
+    /**
+     * v2.1.0 — scheduled work is excluded from every rate, and the list is DERIVED like exposure's.
+     *
+     * Re-declaring the service vocabulary in the contract would let it drift from the classifier that
+     * stamps `kind` at rebuild, and the first symptom would be a rate quietly measured over a
+     * different population than the one the drawer shows.
+     */
+    public function test_services_are_excluded_and_derived_from_the_classifier(): void
+    {
+        $this->assertTrue(config('metrics.recurrence.filters.exclude_services'));
+        $this->assertStringContainsString(
+            'SERVICE_SIGNATURES',
+            config('metrics.recurrence.filters.service_source'),
+            'The service list must be DERIVED from the classifier, never re-declared in the contract.',
+        );
+    }
+
+    /**
+     * The exclusion is a SCOPE, not a deletion — the rows stay and stay readable.
+     *
+     * If this ever flips to a delete, "we removed 1,073 services from the rate" stops being checkable
+     * and the evidence drawer's Services tab has nothing to read.
+     */
+    public function test_the_service_exclusion_is_expressed_as_a_kind_column(): void
+    {
+        $this->assertSame('kind', config('metrics.recurrence.filters.kind_column'));
+    }
+
+    public function test_the_service_separation_is_recorded_in_the_change_history(): void
+    {
+        $history = config('metrics.recurrence.change_history');
+        $latest  = end($history);
+
+        $this->assertSame('2.1.0', $latest['version']);
+        $this->assertSame('2.1.0', config('metrics.recurrence.version'), 'the contract must publish its own latest version');
+        $this->assertSame(46.38, $latest['fleet_comeback']);
+        $this->assertSame(9522, $latest['fleet_n']);
+
+        // The limitation travels WITH the version. Only OIL_SERVICE is typed; TYRE genuinely mixes
+        // punctures with rotations and the corpus cannot separate them. A reader who does not know
+        // that will over-trust the separation.
+        $this->assertNotEmpty($latest['known_limit']);
+    }
+
     public function test_the_ticket_scope_is_historical(): void
     {
         // A retired ticket is a repair that really happened. Matches OperationalKpiService.
@@ -183,6 +227,29 @@ class RecurrenceContractTest extends TestCase
         $this->assertSame(54.0, $stats->heldRate());
     }
 
+    /**
+     * `held` is the SCORING complement and contains faults that returned after the window. Only
+     * neverReturned() may be described as a repair that lasted — the UI once printed "{n} never came
+     * back" over the full `held` bucket, which fleet-wide covered 3,705 repairs whose fault did
+     * return. The rate must not move when that display is corrected.
+     */
+    public function test_never_returned_excludes_the_faults_that_came_back_after_the_window(): void
+    {
+        $stats = $this->stats(n: 100, returned: 46, held: 54, back30: 20, back90: 26, backLater: 14);
+
+        $this->assertSame(40, $stats->neverReturned(), 'held minus the late returns');
+        $this->assertSame(54.0, $stats->heldRate(), 'the scored complement is untouched by the split');
+        $this->assertSame(46.0, $stats->rate(), 'and so is the comeback rate');
+    }
+
+    public function test_merging_sums_the_late_returns_too(): void
+    {
+        $merged = $this->stats(n: 60, held: 30, backLater: 8)->merge($this->stats(n: 40, held: 30, backLater: 5));
+
+        $this->assertSame(13, $merged->backLater);
+        $this->assertSame(47, $merged->neverReturned());
+    }
+
     public function test_it_carries_no_score_grade_or_expectation(): void
     {
         // The measurement layer must not leak judgement. If any of these appear, case-mix has
@@ -215,9 +282,10 @@ class RecurrenceContractTest extends TestCase
     private function stats(
         int $n = 10, int $returned = 5, int $held = 5,
         int $back30 = 2, int $back90 = 3, ?float $meanGap = 30.0,
+        int $backLater = 0,
     ): RecurrenceStats {
         return new RecurrenceStats(
-            $n, $returned, $held, $back30, $back90, $meanGap,
+            $n, $returned, $held, $back30, $back90, $backLater, $meanGap,
             new Coverage($n, $n), null, RecurrenceWindow::fromContract(),
         );
     }

@@ -159,10 +159,17 @@ export default function DomainMatrix({ garages = [], domains = [], onPick, onEvi
                     ? (graded ? (pts > 0 ? `+${Math.round(pts)}` : Math.round(pts)) : '·')
                     : (simple ? g(`matrix.cell.${simple.key}`) : '·');
 
-                  // A GRADED cell opens onto the repairs behind it. An ungraded one stays inert —
-                  // there is nothing to show, and a button that opens an empty drawer teaches people
-                  // the drawer is not worth clicking.
-                  const canDrill = graded && cell?.evidence_query_id && onEvidence;
+                  // A cell with repairs in it opens onto those repairs, graded or not. It used to
+                  // require a grade, which meant a garage with no area over the floor — the common
+                  // case, 116 of 1,003 pairs are gradeable — had nothing clickable anywhere on the
+                  // page, and "not enough repairs to judge" read as "we are not going to show you".
+                  // The drawer states the sample is under the floor, so this cannot smuggle an
+                  // anecdote back in. An EMPTY cell is still inert, and so is exposure damage: that
+                  // one is ungraded because grading it would be wrong, not because it is thin.
+                  const canDrill = cell?.jobs > 0
+                    && cell?.grade !== 'not_graded_exposure'
+                    && cell?.evidence_query_id
+                    && onEvidence;
 
                   const face = (
                     <span

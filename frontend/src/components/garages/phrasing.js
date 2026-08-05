@@ -68,14 +68,18 @@ function overallWords(rel, material, t) {
  */
 export function outcomeLines(row, t) {
   const g = (k, v) => t(`garages.outcome.${k}`, v);
-  const held = row?.held ?? 0;
+  // Same split as OutcomeBar and for the same reason: `held` is the scoring complement and contains
+  // faults that returned after the window, so only never_returned may be called "never came back".
+  const later = row?.back_later ?? 0;
+  const never = row?.never_returned ?? Math.max(0, (row?.held ?? 0) - later);
   const fast = row?.back_30 ?? 0;
   const slow = row?.back_90 ?? 0;
-  const total = held + fast + slow;
+  const total = never + later + fast + slow;
   if (!total) return [];
 
   const lines = [g('total', { n: total })];
-  if (held) lines.push(g('held', { n: held }));
+  if (never) lines.push(g('held', { n: never }));
+  if (later) lines.push(g('backLater', { n: later }));
   if (slow) lines.push(g('back90', { n: slow }));
   if (fast) lines.push(g('back30', { n: fast }));
   if (row?.return_days != null && fast + slow > 0) lines.push(g('typical', { d: Math.round(row.return_days) }));

@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Intelligence\Health\RebuildLedger;
 use App\Intelligence\Support\RecurrencePairBuilder;
+use App\Services\Knowledge\RepairSignatureClassifier;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -130,6 +131,10 @@ class IntelligenceRebuildRecurrence extends Command
         $stats = [
             'raw_rows'       => 0,
             'events'         => 0,
+            // The kind split is recorded in the ledger, not just applied. A rate that dropped because
+            // 1,073 services left the denominator should be explicable from the rebuild's own record.
+            'faults'         => 0,
+            'services'       => 0,
             'recurred'       => 0,
             'open_chains'    => 0,
             'no_vendor'      => 0,
@@ -190,9 +195,16 @@ class IntelligenceRebuildRecurrence extends Command
             if ($pair['multi_vendor_day'])         { $stats['multi_vendor']++; }
             if ($pair['label_source'] === 'both')  { $stats['both_labels']++; }
 
+            // TYPED AT BUILD TIME, from the classifier's own list. A scheduled service recurs by
+            // design, so it must not be scored as a repair that failed — but it stays in the table so
+            // the exclusion is auditable and the drawer's Services tab has something to read.
+            $kind = RepairSignatureClassifier::isService($pair['signature']) ? 'service' : 'fault';
+            $stats[$kind === 'service' ? 'services' : 'faults']++;
+
             $buffer[] = [
                 'vehicle_id'           => $pair['vehicle_id'],
                 'signature'            => $pair['signature'],
+                'kind'                 => $kind,
                 'occurred_at'          => $pair['occurred_at'],
                 'first_maintenance_id' => $pair['first_maintenance_id'],
                 'first_vendor_id'      => $pair['first_vendor_id'],

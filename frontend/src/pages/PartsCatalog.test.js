@@ -176,7 +176,7 @@ describe('retire', () => {
     confirmAction('partsCatalog.retire');
 
     await waitFor(() => expect(api.post).toHaveBeenCalledWith('/parts-catalog/1/retire'));
-    expect(mockToast.success).toHaveBeenCalledWith('partsCatalog.retired');
+    expect(mockToast.success).toHaveBeenCalledWith('partsCatalog.retiredOk');
     await waitFor(() => expect(api.get).toHaveBeenCalledTimes(2));
     // Never converted into a delete.
     expect(api.delete).not.toHaveBeenCalled();

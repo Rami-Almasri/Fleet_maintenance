@@ -3,6 +3,7 @@
 namespace App\Intelligence\Evidence\Queries;
 
 use App\Intelligence\Evidence\EvidenceQuery;
+use App\Intelligence\Evidence\Queries\Concerns\LabelsRecurrenceOutcome;
 use App\Intelligence\Recurrence\RecurrenceRepository;
 use App\Intelligence\Recurrence\RecurrenceWindow;
 use Illuminate\Support\Facades\DB;
@@ -21,6 +22,8 @@ use Illuminate\Support\Facades\DB;
  */
 class GarageRecurrenceQuery implements EvidenceQuery
 {
+    use LabelsRecurrenceOutcome;
+
     private ?object $vendor = null;
 
     public function __construct(
@@ -88,8 +91,13 @@ class GarageRecurrenceQuery implements EvidenceQuery
     {
         $window = $this->window();
 
+        // SAME SCOPE AS THE RATE, kind included. The drawer exists to reconcile with the published
+        // figure, so any predicate the repository applies must apply here too — when services were
+        // scoped out of the rate (contract v2.1.0) and not out of this query, the drawer immediately
+        // showed 1,840 rows behind a figure computed over 1,712. Scheduled work has its own tab.
         $base = fn () => DB::table('fault_recurrence_pairs as p')
             ->where('p.first_vendor_id', $this->vendorId)
+            ->where('p.kind', RecurrenceRepository::KIND_FAULT)
             ->where('p.days_observed', '>=', $window->windowDays);
 
         $total = $base()->count();
@@ -120,9 +128,15 @@ class GarageRecurrenceQuery implements EvidenceQuery
                 'came_back_on'  => $r->next_occurred_at,
                 'days_between'  => $r->days_to_return === null ? null : (int) $r->days_to_return,
                 // The word, not just the gap — a reader scanning fifty rows needs the verdict first.
-                'outcome'       => $r->next_occurred_at === null
-                    ? 'held'
-                    : ((int) $r->days_to_return <= 30 ? 'back within a month' : 'came back'),
+                //
+                // THE WINDOW IS PART OF THE VERDICT. Labelling every non-null return as "came back"
+                // put rows at 125, 154 and 402 days on screen in red while the rate above them counted
+                // those same repairs as HELD (RecurrenceRepository: days_to_return <= windowDays). A
+                // reader tallying the chips could never reach the published numerator and concluded the
+                // number was invented — the precise failure this drawer exists to prevent. The return
+                // date is still shown: a fault that came back after a year is a fact, it is just not a
+                // comeback under this metric.
+                'outcome'       => $this->outcome($r->next_occurred_at, $r->days_to_return, $window),
                 'went_back_to'  => $r->next_vendor,
                 'ticket_id'     => (int) $r->first_maintenance_id,
                 'return_ticket_id' => $r->next_maintenance_id === null ? null : (int) $r->next_maintenance_id,

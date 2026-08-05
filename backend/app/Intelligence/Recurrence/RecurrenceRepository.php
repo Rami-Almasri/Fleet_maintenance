@@ -44,6 +44,11 @@ class RecurrenceRepository
 {
     private const TABLE = 'fault_recurrence_pairs';
 
+    /** The two things a recurrence event can be. Stamped at rebuild, scoped in base(). */
+    public const KIND_FAULT = 'fault';
+
+    public const KIND_SERVICE = 'service';
+
     /** Cached per request — the corpus edge is fixed between rebuilds. */
     private ?string $corpusMax = null;
 
@@ -331,10 +336,37 @@ class RecurrenceRepository
      * would be a second place the rule lives. `excludeExposure` is carried on the window so the
      * contract can state the rule, and a future window that wanted exposure in would have to change
      * the rebuild, not sneak past a query.
+     *
+     * SERVICES ARE FILTERED HERE, and the asymmetry is deliberate. Exposure is excluded by never
+     * being built; services are built, typed and then scoped out — because "we excluded 1,073 oil
+     * services" is a claim somebody has to be able to check, and the evidence drawer's Services tab
+     * reads exactly the rows this filter removes. A deletion would make the correction invisible and
+     * the tab impossible. Contract v2.1.0, filters.exclude_services.
      */
     private function base(RecurrenceWindow $window): Builder
     {
         $q = DB::table(self::TABLE);
+
+        if ($window->excludesServices()) {
+            $q->where('kind', self::KIND_FAULT);
+        }
+
+        if ($window->appliesHorizon()) {
+            $q->where('days_observed', '>=', $window->windowDays);
+        }
+
+        return $q;
+    }
+
+    /**
+     * The same corpus, scoped to SCHEDULED WORK — everything base() removes.
+     *
+     * Not a rate. Services recur by design, so a "service comeback rate" would be a number with no
+     * meaning attached; this exists so the work can be listed, counted and shown, never graded.
+     */
+    public function servicesScope(RecurrenceWindow $window): Builder
+    {
+        $q = DB::table(self::TABLE)->where('kind', self::KIND_SERVICE);
 
         if ($window->appliesHorizon()) {
             $q->where('days_observed', '>=', $window->windowDays);
@@ -356,6 +388,8 @@ class RecurrenceRepository
                 SUM(CASE WHEN next_occurred_at IS NULL OR days_to_return > {$w} THEN 1 ELSE 0 END) AS held,
                 SUM(CASE WHEN next_occurred_at IS NOT NULL AND days_to_return <= 30 THEN 1 ELSE 0 END) AS back_30,
                 SUM(CASE WHEN next_occurred_at IS NOT NULL AND days_to_return > 30 AND days_to_return <= {$w} THEN 1 ELSE 0 END) AS back_90,
+                -- Inside held for scoring, and separated here so no display can call it never.
+                SUM(CASE WHEN next_occurred_at IS NOT NULL AND days_to_return > {$w} THEN 1 ELSE 0 END) AS back_later,
                 AVG(CASE WHEN next_occurred_at IS NOT NULL AND days_to_return <= {$w} THEN days_to_return END) AS mean_gap,
                 COUNT(*) AS scope_total";
     }
@@ -372,6 +406,7 @@ class RecurrenceRepository
             held:          (int) $row->held,
             back30:        (int) $row->back_30,
             back90:        (int) $row->back_90,
+            backLater:     (int) ($row->back_later ?? 0),
             // The MEAN is what a grouped aggregate can produce in one pass. Time-to-return is
             // right-skewed, so a caller that needs the median asks medianGap() / medianGapsByCell()
             // for its own grain rather than being handed a mean wearing the median's name.

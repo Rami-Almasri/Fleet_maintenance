@@ -48,13 +48,45 @@ class RecurrenceRepositoryTest extends GoldenTestCase
 
     // ── The governed measurement ────────────────────────────────────────────────────────────────
 
+    /**
+     * RE-BASELINED for metric contract v2.1.0 (2026-08-05): scheduled services left the denominator.
+     *
+     * n 10,595 → 9,522 and the rate 46.51 → 46.38. The 1,073 removed events are oil services, which
+     * returned at 47.72% — ABOVE the fault rate — so excluding them LOWERED the fleet figure. A
+     * recurring oil change is the service working, not a repair failing, and it was being charged to
+     * garages as a comeback. Not a regression: the population changed on purpose.
+     */
     public function test_the_governed_fleet_rate_is_the_contract_figure(): void
     {
         $stats = $this->repo->fleet(RecurrenceWindow::fromContract());
 
-        $this->assertGolden('repo.fleet.n', 10595, $stats->n);
-        $this->assertGolden('repo.fleet.rate', 46.51, $stats->rate(), 0.05);
-        $this->assertGolden('repo.fleet.held_rate', 53.49, $stats->heldRate(), 0.05);
+        $this->assertGolden('repo.fleet.n', 9522, $stats->n);
+        $this->assertGolden('repo.fleet.rate', 46.38, $stats->rate(), 0.05);
+        $this->assertGolden('repo.fleet.held_rate', 53.62, $stats->heldRate(), 0.05);
+    }
+
+    /**
+     * The excluded services are still THERE — the correction is auditable, not a deletion.
+     *
+     * If this ever returns zero, somebody "cleaned up" the corpus and the evidence drawer's Services
+     * tab silently became an empty page nobody would think to check.
+     */
+    public function test_the_excluded_services_remain_in_the_corpus(): void
+    {
+        $services = DB::table('fault_recurrence_pairs')
+            ->where('kind', RecurrenceRepository::KIND_SERVICE)
+            ->where('days_observed', '>=', RecurrenceWindow::fromContract()->windowDays)
+            ->count();
+
+        $this->assertGolden('repo.services.excluded_n', 1073, $services);
+        $this->assertSame(
+            0,
+            $this->repo->fleet(RecurrenceWindow::fromContract())->n
+                - DB::table('fault_recurrence_pairs')
+                    ->where('kind', RecurrenceRepository::KIND_FAULT)
+                    ->where('days_observed', '>=', 90)->count(),
+            'the governed fleet must be exactly the fault-kind population',
+        );
     }
 
     public function test_returned_and_held_partition_the_sample_exactly(): void
@@ -140,8 +172,13 @@ class RecurrenceRepositoryTest extends GoldenTestCase
         $garageN        = array_sum(array_map(fn ($s) => $s->n, $garages));
         $garageReturned = array_sum(array_map(fn ($s) => $s->returned, $garages));
 
+        // The kind scope belongs here too. This is the one place the test hand-rolls the repository's
+        // scope instead of asking for it, so contract v2.1.0 (services out of every rate) had to be
+        // mirrored by hand — otherwise the reconciliation compares a fault-only fleet against a
+        // fault-plus-service remainder and fails by exactly the unattributed services.
         $unattributed = DB::table('fault_recurrence_pairs')
             ->whereNull('first_vendor_id')
+            ->where('kind', RecurrenceRepository::KIND_FAULT)
             ->where('days_observed', '>=', $w->windowDays)
             ->count();
 

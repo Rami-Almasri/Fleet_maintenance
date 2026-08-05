@@ -12,6 +12,15 @@
 //   · what usually causes it and what usually fixes it
 //   · whether any of it is sourced from documentation
 //
+// TWO AUDIENCES, ONE CARD, ONE SWITCH. An admin curating the vocabulary needs the matching layer —
+// the score, the terms that fired and how, and where that wording came from — because that layer IS
+// the thing they are editing. A supervisor deciding where to send a car does not: they are reading
+// the card to learn what the fault usually is, and "engine nois · wording · 100" is the machinery
+// showing through ([[operational-language-over-engine-vocabulary]]). `matching={false}` drops the
+// score, the term chips and the two reason lines that describe the wording, and keeps what the fault
+// IS — its risk, what the fleet has seen alongside it, what usually causes it, what usually fixes it,
+// and the caveat about how little of that is documented.
+//
 // WHAT IT DOES NOT SHOW. No repair history, no cost, no garage, no recommendation — those are claims
 // about what HAPPENED, and they belong to the cohort panel that owns them. This card is only ever a
 // description of the fault itself, which is why it stays useful on a fault the fleet has never
@@ -47,7 +56,7 @@ const RISK_TONE = {
   green: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20',
 };
 
-export default function FaultKnowledgeCard({ data, className = '' }) {
+export default function FaultKnowledgeCard({ data, className = '', matching = true }) {
   const { t, lang } = useI18n();
 
   if (!data?.keyword) return null;
@@ -56,8 +65,16 @@ export default function FaultKnowledgeCard({ data, className = '' }) {
   const category = lang === 'ar' ? data.category_label_ar || data.category_label : data.category_label;
   const strong   = data.confidence === 'strong';
 
-  // 'lexical' is dropped: it restates the term chips directly above it in prose.
-  const reasons = (data.explanation?.reasons || []).filter((r) => r.kind !== 'lexical');
+  // 'lexical' is dropped always: it restates the term chips directly above it in prose.
+  //
+  // 'provenance' ("wording on this fault comes from — 28 from the curated fault ontology") and
+  // 'curated' ("4 term(s) were written by your staff") go with the chips when matching is hidden.
+  // Both are statements ABOUT the wording, and a sentence explaining where terms came from, printed
+  // on a card that no longer shows the terms, is an answer to a question nobody can see being asked.
+  const HIDDEN_WITHOUT_MATCHING = ['provenance', 'curated'];
+  const reasons = (data.explanation?.reasons || [])
+    .filter((r) => r.kind !== 'lexical')
+    .filter((r) => matching || !HIDDEN_WITHOUT_MATCHING.includes(r.kind));
 
   return (
     <div className={`rounded-xl bg-white p-3 ring-1 ring-inset ring-slate-200 ${className}`}>
@@ -72,18 +89,24 @@ export default function FaultKnowledgeCard({ data, className = '' }) {
           </span>
         )}
 
-        <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset ${
-          strong ? 'bg-emerald-50 text-emerald-700 ring-emerald-600/20' : 'bg-slate-100 text-slate-600 ring-slate-300'}`}
-        >
-          {t(`keywordAi.${data.confidence}`)} · {data.score}
-        </span>
+        {/* "Strong match · 100" is a grade on the MATCHER, not on the fault. It belongs where someone
+            is judging the matcher; on a ticket it invites a supervisor to read a confidence they have
+            no scale for and cannot act on. */}
+        {matching && (
+          <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset ${
+            strong ? 'bg-emerald-50 text-emerald-700 ring-emerald-600/20' : 'bg-slate-100 text-slate-600 ring-slate-300'}`}
+          >
+            {t(`keywordAi.${data.confidence}`)} · {data.score}
+          </span>
+        )}
 
         {category && <span className="ms-auto text-xs text-slate-400">{category}</span>}
       </div>
 
       {/* The wording that actually fired, and how. A wrong answer points at the bad term rather than
-          at an opaque score. */}
-      {data.matches?.length > 0 && (
+          at an opaque score — which is why this stays for the admin who can fix the term, and goes
+          for the supervisor who cannot. */}
+      {matching && data.matches?.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1.5">
           {data.matches.map((hit, i) => (
             <span

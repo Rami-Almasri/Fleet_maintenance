@@ -277,7 +277,7 @@ export default function PartsCatalog() {
     setRetiring(true);
     try {
       await api.post(`/parts-catalog/${toRetire.id}/retire`);
-      toast.success(t('partsCatalog.retired'));
+      toast.success(t('partsCatalog.retiredOk'));
       setToRetire(null);
       setBlocked(null);
       reload();

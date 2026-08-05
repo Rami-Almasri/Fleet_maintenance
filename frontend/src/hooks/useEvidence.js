@@ -12,6 +12,10 @@ import { getEvidence } from '../api/intelligence';
  */
 export default function useEvidence() {
   const [queryId, setQueryId] = useState(null);
+  // Sibling views of the same subject — [{ key, id }]. Faults and Services are two populations of one
+  // corpus, and a garage's scheduled work is not a footnote to its repairs, so they are TABS rather
+  // than a filter hidden inside one table. Empty for every other claim; the drawer shows no tab bar.
+  const [tabs, setTabs] = useState([]);
   const [evidence, setEvidence] = useState(null);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
@@ -45,18 +49,34 @@ export default function useEvidence() {
   }, []);
 
   const open = useCallback(
-    (id) => {
+    (id, siblingTabs = []) => {
       if (!id) return;
       setQueryId(id);
+      setTabs(siblingTabs);
       setEvidence(null);
       load(id, 1);
     },
     [load]
   );
 
+  /**
+   * Move to a sibling view. Page resets to 1 — carrying page 4 across to a tab with two rows lands
+   * the reader on an empty table that looks like missing data.
+   */
+  const switchTab = useCallback(
+    (id) => {
+      if (!id || id === queryId) return;
+      setQueryId(id);
+      setEvidence(null);
+      load(id, 1);
+    },
+    [queryId, load]
+  );
+
   const close = useCallback(() => {
     genRef.current += 1; // any in-flight response is now stale
     setQueryId(null);
+    setTabs([]);
     setEvidence(null);
     setError('');
     setPage(1);
@@ -69,5 +89,8 @@ export default function useEvidence() {
     [queryId, load]
   );
 
-  return { queryId, evidence, page, loading, error, open, close, goToPage, isOpen: queryId !== null };
+  return {
+    queryId, evidence, page, loading, error, open, close, goToPage, switchTab, tabs,
+    isOpen: queryId !== null,
+  };
 }

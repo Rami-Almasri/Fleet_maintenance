@@ -351,6 +351,15 @@ const en = {
         days: 'Days',
         outcome: 'Outcome',
         wentTo: 'Went back to',
+        service: 'Service',
+        doneOn: 'Done',
+        doneAgain: 'Done again',
+        dueEvery: 'Due every',
+        garage: 'Garage',
+      },
+      tab: {
+        faults: 'Faults',
+        services: 'Scheduled services',
       },
       outcome: {
         held: 'held',
@@ -3902,6 +3911,15 @@ const ar = {
         days: 'الأيام',
         outcome: 'النتيجة',
         wentTo: 'عادت إلى',
+        service: 'الخدمة',
+        doneOn: 'تمت',
+        doneAgain: 'أعيدت',
+        dueEvery: 'تستحق كل',
+        garage: 'الورشة',
+      },
+      tab: {
+        faults: 'الأعطال',
+        services: 'الصيانة المجدولة',
       },
       outcome: {
         held: 'صمد',

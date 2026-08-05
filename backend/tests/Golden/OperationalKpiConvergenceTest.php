@@ -82,13 +82,21 @@ class OperationalKpiConvergenceTest extends GoldenTestCase
         $this->assertSame($k['comeback_rate']->sampleSize, $k['first_time_fix_rate']->sampleSize);
     }
 
+    /**
+     * RE-BASELINED for metric contract v2.1.0 (2026-08-05): scheduled services left the denominator.
+     *
+     * 46.51 → 46.38 over n 10,595 → 9,522. The 1,073 excluded events are oil services returning at
+     * 47.72%; a recurring oil change is the service working, not the repair failing, so it never
+     * belonged in a first-time-fix figure. Same movement as repo.fleet.* by construction — these
+     * KPIs read the one RecurrenceStats, which is the point of the convergence.
+     */
     public function test_the_baseline_matches_the_governed_contract_figures(): void
     {
         $k = $this->kpis();
 
-        $this->assertGolden('C1.comeback', 46.51, $k['comeback_rate']->value, 0.05);
-        $this->assertGolden('C1.first_time_fix', 53.49, $k['first_time_fix_rate']->value, 0.05);
-        $this->assertGolden('C1.n', 10595, $k['comeback_rate']->sampleSize);
+        $this->assertGolden('C1.comeback', 46.38, $k['comeback_rate']->value, 0.05);
+        $this->assertGolden('C1.first_time_fix', 53.62, $k['first_time_fix_rate']->value, 0.05);
+        $this->assertGolden('C1.n', 9522, $k['comeback_rate']->sampleSize);
     }
 
     // ── Provenance travels with the number ──────────────────────────────────────────────────────

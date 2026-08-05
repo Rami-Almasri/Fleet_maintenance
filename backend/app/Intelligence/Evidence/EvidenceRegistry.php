@@ -4,6 +4,7 @@ namespace App\Intelligence\Evidence;
 
 use App\Intelligence\Evidence\Queries\GarageDomainRecurrenceQuery;
 use App\Intelligence\Evidence\Queries\GarageRecurrenceQuery;
+use App\Intelligence\Evidence\Queries\GarageServiceQuery;
 use App\Intelligence\Recurrence\RecurrenceRepository;
 use InvalidArgumentException;
 
@@ -34,6 +35,11 @@ class EvidenceRegistry
 
         return match ($kind) {
             'recurrence.garage' => new GarageRecurrenceQuery(
+                $this->recurrence,
+                (int) ($args[0] ?? 0),
+            ),
+            // The Services tab of the same drawer: what base() scopes out of every rate.
+            'recurrence.garage_services' => new GarageServiceQuery(
                 $this->recurrence,
                 (int) ($args[0] ?? 0),
             ),

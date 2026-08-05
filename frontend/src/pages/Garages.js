@@ -216,6 +216,9 @@ export default function Garages() {
         error={evidence.error}
         page={evidence.page}
         onPage={evidence.goToPage}
+        tabs={evidence.tabs}
+        activeId={evidence.queryId}
+        onTab={evidence.switchTab}
       />
     </div>
   );

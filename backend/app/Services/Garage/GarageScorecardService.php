@@ -198,6 +198,7 @@ class GarageScorecardService
         $held = 0;
         $back30 = 0;
         $back90 = 0;
+        $backLater = 0;        // returned after the window: inside $held, never "never came back"
         $expected = 0.0;       // case-mix-adjusted expectation, in repairs
         $durDays = 0.0;
         $durN = 0;
@@ -219,6 +220,7 @@ class GarageScorecardService
                 $held += (int) $c['held'];
                 $back30 += (int) $c['back_30'];
                 $back90 += (int) $c['back_90'];
+                $backLater += (int) $c['back_later'];
                 $expected += $n * (($fleetRow['comeback_pct'] ?? 0) / 100);
             }
             if (! $exposure && (int) $c['duration_n'] > 0) {
@@ -249,9 +251,13 @@ class GarageScorecardService
                 'returned'         => $exposure ? null : (int) $c['returned'],
                 // WHAT ACTUALLY HAPPENED to those repairs — the three counts a person can picture,
                 // plus how long the failures typically lasted before coming back.
+                // `held` stays the SCORING complement so the rate is reconstructible from the payload;
+                // `never_returned` is the only count a display may call lasting. See RecurrenceStats.
                 'held'             => $exposure ? null : (int) $c['held'],
+                'never_returned'   => $exposure ? null : max(0, (int) $c['held'] - (int) $c['back_later']),
                 'back_30'          => $exposure ? null : (int) $c['back_30'],
                 'back_90'          => $exposure ? null : (int) $c['back_90'],
+                'back_later'       => $exposure ? null : (int) $c['back_later'],
                 'return_days'      => $exposure ? null : $c['median_gap'],
                 'fleet_comeback_pct' => $exposure ? null : $fleetCb,
                 'vs_fleet_pts'     => $exposure ? null : $delta,
@@ -302,8 +308,10 @@ class GarageScorecardService
             'vs_expected_pts' => ($actual !== null && $expectedPct !== null) ? round($actual - $expectedPct, 1) : null,
             'n'             => $repairs,
             'held'          => $held,
+            'never_returned' => max(0, $held - $backLater),
             'back_30'       => $back30,
             'back_90'       => $back90,
+            'back_later'    => $backLater,
             // Garage-level median comes from the repository at the garage grain: medians do not
             // sum, so rolling per-domain medians together would produce a number nobody measured.
             'return_days'   => $garageMedian,
@@ -514,6 +522,9 @@ class GarageScorecardService
                 'back_30'      => 0,
                 'back_90'      => 0,
                 'held'         => 0,
+                // Inside `held` for scoring, separate for display: a repair whose fault returned after
+                // the window is not charged to the garage, and is also not one that lasted.
+                'back_later'   => 0,
                 // The median arrives PRECOMPUTED from the repository, which owns how a right-skewed
                 // distribution is summarised. This service no longer carries a bag of raw gaps —
                 // measurement belongs to the repository, interpretation belongs here.
@@ -585,9 +596,10 @@ class GarageScorecardService
 
                 $c['n']        += $stats->n;
                 $c['returned'] += $stats->returned;
-                $c['held']     += $stats->held;
-                $c['back_30']  += $stats->back30;
-                $c['back_90']  += $stats->back90;
+                $c['held']       += $stats->held;
+                $c['back_30']    += $stats->back30;
+                $c['back_90']    += $stats->back90;
+                $c['back_later'] += $stats->backLater;
 
                 // The median arrives precomputed per cell rather than as a bag of gaps: the
                 // repository owns the measurement, including how a skewed distribution is summarised.
@@ -650,7 +662,7 @@ class GarageScorecardService
         $acc = [];
         foreach ($cells as $byDomain) {
             foreach ($byDomain as $key => $c) {
-                foreach (['volume', 'n', 'returned', 'held', 'back_30', 'back_90', 'duration_sum', 'duration_n'] as $f) {
+                foreach (['volume', 'n', 'returned', 'held', 'back_30', 'back_90', 'back_later', 'duration_sum', 'duration_n'] as $f) {
                     $acc[$key][$f] = ($acc[$key][$f] ?? 0) + $c[$f];
                 }
                 $acc[$key]['exposure'] = $c['exposure'];

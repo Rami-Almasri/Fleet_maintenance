@@ -333,6 +333,13 @@ class OperationsService
                 $this->reconcileVehicleOperationalStatus($contract->vehicle);
             }
 
+            // A rental that owed an oil change — whether a controller decided so mid-rental or the
+            // car simply came back past its limit — turns that debt into a real ticket now, while
+            // the car is physically in our hands. Idempotent; safe on any close path.
+            if ($contract->contract_type === 'C') {
+                app(OilChangeProjectionService::class)->settleOnReturn($contract->refresh());
+            }
+
             return $contract->refresh();
         });
     }

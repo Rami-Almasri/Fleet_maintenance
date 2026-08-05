@@ -126,7 +126,13 @@ export default function GarageProfile() {
           coverage={data.coverage}
           asOf={data.as_of}
           unavailableReason={rel.measured ? null : rel.reason}
-          onEvidence={card.evidence_query_id ? () => evidence.open(card.evidence_query_id) : undefined}
+          // Faults AND the scheduled work excluded from this rate. The services tab is not a nicety:
+          // the comeback figure above is computed with the services removed, and "what did you take
+          // out?" has to be answerable one click from the number it changed.
+          onEvidence={card.evidence_query_id ? () => evidence.open(card.evidence_query_id, [
+            { key: 'faults', id: card.evidence_query_id },
+            { key: 'services', id: `recurrence.garage_services:${card.vendor_id}` },
+          ]) : undefined}
         />
         <IntelligenceMetricCard
           label={g('stat.turnaround')}
@@ -176,7 +182,14 @@ export default function GarageProfile() {
                     )}
                   </td>
                   <td className="px-6 py-2 text-end">
-                    {d.graded && d.evidence_query_id && (
+                    {/* Drillable whether or not the area is GRADED. "Not enough repairs to judge"
+                        is a statement about the verdict, not about the repairs — a supervisor asking
+                        what a garage actually did on brakes should get the twenty-one brake jobs.
+                        The drawer's own claim says the sample is under the floor, so opening this
+                        cannot smuggle a two-repair percentage back in. Exposure damage stays inert:
+                        that cell is ungraded because grading it would be wrong, not because the
+                        sample is thin. */}
+                    {d.grade !== 'not_graded_exposure' && d.jobs > 0 && d.evidence_query_id && (
                       <button
                         type="button"
                         onClick={() => evidence.open(d.evidence_query_id)}
@@ -203,6 +216,9 @@ export default function GarageProfile() {
         error={evidence.error}
         page={evidence.page}
         onPage={evidence.goToPage}
+        tabs={evidence.tabs}
+        activeId={evidence.queryId}
+        onTab={evidence.switchTab}
       />
     </div>
   );

@@ -34,6 +34,12 @@ final class RecurrenceWindow
         public readonly string $horizonMode = self::HORIZON_CORPUS_MAX,
         public readonly bool $excludeExposure = true,
         public readonly string $version = 'ad-hoc',
+        /**
+         * Scope rates to kind='fault'. Contract v2.1.0 — a recurring oil change is the service
+         * working, not the repair failing. Carried here rather than assumed in the repository so a
+         * legacy parity window can reproduce v2.0.0's numbers by turning it off.
+         */
+        public readonly bool $excludeServices = true,
     ) {
         if ($windowDays < 1) {
             throw new InvalidArgumentException('A recurrence window must be at least one day.');
@@ -59,6 +65,7 @@ final class RecurrenceWindow
             horizonMode:     (string) data_get($c, 'observation_horizon.mode', self::HORIZON_CORPUS_MAX),
             excludeExposure: (bool) data_get($c, 'filters.exclude_exposure', true),
             version:         (string) ($c['version'] ?? 'unknown'),
+            excludeServices: (bool) data_get($c, 'filters.exclude_services', true),
         );
     }
 
@@ -91,7 +98,9 @@ final class RecurrenceWindow
      */
     public static function legacy(int $windowDays, string $horizonMode): self
     {
-        return new self($windowDays, $horizonMode, true, 'legacy-parity');
+        // Services IN — every retired implementation counted them, so a parity window that excluded
+        // them would not be reproducing the definition it claims to prove.
+        return new self($windowDays, $horizonMode, true, 'legacy-parity', excludeServices: false);
     }
 
     public function appliesHorizon(): bool
@@ -99,14 +108,23 @@ final class RecurrenceWindow
         return $this->horizonMode === self::HORIZON_CORPUS_MAX;
     }
 
+    /** Do rates built on this window measure repair quality only? Contract v2.1.0. */
+    public function excludesServices(): bool
+    {
+        return $this->excludeServices;
+    }
+
     /** Part of the cache key, so two different definitions cannot share a cache entry. */
     public function fingerprint(): string
     {
         return sprintf(
-            '%dd:%s:%s:v%s',
+            '%dd:%s:%s:%s:v%s',
             $this->windowDays,
             $this->horizonMode,
             $this->excludeExposure ? 'noexp' : 'allexp',
+            // In the key, not just the object: v2.0.0 and v2.1.0 answer the same question over
+            // different populations, and a shared cache entry would serve one as the other.
+            $this->excludeServices ? 'nosvc' : 'allsvc',
             $this->version,
         );
     }
@@ -117,6 +135,7 @@ final class RecurrenceWindow
             'window_days'      => $this->windowDays,
             'horizon_mode'     => $this->horizonMode,
             'exclude_exposure' => $this->excludeExposure,
+            'exclude_services' => $this->excludeServices,
             'metric_version'   => $this->version,
         ];
     }

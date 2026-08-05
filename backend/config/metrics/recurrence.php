@@ -40,7 +40,7 @@
 
 return [
 
-    'version'        => '2.0.0',
+    'version'        => '2.1.0',
     'effective_date' => '2026-08-04',
     'owner'          => 'Fleet Intelligence',
     'supersedes'     => '1.0.0',
@@ -133,6 +133,24 @@ return [
         // signature cannot silently start grading it.
         'exclude_exposure' => true,
         'exposure_source'  => \App\Services\Knowledge\RepairSignatureClassifier::class . '::EXPOSURE_SIGNATURES',
+
+        // Scheduled work is not a failure. An oil change recurring every 90 days is
+        // the service working, and counting it as "the fault came back" charged
+        // 1,073 fully-observed services to garages as repair failures — at 47.72%,
+        // slightly ABOVE the 46.38% real faults recur at, so the pollution pushed
+        // every garage's rate UP rather than averaging out.
+        //
+        // Same derivation discipline as exposure: the list lives with the
+        // classifier, never here, so adding a service signature cannot silently
+        // start or stop grading it.
+        //
+        // The rows are NOT deleted from the corpus — they carry kind='service' and
+        // stay readable, because "we excluded 1,073 services" has to be auditable
+        // and the Services tab on the evidence drawer reads exactly those rows.
+        // Excluding by filter rather than by deletion is what keeps both true.
+        'exclude_services' => true,
+        'service_source'   => \App\Services\Knowledge\RepairSignatureClassifier::class . '::SERVICE_SIGNATURES',
+        'kind_column'      => 'kind',
 
         'require_vehicle'  => true,
         'require_date'     => true,
@@ -285,6 +303,31 @@ return [
             'reason'        =>
                 'One repair must count once, and a repair too recent to have failed must not count as '
                 . 'one that held. See docs/Recurrence-Metric-Convergence.md for the measured evidence.',
+            'retired_because' =>
+                'Counted scheduled services as repair failures. 1,073 of its 10,595 fully-observed '
+                . 'events were oil services, which recur BY DESIGN — superseded by 2.1.0.',
+        ],
+        [
+            'version'       => '2.1.0',
+            'effective'     => '2026-08-05',
+            'summary'       => 'Scheduled services separated from faults; the rate measures repair quality only.',
+            'dataset'       => 'fault_recurrence_pairs (kind = fault)',
+            'deduplication' => true,
+            'horizon'       => 'corpus_max - 90d',
+            'fleet_comeback' => 46.38,
+            'fleet_n'       => 9522,
+            'reason'        =>
+                'A recurring oil change is the service working, not the repair failing. Under 2.0.0 the '
+                . '1,073 scheduled services in the corpus returned at 47.72% — ABOVE the 46.38% of real '
+                . 'faults — so they were not neutral filler, they were pushing every garage rate up. '
+                . 'Services are now typed at rebuild (kind) and scoped out of every rate; they remain '
+                . 'in the corpus and readable, so the exclusion is auditable rather than a deletion.',
+            'moved_by'      => '-0.13 pts fleet (46.51 -> 46.38); n 10,595 -> 9,522',
+            'known_limit'   =>
+                'Only OIL_SERVICE is typed as service. TYRE (996 pairs) genuinely mixes punctures with '
+                . 'rotations and the corpus cannot separate them; maintenance_tasks.kind, which could, '
+                . 'reaches 28 of 12,608 pairs. This gets better when the history is classified, not by '
+                . 'guessing here.',
         ],
     ],
 

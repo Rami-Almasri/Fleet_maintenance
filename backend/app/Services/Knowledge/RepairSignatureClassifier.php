@@ -81,6 +81,35 @@ class RepairSignatureClassifier
     public const EXPOSURE_SIGNATURES = ['BODY', 'RIM'];
 
     /**
+     * Signatures that describe SCHEDULED WORK, not a failure — planned maintenance on a cadence.
+     *
+     * ── WHY THIS LIST IS ONE ENTRY LONG ──────────────────────────────────────────────────────────
+     * A recurring oil change is the service working. Counting it as "the fault came back" charged
+     * 1,073 fully-observed scheduled services to garages as repair failures, at 47.72% — slightly
+     * ABOVE the 46.38% that real faults recur at — so the pollution was pushing every garage's
+     * comeback rate up, not averaging out.
+     *
+     * The proper home for this is `maintenance_tasks.kind`, decided per event by
+     * EventClassificationService against the service catalog. That layer exists and is correct, and
+     * it reaches 28 of 12,608 recurrence pairs: it covers the new workflow, not the 26,942-ticket
+     * history this corpus is built from. Until the history is classified, the SIGNATURE is the only
+     * kind signal available at this grain.
+     *
+     * So this list is deliberately conservative — one signature that is unambiguously scheduled.
+     * `TYRE` is NOT here despite the catalog carrying tyre_rotation and wheel_alignment as services:
+     * a puncture and a rotation share the signature and nothing in the corpus separates them, and
+     * silently reclassifying 996 pairs on a guess would trade a known bias for an unmeasurable one.
+     * When maintenance_tasks.kind covers the history, this list retires in favour of it.
+     */
+    public const SERVICE_SIGNATURES = ['OIL_SERVICE'];
+
+    /** Is this signature planned work rather than a failure? */
+    public static function isService(string $signature): bool
+    {
+        return in_array($signature, self::SERVICE_SIGNATURES, true);
+    }
+
+    /**
      * Progress chatter that carries no fault information. Matching one of these AND nothing else is
      * how a note is recognised as workflow noise (2,645 events) rather than an unclassifiable fault —
      * the two must not be confused when reporting coverage.
