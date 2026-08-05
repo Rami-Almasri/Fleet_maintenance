@@ -87,6 +87,7 @@ class NotificationScanner
         'maint_invoice_missing'       => 'maintenance.checkpoint.manage', // the Checkpoint lane's owners: car left the garage, bill never arrived
         'oil_projection'              => 'reminders.manage',              // ask the customer for a mileage reading — further narrowed by an allow-list, see userMayReceive()
         'oil_decision'                => 'reminders.manage',              // the car can't finish inside the tolerance: recall it, or accept + service on return
+        'oil_recall_task'             => 'reminders.manage',              // a recall was ordered: phone the customer and arrange the return
     ];
 
     /**

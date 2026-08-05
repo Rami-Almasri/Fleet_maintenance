@@ -6,6 +6,7 @@ use App\Helpers\ResponseHelper;
 use App\Models\Contract;
 use App\Models\ContractMileageReading;
 use App\Models\ContractOilDecision;
+use App\Models\OilRecallTask;
 use App\Services\OilChangeProjectionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -186,6 +187,102 @@ class OilProjectionController extends Controller
                 'reading'    => $reading,
                 'projection' => $this->projection->project($contract->fresh()),
             ]);
+        } catch (Throwable $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
+     * The Controllers' recall queue: cars whose customers need phoning about getting them back.
+     *
+     * Deliberately thin — a recall task is a conversation to have, so the row carries the figures
+     * that conversation is about and nothing else. There is no route, no driver and no ETA here;
+     * that is a logistics concern the fleet has no module for yet.
+     */
+    public function recallTasks(Request $request): JsonResponse
+    {
+        try {
+            $all = $request->boolean('all');
+
+            $tasks = OilRecallTask::query()
+                ->when(! $all, fn ($q) => $q->open())
+                ->with(['vehicle:id,code,make,model,plate_no', 'contract:id,contract_no,customer_id', 'contract.customer:id,name_en'])
+                ->orderByRaw("FIELD(status, 'open', 'contacted', 'done', 'cancelled')")
+                ->orderByDesc('id')
+                ->limit(200)
+                ->get()
+                ->map(fn (OilRecallTask $t) => [
+                    'id'              => $t->id,
+                    'status'          => $t->status,
+                    'reason_code'     => $t->reason_code,
+                    'contract_id'     => $t->contract_id,
+                    'contract_no'     => $t->contract?->contract_no,
+                    'customer'        => $t->contract?->customer?->name_en,
+                    'vehicle_id'      => $t->vehicle_id,
+                    'plate'           => $t->vehicle?->plate_no,
+                    'car'             => trim(($t->vehicle?->make ?? '') . ' ' . ($t->vehicle?->model ?? '')),
+                    // The frozen figures the caller reads out.
+                    'customer_reading'         => $t->customer_reading,
+                    'customer_reading_on'      => optional($t->customer_reading_on)->toDateString(),
+                    'oil_limit'                => $t->oil_limit,
+                    'allowed_max'              => $t->allowed_max,
+                    'expected_return_odometer' => $t->expected_return_odometer,
+                    'over_tolerance_km'        => $t->overToleranceKm(),
+                    'remaining_days'           => $t->remaining_days,
+                    'created_by'               => $t->created_by_name,
+                    'decided_at'               => optional($t->decided_at)->toDateTimeString(),
+                    'note'                     => $t->note,
+                    'outcome_note'             => $t->outcome_note,
+                    'claimed_by'               => $t->claimedBy?->name,
+                    'completed_at'             => optional($t->completed_at)->toDateTimeString(),
+                ]);
+
+            return ResponseHelper::SuccessResponse([
+                'tasks'   => $tasks,
+                'summary' => [
+                    'open'      => OilRecallTask::where('status', OilRecallTask::STATUS_OPEN)->count(),
+                    'contacted' => OilRecallTask::where('status', OilRecallTask::STATUS_CONTACTED)->count(),
+                ],
+            ]);
+        } catch (Throwable $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /** Move a recall call along: reached the customer, or finished with it. */
+    public function updateRecallTask(Request $request, OilRecallTask $task): JsonResponse
+    {
+        try {
+            $data = $request->validate([
+                'status'       => ['required', 'in:' . implode(',', OilRecallTask::STATUSES)],
+                'outcome_note' => ['nullable', 'string', 'max:1000'],
+            ]);
+
+            $user = $request->user();
+            $task->status = $data['status'];
+            if (array_key_exists('outcome_note', $data) && $data['outcome_note'] !== null) {
+                $task->outcome_note = $data['outcome_note'];
+            }
+
+            // First person to move it off `open` owns the call from then on.
+            if ($task->claimed_by === null && $data['status'] !== OilRecallTask::STATUS_OPEN) {
+                $task->claimed_by = $user?->id;
+                $task->claimed_at = now();
+            }
+
+            if (in_array($data['status'], [OilRecallTask::STATUS_DONE, OilRecallTask::STATUS_CANCELLED], true)) {
+                $task->completed_at = now();
+                $task->completed_by = $user?->id;
+            } else {
+                // Re-opening clears the completion stamps rather than leaving a task that claims to
+                // be both open and finished.
+                $task->completed_at = null;
+                $task->completed_by = null;
+            }
+
+            $task->save();
+
+            return ResponseHelper::SuccessResponse(['task' => $task->fresh()]);
         } catch (Throwable $e) {
             return ResponseHelper::fromException($e);
         }

@@ -23,7 +23,7 @@ jest.mock('react-router-dom', () => ({
   Link: ({ to, children, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
 }), { virtual: true });
 
-jest.mock('../../api/client', () => ({ get: jest.fn(), post: jest.fn() }));
+jest.mock('../../api/client', () => ({ get: jest.fn(), post: jest.fn(), patch: jest.fn() }));
 jest.mock('../../hooks/usePermissions', () => ({
   usePermissions: () => ({ can: () => true, canAny: () => true, hasRole: () => false, roles: [], permissions: [], isSuperAdmin: true }),
 }));
@@ -127,10 +127,27 @@ const RECALCULATED = {
   return_date_known: true, expected_return: 8000, over_tolerance_km: 0, decision: null,
 };
 
+// The call a recall produced: everything the controller has to say, frozen as of the decision.
+const RECALL_TASKS = [{
+  id: 3, status: 'open', reason_code: 'oil_tolerance_exceeded_before_return',
+  contract_id: 91, contract_no: 'C-9001', customer: 'Hazem Ali',
+  vehicle_id: 5, plate: 'K 81836', car: 'JEEP CHEROKEE',
+  customer_reading: 7600, customer_reading_on: '2026-08-05',
+  oil_limit: 7500, allowed_max: 8000, expected_return_odometer: 8600,
+  over_tolerance_km: 600, remaining_days: 5,
+  created_by: 'Marwa', decided_at: '2026-08-05 11:20:00',
+  note: 'Customer is local; ask for Thursday.', outcome_note: null,
+  claimed_by: null, completed_at: null,
+}];
+
+let recallTasks = RECALL_TASKS;
+
 beforeEach(() => {
   jest.clearAllMocks();
+  recallTasks = RECALL_TASKS;
   api.get.mockImplementation((url) => {
     if (url === '/OilProjection') return Promise.resolve({ data: { data: QUEUE } });
+    if (url === '/OilRecallTasks') return Promise.resolve({ data: { data: { tasks: recallTasks, summary: { open: recallTasks.length, contacted: 0 } } } });
     if (url.includes('/oil-projection')) return Promise.resolve({ data: { data: DETAIL } });
     return Promise.resolve({ data: { data: null } });
   });
@@ -151,6 +168,7 @@ const chip = async (label) => fireEvent.click(await screen.findByText(label));
 
 /** The queue opens on the only thing that needs a human: the cars that can't finish inside the allowance. */
 test('the queue opens on the cars that need a decision', async () => {
+  recallTasks = [];   // this test is about the board; the recall queue lists plates too
   await load();
 
   expect(await screen.findByText('K 81836')).toBeInTheDocument();
@@ -189,6 +207,7 @@ test('a car that only busts its allowance on an estimate is a phone call, not a 
  * person about to make the call, with the three numbers the call is actually made on.
  */
 test('a row that needs a decision states where it lands, what it is allowed, and how long is left', async () => {
+  recallTasks = [];   // scope the assertions to the board table
   await load();
 
   const row = within((await screen.findByText('K 81836')).closest('tr'));
@@ -252,13 +271,16 @@ test('a car with no handover reading is reported as unprojectable, not estimated
  */
 test('recalling a car confirms against the figures before it is recorded', async () => {
   api.post.mockResolvedValue({ data: { data: { decision: { id: 1 }, projection: {} } } });
+  recallTasks = [];
   await load();
 
   fireEvent.click(await screen.findByText('Recall now'));
 
   expect(await screen.findByText(/Recall now — K 81836/)).toBeInTheDocument();
   expect(screen.getByText(/600 km past what this car is allowed to run/)).toBeInTheDocument();
-  expect(screen.getByText(/the oil-change ticket is raised automatically the moment it is back/)).toBeInTheDocument();
+  // It promises a CALL, and is explicit that no vehicle movement is being booked.
+  expect(screen.getByText(/contact the customer and agree a day to bring the car in/)).toBeInTheDocument();
+  expect(screen.getByText(/No driver is dispatched and no collection is booked/)).toBeInTheDocument();
 
   // Confirm from the dialog footer (the table button carries the same words).
   fireEvent.click(screen.getAllByText('Recall now').at(-1));
@@ -280,6 +302,65 @@ test('accepting the overrun records the decision with the reason given', async (
   await waitFor(() => expect(api.post).toHaveBeenCalledWith('/Contract/91/oil-decision', {
     decision: 'defer', note: 'Customer is mid-trip',
   }));
+});
+
+/**
+ * A RECALL IS A CONVERSATION, NOT A DISPATCH. The queue carries what the controller has to say on
+ * the phone — the customer's own number, the two limits, where the car lands — and nothing about
+ * routes, drivers or collection times, because none of that exists on this path.
+ */
+test('a recall shows up as a call to make, with the figures it is about', async () => {
+  await load();
+
+  expect(await screen.findByText('Recalls to arrange (1)')).toBeInTheDocument();
+  const q = within(screen.getByText(/The oil tolerance will be exceeded/).closest('li'));
+
+  expect(q.getByText('To call')).toBeInTheDocument();
+  expect(q.getByText(/Hazem Ali · contract C-9001/)).toBeInTheDocument();
+  expect(q.getByText(/The oil tolerance will be exceeded before the rental ends/)).toBeInTheDocument();
+  expect(q.getByText(/Recalled by Marwa/)).toBeInTheDocument();
+  expect(q.getByText(/Customer is local; ask for Thursday/)).toBeInTheDocument();
+
+  // The frozen numbers the call is made on.
+  const figures = q.getByText(/Customer reported/).textContent;
+  expect(figures).toMatch(/7,600 km on/);
+  expect(figures).toMatch(/oil limit 7,500 km/);
+  expect(figures).toMatch(/allowed 8,000 km/);
+  expect(figures).toMatch(/would return on 8,600 km \(600 km over\)/);
+  expect(figures).toMatch(/5d left on the contract/);
+
+  // Nothing pretends a vehicle movement has been arranged.
+  expect(q.queryByText(/driver/i)).not.toBeInTheDocument();
+  expect(q.queryByText(/dispatch/i)).not.toBeInTheDocument();
+  expect(q.queryByText(/pick[- ]?up/i)).not.toBeInTheDocument();
+});
+
+/** The two moves a controller makes on the call. */
+test('a controller can mark the customer contacted', async () => {
+  api.patch.mockResolvedValue({ data: { data: { task: {} } } });
+  await load();
+
+  fireEvent.click(await screen.findByText('Customer contacted'));
+
+  await waitFor(() => expect(api.patch).toHaveBeenCalledWith('/OilRecallTasks/3', { status: 'contacted' }));
+});
+
+/** No recalls outstanding ⇒ no empty box taking up the screen. */
+test('the recall queue is absent when there is nothing to call about', async () => {
+  recallTasks = [];
+  await load();
+
+  await screen.findByText('K 81836');
+  expect(screen.queryByText(/Recalls to arrange/)).not.toBeInTheDocument();
+});
+
+/** The three states are stated on the page, not left to be inferred from badge colours. */
+test('the page spells out the three states and what each one means', async () => {
+  await load();
+
+  expect(await screen.findByText(/Comes back before it even reaches the oil point. No action./)).toBeInTheDocument();
+  expect(screen.getByText(/No decision needed — the rental\s+continues/)).toBeInTheDocument();
+  expect(screen.getByText(/Cannot finish inside the allowance/)).toBeInTheDocument();
 });
 
 /** Opening a contract shows what was reported last time, so the caller isn't typing blind. */

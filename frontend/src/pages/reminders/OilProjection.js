@@ -57,6 +57,19 @@ const DECISION_LABEL = {
   defer:  'Do it on return',
 };
 
+/** Why a recall was ordered. The API sends a code; the sentence is built here. */
+const RECALL_REASON = {
+  oil_tolerance_exceeded_before_return:
+    'The oil tolerance will be exceeded before the rental ends.',
+};
+
+const RECALL_STATUS = {
+  open:      { tone: 'red',   label: 'To call' },
+  contacted: { tone: 'amber', label: 'Customer contacted' },
+  done:      { tone: 'green', label: 'Done' },
+  cancelled: { tone: 'slate', label: 'Withdrawn' },
+};
+
 /** How the rental's remaining run is phrased. Null days = the contract carries no duration. */
 const dueBackIn = (p) => {
   if (!p?.return_date_known) return 'with no return date on the contract';
@@ -293,10 +306,11 @@ export function DecisionDialog({ row, decision, onClose, onDecided }) {
 
         <p className="text-slate-700">
           {recall
-            ? 'The car comes back before it goes further past the allowance. Arrange the return with the '
-              + 'customer — the oil-change ticket is raised automatically the moment it is back.'
-            : 'The rental runs to its end and the overrun is accepted. The oil-change ticket is raised '
-              + 'automatically the moment the car is back.'}
+            ? 'This raises a call for you to make: contact the customer and agree a day to bring the car '
+              + 'in. No driver is dispatched and no collection is booked — that stays a conversation. The '
+              + 'oil-change ticket is raised on its own the moment the car is back.'
+            : 'The rental runs to its end and the overrun is accepted. Nothing to chase — the oil-change '
+              + 'ticket is raised on its own the moment the car is back.'}
         </p>
 
         <Textarea
@@ -311,6 +325,98 @@ export function DecisionDialog({ row, decision, onClose, onDecided }) {
   );
 }
 
+/**
+ * The recall call queue.
+ *
+ * A recall is a CONVERSATION, not a movement: phone the customer, explain that the car is about to
+ * run past what its oil is good for, agree a day to bring it in. So this queue carries the figures
+ * that conversation is about and nothing else — no route, no driver, no ETA. Those belong to a
+ * logistics module the fleet doesn't have yet, and inventing one here would put half-specified
+ * transport jobs in front of drivers.
+ *
+ * The numbers are FROZEN as of the decision, not live: someone halfway through a call must see the
+ * figures the recall was ordered on, not figures that moved under them thirty seconds ago.
+ */
+export function RecallQueue({ tasks, canRecord, onChanged }) {
+  const toast = useToast();
+  const [busyId, setBusyId] = useState(null);
+
+  const move = async (task, status) => {
+    setBusyId(task.id);
+    try {
+      await api.patch(`/OilRecallTasks/${task.id}`, { status });
+      toast.success(status === 'contacted' ? 'Marked as contacted' : 'Recall closed');
+      onChanged();
+    } catch (e) {
+      toast.error(e.response?.data?.message || 'Could not update the recall');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  if (!tasks.length) return null;
+
+  return (
+    <SectionCard
+      title={`Recalls to arrange (${tasks.length})`}
+      subtitle="Call the customer and agree a day to bring the car in. The oil-change ticket is raised on its own once the car is back."
+    >
+      <ul className="divide-y divide-slate-100">
+        {tasks.map((t) => {
+          const s = RECALL_STATUS[t.status] || RECALL_STATUS.open;
+          return (
+            <li key={t.id} className="flex flex-wrap items-start justify-between gap-3 py-3">
+              <div className="min-w-0 space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  {t.vehicle_id
+                    ? <Link to={`/vehicles/${t.vehicle_id}`} className="font-semibold text-slate-900 hover:text-indigo-600">{t.plate || `#${t.vehicle_id}`}</Link>
+                    : <span className="font-semibold text-slate-900">{t.plate || '—'}</span>}
+                  <span className="text-xs text-slate-500">{t.car}</span>
+                  <Badge tone={s.tone}>{s.label}</Badge>
+                </div>
+                <div className="text-sm text-slate-700">
+                  {t.customer || 'Customer'}{t.contract_no ? ` · contract ${t.contract_no}` : ''}
+                </div>
+                <div className="text-sm text-slate-600">
+                  {RECALL_REASON[t.reason_code] || 'Recall ordered.'}
+                </div>
+                {/* Everything the caller needs to say, in the order they'd say it. */}
+                <div className="text-xs text-slate-500">
+                  Customer reported <strong>{num(t.customer_reading)} km</strong>
+                  {t.customer_reading_on ? ` on ${fmtDate(t.customer_reading_on)}` : ''}
+                  {' · '}oil limit {num(t.oil_limit)} km
+                  {' · '}allowed {num(t.allowed_max)} km
+                  {' · '}would return on <strong>{num(t.expected_return_odometer)} km</strong>
+                  {t.over_tolerance_km ? ` (${num(t.over_tolerance_km)} km over)` : ''}
+                  {t.remaining_days != null ? ` · ${t.remaining_days}d left on the contract` : ''}
+                </div>
+                <div className="text-xs text-slate-400">
+                  Recalled by {t.created_by || 'system'}{t.decided_at ? ` · ${fmtDate(t.decided_at)}` : ''}
+                  {t.claimed_by ? ` · picked up by ${t.claimed_by}` : ''}
+                </div>
+                {t.note && <div className="text-xs italic text-slate-500">“{t.note}”</div>}
+              </div>
+
+              {canRecord && (
+                <div className="flex shrink-0 gap-1.5">
+                  {t.status === 'open' && (
+                    <Button size="sm" variant="secondary" loading={busyId === t.id} onClick={() => move(t, 'contacted')}>
+                      Customer contacted
+                    </Button>
+                  )}
+                  <Button size="sm" variant="ghost" loading={busyId === t.id} onClick={() => move(t, 'done')}>
+                    Close
+                  </Button>
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </SectionCard>
+  );
+}
+
 export default function OilProjection() {
   const { can } = usePermissions();
   const canRecord = can('reminders.manage');
@@ -320,8 +426,13 @@ export default function OilProjection() {
   const [deciding, setDeciding] = useState(null);   // { row, decision }
 
   const fetcher = useCallback(async () => {
-    const { data } = await api.get('/OilProjection');
-    return data.data || null;
+    // The board and the recall queue are one screen's worth of work, so they load together — a
+    // controller should never have to go looking for the calls their own decisions created.
+    const [board, recalls] = await Promise.all([
+      api.get('/OilProjection'),
+      api.get('/OilRecallTasks').catch(() => ({ data: { data: { tasks: [] } } })),
+    ]);
+    return { ...(board.data.data || {}), recallTasks: recalls.data?.data?.tasks || [] };
   }, []);
   // Modal open ⇒ pause polling, so the table can't reshuffle under someone mid-call.
   const { data, loading, error, reload } = useFetch(fetcher, [], {
@@ -503,6 +614,13 @@ export default function OilProjection() {
         <MetricCard label="Cars out" value={summary.total} tone="slate" loading={loading} />
       </MetricGrid>
 
+      {/* The calls the decisions created, above the board that creates them. */}
+      <RecallQueue
+        tasks={data?.recallTasks || []}
+        canRecord={canRecord}
+        onChanged={() => reload({ silent: true })}
+      />
+
       <SectionCard
         title="Follow-up queue"
         subtitle={data?.model
@@ -543,6 +661,28 @@ export default function OilProjection() {
           />
         )}
       </SectionCard>
+
+      {/* The three states, stated once, so nobody has to infer them from badge colours. */}
+      <div className="grid gap-2 text-xs text-slate-600 sm:grid-cols-3">
+        <div className="rounded-lg border border-slate-200 p-2.5">
+          <Badge tone="green">Within tolerance</Badge>
+          <div className="mt-1.5">Comes back before it even reaches the oil point. No action.</div>
+        </div>
+        <div className="rounded-lg border border-slate-200 p-2.5">
+          <Badge tone="amber">Oil change on return</Badge>
+          <div className="mt-1.5">
+            Passes the oil point but finishes inside the allowance. No decision needed — the rental
+            continues and the oil change is raised as soon as the car is back.
+          </div>
+        </div>
+        <div className="rounded-lg border border-slate-200 p-2.5">
+          <Badge tone="red">Decision needed</Badge>
+          <div className="mt-1.5">
+            Cannot finish inside the allowance. Someone must choose: <strong>recall now</strong> (raises a
+            call to arrange the return) or <strong>do it on return</strong> (defer until the contract closes).
+          </div>
+        </div>
+      </div>
 
       {/* Traceability: the page states the arithmetic behind every number it shows. */}
       {data?.model?.basis && (

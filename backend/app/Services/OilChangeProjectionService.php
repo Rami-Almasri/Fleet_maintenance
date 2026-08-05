@@ -6,6 +6,7 @@ use App\Models\Contract;
 use App\Models\ContractMileageReading;
 use App\Models\ContractOilDecision;
 use App\Models\Maintenance;
+use App\Models\OilRecallTask;
 use App\Models\User;
 use App\Models\Vehicle;
 use Illuminate\Support\Carbon;
@@ -553,8 +554,115 @@ class OilChangeProjectionService
                 );
             }
 
+            // A recall is a CONVERSATION, so it produces a task for the Controllers to have it —
+            // nothing more. Deferring is not a task: the rental simply runs its course.
+            if ($decision === ContractOilDecision::DECISION_RECALL) {
+                $this->openRecallTask($row, $contract, $projection, $actor, $note);
+            } else {
+                $this->cancelOpenRecallTasks($contract, 'Revised to "do it on return".');
+            }
+
             return $row;
         });
+    }
+
+    /**
+     * Raise the "phone the customer and arrange the return" task, and put it in front of the two
+     * people who make these calls.
+     *
+     * 🛑 This creates NO logistics record. Recalling a car is a conversation, not a movement: nobody
+     * knows yet when or from where the car is coming back, and inventing a dispatch would put a
+     * half-specified transport job in a driver's queue. When a real logistics lane exists it will
+     * hang off this task, and nothing in the decision engine above will need to change.
+     */
+    private function openRecallTask(
+        ContractOilDecision $decision,
+        Contract $contract,
+        array $projection,
+        ?User $actor,
+        ?string $note,
+    ): OilRecallTask {
+        $recipients = $this->controllers();
+
+        $task = OilRecallTask::create([
+            'contract_oil_decision_id' => $decision->id,
+            'contract_id'              => $contract->id,
+            'vehicle_id'               => $contract->vehicle_id,
+            'status'                   => OilRecallTask::STATUS_OPEN,
+            'reason_code'              => OilRecallTask::REASON_OIL_TOLERANCE,
+            // The figures frozen as the caller will read them out — the live projection will have
+            // moved on by the time anyone picks up the phone.
+            'customer_reading'         => $projection['anchor_odometer'],
+            'customer_reading_on'      => $projection['anchor_on'],
+            'oil_limit'                => $projection['oil_limit'],
+            'allowed_max'              => $projection['allowed_max'],
+            'expected_return_odometer' => $projection['expected_return'],
+            'remaining_days'           => $projection['remaining_days'],
+            'created_by'               => $actor?->id,
+            'created_by_name'          => $actor?->name,
+            'decided_at'               => $decision->created_at ?? Carbon::now(),
+            'assigned_user_ids'        => $recipients->pluck('id')->all(),
+            'note'                     => $note,
+        ]);
+
+        $vehicle = $contract->vehicle;
+        $car     = trim(($vehicle?->plate_no ? $vehicle->plate_no . ' · ' : '')
+                      . trim(($vehicle?->make ?? '') . ' ' . ($vehicle?->model ?? '')));
+        $over    = $task->overToleranceKm() ?? 0;
+
+        foreach ($recipients as $user) {
+            app(NotificationScanner::class)->notifyUser($user, [
+                'type'     => 'oil_recall_task',
+                'category' => 'maintenance',
+                'severity' => 'warning',
+                'title'    => 'Call the customer · arrange the car\'s return',
+                'body'     => trim($car . ' is heading for ' . number_format((int) $task->expected_return_odometer)
+                            . ' km, ' . number_format($over) . ' km past the '
+                            . number_format((int) $task->allowed_max) . ' km allowance. Arrange to get it in.'),
+                'url'      => '/oil-projection',
+                'key'      => 'oil_recall_task:' . $task->id,
+                'icon'     => 'oil',
+                'meta'     => [
+                    'task_id'     => $task->id,
+                    'contract_id' => $contract->id,
+                    'vehicle_id'  => $contract->vehicle_id,
+                    'plate'       => $vehicle?->plate_no,
+                    'over_km'     => $over,
+                ],
+            ]);
+        }
+
+        return $task;
+    }
+
+    /** Withdraw any outstanding recall call — the decision it served no longer stands. */
+    public function cancelOpenRecallTasks(Contract $contract, string $why): int
+    {
+        return OilRecallTask::open()->where('contract_id', $contract->id)->get()
+            ->each(fn (OilRecallTask $t) => $t->forceFill([
+                'status'       => OilRecallTask::STATUS_CANCELLED,
+                'outcome_note' => trim(($t->outcome_note ? $t->outcome_note . ' · ' : '') . $why),
+                'completed_at' => Carbon::now(),
+            ])->save())
+            ->count();
+    }
+
+    /**
+     * The two people who make these calls: the configured allow-list (Leen & Marwa), falling back to
+     * holders of the follow-up permission when it is empty. Same audience doctrine as the chase — a
+     * task handed to "everyone with a broad permission" is a task nobody owns.
+     *
+     * @return \Illuminate\Support\Collection<int,User>
+     */
+    public function controllers(): \Illuminate\Support\Collection
+    {
+        $ids = array_values(array_filter((array) config('maintenance.oil_projection.recipient_user_ids', [])));
+
+        $query = $ids
+            ? User::whereIn('id', $ids)
+            : User::permission('reminders.manage');
+
+        return $query->where('status', 'active')->orderBy('id')->get();
     }
 
     /** The one-line "why" carried by the deferred-maintenance flag, in operational language. */
@@ -660,6 +768,16 @@ class OilChangeProjectionService
             ]);
 
             $row->forceFill(['settled_at' => Carbon::now(), 'settled_ticket_id' => $ticket->id])->save();
+
+            // The car is back, so the "arrange the return" call has served its purpose. Closed as
+            // DONE, not cancelled — the job was completed by the car arriving.
+            OilRecallTask::open()->where('contract_id', $contract->id)->get()
+                ->each(fn (OilRecallTask $t) => $t->forceFill([
+                    'status'       => OilRecallTask::STATUS_DONE,
+                    'outcome_note' => trim(($t->outcome_note ? $t->outcome_note . ' · ' : '')
+                                    . 'Car returned; oil change raised as ticket #' . $ticket->id . '.'),
+                    'completed_at' => Carbon::now(),
+                ])->save());
 
             // The debt is now a ticket; the standing flag has done its job.
             app(OperationsService::class)->resolveDeferredMaintenance($vehicle);

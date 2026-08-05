@@ -4,7 +4,9 @@ namespace Tests\Crud;
 
 use App\Models\Contract;
 use App\Models\ContractOilDecision;
+use App\Models\LogisticsTask;
 use App\Models\Maintenance;
+use App\Models\OilRecallTask;
 use App\Models\User;
 use App\Models\Vehicle;
 use App\Services\NotificationScanner;
@@ -473,6 +475,203 @@ class OilChangeProjectionTest extends CrudTestCase
         $this->assertSame('recall_required', $p['oil_status']);
         $this->assertSame('recall', $p['decision']['decision']);
         $this->assertTrue((bool) Vehicle::find($contract->vehicle_id)->is_deferred_maintenance);
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════════════════════
+    //  "RECALL NOW" → A CALL TO MAKE
+    //
+    //  A recall is a CONVERSATION: phone the customer, agree a day to bring the car in. It is
+    //  emphatically NOT a logistics dispatch — the fleet has no operational module for moving
+    //  vehicles on this path yet, and the tests below pin that boundary so a later logistics lane
+    //  is an addition rather than a rewrite.
+    // ═════════════════════════════════════════════════════════════════════════════════════════
+
+    /** The two people who make these calls, named explicitly rather than inherited from .env. */
+    private function oilControllers(): array
+    {
+        $lin   = $this->controller('Lin');
+        $marwa = $this->controller('Marwa');
+        config(['maintenance.oil_projection.recipient_user_ids' => [$lin->id, $marwa->id]]);
+
+        return [$lin, $marwa];
+    }
+
+    /**
+     * The task carries everything the caller has to say, frozen as of the decision — because the
+     * projection keeps moving and somebody halfway through a phone call must not watch the figures
+     * they are quoting change underneath them.
+     */
+    public function test_recalling_creates_a_call_task_holding_the_decision_audit(): void
+    {
+        [$lin] = $this->oilControllers();
+        $contract = $this->rentalWithReading(remainingDays: 30, reading: 7600);
+
+        $this->postJson('/api/Contract/' . $contract->id . '/oil-decision', [
+            'decision' => 'recall',
+            'note'     => 'Customer is local; ask for Thursday.',
+        ])->assertSuccessful();
+
+        $task = OilRecallTask::where('contract_id', $contract->id)->firstOrFail();
+
+        $this->assertSame(OilRecallTask::STATUS_OPEN, $task->status);
+        $this->assertSame(OilRecallTask::REASON_OIL_TOLERANCE, $task->reason_code);
+
+        // Vehicle · contract · the customer's own number · the limits · where it lands.
+        $this->assertSame($contract->vehicle_id, $task->vehicle_id);
+        $this->assertSame($contract->id, $task->contract_id);
+        $this->assertSame(7600, $task->customer_reading);
+        $this->assertSame(now()->toDateString(), $task->customer_reading_on->toDateString());
+        $this->assertSame(self::OIL_LIMIT, $task->oil_limit);
+        $this->assertSame(self::ALLOWED_MAX, $task->allowed_max);
+        $this->assertSame(13600, $task->expected_return_odometer);   // 7,600 + 30 × 200
+        $this->assertSame(5600, $task->overToleranceKm());
+        $this->assertSame(30, $task->remaining_days);
+
+        // Created by, and the moment the decision was taken.
+        $this->assertSame($this->admin->id, $task->created_by);
+        $this->assertSame($this->admin->name, $task->created_by_name);
+        $this->assertNotNull($task->decided_at);
+        $this->assertSame('Customer is local; ask for Thursday.', $task->note);
+
+        // It hangs off the decision record rather than duplicating the judgement.
+        $decision = ContractOilDecision::where('contract_id', $contract->id)->firstOrFail();
+        $this->assertSame($decision->id, $task->contract_oil_decision_id);
+        $this->assertSame(ContractOilDecision::DECISION_RECALL, $decision->decision);
+        $this->assertNotNull($lin);
+    }
+
+    /** It lands with the configured controllers — not broadcast to whoever holds the permission. */
+    public function test_the_recall_task_is_assigned_to_the_configured_controllers(): void
+    {
+        [$lin, $marwa] = $this->oilControllers();
+        $bystander = $this->controller('Holds the permission but is not on the list');
+
+        $contract = $this->rentalWithReading(remainingDays: 30, reading: 7600);
+        $this->postJson('/api/Contract/' . $contract->id . '/oil-decision', ['decision' => 'recall'])
+            ->assertSuccessful();
+
+        $task = OilRecallTask::where('contract_id', $contract->id)->firstOrFail();
+        $this->assertSame([$lin->id, $marwa->id], $task->assigned_user_ids);
+
+        // …and both of them are actually told, while the bystander is not.
+        $key = 'oil_recall_task:' . $task->id;
+        $this->assertSame(1, $this->alertCount($lin, $key));
+        $this->assertSame(1, $this->alertCount($marwa, $key));
+        $this->assertSame(0, $this->alertCount($bystander, $key));
+
+        // The alert says what the call is about, in the numbers it is about.
+        $body = $lin->notifications()->where('data->key', $key)->first()->data['body'];
+        $this->assertStringContainsString('13,600 km', $body);
+        $this->assertStringContainsString('8,000 km allowance', $body);
+    }
+
+    /**
+     * THE BOUNDARY. Recalling a car creates a call to make and nothing else. No LogisticsTask, no
+     * dispatch, no driver — that module does not exist for this path yet, and a half-specified
+     * transport job sitting in a driver's queue would be worse than none.
+     */
+    public function test_recalling_creates_no_logistics_record(): void
+    {
+        $this->oilControllers();
+        $before = LogisticsTask::count();
+
+        $contract = $this->rentalWithReading(remainingDays: 30, reading: 7600);
+        $this->postJson('/api/Contract/' . $contract->id . '/oil-decision', ['decision' => 'recall'])
+            ->assertSuccessful();
+
+        $this->assertSame($before, LogisticsTask::count(), 'a recall is a conversation, not a dispatch');
+        $this->assertSame(0, LogisticsTask::where('vehicle_id', $contract->vehicle_id)->count());
+
+        // And no maintenance ticket either — the car is still with the customer.
+        $this->assertSame(0, Maintenance::where('vehicle_id', $contract->vehicle_id)->count());
+    }
+
+    /**
+     * The gate. A car that will finish inside the allowance cannot be recalled, so no call is ever
+     * raised for one — which is the whole point of the tolerance rule.
+     */
+    public function test_no_recall_task_exists_for_a_car_inside_the_allowance(): void
+    {
+        $this->oilControllers();
+
+        // 7,600 with two days left lands on exactly 8,000 — the last kilometre it is allowed.
+        $contract = $this->rentalWithReading(remainingDays: 2, reading: 7600);
+
+        $this->postJson('/api/Contract/' . $contract->id . '/oil-decision', ['decision' => 'recall'])
+            ->assertStatus(422);
+
+        $this->assertSame(0, OilRecallTask::where('contract_id', $contract->id)->count());
+        $this->assertSame(0, ContractOilDecision::where('contract_id', $contract->id)->count());
+    }
+
+    /** "Do it on return" is not a task — the rental simply runs its course. */
+    public function test_deferring_creates_no_call_task(): void
+    {
+        $this->oilControllers();
+        $contract = $this->rentalWithReading(remainingDays: 5, reading: 7600);
+
+        $this->postJson('/api/Contract/' . $contract->id . '/oil-decision', ['decision' => 'defer'])
+            ->assertSuccessful();
+
+        $this->assertSame(0, OilRecallTask::where('contract_id', $contract->id)->count());
+    }
+
+    /** Changing your mind withdraws the call rather than leaving it sitting in the queue. */
+    public function test_revising_a_recall_to_a_defer_withdraws_the_call(): void
+    {
+        $this->oilControllers();
+        $contract = $this->rentalWithReading(remainingDays: 30, reading: 7600);
+
+        $this->postJson('/api/Contract/' . $contract->id . '/oil-decision', ['decision' => 'recall'])
+            ->assertSuccessful();
+        $this->postJson('/api/Contract/' . $contract->id . '/oil-decision', ['decision' => 'defer'])
+            ->assertSuccessful();
+
+        $task = OilRecallTask::where('contract_id', $contract->id)->firstOrFail();
+        $this->assertSame(OilRecallTask::STATUS_CANCELLED, $task->status);
+        $this->assertStringContainsString('Revised to', $task->outcome_note);
+        $this->assertSame('service_required_on_return', $this->service()->project($contract->fresh())['oil_status']);
+    }
+
+    /** The queue Lin and Marwa work, and the two moves they make on it. */
+    public function test_the_recall_queue_is_listed_and_worked_through(): void
+    {
+        $this->oilControllers();
+        $contract = $this->rentalWithReading(remainingDays: 30, reading: 7600);
+        $this->postJson('/api/Contract/' . $contract->id . '/oil-decision', ['decision' => 'recall'])
+            ->assertSuccessful();
+
+        $data = data_get($this->getJson('/api/OilRecallTasks')->json(), 'data');
+        $this->assertSame(1, $data['summary']['open']);
+
+        $row = $data['tasks'][0];
+        $this->assertSame('open', $row['status']);
+        $this->assertSame('oil_tolerance_exceeded_before_return', $row['reason_code']);
+        $this->assertSame(13600, $row['expected_return_odometer']);
+        $this->assertSame(5600, $row['over_tolerance_km']);
+        // A code, never an English sentence — the wording is built at the edge.
+        $this->assertArrayNotHasKey('reason', $row);
+
+        // Reached the customer…
+        $this->patchJson('/api/OilRecallTasks/' . $row['id'], [
+            'status' => 'contacted', 'outcome_note' => 'Bringing it in Thursday.',
+        ])->assertSuccessful();
+
+        $task = OilRecallTask::find($row['id']);
+        $this->assertSame(OilRecallTask::STATUS_CONTACTED, $task->status);
+        $this->assertSame($this->admin->id, $task->claimed_by);   // whoever moved it owns it
+        $this->assertNull($task->completed_at);
+
+        // …and the car came back, which closes the call and raises the oil change.
+        app(OperationsService::class)->closeOperation($contract->fresh(), ['in_milage' => 13000]);
+
+        $task->refresh();
+        $this->assertSame(OilRecallTask::STATUS_DONE, $task->status);
+        $this->assertNotNull($task->completed_at);
+        $this->assertStringContainsString('oil change raised as ticket', $task->outcome_note);
+
+        // Closed by the car arriving — still no logistics record anywhere in the story.
+        $this->assertSame(0, LogisticsTask::where('vehicle_id', $contract->vehicle_id)->count());
     }
 
     /**

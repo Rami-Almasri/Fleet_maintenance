@@ -288,6 +288,12 @@ Route::middleware('auth:sanctum')->group(function () {
     // same call, acting on what the number just told them.
     Route::post('Contract/{contract}/oil-decision', [\App\Http\Controllers\OilProjectionController::class, 'decide'])
         ->middleware('permission:reminders.manage');
+    // The recall call queue — "phone the customer and arrange the return". A follow-up task, NOT a
+    // logistics dispatch: no route, no driver, no ETA (see the OilRecallTask migration).
+    Route::get('OilRecallTasks', [\App\Http\Controllers\OilProjectionController::class, 'recallTasks'])
+        ->middleware('permission:reminders.view');
+    Route::patch('OilRecallTasks/{task}', [\App\Http\Controllers\OilProjectionController::class, 'updateRecallTask'])
+        ->middleware('permission:reminders.manage');
 });
 
 // Invoices CRUD — website-created (manual) invoices coexist with OfficeManager-synced ones.
