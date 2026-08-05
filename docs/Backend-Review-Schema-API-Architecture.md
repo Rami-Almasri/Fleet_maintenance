@@ -353,7 +353,26 @@ Regression check after both: unit **559** ✅ · golden **93** ✅.
 
 ---
 
-## 6 · Deployment gap — the intelligence layer has never been built on live
+## 6 · Deployment — COMPLETED 2026-08-05
+
+> **Status: ✅ DONE.** The gap described below was closed on 2026-08-05. A full backup was taken
+> first (`laravel-20260805-064130.sql`, 95.2 MB). Live now carries S4 + S3 and both derived tables are
+> populated and fresh. Live figures reconcile **exactly** with the golden clone — same 12,608 pairs,
+> same 46.51% platform comeback, same 33 scored garages — which is the strongest available evidence
+> that the clone was a faithful stand-in throughout this work.
+>
+> | Check | Result |
+> |---|---|
+> | `repair_visits` | **9,830** rows, fresh, 0 failures |
+> | `fault_recurrence_pairs` | **12,608** rows, fresh, 0 failures |
+> | `convergence-audit --strict` | **exit 0** — 14 canonical · 3 exempt · 0 legacy |
+> | `rebuild-health` | both tables **fresh**, v2.0.0, corpus to 2026-07-29 |
+> | Garage scorecard API | **200** — 170 garages, 33 scored, `platform_comeback_pct` 46.51 |
+> | Evidence drill-down API | **200** — 43 rows with a plain-English claim |
+>
+> The original gap is retained below because the *reason* it existed is worth keeping.
+
+### The gap as originally found
 
 Discovered while re-running the convergence audit, which correctly reported `NOT CONVERGED`:
 
