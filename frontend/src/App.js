@@ -52,7 +52,6 @@ import RecurringFaultReviews from './pages/RecurringFaultReviews';
 import DamageAccidents from './pages/DamageAccidents';
 import CostIntelligence from './pages/CostIntelligence';
 import RecommendationIntelligence from './pages/RecommendationIntelligence';
-import ServiceReminders from './pages/reminders/ServiceReminders';
 import OilProjection from './pages/reminders/OilProjection';
 import GarageFinder from './pages/GarageFinder';
 import EventClassificationReview from './pages/EventClassificationReview';
@@ -188,14 +187,16 @@ export default function App() {
                 </Route>
 
                 <Route element={<RequirePermission permission="reminders.view" />}>
-                  {/* Service Reminders — the fleet's recurring service due points (oil, filters, tires…).
-                      Also mounted as a tab inside the Fleet Health hub; both paths render the same page. */}
-                  <Route path="/service-reminders" element={<ServiceReminders />} />
-                  <Route path="/reminders/service" element={<Navigate to="/service-reminders" replace />} />
                   {/* Oil Mileage Follow-up — the mid-rental half of the oil story: cars already out
                       whose projected mileage is nearing the oil limit, and the customer-reported
                       readings that re-anchor the projection. */}
                   <Route path="/oil-projection" element={<OilProjection />} />
+                  {/* The standalone Service Reminders board is retired — reminder management now lives
+                      only as the Service Reminders tab of the Fleet Health hub. The auto-seeder,
+                      notification scanner and ticket roll-forward are untouched; this was purely a
+                      surface consolidation, so old paths deep-link straight into the tab. */}
+                  <Route path="/service-reminders" element={<Navigate to="/inspections/schedules?tab=service" replace />} />
+                  <Route path="/reminders/service" element={<Navigate to="/inspections/schedules?tab=service" replace />} />
                 </Route>
 
                 {/* Registrations now lives inside the Fleet Health hub — keep the old path working
@@ -305,8 +306,8 @@ export default function App() {
                   <Route path="/vehicle-status" element={<Navigate to="/maintenance-workflow" replace />} />
                   <Route path="/cost-intelligence" element={<CostIntelligence />} />
                   <Route path="/recommendation-intelligence" element={<RecommendationIntelligence />} />
-                  {/* Service Due board retired — Service Reminders is the one service surface now. */}
-                  <Route path="/service-due" element={<Navigate to="/service-reminders" replace />} />
+                  {/* Service Due board retired — service reminders live in the Fleet Health hub now. */}
+                  <Route path="/service-due" element={<Navigate to="/inspections/schedules?tab=service" replace />} />
                   {/* Fuel & Mileage, Reconciliation and Chain Audit are unified into one tabbed page. */}
                   <Route path="/mileage" element={<MileageCenter />} />
                   <Route path="/fuel-mileage" element={<Navigate to="/mileage" replace />} />

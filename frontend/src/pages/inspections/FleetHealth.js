@@ -14,7 +14,8 @@ import Registrations from '../Registrations';
  * surfaces into one tabbed page:
  *
  *   • Vehicle Readiness       → /readiness      (fleet status, handover queues, cars in maintenance)
- *   • Service Reminders       → /service-reminders (odometer/date-based service due points)
+ *   • Service Reminders       → this hub is now the ONLY surface (the standalone
+ *                               /service-reminders board was retired and redirects here)
  *   • Booked in Shop          → /maintenance-bookings (cars in the workshop with an upcoming booking)
  *   • Registration & Insurance→ /registrations  (official-document expiry)
  *
