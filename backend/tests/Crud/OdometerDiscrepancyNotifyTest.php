@@ -23,8 +23,10 @@ class OdometerDiscrepancyNotifyTest extends CrudTestCase
         $vehicleId = $this->makeVehicle(['odometer' => 40000]);
         $vehicle   = Vehicle::find($vehicleId);
 
-        // A supervisor who would have been alerted under the old accept-and-notify behavior — kept to
-        // prove NO alert fires now that the reading is rejected outright instead of recorded.
+        // A supervisor who would have been alerted under the old accept-and-notify behaviour. The
+        // reading is now rejected outright, so no DISCREPANCY alert may fire — but the rejected
+        // attempt is itself auditable, and logOdometerBlock deliberately raises `odometer_blocked`
+        // to dispatchers + controllers so a forced entry can't be attempted silently.
         $supervisor = User::create([
             'name'     => 'Supervisor Waleed',
             'email'    => 'sup.' . uniqid() . '@fleet.test',
@@ -52,7 +54,18 @@ class OdometerDiscrepancyNotifyTest extends CrudTestCase
             app(MaintenanceWorkflowService::class)
                 ->recordGarageTransferOdometer($ticket, 39900, null, $this->admin);
         } finally {
-            Notification::assertNothingSent();
+            // The rejected attempt is audited and announced — but as a BLOCK, never as a discrepancy
+            // that was accepted and merely flagged. That distinction is the whole behaviour change.
+            Notification::assertSentTo(
+                $supervisor,
+                FleetAlert::class,
+                fn (FleetAlert $n) => ($n->payload['type'] ?? null) === 'odometer_blocked'
+            );
+            Notification::assertNotSentTo(
+                $supervisor,
+                FleetAlert::class,
+                fn (FleetAlert $n) => ($n->payload['type'] ?? null) === 'odometer_discrepancy'
+            );
         }
     }
 

@@ -3,10 +3,13 @@
 namespace Tests\Crud;
 
 use App\Models\Contract;
+use App\Models\ContractOilDecision;
+use App\Models\Maintenance;
 use App\Models\User;
 use App\Models\Vehicle;
 use App\Services\NotificationScanner;
 use App\Services\OilChangeProjectionService;
+use App\Services\OperationsService;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Hash;
@@ -312,5 +315,414 @@ class OilChangeProjectionTest extends CrudTestCase
         $row = collect($data['contracts'])->firstWhere('contract_id', $contract->id);
         $this->assertNotNull($row);
         $this->assertSame('chase_due', $row['projection']['status']);
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════════════════════
+    //  THE RETURN-WINDOW DECISION
+    //
+    //  Reaching the oil limit is not an emergency. The question is whether the car can FINISH the
+    //  rental inside the tolerance. These fixtures use the fleet's own worked example so the
+    //  arithmetic in each test reads exactly like the rule:
+    //
+    //      oil limit   7,500 km   (last service 0 + 7,500 interval)
+    //      tolerance     500 km
+    //      allowed max 8,000 km
+    // ═════════════════════════════════════════════════════════════════════════════════════════
+
+    private const OIL_LIMIT   = 7500;
+    private const ALLOWED_MAX = 8000;
+
+    /** A car whose oil limit is exactly 7,500 km, so `allowed max` is exactly 8,000 km. */
+    private function carAtLimit7500(): int
+    {
+        $id = $this->makeVehicle();
+        Vehicle::whereKey($id)->update([
+            'status'                => 'rented',
+            'odometer'              => 7000,
+            'last_service_odometer' => 0,
+            'service_interval_km'   => self::OIL_LIMIT,
+        ]);
+
+        return $id;
+    }
+
+    /**
+     * An open rental on that car with `$remainingDays` still to run, already out for a day so the
+     * contract is realistic, and a customer reading of `$reading` km entered today.
+     */
+    private function rentalWithReading(int $remainingDays, int $reading): Contract
+    {
+        $contract = Contract::create([
+            'contract_no'   => 'C-' . strtoupper(uniqid()),
+            'contract_type' => 'C',
+            'state'         => 'open',
+            'vehicle_id'    => $this->carAtLimit7500(),
+            'customer_id'   => $this->makeCustomer(),
+            'out_date'      => now()->subDays(1)->toDateString(),
+            'out_milage'    => 5000,
+            // Contracted duration: one day already spent + the days still to run.
+            'days'          => 1 + $remainingDays,
+        ]);
+
+        $this->postJson('/api/Contract/' . $contract->id . '/mileage-reading', [
+            'odometer'    => $reading,
+            'reported_by' => 'Customer (phone)',
+        ])->assertSuccessful();
+
+        return $contract->fresh();
+    }
+
+    /**
+     * CASE 1 — the case this whole change exists for.
+     *
+     * The car is already 100 km past its oil limit, which under the old reading of the rule looked
+     * like an emergency. It is not: two days remain, so it lands on exactly 8,000 km — the last
+     * kilometre it is allowed. Nobody is interrupted, nobody is asked to decide anything, and the
+     * oil change is simply booked for the moment it comes back.
+     */
+    public function test_a_car_that_finishes_inside_the_tolerance_keeps_running(): void
+    {
+        $contract = $this->rentalWithReading(remainingDays: 2, reading: 7600);
+
+        $p = $this->service()->project($contract);
+
+        $this->assertSame(self::OIL_LIMIT, $p['oil_limit']);
+        $this->assertSame(500, $p['tolerance']);
+        $this->assertSame(self::ALLOWED_MAX, $p['allowed_max']);
+        $this->assertSame(2, $p['remaining_days']);
+        $this->assertTrue($p['return_date_known']);
+
+        // 7,600 + 2 × 200 = 8,000 — right on the allowance, and the allowance exists to be used.
+        $this->assertSame(8000, $p['expected_return']);
+        $this->assertSame(0, $p['over_tolerance_km']);
+        $this->assertSame('service_required_on_return', $p['oil_status']);
+
+        // Past the limit but inside the allowance is NOT a decision. Offering one would be the
+        // noise this rule was written to remove, so the API refuses it outright.
+        $this->postJson('/api/Contract/' . $contract->id . '/oil-decision', ['decision' => 'recall'])
+            ->assertStatus(422);
+
+        // And nobody is asked to choose anything.
+        $this->assertNull($this->detect()->firstWhere('type', 'oil_decision'));
+    }
+
+    /**
+     * CASE 2 — the same car, the same reading, five days left instead of two. Now it cannot finish
+     * inside the allowance however you look at it, so a person has to answer for it.
+     */
+    public function test_a_car_that_cannot_finish_inside_the_tolerance_needs_a_decision(): void
+    {
+        $contract = $this->rentalWithReading(remainingDays: 5, reading: 7600);
+
+        $p = $this->service()->project($contract);
+
+        // 7,600 + 5 × 200 = 8,600 — 600 km past the 8,000 km allowance.
+        $this->assertSame(8600, $p['expected_return']);
+        $this->assertSame(600, $p['over_tolerance_km']);
+        $this->assertSame('decision_required', $p['oil_status']);
+        $this->assertNull($p['decision']);
+
+        // It reaches the two people who make these calls, in the terms they make them in.
+        $alert = $this->detect()->firstWhere('key', 'oil_decision:' . $contract->id . ':r' . $p['reading_id']);
+        $this->assertNotNull($alert, 'a car that will bust the allowance must ask for a decision');
+        $this->assertSame('oil_decision', $alert['type']);
+        $this->assertSame(600, $alert['meta']['over_km']);
+        $this->assertSame(5, $alert['meta']['remaining_days']);
+        $this->assertStringContainsString('8,600 km', $alert['body']);
+        $this->assertStringContainsString('8,000 km allowance', $alert['body']);
+
+        // Two answers, and only two.
+        $this->postJson('/api/Contract/' . $contract->id . '/oil-decision', ['decision' => 'wait_and_see'])
+            ->assertStatus(422);
+    }
+
+    /** "Do it on return" — accept the overrun; the car keeps working and owes a change at close. */
+    public function test_deferring_accepts_the_overrun_and_books_the_change_for_the_return(): void
+    {
+        $contract = $this->rentalWithReading(remainingDays: 5, reading: 7600);
+
+        $res = $this->postJson('/api/Contract/' . $contract->id . '/oil-decision', [
+            'decision' => 'defer',
+            'note'     => 'Customer is mid-trip; 600 km over is acceptable.',
+        ]);
+        $res->assertSuccessful();
+
+        $p = data_get($res->json(), 'data.projection');
+        $this->assertSame('service_required_on_return', $p['oil_status']);
+        $this->assertSame('defer', $p['decision']['decision']);
+        // The arithmetic it was taken against is snapshotted, so the call stays readable later.
+        $this->assertSame(8600, $p['decision']['expected_return_odometer']);
+        $this->assertSame(self::ALLOWED_MAX, $p['decision']['allowed_max']);
+
+        // The car now carries the standing "owes maintenance" flag the rest of the fleet reads.
+        $this->assertTrue((bool) Vehicle::find($contract->vehicle_id)->is_deferred_maintenance);
+
+        // And the decision stops the nagging — it has been answered.
+        $this->assertNull($this->detect()->firstWhere('type', 'oil_decision'));
+    }
+
+    /** "Recall now" — the overrun is too big to accept; the car has to come back. */
+    public function test_recalling_marks_the_car_for_return(): void
+    {
+        $contract = $this->rentalWithReading(remainingDays: 30, reading: 7600);
+
+        $this->postJson('/api/Contract/' . $contract->id . '/oil-decision', ['decision' => 'recall'])
+            ->assertSuccessful();
+
+        $p = $this->service()->project($contract->fresh());
+        $this->assertSame('recall_required', $p['oil_status']);
+        $this->assertSame('recall', $p['decision']['decision']);
+        $this->assertTrue((bool) Vehicle::find($contract->vehicle_id)->is_deferred_maintenance);
+    }
+
+    /**
+     * CASE 3 — the reading is not just filed, it is ANSWERED.
+     *
+     * Leen or Marwa are on the phone. The moment the number goes in, the same response tells them
+     * what it changed: this car was heading 600 km past its allowance and, on the real figure the
+     * customer just read off the dash, it now finishes comfortably inside it. Nothing to decide.
+     */
+    public function test_a_new_reading_recalculates_the_decision_immediately(): void
+    {
+        // Out 4 days on 7,000 km with 4 days still to run. On the 200 km/day assumption the car is
+        // already at 7,800 and heading for 8,600 — 600 km past what it is allowed.
+        $contract = Contract::create([
+            'contract_no'   => 'C-' . strtoupper(uniqid()),
+            'contract_type' => 'C',
+            'state'         => 'open',
+            'vehicle_id'    => $this->carAtLimit7500(),
+            'customer_id'   => $this->makeCustomer(),
+            'out_date'      => now()->subDays(4)->toDateString(),
+            'out_milage'    => 7000,
+            'days'          => 8,
+        ]);
+
+        $before = $this->service()->project($contract);
+        $this->assertSame(7800, $before['expected']);
+        $this->assertSame(8600, $before['expected_return']);
+        $this->assertSame('decision_required', $before['oil_status']);
+
+        // Marwa phones. The customer has actually driven 50 km/day, not 200 — the model was wrong
+        // about this car, which is exactly why we ask a human being instead of trusting the curve.
+        $res = $this->postJson('/api/Contract/' . $contract->id . '/mileage-reading', [
+            'odometer'    => 7200,
+            'reported_by' => 'Customer (phone)',
+        ]);
+        $res->assertSuccessful();
+
+        // The verdict comes back in the SAME response as the save — no second request, no reload.
+        // She can tell the customer to carry on before she puts the phone down.
+        $p = data_get($res->json(), 'data.projection');
+        $this->assertSame(7200, $p['anchor_odometer']);
+        $this->assertSame('reading', $p['anchor_source']);
+        $this->assertSame(4, $p['remaining_days']);
+        $this->assertSame(8000, $p['expected_return']);        // 7,200 + 4 × 200
+        $this->assertSame(0, $p['over_tolerance_km']);         // right on the allowance
+        $this->assertSame('service_required_on_return', $p['oil_status']);
+
+        // …and the decision that was hanging over the car evaporates with it.
+        $this->assertNull($this->detect()->firstWhere('type', 'oil_decision'));
+    }
+
+    /**
+     * A `defer` is bound to the reading it was taken on. If the customer turns out to be driving
+     * harder than the number that call was based on — hard enough to break the allowance again —
+     * the decision does not quietly stand. It comes back to a human, exactly as the chase re-arms.
+     */
+    public function test_a_later_reading_that_re_breaks_the_allowance_re_opens_the_decision(): void
+    {
+        $contract = $this->rentalWithReading(remainingDays: 5, reading: 7600);
+        $this->postJson('/api/Contract/' . $contract->id . '/oil-decision', ['decision' => 'defer'])
+            ->assertSuccessful();
+        $this->assertSame('service_required_on_return', $this->service()->project($contract)['oil_status']);
+
+        // Two days on, the customer reports a much bigger number than the defer assumed.
+        $res = $this->postJson('/api/Contract/' . $contract->id . '/mileage-reading', ['odometer' => 9200]);
+        $res->assertSuccessful();
+
+        $p = data_get($res->json(), 'data.projection');
+        $this->assertSame('decision_required', $p['oil_status']);
+        $this->assertTrue($p['decision']['superseded']);
+    }
+
+    /**
+     * CASE 4 — the promise at the end of every path: the car comes back, and the oil change it owes
+     * becomes a real ticket while it is standing in the yard.
+     */
+    public function test_the_owed_oil_change_becomes_a_ticket_when_the_car_returns(): void
+    {
+        $contract = $this->rentalWithReading(remainingDays: 5, reading: 7600);
+        $this->postJson('/api/Contract/' . $contract->id . '/oil-decision', ['decision' => 'defer'])
+            ->assertSuccessful();
+
+        // The customer brings it back on 8,650 km.
+        app(OperationsService::class)->closeOperation($contract, ['in_milage' => 8650]);
+
+        $ticket = Maintenance::where('vehicle_id', $contract->vehicle_id)
+            ->whereIn('workflow_status', Maintenance::WF_TICKET_STATES)
+            ->latest('id')->first();
+
+        $this->assertNotNull($ticket, 'the returned car must arrive with its oil change already raised');
+        $this->assertSame(Maintenance::TYPE_ROUTINE, $ticket->maintenance_type);
+        $this->assertSame(8650, $ticket->intake_odometer);       // the branch's real return reading
+        $this->assertStringContainsString('Oil Change', json_encode($ticket->findings));
+
+        // The debt is now a ticket, so the standing flag is cleared — no double-chasing.
+        $this->assertFalse((bool) Vehicle::find($contract->vehicle_id)->is_deferred_maintenance);
+
+        // The decision is closed out against the ticket it became.
+        $decision = ContractOilDecision::where('contract_id', $contract->id)->latest('id')->first();
+        $this->assertNotNull($decision->settled_at);
+        $this->assertSame($ticket->id, $decision->settled_ticket_id);
+
+        // The sweep that catches sync-closed contracts must not mint a SECOND ticket for this one.
+        $this->assertSame(0, $this->service()->settleReturnedRentals()['settled']);
+    }
+
+    /**
+     * The quiet majority: nobody was ever asked, because the car was always going to finish inside
+     * the allowance. It still comes back owing an oil change, and the sweep still raises it — this
+     * is the path for the ~all contracts that OfficeManager closes behind our back.
+     */
+    public function test_the_sweep_raises_the_change_for_a_car_that_simply_came_back_past_its_limit(): void
+    {
+        config(['maintenance.oil_projection.recipient_user_ids' => [$this->admin->id]]);
+
+        $contract = $this->rentalWithReading(remainingDays: 2, reading: 7600);
+        $this->assertSame('service_required_on_return', $this->service()->project($contract)['oil_status']);
+
+        // OfficeManager closes it: `in_date` appears, no application code runs.
+        $contract->forceFill(['state' => 'closed', 'in_date' => now()->toDateString(), 'in_milage' => 8000])->save();
+
+        $result = $this->service()->settleReturnedRentals();
+        $this->assertSame(1, $result['settled']);
+
+        $decision = ContractOilDecision::where('contract_id', $contract->id)->latest('id')->first();
+        $this->assertTrue($decision->is_auto, 'nobody decided this — it is recorded as an automatic settle');
+        $this->assertNotNull($decision->settled_ticket_id);
+
+        // Idempotent: a second sweep tick finds nothing left to do.
+        $this->assertSame(0, $this->service()->settleReturnedRentals()['settled']);
+    }
+
+    /** A car that comes back well short of its oil point owes nothing, and nothing is raised. */
+    public function test_a_car_that_returns_below_its_oil_point_owes_nothing(): void
+    {
+        config(['maintenance.oil_projection.recipient_user_ids' => [$this->admin->id]]);
+
+        $contract = $this->rentalWithReading(remainingDays: 1, reading: 6000);
+        $this->assertSame('within_tolerance', $this->service()->project($contract)['oil_status']);
+
+        $contract->forceFill(['state' => 'closed', 'in_date' => now()->toDateString(), 'in_milage' => 6200])->save();
+
+        $this->assertSame(0, $this->service()->settleReturnedRentals()['settled']);
+        $this->assertSame(0, ContractOilDecision::where('contract_id', $contract->id)->count());
+    }
+
+    /**
+     * Recalling a customer's car is not a call anyone should make against a guess. When the newest
+     * real number has aged back into a projection, we ask for a fresh reading instead of asking for
+     * a decision — the board still states the position, but the alert chases the fact.
+     */
+    public function test_a_stale_projection_chases_a_reading_rather_than_forcing_a_decision(): void
+    {
+        $contract = $this->rentalWithReading(remainingDays: 10, reading: 7600);
+        $this->assertTrue($this->service()->project($contract)['decision_ready']);
+        $this->assertNotNull($this->detect()->firstWhere('type', 'oil_decision'));
+
+        // Four days later that reading is no longer a fact about today.
+        Carbon::setTestNow(Carbon::now()->addDays(4));
+
+        $p = $this->service()->project($contract->fresh());
+        // The arithmetic has not changed its mind — the car really will bust its allowance…
+        $this->assertSame('decision_required', $p['oil_status']);
+        // …but it is no longer something a person can answer for, so we ask for the number instead.
+        $this->assertFalse($p['decision_ready']);
+        $this->assertNull($this->detect()->firstWhere('type', 'oil_decision'));
+        $this->assertNotNull($this->detect()->firstWhere('type', 'oil_projection'));
+
+        Carbon::setTestNow();
+    }
+
+    /**
+     * THE NOISE GUARD. Every long rental is arithmetically certain to run past its allowance — a
+     * 30-day hire cannot fit inside an oil interval however you slice it. If the board counted those
+     * as decisions it would show most of the fleet as "Decision needed" every morning and be ignored
+     * within a week. Until a real reading exists, such a car is a phone call, not a choice.
+     */
+    public function test_a_long_rental_on_a_handover_estimate_is_not_counted_as_a_decision(): void
+    {
+        // 30 days out, no customer reading — everything here rests on the 200 km/day assumption.
+        $contract = Contract::create([
+            'contract_no'   => 'C-' . strtoupper(uniqid()),
+            'contract_type' => 'C',
+            'state'         => 'open',
+            'vehicle_id'    => $this->carAtLimit7500(),
+            'customer_id'   => $this->makeCustomer(),
+            'out_date'      => now()->subDays(3)->toDateString(),
+            'out_milage'    => 7000,
+            'days'          => 30,
+        ]);
+
+        $p = $this->service()->project($contract);
+        $this->assertSame('decision_required', $p['oil_status']);
+        $this->assertSame('handover', $p['anchor_source']);
+        $this->assertFalse($p['decision_ready'], 'an estimate is never something to recall a customer on');
+
+        // Nobody is asked to choose; they are asked for the number that would make a choice possible.
+        $this->assertNull($this->detect()->firstWhere('type', 'oil_decision'));
+
+        $data = data_get($this->getJson('/api/OilProjection')->json(), 'data');
+        $this->assertSame(0, $data['summary']['decision_required']);
+        $this->assertGreaterThanOrEqual(1, $data['summary']['awaiting_reading']);
+    }
+
+    /**
+     * The go-live floor. A rental that came back before this flow existed is water under the bridge:
+     * the car has already been through the yard, and raising an oil ticket for it now would hand the
+     * workshop a pile of work for cars that have been and gone. A rental carrying an explicit
+     * decision is settled whatever its date — that call was taken under this flow and is still owed.
+     */
+    public function test_the_sweep_does_not_backfill_returns_from_before_the_flow_existed(): void
+    {
+        config([
+            'maintenance.oil_projection.recipient_user_ids' => [$this->admin->id],
+            'maintenance.oil_projection.settle_from'        => now()->subDay()->toDateString(),
+        ]);
+
+        $old = $this->rentalWithReading(remainingDays: 2, reading: 7600);
+        $old->forceFill([
+            'state' => 'closed', 'in_date' => now()->subDays(4)->toDateString(), 'in_milage' => 8000,
+        ])->save();
+
+        $this->assertSame(0, $this->service()->settleReturnedRentals()['settled']);
+        $this->assertSame(0, ContractOilDecision::where('contract_id', $old->id)->count());
+
+        // But a decision taken under this flow is honoured no matter how long the car has been back.
+        $decided = $this->rentalWithReading(remainingDays: 5, reading: 7600);
+        $this->postJson('/api/Contract/' . $decided->id . '/oil-decision', ['decision' => 'defer'])
+            ->assertSuccessful();
+        $decided->forceFill([
+            'state' => 'closed', 'in_date' => now()->subDays(4)->toDateString(), 'in_milage' => 8600,
+        ])->save();
+
+        $this->assertSame(1, $this->service()->settleReturnedRentals()['settled']);
+    }
+
+    /** The board summarises the decision axis, not just the chase axis. */
+    public function test_the_board_summarises_the_decision_states(): void
+    {
+        $decide = $this->rentalWithReading(remainingDays: 5, reading: 7600);
+        $onReturn = $this->rentalWithReading(remainingDays: 2, reading: 7600);
+
+        $data = data_get($this->getJson('/api/OilProjection')->json(), 'data');
+
+        $this->assertGreaterThanOrEqual(1, $data['summary']['decision_required']);
+        $this->assertGreaterThanOrEqual(1, $data['summary']['service_required_on_return']);
+        $this->assertSame(500, $data['model']['tolerance_km']);
+
+        $rows = collect($data['contracts']);
+        $this->assertSame('decision_required', $rows->firstWhere('contract_id', $decide->id)['projection']['oil_status']);
+        $this->assertSame('service_required_on_return', $rows->firstWhere('contract_id', $onReturn->id)['projection']['oil_status']);
     }
 }

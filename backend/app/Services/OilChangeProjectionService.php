@@ -4,8 +4,14 @@ namespace App\Services;
 
 use App\Models\Contract;
 use App\Models\ContractMileageReading;
+use App\Models\ContractOilDecision;
+use App\Models\Maintenance;
+use App\Models\User;
 use App\Models\Vehicle;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 
 /**
  * Oil-change projection for cars that are OUT on rental — Evidence class **P** (prediction).
@@ -19,9 +25,29 @@ use Illuminate\Support\Carbon;
  * Everything is done in ABSOLUTE odometer values, which keeps the arithmetic honest across a
  * mid-rental oil change (the threshold simply moves) and needs no running subtraction:
  *
- *     threshold = last_service_odometer + service_interval_km + GRACE
+ *     oil_limit = last_service_odometer + service_interval_km
+ *     threshold = oil_limit + TOLERANCE          (a.k.a. "allowed max" — how far it may run)
  *     expected  = anchorOdometer + daysSince(anchorDate) × RATE
  *     chase when expected >= threshold
+ *
+ * ── The decision (what the chase is FOR) ───────────────────────────────────────────────────
+ * Reaching the oil limit is not, by itself, an emergency. The operational question is narrower:
+ *
+ *     WILL THIS CAR STILL BE INSIDE THE TOLERANCE WHEN THE CUSTOMER BRINGS IT BACK?
+ *
+ * which is answered the moment a real reading lands, by projecting forward over the days the
+ * rental still has to run:
+ *
+ *     expected_return = expected_now + remaining_rental_days × RATE
+ *
+ *     expected_return <= oil_limit   → within_tolerance          nothing to do
+ *     expected_return <= allowed_max → service_required_on_return let it finish, book the change
+ *     expected_return >  allowed_max → decision_required          a person picks recall vs defer
+ *
+ * So a car 100 km past its limit with two days left to run is NOT recalled — it lands on 8,000 km
+ * against an 8,000 km allowance and is simply serviced on return. Only a car that cannot finish
+ * inside the tolerance is put in front of a human, and that human has exactly two answers:
+ * recall it now, or accept the overrun and service it at close (ContractOilDecision).
  *
  * RATE is a flat **business assumption** (200 km/day), NOT an attempt to model this customer.
  * The contract may allow more (250 km/day is the usual allowance) — we predict at 200 because
@@ -53,6 +79,37 @@ class OilChangeProjectionService
     /** Anchor came from a customer-reported mid-rental reading. */
     public const ANCHOR_READING = 'reading';
 
+    // ── The decision axis (`oil_status`) ─────────────────────────────────────────────────────
+    // Deliberately SEPARATE from `status`, which stays the chase axis ("do we need to phone the
+    // customer"). One asks whether we have a trustworthy number; this one asks what to do with it.
+
+    /** The rental will finish before the car even reaches its oil point. Nothing to do. */
+    public const OIL_WITHIN_TOLERANCE = 'within_tolerance';
+
+    /** It will pass the oil point but finish inside the tolerance — let it run, service it at close. */
+    public const OIL_SERVICE_ON_RETURN = 'service_required_on_return';
+
+    /** It cannot finish inside the tolerance. A person must choose: recall now, or accept + defer. */
+    public const OIL_DECISION_REQUIRED = 'decision_required';
+
+    /** Somebody chose to bring the car back early. */
+    public const OIL_RECALL_REQUIRED = 'recall_required';
+
+    /** No oil anchor and/or no mileage anchor — we refuse to guess. */
+    public const OIL_NO_DATA = 'no_data';
+
+    /**
+     * How old a customer reading may be and still be treated as a FACT worth deciding on.
+     *
+     * This is the difference between "this car will bust its allowance" (arithmetic, always true of
+     * any long rental) and "somebody should decide about this car today" (a call worth making).
+     * Recalling a paying customer's car is not a decision anyone should take against a projection,
+     * and a reading that is days old has decayed back into one — so past this, the car is chased for
+     * a new number instead. Lives here, not on the board or the scanner, so those two can never
+     * disagree about which cars are actually asking for a human.
+     */
+    public const DECISION_FRESH_DAYS = 1;
+
     /** Readings at or below this are the branch's "didn't record it" sentinels, never real mileage. */
     private const PLACEHOLDER_MAX = MileageBaselineService::PLACEHOLDER_MAX;
 
@@ -67,12 +124,13 @@ class OilChangeProjectionService
     }
 
     /**
-     * The absolute odometer at which this car's oil MUST be changed — the sheet-driven service
-     * point plus the fleet-wide grace we allow a car to run past it.
+     * The absolute odometer at which this car's oil is DUE — the sheet-driven service point
+     * itself, with no tolerance folded in. Crossing it is normal; the tolerance above it is what
+     * decides whether crossing it matters yet.
      *
      * Null when the Oil Change sheet has no anchor for the car (serviceStatus() 'no_data').
      */
-    public function threshold(Vehicle $vehicle): ?int
+    public function oilLimit(Vehicle $vehicle): ?int
     {
         $baseline = $vehicle->last_service_odometer;
         $interval = $vehicle->service_interval_km;
@@ -81,7 +139,37 @@ class OilChangeProjectionService
             return null;
         }
 
-        return (int) $baseline + (int) $interval + $this->grace();
+        return (int) $baseline + (int) $interval;
+    }
+
+    /**
+     * The absolute odometer this car may NOT run past — the oil limit plus the fleet-wide
+     * tolerance. This is the number every decision is made against ("allowed max"): 7,500 km of
+     * oil limit with a 500 km tolerance means the car is allowed to reach 8,000 km.
+     */
+    public function threshold(Vehicle $vehicle): ?int
+    {
+        $limit = $this->oilLimit($vehicle);
+
+        return $limit === null ? null : $limit + $this->grace();
+    }
+
+    /**
+     * The day this rental is contracted to come back: pickup + the contracted duration.
+     *
+     * `contracts.days` is the duration OfficeManager holds for an open rental (an extension simply
+     * updates it, which is why nothing here needs rescheduling). Null when the duration is missing
+     * — the caller must then say so rather than quietly assuming the car is back today.
+     */
+    public function returnDueOn(Contract $contract): ?Carbon
+    {
+        $days = (int) ($contract->days ?? 0);
+
+        if ($days <= 0 || ! $contract->out_date) {
+            return null;
+        }
+
+        return Carbon::parse($contract->out_date)->startOfDay()->addDays($days);
     }
 
     /**
@@ -122,10 +210,17 @@ class OilChangeProjectionService
     /**
      * Evaluate one open rental as of a given day (defaults to today).
      *
+     * Two independent verdicts come back:
+     *   `status`     — the CHASE axis: ok | chase_due | no_data. "Do we need a real number?"
+     *   `oil_status` — the DECISION axis (see the class docblock). "Given the number we have, what
+     *                  happens to this car?" This is what the board acts on.
+     *
      * @return array{
      *   status:string, expected:?int, threshold:?int, anchor_odometer:?int, anchor_on:?string,
      *   anchor_source:?string, reading_id:?int, days_elapsed:?int, rate:int, grace:int,
-     *   km_to_threshold:?int, breach_on:?string, key:?string
+     *   km_to_threshold:?int, breach_on:?string, key:?string, oil_status:string, oil_limit:?int,
+     *   tolerance:int, allowed_max:?int, return_due_on:?string, remaining_days:?int,
+     *   return_date_known:bool, expected_return:?int, over_tolerance_km:?int, decision:?array
      * }
      */
     public function project(Contract $contract, ?Carbon $asOf = null): array
@@ -147,6 +242,18 @@ class OilChangeProjectionService
             'km_to_threshold' => null,
             'breach_on'       => null,
             'key'             => null,
+            // ── decision axis ──
+            'oil_status'        => self::OIL_NO_DATA,
+            'oil_limit'         => null,
+            'tolerance'         => $this->grace(),
+            'allowed_max'       => null,
+            'return_due_on'     => null,
+            'remaining_days'    => null,
+            'return_date_known' => false,
+            'expected_return'   => null,
+            'over_tolerance_km' => null,
+            'decision'          => null,
+            'decision_ready'    => false,
         ];
 
         $vehicle = $contract->vehicle;
@@ -154,13 +261,18 @@ class OilChangeProjectionService
             return $base;
         }
 
+        $oilLimit  = $this->oilLimit($vehicle);
         $threshold = $this->threshold($vehicle);
         $anchor    = $this->anchor($contract);
 
         if ($threshold === null || $anchor === null) {
             // array_merge, not `+`: the union operator keeps the LEFT side's existing null and the
-            // caller would never see the threshold we do know.
-            return array_merge($base, ['threshold' => $threshold]);
+            // caller would never see the limits we do know.
+            return array_merge($base, [
+                'threshold'   => $threshold,
+                'oil_limit'   => $oilLimit,
+                'allowed_max' => $threshold,
+            ]);
         }
 
         // Never let a back-dated reading produce negative elapsed days. Carbon 3 returns a float
@@ -173,6 +285,22 @@ class OilChangeProjectionService
         // it → the anchor day itself.
         $kmToGo    = $threshold - $anchor['odometer'];
         $breachDay = $kmToGo <= 0 ? 0 : (int) ceil($kmToGo / $rate);
+
+        // ── The return window ────────────────────────────────────────────────────────────────
+        // How much further this car can still be driven under the contract we hold. An overdue
+        // rental floors at 0 rather than going negative: the customer is past due, so the only
+        // honest statement is "it could come back at any moment", not "it drove backwards".
+        $dueOn     = $this->returnDueOn($contract);
+        $remaining = $dueOn ? (int) max(0, $asOf->diffInDays($dueOn, false)) : null;
+
+        // A contract with no duration cannot be projected to its end. We fall back to "as if it
+        // came back today", which is OPTIMISTIC — so `return_date_known` is published alongside it
+        // and the board says so out loud. Guessing a duration would be worse: it would silently
+        // manufacture a recall (or silently suppress one) from a number nobody entered.
+        $expectedReturn = $expected + (($remaining ?? 0) * $rate);
+
+        $decision  = $this->latestDecision($contract);
+        $oilStatus = $this->classify($expectedReturn, $oilLimit, $threshold, $decision, $anchor);
 
         return [
             'status'          => $isDue ? 'chase_due' : 'ok',
@@ -188,7 +316,102 @@ class OilChangeProjectionService
             'km_to_threshold' => $threshold - $expected,
             'breach_on'       => $anchor['at']->copy()->addDays($breachDay)->toDateString(),
             'key'             => $this->dedupKey($contract, $anchor),
+            // ── decision axis ──
+            'oil_status'        => $oilStatus,
+            'oil_limit'         => $oilLimit,
+            'tolerance'         => $this->grace(),
+            'allowed_max'       => $threshold,
+            'return_due_on'     => $dueOn?->toDateString(),
+            'remaining_days'    => $remaining,
+            'return_date_known' => $dueOn !== null,
+            'expected_return'   => $expectedReturn,
+            // Positive = how far past the allowance it lands; negative = headroom still in hand.
+            'over_tolerance_km' => $expectedReturn - $threshold,
+            'decision'          => $decision ? $this->decisionPayload($decision, $anchor) : null,
+            // Is this a call anyone can actually take right now? Any long rental is arithmetically
+            // certain to bust its allowance — a 30-day hire cannot fit inside an oil interval — so
+            // `decision_required` alone would put most of the fleet in front of a human every day.
+            // The question only becomes answerable once we hold a FRESH REAL reading; until then the
+            // car belongs in the chase queue, not the decision queue.
+            'decision_ready'    => $oilStatus === self::OIL_DECISION_REQUIRED
+                                && $anchor['source'] === self::ANCHOR_READING
+                                && $daysElapsed <= self::DECISION_FRESH_DAYS,
         ];
+    }
+
+    /**
+     * Turn the return-window arithmetic into one of the four operating states.
+     *
+     * A recorded decision overrides the arithmetic, with one exception that matters: a `defer` is
+     * bound to the anchor it was taken on. If a LATER customer reading shows the car is being
+     * driven harder than the number that decision was based on — hard enough to bust the tolerance
+     * again — the defer is treated as superseded and the call comes back to a human. That mirrors
+     * the re-arm doctrine the whole feature runs on: a new anchor re-opens the question. A `recall`
+     * is terminal; the car is already coming back, so there is nothing left to re-ask.
+     */
+    private function classify(
+        int $expectedReturn,
+        ?int $oilLimit,
+        int $allowedMax,
+        ?ContractOilDecision $decision,
+        array $anchor,
+    ): string {
+        $bare = match (true) {
+            $expectedReturn > $allowedMax                        => self::OIL_DECISION_REQUIRED,
+            $oilLimit !== null && $expectedReturn > $oilLimit    => self::OIL_SERVICE_ON_RETURN,
+            default                                              => self::OIL_WITHIN_TOLERANCE,
+        };
+
+        if (! $decision || ! $decision->isOpen()) {
+            return $bare;
+        }
+
+        if ($decision->decision === ContractOilDecision::DECISION_RECALL) {
+            return self::OIL_RECALL_REQUIRED;
+        }
+
+        // Deferred. Stands unless a newer reading has re-broken the tolerance.
+        return ($bare === self::OIL_DECISION_REQUIRED && $this->supersedes($anchor, $decision))
+            ? self::OIL_DECISION_REQUIRED
+            : self::OIL_SERVICE_ON_RETURN;
+    }
+
+    /** True when the projection is now anchored on a READING taken after the decision was made. */
+    private function supersedes(array $anchor, ContractOilDecision $decision): bool
+    {
+        return $anchor['reading_id'] !== null
+            && (int) $anchor['reading_id'] !== (int) $decision->anchor_reading_id;
+    }
+
+    /** The decision as the board renders it — what was chosen, by whom, and against which figures. */
+    private function decisionPayload(ContractOilDecision $decision, array $anchor): array
+    {
+        return [
+            'id'                       => $decision->id,
+            'decision'                 => $decision->decision,
+            'note'                     => $decision->note,
+            'decided_by'               => $decision->decided_by_name,
+            'decided_at'               => optional($decision->created_at)->toDateTimeString(),
+            'is_auto'                  => (bool) $decision->is_auto,
+            'settled_at'               => optional($decision->settled_at)->toDateTimeString(),
+            'settled_ticket_id'        => $decision->settled_ticket_id,
+            // The arithmetic it was taken against — so a week-old call can still be read honestly
+            // beside today's numbers instead of appearing to contradict them.
+            'expected_return_odometer' => $decision->expected_return_odometer,
+            'allowed_max'              => $decision->allowed_max,
+            'remaining_days'           => $decision->remaining_days,
+            'superseded'               => $decision->isOpen()
+                && $decision->decision === ContractOilDecision::DECISION_DEFER
+                && $this->supersedes($anchor, $decision),
+        ];
+    }
+
+    /** The standing decision for this rental, if any — newest wins. */
+    public function latestDecision(Contract $contract): ?ContractOilDecision
+    {
+        return ContractOilDecision::where('contract_id', $contract->id)
+            ->orderByDesc('id')
+            ->first();
     }
 
     /**
@@ -260,5 +483,269 @@ class OilChangeProjectionService
         }
 
         return $out;
+    }
+
+    // ── The mid-rental decision ──────────────────────────────────────────────────────────────
+
+    /**
+     * Record what a person decided about a rental that cannot finish inside the tolerance.
+     *
+     * Only offered — and only accepted — when the arithmetic actually asks for it. A car heading
+     * for 7,900 km against an 8,000 km allowance is NOT a decision; it is a car that gets its oil
+     * changed when it comes back, and putting it in front of a human is exactly the noise this
+     * feature exists to remove. Deciding an already-decided contract is allowed (someone changes
+     * their mind, or a fresh reading re-opened a defer) — the newest row wins and the old one stays
+     * as history.
+     *
+     * Both decisions raise the standing deferred-maintenance flag: whatever we choose now, this car
+     * owes an oil change the moment it is back, and that flag is what the rest of the system
+     * already understands by "owes maintenance".
+     */
+    public function decide(Contract $contract, string $decision, ?User $actor = null, ?string $note = null): ContractOilDecision
+    {
+        if (! in_array($decision, ContractOilDecision::DECISIONS, true)) {
+            throw ValidationException::withMessages([
+                'decision' => 'Choose one: recall the car now, or do the oil change when it comes back.',
+            ]);
+        }
+
+        $projection = $this->project($contract);
+
+        if ($projection['oil_status'] === self::OIL_NO_DATA) {
+            throw ValidationException::withMessages([
+                'decision' => 'There is no mileage to decide on yet — record a reading from the customer first.',
+            ]);
+        }
+
+        // The gate. `recall_required` is included so a recall can be revised to a defer.
+        $decidable = [self::OIL_DECISION_REQUIRED, self::OIL_RECALL_REQUIRED];
+        if (! in_array($projection['oil_status'], $decidable, true)) {
+            throw ValidationException::withMessages([
+                'decision' => 'This car is projected to finish inside the '
+                            . number_format($projection['allowed_max']) . ' km allowance, so there is nothing to decide'
+                            . ' — the oil change is already booked for when it comes back.',
+            ]);
+        }
+
+        return DB::transaction(function () use ($contract, $decision, $actor, $note, $projection) {
+            $row = ContractOilDecision::create([
+                'contract_id'              => $contract->id,
+                'vehicle_id'               => $contract->vehicle_id,
+                'decision'                 => $decision,
+                'anchor_reading_id'        => $projection['reading_id'],
+                'oil_limit'                => $projection['oil_limit'],
+                'allowed_max'              => $projection['allowed_max'],
+                'expected_return_odometer' => $projection['expected_return'],
+                'remaining_days'           => $projection['remaining_days'],
+                'decided_by'               => $actor?->id,
+                'decided_by_name'          => $actor?->name,
+                'note'                     => $note,
+                'is_auto'                  => false,
+            ]);
+
+            // Whatever was chosen, the car owes an oil change on return. Reuse the standing flag the
+            // rest of the fleet already reads as "route this car to the garage when it lands".
+            if ($contract->vehicle) {
+                app(OperationsService::class)->flagDeferredMaintenance(
+                    $contract->vehicle,
+                    $this->flagNote($decision, $projection),
+                    $actor?->name,
+                );
+            }
+
+            return $row;
+        });
+    }
+
+    /** The one-line "why" carried by the deferred-maintenance flag, in operational language. */
+    private function flagNote(string $decision, array $projection): string
+    {
+        $over = max(0, (int) $projection['over_tolerance_km']);
+
+        return $decision === ContractOilDecision::DECISION_RECALL
+            ? 'Oil change — car recalled from rental; projected ' . number_format($projection['expected_return'])
+              . ' km against a ' . number_format($projection['allowed_max']) . ' km allowance.'
+            : 'Oil change owed on return — accepted running ' . number_format($over)
+              . ' km past the ' . number_format($projection['allowed_max']) . ' km allowance.';
+    }
+
+    // ── Settlement: the car comes back ───────────────────────────────────────────────────────
+
+    /**
+     * The rental has closed — turn the owed oil change into a real ticket.
+     *
+     * This is the far end of every path above: a recall, an accepted overrun, and the quiet case
+     * where nobody was ever asked because the car crossed its limit inside the tolerance. All three
+     * mean the same job, so all three land here and mint the same routine-service ticket through
+     * MaintenanceWorkflowService — the single write path for a scheduled service.
+     *
+     * Idempotent by construction: one settled ContractOilDecision per contract, and the row is
+     * written even when no human ever decided (`is_auto`), which is what makes the sweep safe to
+     * run on every tick.
+     *
+     * Returns the ticket, or null when nothing was owed / it could not be raised.
+     */
+    public function settleOnReturn(Contract $contract, ?User $actor = null): ?Maintenance
+    {
+        // Still out. Nothing to settle — the decision, if any, is still live.
+        if ($contract->state !== 'closed' && ! $contract->in_date) {
+            return null;
+        }
+
+        $vehicle = $contract->vehicle;
+        if (! $vehicle) {
+            return null;
+        }
+
+        // Already settled once. Never mint a second ticket for the same rental.
+        if (ContractOilDecision::where('contract_id', $contract->id)->whereNotNull('settled_at')->exists()) {
+            return null;
+        }
+
+        $decision = ContractOilDecision::where('contract_id', $contract->id)->orderByDesc('id')->first();
+        $oilLimit = $this->oilLimit($vehicle);
+
+        // What the car actually came back on. The branch's return reading is a real capture (unlike
+        // the customer's phone number), so it is preferred; a placeholder falls back to the last
+        // projection we held.
+        $returned = (int) ($contract->in_milage ?? 0);
+        $finalKm  = $returned > self::PLACEHOLDER_MAX
+            ? $returned
+            : ($this->project($contract, $contract->in_date ? Carbon::parse($contract->in_date) : null)['expected'] ?? null);
+
+        // Owed when somebody decided it was, or when the car simply came back past its oil point.
+        $owed = $decision !== null || ($oilLimit !== null && $finalKm !== null && $finalKm >= $oilLimit);
+        if (! $owed) {
+            return null;
+        }
+
+        $actor ??= $this->settleActor($decision);
+        if (! $actor) {
+            // No user to attribute the ticket to. Say so loudly rather than swallow the job — the
+            // car is back, owing a service, and nothing was raised.
+            Log::warning('Oil settle: no actor available to open the service ticket', [
+                'contract_id' => $contract->id,
+                'vehicle_id'  => $vehicle->id,
+            ]);
+
+            return null;
+        }
+
+        return DB::transaction(function () use ($contract, $vehicle, $decision, $finalKm, $actor) {
+            try {
+                $ticket = app(MaintenanceWorkflowService::class)
+                    ->openServiceTicket($vehicle, 'Oil Change', $finalKm, $actor);
+            } catch (\Throwable $e) {
+                // A car that has left the fleet (sold / disposed) can't enter the workflow. That is a
+                // legitimate outcome, not a failure of this sweep.
+                Log::warning('Oil settle: could not open the service ticket', [
+                    'contract_id' => $contract->id,
+                    'vehicle_id'  => $vehicle->id,
+                    'error'       => $e->getMessage(),
+                ]);
+
+                return null;
+            }
+
+            $row = $decision ?: ContractOilDecision::create([
+                'contract_id'              => $contract->id,
+                'vehicle_id'               => $vehicle->id,
+                // Nobody was asked: the car finished inside the tolerance, which is precisely the
+                // case this flow is designed NOT to interrupt a rental for.
+                'decision'                 => ContractOilDecision::DECISION_DEFER,
+                'oil_limit'                => $this->oilLimit($vehicle),
+                'allowed_max'              => $this->threshold($vehicle),
+                'expected_return_odometer' => $finalKm,
+                'is_auto'                  => true,
+            ]);
+
+            $row->forceFill(['settled_at' => Carbon::now(), 'settled_ticket_id' => $ticket->id])->save();
+
+            // The debt is now a ticket; the standing flag has done its job.
+            app(OperationsService::class)->resolveDeferredMaintenance($vehicle);
+
+            return $ticket;
+        });
+    }
+
+    /**
+     * Sweep every rental that has come back but never had its owed oil change raised.
+     *
+     * The explicit close path calls settleOnReturn() directly, but most contracts on the live fleet
+     * are closed by the OfficeManager sync writing `in_date` — no application code runs there at
+     * all. This sweep is what makes the promise hold either way.
+     *
+     * @return array{settled:int, tickets:array<int,int>}
+     */
+    public function settleReturnedRentals(int $limit = 200): array
+    {
+        $settled = 0;
+        $tickets = [];
+
+        // Rentals with an open (unsettled) decision, plus recently-returned rentals that may owe a
+        // change nobody was ever asked about.
+        Contract::query()
+            ->where('contract_type', 'C')
+            ->whereNotNull('vehicle_id')
+            ->where(fn ($q) => $q->where('state', 'closed')->orWhereNotNull('in_date'))
+            ->where(function ($q) {
+                $q->whereIn('id', ContractOilDecision::whereNull('settled_at')->select('contract_id'))
+                  // …or a recent return nobody was ever asked about. Bounded at BOTH ends on purpose:
+                  //   • the 7-day window, because a rental that came back last month is water under
+                  //     the bridge and raising an oil ticket for it now is noise, not diligence;
+                  //   • `settle_from`, because without it the very first run would sweep up every car
+                  //     that happened to return in the days before this flow existed and dump a pile
+                  //     of tickets on the workshop for cars that have already been and gone.
+                  ->orWhere(fn ($r) => $r->whereDate('in_date', '>=', $this->settleFloor()->toDateString()));
+            })
+            ->whereNotIn('id', ContractOilDecision::whereNotNull('settled_at')->select('contract_id'))
+            ->with('vehicle')
+            ->orderByDesc('id')
+            ->limit($limit)
+            ->get()
+            ->each(function (Contract $c) use (&$settled, &$tickets) {
+                $ticket = $this->settleOnReturn($c);
+                if ($ticket) {
+                    $settled++;
+                    $tickets[$c->id] = $ticket->id;
+                }
+            });
+
+        return ['settled' => $settled, 'tickets' => $tickets];
+    }
+
+    /**
+     * How far back the sweep may reach for a return NOBODY decided about: the later of the 7-day
+     * window and the configured go-live date. A rental that carries an explicit decision is settled
+     * whatever its date — that call was taken under this flow and is owed either way.
+     */
+    private function settleFloor(): Carbon
+    {
+        $window = Carbon::now()->subDays(7)->startOfDay();
+        $from   = config('maintenance.oil_projection.settle_from');
+
+        if (! $from) {
+            return $window;
+        }
+
+        $configured = Carbon::parse($from)->startOfDay();
+
+        return $configured->gt($window) ? $configured : $window;
+    }
+
+    /**
+     * Who the auto-raised ticket is attributed to: the person who took the decision, else one of
+     * the configured follow-up controllers (Leen / Marwa), else nobody — and we decline rather
+     * than attribute a real workshop ticket to an arbitrary account.
+     */
+    private function settleActor(?ContractOilDecision $decision): ?User
+    {
+        if ($decision?->decided_by && ($user = User::find($decision->decided_by))) {
+            return $user;
+        }
+
+        $ids = (array) config('maintenance.oil_projection.recipient_user_ids', []);
+
+        return $ids ? User::whereIn('id', $ids)->orderBy('id')->first() : null;
     }
 }

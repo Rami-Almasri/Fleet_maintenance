@@ -125,6 +125,15 @@ Schedule::command('inspections:generate-tasks')
     ->dailyAt('07:30')
     ->withoutOverlapping();
 
+// Hourly: raise the oil-change ticket for rentals that have come back owing one — a controller's
+// mid-rental "do it on return" / "recall now" call, or simply a car that returned past its oil
+// limit. Hourly rather than daily because the trigger is a physical return: the car is standing in
+// the yard and the crew needs the ticket while it is still there, not tomorrow morning. Idempotent
+// (one settled decision row per rental), so a run that overlaps a UI-driven close is harmless.
+Schedule::command('oil:settle-returns')
+    ->hourly()
+    ->withoutOverlapping();
+
 // Every 10 min: push newly-logged vehicle timeline events (the maintenance-workflow audit trail)
 // to the "Vehicle Timeline" Google Sheet. Incremental via a high-water mark, so each run appends
 // only what's new — cheap and idempotent. Runs in the background so the Google write never blocks

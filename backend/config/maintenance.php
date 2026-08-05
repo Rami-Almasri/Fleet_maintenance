@@ -110,6 +110,14 @@ return [
         // rather than the prediction rate. A contract's own `miles_allowed_pd` overrides it.
         'allowance_km_per_day' => (int) env('OIL_PROJECTION_ALLOWANCE_KM', 250),
 
+        // GO-LIVE FLOOR for the return sweep (oil:settle-returns). A rental that comes back past its
+        // oil point owes a change even when nobody was ever asked about it — but only from the day
+        // this flow was switched on. Without this floor the first run would sweep up every car that
+        // returned in the preceding week and hand the workshop a pile of tickets for cars that have
+        // already been serviced, sold, or sent back out. A rental carrying an explicit recall/defer
+        // decision is always settled, whatever its date. Blank = no floor (7-day window only).
+        'settle_from'          => env('OIL_SETTLE_FROM', '2026-08-05'),
+
         // WHO gets chased for a customer mileage reading. An allow-list of real people (Leen and
         // Marwa) is the safest production setting. When it is empty we fall back to the permission
         // gate below — deliberately narrow, because a daily nag sent to everyone holding a broad

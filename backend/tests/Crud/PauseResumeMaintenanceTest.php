@@ -20,7 +20,15 @@ use Illuminate\Http\UploadedFile;
  */
 class PauseResumeMaintenanceTest extends CrudTestCase
 {
-    /** A committed, in-progress ticket at $status with the car held in maintenance. */
+    /**
+     * A committed, in-progress ticket at $status with the car held in maintenance.
+     *
+     * Marked DEFERRABLE explicitly: `maintenances.deferrable_for_rental` defaults to false, which means
+     * MANDATORY maintenance — a hard block that `pull_from_maintenance` is designed NOT to lift
+     * (ContractEligibilityService::maintenanceCheck). A ticket only becomes deferrable when an inspector
+     * says so at the Decide step, and this fixture skips that step, so it must set the flag itself.
+     * Pausing a mandatory ticket for a rental is supposed to be impossible.
+     */
     private function ticketAt(string $status, array $extra = []): Maintenance
     {
         $vehicleId = $this->makeVehicle();
@@ -30,7 +38,8 @@ class PauseResumeMaintenanceTest extends CrudTestCase
         $ticket = Maintenance::create(array_merge([
             'vehicle_id'      => $vehicle->id,
             'vendor_id'       => $this->makeVendor(['name' => 'Ajman Sticar Shop']),
-            'origin'          => Maintenance::ORIGIN_MANUAL,
+            'origin'                => Maintenance::ORIGIN_MANUAL,
+            'deferrable_for_rental' => true,
             'workflow_status' => $status,
             'event_status'    => in_array($status, Maintenance::WF_PHYSICALLY_OUT_STATES, true) ? 'OUT' : 'IN',
             'out_date'        => now()->toDateString(),

@@ -1,11 +1,13 @@
 // The Oil Mileage Follow-up page, tested as a WORKFLOW rather than as markup.
 //
-// The loop this page closes is: a car goes out → the projection drifts past the oil limit → someone
-// calls the customer → the number they read off the dash is typed in → the projection re-anchors and
-// the next check moves. These tests assert the parts of that loop a person depends on: that the queue
-// says WHY a car is on it, that a car we cannot project is never given an invented number, that
-// saving a reading shows the recalculated verdict (not just "saved"), and that a rejected reading
-// surfaces the API's reason instead of a generic failure.
+// The loop this page closes is: a car goes out → the projection drifts toward the oil limit → someone
+// calls the customer → the number they read off the dash is typed in → and the system answers the only
+// question that matters operationally: WILL THIS CAR STILL BE INSIDE ITS ALLOWANCE WHEN IT COMES BACK?
+//
+// Most cars will be, and are simply serviced on return with nobody interrupted. These tests assert the
+// parts of that loop a person depends on: that a car finishing inside the allowance is never turned into
+// a decision, that a car finishing outside it is — with the figures spelled out — that a car we cannot
+// project is never given an invented number, and that saving a reading shows the recalculated verdict.
 
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import OilProjection, { reasonFor } from './OilProjection';
@@ -26,44 +28,86 @@ jest.mock('../../hooks/usePermissions', () => ({
   usePermissions: () => ({ can: () => true, canAny: () => true, hasRole: () => false, roles: [], permissions: [], isSuperAdmin: true }),
 }));
 
-// One car past its limit, one comfortably inside it, one with no handover reading to project from.
+// Every fixture uses the fleet's own worked example: a 7,500 km oil limit, a 500 km tolerance, and so
+// an 8,000 km allowed maximum. What separates the cars is only how long each rental still has to run.
+const LIMITS = { oil_limit: 7500, tolerance: 500, allowed_max: 8000, threshold: 8000, rate: 200, grace: 500 };
+
 const QUEUE = {
   contracts: [
     {
+      // Five days still to run — 7,600 now becomes 8,600 by the time it is back. Cannot be absorbed.
       contract_id: 91, contract_no: 'C-9001', customer: 'Hazem Ali',
       vehicle_id: 5, plate: 'K 81836', car: 'JEEP CHEROKEE', out_date: '2026-07-30',
       projection: {
-        status: 'chase_due', expected: 7500, threshold: 7000, km_to_threshold: -500,
-        days_elapsed: 5, anchor_odometer: 6500, anchor_on: '2026-07-30', anchor_source: 'handover',
-        reading_id: null, rate: 200, grace: 500, breach_on: '2026-08-02',
-        key: 'oil_projection:91:start',
+        ...LIMITS, status: 'ok', expected: 7600, km_to_threshold: 400,
+        days_elapsed: 0, anchor_odometer: 7600, anchor_on: '2026-08-05', anchor_source: 'reading',
+        reading_id: 9, breach_on: '2026-08-07', key: 'oil_projection:91:r9',
+        oil_status: 'decision_required', return_due_on: '2026-08-10', remaining_days: 5,
+        return_date_known: true, expected_return: 8600, over_tolerance_km: 600, decision: null,
+        decision_ready: true,
       },
     },
     {
+      // The SAME reading with two days left. It lands on exactly 8,000 — the last kilometre it is
+      // allowed — so the rental runs on and the oil change is booked for the return.
       contract_id: 92, contract_no: 'C-9002', customer: 'Dima Nasser',
       vehicle_id: 6, plate: 'F 21099', car: 'CHEVROLET CAMARO', out_date: '2026-08-02',
       projection: {
-        status: 'ok', expected: 6900, threshold: 7500, km_to_threshold: 600,
-        days_elapsed: 2, anchor_odometer: 6500, anchor_on: '2026-08-02', anchor_source: 'handover',
-        reading_id: null, rate: 200, grace: 500, breach_on: '2026-08-07',
-        key: 'oil_projection:92:start',
+        ...LIMITS, status: 'ok', expected: 7600, km_to_threshold: 400,
+        days_elapsed: 0, anchor_odometer: 7600, anchor_on: '2026-08-05', anchor_source: 'reading',
+        reading_id: 11, breach_on: '2026-08-07', key: 'oil_projection:92:r11',
+        oil_status: 'service_required_on_return', return_due_on: '2026-08-07', remaining_days: 2,
+        return_date_known: true, expected_return: 8000, over_tolerance_km: 0, decision: null,
       },
     },
     {
       contract_id: 93, contract_no: 'C-9003', customer: 'Yousef Karim',
       vehicle_id: 7, plate: 'J 17096', car: 'FORD MUSTANG', out_date: '2026-07-01',
       projection: {
-        status: 'no_data', expected: null, threshold: 7500, km_to_threshold: null,
+        ...LIMITS, status: 'no_data', expected: null, km_to_threshold: null,
         days_elapsed: null, anchor_odometer: null, anchor_on: null, anchor_source: null,
-        reading_id: null, rate: 200, grace: 500, breach_on: null, key: null,
+        reading_id: null, breach_on: null, key: null,
+        oil_status: 'no_data', return_due_on: null, remaining_days: null,
+        return_date_known: false, expected_return: null, over_tolerance_km: null, decision: null,
+      },
+    },
+    {
+      contract_id: 94, contract_no: 'C-9004', customer: 'Rana Odeh',
+      vehicle_id: 8, plate: 'D 40021', car: 'NISSAN SUNNY', out_date: '2026-08-03',
+      projection: {
+        ...LIMITS, status: 'ok', expected: 6000, km_to_threshold: 2000,
+        days_elapsed: 2, anchor_odometer: 5600, anchor_on: '2026-08-03', anchor_source: 'handover',
+        reading_id: null, breach_on: '2026-08-15', key: 'oil_projection:94:start',
+        oil_status: 'within_tolerance', return_due_on: '2026-08-07', remaining_days: 2,
+        return_date_known: true, expected_return: 6400, over_tolerance_km: -1600, decision: null,
+      },
+    },
+    {
+      // A 30-day hire. It is arithmetically certain to bust its allowance — every long rental is —
+      // but the only number we have is a 200 km/day guess from the handover reading. Nobody can
+      // answer for this car until someone phones the customer.
+      contract_id: 95, contract_no: 'C-9005', customer: 'Samir Haddad',
+      vehicle_id: 9, plate: 'B 55510', car: 'TOYOTA COROLLA', out_date: '2026-07-28',
+      projection: {
+        ...LIMITS, status: 'chase_due', expected: 8200, km_to_threshold: -200,
+        days_elapsed: 8, anchor_odometer: 6600, anchor_on: '2026-07-28', anchor_source: 'handover',
+        reading_id: null, breach_on: '2026-08-04', key: 'oil_projection:95:start',
+        oil_status: 'decision_required', return_due_on: '2026-08-27', remaining_days: 22,
+        return_date_known: true, expected_return: 12600, over_tolerance_km: 4600, decision: null,
+        decision_ready: false,
       },
     },
   ],
-  summary: { chase_due: 1, ok: 1, no_data: 1, total: 3 },
+  summary: {
+    chase_due: 1, ok: 3, no_data: 1, total: 5,
+    decision_required: 1, awaiting_reading: 1, recall_required: 0,
+    service_required_on_return: 1, within_tolerance: 1,
+  },
   model: {
     rate_km_per_day: 200,
     grace_km: 500,
-    basis: 'expected = anchor odometer + days since anchor × rate; limit = last service odometer + interval (Oil Change sheet) + grace',
+    tolerance_km: 500,
+    basis: 'expected = anchor odometer + days since anchor × rate; oil limit = last service odometer + interval (Oil Change sheet); allowed max = oil limit + tolerance; expected on return = expected + remaining rental days × rate',
   },
 };
 
@@ -73,11 +117,14 @@ const DETAIL = {
   readings: [{ id: 4, odometer: 6800, reported_on: '2026-08-01', source: 'customer_reported', reported_by: 'Customer', note: null }],
 };
 
-// After the customer reports 7,000 km the car is back inside the limit and the anchor has moved.
+// The customer turns out to have driven far less than the model assumed: the car now finishes on
+// exactly its allowance and the decision that was hanging over it disappears.
 const RECALCULATED = {
-  status: 'ok', expected: 7000, threshold: 7500, km_to_threshold: 500,
-  days_elapsed: 0, anchor_odometer: 7000, anchor_on: '2026-08-04', anchor_source: 'reading',
-  reading_id: 9, rate: 200, grace: 500, breach_on: '2026-08-07', key: 'oil_projection:91:r9',
+  ...LIMITS, status: 'ok', expected: 7200, km_to_threshold: 800,
+  days_elapsed: 0, anchor_odometer: 7200, anchor_on: '2026-08-05', anchor_source: 'reading',
+  reading_id: 12, breach_on: '2026-08-09', key: 'oil_projection:91:r12',
+  oil_status: 'service_required_on_return', return_due_on: '2026-08-10', remaining_days: 4,
+  return_date_known: true, expected_return: 8000, over_tolerance_km: 0, decision: null,
 };
 
 beforeEach(() => {
@@ -100,54 +147,139 @@ const load = async () => {
   await waitFor(() => expect(screen.getByText('Oil Mileage Follow-up')).toBeInTheDocument());
 };
 
-/** The queue opens on the only thing that needs a human: the cars past their limit. */
-test('the queue opens on the cars that need a call', async () => {
+const chip = async (label) => fireEvent.click(await screen.findByText(label));
+
+/** The queue opens on the only thing that needs a human: the cars that can't finish inside the allowance. */
+test('the queue opens on the cars that need a decision', async () => {
   await load();
 
   expect(await screen.findByText('K 81836')).toBeInTheDocument();
-  // The within-limit and un-projectable cars are filtered out of the default view.
+  // Everything that resolves itself is filtered out of the default view — including the car that is
+  // already past its oil limit but will still come back inside the allowance.
   expect(screen.queryByText('F 21099')).not.toBeInTheDocument();
+  expect(screen.queryByText('D 40021')).not.toBeInTheDocument();
   expect(screen.queryByText('J 17096')).not.toBeInTheDocument();
+  // …and so is the long hire that only LOOKS like a decision: it rests on an estimate.
+  expect(screen.queryByText('B 55510')).not.toBeInTheDocument();
+});
+
+/**
+ * THE GUARD THAT KEEPS THIS QUEUE WORTH READING. Every long rental is arithmetically certain to run
+ * past its allowance, so counting the raw state would put most of the fleet under "Decision needed"
+ * every morning and the board would be ignored inside a week. A decision resting on a 200 km/day
+ * assumption is not a decision — it is a phone call, and the row says exactly that instead of
+ * offering two buttons nobody should press yet.
+ */
+test('a car that only busts its allowance on an estimate is a phone call, not a decision', async () => {
+  await load();
+  await chip(/Needs a number first \(1\)/);
+
+  const row = within((await screen.findByText('B 55510')).closest('tr'));
+  expect(row.getByText('Needs a number first')).toBeInTheDocument();
+  expect(row.getByText(/That is an estimate, not a reading — get the real number/)).toBeInTheDocument();
+
+  // The two answers are withheld until someone has a real figure to answer on.
+  expect(row.queryByText('Recall now')).not.toBeInTheDocument();
+  expect(row.queryByText('Do it on return')).not.toBeInTheDocument();
+  expect(row.getByText('Enter reading')).toBeInTheDocument();
 });
 
 /**
  * THE LOAD-BEARING ASSERTION for the table: a row must say why it is here, in the language of the
- * person about to make the call. A queue that shows a number without a reason gets ignored.
+ * person about to make the call, with the three numbers the call is actually made on.
  */
-test('each row explains why the car is on the list, with the numbers behind it', async () => {
+test('a row that needs a decision states where it lands, what it is allowed, and how long is left', async () => {
   await load();
 
-  expect(await screen.findByText(/Out 5 days/)).toBeInTheDocument();
-  expect(screen.getByText(/500 km past the 7,000 km oil limit/)).toBeInTheDocument();
-  expect(screen.getByText('7,500 km')).toBeInTheDocument();   // projected now
-  expect(screen.getByText('500 km over')).toBeInTheDocument(); // margin
+  const row = within((await screen.findByText('K 81836')).closest('tr'));
+  expect(row.getByText('8,600 km')).toBeInTheDocument();          // where it comes back
+  expect(row.getByText('8,000 km')).toBeInTheDocument();          // what it is allowed to reach
+  expect(row.getByText('7,500 + 500')).toBeInTheDocument();       // and how that allowance is built
+  expect(row.getByText('600 km over')).toBeInTheDocument();
+  expect(row.getByText('5d to run')).toBeInTheDocument();
+  expect(row.getByText('Decision needed')).toBeInTheDocument();
+  expect(row.getByText(/600 km past the 8,000 km allowance/)).toBeInTheDocument();
+});
+
+/**
+ * THE RULE THIS CHANGE EXISTS FOR. A car already past its oil limit, with two days left, lands on
+ * exactly its allowance. It is NOT a decision, it is not recalled, and it is not interrupted — it is
+ * an oil change booked for the day it comes back, and the row says so without offering a choice.
+ */
+test('a car that finishes inside the allowance is booked for service, never turned into a decision', async () => {
+  await load();
+  await chip(/On return \(1\)/);
+
+  const row = within((await screen.findByText('F 21099')).closest('tr'));
+  expect(row.getByText('Oil change on return')).toBeInTheDocument();
+  expect(row.getByText('0 km spare')).toBeInTheDocument();
+  expect(row.getByText(/Let the rental finish — the oil change is booked for the return/)).toBeInTheDocument();
+
+  // The two answers are not on offer, because there is no question.
+  expect(row.queryByText('Recall now')).not.toBeInTheDocument();
+  expect(row.queryByText('Do it on return')).not.toBeInTheDocument();
+});
+
+/** A car nowhere near its oil point is reported as exactly that. */
+test('a car still short of its oil point is left alone', async () => {
+  await load();
+  await chip(/Within tolerance \(1\)/);
+
+  const row = within((await screen.findByText('D 40021')).closest('tr'));
+  expect(row.getByText('Within tolerance')).toBeInTheDocument();
+  expect(row.getByText(/still short of the 7,500 km oil point. Nothing to do/)).toBeInTheDocument();
 });
 
 /** A car we cannot project must never be given an invented figure — it says so plainly. */
 test('a car with no handover reading is reported as unprojectable, not estimated', async () => {
   await load();
-  fireEvent.click(await screen.findByText(/Can’t project \(1\)/));
+  await chip(/Can’t project \(1\)/);
 
   const plate = await screen.findByText('J 17096');
   expect(screen.getByText(/we can’t work out where it is now/)).toBeInTheDocument();
 
-  // Scoped to the row, because "Can’t project" is also a metric-card label and a filter chip.
   const row = within(plate.closest('tr'));
   expect(row.getByText('Can’t project')).toBeInTheDocument();
-  // The oil LIMIT is still known and shown (7,500 km) — it comes off the sheet, not the projection.
-  expect(row.getByText('7,500 km')).toBeInTheDocument();
-  // But no margin is invented, because there is nothing to measure the distance from.
-  expect(row.queryByText(/km (over|left)/)).not.toBeInTheDocument();
+  // Nothing is invented: no landing figure, no margin, no decision.
+  expect(row.getByText('Not stated')).toBeInTheDocument();
+  expect(row.queryByText(/km (over|spare)/)).not.toBeInTheDocument();
+  expect(row.queryByText('Recall now')).not.toBeInTheDocument();
 });
 
-/** A car inside its limit reports the margin and when it will next be looked at. */
-test('a car within the limit shows its remaining margin and next check', async () => {
+/**
+ * Recalling a paying customer's car is confirmed, not fired from a table button — and the confirmation
+ * restates the figures it is being done on, because that is what the person is answering for.
+ */
+test('recalling a car confirms against the figures before it is recorded', async () => {
+  api.post.mockResolvedValue({ data: { data: { decision: { id: 1 }, projection: {} } } });
   await load();
-  fireEvent.click(await screen.findByText(/Within limit \(1\)/));
 
-  expect(await screen.findByText('F 21099')).toBeInTheDocument();
-  expect(screen.getByText('600 km left')).toBeInTheDocument();
-  expect(screen.getByText(/Next check around/)).toBeInTheDocument();
+  fireEvent.click(await screen.findByText('Recall now'));
+
+  expect(await screen.findByText(/Recall now — K 81836/)).toBeInTheDocument();
+  expect(screen.getByText(/600 km past what this car is allowed to run/)).toBeInTheDocument();
+  expect(screen.getByText(/the oil-change ticket is raised automatically the moment it is back/)).toBeInTheDocument();
+
+  // Confirm from the dialog footer (the table button carries the same words).
+  fireEvent.click(screen.getAllByText('Recall now').at(-1));
+
+  await waitFor(() => expect(api.post).toHaveBeenCalledWith('/Contract/91/oil-decision', {
+    decision: 'recall', note: null,
+  }));
+});
+
+/** The other answer: accept the overrun, keep the customer moving, service it at close. */
+test('accepting the overrun records the decision with the reason given', async () => {
+  api.post.mockResolvedValue({ data: { data: { decision: { id: 2 }, projection: {} } } });
+  await load();
+
+  fireEvent.click(await screen.findByText('Do it on return'));
+  fireEvent.change(await screen.findByLabelText(/Why/), { target: { value: 'Customer is mid-trip' } });
+  fireEvent.click(screen.getAllByText('Do it on return').at(-1));
+
+  await waitFor(() => expect(api.post).toHaveBeenCalledWith('/Contract/91/oil-decision', {
+    decision: 'defer', note: 'Customer is mid-trip',
+  }));
 });
 
 /** Opening a contract shows what was reported last time, so the caller isn't typing blind. */
@@ -160,26 +292,26 @@ test('opening a contract loads its previous readings', async () => {
 });
 
 /**
- * THE WHOLE POINT OF THE LOOP. Saving the number the customer gave must post it against the
- * contract and then show the RECALCULATED verdict — the anchor has moved, so the answer changed.
- * "Saved" on its own would leave the caller not knowing whether the car still needs an oil change.
+ * THE WHOLE POINT OF THE LOOP. Saving the number the customer gave must post it against the contract
+ * and then show the RECALCULATED verdict — before the caller puts the phone down. "Saved" on its own
+ * would leave them not knowing whether they still have a decision to take.
  */
-test('entering the reported mileage re-anchors the projection and shows the new verdict', async () => {
-  api.post.mockResolvedValue({ data: { data: { reading: { id: 9 }, projection: RECALCULATED } } });
+test('entering the reported mileage recalculates the verdict on the spot', async () => {
+  api.post.mockResolvedValue({ data: { data: { reading: { id: 12 }, projection: RECALCULATED } } });
   await load();
 
   fireEvent.click(await screen.findByText('Enter reading'));
-  fireEvent.change(await screen.findByLabelText(/Odometer reported by the customer/), { target: { value: '7000' } });
+  fireEvent.change(await screen.findByLabelText(/Odometer reported by the customer/), { target: { value: '7200' } });
   fireEvent.click(screen.getByText('Save reading'));
 
   await waitFor(() => expect(api.post).toHaveBeenCalledWith('/Contract/91/mileage-reading', {
-    odometer: 7000, reported_by: null, note: null,
+    odometer: 7200, reported_by: null, note: null,
   }));
 
-  const recalculated = await screen.findByText('Recalculated');
-  const panel = recalculated.parentElement;
-  // Back inside the limit, measured from the number the customer actually gave.
-  expect(within(panel).getByText(/500 km before the 7,500 km oil limit/)).toBeInTheDocument();
+  const panel = (await screen.findByText('Recalculated')).parentElement;
+  // The decision has gone: on the real number the car comes back inside its allowance.
+  expect(within(panel).getByText(/inside the 8,000 km allowance/)).toBeInTheDocument();
+  expect(within(panel).getByText(/oil change is booked for the return/)).toBeInTheDocument();
 });
 
 /** A reading that runs backwards is refused by the API; the caller sees its reason, not "failed". */
@@ -196,27 +328,59 @@ test('a rejected reading surfaces the API’s own explanation', async () => {
   expect(await screen.findByText(/Mileage cannot go backwards/)).toBeInTheDocument();
 });
 
-/** Traceability: the page states the arithmetic and where the oil limit came from. */
+/** Traceability: the page states the arithmetic and where every input came from. */
 test('the page declares how every number was derived', async () => {
   await load();
   expect(await screen.findByText(/Data origin:/)).toBeInTheDocument();
-  expect(screen.getByText(/anchor odometer \+ days since anchor × rate/)).toBeInTheDocument();
+  expect(screen.getByText(/expected on return = expected \+ remaining rental days × rate/)).toBeInTheDocument();
+  expect(screen.getByText(/remaining days\s+come from the contract’s own duration/)).toBeInTheDocument();
   expect(screen.getByText(/never change the car’s odometer/)).toBeInTheDocument();
 });
 
-/** The reason sentence is the page's editorial contract — asserted directly, free of rendering. */
+/** The verdict sentence is the page's editorial contract — asserted directly, free of rendering. */
 describe('reasonFor', () => {
+  const base = { oil_limit: 7500, tolerance: 500, allowed_max: 8000, return_date_known: true };
+
   test('an unprojectable car blames the missing handover reading', () => {
-    expect(reasonFor({ status: 'no_data' })).toMatch(/No mileage was recorded when this car went out/);
+    expect(reasonFor({ status: 'no_data', oil_status: 'no_data' }))
+      .toMatch(/No mileage was recorded when this car went out/);
   });
 
-  test('a single day out is not pluralised', () => {
-    const s = reasonFor({ status: 'chase_due', days_elapsed: 1, expected: 7600, threshold: 7000 });
-    expect(s).toMatch(/Out 1 day —/);
+  const decidable = { ...base, oil_status: 'decision_required', decision_ready: true };
+
+  test('a decision states the overrun, the allowance, and both answers', () => {
+    const s = reasonFor({ ...decidable, expected: 7600, expected_return: 8600, over_tolerance_km: 600, remaining_days: 5 });
+    expect(s).toMatch(/due back in 5 days/);
+    expect(s).toMatch(/600 km past the 8,000 km allowance/);
+    expect(s).toMatch(/Recall it now, or accept that/);
+  });
+
+  test('the same overrun on an estimate asks for a reading instead of a choice', () => {
+    const s = reasonFor({ ...base, oil_status: 'decision_required', decision_ready: false, expected: 7600, expected_return: 8600, over_tolerance_km: 600, remaining_days: 5 });
+    expect(s).toMatch(/600 km past the 8,000 km allowance/);
+    expect(s).toMatch(/estimate, not a reading/);
+    expect(s).not.toMatch(/Recall it now/);
+  });
+
+  test('a single remaining day is not pluralised', () => {
+    const s = reasonFor({ ...decidable, expected: 7900, expected_return: 8100, over_tolerance_km: 100, remaining_days: 1 });
+    expect(s).toMatch(/due back in 1 day —/);
   });
 
   test('it never reports a negative overshoot', () => {
-    const s = reasonFor({ status: 'chase_due', days_elapsed: 3, expected: 7000, threshold: 7000 });
+    const s = reasonFor({ ...decidable, expected: 8000, expected_return: 8000, over_tolerance_km: -10, remaining_days: 0 });
     expect(s).toMatch(/0 km past/);
+    expect(s).toMatch(/due back today/);
+  });
+
+  test('a contract with no duration says so rather than assuming the car is back today', () => {
+    const s = reasonFor({ ...decidable, return_date_known: false, expected: 8600, expected_return: 8600, over_tolerance_km: 600, remaining_days: null });
+    expect(s).toMatch(/no return date on the contract/);
+  });
+
+  test('a recall names who agreed it', () => {
+    const s = reasonFor({ ...base, oil_status: 'recall_required', expected_return: 9600, decision: { decided_by: 'Marwa' } });
+    expect(s).toMatch(/Recall agreed by Marwa/);
+    expect(s).toMatch(/raised automatically once the car is back/);
   });
 });

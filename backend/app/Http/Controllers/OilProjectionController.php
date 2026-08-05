@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Helpers\ResponseHelper;
 use App\Models\Contract;
 use App\Models\ContractMileageReading;
+use App\Models\ContractOilDecision;
 use App\Services\OilChangeProjectionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -58,12 +59,15 @@ class OilProjectionController extends Controller
                     ];
                 })
                 ->when($only !== '', fn ($rows) => $rows->where('projection.status', $only))
-                // Chases first, then whoever is closest to their limit; no-data cars last since
+                // Answerable decisions first (someone has to choose today), then the calls that would
+                // make the rest answerable, then everything running its course. No-data cars last —
                 // there is nothing to act on until someone captures a handover reading.
-                ->sortBy(fn ($r) => match ($r['projection']['status']) {
-                    'chase_due' => 0,
-                    'ok'        => 1,
-                    default     => 2,
+                ->sortBy(fn ($r) => match (true) {
+                    ($r['projection']['decision_ready'] ?? false)                                  => 0,
+                    $r['projection']['oil_status'] === OilChangeProjectionService::OIL_RECALL_REQUIRED => 1,
+                    $r['projection']['status'] === 'chase_due'                                     => 2,
+                    $r['projection']['status'] === 'ok'                                            => 3,
+                    default                                                                        => 4,
                 })
                 ->values();
 
@@ -72,6 +76,18 @@ class OilProjectionController extends Controller
                 'ok'        => $rows->where('projection.status', 'ok')->count(),
                 'no_data'   => $rows->where('projection.status', 'no_data')->count(),
                 'total'     => $rows->count(),
+                // The decision axis — what the board is actually worked from. `decision_required`
+                // counts only the cars a person can actually answer for TODAY (projection.decision_ready):
+                // any long rental is arithmetically certain to bust its allowance, so counting the raw
+                // state would put most of the fleet under "Decision needed" every morning and the queue
+                // would be ignored within a week. The rest are counted as what they are — cars whose
+                // number needs refreshing before anyone can decide anything.
+                'decision_required'          => $rows->where('projection.decision_ready', true)->count(),
+                'awaiting_reading'           => $rows->where('projection.oil_status', OilChangeProjectionService::OIL_DECISION_REQUIRED)
+                                                     ->where('projection.decision_ready', false)->count(),
+                'recall_required'            => $rows->where('projection.oil_status', OilChangeProjectionService::OIL_RECALL_REQUIRED)->count(),
+                'service_required_on_return' => $rows->where('projection.oil_status', OilChangeProjectionService::OIL_SERVICE_ON_RETURN)->count(),
+                'within_tolerance'           => $rows->where('projection.oil_status', OilChangeProjectionService::OIL_WITHIN_TOLERANCE)->count(),
             ];
 
             return ResponseHelper::SuccessResponse([
@@ -80,9 +96,12 @@ class OilProjectionController extends Controller
                 'model'     => [
                     'rate_km_per_day' => $this->projection->rate(),
                     'grace_km'        => $this->projection->grace(),
+                    'tolerance_km'    => $this->projection->grace(),
                     // Traceability: the page must be able to say where every number came from.
                     'basis'           => 'expected = anchor odometer + days since anchor × rate;'
-                                       . ' limit = last service odometer + interval (Oil Change sheet) + grace',
+                                       . ' oil limit = last service odometer + interval (Oil Change sheet);'
+                                       . ' allowed max = oil limit + tolerance;'
+                                       . ' expected on return = expected + remaining rental days × rate',
                 ],
             ]);
         } catch (Throwable $e) {
@@ -159,10 +178,44 @@ class OilProjectionController extends Controller
                 'note'        => $data['note'] ?? null,
             ]);
 
-            // Recalculate straight away: the caller sees the new verdict and the next chase date
-            // in the same response, which is the whole point of entering the number.
+            // Recalculate straight away. Saving the number is only half the job: the caller needs to
+            // know, on the same screen and before they hang up, whether this car now finishes inside
+            // the allowance or has become a decision. That verdict — `oil_status` — is the point of
+            // making the call at all, so the write path always returns the full recomputed answer.
             return ResponseHelper::SuccessResponse([
                 'reading'    => $reading,
+                'projection' => $this->projection->project($contract->fresh()),
+            ]);
+        } catch (Throwable $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
+     * Take the call on a rental that cannot finish inside the oil tolerance.
+     *
+     * Two answers only, because operationally there are only two: bring the car back now, or accept
+     * the overrun and service it at close. The service refuses anything else, and refuses the whole
+     * question for a car that is projected to finish inside the allowance — that car is not a
+     * decision, it is an oil change already booked for its return.
+     */
+    public function decide(Request $request, Contract $contract): JsonResponse
+    {
+        try {
+            $data = $request->validate([
+                'decision' => ['required', 'in:' . implode(',', ContractOilDecision::DECISIONS)],
+                'note'     => ['nullable', 'string', 'max:1000'],
+            ]);
+
+            $decision = $this->projection->decide(
+                $contract,
+                $data['decision'],
+                $request->user(),
+                $data['note'] ?? null,
+            );
+
+            return ResponseHelper::SuccessResponse([
+                'decision'   => $decision,
                 'projection' => $this->projection->project($contract->fresh()),
             ]);
         } catch (Throwable $e) {

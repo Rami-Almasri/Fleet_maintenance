@@ -283,6 +283,11 @@ Route::middleware('auth:sanctum')->group(function () {
         ->middleware('permission:reminders.view');
     Route::post('Contract/{contract}/mileage-reading', [\App\Http\Controllers\OilProjectionController::class, 'reading'])
         ->middleware('permission:reminders.manage');
+    // Recall now vs do it on return — the operational call on a rental that can't finish inside
+    // the oil tolerance. Same permission as recording the reading: it's the same person, on the
+    // same call, acting on what the number just told them.
+    Route::post('Contract/{contract}/oil-decision', [\App\Http\Controllers\OilProjectionController::class, 'decide'])
+        ->middleware('permission:reminders.manage');
 });
 
 // Invoices CRUD — website-created (manual) invoices coexist with OfficeManager-synced ones.

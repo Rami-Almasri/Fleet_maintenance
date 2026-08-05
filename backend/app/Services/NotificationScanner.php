@@ -50,6 +50,7 @@ class NotificationScanner
         'booking_in_maintenance:', 'booking_readiness:', 'deferred_maint_return:',
         'part_delivery_overdue:', 'test_interrupted:',
         'oil_projection:', // carries the projection ANCHOR, so a new mileage reading rotates it and re-arms the chase
+        'oil_decision:',   // same anchor discipline: asked once per reading, re-armed by the next one
     ];
 
     /**
@@ -85,6 +86,7 @@ class NotificationScanner
         'test_interrupted'            => 'maintenance.manage',   // controllers (Leen): a recommended test lapsed because the car went back on rent
         'maint_invoice_missing'       => 'maintenance.checkpoint.manage', // the Checkpoint lane's owners: car left the garage, bill never arrived
         'oil_projection'              => 'reminders.manage',              // ask the customer for a mileage reading — further narrowed by an allow-list, see userMayReceive()
+        'oil_decision'                => 'reminders.manage',              // the car can't finish inside the tolerance: recall it, or accept + service on return
     ];
 
     /**
@@ -94,10 +96,12 @@ class NotificationScanner
      */
     private const ALERT_RECIPIENT_ALLOW_LISTS = [
         'oil_projection' => 'maintenance.oil_projection.recipient_user_ids', // Leen & Marwa make these calls
+        'oil_decision'   => 'maintenance.oil_projection.recipient_user_ids', // …and take the decision that follows
     ];
 
     /** Days a garage is given to send its bill before the missing invoice becomes an alert. */
     private const INVOICE_GRACE_DAYS = 2;
+
 
     public function __construct(
         private DashboardService $dashboard,
@@ -570,14 +574,29 @@ class NotificationScanner
                     }
 
                     $p = $this->oilProjection->project($contract);
+
+                    $v   = $contract->vehicle;
+                    $car = trim(($v->code ? '#' . $v->code . ' ' : '') . trim($v->make . ' ' . $v->model)
+                              . ($v->plate_no ? ' (' . $v->plate_no . ')' : ''));
+
+                    // A car that cannot finish the rental inside the tolerance is no longer a request
+                    // for information — it is a request for a DECISION, and it goes to the same two
+                    // people under its own anchor-keyed alert.
+                    //
+                    // But only when it rests on a FRESH REAL NUMBER — `decision_ready`, which the
+                    // projection service owns so this and the board cannot drift apart. Otherwise we
+                    // fall through and chase for a reading instead, which is the whole doctrine of
+                    // this feature: never act on the estimate when you can act on the fact.
+                    if ($p['decision_ready']) {
+                        $chases->push($this->oilDecisionAlert($contract, $v, $car, $p));
+                        continue;
+                    }
+
                     if ($p['status'] !== 'chase_due') {
                         continue; // 'ok' = still inside the limit · 'no_data' = no anchor, we never guess
                     }
 
-                    $v     = $contract->vehicle;
-                    $car   = trim(($v->code ? '#' . $v->code . ' ' : '') . trim($v->make . ' ' . $v->model)
-                                . ($v->plate_no ? ' (' . $v->plate_no . ')' : ''));
-                    $over  = $p['expected'] - $p['threshold'];
+                    $over = $p['expected'] - $p['threshold'];
 
                     $chases->push([
                         'type'     => 'oil_projection',
@@ -605,6 +624,49 @@ class NotificationScanner
             });
 
         return $chases;
+    }
+
+    /**
+     * "This one needs a call you can't make from a spreadsheet."
+     *
+     * Raised when the projection says the car will pass `oil limit + tolerance` before the customer
+     * is contracted to bring it back. The body states the arithmetic in the terms the decision is
+     * actually made in — where it lands, what it is allowed to reach, and how many days are left —
+     * because the person reading it has to choose between recalling a paying customer's car and
+     * letting an engine run over. Keyed by the anchor, like the chase: asked once per reading, and
+     * a fresh reading that still busts the tolerance re-arms it.
+     */
+    private function oilDecisionAlert(Contract $contract, $vehicle, string $car, array $p): array
+    {
+        $over  = max(0, (int) $p['over_tolerance_km']);
+        $days  = $p['remaining_days'];
+        $when  = $p['return_date_known']
+            ? ($days === 0 ? 'due back today' : 'due back in ' . $days . ' ' . ($days === 1 ? 'day' : 'days'))
+            : 'with no return date on the contract';
+
+        return [
+            'type'     => 'oil_decision',
+            'category' => 'maintenance',
+            'severity' => 'warning',
+            'title'    => 'Decision needed · car will run past the oil allowance',
+            'body'     => trim($car . ' is ' . $when . ' and is projected to reach '
+                        . number_format($p['expected_return']) . ' km — ' . number_format($over)
+                        . ' km past the ' . number_format($p['allowed_max']) . ' km allowance.'
+                        . ' Recall it now, or accept it and book the oil change for its return.'),
+            'url'      => '/oil-projection',
+            'key'      => 'oil_decision:' . substr((string) $p['key'], strlen('oil_projection:')),
+            'icon'     => 'oil',
+            'meta'     => [
+                'contract_id'     => $contract->id,
+                'vehicle_id'      => $vehicle->id,
+                'plate'           => $vehicle->plate_no,
+                'expected_return' => $p['expected_return'],
+                'allowed_max'     => $p['allowed_max'],
+                'over_km'         => $over,
+                'remaining_days'  => $days,
+                'oil_status'      => $p['oil_status'],
+            ],
+        ];
     }
 
     /**
