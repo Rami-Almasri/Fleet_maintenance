@@ -35,9 +35,15 @@ class MaintenanceInvoiceResource extends JsonResource
             'variance'              => $inv->variance(),
             'variance_explanation'  => $inv->variance_explanation,
 
-            // Accounting bridge — this invoice's own clock.
+            // Accounting bridge — this invoice's own clock. Distinct from the lifecycle `status` below:
+            // reconciliation answers "did finance match this against the accounting system", while the
+            // lifecycle answers "where is this bill in its own life" (draft → approved → paid).
             'reconciliation_status' => $inv->reconciliation_status,
             'reconciled_at'         => optional($inv->reconciled_at)->toIso8601String(),
+
+            // The shared financial-document lifecycle (see IsFinancialDocument): status, approval,
+            // payment and what is still outstanding.
+            'lifecycle'             => $inv->statusPayload(),
 
             // The faults this invoice covers + their line breakdown (eager-loaded on the ticket surface).
             'task_ids'              => $inv->relationLoaded('tasks') ? $inv->tasks->pluck('id')->all() : null,

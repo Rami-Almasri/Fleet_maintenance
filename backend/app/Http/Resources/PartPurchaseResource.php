@@ -38,6 +38,23 @@ class PartPurchaseResource extends JsonResource
             'requires_review'     => (bool) $this->requires_review,
             'duplicate_of_purchase_id' => $this->duplicate_of_purchase_id,
             'notes'               => $this->notes,
+
+            // ── The paper behind the price (supplier buys only — a garage part is on the garage's bill) ──
+            'part_invoice_id'     => $this->part_invoice_id,
+            'invoice_no'          => $this->whenLoaded('invoice', fn () => $this->invoice?->invoice_no),
+            'invoice_photo_url'   => $this->whenLoaded('invoice', fn () => $this->invoice?->photoUrl()),
+            // A supplier buy whose price has no document yet — what the UI nags about.
+            'invoice_missing'     => $this->needsPartInvoice() && ! $this->part_invoice_id,
+
+            // ── Returns: the buy is never deleted, so the ledger reads gross → refunded → net ──
+            'gross_cost'          => $this->grossCost(),
+            'refunded_total'      => $this->refundedTotal(),
+            'net_cost'            => $this->netCost(),
+            // Whether anything is still returnable — every un-rejected return counted against the quantity.
+            'fully_returned'      => round((float) $this->returns()
+                ->where('status', '!=', \App\Models\PartReturn::STATUS_REJECTED)
+                ->sum('quantity'), 2) >= (float) ($this->quantity ?: 1),
+
             'created_at'          => optional($this->created_at)->toIso8601String(),
         ];
     }

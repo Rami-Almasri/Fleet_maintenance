@@ -53,6 +53,10 @@ export const ROLE_BLOCKED_PATHS = {
     '/finding-keywords',
     '/recurring-fault-reviews',
     '/parts',
+    // Path blocks match on '/' boundaries, so '/parts' does NOT cover '/part-invoices' —
+    // a role denied the parts board must be denied the supplier invoices explicitly.
+    '/part-invoices',
+    '/procurement',
     // The fleet asset board — warranty exposure, installed value, replacement
     // churn. Every role holding `components.view` reaches it by permission, so
     // it has to be denied here for the same roles that lose the other
@@ -135,6 +139,10 @@ export const ROLE_BLOCKED_PATHS = {
     '/oil-projection',          // the controllers' mid-rental oil chase
     '/finding-keywords',
     '/parts',
+    // Path blocks match on '/' boundaries, so '/parts' does NOT cover '/part-invoices' —
+    // a role denied the parts board must be denied the supplier invoices explicitly.
+    '/part-invoices',
+    '/procurement',
     '/components',
     '/car-status',
     '/driver-dispatch',         // the supervisor assigns; the inspector doesn't
@@ -233,6 +241,10 @@ export const ROLE_BLOCKED_PATHS = {
     '/finding-keywords',
     '/recurring-fault-reviews',
     '/parts',
+    // Path blocks match on '/' boundaries, so '/parts' does NOT cover '/part-invoices' —
+    // a role denied the parts board must be denied the supplier invoices explicitly.
+    '/part-invoices',
+    '/procurement',
     '/garages',
     '/drivers',
     '/odometer-approvals',

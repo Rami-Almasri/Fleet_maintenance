@@ -330,13 +330,25 @@ class GarageInvoiceService
                     ])->saveQuietly();
                 }
             } else {
-                $this->workflow->syncLineItems(
-                    $ticket,
-                    $submission->line_items ?? [],
-                    $actor,
-                    $submission->receipt_total !== null ? (float) $submission->receipt_total : null,
-                    $submission->variance_explanation,
-                );
+                // The submission named no garage. That used to fall through to the ticket-level line
+                // writer, which produced lines with no document behind them — the one bypass left in
+                // this path. An unnamed garage is still a real bill, so it is recorded as an IN-HOUSE
+                // invoice: same audited writer, same gates, and every line keeps a traceable origin.
+                $invoice = $this->invoices->create($ticket, [
+                    'is_internal'          => true,
+                    'task_ids'             => $this->coveredTaskIds($submission),
+                    'line_items'           => $submission->line_items ?? [],
+                    'receipt_total'        => $submission->receipt_total !== null ? (float) $submission->receipt_total : null,
+                    'variance_explanation' => $submission->variance_explanation,
+                    'notes'                => $submission->garage_note,
+                ], $actor);
+
+                if ($submission->receipt_photo_key) {
+                    $invoice->forceFill([
+                        'receipt_photo_disk' => $submission->receipt_photo_disk,
+                        'receipt_photo_key'  => $submission->receipt_photo_key,
+                    ])->saveQuietly();
+                }
             }
 
             $submission->fill([

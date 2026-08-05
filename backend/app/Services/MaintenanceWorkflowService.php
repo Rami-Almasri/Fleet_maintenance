@@ -4224,6 +4224,9 @@ class MaintenanceWorkflowService
 
         // Apply any closing values before the guardrail check.
         if (array_key_exists('cost', $data) && $data['cost'] !== '' && $data['cost'] !== null) {
+            // The SAME rule as recordCost, from the same method — a closing screen is not a licence to
+            // type over money that invoices already account for.
+            $this->guardTypedCost($ticket);
             $ticket->cost = $data['cost'];
         }
         if (! empty($data['vendor_id'])) {
@@ -4238,7 +4241,23 @@ class MaintenanceWorkflowService
             ]);
         }
 
-        return DB::transaction(function () use ($ticket, $data, $actor, $fromReinspection) {
+        // CLOSED must mean "financially complete" — otherwise the state says the repair is finished while
+        // its money still cannot be traced to a document. But the car is physically back, so blocking the
+        // operational close would only teach people to work around it. The workflow already has the right
+        // answer for that: AWAITING_INVOICE, the deferred-invoice lane. So a ticket whose money is not yet
+        // documented does all of its operational closing work and lands there instead of CLOSED.
+        $financial   = app(FinancialCompletenessService::class)->check($ticket);
+        $targetState = $financial['complete'] ? Maintenance::WF_CLOSED : Maintenance::WF_AWAITING_INVOICE;
+
+        // If that lane is not reachable from here, refusing is the honest outcome — never a silent close.
+        if (! $financial['complete'] && ! $this->canTransition($ticket, Maintenance::WF_AWAITING_INVOICE)) {
+            throw new WorkflowTransitionException(
+                'This ticket cannot be closed yet. ' . app(FinancialCompletenessService::class)->refusalMessage($financial),
+                ['field' => 'financial', 'blockers' => $financial['blockers']],
+            );
+        }
+
+        return DB::transaction(function () use ($ticket, $data, $actor, $fromReinspection, $targetState, $financial) {
             // Concurrency / double-submit guard: take the ticket's row lock and RE-VALIDATE the close
             // transition against the freshly-read status INSIDE the transaction. Two people (or a
             // double-click) closing the same ticket previously BOTH ran confirmRoutineServices — double
@@ -4246,7 +4265,7 @@ class MaintenanceWorkflowService
             // caller now blocks here until the first commits, then fails this guard cleanly.
             $this->assertTransition(
                 Maintenance::where('id', $ticket->id)->lockForUpdate()->firstOrFail(),
-                Maintenance::WF_CLOSED,
+                $targetState,
             );
 
             // Car came back → 'IN' records the return and the cascade frees it. The inspector may
@@ -4257,7 +4276,13 @@ class MaintenanceWorkflowService
                 : Carbon::today();
             $ticket->wf_closed_by    = $actor->id;
             $ticket->wf_closed_at    = Carbon::now();
-            $ticket->workflow_status = Maintenance::WF_CLOSED;
+            $ticket->workflow_status = $targetState;
+
+            // Parked in the deferred-invoice lane: stamp WHEN the wait started so the outstanding-invoice
+            // trackers pick it up, exactly as deferInvoice() does.
+            if ($targetState === Maintenance::WF_AWAITING_INVOICE) {
+                $ticket->awaiting_invoice_since = Carbon::now();
+            }
 
             // Auto-generate the LEGACY-FORMAT maintenance note from the ticket's structured workflow
             // data (inspector report + findings + garage notes + dates/garage/odometer), so the closed
@@ -5158,6 +5183,19 @@ class MaintenanceWorkflowService
     {
         $this->assertTransition($ticket, Maintenance::WF_CLOSED);
 
+        // A ticket may not close carrying money that cannot be traced to a document. This is the gate
+        // that turns the audit from a report into a workflow: without it, "0% traceable" simply happens
+        // again on the next ticket. The refusal always names the specific next action, and there is
+        // always a documented way past it — record the invoice, or record an adjustment that explains
+        // the figure. See FinancialCompletenessService.
+        $check = app(FinancialCompletenessService::class)->check($ticket);
+        if (! $check['complete']) {
+            throw new WorkflowTransitionException(
+                'This ticket cannot be closed yet. ' . app(FinancialCompletenessService::class)->refusalMessage($check),
+                ['field' => 'financial', 'blockers' => $check['blockers']],
+            );
+        }
+
         return DB::transaction(function () use ($ticket, $actor) {
             $ticket->workflow_status       = Maintenance::WF_CLOSED;
             $ticket->awaiting_invoice_since = null;
@@ -5189,6 +5227,8 @@ class MaintenanceWorkflowService
         if (! is_numeric($cost) || (float) $cost < 0) {
             throw new WorkflowTransitionException('Enter a valid repair cost (a number, 0 or more).', ['field' => 'cost']);
         }
+
+        $this->guardTypedCost($ticket);
 
         return DB::transaction(function () use ($ticket, $cost, $actor) {
             $ticket->cost             = round((float) $cost, 2);
@@ -5286,34 +5326,15 @@ class MaintenanceWorkflowService
         ?string $varianceExplanation = null,
     ): Maintenance {
         return DB::transaction(function () use ($ticket, $items, $actor, $receiptTotal, $varianceExplanation) {
-            $this->applyLineItems($ticket, $items, $actor);
+            // The lines, the variance gate and the reconciliation flag are ALL owned by the invoice this
+            // delegates to — there is one implementation of each, not two that can drift.
+            $this->applyLineItems($ticket, $items, $actor, $receiptTotal, $this->clean($varianceExplanation));
 
-            // Variance gate — the itemised sum (now on $ticket->cost) vs the hand-keyed receipt total.
-            // A gap over one cent must be explained, or the save is rejected before anything is stamped.
-            $explanation = $this->clean($varianceExplanation);
-            $variance    = 0.0;
-            if ($receiptTotal !== null) {
-                $variance = round((float) $ticket->cost - (float) $receiptTotal, 2);
-                if (abs($variance) > 0.01 && $explanation === null) {
-                    throw new WorkflowTransitionException(
-                        'The itemised total (AED ' . number_format((float) $ticket->cost, 2) . ') does not match the '
-                        . 'receipt total (AED ' . number_format((float) $receiptTotal, 2) . '). Add a variance '
-                        . 'explanation to record it.',
-                        ['field' => 'variance_explanation', 'variance' => $variance],
-                    );
-                }
-            }
-
-            $ticket->receipt_total = $receiptTotal;
-            // Keep the note only while it is actually needed (a real mismatch); a matching invoice clears it.
-            $ticket->variance_explanation = ($receiptTotal !== null && abs($variance) > 0.01) ? $explanation : null;
-
-            // Accounting bridge — flag a real itemised invoice as pending reconciliation for the finance
-            // engine ("Financial-Pending-Reconciliation"). An empty submission leaves the flag untouched.
-            if ($ticket->lineItems()->count() > 0) {
-                $ticket->reconciliation_status     = Maintenance::RECON_PENDING;
-                $ticket->reconciliation_flagged_at = Carbon::now();
-            }
+            // The ticket's receipt total + headline reconciliation status are rolled up from its
+            // invoices (Maintenance::recalcInvoiceAggregate, fired by the invoice's own save hook), so
+            // nothing is set here that the documents do not already say.
+            $ticket->refresh();
+            $variance = $receiptTotal !== null ? round((float) $ticket->cost - (float) $receiptTotal, 2) : 0.0;
 
             $ticket->cost_recorded_at = Carbon::now();
             $ticket->cost_recorded_by = $actor->id;
@@ -5381,101 +5402,64 @@ class MaintenanceWorkflowService
     }
 
     /**
-     * Replace the ticket's Parts + Labor lines with a fresh set and re-derive the totals on the row.
-     * Each raw row is normalised into a MaintenanceLineItem: a 'part' carries name/qty/unit price +
-     * the install date & warranty months that power durability tracking; a 'labor' line is hours ×
-     * rate. The line's `vehicle_id` is denormalised from the ticket (fast TCO/lifespan reports), and
-     * `installed_odometer` falls back to the ticket's return reading when the caller leaves it blank.
+     * Replace the ticket's Parts + Labor lines — THROUGH the garage invoice that backs them.
      *
-     * Does NOT save the ticket — it sets parts_total/labor_total/cost in memory via
-     * recalcLineItemTotals() and leaves persistence to the caller (so it composes inside markReady's
-     * own save, and syncLineItems saves explicitly with its audit stamps).
+     * This used to write maintenance_line_items straight onto the ticket. It was a second, competing
+     * implementation of invoice entry: it duplicated the Diagnosis-First and variance gates, and — the
+     * real damage — every line it produced carried no `maintenance_invoice_id`, so it was untraceable by
+     * construction. That single path is where the AED 13,685 of "real lines never attached to any
+     * invoice" in the traceability audit came from.
      *
-     * @param array<int,array> $items
+     * So it now resolves the ticket's bill and delegates to {@see MaintenanceInvoiceService}, the one
+     * audited writer. The endpoint, the request shape and the UI are unchanged; what changes is that
+     * every line now lands on a document and carries its structured origin.
+     *
+     * Ambiguity is refused rather than guessed: a ticket worked in two garages has two bills, and
+     * "replace the ticket's lines" has no single correct meaning there — the caller is sent to the
+     * invoice they actually mean.
      */
-    private function applyLineItems(Maintenance $ticket, array $items, User $actor): void
-    {
-        // Diagnosis-First: every line MUST be attributed to a finding that exists on this ticket — no
-        // ghost costs. Build the allowed set (inspector + garage findings, matched case-insensitively
-        // on text) once, and validate the WHOLE incoming batch before touching anything, so an unlinked
-        // or unknown line fails fast with no side effects.
-        $findingTexts = collect($ticket->findings ?? [])
-            ->pluck('text')
-            ->filter()
-            ->map(fn ($t) => mb_strtolower(trim((string) $t)))
-            ->flip();
+    private function applyLineItems(
+        Maintenance $ticket,
+        array $items,
+        User $actor,
+        ?float $receiptTotal = null,
+        ?string $varianceExplanation = null,
+    ): void {
+        $invoices = app(MaintenanceInvoiceService::class);
+        $existing = $ticket->invoices()->get();
 
-        foreach ($items as $row) {
-            if (! is_array($row) || $this->clean($row['description'] ?? null) === null) {
-                continue; // a line with no description is meaningless — skipped, never persisted
-            }
-            $finding = $this->clean($row['finding_text'] ?? null);
-            if ($finding === null) {
-                throw new WorkflowTransitionException(
-                    'Every part or labor line must be linked to a finding on this ticket (Diagnosis-First).',
-                    ['field' => 'finding_text'],
-                );
-            }
-            if (! $findingTexts->has(mb_strtolower($finding))) {
-                throw new WorkflowTransitionException(
-                    "“{$finding}” is not a finding on this ticket — link each cost to an existing symptom.",
-                    ['field' => 'finding_text'],
-                );
-            }
+        if ($existing->count() > 1) {
+            throw new WorkflowTransitionException(
+                'This ticket carries ' . $existing->count() . ' invoices, so "replace all lines" is ambiguous. '
+                . 'Edit the specific garage invoice these lines belong to.',
+                ['field' => 'line_items', 'invoice_ids' => $existing->pluck('id')->all()],
+            );
         }
 
-        // Wholesale replace — the editor always submits the full current set.
-        $ticket->lineItems()->delete();
-
-        $fallbackOdo = $ticket->return_odometer ?: $ticket->receive_odometer ?: null;
-
-        foreach ($items as $row) {
-            if (! is_array($row)) {
-                continue;
-            }
-            $kind = ($row['kind'] ?? null) === MaintenanceLineItem::KIND_LABOR
-                ? MaintenanceLineItem::KIND_LABOR
-                : MaintenanceLineItem::KIND_PART;
-
-            $description = $this->clean($row['description'] ?? null);
-            if ($description === null) {
-                continue; // a line with no description is meaningless — skip it
-            }
-
-            $isPart = $kind === MaintenanceLineItem::KIND_PART;
-            $qty    = isset($row['quantity']) && is_numeric($row['quantity']) ? round((float) $row['quantity'], 2) : 1;
-            $price  = isset($row['unit_price']) && is_numeric($row['unit_price']) ? round((float) $row['unit_price'], 2) : 0;
-
-            $ticket->lineItems()->create([
-                'vehicle_id'         => $ticket->vehicle_id,
-                'kind'               => $kind,
-                'finding_text'       => $this->clean($row['finding_text'] ?? null),
-                'category_key'       => $this->clean($row['category_key'] ?? null),
-                'description'        => $description,
-                'part_number'        => $isPart ? $this->clean($row['part_number'] ?? null) : null,
-                // Lightweight tire tracking — audit trail captured only when a tire part is fitted
-                // (category 'tyres'); harmless nulls on every other line.
-                'tire_brand'         => $isPart ? $this->clean($row['tire_brand'] ?? null) : null,
-                'tire_dot'           => $isPart ? $this->clean($row['tire_dot'] ?? null) : null,
-                'tire_tread_mm'      => $isPart && isset($row['tire_tread_mm']) && is_numeric($row['tire_tread_mm']) ? (float) $row['tire_tread_mm'] : null,
-                'quantity'           => max(0, $qty),
-                'uom'                => $this->clean($row['uom'] ?? null) ?: ($isPart ? 'unit' : 'hour'),
-                'unit_price'         => max(0, $price),
-                // Durability/warranty only make sense for a part.
-                'installed_on'       => $isPart ? ($this->clean($row['installed_on'] ?? null) ?: $ticket->actual_in_date?->toDateString() ?: null) : null,
-                'installed_odometer' => $isPart ? ((isset($row['installed_odometer']) && is_numeric($row['installed_odometer'])) ? (int) $row['installed_odometer'] : $fallbackOdo) : null,
-                'warranty_months'    => $isPart && isset($row['warranty_months']) && is_numeric($row['warranty_months']) ? (int) $row['warranty_months'] : null,
-                'created_by'         => $actor->id,
-                // Provenance: the capture method. Defaults to 'manual'; an OCR/import pipeline sends the
-                // same line shape with entry_source='ocr'; an accepted garage-portal submission tags 'garage'.
-                'entry_source'       => in_array(($row['entry_source'] ?? null), ['manual', 'ocr', 'import', 'garage'], true)
-                                            ? $row['entry_source'] : 'manual',
-            ]);
+        $payload = ['line_items' => $items];
+        if ($receiptTotal !== null || $varianceExplanation !== null) {
+            $payload['receipt_total']        = $receiptTotal;
+            $payload['variance_explanation'] = $varianceExplanation;
         }
 
-        // Re-read the freshly written set and roll the totals onto the ticket row (no save here).
-        $ticket->load('lineItems');
-        $ticket->recalcLineItemTotals();
+        if ($invoice = $existing->first()) {
+            $invoices->update($invoice, $payload, $actor);
+
+            return;
+        }
+
+        // No bill yet — open the one these lines belong to. It takes the ticket's garage when there is
+        // one; with no garage it is an in-house bill, which is a real document rather than the absence
+        // of one. Non-incorrect faults are attached so cost still attributes per fault, and an incorrect
+        // fault is deliberately left off (billing one is refused by IncorrectFaultCostGuard).
+        $payload['vendor_id']   = $ticket->vendor_id;
+        $payload['is_internal'] = $ticket->vendor_id === null;
+        $payload['task_ids']    = $ticket->tasks()
+            ->whereNull('marked_incorrect_at')
+            ->pluck('id')
+            ->all();
+
+        $invoices->create($ticket, $payload, $actor);
     }
 
     /**
@@ -5806,6 +5790,34 @@ class MaintenanceWorkflowService
     }
 
     /** Reject any move the current state does not permit. */
+    /** Is this move legal from where the ticket stands? The question form of {@see assertTransition()}. */
+    private function canTransition(Maintenance $ticket, string $to): bool
+    {
+        return in_array($to, self::TRANSITIONS[$ticket->workflow_status] ?? [], true);
+    }
+
+    /**
+     * The ONE rule about hand-typed totals, so the closing screen and the deferred-cost screen cannot
+     * disagree about it.
+     *
+     * A typed total is how 311 of 354 tickets ended up with a cost no document supports. Once a ticket
+     * carries real billed lines, typing over their sum would silently contradict the invoices underneath,
+     * so it is refused and the caller is pointed at the two paths that leave a document behind.
+     */
+    private function guardTypedCost(Maintenance $ticket): void
+    {
+        if (! $ticket->lineItems()->exists()) {
+            return;
+        }
+
+        throw new WorkflowTransitionException(
+            'This ticket is itemised — its cost is the sum of its invoice lines (AED '
+            . number_format((float) $ticket->cost, 2) . ') and cannot be typed over. To change it, edit '
+            . 'the invoice it came from, or record an adjustment explaining the difference.',
+            ['field' => 'cost', 'itemised_total' => (float) $ticket->cost],
+        );
+    }
+
     private function assertTransition(Maintenance $ticket, string $to): void
     {
         $from = $ticket->workflow_status;

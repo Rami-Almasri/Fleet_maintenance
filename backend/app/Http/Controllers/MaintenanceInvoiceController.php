@@ -127,6 +127,10 @@ class MaintenanceInvoiceController extends Controller
             'line_items.*.tire_brand'   => ['nullable', 'string', 'max:80'],
             'line_items.*.tire_dot'     => ['nullable', 'string', 'max:40'],
             'line_items.*.tire_tread_mm'=> ['nullable', 'numeric', 'min:0'],
+            // VAT and discount are keyed as the paper states them (both positive). The service writes them
+            // as ledger lines so they stay auditable; the discount is stored negative there.
+            'vat_amount'                => ['nullable', 'numeric', 'min:0'],
+            'discount_amount'           => ['nullable', 'numeric', 'min:0'],
             'receipt_total'             => ['nullable', 'numeric', 'min:0'],
             'variance_explanation'      => ['nullable', 'string', 'max:2000'],
             'receipt_photo'             => ['nullable', 'image', 'max:8192'],

@@ -25,6 +25,8 @@ use Illuminate\Support\Facades\DB;
  */
 class PartsDemoSeed extends Command
 {
+    use Concerns\GuardsDemoWrites;
+
     protected $signature = 'parts:demo-seed {--clean : Remove all [PARTS-DEMO] data instead of creating it}';
 
     protected $description = 'Seed (or --clean) realistic demo data for the Parts Purchase workflow on the Ford Mustang.';
@@ -33,6 +35,11 @@ class PartsDemoSeed extends Command
 
     public function handle(PartWorkflowService $svc, PartIntelligenceService $intel): int
     {
+        // A demo tool may not manufacture financial rows in the live schema — see GuardsDemoWrites.
+        if (! $this->demoWritesAllowed()) {
+            return self::FAILURE;
+        }
+
         if ($this->option('clean')) {
             return $this->clean();
         }

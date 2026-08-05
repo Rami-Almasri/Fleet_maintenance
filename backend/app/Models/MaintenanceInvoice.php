@@ -25,6 +25,8 @@ use Illuminate\Support\Facades\Storage;
  */
 class MaintenanceInvoice extends Model
 {
+    use \App\Models\Concerns\IsFinancialDocument;
+
     protected $table = 'maintenance_invoices';
 
     protected $fillable = [
@@ -34,6 +36,8 @@ class MaintenanceInvoice extends Model
         'invoice_no',
         'parts_total',
         'labor_total',
+        'vat_total',
+        'discount_total',
         'amount',
         'receipt_total',
         'variance_explanation',
@@ -46,18 +50,58 @@ class MaintenanceInvoice extends Model
         'notes',
         'recorded_by',
         'recorded_at',
+        // Lifecycle — see IsFinancialDocument + FinancialDocumentStatus. Distinct from
+        // `reconciliation_status`, which answers a different question: reconciliation is "did finance match
+        // this against the accounting system", while `status` is "where is this bill in its own life".
+        'status', 'due_date', 'terms_days',
+        'approved_by', 'approved_by_name', 'approved_at',
+        'paid_amount', 'paid_at', 'payment_reference', 'paid_by',
+        'cancelled_at', 'cancellation_reason',
     ];
 
     protected $casts = [
         'is_internal'               => 'boolean',
         'parts_total'               => 'decimal:2',
         'labor_total'               => 'decimal:2',
+        'vat_total'                 => 'decimal:2',
+        'discount_total'            => 'decimal:2',
         'amount'                    => 'decimal:2',
         'receipt_total'             => 'decimal:2',
         'reconciliation_flagged_at' => 'datetime',
         'reconciled_at'             => 'datetime',
         'recorded_at'               => 'datetime',
+        'paid_amount'               => 'decimal:2',
+        'due_date'                  => 'date',
+        'approved_at'               => 'datetime',
+        'paid_at'                   => 'datetime',
+        'cancelled_at'              => 'datetime',
     ];
+
+    // ── Financial document (IsFinancialDocument) ──────────────────────────────────────────────────
+
+    /** What settling this garage bill in full would cost. */
+    public function documentTotal(): float
+    {
+        return round((float) $this->amount, 2);
+    }
+
+    /**
+     * A garage bill has no return path of its own — parts go back to the SUPPLIER that sold them, and a
+     * labour refund is recorded as an adjustment rather than as a credit against this document. So there
+     * is nothing to derive here, and a garage invoice never reports itself as refunded.
+     */
+    public function documentRefunded(): float
+    {
+        return 0.0;
+    }
+
+    /** A garage bill carries no separate invoice date — it is reckoned from when we recorded it. */
+    public function documentDate(): ?string
+    {
+        $date = $this->recorded_at ?: $this->created_at;
+
+        return $date ? Carbon::parse($date)->toDateString() : null;
+    }
 
     protected static function booted(): void
     {
@@ -115,10 +159,17 @@ class MaintenanceInvoice extends Model
 
         $parts = round((float) $lines->where('kind', MaintenanceLineItem::KIND_PART)->sum('line_total'), 2);
         $labor = round((float) $lines->where('kind', MaintenanceLineItem::KIND_LABOR)->sum('line_total'), 2);
+        // VAT is positive, discount is stored negative — so the grand total stays a plain sum and no
+        // reader has to remember which way each band points.
+        $vat      = round((float) $lines->where('kind', MaintenanceLineItem::KIND_VAT)->sum('line_total'), 2);
+        $discount = round((float) $lines->where('kind', MaintenanceLineItem::KIND_DISCOUNT)->sum('line_total'), 2);
+        $adjust   = round((float) $lines->where('kind', MaintenanceLineItem::KIND_ADJUSTMENT)->sum('line_total'), 2);
 
-        $this->parts_total = $parts;
-        $this->labor_total = $labor;
-        $this->amount      = round($parts + $labor, 2);
+        $this->parts_total    = $parts;
+        $this->labor_total    = $labor;
+        $this->vat_total      = $vat;
+        $this->discount_total = $discount;
+        $this->amount         = round($parts + $labor + $vat + $discount + $adjust, 2);
         $this->saveQuietly();
     }
 

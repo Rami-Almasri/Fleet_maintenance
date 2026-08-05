@@ -27,6 +27,8 @@ use Illuminate\Support\Facades\DB;
  */
 class PartsApprovalDemoSeed extends Command
 {
+    use Concerns\GuardsDemoWrites;
+
     protected $signature = 'parts:demo-approval {--clean : Remove all [APPROVAL-DEMO] data instead of creating it}';
 
     protected $description = 'Seed (or --clean) part requests that trip the approve-time duplicate warning.';
@@ -35,6 +37,11 @@ class PartsApprovalDemoSeed extends Command
 
     public function handle(PartWorkflowService $svc, PartIntelligenceService $intel): int
     {
+        // A demo tool may not manufacture financial rows in the live schema — see GuardsDemoWrites.
+        if (! $this->demoWritesAllowed()) {
+            return self::FAILURE;
+        }
+
         if ($this->option('clean')) {
             return $this->clean();
         }

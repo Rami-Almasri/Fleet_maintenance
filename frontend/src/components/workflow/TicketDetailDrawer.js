@@ -13,6 +13,9 @@ import RepairQualityCheck from './RepairQualityCheck';
 import RequiredPartsPanel from './RequiredPartsPanel';
 import RepairOutlook from './RepairOutlook';
 import VideoEvidence from './VideoEvidence';
+import CostJourney from './CostJourney';
+import FinancialStory from './FinancialStory';
+import ProcurementLifecycle from './ProcurementLifecycle';
 import InvoicesPanel from './InvoicesPanel';
 import TicketParts from './TicketParts';
 import SuggestedChecks from './SuggestedChecks';
@@ -455,6 +458,32 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
                 <TestDriveReport report={tk.test_drive_report} tasks={tk.tasks} />
               </div>
             )}
+          </Section>
+
+          {/* Financial Story — LEADS the money section on purpose. It opens with what is still owed
+              before the ticket can close (the only part anyone must act on), then the narrative from
+              diagnosis to closure. The breakdown and lifecycle below explain the figures; this says what
+              to do about them. Self-fetching; silent when nothing financial has happened. */}
+          <Section title="Financial Story" icon={<Icon.Invoice className="h-3.5 w-3.5 text-slate-400" />}>
+            <FinancialStory ticketId={ticketId} reloadKey={reloadKey} />
+          </Section>
+
+          {/* Repair Cost Breakdown — the ticket's money read end to end: fault → required part → where the
+              part came from → its invoice → what fitting it cost → the total. Sits ABOVE the invoice list
+              on purpose: this is what the cost IS, the panels below are where it is edited. Self-fetching,
+              read-only, and renders nothing until the ticket has money or required parts. */}
+          {tk.tasks?.length > 0 && (
+            <Section title="Repair Cost Breakdown" icon={<Icon.Coins className="h-3.5 w-3.5 text-slate-400" />}>
+              <CostJourney ticketId={ticketId} reloadKey={reloadKey} />
+            </Section>
+          )}
+
+          {/* Procurement Lifecycle — request → PO → invoice → received → installed → return → paid →
+              closed, per part. Sits under the cost breakdown because it answers the other half of the
+              money question: not what it cost, but what has been ordered, received, fitted and paid.
+              Self-fetching; renders nothing when nothing was ever ordered for this ticket. */}
+          <Section title="Procurement Lifecycle" icon={<Icon.Route className="h-3.5 w-3.5 text-slate-400" />}>
+            <ProcurementLifecycle ticketId={ticketId} reloadKey={reloadKey} />
           </Section>
 
           {/* Invoices — One Ticket → Many Invoices: each garage's bill for the faults it fixed. Present

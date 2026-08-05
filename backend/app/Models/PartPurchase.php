@@ -116,4 +116,52 @@ class PartPurchase extends Model
     {
         return $this->hasOne(VehicleComponent::class, 'source_part_purchase_id');
     }
+
+    /**
+     * The SUPPLIER invoice this purchase is billed on — the document behind its price.
+     *
+     * Only ever set for a supplier buy. A garage-sourced part is billed on that garage's
+     * {@see MaintenanceInvoice} instead, so it never carries a part invoice ([[PartInvoice]]).
+     */
+    public function invoice(): BelongsTo
+    {
+        return $this->belongsTo(PartInvoice::class, 'part_invoice_id');
+    }
+
+    /** Every return raised against this buy — full or partial, settled or still moving. */
+    public function returns(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(PartReturn::class, 'part_purchase_id');
+    }
+
+    /** Whether this buy needs a supplier invoice keyed against it (a garage buy never does). */
+    public function needsPartInvoice(): bool
+    {
+        return $this->purchase_source === self::SOURCE_SUPPLIER;
+    }
+
+    // ── Money ─────────────────────────────────────────────────────────────────────────────────────
+
+    /** What we paid, before any return: price × quantity. */
+    public function grossCost(): float
+    {
+        return round((float) $this->purchase_price * (float) ($this->quantity ?: 1), 2);
+    }
+
+    /** What actually came back — refunded returns only; a requested/sent return is not money yet. */
+    public function refundedTotal(): float
+    {
+        $returns = $this->relationLoaded('returns') ? $this->returns : $this->returns()->get();
+
+        return round((float) $returns->where('status', PartReturn::STATUS_REFUNDED)->sum('refund_amount'), 2);
+    }
+
+    /**
+     * What this part really cost the fleet: paid minus refunded. A restocking fee is deliberately NOT
+     * credited — it is money we did not get back, so it stays in the cost.
+     */
+    public function netCost(): float
+    {
+        return round($this->grossCost() - $this->refundedTotal(), 2);
+    }
 }

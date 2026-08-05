@@ -14,6 +14,7 @@ import { Input, Select, Textarea } from '../components/ui/Field';
 import PartsAnalytics from '../components/analytics/PartsAnalytics';
 import PartPurchaseHistory from '../components/parts/PartPurchaseHistory';
 import PartRecordModal from '../components/parts/PartRecordModal';
+import PartReturnModal from '../components/parts/PartReturnModal';
 import { SHOW_FINANCIALS } from '../config/features';
 import { aed, fmtAgo, num } from '../lib/format';
 
@@ -777,6 +778,8 @@ export default function Parts() {
   // Modals hold a request → pause background polling while any is open.
   const [purchaseFor, setPurchaseFor] = useState(null);
   const [installFor, setInstallFor] = useState(null);
+  // The PURCHASE being returned (not the request) — a return is raised against the specific buy.
+  const [returnFor, setReturnFor] = useState(null);
   const [rejectFor, setRejectFor] = useState(null);
   const [approveFor, setApproveFor] = useState(null); // { request, dup } — set only when a duplicate trips
   const [recordFor, setRecordFor] = useState(null);   // the row whose full part record is open
@@ -967,6 +970,25 @@ export default function Parts() {
     if (r.status === 'installed' && canRequest) {
       actions.push(<Button key="complete" variant="success" size="sm" loading={isBusy(r, 'complete')} onClick={() => runAction(r, 'complete', 'Request completed')}>Complete</Button>);
     }
+    // Return — available from the moment a part has actually been bought, and still available after it was
+    // fitted (a part can fail on the bench or turn out to be the wrong one once it's on the car). It never
+    // deletes the purchase: it logs a return beside it and, once refunded, credits the ticket.
+    if (canPurchase && r.purchases?.length) {
+      const returnable = [...r.purchases].reverse().find((p) => !p.fully_returned);
+      if (returnable) {
+        actions.push(
+          <Button
+            key="return"
+            variant="ghost"
+            size="sm"
+            className="text-amber-700 hover:bg-amber-50"
+            onClick={() => setReturnFor({ ...returnable, supplier: returnable.supplier || returnable.source_name })}
+          >
+            Return
+          </Button>,
+        );
+      }
+    }
     return actions;
   };
 
@@ -1120,6 +1142,12 @@ export default function Parts() {
         open={!!installFor}
         request={installFor}
         onClose={() => setInstallFor(null)}
+        onDone={() => reload({ silent: true })}
+      />
+      <PartReturnModal
+        open={!!returnFor}
+        purchase={returnFor}
+        onClose={() => setReturnFor(null)}
         onDone={() => reload({ silent: true })}
       />
       <RejectModal

@@ -876,6 +876,9 @@ class Maintenance extends Model
         'wf_closed_by', 'wf_closed_at',
         // Financial Decoupling (Deferred Cost) — who recorded the final cost after close, and when.
         'cost_recorded_at', 'cost_recorded_by',
+        // Legacy marking: this cost predates financial documents, so it is reported as a known backlog
+        // rather than as a fresh failure. See CostVerificationService.
+        'cost_legacy_at', 'cost_legacy_note',
         // Path A (Manual Entry) — when/by-whom we asked the garage for an itemised invoice.
         'invoice_requested_at', 'invoice_requested_by',
         // Awaiting-Invoice SLA — when the ticket entered awaiting_invoice (the 3-day overdue clock).
@@ -943,6 +946,7 @@ class Maintenance extends Model
         'park_arrived_at'      => 'datetime',
         'wf_closed_at'         => 'datetime',
         'cost_recorded_at'     => 'datetime',
+        'cost_legacy_at'       => 'datetime',
         'invoice_requested_at' => 'datetime',
         'awaiting_invoice_since' => 'datetime',
         // Recommendation queue triage
@@ -1741,7 +1745,10 @@ class Maintenance extends Model
 
         $this->parts_total      = $parts;
         $this->labor_total      = $labor;
-        $this->cost             = round($parts + $labor, 2); // line items OWN the grand total once itemised
+        // The grand total is the sum of EVERY line, not just parts + labor: VAT, discounts and
+        // adjustments are ledger rows too, so a ticket with any of them still totals to its documents.
+        // With none of them present this is identical to the old parts + labor, by construction.
+        $this->cost             = round((float) $items->sum('line_total'), 2);
         $this->cost_is_itemized = true;
     }
 

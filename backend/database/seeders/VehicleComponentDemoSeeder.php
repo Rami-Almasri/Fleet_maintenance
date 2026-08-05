@@ -43,6 +43,27 @@ class VehicleComponentDemoSeeder extends Seeder
     /** Tag written into part_purchases.notes and component_events.meta so demo rows are findable. */
     public const MARKER = 'COMPONENT_DEMO';
 
+    /**
+     * TARGETED MODE — fit these vehicle ids and ONLY these, leaving every other demo car untouched.
+     *
+     * Without it, a re-run wipes all {@see MARKER} rows and rebuilds the whole 80-car sample, which
+     * re-rolls cars a colleague may have open in a browser. Set this (via `components:demo-fit`) and
+     * both the wipe and the build are scoped to the named cars, so topping up one vehicle costs
+     * nothing anywhere else. Also bypasses the hash-order sample and {@see MIN_ODOMETER}: the caller
+     * named the car deliberately.
+     *
+     * @var array<int,int>
+     */
+    public array $onlyVehicleIds = [];
+
+    /**
+     * Raise the FLOOR of every slot's generation range, so a targeted car is guaranteed a repeat
+     * chain instead of one that happens to roll a single generation. 0 = leave {@see GENERATIONS}
+     * alone. Only honest as a demo lever — it makes the car heavier on replacements than the fleet,
+     * which is the whole point of a showcase, and the ceiling is still each slot's own maximum.
+     */
+    public int $minGenerations = 0;
+
     private const VEHICLE_COUNT   = 80;
     private const MIN_SLOTS       = 20;
     private const MAX_SLOTS       = 40;
@@ -153,8 +174,25 @@ class VehicleComponentDemoSeeder extends Seeder
 
     public function run(): void
     {
-        $this->command?->info('Wiping any previous ' . self::MARKER . ' rows…');
-        self::teardown();
+        // This seeder creates part_purchases directly, bypassing PartWorkflowService and its gates, so on
+        // the live schema it would manufacture exactly the untraceable spend the financial workflow
+        // exists to prevent. It has happened before and had to be purged by hand.
+        $database = (string) config('database.connections.' . config('database.default') . '.database');
+        if (app()->environment('production') || in_array($database, ['laravel', 'fleet', 'production'], true)) {
+            $this->command?->error(
+                "Refused: this is a demo seeder and the target database is '{$database}'. "
+                . 'Point DB_DATABASE at a scratch schema and run it again.'
+            );
+
+            return;
+        }
+
+        $targeted = ! empty($this->onlyVehicleIds);
+
+        $this->command?->info($targeted
+            ? 'Wiping previous ' . self::MARKER . ' rows for vehicle(s) ' . implode(', ', $this->onlyVehicleIds) . '…'
+            : 'Wiping any previous ' . self::MARKER . ' rows…');
+        self::teardown($targeted ? $this->onlyVehicleIds : null);
 
         $catalogs = ComponentCatalog::active()
             ->where('tracking_mode', '!=', ComponentCatalog::TRACKING_CONSUMABLE)
@@ -177,12 +215,34 @@ class VehicleComponentDemoSeeder extends Seeder
         // — the car had simply dropped out of the sample. Hashing the id gives the same scattered
         // 80 cars every time: still spread across the fleet rather than the first 80 by id, but
         // repeatable, so links stay valid and a re-run refreshes the SAME cars.
-        $vehicles = Vehicle::query()
-            ->whereNotNull('plate_no')
-            ->where('odometer', '>=', self::MIN_ODOMETER)
-            ->orderByRaw('MD5(CONCAT(id, ?))', [self::MARKER])
-            ->limit(self::VEHICLE_COUNT)
-            ->get();
+        $vehicles = $targeted
+            // Named explicitly — the sample rules do not apply, but the odometer floor still has to
+            // be reported, because a car below it cannot carry an honest install reading.
+            ? Vehicle::query()->whereIn('id', $this->onlyVehicleIds)->get()
+            : Vehicle::query()
+                ->whereNotNull('plate_no')
+                ->where('odometer', '>=', self::MIN_ODOMETER)
+                ->orderByRaw('MD5(CONCAT(id, ?))', [self::MARKER])
+                ->limit(self::VEHICLE_COUNT)
+                ->get();
+
+        if ($targeted) {
+            $tooNew = $vehicles->filter(fn (Vehicle $v) => (int) $v->odometer < self::MIN_ODOMETER);
+
+            foreach ($tooNew as $v) {
+                $this->command?->warn(sprintf(
+                    'Vehicle %d (%s) reads %s km, below the %s km floor — its generated history will be '
+                    . 'compressed into that distance.',
+                    $v->id, $v->plate_no, number_format((int) $v->odometer), number_format(self::MIN_ODOMETER)
+                ));
+            }
+
+            $missing = array_diff($this->onlyVehicleIds, $vehicles->pluck('id')->all());
+
+            foreach ($missing as $id) {
+                $this->command?->error("Vehicle {$id} not found — skipped.");
+            }
+        }
 
         if ($vehicles->isEmpty()) {
             $this->command?->error('No vehicles found — nothing to fit components to.');
@@ -266,6 +326,13 @@ class VehicleComponentDemoSeeder extends Seeder
         $tickets, $suppliers, $garages, ?User $actor, array &$stats
     ): void {
         [$minGen, $maxGen] = self::GENERATIONS[$catalog->slug] ?? [1, 1];
+
+        // A showcase car raises the floor but never the ceiling: a part the fleet replaces at most
+        // twice must not suddenly show five generations just because someone wanted a demo.
+        if ($this->minGenerations > 0) {
+            $minGen = min($maxGen, max($minGen, $this->minGenerations));
+        }
+
         $generations = random_int($minGen, $maxGen);
 
         // Fractions along the history window where each generation begins. 0 = oldest record we hold,
@@ -663,8 +730,11 @@ class VehicleComponentDemoSeeder extends Seeder
      * Remove every row this seeder created, and nothing else. Order matters: events reference
      * components, components reference purchases, and a component's successor FK must be cleared
      * before its predecessor row can go.
+     *
+     * @param array<int,int>|null $vehicleIds when given, remove ONLY these cars' demo rows and leave
+     *                                        every other demo car standing
      */
-    public static function teardown(): void
+    public static function teardown(?array $vehicleIds = null): void
     {
         $purchaseIds = PartPurchase::where('notes', self::MARKER)->pluck('id');
 
@@ -672,7 +742,17 @@ class VehicleComponentDemoSeeder extends Seeder
             return;
         }
 
-        $componentIds = VehicleComponent::whereIn('source_part_purchase_id', $purchaseIds)->pluck('id');
+        $componentIds = VehicleComponent::whereIn('source_part_purchase_id', $purchaseIds)
+            ->when($vehicleIds !== null, fn ($q) => $q->whereIn('vehicle_id', $vehicleIds))
+            ->pluck('id');
+
+        // Scoped run: the purchase rows to drop are only those backing the components we are about
+        // to delete. Taking the whole marker set would strip provenance from every other demo car.
+        if ($vehicleIds !== null) {
+            $purchaseIds = VehicleComponent::whereIn('id', $componentIds)
+                ->whereNotNull('source_part_purchase_id')
+                ->pluck('source_part_purchase_id');
+        }
 
         // The timeline mirrors carry the marker in their meta JSON — matched as text so this works
         // on MySQL and SQLite alike, and scoped to the component event types so nothing else is hit.
@@ -681,7 +761,9 @@ class VehicleComponentDemoSeeder extends Seeder
             VehicleLogEvent::EVENT_COMPONENT_REMOVED,
             VehicleLogEvent::EVENT_COMPONENT_DISPOSED,
             VehicleLogEvent::EVENT_COMPONENT_TRANSFERRED,
-        ])->where('meta', 'like', '%' . self::MARKER . '%')->delete();
+        ])->where('meta', 'like', '%' . self::MARKER . '%')
+            ->when($vehicleIds !== null, fn ($q) => $q->whereIn('vehicle_id', $vehicleIds))
+            ->delete();
 
         ComponentEvent::whereIn('vehicle_component_id', $componentIds)->delete();
         VehicleComponent::whereIn('id', $componentIds)->update(['replaced_by_component_id' => null]);

@@ -10,6 +10,7 @@ use App\Models\Maintenance;
 use App\Models\RfqLine;
 use App\Models\SupplierQuote;
 use App\Models\MaintenanceLineItem;
+use App\Models\MaintenanceTask;
 use App\Models\PartInvestigation;
 use App\Models\PartPurchase;
 use App\Models\PartRequest;
@@ -33,6 +34,7 @@ class PartWorkflowService
         private VehicleLogService $log,
         private NotificationScanner $notifier,
         private ComponentService $components,
+        private IncorrectFaultCostGuard $incorrect,
     ) {}
 
     // ───────────────────────────── request lifecycle ─────────────────────────────
@@ -41,6 +43,12 @@ class PartWorkflowService
     public function createRequest(array $data, User $actor): PartRequest
     {
         $ticket = ! empty($data['maintenance_id']) ? Maintenance::find($data['maintenance_id']) : null;
+
+        // A fault ruled a mis-diagnosis buys nothing further — the procurement chain stops at its source.
+        $this->incorrect->assertNotIncorrect(
+            ! empty($data['maintenance_task_id']) ? MaintenanceTask::find($data['maintenance_task_id']) : null,
+            'the reason for a part request',
+        );
 
         $req = new PartRequest();
         $req->fill([
@@ -205,6 +213,10 @@ class PartWorkflowService
             // Look for a prior buy of the same part on this vehicle, WITH A LOCK, before we insert. The
             // fault context (from the request's task) escalates a same-part-for-the-same-fault repeat.
             $fault   = $req->task;
+
+            // The fault may have been ruled incorrect between the request and the buy — stop the spend here.
+            $this->incorrect->assertNotIncorrect($fault, 'bought against');
+
             $verdict = $this->intel->detectDuplicate(
                 $req->vehicle_id, $req->part_name, $req->part_number, $req->category_key, $partClass, null, true,
                 $fault?->category_key, $fault?->symptom
@@ -320,6 +332,11 @@ class PartWorkflowService
             abort(409, 'This part is already installed.');
         }
 
+        // Fitting is where a purchase becomes ticket cost, so it is also gated: a fault ruled incorrect
+        // cannot take on a new part line. (Anything fitted BEFORE the ruling keeps its cost — see
+        // IncorrectFaultCostGuard for why that money is never subtracted.)
+        $this->incorrect->assertNotIncorrect($purchase->task, 'charged for a fitted part');
+
         return DB::transaction(function () use ($purchase, $data, $actor) {
             $lineItemId = $purchase->maintenance_line_item_id;
 
@@ -345,6 +362,15 @@ class PartWorkflowService
                     'warranty_months'     => $data['warranty_months'] ?? null,
                     'created_by'          => $actor->id,
                     'entry_source'        => 'purchase', // origin tag (entry_source is varchar(12)); marks a Parts-Purchase-flow line
+                    // Structured origin. A purchase is NOT itself a document — it is our own record of
+                    // having paid. So the line points at the supplier invoice when one is already on
+                    // file, and is left NULL (i.e. unsourced) when it is not; PartInvoiceService fills
+                    // it in the moment the invoice is recorded. A garage-supplied part is backed by the
+                    // garage's own bill instead.
+                    'source_type'         => $purchase->part_invoice_id
+                        ? \App\Services\CostSourceResolver::SOURCE_SUPPLIER_INVOICE
+                        : null,
+                    'source_id'           => $purchase->part_invoice_id,
                 ]);
                 $lineItemId = $line->id;
 

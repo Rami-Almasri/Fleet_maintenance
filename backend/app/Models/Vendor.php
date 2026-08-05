@@ -14,6 +14,8 @@ class Vendor extends Model
 
     protected $fillable = [
         'name',
+        'payment_terms_days',
+        'payment_terms_note',
         'type',
         'phone',
         'email',

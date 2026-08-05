@@ -28,7 +28,21 @@ class MaintenanceLineItem extends Model
     public const KIND_PART = 'part';
     /** A garage labor charge — hours × rate. */
     public const KIND_LABOR = 'labor';
-    public const KINDS = [self::KIND_PART, self::KIND_LABOR];
+    /** Tax charged on a document. Always positive; belongs to the invoice, not to a fault. */
+    public const KIND_VAT = 'vat';
+    /** A reduction granted on a document. Always NEGATIVE, so every band is a plain sum. */
+    public const KIND_DISCOUNT = 'discount';
+    /** A correction backed by a {@see CostAdjustment} — the fourth source document. Signed either way. */
+    public const KIND_ADJUSTMENT = 'adjustment';
+
+    public const KINDS = [self::KIND_PART, self::KIND_LABOR, self::KIND_VAT, self::KIND_DISCOUNT, self::KIND_ADJUSTMENT];
+
+    /**
+     * The kinds a human keys directly onto an invoice as work done. VAT and discount are document-level
+     * arithmetic rather than work, and an adjustment is written by its own service — so the invoice line
+     * editor offers only these two, and Diagnosis-First (every line names a fault) applies only to them.
+     */
+    public const WORK_KINDS = [self::KIND_PART, self::KIND_LABOR];
 
     protected $fillable = [
         'maintenance_id',
@@ -56,6 +70,11 @@ class MaintenanceLineItem extends Model
         'odoo_synced_at',
         'created_by',
         'entry_source',
+        // The STRUCTURED origin: which of the four source documents backs this amount. Denormalised from
+        // the relations so spend can be reported by origin with a plain join, and kept in step by the
+        // services that write lines (and by PartInvoiceService when a purchase is later invoiced).
+        'source_type',
+        'source_id',
     ];
 
     protected $casts = [

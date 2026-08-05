@@ -37,6 +37,7 @@ class MaintenanceInvoiceService
     public function __construct(
         private NotificationScanner $notifier,
         private VehicleLogService $log,
+        private IncorrectFaultCostGuard $incorrect,
     ) {}
 
     /**
@@ -65,6 +66,7 @@ class MaintenanceInvoiceService
 
             $this->syncFaults($ticket, $invoice, $data['task_ids'] ?? []);
             $this->replaceLineItems($ticket, $invoice, $data['line_items'] ?? [], $actor);
+            $this->applyVatAndDiscount($ticket, $invoice, $data, $actor);
             $this->applyReceiptGate($invoice, $data);
 
             if ($photo) {
@@ -112,6 +114,7 @@ class MaintenanceInvoiceService
             if (array_key_exists('line_items', $data)) {
                 $this->replaceLineItems($ticket, $invoice, $data['line_items'] ?? [], $actor);
             }
+            $this->applyVatAndDiscount($ticket, $invoice, $data, $actor);
             $this->applyReceiptGate($invoice, $data);
 
             if ($photo) {
@@ -201,6 +204,10 @@ class MaintenanceInvoiceService
                     ['field' => 'task_ids'],
                 );
             }
+
+            // A fault ruled a mis-diagnosis cannot be put on a bill — the car did not have that problem.
+            // Cost already spent on it before the ruling is untouched; see IncorrectFaultCostGuard.
+            $this->incorrect->assertNoneIncorrect($ids, 'covered by an invoice');
         }
 
         // Release faults this invoice used to cover but that are no longer selected.
@@ -227,6 +234,10 @@ class MaintenanceInvoiceService
             ->map(fn ($t) => mb_strtolower(trim((string) $t)))
             ->flip();
 
+        // Faults on this ticket ruled a mis-diagnosis — no NEW line may be charged to one of them. Fetched
+        // once for the whole batch rather than per line (see IncorrectFaultCostGuard).
+        $incorrect = $this->incorrect->incorrectSymptoms($ticket);
+
         // Validate the WHOLE batch before touching anything, so a bad line fails with no side effects.
         foreach ($items as $row) {
             if (! is_array($row) || $this->clean($row['description'] ?? null) === null) {
@@ -245,13 +256,17 @@ class MaintenanceInvoiceService
                     ['field' => 'finding_text'],
                 );
             }
+            $this->incorrect->assertLineNotOnIncorrectFault($finding, $incorrect, 'charged for parts or labour');
         }
 
         // Map a finding text → the covered fault it names, so a line also feeds per-fault cost (best-effort).
         $taskBySymptom = $invoice->tasks()->get()
             ->keyBy(fn (MaintenanceTask $t) => mb_strtolower(trim((string) $t->symptom)));
 
-        $invoice->lineItems()->delete();
+        // Only the WORK lines are replaced. VAT and discount sit on the same invoice but are owned by
+        // applyVatAndDiscount(), and an edit that submits line_items without touching them must not
+        // silently wipe them — so they are scoped out here rather than caught by a blanket delete.
+        $invoice->lineItems()->whereIn('kind', MaintenanceLineItem::WORK_KINDS)->delete();
 
         $fallbackOdo = $ticket->return_odometer ?: $ticket->receive_odometer ?: null;
 
@@ -292,12 +307,85 @@ class MaintenanceInvoiceService
                 'created_by'         => $actor->id,
                 'entry_source'       => in_array(($row['entry_source'] ?? null), ['manual', 'ocr', 'import', 'garage'], true)
                                             ? $row['entry_source'] : 'manual',
+                // Structured origin: every line on this bill is backed by this bill.
+                'source_type'        => CostSourceResolver::SOURCE_GARAGE_INVOICE,
+                'source_id'          => $invoice->id,
             ]);
         }
 
         // Re-derive this invoice's own total from the freshly written lines (bubbles up to the ticket).
         $invoice->load('lineItems');
         $invoice->recalcTotals();
+    }
+
+    /**
+     * Write this invoice's VAT and discount as LEDGER LINES, not as header fields.
+     *
+     * A ticket has to separate parts, labour, VAT, discounts, refunds and the net total — and every one of
+     * those bands must trace to a document. Keying VAT into a column on the invoice would give the ticket
+     * a figure with no row behind it; writing it as a line (kind = vat, carrying this invoice's id) keeps
+     * the ONE-ledger rule intact, so the ticket total is still the sum of its lines and the VAT is as
+     * auditable as any part.
+     *
+     * Both are replace-wholesale, like the work lines: the editor always submits the current state. A zero
+     * or absent value removes the line entirely rather than leaving a 0.00 row cluttering the bill.
+     *
+     * Neither carries a `finding_text`: VAT and a discount apply to the DOCUMENT, not to one fault, so
+     * they are deliberately ticket-level and never distort a fault's parts/labour cost.
+     */
+    private function applyVatAndDiscount(Maintenance $ticket, MaintenanceInvoice $invoice, array $data, User $actor): void
+    {
+        $bands = [
+            MaintenanceLineItem::KIND_VAT => [
+                'key'   => 'vat_amount',
+                'label' => 'VAT',
+                // VAT adds to the bill.
+                'sign'  => 1,
+            ],
+            MaintenanceLineItem::KIND_DISCOUNT => [
+                'key'   => 'discount_amount',
+                'label' => 'Discount',
+                // A discount is entered as the positive number printed on the paper and STORED negative,
+                // so every band on the ticket is a plain sum and no reader has to guess the direction.
+                'sign'  => -1,
+            ],
+        ];
+
+        $touched = false;
+
+        foreach ($bands as $kind => $band) {
+            if (! array_key_exists($band['key'], $data)) {
+                continue; // caller isn't touching this band — leave whatever is there
+            }
+            $touched = true;
+
+            $invoice->lineItems()->where('kind', $kind)->get()->each->delete();
+
+            $amount = round(abs((float) ($data[$band['key']] ?? 0)), 2);
+            if ($amount <= 0) {
+                continue;
+            }
+
+            $invoice->lineItems()->create([
+                'maintenance_id' => $ticket->id,
+                'vehicle_id'     => $ticket->vehicle_id,
+                'kind'           => $kind,
+                'description'    => $band['label'],
+                'quantity'       => 1,
+                'uom'            => 'unit',
+                'unit_price'     => $band['sign'] * $amount,
+                'created_by'     => $actor->id,
+                'entry_source'   => 'manual',
+                // Structured origin: VAT and discount belong to the garage's bill like any other line.
+                'source_type'    => CostSourceResolver::SOURCE_GARAGE_INVOICE,
+                'source_id'      => $invoice->id,
+            ]);
+        }
+
+        if ($touched) {
+            $invoice->load('lineItems');
+            $invoice->recalcTotals();
+        }
     }
 
     /**
