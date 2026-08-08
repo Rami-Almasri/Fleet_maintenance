@@ -22,12 +22,16 @@ use Throwable;
  * Order matters (API FIRST, then sheet — the API is the source of truth for our fleet):
  *  1. API vehicles           -> create OUR cars (owner 1541 + extra serials) with identity +
  *                               operational data (VIN/plate/year/status/odometer/car_serial),
- *                               specs + rental defaults, AND insurance (insurer/policy/expiry).
+ *                               specs + rental defaults, and the MORTGAGE flag.
  *                               This IS the link+status step now — no separate link phase.
  *  2. Sheet "Faster" tab     -> enrich make/model/color + purchase price (won't clobber #1)
  *  3. Sheet "F RTA"          -> registration fines + status text
- *  4. Sheet "F Insurance"    -> Mulkiya (registration) expiry + mortgaged-by only
- *                               (insurance itself now comes from the API in step 1)
+ *  4. Sheet "F Insurance"    -> Mulkiya (registration) expiry, mortgaged-by, AND the insurance
+ *                               itself: insurer + insurance_expiry. Reverted to the sheet on
+ *                               2026-07-23 — the API no longer owns insurance, upsertMortgage()
+ *                               writes only is_mortgaged. This phase is also scheduled on its
+ *                               own as `sync:insurance` (03:20), because leaving it reachable
+ *                               only through this command left production months stale.
  *  5. API contracts          -> contracts for our cars (creates customer stubs; null-safe)
  *  6. API invoices           -> charges rolled into contract debit
  *  7. API customers          -> fill in customer names for the new stubs

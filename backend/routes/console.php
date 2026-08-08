@@ -46,6 +46,18 @@ Schedule::command('import:vehicle-status')
     ->withoutOverlapping()
     ->runInBackground();
 
+// Insurance + Mulkiya, from the "F Insurance" tab — the source of truth for insurance_expiry
+// since 2026-07-23 (OfficeManagerSync::upsertMortgage writes only is_mortgaged now). This phase
+// lived ONLY inside `fleet:refresh`, which nothing schedules, so on any machine where nobody
+// typed it by hand the insurance dates stayed frozen at their old API-era values while om:sync
+// kept rewriting the same rows nightly — the registration looked fresh and the insurance was
+// months stale. That is what put 57 cars on production behind "insurance expired" alerts when
+// only 13 were genuinely lapsed. Runs after import:vehicle-status so it sees the settled fleet.
+Schedule::command('sync:insurance')
+    ->dailyAt('03:20')
+    ->withoutOverlapping()
+    ->runInBackground();
+
 // Contracts — hourly. Keeps fleet availability (Available/Rented/Maintenance) fresh all day,
 // not just after the nightly run. Light: reads open contracts + close-detection.
 Schedule::command('om:sync --contracts --skip-backup')
