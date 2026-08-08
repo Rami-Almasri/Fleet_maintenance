@@ -34,6 +34,12 @@ class NotificationController extends Controller
             'icon'       => $data['icon'] ?? 'bell',
             'meta'       => $data['meta'] ?? [],
             'read'       => ! is_null($n->read_at),
+            // The condition behind this alert no longer holds — the car sold, the papers were
+            // renewed, the rental came back. NotificationScanner::resolveStale() stamps it, but
+            // until now that stamp was invisible: a settled card still showed its severity chip
+            // and a live "Renew Insurance" button, so it read as an open demand. Surfaced so the
+            // card can retire itself on screen instead of being dismissed by hand.
+            'resolved'   => ($data['resolved'] ?? false) === true,
             'read_at'    => optional($n->read_at)->toIso8601String(),
             'created_at' => optional($n->created_at)->toIso8601String(),
         ];

@@ -49,6 +49,11 @@ class CheckFleetExpiry extends Command
         $today = now()->startOfDay()->toDateString();
 
         $expired = Vehicle::whereIn('status', self::IN_SERVICE_STATUSES)
+            // A car being sold is not renewed, it is handed over — an expiring policy on it is
+            // the expected end of the policy, not a problem. `status = 'sold'` only lands once
+            // OfficeManager clears the paperwork, so the manual for_sale flag is the signal that
+            // arrives in time to stop the chase. Mirrors InspectionEngineService's for-sale skip.
+            ->where(fn ($q) => $q->where('for_sale', false)->orWhereNull('for_sale'))
             ->whereHas('registration', function ($q) use ($today) {
                 $q->where(function ($q2) use ($today) {
                     $q2->where('expiry_date', '<', $today)

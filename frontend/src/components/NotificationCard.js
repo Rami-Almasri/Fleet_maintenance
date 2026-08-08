@@ -19,20 +19,25 @@ const SEVERITY_BUTTON_VARIANT = {
 export default function NotificationCard({ n, onAction, onMarkRead, onDismiss }) {
   const theme = severityTheme(n.severity);
   const chips = metaChips(n);
-  const label = actionLabel(n);
+  // A resolved card is history, not a to-do: the condition cleared on its own (car sold, papers
+  // renewed). It keeps its text so the record stays readable, but loses the urgency colour and
+  // the action button — asking someone to renew the insurance on a car we no longer own is the
+  // exact noise this suppresses.
+  const settled = !!n.resolved;
+  const label = settled ? null : actionLabel(n);
 
   return (
     <article
       className={[
         'group relative flex flex-col overflow-hidden rounded-2xl border border-slate-200/60',
         'border-s-4 shadow-soft hover-lift',
-        theme.border,
-        n.read ? 'bg-white' : theme.cardTint,
+        settled ? 'border-s-slate-200' : theme.border,
+        settled ? 'bg-white opacity-70' : n.read ? 'bg-white' : theme.cardTint,
       ].join(' ')}
     >
       {/* header: icon · severity chip · time */}
-      <div className={`flex items-start gap-3 px-4 pt-4 ${n.read ? '' : theme.headTint}`}>
-        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white shadow-sm ${theme.iconBg}`}>
+      <div className={`flex items-start gap-3 px-4 pt-4 ${n.read || settled ? '' : theme.headTint}`}>
+        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white shadow-sm ${settled ? 'bg-slate-300' : theme.iconBg}`}>
           <svg aria-hidden="true" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
             <path d={iconPath(n.icon)} />
           </svg>
@@ -40,13 +45,16 @@ export default function NotificationCard({ n, onAction, onMarkRead, onDismiss })
 
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${theme.chipBg} ${theme.chipText}`}>
-              {theme.label}
+            <span className={[
+              'inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide',
+              settled ? 'bg-slate-100 text-slate-500' : `${theme.chipBg} ${theme.chipText}`,
+            ].join(' ')}>
+              {settled ? 'No longer applies' : theme.label}
             </span>
-            {!n.read && <span className={`h-2 w-2 rounded-full ${theme.dot}`} aria-label="unread" />}
+            {!n.read && !settled && <span className={`h-2 w-2 rounded-full ${theme.dot}`} aria-label="unread" />}
             <span className="ms-auto whitespace-nowrap text-[11px] font-medium text-slate-400">{timeAgo(n.created_at)}</span>
           </div>
-          <h3 className={`mt-1.5 text-sm leading-snug ${n.read ? 'font-semibold text-slate-700' : 'font-bold text-slate-900'}`}>
+          <h3 className={`mt-1.5 text-sm leading-snug ${settled ? 'font-semibold text-slate-500' : n.read ? 'font-semibold text-slate-700' : 'font-bold text-slate-900'}`}>
             {n.title}
           </h3>
         </div>
@@ -89,8 +97,8 @@ export default function NotificationCard({ n, onAction, onMarkRead, onDismiss })
         </div>
       )}
 
-      {/* footer actions */}
-      <div className="mt-auto flex items-center gap-2 px-4 pb-4 pt-4">
+      {/* footer actions — a settled card has none, so it collapses to just its text */}
+      <div className={`mt-auto flex items-center gap-2 px-4 ${label || (onMarkRead && !n.read) ? 'pb-4 pt-4' : 'pb-4'}`}>
         {label && (
           <button
             type="button"

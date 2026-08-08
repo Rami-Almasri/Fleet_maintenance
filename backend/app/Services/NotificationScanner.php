@@ -469,7 +469,14 @@ class NotificationScanner
             // Skip docs on cars that are out of the fleet: only Ready (OM status 2) or
             // Rented (3) get registration / insurance expiry alerts. No expiry noise for
             // sold, disposed or scrapped vehicles — mirrors the Foresight report filter.
-            ->whereHas('vehicle', fn ($q) => $q->whereIn('status', Vehicle::ACTIVE_STATUSES))
+            //
+            // A car on its way OUT is not renewed, it is handed over. OfficeManager only flips
+            // status to 'sold' once the paperwork clears, which is weeks after the fleet knows
+            // the car is gone — so the manual `for_sale` flag is the earlier signal and it
+            // silences the renewal chase too. Same skip InspectionEngineService already applies.
+            ->whereHas('vehicle', fn ($q) => $q
+                ->whereIn('status', Vehicle::ACTIVE_STATUSES)
+                ->where(fn ($s) => $s->where('for_sale', false)->orWhereNull('for_sale')))
             ->where(function ($q) use ($soon, $floor) {
                 $q->whereBetween('expiry_date', [$floor, $soon])
                   ->orWhereBetween('insurance_expiry', [$floor, $soon]);

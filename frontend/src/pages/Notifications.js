@@ -551,10 +551,15 @@ function NotificationRow({ n, onAction, onMarkRead, onDismiss, grouped = false }
   const highlights = metaHighlights(n);
   let entities = metaEntities(n);
   if (grouped) entities = entities.filter((e) => e.key !== 'plate' && e.key !== 'ticket');
-  const label = actionLabel(n);
   const kind = typeLabel(n.type);
-  const isCritical = n.severity === 'critical';
-  const emphasize = !n.read && (isCritical || n.severity === 'warning');
+  // Resolved = the condition cleared on its own, so this row is a record, not a demand. A sold
+  // car's expired insurance is the case that forced this: the scanner had already stopped
+  // raising it, but the row still wore a Critical badge and a "Renew Insurance" button. Settled
+  // rows keep their text and drop the urgency + the CTA.
+  const settled = !!n.resolved;
+  const label = settled ? null : actionLabel(n);
+  const isCritical = !settled && n.severity === 'critical';
+  const emphasize = !settled && !n.read && (isCritical || n.severity === 'warning');
 
   // Grouped members sit inside a shared frame → flat, divided rows. Standalone cards
   // carry their own frame, severity rail and (for hot unread items) a tinted body.
@@ -580,9 +585,11 @@ function NotificationRow({ n, onAction, onMarkRead, onDismiss, grouped = false }
         <div className="flex items-start gap-3">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <Badge tone={SEVERITY_TONE[n.severity] || 'blue'} dot>{theme.label}</Badge>
+              {settled
+                ? <Badge tone="slate">No longer applies</Badge>
+                : <Badge tone={SEVERITY_TONE[n.severity] || 'blue'} dot>{theme.label}</Badge>}
               <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{kind}</span>
-              {!n.read && <span className={`h-2 w-2 shrink-0 rounded-full ${theme.dot}`} aria-label="unread" />}
+              {!n.read && !settled && <span className={`h-2 w-2 shrink-0 rounded-full ${theme.dot}`} aria-label="unread" />}
             </div>
             <h3 className={`mt-1.5 text-sm leading-snug ${n.read ? 'font-semibold text-slate-700' : 'font-bold text-slate-900'}`}>
               {n.title}
