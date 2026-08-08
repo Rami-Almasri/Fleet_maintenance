@@ -58,6 +58,34 @@ Schedule::command('sync:insurance')
     ->withoutOverlapping()
     ->runInBackground();
 
+// The rest of the sheet phases, for the same reason. Each of these lived only inside
+// `fleet:refresh`; the API syncs above had their own entries and the sheet imports did not, so
+// production ran for months on whatever sheet data its database happened to be seeded with while
+// om:sync kept the same rows' updated_at looking current. Ordered to mirror fleet:refresh —
+// cars first, then the registration/fines overlay, then the sheet-sourced maintenance history.
+Schedule::command('sync:vehicles')       // "Faster" tab — make/model/colour + purchase price
+    ->dailyAt('03:25')
+    ->withoutOverlapping()
+    ->runInBackground();
+
+Schedule::command('sync:registrations')  // "F RTA" tab — fines count/amount + status text
+    ->dailyAt('03:30')
+    ->withoutOverlapping()
+    ->runInBackground();
+
+Schedule::command('import:customer-cases')
+    ->dailyAt('03:35')
+    ->withoutOverlapping()
+    ->runInBackground();
+
+// Oil change LAST of the sheet block but before mileage:scan (03:45) and service:sync-reminders
+// (04:00) — those two read last_service_odometer / service_interval_km, the two columns this
+// import owns. Run it after them and the reminders are computed from yesterday's baselines.
+Schedule::command('sync:oil-change')
+    ->dailyAt('03:40')
+    ->withoutOverlapping()
+    ->runInBackground();
+
 // Contracts — hourly. Keeps fleet availability (Available/Rented/Maintenance) fresh all day,
 // not just after the nightly run. Light: reads open contracts + close-detection.
 Schedule::command('om:sync --contracts --skip-backup')
