@@ -24,7 +24,7 @@ import Icon from '../../components/ui/Icon';
 import { Skeleton } from '../../components/ui/Skeleton';
 import { Card, SearchInput, EmptyState, ErrorState } from '../../components/ui/Misc';
 import CountUp from '../../components/ui/CountUp';
-import { getCheckpointCompliance, delayReasonLabel } from '../../lib/maintenanceCheckpoints';
+import { getCheckpointCompliance, useCheckpointVocab } from '../../lib/maintenanceCheckpoints';
 import { fmtDate } from '../../lib/format';
 
 // How loud the last ask was — the same ladder the scan fires on.
@@ -49,8 +49,9 @@ const BUCKETS = [
 ];
 const bucketOf = (days) => BUCKETS.find((b) => b.test(days || 0)) || BUCKETS[0];
 
-const reasonText = (r) => (r.delay_reason === 'other'
-  ? (r.reason_other || 'Other')
+// `other` carries the supervisor's own words, which stay as typed; only the blank-fallback translates.
+const reasonText = (r, delayReasonLabel, otherWord) => (r.delay_reason === 'other'
+  ? (r.reason_other || otherWord)
   : (delayReasonLabel(r.delay_reason) || '—'));
 
 // Has this car's promised date actually shifted? Drives the struck-through "originally" line.
@@ -216,6 +217,7 @@ function PromiseTrack({ r }) {
 }
 
 function Row({ r, open, onToggle }) {
+  const { delayReasonLabel } = useCheckpointVocab();
   const level = LEVEL_META[r.last_level]
     || { label: r.last_level || '—', chip: 'bg-slate-50 text-slate-600 ring-slate-200' };
   const b = bucketOf(r.days_unanswered);
@@ -328,7 +330,9 @@ function Row({ r, open, onToggle }) {
           <ol className="mt-4 space-y-2 border-t border-slate-100 pt-4 animate-fade">
             {r.reasons.map((x, i) => (
               <li key={i} className="relative flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-amber-50/60 py-2 pe-3 ps-3 text-xs ring-1 ring-inset ring-amber-100">
-                <span className="font-semibold text-amber-800">{reasonText(x)}</span>
+                <span className="font-semibold text-amber-800">
+                  {reasonText(x, delayReasonLabel, delayReasonLabel('other'))}
+                </span>
                 <span className="text-slate-500">
                   {x.previous_date ? `${fmtDate(x.previous_date)} → ` : ''}{fmtDate(x.next_date)}
                 </span>

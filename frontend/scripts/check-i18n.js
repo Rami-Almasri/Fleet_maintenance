@@ -138,7 +138,92 @@ report('Arabic module ids not in registry', badModuleIds);
 report('Arabic slugs not in registry', badSectionSlugs);
 report('registry sections missing Arabic', missingSectionSlugs);
 
-// en/ar parity for the shared namespaces. `nav` and the per-module subtrees of
+// ── Board lanes: every ar.lanes.<key> must match a real lane in config/maintenanceLanes.js,
+// and every lane must have Arabic. Same English-in-the-table arrangement as nav/modules, so the
+// keys have to be kept in sync the same way.
+const lanesSrc = fs.readFileSync(path.join(SRC, 'config/maintenanceLanes.js'), 'utf8');
+const laneDefBlock = lanesSrc.slice(0, lanesSrc.indexOf('export const ALL_LANE_DEFS'));
+const laneKeys = [...laneDefBlock.matchAll(/\{\s*key:\s*'([^']+)'/g)].map((m) => m[1]);
+const arLanes = LABELS.ar.lanes || {};
+console.log(`lanes: ${laneKeys.length}`);
+report('lanes missing Arabic', laneKeys.filter((k) => !arLanes[k]));
+report('lanes missing an Arabic name/hint', laneKeys.filter((k) => arLanes[k] && !(arLanes[k].name && arLanes[k].hint)));
+report('orphan Arabic lane keys', Object.keys(arLanes).filter((k) => !laneKeys.includes(k)));
+
+// ── Fault buckets: every category in lib/faultCategories.js needs Arabic, and vice versa.
+const fcSrc = fs.readFileSync(path.join(SRC, 'lib/faultCategories.js'), 'utf8');
+const fcBlock = fcSrc.slice(fcSrc.indexOf('export const FAULT_CATEGORIES'), fcSrc.indexOf('const OTHER ='));
+const fcKeys = [...fcBlock.matchAll(/\{\s*key:\s*'([^']+)'/g)].map((m) => m[1]);
+// `other` (the fallback bucket) plus the two synthetic donut slices, which have no table entry.
+const fcExtra = ['other', 'unspecified', 'otherTypes'];
+const arFc = LABELS.ar.faultCategories || {};
+console.log(`fault categories: ${fcKeys.length}`);
+report('fault categories missing Arabic', fcKeys.filter((k) => !arFc[k]));
+report('orphan Arabic fault-category keys',
+  Object.keys(arFc).filter((k) => !fcKeys.includes(k) && !fcExtra.includes(k)));
+report('synthetic fault slices missing Arabic', fcExtra.filter((k) => !arFc[k]));
+
+// ── Vehicle-dossier "Data origin" captions: every tab in TAB_ORIGIN needs an Arabic paragraph.
+// English-in-the-table (each paragraph documents its tab), so parity exempts it — this is the check
+// that keeps the two sides honest instead.
+const vpSrc = fs.readFileSync(path.join(SRC, 'pages/vehicles/VehicleProfile.js'), 'utf8');
+const originFrom = vpSrc.indexOf('const TAB_ORIGIN');
+const originBlock = vpSrc.slice(originFrom, vpSrc.indexOf('\n};', originFrom));
+const originTabs = [...originBlock.matchAll(/^\s{2}(\w+):\s*'/gm)].map((m) => m[1]);
+const arOrigin = LABELS.ar.vehicleProfile?.origin || {};
+console.log(`vehicle-profile data-origin tabs: ${originTabs.length}`);
+report('data-origin tabs missing Arabic', originTabs.filter((k) => !arOrigin[k]));
+report('orphan Arabic data-origin keys', Object.keys(arOrigin).filter((k) => !originTabs.includes(k)));
+
+// ── Parts lifecycle vocabularies: STATUS_LABEL / CLASS_LABEL / DUP_REASONS in pages/Parts.js hold
+// the English (they mirror server constants); every one of their keys needs Arabic. Position and
+// source are small closed sets checked against the literals the page offers.
+const partsSrc = fs.readFileSync(path.join(SRC, 'pages/Parts.js'), 'utf8');
+// Handles both the multi-line maps (STATUS_LABEL) and the one-liners (CLASS_LABEL).
+const objKeys = (constName) => {
+  const from = partsSrc.indexOf(`const ${constName}`);
+  if (from < 0) return [];
+  const open = partsSrc.indexOf('{', from);
+  const block = partsSrc.slice(open + 1, partsSrc.indexOf('}', open));
+  return [...block.matchAll(/(?:^|[,{])\s*(\w+):/g)].map((m) => m[1]);
+};
+const dupReasonKeys = [...partsSrc.slice(partsSrc.indexOf('const DUP_REASONS'))
+  .slice(0, 400).matchAll(/\['(\w+)',/g)].map((m) => m[1]);
+const arParts = LABELS.ar.parts || {};
+const partsVocab = [
+  ['status', objKeys('STATUS_LABEL')],
+  ['class', objKeys('CLASS_LABEL')],
+  ['dupReason', dupReasonKeys],
+  ['sourceLabel', ['garage', 'supplier']],
+  ['position', ['front_left', 'front_right', 'rear_left', 'rear_right', 'front', 'rear']],
+];
+let partsCount = 0;
+for (const [ns, keys] of partsVocab) {
+  partsCount += keys.length;
+  const ar = arParts[ns] || {};
+  report(`parts.${ns} missing Arabic`, keys.filter((k) => !ar[k]));
+  report(`orphan Arabic parts.${ns} keys`, Object.keys(ar).filter((k) => !keys.includes(k)));
+}
+console.log(`parts vocabulary values: ${partsCount}`);
+
+// ── Repair-capture vocabularies: each `value` in the lib's three lists needs Arabic, and vice
+// versa. These mirror PHP constants, so a value added server-side surfaces here as a missing key.
+const rcSrc = fs.readFileSync(path.join(SRC, 'lib/repairCapture.js'), 'utf8');
+const rcList = (constName, arKey) => {
+  const from = rcSrc.indexOf(`export const ${constName}`);
+  const block = rcSrc.slice(from, rcSrc.indexOf('];', from));
+  const values = [...block.matchAll(/\{\s*value:\s*'([^']+)'/g)].map((m) => m[1]);
+  const ar = LABELS.ar.repairCapture?.[arKey] || {};
+  report(`repairCapture.${arKey} missing Arabic`, values.filter((v) => !ar[v]?.label));
+  report(`orphan Arabic repairCapture.${arKey} keys`, Object.keys(ar).filter((v) => !values.includes(v)));
+  return values.length;
+};
+const rcCount = rcList('OUTCOMES', 'outcomes')
+  + rcList('VERIFICATION_RESULTS', 'verificationResults')
+  + rcList('VERIFICATION_METHODS', 'verificationMethods');
+console.log(`repair-capture vocabulary values: ${rcCount}`);
+
+// en/ar parity for the shared namespaces. `nav`, `lanes` and the per-module subtrees of
 // `modules` are English-in-the-table by design (see labels.js), so exclude them.
 const walk = (o, p = '') =>
   Object.entries(o).flatMap(([k, v]) =>
@@ -149,6 +234,15 @@ const walk = (o, p = '') =>
 const AR_ONLY_PLURAL = /\.(zero|two|few|many)$/;
 const exempt = (k) =>
   k === 'nav' || k.startsWith('nav.') ||
+  k === 'lanes' || k.startsWith('lanes.') ||
+  k === 'faultCategories' || k.startsWith('faultCategories.') ||
+  k === 'repairCapture' || k.startsWith('repairCapture.') ||
+  k === 'checkpoints' || k.startsWith('checkpoints.') ||
+  k === 'badge' || k.startsWith('badge.') ||
+  k.startsWith('vehicleProfile.origin.') ||
+  // Parts lifecycle vocabularies — English beside the server constants in pages/Parts.js.
+  ['parts.status.', 'parts.class.', 'parts.sourceLabel.', 'parts.position.', 'parts.dupReason.']
+    .some((p) => k.startsWith(p)) ||
   moduleIds.some((id) => k.startsWith(`modules.${id}.`)) ||
   AR_ONLY_PLURAL.test(k);
 const enKeys = new Set(walk(LABELS.en).filter((k) => !exempt(k)));

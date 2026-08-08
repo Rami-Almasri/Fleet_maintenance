@@ -17,8 +17,8 @@ import Button from '../ui/Button';
 import { Textarea } from '../ui/Field';
 import { useToast } from '../ui/Toast';
 import {
-  VERIFICATION_RESULTS, VERIFICATION_METHODS,
-  getVerificationOptions, submitVerification, outcomeMeta,
+  useRepairCaptureVocab,
+  getVerificationOptions, submitVerification,
 } from '../../lib/repairCapture';
 
 const TONES = {
@@ -30,6 +30,7 @@ const TONES = {
 
 export default function RepairVerifyModal({ open, taskId, onClose, onSaved }) {
   const toast = useToast();
+  const { verificationResults, verificationMethods, outcomeMeta } = useRepairCaptureVocab();
 
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -164,7 +165,7 @@ export default function RepairVerifyModal({ open, taskId, onClose, onSaved }) {
               <section className="space-y-2">
                 <h3 className="text-sm font-semibold text-slate-800">What did you find?</h3>
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  {VERIFICATION_RESULTS.map((r) => (
+                  {verificationResults.map((r) => (
                     <button
                       key={r.value}
                       type="button"
@@ -195,7 +196,7 @@ export default function RepairVerifyModal({ open, taskId, onClose, onSaved }) {
               <section className="space-y-2">
                 <h3 className="text-sm font-semibold text-slate-800">How did you check?</h3>
                 <div className="flex flex-wrap gap-1.5">
-                  {VERIFICATION_METHODS.map((m) => (
+                  {verificationMethods.map((m) => (
                     <button
                       key={m.value}
                       type="button"

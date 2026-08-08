@@ -4,6 +4,13 @@
 //
 // The first eight are the canonical pipeline (always shown, left→right = the ticket journey). The rest
 // are EXCEPTION lanes — off the linear path.
+//
+// LOCALIZATION — like `nav` and `modules`, the English lives HERE (the lane name and hint document
+// what the stage means alongside its key, tone and flag) and only the Arabic lives in labels.js, under
+// `ar.lanes.<key>.name` / `.hint`. Never read `.name`/`.hint` off these constants for display; call
+// `useLanes()` below, which resolves both through tf() so a lane renders in the active language.
+import { useMemo } from 'react';
+import { useI18n } from '../i18n/I18nContext';
 import { SHOW_VIDEO_REVIEW } from './features';
 
 export const PRIMARY_LANES = [
@@ -31,6 +38,22 @@ export const ALL_LANE_DEFS = [...PRIMARY_LANES, ...EXCEPTION_LANES];
 // The canonical linear journey (the 8 primary lanes, left→right). A ticket's position in this list is
 // how far the vehicle has travelled — the card's pipeline spine renders that as a progress bar.
 export const PIPELINE_KEYS = PRIMARY_LANES.map((l) => l.key);
+
+// The lane definitions with `name` + `hint` resolved into the active language. This is what every
+// display surface must use; the raw constants above are for keys, tones and ordering only.
+export function useLanes() {
+  const { tf } = useI18n();
+  return useMemo(() => {
+    const loc = (l) => ({
+      ...l,
+      name: tf(`lanes.${l.key}.name`, l.name),
+      hint: tf(`lanes.${l.key}.hint`, l.hint),
+    });
+    const primary = PRIMARY_LANES.map(loc);
+    const exception = EXCEPTION_LANES.map(loc);
+    return { primary, exception, all: [...primary, ...exception] };
+  }, [tf]);
+}
 
 // Attach each lane's tickets from a board `columns` object ({ [laneKey]: ticket[] }), applying an
 // optional ticket filter. Returns [{ ...laneDef, tickets }].

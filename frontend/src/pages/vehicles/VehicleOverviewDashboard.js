@@ -23,6 +23,7 @@ import Badge from '../../components/ui/Badge';
 import { InfoTip } from '../../components/ui/Tooltip';
 import { aed, aed2, num, fmtDate, dayBadge } from '../../lib/format';
 import { categorySegments } from '../../lib/faultCategories';
+import { useI18n } from '../../i18n/I18nContext';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -295,6 +296,7 @@ export default function VehicleOverviewDashboard({
   v = {}, stats = {}, reg = null, contracts = [], maintenance = [],
   showFinancials = false, onNavigate,
 }) {
+  const { tf } = useI18n();
   const health = useMemo(() => buildHealth({ v, reg, maintenance }), [v, reg, maintenance]);
 
   // ── Revenue architecture (money) — from the backend's classified debit buckets ──
@@ -310,7 +312,7 @@ export default function VehicleOverviewDashboard({
   const revenueTotal = revenueSegments.reduce((a, s) => a + s.value, 0);
 
   // ── Expense architecture (money) — visit cost bucketed by dominant fault category ──
-  const expenseSegments = useMemo(() => categorySegments(maintenance, 'cost'), [maintenance]);
+  const expenseSegments = useMemo(() => categorySegments(maintenance, 'cost', { tf }), [maintenance, tf]);
   const expenseTotal = expenseSegments.reduce((a, s) => a + s.value, 0);
 
   // ── Repair & service trend — DAYS on rent vs. DAYS in the workshop, per month ──

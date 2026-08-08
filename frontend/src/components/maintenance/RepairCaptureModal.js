@@ -23,7 +23,7 @@ import Button from '../ui/Button';
 import { Textarea } from '../ui/Field';
 import { useToast } from '../ui/Toast';
 import {
-  OUTCOMES,
+  useRepairCaptureVocab,
   getCaptureOptions, submitCapture, createFrictionTracker,
   startCapture, abandonCapture,
 } from '../../lib/repairCapture';
@@ -163,6 +163,7 @@ function ActionPicker({ suggestions, chosen, onAdd, onRemove, onMove, onNote }) 
 
 export default function RepairCaptureModal({ open, taskId, onClose, onSaved }) {
   const toast = useToast();
+  const { outcomes } = useRepairCaptureVocab();
 
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -380,7 +381,7 @@ export default function RepairCaptureModal({ open, taskId, onClose, onSaved }) {
                 <section className="space-y-2">
                   <StepHeader n={3} title="Did it fix the problem?" done={step3Done} />
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                    {OUTCOMES.map((o) => (
+                    {outcomes.map((o) => (
                       <button
                         key={o.value}
                         type="button"

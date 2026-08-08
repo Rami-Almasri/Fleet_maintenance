@@ -11,6 +11,11 @@
 
 // Ordered most-specific → most-generic; first category with a keyword hit wins.
 // `color` is a chart-palette key (see chartUtils PALETTES).
+//
+// LOCALIZATION — `label` is the English, kept here beside the keywords that define the category;
+// the Arabic lives in labels.js under `ar.faultCategories.<key>`. The segment builders below accept
+// a `tf` (from useI18n) and resolve through it, so a chart legend renders in the active language.
+// Individual FAULT TAGS are data, not UI text, and are never translated — only the buckets are.
 export const FAULT_CATEGORIES = [
   { key: 'ac',           label: 'Cooling & A/C',        color: 'cyan',   keywords: ['cool', 'a/c', 'aircon', 'air con', 'climate', 'compressor', 'condenser', 'radiator', 'overheat'] },
   { key: 'electrical',   label: 'Electrical system',    color: 'violet', keywords: ['electr', 'battery', 'wiring', 'alternator', 'sensor', 'fuse', 'ecu', 'light', 'lamp', 'won\'t start', 'wont start', 'no start', 'starter'] },
@@ -96,7 +101,8 @@ export function isNonFaultVisit(visit) {
 // entirely (see isServiceOnlyVisit); a visit with nothing recorded falls back to its reason, else
 // "Unspecified". The long tail past `top` folds into one "Other (N types)" slice so the donut stays
 // legible. Returns [{ key, label, color, value }] sorted big → small.
-export function faultTagSegments(visits = [], { top = 10 } = {}) {
+export function faultTagSegments(visits = [], { top = 10, tf = null, tp = null } = {}) {
+  const loc = (key, en, vars) => (tf ? tf(key, en, vars) : en);
   const totals = {};
   visits.forEach((v) => {
     let faults = visitFaults(v);
@@ -121,8 +127,11 @@ export function faultTagSegments(visits = [], { top = 10 } = {}) {
 
   // Hues go to REAL faults in fixed palette order; "Unspecified" stays gray and consumes no slot.
   let slot = 0;
+  // `key` stays the raw English sentinel (it identifies the slice); only the displayed label is
+  // localized, so colour assignment and any caller keyed on 'Unspecified' keep working.
   const withColor = (s) => ({
     ...s,
+    label: s.label === 'Unspecified' ? loc('faultCategories.unspecified', 'Unspecified') : s.label,
     color: s.label === 'Unspecified' ? UNSPECIFIED_COLOR : FAULT_PALETTE[slot++],
   });
   if (sorted.length <= limit) return sorted.map(withColor);
@@ -131,7 +140,7 @@ export function faultTagSegments(visits = [], { top = 10 } = {}) {
   const tail = sorted.slice(limit - 1);
   head.push({
     key: '__other',
-    label: `Other (${tail.length} types)`,
+    label: tp ? tp('faultCategories.otherTypes', tail.length) : `Other (${tail.length} types)`,
     value: tail.reduce((a, s) => a + s.value, 0),
     color: OTHER_COLOR,
     // The folded long-tail, so the legend's "Other" row can expand to reveal each type's share.
@@ -144,7 +153,7 @@ export function faultTagSegments(visits = [], { top = 10 } = {}) {
 //   metric: 'count'  → one per visit (fault distribution)
 //           'cost'   → visit.total summed  (expense architecture)
 // Returns [{ key, label, color, value }] sorted big → small, zero buckets dropped.
-export function categorySegments(visits = [], metric = 'count') {
+export function categorySegments(visits = [], metric = 'count', { tf = null } = {}) {
   const totals = {};
   const meta = {};
   visits.forEach((v) => {
@@ -155,7 +164,12 @@ export function categorySegments(visits = [], metric = 'count') {
     meta[cat.key] = cat;
   });
   return Object.keys(totals)
-    .map((k) => ({ key: k, label: meta[k].label, color: meta[k].color, value: Math.round(totals[k] * 100) / 100 }))
+    .map((k) => ({
+      key: k,
+      label: tf ? tf(`faultCategories.${k}`, meta[k].label) : meta[k].label,
+      color: meta[k].color,
+      value: Math.round(totals[k] * 100) / 100,
+    }))
     .filter((s) => s.value > 0)
     .sort((a, b) => b.value - a.value);
 }

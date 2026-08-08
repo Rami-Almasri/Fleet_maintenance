@@ -6,6 +6,11 @@
 // captureOptions(); these local lists exist only to give each value a human label and an order, and
 // the server list is what decides which are actually offered.
 
+// LOCALIZATION — the English `label`/`hint` stay here, beside the value they explain and the PHP
+// constant they mirror; the Arabic lives in labels.js under `ar.repairCapture.*`. Display surfaces
+// must read the vocabularies through useRepairCaptureVocab() rather than the raw constants.
+import { useMemo } from 'react';
+import { useI18n } from '../i18n/I18nContext';
 import api from '../api/client';
 
 const base = (taskId) => `/maintenance-tasks/${taskId}/capture`;
@@ -47,6 +52,29 @@ export const VERIFICATION_METHODS = [
 export const outcomeMeta = (value) => OUTCOMES.find((o) => o.value === value) || null;
 export const verificationLabel = (value) =>
   VERIFICATION_METHODS.find((v) => v.value === value)?.label || value || null;
+
+// The three vocabularies with `label`/`hint` resolved into the active language, plus a localized
+// `outcomeMeta`. The raw constants above remain the contract with the PHP side; this is what renders.
+export function useRepairCaptureVocab() {
+  const { tf } = useI18n();
+  return useMemo(() => {
+    const loc = (ns) => (o) => ({
+      ...o,
+      label: tf(`repairCapture.${ns}.${o.value}.label`, o.label),
+      ...(o.hint ? { hint: tf(`repairCapture.${ns}.${o.value}.hint`, o.hint) } : {}),
+    });
+    const outcomes = OUTCOMES.map(loc('outcomes'));
+    const results = VERIFICATION_RESULTS.map(loc('verificationResults'));
+    const methods = VERIFICATION_METHODS.map(loc('verificationMethods'));
+    return {
+      outcomes,
+      verificationResults: results,
+      verificationMethods: methods,
+      outcomeMeta: (value) => outcomes.find((o) => o.value === value) || null,
+      verificationLabel: (value) => methods.find((m) => m.value === value)?.label || value || null,
+    };
+  }, [tf]);
+}
 
 /** What this fault's capture form should offer: suggested actions, vocabularies, and prior capture. */
 export async function getCaptureOptions(taskId) {

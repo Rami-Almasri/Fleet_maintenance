@@ -8,6 +8,12 @@
 // There is NO manual "Progress outcome" (On Track / Delayed / Critical): a checkpoint captures the ETA
 // change, and the dashboard PROGRESS_STATUS below is DERIVED from the promised date + workflow stage.
 
+// LOCALIZATION — the English labels stay here beside the model constant each mirrors; the Arabic
+// lives in labels.js under `ar.checkpoints.*`. Display surfaces must read these through
+// useCheckpointVocab() below rather than off the raw constants or the bare statusLabel/
+// delayReasonLabel helpers (which are kept English for non-React callers such as report builders).
+import { useMemo } from 'react';
+import { useI18n } from '../i18n/I18nContext';
 import api from '../api/client';
 
 const base = (ticketId) => `/maintenance-tickets/${ticketId}`;
@@ -69,6 +75,33 @@ export const isCheckpointStage = (workflowStatus) => CHECKPOINT_STAGES.includes(
 
 export const statusLabel = (v) => STATUS_OPTIONS.find((o) => o.value === v)?.label || v || null;
 export const delayReasonLabel = (v) => DELAY_REASONS.find((o) => o.value === v)?.label || v || null;
+
+// Every checkpoint vocabulary, resolved into the active language. The `tone`/`chip`/`dot` classes and
+// the option ORDER come from the constants above unchanged — only the words move.
+export function useCheckpointVocab() {
+  const { tf } = useI18n();
+  return useMemo(() => {
+    const locList = (list, ns) =>
+      list.map((o) => ({ ...o, label: tf(`checkpoints.${ns}.${o.value}`, o.label) }));
+    const locMap = (map, ns) =>
+      Object.fromEntries(Object.entries(map).map(([k, m]) => [
+        k,
+        { ...m, label: tf(`checkpoints.${ns}.${k}.label`, m.label), ...(m.tip ? { tip: tf(`checkpoints.${ns}.${k}.tip`, m.tip) } : {}) },
+      ]));
+
+    const statusOptions = locList(STATUS_OPTIONS, 'status');
+    const delayReasons = locList(DELAY_REASONS, 'delayReason');
+    return {
+      statusOptions,
+      delayReasons,
+      progressStatus: locMap(PROGRESS_STATUS, 'progress'),
+      sourceMeta: locMap(SOURCE_META, 'source'),
+      responseMeta: locMap(RESPONSE_META, 'response'),
+      statusLabel: (v) => statusOptions.find((o) => o.value === v)?.label || v || null,
+      delayReasonLabel: (v) => delayReasons.find((o) => o.value === v)?.label || v || null,
+    };
+  }, [tf]);
+}
 
 // ── Reads ────────────────────────────────────────────────────────────────────
 export async function getTicketCheckpoints(ticketId) {

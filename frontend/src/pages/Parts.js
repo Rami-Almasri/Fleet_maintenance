@@ -17,6 +17,7 @@ import PartRecordModal from '../components/parts/PartRecordModal';
 import PartReturnModal from '../components/parts/PartReturnModal';
 import { SHOW_FINANCIALS } from '../config/features';
 import { aed, fmtAgo, num } from '../lib/format';
+import { useI18n } from '../i18n/I18nContext';
 
 const PAGE_SIZE = 15;
 
@@ -68,12 +69,14 @@ const DUP_REASONS = [
 
 
 function StatusBadge({ status }) {
-  return <Badge tone={STATUS_TONE[status] || 'gray'}>{STATUS_LABEL[status] || status}</Badge>;
+  const { tf } = useI18n();
+  return <Badge tone={STATUS_TONE[status] || 'gray'}>{tf(`parts.status.${status}`, STATUS_LABEL[status] || status)}</Badge>;
 }
 
 
 // ─── Purchase modal (with duplicate-purchase intelligence) ───────────────────
 function PurchaseModal({ open, request, onClose, onDone, vendors }) {
+  const { t, tf } = useI18n();
   const toast = useToast();
   const [form, setForm] = useState({
     purchase_source: 'supplier',
@@ -181,18 +184,18 @@ function PurchaseModal({ open, request, onClose, onDone, vendors }) {
     <Modal
       open={open}
       onClose={() => !saving && onClose()}
-      title="Record Purchase"
+      title={t('parts.purchase.title')}
       subtitle={request ? `${request.part_name} · ${request.vehicle?.plate || `#${request.vehicle?.id}`}` : ''}
       size="lg"
       footer={
         <>
-          <Button variant="secondary" onClick={onClose} disabled={saving}>Cancel</Button>
-          <Button onClick={submit} loading={saving} disabled={!canSubmit}>Record purchase</Button>
+          <Button variant="secondary" onClick={onClose} disabled={saving}>{t('parts.cancel')}</Button>
+          <Button onClick={submit} loading={saving} disabled={!canSubmit}>{t('parts.purchase.submit')}</Button>
         </>
       }
     >
       <div className="space-y-4">
-        {checking && <div className="text-xs text-slate-400">Loading this part’s full purchase record…</div>}
+        {checking && <div className="text-xs text-slate-400">{t('parts.purchase.loadingRecord')}</div>}
 
         {/* Duplicate-purchase warning — prominent, and it gates the submit button. */}
         {isDuplicate && (
@@ -220,8 +223,8 @@ function PurchaseModal({ open, request, onClose, onDone, vendors }) {
                 error={errors.duplicate_reason_code?.[0]}
                 onChange={(e) => set('duplicate_reason_code', e.target.value)}
               >
-                <option value="">Select a reason…</option>
-                {DUP_REASONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                <option value="">{t('parts.purchase.selectReason')}</option>
+                {DUP_REASONS.map(([v, l]) => <option key={v} value={v}>{tf(`parts.dupReason.${v}`, l)}</option>)}
               </Select>
               <Textarea
                 className="mt-2"
@@ -242,7 +245,7 @@ function PurchaseModal({ open, request, onClose, onDone, vendors }) {
 
         {/* Purchase source toggle */}
         <div>
-          <span className="mb-1 block text-sm font-medium text-slate-700">Bought from</span>
+          <span className="mb-1 block text-sm font-medium text-slate-700">{t('parts.purchase.boughtFrom')}</span>
           <div className="inline-flex rounded-lg border border-slate-300 p-0.5">
             {['garage', 'supplier'].map((s) => (
               <button
@@ -251,7 +254,7 @@ function PurchaseModal({ open, request, onClose, onDone, vendors }) {
                 onClick={() => { set('purchase_source', s); set('source_vendor_id', ''); }}
                 className={`rounded-md px-4 py-1.5 text-sm font-semibold capitalize transition ${form.purchase_source === s ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50'}`}
               >
-                {s === 'garage' ? 'Garage' : 'Parts supplier'}
+                {t(`parts.source.${s}`)}
               </button>
             ))}
           </div>
@@ -259,17 +262,17 @@ function PurchaseModal({ open, request, onClose, onDone, vendors }) {
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
-            <span className="mb-1 block text-sm font-medium text-slate-700">{form.purchase_source === 'garage' ? 'Garage' : 'Supplier'}</span>
+            <span className="mb-1 block text-sm font-medium text-slate-700">{t(`parts.vendorLabel.${form.purchase_source === 'garage' ? 'garage' : 'supplier'}`)}</span>
             <SearchSelect
               value={form.source_vendor_id}
               onChange={(v) => set('source_vendor_id', v)}
               options={vendorOptions}
-              placeholder="Pick a vendor…"
+              placeholder={t('parts.purchase.pickVendor')}
             />
           </div>
           <Input
-            label="…or type a source name"
-            placeholder="Free-text vendor name"
+            label={t('parts.purchase.orTypeSource')}
+            placeholder={t('parts.purchase.freeTextVendor')}
             value={form.source_name}
             error={errors.source_name?.[0]}
             onChange={(e) => set('source_name', e.target.value)}
@@ -280,19 +283,19 @@ function PurchaseModal({ open, request, onClose, onDone, vendors }) {
           {/* Price entry is a record — always visible even with financials hidden. */}
           <div className="grid grid-cols-[1fr_auto] gap-2">
             <Input
-              label="Purchase price"
+              label={t('parts.purchase.price')}
               required
               type="number"
               min={0}
               step="0.01"
               value={form.purchase_price}
-              error={errors.purchase_price?.[0] || (form.purchase_price !== '' && !priceValid ? 'Must be greater than 0' : undefined)}
+              error={errors.purchase_price?.[0] || (form.purchase_price !== '' && !priceValid ? t('parts.purchase.priceInvalid') : undefined)}
               onChange={(e) => set('purchase_price', e.target.value)}
             />
-            <Input label="Cur." className="w-20" value={form.currency} onChange={(e) => set('currency', e.target.value)} />
+            <Input label={t('parts.purchase.currency')} className="w-20" value={form.currency} onChange={(e) => set('currency', e.target.value)} />
           </div>
           <Input
-            label="Quantity"
+            label={t('parts.purchase.quantity')}
             type="number"
             min={1}
             value={form.quantity}
@@ -303,27 +306,27 @@ function PurchaseModal({ open, request, onClose, onDone, vendors }) {
               fitted, so the Installed Components dossier can link a part back to the paperwork
               that bought it. Optional — a cash counter buy legitimately has none. */}
           <Input
-            label="PO / invoice reference"
-            placeholder="Optional — e.g. PO-2026-0481"
+            label={t('parts.purchase.poRef')}
+            placeholder={t('parts.purchase.poRefHint')}
             value={form.po_number}
             error={errors.po_number?.[0]}
             onChange={(e) => set('po_number', e.target.value)}
           />
           <Select
-            label="Repair location"
+            label={t('parts.purchase.repairLocation')}
             value={form.repair_location}
             error={errors.repair_location?.[0]}
             onChange={(e) => set('repair_location', e.target.value)}
           >
-            <option value="garage">In garage</option>
-            <option value="onsite">On-site</option>
+            <option value="garage">{t('parts.purchase.inGarage')}</option>
+            <option value="onsite">{t('parts.purchase.onSite')}</option>
           </Select>
         </div>
 
         <Textarea
-          label="Notes"
+          label={t('parts.notes')}
           rows={2}
-          placeholder="Optional"
+          placeholder={t('parts.optional')}
           value={form.notes}
           error={errors.notes?.[0]}
           onChange={(e) => set('notes', e.target.value)}
@@ -335,6 +338,7 @@ function PurchaseModal({ open, request, onClose, onDone, vendors }) {
 
 // ─── Install modal ───────────────────────────────────────────────────────────
 function InstallModal({ open, request, onClose, onDone }) {
+  const { t, tf } = useI18n();
   const toast = useToast();
   const purchase = request?.purchases?.find((p) => !p.installed_at) || request?.purchases?.[request.purchases.length - 1];
   const vehicleId = request?.vehicle?.id || request?.vehicle_id || purchase?.vehicle_id || null;
@@ -486,13 +490,13 @@ function InstallModal({ open, request, onClose, onDone }) {
     <Modal
       open={open}
       onClose={() => !saving && onClose()}
-      title="Install Part"
+      title={t('parts.install.title')}
       subtitle={request ? `${request.part_name} · ${request.vehicle?.plate || `#${request.vehicle?.id}`}` : ''}
       size="md"
       footer={
         <>
-          <Button variant="secondary" onClick={onClose} disabled={saving}>Cancel</Button>
-          <Button onClick={submit} loading={saving}>Mark installed</Button>
+          <Button variant="secondary" onClick={onClose} disabled={saving}>{t('parts.cancel')}</Button>
+          <Button onClick={submit} loading={saving}>{t('parts.install.submit')}</Button>
         </>
       }
     >
@@ -507,43 +511,39 @@ function InstallModal({ open, request, onClose, onDone }) {
             Recording the install here is what puts the part on the vehicle's Installed Components
             tab — there is no separate screen to add it, and no list to keep in sync afterwards. */}
         <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
-          <h4 className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Vehicle configuration</h4>
-          <p className="mt-0.5 text-xs text-slate-400">
-            Fitting this part updates the vehicle's installed components automatically. Nothing else needs updating.
-          </p>
+          <h4 className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">{t('parts.install.config')}</h4>
+          <p className="mt-0.5 text-xs text-slate-400">{t('parts.install.configHint')}</p>
 
           {/* The type is what turns a free-text part name into a tracked asset. Without it the
               vehicle's configuration cannot be updated at all. */}
           <div className="mt-3">
             <Select
-              label="Component type *"
+              label={t('parts.install.componentType')}
               value={form.component_catalog_id}
               error={errors['component.component_catalog_id']?.[0]}
               onChange={(e) => set('component_catalog_id', e.target.value)}
             >
-              <option value="">Select what kind of part this is…</option>
+              <option value="">{t('parts.install.selectType')}</option>
               {catalog.map((c) => (
                 <option key={c.id} value={c.id}>{c.name}</option>
               ))}
             </Select>
             {!form.component_catalog_id && !errors['component.component_catalog_id'] && (
-              <p className="mt-1 text-xs text-amber-600">
-                Required — the type is what puts this part on the vehicle’s Installed Components tab.
-              </p>
+              <p className="mt-1 text-xs text-amber-600">{t('parts.install.typeRequired')}</p>
             )}
           </div>
 
           <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-3">
             <Input
-              label="Brand"
-              placeholder="e.g. Bosch"
+              label={t('parts.install.brand')}
+              placeholder={t('parts.install.brandHint')}
               value={form.brand}
               error={errors['component.brand']?.[0]}
               onChange={(e) => set('brand', e.target.value)}
             />
             <Input
-              label={selectedType?.requires_serial ? 'Serial number *' : 'Serial number'}
-              placeholder={selectedType?.requires_serial ? 'Required for this type' : 'If the part has one'}
+              label={t(selectedType?.requires_serial ? 'parts.install.serialRequired' : 'parts.install.serial')}
+              placeholder={t(selectedType?.requires_serial ? 'parts.install.serialRequiredHint' : 'parts.install.serialHint')}
               value={form.serial_no}
               error={errors['component.serial_no']?.[0]}
               onChange={(e) => set('serial_no', e.target.value)}
@@ -551,17 +551,15 @@ function InstallModal({ open, request, onClose, onDone }) {
             {/* Only offered when the chosen type actually has slots — sending a position to a
                 positionless type is rejected outright. */}
             <Select
-              label="Position"
+              label={t('parts.install.position')}
               value={form.position}
               disabled={positions.length === 0}
               error={errors['component.position']?.[0]}
               onChange={(e) => set('position', e.target.value)}
             >
-              <option value="">{positions.length ? 'Select a position…' : 'Not applicable'}</option>
+              <option value="">{t(positions.length ? 'parts.install.selectPosition' : 'parts.install.noPosition')}</option>
               {positions.map((p) => (
-                <option key={p} value={p}>
-                  {{ front_left: 'Front left', front_right: 'Front right', rear_left: 'Rear left', rear_right: 'Rear right', front: 'Front axle', rear: 'Rear axle' }[p] || p}
-                </option>
+                <option key={p} value={p}>{tf(`parts.position.${p}`, p)}</option>
               ))}
             </Select>
           </div>
@@ -570,38 +568,41 @@ function InstallModal({ open, request, onClose, onDone }) {
               system needs a reason AND a destination before it will retire the previous record. */}
           <div className="mt-4 border-t border-slate-200 pt-3">
             <p className="text-xs font-medium text-slate-600">
-              {replacing ? 'Replacing an existing part — both answers required' : 'Replacing an existing part?'}
+              {t(replacing ? 'parts.install.replacingTitle' : 'parts.install.replacingAsk')}
             </p>
             <p className={`mt-0.5 text-xs ${replacing ? 'text-amber-600' : 'text-slate-400'}`}>
               {replacing
-                ? `This car already has a ${replacing.part_name || selectedType?.name} fitted${replacing.installed_at ? ` since ${String(replacing.installed_at).slice(0, 10)}` : ''}. Say why it came off and where it went, or the fitting cannot be recorded.`
-                : 'Answer both and the old part is retired automatically, linked to this one as its successor. Leave blank if nothing was removed.'}
+                ? t(replacing.installed_at ? 'parts.install.replacingHintSince' : 'parts.install.replacingHint', {
+                  part: replacing.part_name || selectedType?.name,
+                  since: String(replacing.installed_at || '').slice(0, 10),
+                })
+                : t('parts.install.replacingNone')}
             </p>
             <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Select
-                label="Why it came off"
+                label={t('parts.install.whyOff')}
                 value={form.removal_reason}
                 error={errors['predecessor.removal_reason']?.[0]}
                 onChange={(e) => set('removal_reason', e.target.value)}
               >
-                <option value="">Nothing was removed</option>
-                <option value="worn_out">Worn out</option>
-                <option value="failed">Failed</option>
-                <option value="accident">Accident damage</option>
-                <option value="upgrade">Upgraded</option>
-                <option value="recall">Recall</option>
+                <option value="">{t('parts.removal.none')}</option>
+                <option value="worn_out">{t('parts.removal.worn_out')}</option>
+                <option value="failed">{t('parts.removal.failed')}</option>
+                <option value="accident">{t('parts.removal.accident')}</option>
+                <option value="upgrade">{t('parts.removal.upgrade')}</option>
+                <option value="recall">{t('parts.removal.recall')}</option>
               </Select>
               <Select
-                label="Where the old part went"
+                label={t('parts.install.whereWent')}
                 value={form.disposition}
                 error={errors['predecessor.disposition']?.[0]}
                 onChange={(e) => set('disposition', e.target.value)}
               >
                 <option value="">—</option>
-                <option value="scrapped">Scrapped</option>
-                <option value="stored">Kept as a spare</option>
-                <option value="returned_supplier">Returned to supplier</option>
-                <option value="warranty_return">Returned under warranty</option>
+                <option value="scrapped">{t('parts.disposition.scrapped')}</option>
+                <option value="stored">{t('parts.disposition.stored')}</option>
+                <option value="returned_supplier">{t('parts.disposition.returned_supplier')}</option>
+                <option value="warranty_return">{t('parts.disposition.warranty_return')}</option>
               </Select>
             </div>
           </div>
@@ -613,6 +614,7 @@ function InstallModal({ open, request, onClose, onDone }) {
 
 // ─── Reject modal ────────────────────────────────────────────────────────────
 function RejectModal({ open, request, onClose, onDone }) {
+  const { t } = useI18n();
   const toast = useToast();
   const [reason, setReason] = useState('');
   const [error, setError] = useState('');
@@ -621,15 +623,15 @@ function RejectModal({ open, request, onClose, onDone }) {
   useEffect(() => { if (open) { setReason(''); setError(''); } }, [open]);
 
   const submit = async () => {
-    if (!reason.trim()) { setError('A reason is required'); return; }
+    if (!reason.trim()) { setError(t('parts.reject.reasonRequired')); return; }
     setSaving(true);
     try {
       await api.post(`/part-requests/${request.id}/reject`, { reason: reason.trim() });
-      toast.success('Request rejected');
+      toast.success(t('parts.reject.done'));
       onDone();
       onClose();
     } catch (err) {
-      toast.error(err.response?.data?.message || err.response?.data?.msg || 'Could not reject the request');
+      toast.error(err.response?.data?.message || err.response?.data?.msg || t('parts.reject.failed'));
     } finally {
       setSaving(false);
     }
@@ -639,21 +641,21 @@ function RejectModal({ open, request, onClose, onDone }) {
     <Modal
       open={open}
       onClose={() => !saving && onClose()}
-      title="Reject Part Request"
+      title={t('parts.reject.title')}
       subtitle={request ? request.part_name : ''}
       size="sm"
       footer={
         <>
-          <Button variant="secondary" onClick={onClose} disabled={saving}>Cancel</Button>
-          <Button variant="danger" onClick={submit} loading={saving}>Reject</Button>
+          <Button variant="secondary" onClick={onClose} disabled={saving}>{t('parts.cancel')}</Button>
+          <Button variant="danger" onClick={submit} loading={saving}>{t('parts.reject.submit')}</Button>
         </>
       }
     >
       <Textarea
-        label="Reason"
+        label={t('parts.reject.reason')}
         required
         rows={3}
-        placeholder="Why is this request being rejected?"
+        placeholder={t('parts.reject.reasonHint')}
         value={reason}
         error={error}
         onChange={(e) => setReason(e.target.value)}
@@ -672,6 +674,7 @@ function RejectModal({ open, request, onClose, onDone }) {
 // The full mandatory reason stays at the purchase step (where money is actually
 // committed); here an optional note is enough, kept on the request's audit trail.
 function ApproveModal({ open, request, dup, onClose, onDone }) {
+  const { t, tf } = useI18n();
   const toast = useToast();
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
@@ -682,11 +685,11 @@ function ApproveModal({ open, request, dup, onClose, onDone }) {
     setSaving(true);
     try {
       await api.post(`/part-requests/${request.id}/approve`, { notes: note.trim() || null });
-      toast.success('Request approved');
+      toast.success(t('parts.approve.done'));
       onDone();
       onClose();
     } catch (err) {
-      toast.error(err.response?.data?.message || err.response?.data?.msg || 'Could not approve the request');
+      toast.error(err.response?.data?.message || err.response?.data?.msg || t('parts.approve.failed'));
     } finally {
       setSaving(false);
     }
@@ -703,14 +706,14 @@ function ApproveModal({ open, request, dup, onClose, onDone }) {
     <Modal
       open={open}
       onClose={() => !saving && onClose()}
-      title={alerted ? 'Approve — possible duplicate' : 'Approve — this part has been bought before'}
+      title={t(alerted ? 'parts.approve.titleDup' : 'parts.approve.titleSeen')}
       subtitle={request ? `${request.part_name} · ${request.vehicle?.plate || `#${request.vehicle?.id}`}` : ''}
       size="lg"
       footer={
         <>
-          <Button variant="secondary" onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button variant="secondary" onClick={onClose} disabled={saving}>{t('parts.cancel')}</Button>
           <Button variant={high ? 'danger' : 'success'} onClick={submit} loading={saving}>
-            {alerted ? 'Approve anyway' : 'Approve'}
+            {t(alerted ? 'parts.approve.anyway' : 'parts.approve.submit')}
           </Button>
         </>
       }
@@ -719,30 +722,28 @@ function ApproveModal({ open, request, dup, onClose, onDone }) {
         {alerted ? (
           <div className={`rounded-xl px-4 py-3 text-sm ring-1 ring-inset ${high ? 'bg-red-50 text-red-800 ring-red-600/25' : 'bg-amber-50 text-amber-800 ring-amber-600/25'}`}>
             <p className="font-semibold">
-              ⚠ Attention: this vehicle already received {prev?.part_name || 'this part'} {num(dup?.days_between)} day(s) ago.
+              {t('parts.approve.alert', { part: prev?.part_name || t('parts.approve.thisPart'), days: num(dup?.days_between) })}
             </p>
             <ul className="mt-1.5 space-y-0.5 text-xs">
               {prev?.purchase_price != null && (
-                <li>Previous cost {aed(prev.purchase_price)} {prev.currency && prev.currency !== 'AED' ? `(${prev.currency})` : ''}.</li>
+                <li>{t('parts.approve.prevCost', { amount: aed(prev.purchase_price), currency: prev.currency && prev.currency !== 'AED' ? `(${prev.currency})` : '' })}</li>
               )}
-              {prev?.purchased_by && <li>Previous purchase by {prev.purchased_by}.</li>}
+              {prev?.purchased_by && <li>{t('parts.approve.prevBuyer', { who: prev.purchased_by })}</li>}
               {prev?.source && (
-                <li>Bought from {prev.source_name ? <span className="font-medium">{prev.source_name}</span> : sourceLabel(prev.source)}{prev.source_name && sourceLabel(prev.source) ? ` (${sourceLabel(prev.source)})` : ''}.</li>
+                <li>{t('parts.approve.prevSource')} {prev.source_name ? <span className="font-medium">{prev.source_name}</span> : tf(`parts.sourceLabel.${prev.source}`, sourceLabel(prev.source))}{prev.source_name && sourceLabel(prev.source) ? ` (${tf(`parts.sourceLabel.${prev.source}`, sourceLabel(prev.source))})` : ''}.</li>
               )}
-              {dup?.part_class && <li>Part class: <span className="font-medium capitalize">{dup.part_class}</span> · window {num(dup.window_days)} day(s).</li>}
-              {dup?.same_fault && <li className="font-medium">Same fault as before — the earlier repair may have failed.</li>}
+              {dup?.part_class && <li>{t('parts.approve.partClass')} <span className="font-medium capitalize">{tf(`parts.class.${dup.part_class}`, dup.part_class)}</span> · {t('parts.approve.window', { days: num(dup.window_days) })}</li>}
+              {dup?.same_fault && <li className="font-medium">{t('parts.approve.sameFault')}</li>}
             </ul>
           </div>
         ) : (
           // No alert fired — say so plainly, so a quiet engine is never mistaken for a clean history.
           <div className="rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-700 ring-1 ring-inset ring-slate-200">
-            <p className="font-semibold">
-              This vehicle has had this part {num(count)} time(s) before.
-            </p>
+            <p className="font-semibold">{t('parts.approve.seenBefore', { n: num(count) })}</p>
             <p className="mt-1 text-xs text-slate-500">
-              No duplicate alert
-              {dup?.part_class ? <> — a <span className="font-medium capitalize">{dup.part_class}</span> part repeated outside the {num(dup?.window_days)}-day window is normal</> : ''}
-              . The record is shown so you approve knowing what came before.
+              {t('parts.approve.noAlert')}
+              {dup?.part_class ? <> — {t('parts.approve.noAlertClass', { cls: tf(`parts.class.${dup.part_class}`, dup.part_class), days: num(dup?.window_days) })}</> : ''}
+              . {t('parts.approve.noAlertTail')}
             </p>
           </div>
         )}
@@ -751,16 +752,14 @@ function ApproveModal({ open, request, dup, onClose, onDone }) {
         <PartPurchaseHistory history={dup?.history} partName={request?.part_name} />
 
         <Textarea
-          label={alerted ? 'Reason for approving again (optional)' : 'Note (optional)'}
+          label={t(alerted ? 'parts.approve.noteLabelDup' : 'parts.approve.noteLabel')}
           rows={2}
-          placeholder={alerted ? 'e.g. previous part failed, wrong diagnosis, customer request…' : 'Anything the buyer should know…'}
+          placeholder={t(alerted ? 'parts.approve.notePlaceholderDup' : 'parts.approve.notePlaceholder')}
           value={note}
           onChange={(e) => setNote(e.target.value)}
         />
         <p className="text-xs text-slate-400">
-          {alerted
-            ? 'A full reason is still required at the purchase step — this note is kept on the request for the audit trail.'
-            : 'This note is kept on the request for the audit trail.'}
+          {t(alerted ? 'parts.approve.noteFootDup' : 'parts.approve.noteFoot')}
         </p>
       </div>
     </Modal>
@@ -769,6 +768,7 @@ function ApproveModal({ open, request, dup, onClose, onDone }) {
 
 // ─── Page ────────────────────────────────────────────────────────────────────
 export default function Parts() {
+  const { t, tf } = useI18n();
   const toast = useToast();
   const { can } = usePermissions();
   const canRequest = can('parts.request');
@@ -944,31 +944,31 @@ export default function Parts() {
     // to ask the question without having to start an approval to find out.
     actions.push(
       <Button key="record" variant="ghost" size="sm" className="text-slate-600 hover:bg-slate-100" onClick={() => setRecordFor(r)}>
-        Record
+        {t('parts.actions.record')}
       </Button>,
     );
     // 'under_review' kept in the guard so any legacy row in that state can still be actioned,
     // but the Review step itself is retired — a request goes straight to Approve/Reject.
     if (['requested', 'under_review'].includes(r.status) && canReview) {
       actions.push(
-        <Button key="approve" variant="success" size="sm" loading={isBusy(r, 'approve')} onClick={() => onApprove(r)}>Approve</Button>,
-        <Button key="reject" variant="ghost" size="sm" className="text-red-600 hover:bg-red-50" onClick={() => setRejectFor(r)}>Reject</Button>,
+        <Button key="approve" variant="success" size="sm" loading={isBusy(r, 'approve')} onClick={() => onApprove(r)}>{t('parts.actions.approve')}</Button>,
+        <Button key="reject" variant="ghost" size="sm" className="text-red-600 hover:bg-red-50" onClick={() => setRejectFor(r)}>{t('parts.actions.reject')}</Button>,
       );
     }
     if (r.status === 'approved' && canPurchase) {
-      actions.push(<Button key="purchase" size="sm" onClick={() => setPurchaseFor(r)}>Record Purchase</Button>);
+      actions.push(<Button key="purchase" size="sm" onClick={() => setPurchaseFor(r)}>{t('parts.purchase.title')}</Button>);
     }
     if (r.status === 'purchased' && canPurchase) {
       const po = r.purchases?.find((p) => !p.installed_at) || r.purchases?.[r.purchases.length - 1];
       if (po && !po.delivered_at) {
-        actions.push(<Button key="delivered" variant="ghost" size="sm" className="text-cyan-700 hover:bg-cyan-50" loading={isBusy(r, 'delivered')} onClick={() => markDelivered(r, po)}>Mark delivered</Button>);
+        actions.push(<Button key="delivered" variant="ghost" size="sm" className="text-cyan-700 hover:bg-cyan-50" loading={isBusy(r, 'delivered')} onClick={() => markDelivered(r, po)}>{t('parts.actions.markDelivered')}</Button>);
       } else if (po?.delivered_at) {
-        actions.push(<span key="delivered-tag" className="inline-flex items-center rounded-md bg-cyan-50 px-2 py-1 text-xs font-medium text-cyan-700 ring-1 ring-inset ring-cyan-200">✓ Delivered</span>);
+        actions.push(<span key="delivered-tag" className="inline-flex items-center rounded-md bg-cyan-50 px-2 py-1 text-xs font-medium text-cyan-700 ring-1 ring-inset ring-cyan-200">{t('parts.actions.delivered')}</span>);
       }
-      actions.push(<Button key="install" variant="secondary" size="sm" onClick={() => setInstallFor(r)}>Install</Button>);
+      actions.push(<Button key="install" variant="secondary" size="sm" onClick={() => setInstallFor(r)}>{t('parts.actions.install')}</Button>);
     }
     if (r.status === 'installed' && canRequest) {
-      actions.push(<Button key="complete" variant="success" size="sm" loading={isBusy(r, 'complete')} onClick={() => runAction(r, 'complete', 'Request completed')}>Complete</Button>);
+      actions.push(<Button key="complete" variant="success" size="sm" loading={isBusy(r, 'complete')} onClick={() => runAction(r, 'complete', t('parts.actions.completed'))}>{t('parts.actions.complete')}</Button>);
     }
     // Return — available from the moment a part has actually been bought, and still available after it was
     // fitted (a part can fail on the bench or turn out to be the wrong one once it's on the car). It never
@@ -984,7 +984,7 @@ export default function Parts() {
             className="text-amber-700 hover:bg-amber-50"
             onClick={() => setReturnFor({ ...returnable, supplier: returnable.supplier || returnable.source_name })}
           >
-            Return
+            {t('parts.actions.return')}
           </Button>,
         );
       }
@@ -996,12 +996,12 @@ export default function Parts() {
     <div className="py-8">
       <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
         <PageHeader
-          title="Parts Purchase"
-          subtitle={loading ? '…' : `${num(filtered.length)} of ${num(requests.length)} part requests`}
+          title={t('parts.title')}
+          subtitle={loading ? '…' : t('parts.subtitle', { shown: num(filtered.length), total: num(requests.length) })}
         >
           {/* Requests are initiated from inside the maintenance ticket (vehicle → ticket → fault), not here.
               This board is the purchasing hub: review → approve → purchase → install → investigations. */}
-          <span className="text-xs text-slate-400">Requests start from a maintenance ticket</span>
+          <span className="text-xs text-slate-400">{t('parts.startFromTicket')}</span>
         </PageHeader>
 
         {/* Status summary tiles (click to filter) */}
@@ -1014,7 +1014,7 @@ export default function Parts() {
             >
               <span className="flex items-center gap-2">
                 <span className={`h-1.5 w-1.5 rounded-full ${STATUS_TONE[s] === 'green' ? 'bg-emerald-500' : STATUS_TONE[s] === 'violet' ? 'bg-violet-500' : STATUS_TONE[s] === 'cyan' ? 'bg-cyan-500' : STATUS_TONE[s] === 'blue' ? 'bg-blue-500' : STATUS_TONE[s] === 'amber' ? 'bg-amber-500' : 'bg-slate-400'}`} />
-                <span className="text-xs font-medium text-slate-500">{STATUS_LABEL[s]}</span>
+                <span className="text-xs font-medium text-slate-500">{tf(`parts.status.${s}`, STATUS_LABEL[s])}</span>
               </span>
               <span className="mt-1 font-display text-2xl font-bold tracking-tight text-slate-900">{loading ? '…' : num(counts[s] || 0)}</span>
             </button>
@@ -1023,23 +1023,23 @@ export default function Parts() {
 
         {/* Filters */}
         <div className="flex flex-col gap-3 sm:flex-row">
-          <SearchInput className="flex-1" value={search} onChange={(v) => { setSearch(v); setPage(1); }} placeholder="Search part, plate, customer…" />
+          <SearchInput className="flex-1" value={search} onChange={(v) => { setSearch(v); setPage(1); }} placeholder={t('parts.searchPlaceholder')} />
           <Select className="sm:w-44" value={source} onChange={(e) => { setSource(e.target.value); setPage(1); }}>
-            <option value="">All sources</option>
-            <option value="garage">Garage</option>
+            <option value="">{t('parts.allSources')}</option>
+            <option value="garage">{t('parts.source.garage')}</option>
           </Select>
           <Select className="sm:w-48" value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }}>
-            <option value="">All statuses</option>
-            {ALL_STATUSES.map((s) => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
+            <option value="">{t('parts.allStatuses')}</option>
+            {ALL_STATUSES.map((s) => <option key={s} value={s}>{tf(`parts.status.${s}`, STATUS_LABEL[s])}</option>)}
           </Select>
         </div>
 
         {/* Arrived from a ticket's Parts section — say so, and offer the way back to the full board. */}
         {ticketId && (
           <div className="flex items-center gap-2 rounded-lg bg-indigo-50 px-4 py-2 text-sm text-indigo-800 ring-1 ring-inset ring-indigo-600/20">
-            <span>Showing parts for maintenance ticket <span className="font-semibold">#{ticketId}</span> only.</span>
+            <span>{t('parts.ticketFilterBefore')} <span className="font-semibold">#{ticketId}</span> {t('parts.ticketFilterAfter')}</span>
             <button type="button" onClick={clearTicketFilter} className="font-semibold underline underline-offset-2 hover:text-indigo-900">
-              Show all parts
+              {t('parts.showAll')}
             </button>
           </div>
         )}
@@ -1060,13 +1060,13 @@ export default function Parts() {
             <table className="min-w-full border-separate border-spacing-0 text-sm">
               <thead className="bg-slate-50/90">
                 <tr className="text-start text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-start">Vehicle</th>
-                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-start">Part</th>
-                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-start">Source</th>
-                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-start">Location</th>
-                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-start">Status</th>
-                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-start">Requested</th>
-                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-end">Actions</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-start">{t('parts.cols.vehicle')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-start">{t('parts.cols.part')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-start">{t('parts.cols.source')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-start">{t('parts.cols.location')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-start">{t('parts.cols.status')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-start">{t('parts.cols.requested')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-end">{t('parts.cols.actions')}</th>
                 </tr>
               </thead>
 
@@ -1116,7 +1116,7 @@ export default function Parts() {
             </table>
 
             {!loading && filtered.length === 0 && (
-              <EmptyState title="No part requests" message="Nothing matches these filters yet." />
+              <EmptyState title={t('parts.empty.title')} message={t('parts.empty.message')} />
             )}
           </div>
 

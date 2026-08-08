@@ -9,7 +9,7 @@ import { SectionCard } from '../ui/Table';
 import { Skeleton } from '../ui/Skeleton';
 import { InfoTip } from '../ui/Tooltip';
 import { fmtDate } from '../../lib/format';
-import { getMaintenanceProgress, PROGRESS_STATUS, SOURCE_META, resolveCheckpointTicket, statusLabel, delayReasonLabel } from '../../lib/maintenanceCheckpoints';
+import { getMaintenanceProgress, useCheckpointVocab, resolveCheckpointTicket } from '../../lib/maintenanceCheckpoints';
 import CheckpointModal from '../maintenance/CheckpointModal';
 import DelayExplanation from '../maintenance/DelayExplanation';
 
@@ -22,7 +22,8 @@ const SUMMARY_CHIPS = [
 ];
 
 function StatusChip({ status }) {
-  const s = PROGRESS_STATUS[status] || PROGRESS_STATUS.on_schedule;
+  const { progressStatus } = useCheckpointVocab();
+  const s = progressStatus[status] || progressStatus.on_schedule;
   return (
     <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ${s.chip}`}>
       <span className={`h-1.5 w-1.5 rounded-full ${s.dot} ${status === 'needs_update' || status === 'overdue' ? 'animate-pulse' : ''}`} />
@@ -40,7 +41,8 @@ function daysCell(r) {
 
 // Where a row came from — 'Contract' vs 'Workshop' — badged so a mixed queue stays legible.
 function SourceBadge({ source }) {
-  const s = SOURCE_META[source];
+  const { sourceMeta } = useCheckpointVocab();
+  const s = sourceMeta[source];
   if (!s) return null;
   return (
     <span title={s.tip} className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ring-1 ${s.chip}`}>
@@ -78,6 +80,7 @@ function checkpointDelayDays(prev, next) {
 // The workshop's last update, clearly labelled: Previous → New ETA (+ delay days), the reason it moved,
 // and who filed it when — so the cell reads as information, not two dates jammed together.
 function LastCheckpointCell({ r }) {
+  const { statusLabel, delayReasonLabel } = useCheckpointVocab();
   const c = r.last_checkpoint;
   if (!c) return <span className="text-amber-600">No update yet</span>;
   const workshop = statusLabel(c.status);

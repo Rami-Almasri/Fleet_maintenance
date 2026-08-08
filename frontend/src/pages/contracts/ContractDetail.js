@@ -14,6 +14,7 @@ import BillingReconciliation from '../../components/BillingReconciliation';
 import ReadinessPanel from '../../components/readiness/ReadinessPanel';
 import { aed2, fmtDate, fmtTime, combineDateTime, fmtDuration, num } from '../../lib/format';
 import { SHOW_FINANCIALS } from '../../config/features';
+import { useI18n } from '../../i18n/I18nContext';
 
 // Renders a card with a label/value grid. Pairs = [[label, value], ...]
 function Section({ title, pairs }) {
@@ -50,6 +51,7 @@ const RECON_STATUS = {
  * OfficeManager server degrades to "Unavailable".
  */
 function NetProfitCard({ contractId }) {
+  const { t } = useI18n();
   const [state, setState] = useState({ loading: true, error: '', data: null });
 
   useEffect(() => {
@@ -72,13 +74,13 @@ function NetProfitCard({ contractId }) {
       <div className="flex flex-wrap items-center justify-between gap-4 px-6 py-5">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Net Profit</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">{t('contractDetail.netProfit')}</p>
             {!state.loading && <Badge tone={st.tone}>{st.label}</Badge>}
           </div>
           {state.loading ? (
-            <div className="mt-2 flex items-center gap-2 text-slate-400"><Spinner className="h-5 w-5" /><span className="text-sm">Reconciling against accounting…</span></div>
+            <div className="mt-2 flex items-center gap-2 text-slate-400"><Spinner className="h-5 w-5" /><span className="text-sm">{t('contractDetail.reconciling')}</span></div>
           ) : state.error ? (
-            <p className="mt-2 text-sm text-red-600">Couldn’t reconcile: {state.error}</p>
+            <p className="mt-2 text-sm text-red-600">{t('contractDetail.reconcileFailed')} {state.error}</p>
           ) : (
             <>
               <p className={`mt-1 text-3xl font-bold tracking-tight ${positive ? 'text-emerald-600' : 'text-red-600'}`}>
@@ -121,20 +123,21 @@ function Milestone({ label, date, icon, tone = 'slate' }) {
 
 // Out → Expected → Returned lifecycle of a contract, as a 3-step timeline.
 function Lifecycle({ out, expected, actual, open, late }) {
+  const { t } = useI18n();
   if (!out) return null;
   const third = actual
-    ? { label: 'Returned', date: fmtDate(actual), tone: late ? 'red' : 'emerald', icon: ICON_CHECK }
+    ? { label: t('contractDetail.lifecycle.returned'), date: fmtDate(actual), tone: late ? 'red' : 'emerald', icon: ICON_CHECK }
     : open
-      ? { label: 'In progress', date: 'Not returned yet', tone: 'amber', icon: ICON_CLOCK }
-      : { label: 'Closed', date: '—', tone: 'slate', icon: ICON_CHECK };
+      ? { label: t('contractDetail.lifecycle.inProgress'), date: t('contractDetail.lifecycle.notReturned'), tone: 'amber', icon: ICON_CLOCK }
+      : { label: t('contractDetail.lifecycle.closed'), date: '—', tone: 'slate', icon: ICON_CHECK };
   const nodes = [
-    { label: 'Out', date: fmtDate(out), tone: 'indigo', icon: ICON_CAL },
-    { label: 'Expected return', date: expected ? fmtDate(expected) : '—', tone: expected ? 'amber' : 'slate', icon: ICON_CLOCK },
+    { label: t('contractDetail.lifecycle.out'), date: fmtDate(out), tone: 'indigo', icon: ICON_CAL },
+    { label: t('contractDetail.lifecycle.expected'), date: expected ? fmtDate(expected) : '—', tone: expected ? 'amber' : 'slate', icon: ICON_CLOCK },
     third,
   ];
   return (
     <Card className="p-6">
-      <h3 className="mb-5 text-xs font-semibold uppercase tracking-wide text-slate-400">Lifecycle</h3>
+      <h3 className="mb-5 text-xs font-semibold uppercase tracking-wide text-slate-400">{t('contractDetail.lifecycle.title')}</h3>
       <div className="relative flex items-start justify-between">
         <span aria-hidden className="pointer-events-none absolute start-8 end-8 top-5 h-0.5 bg-slate-200" />
         {nodes.map((n, i) => <Milestone key={i} {...n} />)}
@@ -144,6 +147,7 @@ function Lifecycle({ out, expected, actual, open, late }) {
 }
 
 export default function ContractDetail() {
+  const { t, tp } = useI18n();
   const { id } = useParams();
   const navigate = useNavigate();
   const fetcher = useCallback(async () => {
@@ -157,9 +161,9 @@ export default function ContractDetail() {
     return (
       <div className="mx-auto max-w-3xl px-4 py-12">
         <Card>
-          <ErrorState title="Couldn’t load this contract" message={error || 'Contract not found.'} onRetry={reload} />
+          <ErrorState title={t('contractDetail.loadFailed')} message={error || t('contractDetail.notFound')} onRetry={reload} />
         </Card>
-        <Link to="/contracts" className="mt-4 inline-block text-sm font-medium text-indigo-600 transition-colors hover:text-indigo-700">← Back to contracts</Link>
+        <Link to="/contracts" className="mt-4 inline-block text-sm font-medium text-indigo-600 transition-colors hover:text-indigo-700">{t('contractDetail.back')}</Link>
       </div>
     );
   }
@@ -291,8 +295,8 @@ export default function ContractDetail() {
                   <ContractTypeBadge type={c.contract_type} />
                   <ContractStateBadge state={c.state} />
                   {mStatus && <Badge tone={mStatus.badge}>{mStatus.label}</Badge>}
-                  {rentalDue?.inProgress && <Badge tone={rentalDue.overdue ? 'red' : 'blue'}>{rentalDue.overdue ? `Overdue · due ${fmtDate(rentalDue.due)}` : `Due back ${fmtDate(rentalDue.due)}`}</Badge>}
-                  {c.parent_contract_id && <Badge tone="indigo">🔁 Exchange</Badge>}
+                  {rentalDue?.inProgress && <Badge tone={rentalDue.overdue ? 'red' : 'blue'}>{t(rentalDue.overdue ? 'contractDetail.overdueBadge' : 'contractDetail.dueBackBadge', { date: fmtDate(rentalDue.due) })}</Badge>}
+                  {c.parent_contract_id && <Badge tone="indigo">🔁 {t('contractDetail.exchange')}</Badge>}
                   {/* Customer-wide money badges (carried balance / wallet / owes) — financials only */}
                   {SHOW_FINANCIALS && Number(c.carried_balance) > 0 && <Badge tone="green" className="font-semibold">Carried {aed2(c.carried_balance)}</Badge>}
                   {SHOW_FINANCIALS && Number(c.customer?.available_wallet) > 0 && <Badge tone="cyan" className="font-semibold">💰 Customer wallet {aed2(c.customer.available_wallet)}</Badge>}
@@ -324,7 +328,7 @@ export default function ContractDetail() {
                   </p>
                 </>
               )}
-              <Button variant="secondary" className={`${SHOW_FINANCIALS ? 'mt-4' : ''} w-full justify-center`} onClick={() => navigate(`/contracts/${id}/edit`)}>Edit Contract</Button>
+              <Button variant="secondary" className={`${SHOW_FINANCIALS ? 'mt-4' : ''} w-full justify-center`} onClick={() => navigate(`/contracts/${id}/edit`)}>{t('contractDetail.edit')}</Button>
             </div>
           </div>
         </div>
@@ -373,32 +377,32 @@ export default function ContractDetail() {
         {SHOW_FINANCIALS && overdueBilling && (
           <Card className="p-6 ring-1 ring-red-200">
             <div className="mb-3 flex items-center justify-between gap-3">
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-red-500">Overdue — extension estimate</h3>
-              <Badge tone="red">{overdueBilling.lateDays}d past due</Badge>
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-red-500">{t('contractDetail.overdue.title')}</h3>
+              <Badge tone="red">{t('contractDetail.overdue.pastDue', { n: overdueBilling.lateDays })}</Badge>
             </div>
             <p className="mb-5 text-sm text-slate-600">
-              Expected return was <span className="font-medium text-slate-900">{fmtDate(rentalDue.due)}</span> and the car is still out.
-              If the lease is extended, here’s the estimated charge for the extra {overdueBilling.lateDays} day{overdueBilling.lateDays === 1 ? '' : 's'}.
+              {t('contractDetail.overdue.expectedWas')} <span className="font-medium text-slate-900">{fmtDate(rentalDue.due)}</span> {t('contractDetail.overdue.stillOut')}
+              {' '}{tp('contractDetail.overdue.estimateFor', overdueBilling.lateDays, { n: overdueBilling.lateDays })}
             </p>
 
             {overdueBilling.daily != null ? (
               <>
                 <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
                   <div className="rounded-2xl border border-slate-200/60 bg-white px-5 py-4 shadow-soft">
-                    <p className="text-xs font-medium text-slate-500">Days late</p>
+                    <p className="text-xs font-medium text-slate-500">{t('contractDetail.overdue.daysLate')}</p>
                     <p className="mt-1.5 text-2xl font-bold tracking-tight text-slate-900">{overdueBilling.lateDays}d</p>
                   </div>
                   <div className="rounded-2xl border border-slate-200/60 bg-white px-5 py-4 shadow-soft">
-                    <p className="text-xs font-medium text-slate-500">Daily rate</p>
+                    <p className="text-xs font-medium text-slate-500">{t('contractDetail.overdue.dailyRate')}</p>
                     <p className="mt-1.5 text-2xl font-bold tracking-tight text-slate-900">{aed2(overdueBilling.daily)}</p>
                     <p className="mt-0.5 text-xs text-slate-400">{overdueBilling.rateSource}</p>
                   </div>
                   <div className="rounded-2xl border border-red-200 bg-red-50/50 px-5 py-4 shadow-soft">
-                    <p className="text-xs font-medium text-red-500">Estimated extra</p>
+                    <p className="text-xs font-medium text-red-500">{t('contractDetail.overdue.estimatedExtra')}</p>
                     <p className="mt-1.5 text-2xl font-bold tracking-tight text-red-600">{aed2(overdueBilling.estimate)}</p>
                   </div>
                   <div className="rounded-2xl border border-slate-200/60 bg-white px-5 py-4 shadow-soft">
-                    <p className="text-xs font-medium text-slate-500">Projected balance</p>
+                    <p className="text-xs font-medium text-slate-500">{t('contractDetail.overdue.projectedBalance')}</p>
                     <p className="mt-1.5 text-2xl font-bold tracking-tight text-slate-900">{aed2(overdueBilling.projectedBalance)}</p>
                     <p className="mt-0.5 text-xs text-slate-400">current {aed2(c.contract_balance)} + extra</p>
                   </div>
@@ -422,7 +426,7 @@ export default function ContractDetail() {
         {(c.contract_type === 'U' || (c.items && c.items.length > 0)) && (
           <Card className="p-6">
             <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Maintenance</h3>
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">{t('contractDetail.maintenance.title')}</h3>
               {garageName && (
                 <span className="text-sm text-slate-600">
                   {garageLabel}: <span className="font-medium text-slate-900">{garageName}</span>
@@ -433,16 +437,16 @@ export default function ContractDetail() {
 
             <div className="mb-4 grid grid-cols-1 gap-x-8 gap-y-1 sm:grid-cols-3">
               {[
-                ['Vehicle', c.vehicle?.plate_no ? <Link to={`/vehicles/${c.vehicle_id}`} className="text-indigo-600 hover:text-indigo-700">{c.vehicle.plate_no}</Link> : null],
+                [t('contractDetail.fields.vehicle'), c.vehicle?.plate_no ? <Link to={`/vehicles/${c.vehicle_id}`} className="text-indigo-600 hover:text-indigo-700">{c.vehicle.plate_no}</Link> : null],
                 ['Responsible', c.responsible],
                 ['Approved By', c.approved_by],
                 ['Sent to Garage', c.out_date ? fmtDate(c.out_date) : null],
-                ['Expected Return', c.expected_return_date ? fmtDate(c.expected_return_date) : null],
+                [t('contractDetail.fields.expectedReturn'), c.expected_return_date ? fmtDate(c.expected_return_date) : null],
                 ['Returned', c.in_date ? fmtDate(c.in_date) : null],
                 ['Late by', (c.in_date && c.expected_return_date && dayDiff(c.in_date, c.expected_return_date) > 0) ? <span className="text-red-600">{dayDiff(c.in_date, c.expected_return_date)} days</span> : null],
                 ['Mileage Out', c.out_milage != null ? `${num(c.out_milage)} km` : null],
                 ['Mileage In', c.in_milage != null ? `${num(c.in_milage)} km` : null],
-                ['Days', c.days != null ? c.days : null],
+                [t('contractDetail.fields.days'), c.days != null ? c.days : null],
               ]
                 .filter(([, v]) => v !== null && v !== undefined && v !== '')
                 .map(([l, v]) => (
@@ -466,9 +470,9 @@ export default function ContractDetail() {
                 <table className="min-w-full text-sm stagger-rows">
                   <thead className="bg-slate-50/90">
                     <tr className="text-start text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Service</th>
-                      <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-end">Cost</th>
-                      <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Notes</th>
+                      <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">{t('contractDetail.maintenance.service')}</th>
+                      <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-end">{t('contractDetail.maintenance.cost')}</th>
+                      <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">{t('contractDetail.maintenance.notes')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -482,7 +486,7 @@ export default function ContractDetail() {
                   </tbody>
                   <tfoot>
                     <tr className="border-t border-slate-200">
-                      <td className="px-5 py-3 text-end font-semibold text-slate-700">Total</td>
+                      <td className="px-5 py-3 text-end font-semibold text-slate-700">{t('contractDetail.maintenance.total')}</td>
                       <td className="px-5 py-3 text-end font-bold tabular-nums text-slate-900">{aed2(c.maintenance_total ?? c.items.reduce((s, i) => s + Number(i.cost || 0), 0))}</td>
                       <td />
                     </tr>
@@ -490,7 +494,7 @@ export default function ContractDetail() {
                 </table>
               </div>
             ) : (
-              <p className="text-sm text-slate-400">No items recorded.</p>
+              <p className="text-sm text-slate-400">{t('contractDetail.maintenance.empty')}</p>
             )}
 
             {c.maintenance_notes && <p className="mt-4 whitespace-pre-line text-sm text-slate-700">{c.maintenance_notes}</p>}
@@ -515,52 +519,52 @@ export default function ContractDetail() {
         </div>
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <Section title="Parties" pairs={[
-            ['Customer', c.customer ? <Link to={`/customers/${c.customer_id}`} className="text-indigo-600 hover:text-indigo-700">{c.customer.name_en || `#${c.customer.customer_no}`}{c.customer.name_en ? <span className="ms-1.5 text-xs text-slate-400">#{c.customer.customer_no}</span> : null}</Link> : '—'],
-            ['Vehicle', c.vehicle?.plate_no ? <Link to={`/vehicles/${c.vehicle_id}`} className="text-indigo-600 hover:text-indigo-700">{c.vehicle.plate_no} · {[c.vehicle.make, c.vehicle.model].filter(Boolean).join(' ')}</Link> : (c.vehicle_id || '—')],
-            ['Reference', c.reference],
-            ['Source', c.source],
-            ['Salesman', c.sales_man1],
+          <Section title={t('contractDetail.sections.parties')} pairs={[
+            [t('contractDetail.fields.customer'), c.customer ? <Link to={`/customers/${c.customer_id}`} className="text-indigo-600 hover:text-indigo-700">{c.customer.name_en || `#${c.customer.customer_no}`}{c.customer.name_en ? <span className="ms-1.5 text-xs text-slate-400">#{c.customer.customer_no}</span> : null}</Link> : '—'],
+            [t('contractDetail.fields.vehicle'), c.vehicle?.plate_no ? <Link to={`/vehicles/${c.vehicle_id}`} className="text-indigo-600 hover:text-indigo-700">{c.vehicle.plate_no} · {[c.vehicle.make, c.vehicle.model].filter(Boolean).join(' ')}</Link> : (c.vehicle_id || '—')],
+            [t('contractDetail.fields.reference'), c.reference],
+            [t('contractDetail.fields.source'), c.source],
+            [t('contractDetail.fields.salesman'), c.sales_man1],
           ]} />
 
-          <Section title="Period" pairs={[
-            ['Out Date', fmtDate(c.out_date)], ['Out Time', c.out_time ? fmtTime(c.out_time) : null], ['Out Mileage', c.out_milage != null ? num(c.out_milage) : null], ['Out Fuel', c.out_fuel], ['Opened By', c.opened_by],
-            ['In Date', fmtDate(c.in_date)], ['In Time', c.in_time ? fmtTime(c.in_time) : null], ['In Mileage', c.in_milage != null ? num(c.in_milage) : null], ['In Fuel', c.in_fuel], ['Closed By', c.closed_by],
-            ['Duration', heldDuration], ['Days', c.days], ['KM', c.km != null ? num(c.km) : null],
-            ['Expected Return', rentalDue ? `${fmtDate(rentalDue.due)}${rentalDue.overdue ? ' (overdue)' : ''}` : null],
+          <Section title={t('contractDetail.sections.period')} pairs={[
+            [t('contractDetail.fields.outDate'), fmtDate(c.out_date)], [t('contractDetail.fields.outTime'), c.out_time ? fmtTime(c.out_time) : null], [t('contractDetail.fields.outMileage'), c.out_milage != null ? num(c.out_milage) : null], [t('contractDetail.fields.outFuel'), c.out_fuel], [t('contractDetail.fields.openedBy'), c.opened_by],
+            [t('contractDetail.fields.inDate'), fmtDate(c.in_date)], [t('contractDetail.fields.inTime'), c.in_time ? fmtTime(c.in_time) : null], [t('contractDetail.fields.inMileage'), c.in_milage != null ? num(c.in_milage) : null], [t('contractDetail.fields.inFuel'), c.in_fuel], [t('contractDetail.fields.closedBy'), c.closed_by],
+            [t('contractDetail.fields.duration'), heldDuration], [t('contractDetail.fields.days'), c.days], [t('contractDetail.fields.kM'), c.km != null ? num(c.km) : null],
+            [t('contractDetail.fields.expectedReturn'), rentalDue ? `${fmtDate(rentalDue.due)}${rentalDue.overdue ? ' (overdue)' : ''}` : null],
           ]} />
 
           {/* rental-only financial sections — hidden for maintenance, and while financials are off */}
           {!isMaintenance && SHOW_FINANCIALS && (
             <>
-              <Section title="Pricing" pairs={[
-                ['Day Price', money(c.day_price)], ['Week Price', money(c.week_price)], ['Month Price', money(c.month_price)],
-                ['Hour Price', money(c.hour_price)], ['Year Price', money(c.year_price)],
-                ['Miles / day', c.miles_allowed_pd], ['Miles / month', c.miles_allowed_pm], ['Extra mile', money(c.extra_mile_charge)],
-                ['CDW rate', money(c.cdw_rate)], ['Insurance type', c.insurance_type],
+              <Section title={t('contractDetail.sections.pricing')} pairs={[
+                [t('contractDetail.fields.dayPrice'), money(c.day_price)], [t('contractDetail.fields.weekPrice'), money(c.week_price)], [t('contractDetail.fields.monthPrice'), money(c.month_price)],
+                [t('contractDetail.fields.hourPrice'), money(c.hour_price)], [t('contractDetail.fields.yearPrice'), money(c.year_price)],
+                [t('contractDetail.fields.milesDay'), c.miles_allowed_pd], [t('contractDetail.fields.milesMonth'), c.miles_allowed_pm], [t('contractDetail.fields.extraMile'), money(c.extra_mile_charge)],
+                [t('contractDetail.fields.cDWRate'), money(c.cdw_rate)], [t('contractDetail.fields.insuranceType'), c.insurance_type],
               ]} />
 
-              <Section title="Debit Breakdown" pairs={[
-                ['Rents', money(c.rents_debit)], ['Salik', money(c.salik_debit)], ['Damages', money(c.damages_debit)],
-                ['Breaches', money(c.breachs_debit)], ['Extra charges', money(c.extra_charges_debit)], ['KM', money(c.km_debit)],
-                ['Fuel', money(c.fuel_debit)], ['GPS', money(c.gps_debit)], ['CDW', money(c.cdw_debit)],
-                ['Extra driver', money(c.extra_driver_debit)], ['VAT', money(c.vat_debit)], ['Deposit', money(c.deposit_debit)],
-                ['Cardoo', money(c.cardoo_debit)],
+              <Section title={t('contractDetail.sections.debit')} pairs={[
+                [t('contractDetail.fields.rents'), money(c.rents_debit)], [t('contractDetail.fields.salik'), money(c.salik_debit)], [t('contractDetail.fields.damages'), money(c.damages_debit)],
+                [t('contractDetail.fields.breaches'), money(c.breachs_debit)], [t('contractDetail.fields.extraCharges'), money(c.extra_charges_debit)], [t('contractDetail.fields.kM'), money(c.km_debit)],
+                [t('contractDetail.fields.fuel'), money(c.fuel_debit)], [t('contractDetail.fields.gPS'), money(c.gps_debit)], [t('contractDetail.fields.cDW'), money(c.cdw_debit)],
+                [t('contractDetail.fields.extraDriver'), money(c.extra_driver_debit)], [t('contractDetail.fields.vAT'), money(c.vat_debit)], [t('contractDetail.fields.deposit'), money(c.deposit_debit)],
+                [t('contractDetail.fields.cardoo'), money(c.cardoo_debit)],
               ]} />
 
-              <Section title="Credit Breakdown" pairs={[
-                ['Rents', money(c.rents_credit)], ['Salik', money(c.salik_credit)], ['Damages', money(c.damages_credit)],
-                ['Breaches', money(c.breachs_credit)], ['Extra charges', money(c.extra_charges_credit)], ['KM', money(c.km_credit)],
-                ['Fuel', money(c.fuel_credit)], ['GPS', money(c.gps_credit)], ['CDW', money(c.cdw_credit)],
-                ['Extra driver', money(c.extra_driver_credit)], ['VAT', money(c.vat_credit)], ['Deposit', money(c.deposit_credit)],
-                ['Cardoo', money(c.cardoo_credit)],
+              <Section title={t('contractDetail.sections.credit')} pairs={[
+                [t('contractDetail.fields.rents'), money(c.rents_credit)], [t('contractDetail.fields.salik'), money(c.salik_credit)], [t('contractDetail.fields.damages'), money(c.damages_credit)],
+                [t('contractDetail.fields.breaches'), money(c.breachs_credit)], [t('contractDetail.fields.extraCharges'), money(c.extra_charges_credit)], [t('contractDetail.fields.kM'), money(c.km_credit)],
+                [t('contractDetail.fields.fuel'), money(c.fuel_credit)], [t('contractDetail.fields.gPS'), money(c.gps_credit)], [t('contractDetail.fields.cDW'), money(c.cdw_credit)],
+                [t('contractDetail.fields.extraDriver'), money(c.extra_driver_credit)], [t('contractDetail.fields.vAT'), money(c.vat_credit)], [t('contractDetail.fields.deposit'), money(c.deposit_credit)],
+                [t('contractDetail.fields.cardoo'), money(c.cardoo_credit)],
               ]} />
 
-              <Section title="Totals & Adjustments" pairs={[
-                ['Contract Debit', money(c.contract_debit)], ['Contract Credit', money(c.contract_credit)], ['Balance', money(c.contract_balance)],
-                ['Refunds', money(c.contract_refunds)], ['Discount', money(c.contract_discount)], ['Bad Debts', money(c.contract_bad_debts)],
-                ['Deposit', money(c.contract_deposit)], ['Commissions', money(c.contract_commissions)], ['Income', money(c.contract_income)],
-                ['Cardoo Deposit', money(c.cardoo_deposit)],
+              <Section title={t('contractDetail.sections.totals')} pairs={[
+                [t('contractDetail.fields.contractDebit'), money(c.contract_debit)], [t('contractDetail.fields.contractCredit'), money(c.contract_credit)], [t('contractDetail.fields.balance'), money(c.contract_balance)],
+                [t('contractDetail.fields.refunds'), money(c.contract_refunds)], [t('contractDetail.fields.discount'), money(c.contract_discount)], [t('contractDetail.fields.badDebts'), money(c.contract_bad_debts)],
+                [t('contractDetail.fields.deposit'), money(c.contract_deposit)], [t('contractDetail.fields.commissions'), money(c.contract_commissions)], [t('contractDetail.fields.income'), money(c.contract_income)],
+                [t('contractDetail.fields.cardooDeposit'), money(c.cardoo_deposit)],
               ]} />
             </>
           )}
@@ -568,7 +572,7 @@ export default function ContractDetail() {
 
         {c.remarks && (
           <Card className="p-6">
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Remarks</h3>
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{t('contractDetail.remarks')}</h3>
             <p className="text-sm text-slate-700">{c.remarks}</p>
           </Card>
         )}

@@ -13,7 +13,7 @@ import { Textarea, Select, Input } from '../ui/Field';
 import CheckpointTimeline from './CheckpointTimeline';
 import { fmtDate } from '../../lib/format';
 import {
-  STATUS_OPTIONS, DELAY_REASONS, RESPONSE_CONFIRMED, RESPONSE_RESCHEDULED,
+  useCheckpointVocab, RESPONSE_CONFIRMED, RESPONSE_RESCHEDULED,
   getTicketCheckpoints, submitCheckpoint, deleteCheckpoint,
   setExpectedCompletion, setResponsibles, getCheckpointCandidates,
 } from '../../lib/maintenanceCheckpoints';
@@ -71,6 +71,7 @@ function ChaseBar({ chase }) {
 }
 
 export default function CheckpointModal({ open, ticketId, title, subtitle, onClose, onDone }) {
+  const { statusOptions, delayReasons } = useCheckpointVocab();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -363,7 +364,7 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
                   />
                   <Select label="Reason it moved" required value={delayReason} onChange={(e) => setDelayReason(e.target.value)}>
                     <option value="">— Select —</option>
-                    {DELAY_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+                    {delayReasons.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
                   </Select>
                   {delayReason === 'other' && (
                     <Input label="Explain" required value={delayReasonOther} onChange={(e) => setDelayReasonOther(e.target.value)} placeholder="Why did the date move?" />
@@ -388,7 +389,7 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
 
               <Select label="Workshop status" value={status} onChange={(e) => setStatus(e.target.value)}>
                 <option value="">— Select —</option>
-                {STATUS_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+                {statusOptions.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
               </Select>
 
               <Textarea label="Progress note" rows={3} value={summary} onChange={(e) => setSummary(e.target.value)} placeholder="What was done since the last update? What's next?" />

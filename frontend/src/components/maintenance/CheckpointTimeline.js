@@ -7,8 +7,11 @@
 //
 // There is NO manual "outcome" — a job's On Schedule / Overdue status is derived from the ETA elsewhere.
 
-import { statusLabel, delayReasonLabel, RESPONSE_RESCHEDULED } from '../../lib/maintenanceCheckpoints';
+import {
+  useCheckpointVocab, RESPONSE_RESCHEDULED, RESPONSE_CONFIRMED,
+} from '../../lib/maintenanceCheckpoints';
 import { fmtDate } from '../../lib/format';
+import { useI18n } from '../../i18n/I18nContext';
 
 function when(iso) {
   if (!iso) return '';
@@ -20,15 +23,19 @@ function when(iso) {
   }
 }
 
-const reasonText = (c) => (c.delay_reason === 'other'
-  ? (c.delay_reason_other || 'Other')
+// `other` carries the supervisor's own free text, which is data and stays as typed; only the
+// fallback word when they left it blank is translated.
+const reasonText = (c, delayReasonLabel, tf) => (c.delay_reason === 'other'
+  ? (c.delay_reason_other || tf('checkpoints.delayReason.other', 'Other'))
   : delayReasonLabel(c.delay_reason));
 
 export default function CheckpointTimeline({ checkpoints = [], onDelete = null, canManage = false }) {
+  const { tf } = useI18n();
+  const { statusLabel, delayReasonLabel, responseMeta } = useCheckpointVocab();
   if (!checkpoints.length) {
     return (
       <p className="py-8 text-center text-sm text-slate-400">
-        No updates yet — the first progress update will appear here.
+        {tf('checkpoints.timeline.empty', 'No updates yet — the first progress update will appear here.')}
       </p>
     );
   }
@@ -58,7 +65,7 @@ export default function CheckpointTimeline({ checkpoints = [], onDelete = null, 
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                   <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ${etaChanged ? 'bg-amber-50 text-amber-700 ring-amber-200' : 'bg-slate-50 text-slate-600 ring-slate-200'}`}>
-                    {etaChanged ? 'Date moved' : 'Date confirmed'}
+                    {responseMeta[etaChanged ? RESPONSE_RESCHEDULED : RESPONSE_CONFIRMED].label}
                   </span>
                   {c.status && (
                     <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
@@ -81,7 +88,11 @@ export default function CheckpointTimeline({ checkpoints = [], onDelete = null, 
                     )}
                     <span className="font-semibold text-amber-800">{fmtDate(c.next_expected_date)}</span>
                   </p>
-                  {reasonText(c) && <p className="mt-1 font-medium text-amber-700">Reason: {reasonText(c)}</p>}
+                  {reasonText(c, delayReasonLabel, tf) && (
+                    <p className="mt-1 font-medium text-amber-700">
+                      {tf('checkpoints.timeline.reason', 'Reason')}: {reasonText(c, delayReasonLabel, tf)}
+                    </p>
+                  )}
                 </div>
               ) : (
                 c.next_expected_date && (

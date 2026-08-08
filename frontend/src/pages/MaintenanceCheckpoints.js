@@ -17,11 +17,11 @@ import { InfoTip } from '../components/ui/Tooltip';
 import { useToast } from '../components/ui/Toast';
 import { fmtDate } from '../lib/format';
 import {
-  getMaintenanceProgress, PROGRESS_STATUS, statusLabel, delayReasonLabel,
-  SOURCE_META, resolveCheckpointTicket,
+  getMaintenanceProgress, useCheckpointVocab, resolveCheckpointTicket,
 } from '../lib/maintenanceCheckpoints';
 import CheckpointModal from '../components/maintenance/CheckpointModal';
 import DelayExplanation from '../components/maintenance/DelayExplanation';
+import { useI18n } from '../i18n/I18nContext';
 
 // Roll-up chips, worst-first — the queue's health at a glance (all DERIVED from the ETA / workflow stage).
 const SUMMARY_CHIPS = [
@@ -44,7 +44,8 @@ const WF_STAGE_LABEL = {
 };
 
 function StatusChip({ status }) {
-  const s = PROGRESS_STATUS[status] || PROGRESS_STATUS.on_schedule;
+  const { progressStatus } = useCheckpointVocab();
+  const s = progressStatus[status] || progressStatus.on_schedule;
   return (
     <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1 ${s.chip}`}>
       <span className={`h-1.5 w-1.5 rounded-full ${s.dot} ${status === 'needs_update' || status === 'overdue' ? 'animate-pulse' : ''}`} />
@@ -56,7 +57,8 @@ function StatusChip({ status }) {
 // Where a row came from — 'Contract' (open type-U contract) vs 'Workshop' (app workflow ticket) — so a
 // mixed queue stays legible at a glance.
 function SourceBadge({ source }) {
-  const s = SOURCE_META[source];
+  const { sourceMeta } = useCheckpointVocab();
+  const s = sourceMeta[source];
   if (!s) return null;
   return (
     <span title={s.tip} className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ring-1 ${s.chip}`}>
@@ -66,15 +68,16 @@ function SourceBadge({ source }) {
 }
 
 function EtaCell({ r }) {
+  const { t } = useI18n();
   return (
     <div className="leading-tight">
       {r.overdue
-        ? <span className="font-semibold text-red-600 tabular-nums">+{r.days_over}d overdue</span>
+        ? <span className="font-semibold text-red-600 tabular-nums">{t('checkpointsPage.overdue', { n: r.days_over })}</span>
         : r.eta_status === 'due_today'
-          ? <span className="font-semibold text-amber-600">Due today</span>
+          ? <span className="font-semibold text-amber-600">{t('checkpointsPage.dueToday')}</span>
           : r.expected_on
-            ? <span className="tabular-nums text-slate-700">{r.days_left}d left</span>
-            : <span className="text-slate-400">No ETA</span>}
+            ? <span className="tabular-nums text-slate-700">{t('checkpointsPage.daysLeft', { n: r.days_left })}</span>
+            : <span className="text-slate-400">{t('checkpointsPage.noEta')}</span>}
       {r.expected_on && (
         <p className="text-[11px] text-slate-400">{fmtDate(r.expected_on)}{r.is_estimated ? ' (est.)' : ''}</p>
       )}
@@ -107,8 +110,10 @@ function checkpointDelayDays(prev, next) {
 // "What did the workshop last report?" — the latest update as a clearly-labelled, readable summary:
 // the ETA change (Previous → New with the delay in days), the reason it moved, and who updated it when.
 function LastCheckpointCell({ r }) {
+  const { t } = useI18n();
+  const { statusLabel, delayReasonLabel } = useCheckpointVocab();
   const c = r.last_checkpoint;
-  if (!c) return <span className="text-amber-600">No update yet</span>;
+  if (!c) return <span className="text-amber-600">{t('checkpointsPage.noUpdate')}</span>;
   const workshop = statusLabel(c.status);
   const reason = c.delay_reason === 'other' ? (c.delay_reason_other || null) : delayReasonLabel(c.delay_reason);
   const etaMoved = !!c.next_expected_date
@@ -121,12 +126,12 @@ function LastCheckpointCell({ r }) {
         <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px]">
           {c.previous_expected_date && (
             <span className="text-slate-500">
-              <span className="text-slate-400">Prev</span> <span className="line-through decoration-slate-300">{fmtDate(c.previous_expected_date)}</span>
+              <span className="text-slate-400">{t('checkpointsPage.prev')}</span> <span className="line-through decoration-slate-300">{fmtDate(c.previous_expected_date)}</span>
             </span>
           )}
           <span aria-hidden className="text-amber-500">→</span>
           <span className="font-semibold text-slate-700">
-            <span className="text-slate-400">New</span> {fmtDate(c.next_expected_date)}
+            <span className="text-slate-400">{t('checkpointsPage.new')}</span> {fmtDate(c.next_expected_date)}
           </span>
           {dd != null && dd > 0 && (
             <span className="rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-bold text-red-600 ring-1 ring-red-200">+{dd}d</span>
@@ -134,16 +139,16 @@ function LastCheckpointCell({ r }) {
         </div>
       ) : (
         <span className="inline-flex items-center rounded-full bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200">
-          ETA confirmed {c.next_expected_date ? fmtDate(c.next_expected_date) : ''}
+          {t('checkpointsPage.etaConfirmed')} {c.next_expected_date ? fmtDate(c.next_expected_date) : ''}
         </span>
       )}
       {/* Reason the ETA moved — the operationally important bit. */}
       {etaMoved && (
         reason
-          ? <p className="mt-1 text-[11px] text-amber-700"><span className="font-semibold">Reason:</span> {reason}</p>
-          : <p className="mt-1 text-[11px] text-amber-600">No delay reason recorded</p>
+          ? <p className="mt-1 text-[11px] text-amber-700"><span className="font-semibold">{t('checkpointsPage.reason')}</span> {reason}</p>
+          : <p className="mt-1 text-[11px] text-amber-600">{t('checkpointsPage.noReason')}</p>
       )}
-      {workshop && <p className="mt-0.5 text-[11px] font-medium text-slate-500">Workshop: {workshop}</p>}
+      {workshop && <p className="mt-0.5 text-[11px] font-medium text-slate-500">{t('checkpointsPage.workshop')} {workshop}</p>}
       {c.summary && <p className="mt-0.5 truncate text-[11px] text-slate-500" title={c.summary}>“{c.summary}”</p>}
       <p className="mt-1 text-[11px] text-slate-400">
         {c.by ? `Updated by ${c.by}` : 'Updated'}{r.last_checkpoint_at ? ` · ${fmtDate(r.last_checkpoint_at)}` : ''}
@@ -153,7 +158,9 @@ function LastCheckpointCell({ r }) {
 }
 
 export default function MaintenanceCheckpoints() {
+  const { t } = useI18n();
   const toast = useToast();
+  const { sourceMeta } = useCheckpointVocab();
   const [searchParams, setSearchParams] = useSearchParams();
   const [data, setData] = useState({ summary: {}, items: [] });
   const [loading, setLoading] = useState(true);
@@ -231,11 +238,11 @@ export default function MaintenanceCheckpoints() {
     if (fStatus !== 'all') r = r.filter((x) => x.status === fStatus);
     const term = q.trim().toLowerCase();
     if (term) {
-      r = r.filter((x) => `${x.plate || ''} ${x.car || ''} ${x.garage || ''} ${(x.problem_items || []).join(' ')} ${x.problem || ''} ${(SOURCE_META[x.source]?.label || '')} ${(x.responsible || []).map((u) => u.name).join(' ')}`
+      r = r.filter((x) => `${x.plate || ''} ${x.car || ''} ${x.garage || ''} ${(x.problem_items || []).join(' ')} ${x.problem || ''} ${(sourceMeta[x.source]?.label || '')} ${(x.responsible || []).map((u) => u.name).join(' ')}`
         .toLowerCase().includes(term));
     }
     return r;
-  }, [items, fStatus, q]);
+  }, [items, fStatus, q, sourceMeta]);
 
   const activeFilters = fStatus !== 'all' || q.trim();
 
@@ -297,7 +304,7 @@ export default function MaintenanceCheckpoints() {
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="Search vehicle, workshop or responsible…"
+              placeholder={t('checkpointsPage.searchPlaceholder')}
               className="w-full rounded-lg border border-slate-200 bg-white py-2 ps-9 pe-3 text-sm outline-none transition focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10"
             />
           </div>
@@ -306,7 +313,7 @@ export default function MaintenanceCheckpoints() {
             onChange={(e) => setFStatus(e.target.value)}
             className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 outline-none focus:border-indigo-500"
           >
-            <option value="all">All statuses</option>
+            <option value="all">{t('checkpointsPage.allStatuses')}</option>
             {SUMMARY_CHIPS.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
           </select>
           {activeFilters && (
@@ -331,15 +338,15 @@ export default function MaintenanceCheckpoints() {
               <table className="w-full min-w-[1080px] text-sm">
                 <thead>
                   <tr className="border-b border-slate-100 bg-slate-50/60 text-start text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                    <th className="px-4 py-2.5">Vehicle</th>
-                    <th className="px-4 py-2.5">Problem</th>
-                    <th className="px-4 py-2.5">Workshop</th>
-                    <th className="px-4 py-2.5">Maintenance status</th>
-                    <th className="px-4 py-2.5">Expected / due</th>
-                    <th className="px-4 py-2.5">Progress</th>
-                    <th className="px-4 py-2.5">Last checkpoint</th>
-                    <th className="px-4 py-2.5">Responsible</th>
-                    <th className="px-4 py-2.5 text-end">Action</th>
+                    <th className="px-4 py-2.5">{t('checkpointsPage.cols.vehicle')}</th>
+                    <th className="px-4 py-2.5">{t('checkpointsPage.cols.problem')}</th>
+                    <th className="px-4 py-2.5">{t('checkpointsPage.cols.workshop')}</th>
+                    <th className="px-4 py-2.5">{t('checkpointsPage.cols.maintStatus')}</th>
+                    <th className="px-4 py-2.5">{t('checkpointsPage.cols.expected')}</th>
+                    <th className="px-4 py-2.5">{t('checkpointsPage.cols.progress')}</th>
+                    <th className="px-4 py-2.5">{t('checkpointsPage.cols.lastCheckpoint')}</th>
+                    <th className="px-4 py-2.5">{t('checkpointsPage.cols.responsible')}</th>
+                    <th className="px-4 py-2.5 text-end">{t('checkpointsPage.cols.action')}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">

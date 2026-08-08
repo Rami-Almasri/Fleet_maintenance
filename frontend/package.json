@@ -19,7 +19,10 @@
     "build": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject",
-    "check:i18n": "node scripts/check-i18n.js",
+    "check:i18n": "node scripts/check-i18n.js && node scripts/check-hardcoded-strings.js",
+    "check:i18n:strings": "node scripts/check-hardcoded-strings.js",
+    "check:i18n:report": "node scripts/check-hardcoded-strings.js --report",
+    "check:i18n:update": "node scripts/check-hardcoded-strings.js --update",
     "check:rtl": "node scripts/check-rtl.js src",
     "check": "npm run check:i18n && npm run check:rtl"
   },

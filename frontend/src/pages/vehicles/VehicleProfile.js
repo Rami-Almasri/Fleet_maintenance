@@ -23,6 +23,7 @@ import ComponentRepeatAlert from '../../components/vehicles/ComponentRepeatAlert
 import { aed2, fmtDate, fmtClock, num } from '../../lib/format';
 import CompositionDonut from '../../components/ui/CompositionDonut';
 import { faultTagSegments, isServiceOnlyVisit } from '../../lib/faultCategories';
+import { useI18n } from '../../i18n/I18nContext';
 import { openVehicleProfileReport } from '../../lib/vehicleProfileReport';
 import { SHOW_FINANCIALS } from '../../config/features';
 import ReadinessChecklist from './ReadinessChecklist';
@@ -159,11 +160,12 @@ const SHOP_STATES = new Set(['under_repair', 'repair_review', 'ready_for_pickup'
 // (reshaped from the same VehicleLogEvent trail the Timeline tab shows as a flat feed). The point is
 // "where did the time go" — a proportional stacked bar makes a stuck stage jump out at a glance.
 function WorkflowJourneys({ journeys }) {
+  const { t } = useI18n();
   if (!journeys.length) {
     return (
       <Card className="p-10 text-center">
-        <p className="text-sm text-slate-500">No maintenance workflow tickets have been raised on this car yet.</p>
-        <p className="mt-1 text-xs text-slate-400">Once a ticket moves through the board, its stage-by-stage journey shows up here.</p>
+        <p className="text-sm text-slate-500">{t('vehicleProfile.journeys.empty')}</p>
+        <p className="mt-1 text-xs text-slate-400">{t('vehicleProfile.journeys.emptyHint')}</p>
       </Card>
     );
   }
@@ -235,7 +237,7 @@ function WorkflowJourneys({ journeys }) {
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="flex items-center gap-2">
                           <Badge tone={tone}>{label}</Badge>
-                          {isCurrent && <span className="text-xs font-medium text-blue-600">current stage</span>}
+                          {isCurrent && <span className="text-xs font-medium text-blue-600">{t('vehicleProfile.journeys.currentStage')}</span>}
                         </div>
                         <span className={`text-xs font-semibold tabular-nums ${isCurrent ? 'text-blue-600' : 'text-slate-600'}`}>
                           {isCurrent ? `${dur || '0s'} so far` : (dur || '—')}
@@ -261,8 +263,9 @@ function WorkflowJourneys({ journeys }) {
 
 // Multi-line workshop notes -> a tidy bulleted list; lines made only of -, *, = … become dividers.
 function NotesList({ text }) {
+  const { t } = useI18n();
   const lines = String(text || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  if (lines.length === 0) return <span className="text-sm text-slate-400">No notes</span>;
+  if (lines.length === 0) return <span className="text-sm text-slate-400">{t('vehicleProfile.notes.none')}</span>;
   return (
     <ul className="space-y-1.5">
       {lines.map((line, i) =>
@@ -308,13 +311,15 @@ const TAB_ORIGIN = {
   components: 'The vehicle’s physical configuration, DERIVED from the maintenance workflow — never typed in. A component appears here through one of two doors, and the row says which. PURCHASED: a ticket reached its install step (part purchased → received → installed); identity, supplier, cost, warranty and odometer are FACTS copied from the purchase order. REPORTED: a technician recorded “replaced X” at repair capture with no purchase behind it — the part is genuinely fitted, but there is no paperwork, so cost and supplier are blank rather than zero, and no warranty is claimed. Either way the install retires the part it replaced and writes both to the timeline. Age, life-used, warranty standing and cost/km are DERIVED at read time. Money figures count only the parts whose cost is known, and say how many that is. Consumables refreshed by routine servicing (oil, filters bundled with an oil change) are merged in from the service log and tagged “Service”, because they are performed work rather than tracked assets.',
 };
 
-// A muted provenance caption shown at the foot of each tab.
+// A muted provenance caption shown at the foot of each tab. The English paragraphs stay in
+// TAB_ORIGIN above (they document each tab beside its key); the Arabic is in ar.vehicleProfile.origin.
 function DataOrigin({ tab }) {
+  const { t, tf } = useI18n();
   const text = TAB_ORIGIN[tab];
   if (!text) return null;
   return (
     <p className="px-1 pt-1 text-xs leading-relaxed text-slate-400">
-      <span className="font-semibold text-slate-500">Data origin</span> · {text}
+      <span className="font-semibold text-slate-500">{t('vehicleProfile.dataOrigin')}</span> · {tf(`vehicleProfile.origin.${tab}`, text)}
     </p>
   );
 }
@@ -370,6 +375,7 @@ function HeroLed({ label, status, detail }) {
 }
 
 export default function VehicleProfile() {
+  const { t, tf, tp } = useI18n();
   const { id } = useParams();
   const fetcher = useCallback(async () => {
     const { data } = await api.get(`/Vehicle/${id}/profile`);
@@ -584,8 +590,8 @@ export default function VehicleProfile() {
   if (error || !data) {
     return (
       <div className="mx-auto max-w-3xl px-4 py-12">
-        <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error || 'Not found'}</div>
-        <Link to="/vehicles" className="mt-4 inline-block text-sm font-medium text-indigo-600">← Back to vehicles</Link>
+        <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error || t('vehicleProfile.notFound')}</div>
+        <Link to="/vehicles" className="mt-4 inline-block text-sm font-medium text-indigo-600">{t('vehicleProfile.backToVehicles')}</Link>
       </div>
     );
   }
@@ -612,7 +618,7 @@ export default function VehicleProfile() {
   // FAULTS ONLY: planned services (oil & filter, periodic maintenance, cleaning) are a different kind
   // of event and are counted out — see faultCategories.visitFaults. What was removed is stated on the
   // card rather than silently dropped, so the chart's scope is readable off the chart itself.
-  const faultSegments = faultTagSegments(maintenance, { top: 8 });
+  const faultSegments = faultTagSegments(maintenance, { top: 8, tf, tp });
   const serviceOnlyVisits = maintenance.filter(isServiceOnlyVisit).length;
   const maintenanceLog = data.maintenance_log || [];
   // One unified history: legacy sheet workshop events + the manual workflow audit trail + follow-ups.
@@ -675,7 +681,7 @@ export default function VehicleProfile() {
                 </div>
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-3">
-                    <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '.2em', textTransform: 'uppercase', color: '#7f92b8' }}>Vehicle Dossier</span>
+                    <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '.2em', textTransform: 'uppercase', color: '#7f92b8' }}>{t('vehicleProfile.hero.dossier')}</span>
                     <span className="vhero-live"><span className="dot" />LIVE</span>
                   </div>
                   <h1 className="mt-1.5 font-display text-2xl font-bold tracking-tight text-white sm:text-3xl" style={{ letterSpacing: '-.02em', textShadow: '0 2px 24px rgba(34,211,238,.25)' }}>
@@ -692,17 +698,17 @@ export default function VehicleProfile() {
                   <div className="mt-3.5 flex flex-wrap items-center gap-2">
                     {/* Canonical dual-state — the same rental + maintenance identity used across the app. */}
                     <DualState vehicle={{ ...v, av_state: av.state }} size="md" />
-                    {v.for_sale && <Badge tone="amber" dot>For sale</Badge>}
+                    {v.for_sale && <Badge tone="amber" dot>{t('vehicleProfile.hero.forSale')}</Badge>}
                   </div>
                 </div>
               </div>
 
               {/* Telemetry tiles — the numbers count up on load */}
               <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                <HeroStat label="Odometer" value={v.odometer} unit="km" />
-                <HeroStat label="Rentals" value={contractTypeCounts.C || 0} />
-                <HeroStat label="Workshop Visits" value={maintenance.length} />
-                <HeroStat label="Faults Logged" value={totalFaults} />
+                <HeroStat label={t('vehicleProfile.hero.odometer')} value={v.odometer} unit="km" />
+                <HeroStat label={t('vehicleProfile.hero.rentals')} value={contractTypeCounts.C || 0} />
+                <HeroStat label={t('vehicleProfile.hero.visits')} value={maintenance.length} />
+                <HeroStat label={t('vehicleProfile.hero.faults')} value={totalFaults} />
               </div>
 
               {/* Health LEDs — registration / insurance / service, glowing by urgency */}
@@ -715,8 +721,8 @@ export default function VehicleProfile() {
                 <div className="vhero-ticker">
                   <span className="vhero-live"><span className="dot" /></span>
                   <span className="min-w-0 truncate">
-                    Latest activity — <span className="what">{lastEventLabel}</span>
-                    {lastEvent.garage ? <> at <span className="what">{lastEvent.garage}</span></> : null}
+                    {t('vehicleProfile.hero.latestActivity')} <span className="what">{lastEventLabel}</span>
+                    {lastEvent.garage ? <> {t('vehicleProfile.hero.at')} <span className="what">{lastEvent.garage}</span></> : null}
                     {lastEvent.date ? <span style={{ color: '#7f92b8' }}> · {fmtDate(lastEvent.date)}</span> : null}
                   </span>
                 </div>
@@ -725,11 +731,11 @@ export default function VehicleProfile() {
 
             {/* Fault distribution — frosted glass telemetry card */}
             <div className="vhero-glass w-full shrink-0 p-5 lg:w-96">
-              <div className="text-[10px] font-semibold uppercase text-slate-400" style={{ letterSpacing: '.14em', marginBottom: 4 }}>Fault Distribution</div>
-              <p className="mb-1 text-xs text-slate-500">Each fault by share of all faults recorded</p>
+              <div className="text-[10px] font-semibold uppercase text-slate-400" style={{ letterSpacing: '.14em', marginBottom: 4 }}>{t('vehicleProfile.faults.title')}</div>
+              <p className="mb-1 text-xs text-slate-500">{t('vehicleProfile.faults.subtitle')}</p>
               <p className="mb-4 text-[11px] text-slate-400">
-                Faults only — scheduled service is not a fault
-                {serviceOnlyVisits > 0 && <> · {num(serviceOnlyVisits)} service {serviceOnlyVisits === 1 ? 'visit' : 'visits'} excluded</>}
+                {t('vehicleProfile.faults.faultsOnly')}
+                {serviceOnlyVisits > 0 && <> · {tp('vehicleProfile.faults.serviceExcluded', serviceOnlyVisits, { n: num(serviceOnlyVisits) })}</>}
               </p>
               {faultSegments.length ? (
                 <CompositionDonut
@@ -850,21 +856,21 @@ export default function VehicleProfile() {
         <div role="tabpanel" id="panel-visits" aria-labelledby="tab-visits" className="space-y-6">
         {/* Maintenance history — the full "story" for this car */}
         <SectionCard
-          title="Maintenance History"
-          subtitle="Each visit, newest first · tap a row to see its workshop events."
-          actions={<Badge tone="gray">{num(maintenance.length)} {maintenance.length === 1 ? 'visit' : 'visits'}</Badge>}
+          title={t('vehicleProfile.history.title')}
+          subtitle={t('vehicleProfile.history.subtitle')}
+          actions={<Badge tone="gray">{tp('vehicleProfile.history.visitCount', maintenance.length, { n: num(maintenance.length) })}</Badge>}
         >
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm stagger-rows">
               <thead className="bg-slate-50/90">
                 <tr className="text-start text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  <th className="whitespace-nowrap border-b border-slate-200 px-6 py-3">Visit</th>
-                  <th className="whitespace-nowrap border-b border-slate-200 px-6 py-3">Out / In</th>
-                  <th className="whitespace-nowrap border-b border-slate-200 px-6 py-3">Priority</th>
-                  <th className="whitespace-nowrap border-b border-slate-200 px-6 py-3">Status</th>
-                  <th className="whitespace-nowrap border-b border-slate-200 px-6 py-3">Garage</th>
-                  <th className="whitespace-nowrap border-b border-slate-200 px-6 py-3">Issues</th>
-                  {SHOW_FINANCIALS && <th className="whitespace-nowrap border-b border-slate-200 px-6 py-3 text-end">Total Cost</th>}
+                  <th className="whitespace-nowrap border-b border-slate-200 px-6 py-3">{t('vehicleProfile.history.cols.visit')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-6 py-3">{t('vehicleProfile.history.cols.outIn')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-6 py-3">{t('vehicleProfile.history.cols.priority')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-6 py-3">{t('vehicleProfile.history.cols.status')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-6 py-3">{t('vehicleProfile.history.cols.garage')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-6 py-3">{t('vehicleProfile.history.cols.issues')}</th>
+                  {SHOW_FINANCIALS && <th className="whitespace-nowrap border-b border-slate-200 px-6 py-3 text-end">{t('vehicleProfile.history.cols.totalCost')}</th>}
                 </tr>
               </thead>
               <tbody>
@@ -910,7 +916,7 @@ export default function VehicleProfile() {
                         <tr className="bg-slate-50/60">
                           <td colSpan={SHOW_FINANCIALS ? 7 : 6} className="px-6 py-4">
                             <div className="space-y-2">
-                              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Workshop events for this visit</p>
+                              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">{t('vehicleProfile.history.eventsForVisit')}</p>
                               {events.map((e) => (
                                 <div key={e.id} className="flex flex-wrap items-start gap-x-4 gap-y-1 rounded-xl bg-white px-4 py-2.5 text-sm shadow-soft ring-1 ring-inset ring-slate-100">
                                   <Badge tone={EVENT_TONE[e.event] || 'gray'}>{e.event || '—'}</Badge>
@@ -933,7 +939,7 @@ export default function VehicleProfile() {
                   );
                 })}
                 {maintenance.length === 0 && (
-                  <tr><td colSpan={SHOW_FINANCIALS ? 7 : 6} className="px-6 py-12 text-center text-slate-400">No maintenance recorded for this vehicle yet.</td></tr>
+                  <tr><td colSpan={SHOW_FINANCIALS ? 7 : 6} className="px-6 py-12 text-center text-slate-400">{t('vehicleProfile.history.empty')}</td></tr>
                 )}
               </tbody>
             </table>
@@ -996,8 +1002,8 @@ export default function VehicleProfile() {
         {/* Cost analysis — per-service price trend & vs-fleet comparison */}
         {analytics.length > 0 && (
           <SectionCard
-            title="Cost Analysis"
-            subtitle="Latest price vs the previous one, and this car vs the fleet average."
+            title={t('vehicleProfile.cost.title')}
+            subtitle={t('vehicleProfile.cost.subtitle')}
           >
             <DataTable
               rows={analytics}
@@ -1044,10 +1050,10 @@ export default function VehicleProfile() {
         <SectionCard
           id="contract-history"
           className="scroll-mt-28"
-          title="Contract History"
+          title={t('vehicleProfile.contracts.title')}
           actions={(
             <div className="flex items-center gap-3">
-              <Badge tone="gray">{num(contracts.length)} total</Badge>
+              <Badge tone="gray">{t('vehicleProfile.contracts.total', { n: num(contracts.length) })}</Badge>
               {/* Type filter — only shows when the vehicle has more than one type to switch between */}
               {contractFilters.length > 2 && (
                 <div className="inline-flex rounded-lg bg-slate-100 p-0.5">
@@ -1142,14 +1148,14 @@ export default function VehicleProfile() {
       <Modal
         open={maintOpen}
         onClose={() => !busy && closeMaint()}
-        title="Send to Maintenance"
+        title={t('vehicleProfile.maint.title')}
         subtitle={v.plate_no || v.vin}
         footer={(
           <>
-            <Button variant="secondary" onClick={closeMaint} disabled={busy}>Cancel</Button>
+            <Button variant="secondary" onClick={closeMaint} disabled={busy}>{t('vehicleProfile.maint.cancel')}</Button>
             {conflict
-              ? <Button variant="danger" onClick={() => sendToMaintenance({ force: true })} loading={busy}>Send anyway</Button>
-              : <Button onClick={() => sendToMaintenance({})} loading={busy}>Send to Maintenance</Button>}
+              ? <Button variant="danger" onClick={() => sendToMaintenance({ force: true })} loading={busy}>{t('vehicleProfile.maint.sendAnyway')}</Button>
+              : <Button onClick={() => sendToMaintenance({})} loading={busy}>{t('vehicleProfile.maint.title')}</Button>}
           </>
         )}
       >
@@ -1168,21 +1174,25 @@ export default function VehicleProfile() {
                   ))}
                 </ul>
               )}
-              <p className="mt-2 text-xs text-slate-500">Set an expected return date before the reservation starts, or press <span className="font-medium">Send anyway</span> to override.</p>
+              <p className="mt-2 text-xs text-slate-500">
+                {t('vehicleProfile.maint.overrideBefore')}
+                <span className="font-medium">{t('vehicleProfile.maint.sendAnyway')}</span>
+                {t('vehicleProfile.maint.overrideAfter')}
+              </p>
             </div>
           )}
-          <p className="text-sm text-slate-500">This opens a maintenance record — the car immediately shows as "in maintenance". Maintenance can be opened even for a car with an active or upcoming booking; manage the overlap manually.</p>
+          <p className="text-sm text-slate-500">{t('vehicleProfile.maint.explainer')}</p>
           <label className="block">
-            <span className="mb-1 block text-sm font-medium text-slate-700">Garage</span>
+            <span className="mb-1 block text-sm font-medium text-slate-700">{t('vehicleProfile.maint.garage')}</span>
             <SearchSelect
               value={maintForm.vendor_id}
               onChange={(val) => setMaintForm((f) => ({ ...f, vendor_id: val }))}
               options={vendors.map((vn) => ({ id: vn.id, label: vn.name || `#${vn.id}`, sub: vn.type || '' }))}
-              placeholder="Search garage…"
+              placeholder={t('vehicleProfile.maint.searchGarage')}
             />
           </label>
           <Input
-            label="Expected Return"
+            label={t('vehicleProfile.maint.expectedReturn')}
             type="date"
             value={maintForm.expected_return_date}
             onChange={(e) => { setMaintForm((f) => ({ ...f, expected_return_date: e.target.value })); setConflict(null); }}
@@ -1195,9 +1205,9 @@ export default function VehicleProfile() {
         open={!!logEvent}
         onClose={() => setLogEvent(null)}
         size="lg"
-        title="Workshop Event"
+        title={t('vehicleProfile.event.title')}
         subtitle={logEvent ? `${[v.make, v.model].filter(Boolean).join(' ')}${v.plate_no ? ` · ${v.plate_no}` : ''}` : ''}
-        footer={<Button variant="secondary" onClick={() => setLogEvent(null)}>Close</Button>}
+        footer={<Button variant="secondary" onClick={() => setLogEvent(null)}>{t('vehicleProfile.close')}</Button>}
       >
         {logEvent && (() => {
           const tone = EVENT_TONE[logEvent.event] || 'gray';
@@ -1224,7 +1234,7 @@ export default function VehicleProfile() {
                 </div>
                 {logEvent.cost != null && Number(logEvent.cost) > 0 && (
                   <div className="shrink-0 text-end">
-                    <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">Cost</p>
+                    <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">{t('vehicleProfile.event.cost')}</p>
                     <p className="text-lg font-bold text-slate-900">{aed2(logEvent.cost)}</p>
                   </div>
                 )}
@@ -1233,7 +1243,7 @@ export default function VehicleProfile() {
               {/* the real fault — MAIN area(s) + SUP detail(s) recorded for the visit */}
               {(logEvent.main || logEvent.sup) && (
                 <div className="rounded-xl bg-slate-50/70 p-4 ring-1 ring-inset ring-slate-100">
-                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Problem</p>
+                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">{t('vehicleProfile.event.problem')}</p>
                   {logEvent.main && <p className="text-sm font-semibold text-slate-800">{logEvent.main}</p>}
                   {logEvent.sup && <p className="mt-0.5 text-sm text-slate-600">{logEvent.sup}</p>}
                 </div>
@@ -1241,17 +1251,17 @@ export default function VehicleProfile() {
 
               {/* facts grid */}
               <div className="grid grid-cols-1 gap-x-8 sm:grid-cols-2">
-                <Field label="Event" value={logEvent.event} />
-                <Field label="Date" value={logEvent.date ? fmtDate(logEvent.date) : '—'} />
-                <Field label="Garage" value={logEvent.garage} />
-                <Field label="Returned" value={logEvent.actual_in ? fmtDate(logEvent.actual_in) : '—'} />
-                <Field label="Type" value={logEvent.type} />
-                <Field label="Damage" value={logEvent.damage} />
-                <Field label="Severity" value={logEvent.severity} />
-                <Field label="Cost" value={logEvent.cost != null ? aed2(logEvent.cost) : '—'} />
+                <Field label={t('vehicleProfile.event.event')} value={logEvent.event} />
+                <Field label={t('vehicleProfile.event.date')} value={logEvent.date ? fmtDate(logEvent.date) : '—'} />
+                <Field label={t('vehicleProfile.event.garage')} value={logEvent.garage} />
+                <Field label={t('vehicleProfile.event.returned')} value={logEvent.actual_in ? fmtDate(logEvent.actual_in) : '—'} />
+                <Field label={t('vehicleProfile.event.type')} value={logEvent.type} />
+                <Field label={t('vehicleProfile.event.damage')} value={logEvent.damage} />
+                <Field label={t('vehicleProfile.event.severity')} value={logEvent.severity} />
+                <Field label={t('vehicleProfile.event.cost')} value={logEvent.cost != null ? aed2(logEvent.cost) : '—'} />
                 {logEvent.contract_id && (
                   <div className="flex justify-between gap-4 py-1.5 text-sm">
-                    <span className="text-slate-500">Contract</span>
+                    <span className="text-slate-500">{t('vehicleProfile.event.contract')}</span>
                     <Link to={`/contracts/${logEvent.contract_id}`} className="font-medium text-indigo-600 hover:text-indigo-700">#{logEvent.contract_no || logEvent.contract_id}</Link>
                   </div>
                 )}
@@ -1260,7 +1270,7 @@ export default function VehicleProfile() {
               {/* issue tags */}
               {(logEvent.issues || logEvent.tags || []).length > 0 && (
                 <div>
-                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Issues</p>
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{t('vehicleProfile.event.issues')}</p>
                   <div className="flex flex-wrap gap-1.5">
                     {(logEvent.issues || logEvent.tags).map((t) => <Badge key={t} tone="indigo">{t}</Badge>)}
                   </div>
@@ -1269,7 +1279,7 @@ export default function VehicleProfile() {
 
               {/* full notes */}
               <div>
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Workshop Notes</p>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{t('vehicleProfile.event.notes')}</p>
                 <div className="rounded-xl bg-slate-50/70 p-4 ring-1 ring-inset ring-slate-100">
                   <NotesList text={logEvent.notes} />
                 </div>
@@ -1284,9 +1294,9 @@ export default function VehicleProfile() {
         open={bridgeOpen}
         onClose={() => setBridgeOpen(false)}
         size="xl"
-        title="How Lifetime Net Profit is calculated"
+        title={t('vehicleProfile.bridge.title')}
         subtitle={`${[v.make, v.model].filter(Boolean).join(' ')}${v.plate_no ? ` · ${v.plate_no}` : ''}`}
-        footer={<Button variant="secondary" onClick={() => setBridgeOpen(false)}>Close</Button>}
+        footer={<Button variant="secondary" onClick={() => setBridgeOpen(false)}>{t('vehicleProfile.close')}</Button>}
       >
         {(() => {
           const pb = stats.profit_bridge || {};
@@ -1295,19 +1305,19 @@ export default function VehicleProfile() {
             <div className="space-y-6">
               {/* The gross→net chain, with every sub-sum shown. */}
               <div className="rounded-2xl border border-slate-200/60 bg-slate-50/60 p-5">
-                <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">The formula</p>
+                <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">{t('vehicleProfile.bridge.formula')}</p>
                 <dl className="space-y-2 text-sm">
-                  <BridgeLine label="Rent billed" hint="Σ rental charges (rents_debit)" value={aed2(pb.rent_billed)} />
-                  <BridgeLine label="− Discount" hint="Σ discounts given" value={`− ${aed2(pb.discount)}`} valueClass="text-slate-500" />
-                  <BridgeLine label="+ Realized usage" hint="COLLECTED km / fuel / cardoo / extra-driver / CDW / GPS / co-driver" value={`+ ${aed2(pb.realized_usage)}`} valueClass="text-slate-700" />
+                  <BridgeLine label={t('vehicleProfile.bridge.rentBilled')} hint={t('vehicleProfile.bridge.rentBilledHint')} value={aed2(pb.rent_billed)} />
+                  <BridgeLine label={t('vehicleProfile.bridge.discount')} hint={t('vehicleProfile.bridge.discountHint')} value={`− ${aed2(pb.discount)}`} valueClass="text-slate-500" />
+                  <BridgeLine label={t('vehicleProfile.bridge.usage')} hint={t('vehicleProfile.bridge.usageHint')} value={`+ ${aed2(pb.realized_usage)}`} valueClass="text-slate-700" />
                   <div className="!mt-2 border-t border-dashed border-slate-200 pt-2">
-                    <BridgeLine label="= Gross Revenue" value={aed2(pb.gross_revenue)} labelClass="font-semibold text-slate-900" valueClass="font-semibold text-slate-900" />
+                    <BridgeLine label={t('vehicleProfile.bridge.gross')} value={aed2(pb.gross_revenue)} labelClass="font-semibold text-slate-900" valueClass="font-semibold text-slate-900" />
                   </div>
-                  <BridgeLine label="− Operating costs" hint="Sales commissions + co-driver fees" value={`− ${aed2(pb.operating_cost)}`} valueClass="text-slate-500" />
-                  <BridgeLine label="− Maintenance" hint={`Workshop repairs${pb.maintenance_visits ? ` · ${num(pb.maintenance_visits)} costed visit${pb.maintenance_visits === 1 ? '' : 's'}` : ''}`} value={`− ${aed2(pb.maintenance)}`} valueClass="text-amber-600" />
+                  <BridgeLine label={t('vehicleProfile.bridge.operating')} hint={t('vehicleProfile.bridge.operatingHint')} value={`− ${aed2(pb.operating_cost)}`} valueClass="text-slate-500" />
+                  <BridgeLine label={t('vehicleProfile.bridge.maintenance')} hint={pb.maintenance_visits ? tp('vehicleProfile.bridge.maintenanceHintVisits', pb.maintenance_visits, { n: num(pb.maintenance_visits) }) : t('vehicleProfile.bridge.maintenanceHint')} value={`− ${aed2(pb.maintenance)}`} valueClass="text-amber-600" />
                   <div className="!mt-3 border-t border-slate-300 pt-3">
                     <BridgeLine
-                      label="= Lifetime Net Profit"
+                      label={t('vehicleProfile.bridge.net')}
                       labelClass="text-base font-bold text-slate-900"
                       value={aed2(pb.net_profit)}
                       valueClass={`text-base font-bold ${Number(pb.net_profit) < 0 ? 'text-red-600' : 'text-emerald-600'}`}
@@ -1315,29 +1325,29 @@ export default function VehicleProfile() {
                   </div>
                 </dl>
                 <p className="mt-3 text-xs text-slate-400">
-                  Rentals counted: {num(pb.rentals)}. Maintenance is taken at the car level (workshop log) so it is never double-counted. VAT, deposits and damages are excluded.
+                  {t('vehicleProfile.bridge.footnote', { n: num(pb.rentals) })}
                 </p>
               </div>
 
               {/* Every rental contract that summed into Gross Revenue − Operating. */}
               <div>
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                  Per-contract working ({num(pc.length)} rental{pc.length === 1 ? '' : 's'})
+                  {tp('vehicleProfile.bridge.perContract', pc.length, { n: num(pc.length) })}
                 </p>
                 {pc.length === 0 ? (
-                  <p className="rounded-xl bg-slate-50/70 p-4 text-sm text-slate-500 ring-1 ring-inset ring-slate-100">No rental contracts.</p>
+                  <p className="rounded-xl bg-slate-50/70 p-4 text-sm text-slate-500 ring-1 ring-inset ring-slate-100">{t('vehicleProfile.bridge.noContracts')}</p>
                 ) : (
                   <div className="max-h-[22rem] overflow-auto rounded-xl ring-1 ring-inset ring-slate-200">
                     <table className="min-w-full divide-y divide-slate-100 text-sm">
                       <thead className="sticky top-0 bg-slate-50 text-[11px] uppercase tracking-wide text-slate-500">
                         <tr>
-                          <th className="px-3 py-2 text-start font-semibold">Contract</th>
-                          <th className="px-3 py-2 text-start font-semibold">Out</th>
-                          <th className="px-3 py-2 text-end font-semibold">Rent</th>
-                          <th className="px-3 py-2 text-end font-semibold">Disc.</th>
-                          <th className="px-3 py-2 text-end font-semibold">Usage</th>
-                          <th className="px-3 py-2 text-end font-semibold">Oper.</th>
-                          <th className="px-3 py-2 text-end font-semibold">Net</th>
+                          <th className="px-3 py-2 text-start font-semibold">{t('vehicleProfile.bridge.cols.contract')}</th>
+                          <th className="px-3 py-2 text-start font-semibold">{t('vehicleProfile.bridge.cols.out')}</th>
+                          <th className="px-3 py-2 text-end font-semibold">{t('vehicleProfile.bridge.cols.rent')}</th>
+                          <th className="px-3 py-2 text-end font-semibold">{t('vehicleProfile.bridge.cols.disc')}</th>
+                          <th className="px-3 py-2 text-end font-semibold">{t('vehicleProfile.bridge.cols.usage')}</th>
+                          <th className="px-3 py-2 text-end font-semibold">{t('vehicleProfile.bridge.cols.oper')}</th>
+                          <th className="px-3 py-2 text-end font-semibold">{t('vehicleProfile.bridge.cols.net')}</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-50">

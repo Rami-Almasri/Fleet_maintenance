@@ -12,6 +12,7 @@ import { aed2 } from '../../lib/format';
 import { useAuth } from '../../auth/AuthContext';
 import RentalReadinessGate from './RentalReadinessGate';
 import RentalReadinessInline from './RentalReadinessInline';
+import { useI18n } from '../../i18n/I18nContext';
 
 const TYPES = [{ v: 'C', l: 'Rental' }, { v: 'U', l: 'Maintenance' }, { v: 'R', l: 'Booking' }];
 
@@ -59,6 +60,9 @@ function cleanPayload(values) {
 }
 
 export default function ContractForm() {
+  // Bound as `tr`, not `t` — this file already uses `t` as a map/callback parameter in several
+  // places (TYPES, tags), and shadowing the resolver there would silently break those labels.
+  const { t: tr, tf, tp } = useI18n();
   const { id } = useParams();
   const isEdit = Boolean(id);
   const navigate = useNavigate();
@@ -121,7 +125,7 @@ export default function ContractForm() {
     auto[field] ? (
       <span className="inline-flex items-center gap-1.5">
         {text}
-        <span className="rounded-full bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-600 ring-1 ring-indigo-100">✨ auto</span>
+        <span className="rounded-full bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-600 ring-1 ring-indigo-100">✨ {tr('contractForm.auto')}</span>
       </span>
     ) : (
       text
@@ -596,33 +600,33 @@ export default function ContractForm() {
           </div>
         )}
 
-        <Section title="Basics">
+        <Section title={tr('contractForm.sections.basics')}>
           <Input
-            label={isEdit ? 'Contract No.' : 'Contract No. (auto)'}
+            label={tr(isEdit ? 'contractForm.contractNo' : 'contractForm.contractNoAuto')}
             required
             value={form.contract_no || ''}
             onChange={set('contract_no')}
             error={err('contract_no')}
             readOnly={!isEdit}
-            title={!isEdit ? 'Generated automatically' : undefined}
+            title={!isEdit ? tr('contractForm.generatedAuto') : undefined}
             className={!isEdit ? 'bg-slate-50 text-slate-500' : ''}
           />
-          <Select label="Type" value={form.contract_type || 'C'} onChange={set('contract_type')} error={err('contract_type')}>
-            {TYPES.map((t) => <option key={t.v} value={t.v}>{t.l}</option>)}
+          <Select label={tr('contractForm.type')} value={form.contract_type || 'C'} onChange={set('contract_type')} error={err('contract_type')}>
+            {TYPES.map((ty) => <option key={ty.v} value={ty.v}>{tf(`contractForm.contractType.${ty.v}`, ty.l)}</option>)}
           </Select>
-          <Select label="State" value={form.state || 'open'} onChange={onStateChange} error={err('state')}>
-            <option value="open">Open</option>
-            <option value="closed">Closed</option>
+          <Select label={tr('contractForm.state')} value={form.state || 'open'} onChange={onStateChange} error={err('state')}>
+            <option value="open">{tr('contractForm.open')}</option>
+            <option value="closed">{tr('contractForm.closed')}</option>
           </Select>
         </Section>
 
-        <Section title="Parties">
+        <Section title={tr('contractForm.sections.parties')}>
           <label className="block">
             <div className="mb-1 flex items-center justify-between">
               <span className="flex items-center gap-1.5 text-sm font-medium text-slate-700">
                 Customer
                 {auto.customer_id && (
-                  <span className="rounded-full bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-600 ring-1 ring-indigo-100">✨ auto</span>
+                  <span className="rounded-full bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-600 ring-1 ring-indigo-100">✨ {tr('contractForm.auto')}</span>
                 )}
               </span>
               <button
@@ -645,23 +649,23 @@ export default function ContractForm() {
                 />
                 <input
                   className={inputCls}
-                  placeholder="Mobile (optional)"
+                  placeholder={tr('contractForm.mobileOptional')}
                   value={newCust.mobile}
                   onChange={(e) => setNewCust((n) => ({ ...n, mobile: e.target.value }))}
                   onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); createCustomer(); } }}
                 />
                 <div className="flex justify-end">
-                  <Button variant="secondary" onClick={createCustomer} loading={creatingCust}>Add customer</Button>
+                  <Button variant="secondary" onClick={createCustomer} loading={creatingCust}>{tr('contractForm.addCustomer')}</Button>
                 </div>
               </div>
             ) : (
-              <SearchSelect value={form.customer_id} onChange={(v) => { clearAuto('customer_id'); setVal('customer_id', v); }} options={customerOptions} placeholder="Search customer…" />
+              <SearchSelect value={form.customer_id} onChange={(v) => { clearAuto('customer_id'); setVal('customer_id', v); }} options={customerOptions} placeholder={tr('contractForm.searchCustomer')} />
             )}
             {err('customer_id') && <span className="mt-1 block text-xs text-red-600">{err('customer_id')}</span>}
           </label>
           <label className="block">
-            <span className="mb-1 block text-sm font-medium text-slate-700">Vehicle</span>
-            <SearchSelect value={form.vehicle_id} onChange={onVehicleChange} options={vehicleOptions} placeholder="Search plate / VIN…" />
+            <span className="mb-1 block text-sm font-medium text-slate-700">{tr('contractForm.vehicle')}</span>
+            <SearchSelect value={form.vehicle_id} onChange={onVehicleChange} options={vehicleOptions} placeholder={tr('contractForm.searchPlate')} />
             {err('vehicle_id') && <span className="mt-1 block text-xs text-red-600">{err('vehicle_id')}</span>}
           </label>
         </Section>
@@ -669,10 +673,10 @@ export default function ContractForm() {
         {/* Visual Condition Grade alert — a car picked for a rental/booking that isn't Perfect. */}
         {isHandover && conditionGrade === 'orange' && (
           <div className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-800 shadow-soft">
-            <p className="font-semibold">⚠️ This vehicle has minor cosmetic issues.</p>
+            <p className="font-semibold">⚠️ {tr('contractForm.cosmetic.title')}</p>
             <p className="mt-0.5">
               {conditionNote ? `“${conditionNote}” — ` : ''}
-              It stays available to rent, but make sure the client acknowledges the condition in the inspection report at handover.
+              {tr('contractForm.cosmetic.body')}
             </p>
           </div>
         )}
@@ -700,19 +704,18 @@ export default function ContractForm() {
         {/* Deferred Maintenance — advisory only (never a block); a confirm prompt fires on submit. */}
         {inMaintenance && (
           <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-800 shadow-soft">
-            <p className="font-semibold">🛠️↩️ This vehicle is currently in the workshop.</p>
+            <p className="font-semibold">🛠️↩️ {tr('contractForm.inShop.title')}</p>
             <p className="mt-0.5">
-              Renting it will <span className="font-semibold">close its maintenance ticket</span> and flag it to return to the
-              garage once the customer brings it back — so no maintenance task is forgotten and there are no overlapping contracts.
+              {tr('contractForm.inShop.before')} <span className="font-semibold">{tr('contractForm.inShop.closeTicket')}</span> {tr('contractForm.inShop.after')}
             </p>
           </div>
         )}
         {!inMaintenance && owesMaintenance && (
           <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-800 shadow-soft">
-            <p className="font-semibold">🛠️↩️ This vehicle is flagged for deferred maintenance.</p>
+            <p className="font-semibold">🛠️↩️ {tr('contractForm.deferred.title')}</p>
             <p className="mt-0.5">
               {selectedVehicle?.deferred_maintenance_reason ? `“${selectedVehicle.deferred_maintenance_reason}” — ` : ''}
-              It was pulled out of the workshop early and still owes the garage a visit. You can still rent it, but it must go back once it returns.
+              {tr('contractForm.deferred.body')}
             </p>
           </div>
         )}
@@ -723,51 +726,51 @@ export default function ContractForm() {
           <RentalReadinessInline vehicleId={form.vehicle_id} />
         )}
 
-        <Section title="Out (pickup)" cols={3}>
-          <Input label={autoLabel('Out Date', 'out_date')} type="date" value={form.out_date || ''} onChange={onOutDateChange} />
-          <Input label={autoLabel('Out Time', 'out_time')} value={form.out_time || ''} onChange={setClearing('out_time')} placeholder="14:30" />
-          <Input label={autoLabel('Out Mileage', 'out_milage')} type="number" value={form.out_milage ?? ''} onChange={setClearing('out_milage')} />
-          <Input label="Out Fuel" value={form.out_fuel || ''} onChange={set('out_fuel')} />
-          <Input label={autoLabel('Opened By', 'opened_by')} value={form.opened_by || ''} onChange={setClearing('opened_by')} />
+        <Section title={tr('contractForm.sections.out')} cols={3}>
+          <Input label={autoLabel(tr('contractForm.fields.outDate'), 'out_date')} type="date" value={form.out_date || ''} onChange={onOutDateChange} />
+          <Input label={autoLabel(tr('contractForm.fields.outTime'), 'out_time')} value={form.out_time || ''} onChange={setClearing('out_time')} placeholder="14:30" />
+          <Input label={autoLabel(tr('contractForm.fields.outMileage'), 'out_milage')} type="number" value={form.out_milage ?? ''} onChange={setClearing('out_milage')} />
+          <Input label={tr('contractForm.fields.outFuel')} value={form.out_fuel || ''} onChange={set('out_fuel')} />
+          <Input label={autoLabel(tr('contractForm.fields.openedBy'), 'opened_by')} value={form.opened_by || ''} onChange={setClearing('opened_by')} />
         </Section>
 
-        <Section title="In (return)" cols={3}>
-          <Input label={autoLabel('In Date', 'in_date')} type="date" value={form.in_date || ''} onChange={onInDateChange} />
-          <Input label={autoLabel('In Time', 'in_time')} value={form.in_time || ''} onChange={setClearing('in_time')} placeholder="12:00" />
-          <Input label="In Mileage" type="number" value={form.in_milage ?? ''} onChange={set('in_milage')} />
-          <Input label="In Fuel" value={form.in_fuel || ''} onChange={set('in_fuel')} />
-          <Input label={autoLabel('Closed By', 'closed_by')} value={form.closed_by || ''} onChange={setClearing('closed_by')} />
-          <Input label="Days" type="number" value={form.days ?? ''} onChange={set('days')} />
-          <Input label="KM" type="number" value={form.km ?? ''} onChange={set('km')} />
+        <Section title={tr('contractForm.sections.in')} cols={3}>
+          <Input label={autoLabel(tr('contractForm.fields.inDate'), 'in_date')} type="date" value={form.in_date || ''} onChange={onInDateChange} />
+          <Input label={autoLabel(tr('contractForm.fields.inTime'), 'in_time')} value={form.in_time || ''} onChange={setClearing('in_time')} placeholder="12:00" />
+          <Input label={tr('contractForm.fields.inMileage')} type="number" value={form.in_milage ?? ''} onChange={set('in_milage')} />
+          <Input label={tr('contractForm.fields.inFuel')} value={form.in_fuel || ''} onChange={set('in_fuel')} />
+          <Input label={autoLabel(tr('contractForm.fields.closedBy'), 'closed_by')} value={form.closed_by || ''} onChange={setClearing('closed_by')} />
+          <Input label={tr('contractForm.fields.days')} type="number" value={form.days ?? ''} onChange={set('days')} />
+          <Input label={tr('contractForm.fields.km')} type="number" value={form.km ?? ''} onChange={set('km')} />
         </Section>
 
         {isMaintenance ? (
           <>
-            <Section title="Maintenance Details" cols={2}>
+            <Section title={tr('contractForm.sections.maintDetails')} cols={2}>
               <label className="block">
-                <span className="mb-1 block text-sm font-medium text-slate-700">Garage / Vendor</span>
-                <SearchSelect value={form.vendor_id} onChange={(v) => setVal('vendor_id', v)} options={vendorOptions} placeholder="Search garage / vendor…" />
+                <span className="mb-1 block text-sm font-medium text-slate-700">{tr('contractForm.fields.garage')}</span>
+                <SearchSelect value={form.vendor_id} onChange={(v) => setVal('vendor_id', v)} options={vendorOptions} placeholder={tr('contractForm.searchGarage')} />
                 {err('vendor_id') && <span className="mt-1 block text-xs text-red-600">{err('vendor_id')}</span>}
               </label>
-              <Input label="Expected Return" type="date" value={form.expected_return_date || ''} onChange={set('expected_return_date')} />
-              <Select label="Responsible" value={form.responsible || ''} onChange={set('responsible')}>
-                <option value="">Select…</option>
+              <Input label={tr('contractForm.fields.expectedReturn')} type="date" value={form.expected_return_date || ''} onChange={set('expected_return_date')} />
+              <Select label={tr('contractForm.fields.responsible')} value={form.responsible || ''} onChange={set('responsible')}>
+                <option value="">{tr('contractForm.select')}</option>
                 {MAINTENANCE_RESPONSIBLES.map((p) => <option key={p} value={p}>{p}</option>)}
                 {/* keep any pre-existing responsible from an older record selectable */}
                 {form.responsible && !MAINTENANCE_RESPONSIBLES.includes(form.responsible) && (
                   <option value={form.responsible}>{form.responsible}</option>
                 )}
               </Select>
-              <Input label="Approved By" value={form.approved_by || ''} onChange={set('approved_by')} />
+              <Input label={tr('contractForm.fields.approvedBy')} value={form.approved_by || ''} onChange={set('approved_by')} />
             </Section>
 
             {/* Issue keywords / tags */}
             <Card className="p-6">
               <div className="mb-3 flex items-center justify-between">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Issue Keywords / Tags</h3>
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">{tr('contractForm.tags.title')}</h3>
                 {predicted && (
                   <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset ${LEVEL_CHIP[predicted]}`}>
-                    Priority: {LEVEL_META[predicted].emoji} {LEVEL_META[predicted].label}
+                    {tr('contractForm.tags.priority')} {LEVEL_META[predicted].emoji} {LEVEL_META[predicted].label}
                   </span>
                 )}
               </div>
@@ -777,21 +780,21 @@ export default function ContractForm() {
                   return (
                     <span key={t} className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-sm font-medium ring-1 ring-inset ${lvl ? LEVEL_CHIP[lvl] : 'bg-slate-50 text-slate-700 ring-slate-200'}`}>
                       {t}
-                      <button type="button" onClick={() => removeTag(t)} aria-label={`Remove ${t}`} className="opacity-50 transition hover:opacity-100">×</button>
+                      <button type="button" onClick={() => removeTag(t)} aria-label={tr('contractForm.tags.remove', { tag: t })} className="opacity-50 transition hover:opacity-100">×</button>
                     </span>
                   );
                 })}
-                {tags.length === 0 && <span className="text-sm text-slate-400">No issues yet — pick from the list below; each one sets the maintenance priority.</span>}
+                {tags.length === 0 && <span className="text-sm text-slate-400">{tr('contractForm.tags.empty')}</span>}
               </div>
               <div className="mt-3 flex gap-2">
                 <input
                   value={tagInput}
                   onChange={(e) => setTagInput(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTag(tagInput); } }}
-                  placeholder="Type a keyword and press Enter…"
+                  placeholder={tr('contractForm.tags.placeholder')}
                   className={inputCls}
                 />
-                <Button variant="secondary" onClick={() => addTag(tagInput)}>Add</Button>
+                <Button variant="secondary" onClick={() => addTag(tagInput)}>{tr('contractForm.tags.add')}</Button>
               </div>
               {reasons.length > 0 && (
                 <div className="mt-3">
@@ -818,79 +821,79 @@ export default function ContractForm() {
             {/* Invoice-style maintenance items */}
             <Card className="p-6">
               <div className="mb-4 flex items-center justify-between">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Maintenance Items</h3>
-                <Button variant="secondary" onClick={addItem}>+ Add item</Button>
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">{tr('contractForm.items.title')}</h3>
+                <Button variant="secondary" onClick={addItem}>{tr('contractForm.items.add')}</Button>
               </div>
               <div className="space-y-2">
                 <div className="hidden gap-2 px-1 text-xs font-medium uppercase tracking-wide text-slate-400 sm:grid sm:grid-cols-12">
-                  <div className="sm:col-span-5">Service</div>
-                  <div className="text-end sm:col-span-2">Cost</div>
-                  <div className="sm:col-span-4">Notes</div>
+                  <div className="sm:col-span-5">{tr('contractForm.items.service')}</div>
+                  <div className="text-end sm:col-span-2">{tr('contractForm.items.cost')}</div>
+                  <div className="sm:col-span-4">{tr('contractForm.items.notes')}</div>
                   <div className="sm:col-span-1" />
                 </div>
                 {items.map((it, idx) => (
                   <div key={idx} className="grid grid-cols-1 gap-2 sm:grid-cols-12 sm:items-center">
-                    <input className={`${inputCls} sm:col-span-5`} value={it.service_name} onChange={(e) => setItem(idx, 'service_name', e.target.value)} placeholder="e.g. Oil Change" />
+                    <input className={`${inputCls} sm:col-span-5`} value={it.service_name} onChange={(e) => setItem(idx, 'service_name', e.target.value)} placeholder={tr('contractForm.items.servicePlaceholder')} />
                     <input type="number" step="0.01" className={`${inputCls} text-end sm:col-span-2`} value={it.cost} onChange={(e) => setItem(idx, 'cost', e.target.value)} placeholder="0.00" />
-                    <input className={`${inputCls} sm:col-span-4`} value={it.notes} onChange={(e) => setItem(idx, 'notes', e.target.value)} placeholder="Notes (optional)" />
-                    <Button type="button" variant="ghost" size="sm" onClick={() => removeItem(idx)} className="text-red-600 hover:bg-red-50 sm:col-span-1" title="Remove">Remove</Button>
+                    <input className={`${inputCls} sm:col-span-4`} value={it.notes} onChange={(e) => setItem(idx, 'notes', e.target.value)} placeholder={tr('contractForm.items.notesPlaceholder')} />
+                    <Button type="button" variant="ghost" size="sm" onClick={() => removeItem(idx)} className="text-red-600 hover:bg-red-50 sm:col-span-1" title={tr('contractForm.items.remove')}>{tr('contractForm.items.remove')}</Button>
                   </div>
                 ))}
                 {items.length === 0 && (
-                  <p className="py-4 text-center text-sm text-slate-400">No items yet. Click “+ Add item” to add services like Oil Change, Brake Pads, Filter, Labor…</p>
+                  <p className="py-4 text-center text-sm text-slate-400">{tr('contractForm.items.empty')}</p>
                 )}
               </div>
               <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-4">
-                <span className="text-sm font-medium text-slate-500">Total Maintenance Cost</span>
+                <span className="text-sm font-medium text-slate-500">{tr('contractForm.items.total')}</span>
                 <span className="text-xl font-bold text-slate-900">{aed2(itemsTotal)}</span>
               </div>
             </Card>
 
-            <Section title="Notes" cols={1}>
+            <Section title={tr('contractForm.sections.notes')} cols={1}>
               <label className="block sm:col-span-2">
-                <span className="mb-1 block text-sm font-medium text-slate-700">Maintenance Notes</span>
+                <span className="mb-1 block text-sm font-medium text-slate-700">{tr('contractForm.maintNotes')}</span>
                 <textarea value={form.maintenance_notes || ''} onChange={set('maintenance_notes')} rows={3} className={inputCls} />
               </label>
             </Section>
           </>
         ) : (
           <>
-            <Section title="Pricing" cols={3}>
-              <Input label={autoLabel('Day Price', 'day_price')} type="number" step="0.01" value={form.day_price ?? ''} onChange={setClearing('day_price')} />
-              <Input label={autoLabel('Week Price', 'week_price')} type="number" step="0.01" value={form.week_price ?? ''} onChange={setClearing('week_price')} />
-              <Input label={autoLabel('Month Price', 'month_price')} type="number" step="0.01" value={form.month_price ?? ''} onChange={setClearing('month_price')} />
+            <Section title={tr('contractForm.sections.pricing')} cols={3}>
+              <Input label={autoLabel(tr('contractForm.fields.dayPrice'), 'day_price')} type="number" step="0.01" value={form.day_price ?? ''} onChange={setClearing('day_price')} />
+              <Input label={autoLabel(tr('contractForm.fields.weekPrice'), 'week_price')} type="number" step="0.01" value={form.week_price ?? ''} onChange={setClearing('week_price')} />
+              <Input label={autoLabel(tr('contractForm.fields.monthPrice'), 'month_price')} type="number" step="0.01" value={form.month_price ?? ''} onChange={setClearing('month_price')} />
             </Section>
 
             {rentEstimate && (
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-indigo-100 bg-indigo-50 px-5 py-4 shadow-soft">
                 <div>
                   <p className="text-sm font-semibold text-indigo-900">
-                    Estimated rent · {aed2(rentEstimate.total)}
+                    {tr('contractForm.estimate.title')} · {aed2(rentEstimate.total)}
                   </p>
                   <p className="mt-0.5 text-xs text-indigo-600">
-                    {rentEstimate.days} day{rentEstimate.days === 1 ? '' : 's'} → {rentEstimate.parts.join(' + ')} at the rates above
+                    {tp('contractForm.estimate.days', rentEstimate.days, { n: rentEstimate.days })} → {rentEstimate.parts.join(' + ')} {tr('contractForm.estimate.atRates')}
                   </p>
                 </div>
                 <Button variant="secondary" onClick={() => { clearAuto('rents_debit'); setVal('rents_debit', rentEstimate.total); }}>
-                  Use as Rents
+                  {tr('contractForm.estimate.useAsRents')}
                 </Button>
               </div>
             )}
 
-            <Section title="Charges (debit)" cols={3}>
-              <Input label="Rents" type="number" step="0.01" value={form.rents_debit ?? ''} onChange={set('rents_debit')} />
-              <Input label="Salik" type="number" step="0.01" value={form.salik_debit ?? ''} onChange={set('salik_debit')} />
-              <Input label="Damages" type="number" step="0.01" value={form.damages_debit ?? ''} onChange={set('damages_debit')} />
-              <Input label="CDW" type="number" step="0.01" value={form.cdw_debit ?? ''} onChange={set('cdw_debit')} />
-              <Input label="VAT" type="number" step="0.01" value={form.vat_debit ?? ''} onChange={set('vat_debit')} />
-              <Input label="Deposit" type="number" step="0.01" value={form.deposit_debit ?? ''} onChange={set('deposit_debit')} />
+            <Section title={tr('contractForm.sections.charges')} cols={3}>
+              <Input label={tr('contractForm.fields.rents')} type="number" step="0.01" value={form.rents_debit ?? ''} onChange={set('rents_debit')} />
+              <Input label={tr('contractForm.fields.salik')} type="number" step="0.01" value={form.salik_debit ?? ''} onChange={set('salik_debit')} />
+              <Input label={tr('contractForm.fields.damages')} type="number" step="0.01" value={form.damages_debit ?? ''} onChange={set('damages_debit')} />
+              <Input label={tr('contractForm.fields.cdw')} type="number" step="0.01" value={form.cdw_debit ?? ''} onChange={set('cdw_debit')} />
+              <Input label={tr('contractForm.fields.vat')} type="number" step="0.01" value={form.vat_debit ?? ''} onChange={set('vat_debit')} />
+              <Input label={tr('contractForm.fields.deposit')} type="number" step="0.01" value={form.deposit_debit ?? ''} onChange={set('deposit_debit')} />
             </Section>
 
-            <Section title="Totals" cols={2}>
-              <Input label="Contract Debit" type="number" step="0.01" value={form.contract_debit ?? ''} onChange={set('contract_debit')} />
-              <Input label="Contract Credit" type="number" step="0.01" value={form.contract_credit ?? ''} onChange={set('contract_credit')} />
-              <Input label="Balance" type="number" step="0.01" value={form.contract_balance ?? ''} onChange={set('contract_balance')} />
-              <Input label="Deposit Held" type="number" step="0.01" value={form.contract_deposit ?? ''} onChange={set('contract_deposit')} />
+            <Section title={tr('contractForm.sections.totals')} cols={2}>
+              <Input label={tr('contractForm.fields.contractDebit')} type="number" step="0.01" value={form.contract_debit ?? ''} onChange={set('contract_debit')} />
+              <Input label={tr('contractForm.fields.contractCredit')} type="number" step="0.01" value={form.contract_credit ?? ''} onChange={set('contract_credit')} />
+              <Input label={tr('contractForm.fields.balance')} type="number" step="0.01" value={form.contract_balance ?? ''} onChange={set('contract_balance')} />
+              <Input label={tr('contractForm.fields.depositHeld')} type="number" step="0.01" value={form.contract_deposit ?? ''} onChange={set('contract_deposit')} />
             </Section>
           </>
         )}
@@ -908,11 +911,10 @@ export default function ContractForm() {
         onConfirm={() => { setCosmeticAck(false); proceedToCommit(); }}
         loading={saving}
         variant="primary"
-        title="Confirm cosmetic condition"
-        confirmText="Client acknowledged — continue"
+        title={tr('contractForm.cosmeticAck.title')}
+        confirmText={tr('contractForm.cosmeticAck.confirm')}
         message={
-          `This vehicle has minor cosmetic issues${conditionNote ? ` (“${conditionNote}”)` : ''}. Please ensure the client acknowledges them in the inspection report`
-          + ' before you continue. Your confirmation is recorded on the contract.'
+          tr('contractForm.cosmeticAck.message', { note: conditionNote ? ` (“${conditionNote}”)` : '' })
         }
       />
 
@@ -923,15 +925,17 @@ export default function ContractForm() {
         onConfirm={() => { setShowDeferAck(false); setDeferAck(true); afterDefer(pendingOpts); }}
         loading={saving}
         variant="warning"
-        title={inMaintenance ? 'Pull car out of the workshop?' : 'Deferred maintenance'}
-        confirmText={inMaintenance ? 'Close ticket & rent' : 'Proceed with rental'}
+        title={tr(inMaintenance ? 'contractForm.deferAck.titleInShop' : 'contractForm.deferAck.title')}
+        confirmText={tr(inMaintenance ? 'contractForm.deferAck.confirmInShop' : 'contractForm.deferAck.confirm')}
         message={
           inMaintenance
-            ? `${selectedVehicle?.plate_no || 'This vehicle'} is in the workshop. Renting it will close its open maintenance `
-              + 'ticket and flag it to return to the garage after the rental. Do you want to proceed?'
-            : `${selectedVehicle?.plate_no || 'This vehicle'} is flagged for deferred maintenance`
-              + `${selectedVehicle?.deferred_maintenance_reason ? ` — “${selectedVehicle.deferred_maintenance_reason}”` : ''}. `
-              + 'Do you want to proceed with the rental anyway? It must return to the workshop once the customer brings it back.'
+            ? tr('contractForm.deferAck.messageInShop', {
+              plate: selectedVehicle?.plate_no || tr('contractForm.thisVehicle'),
+            })
+            : tr('contractForm.deferAck.message', {
+              plate: selectedVehicle?.plate_no || tr('contractForm.thisVehicle'),
+              note: selectedVehicle?.deferred_maintenance_reason ? ` — “${selectedVehicle.deferred_maintenance_reason}”` : '',
+            })
         }
       />
 
@@ -942,16 +946,18 @@ export default function ContractForm() {
         onConfirm={() => { setMgrOverride(false); proceedToCommit({ managerOverride: true }); }}
         loading={saving}
         variant="warning"
-        title="Manager override — Yellow vehicle"
-        confirmText="Override & rent"
+        title={tr('contractForm.override.title')}
+        confirmText={tr('contractForm.override.confirm')}
         confirmDisabled={!overrideReason.trim()}
         message={
-          `${selectedVehicle?.plate_no || 'This vehicle'} is graded Yellow (maintenance needed)`
-          + `${conditionNote ? ` — “${conditionNote}”` : ''}. As a manager you can override the block. Your reason is recorded on the contract.`
+          tr('contractForm.override.message', {
+            plate: selectedVehicle?.plate_no || tr('contractForm.thisVehicle'),
+            note: conditionNote ? ` — “${conditionNote}”` : '',
+          })
         }
       >
         <label className="mt-3 block">
-          <span className="text-xs font-medium text-slate-600">Reason for override <span className="text-red-500">*</span></span>
+          <span className="text-xs font-medium text-slate-600">{tr('contractForm.override.reason')} <span className="text-red-500">*</span></span>
           <textarea
             value={overrideReason}
             onChange={(e) => setOverrideReason(e.target.value)}

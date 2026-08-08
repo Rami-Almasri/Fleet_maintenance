@@ -1,4 +1,8 @@
 import { useState } from 'react';
+import { useI18n } from '../../i18n/I18nContext';
+
+// LOCALIZATION — every badge below is a fixed vocabulary, so the English stays here beside the
+// status code it labels and the Arabic lives in labels.js under `ar.badge.*`, resolved with tf().
 
 const TONES = {
   gray: 'bg-slate-100 text-slate-600 ring-slate-500/20',
@@ -48,7 +52,13 @@ const VEHICLE_STATUS_TONE = {
 };
 
 export function VehicleStatusBadge({ status }) {
-  return <Badge tone={VEHICLE_STATUS_TONE[status] || 'gray'}>{(status || 'unknown').replace(/_/g, ' ')}</Badge>;
+  const { tf } = useI18n();
+  const key = status || 'unknown';
+  return (
+    <Badge tone={VEHICLE_STATUS_TONE[status] || 'gray'}>
+      {tf(`badge.vehicleStatus.${key}`, key.replace(/_/g, ' '))}
+    </Badge>
+  );
 }
 
 // The car's CURRENT movement (operational_status), derived from its open contracts —
@@ -65,9 +75,13 @@ const OPERATIONAL = {
 
 // `destination` is only used for in_transit, to spell out "In transit → Deals on Wheels".
 export function OperationalBadge({ status, destination }) {
+  const { tf } = useI18n();
   const m = OPERATIONAL[status];
   if (!m) return null;
-  const label = status === 'in_transit' && destination ? `In transit → ${destination}` : m.label;
+  // The destination is a garage/branch name — data, so it is never translated, only the frame is.
+  const label = status === 'in_transit' && destination
+    ? tf('badge.operational.inTransitTo', `In transit → ${destination}`, { destination })
+    : tf(`badge.operational.${status}`, m.label);
   return <Badge tone={m.tone} dot>{label}</Badge>;
 }
 
@@ -83,19 +97,31 @@ const VEHICLE_WARNING = {
 };
 
 export function VehicleWarningTag({ status }) {
+  const { tf } = useI18n();
   const m = VEHICLE_WARNING[status];
   if (!m) return null;
-  return <Badge tone={m.tone} dot className="font-semibold">{m.label}</Badge>;
+  return (
+    <Badge tone={m.tone} dot className="font-semibold">
+      {tf(`badge.vehicleWarning.${status}`, m.label)}
+    </Badge>
+  );
 }
 
 // Deferred Maintenance — a standing warning for a car that was pulled out of the workshop
 // early to satisfy a customer and still "owes" the garage a visit. Shown ALONGSIDE the live
 // status the whole time it's out, so it can't be silently re-rented and forgotten.
 export function DeferredMaintenanceBadge({ pending, note }) {
+  const { tf } = useI18n();
   if (!pending) return null;
+  // `note` is whatever ops typed when they released the car — data, kept verbatim.
+  const title = note
+    ? tf('badge.deferred.titleWithNote', `Owes maintenance — ${note}`, { note })
+    : tf('badge.deferred.title', 'Pulled from the workshop for a customer — must go back to the garage once it returns.');
   return (
-    <span title={note ? `Owes maintenance — ${note}` : 'Pulled from the workshop for a customer — must go back to the garage once it returns.'}>
-      <Badge tone="red" dot className="whitespace-nowrap font-semibold normal-case">Owes maintenance</Badge>
+    <span title={title}>
+      <Badge tone="red" dot className="whitespace-nowrap font-semibold normal-case">
+        {tf('badge.deferred.label', 'Owes maintenance')}
+      </Badge>
     </span>
   );
 }
@@ -116,22 +142,34 @@ export const CONDITION_GRADE = {
 // The condition badge. Perfect is hidden by default (no news is good news) unless
 // `showGreen` is set, so the list only calls out cars that need attention.
 export function ConditionBadge({ grade, showGreen = false }) {
+  const { tf } = useI18n();
   const m = CONDITION_GRADE[grade];
   if (!m || (grade === 'green' && !showGreen)) return null;
-  return <Badge tone={m.tone} dot className="font-semibold">{m.label}</Badge>;
+  return (
+    <Badge tone={m.tone} dot className="font-semibold">
+      {tf(`badge.conditionGrade.${grade}`, m.label)}
+    </Badge>
+  );
 }
 
 // A tiny condition dot for dense grids (the dashboard Fleet Pulse). Hidden for Perfect.
 export function ConditionDot({ grade, className = '' }) {
+  const { tf } = useI18n();
   const m = CONDITION_GRADE[grade];
   if (!m || grade === 'green') return null;
-  return <span className={`inline-block h-2 w-2 rounded-full ${m.dot} ${className}`} title={m.label} />;
+  return (
+    <span
+      className={`inline-block h-2 w-2 rounded-full ${m.dot} ${className}`}
+      title={tf(`badge.conditionGrade.${grade}`, m.label)}
+    />
+  );
 }
 
 // A tiny "OM" toggle that reveals the stored OfficeManager lifecycle status on
 // click, so staff can compare it against the live (contract-based) status. The
 // OM status is always stored & synced — just hidden until requested.
 export function OmStatusButton({ status }) {
+  const { tf } = useI18n();
   const [show, setShow] = useState(false);
   if (!status) return null;
   return (
@@ -140,7 +178,7 @@ export function OmStatusButton({ status }) {
         type="button"
         onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShow((s) => !s); }}
         className="rounded-lg border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500 transition hover:bg-slate-50"
-        title="Show the OfficeManager status to compare"
+        title={tf('badge.omStatus.tip', 'Show the OfficeManager status to compare')}
       >
         OM
       </button>
@@ -158,7 +196,12 @@ const CONTRACT_STATE_TONE = {
 };
 
 export function ContractStateBadge({ state }) {
-  return <Badge tone={CONTRACT_STATE_TONE[state] || 'blue'}>{state || '—'}</Badge>;
+  const { tf } = useI18n();
+  return (
+    <Badge tone={CONTRACT_STATE_TONE[state] || 'blue'}>
+      {state ? tf(`badge.contractState.${state}`, state) : '—'}
+    </Badge>
+  );
 }
 
 // The real contract classification lives in the `contract_type` code letter.
@@ -171,7 +214,8 @@ export const CONTRACT_TYPE = {
 };
 
 export function ContractTypeBadge({ type }) {
+  const { tf } = useI18n();
   const m = CONTRACT_TYPE[type];
   if (!m) return <Badge tone="gray">{type || '—'}</Badge>;
-  return <Badge tone={m.tone}>{m.label}</Badge>;
+  return <Badge tone={m.tone}>{tf(`badge.contractType.${type}`, m.label)}</Badge>;
 }

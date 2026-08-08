@@ -5,14 +5,15 @@
 import { useCallback, useMemo } from 'react';
 import api from '../../api/client';
 import useFetch from '../../hooks/useFetch';
-import { ALL_LANE_DEFS, buildLanes } from '../../config/maintenanceLanes';
+import { useLanes, buildLanes } from '../../config/maintenanceLanes';
 import MaintenanceWorkflowAnalytics from './MaintenanceWorkflowAnalytics';
 
 export default function MaintenanceWorkflowAnalyticsPanel() {
   const fetcher = useCallback(async () => (await api.get('/maintenance-tickets/board')).data.data, []);
   const { data, loading } = useFetch(fetcher, [], { refreshInterval: 15000 });
 
-  const lanes = useMemo(() => buildLanes(ALL_LANE_DEFS, data?.columns || {}), [data]);
+  const laneDefs = useLanes();
+  const lanes = useMemo(() => buildLanes(laneDefs.all, data?.columns || {}), [laneDefs, data]);
   const hasTickets = useMemo(() => lanes.some((l) => l.tickets.length), [lanes]);
 
   if (loading || !hasTickets) return null;

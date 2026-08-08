@@ -17,7 +17,7 @@ import RecentlyFixedCard from '../components/RecentlyFixedCard';
 import RepeatPartPurchases from '../components/dashboard/RepeatPartPurchases';
 import MaintenanceWorkflowAnalyticsPanel from '../components/analytics/MaintenanceWorkflowAnalyticsPanel';
 import { aed, fmtDate } from '../lib/format';
-import { delayReasonLabel } from '../lib/maintenanceCheckpoints';
+import { useCheckpointVocab } from '../lib/maintenanceCheckpoints';
 import { SHOW_FINANCIALS } from '../config/features';
 import { useAuth } from '../auth/AuthContext';
 import { useI18n } from '../i18n/I18nContext';
@@ -71,6 +71,7 @@ function checkpointDelayDays(prev, next) {
 // the reason it moved, and who filed it when. Amber "No update filed yet" when nobody has reported.
 function CheckpointLine({ cp }) {
   const { t } = useI18n();
+  const { delayReasonLabel } = useCheckpointVocab();
   if (!cp) {
     return <p className="text-[11px] font-semibold text-amber-600">{t('dash.cp.none')}</p>;
   }

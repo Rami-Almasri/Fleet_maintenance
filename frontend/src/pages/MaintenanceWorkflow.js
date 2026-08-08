@@ -22,7 +22,7 @@ import {
   resolveAction, allows, ctaLabel, TASK_STATUS, stageAge,
   isAtGarage, custodyBlocked, custodyHolderName,
 } from '../components/workflow/meta';
-import { PRIMARY_LANES, EXCEPTION_LANES, PIPELINE_KEYS } from '../config/maintenanceLanes';
+import { useLanes, PIPELINE_KEYS } from '../config/maintenanceLanes';
 import {
   CommandPanel, OpsClock,
 } from '../components/ops';
@@ -419,6 +419,7 @@ function TicketCard({ tk, tone, laneKey, laneName, can, userId, active, onSelect
 
 // A single board column (lane) — colored top accent, header with count, cards or an empty state.
 function Lane({ lane, loading, expanded, onToggle, cardProps }) {
+  const { t } = useI18n();
   const tickets = lane.tickets;
   const shown = expanded ? tickets : tickets.slice(0, LANE_PAGE_SIZE);
   const hidden = tickets.length - shown.length;
@@ -436,14 +437,14 @@ function Lane({ lane, loading, expanded, onToggle, cardProps }) {
         ) : tickets.length === 0 ? (
           <div className="mwf-empty">
             <span className="ic"><Icon.Check className="h-4 w-4" /></span>
-            <p className="t">No tickets</p>
+            <p className="t">{t('workflow.board.noTickets')}</p>
             <p className="h">{lane.hint}</p>
           </div>
         ) : (
           <>
             {shown.map((tk) => <TicketCard key={tk.id} tk={tk} tone={lane.tone} laneKey={lane.key} laneName={lane.name} active={tk.id === cardProps.selectedId} {...cardProps} />)}
             {hidden > 0 && <button type="button" className="opx-lane-more" onClick={onToggle}>+{hidden} more</button>}
-            {expanded && tickets.length > LANE_PAGE_SIZE && <button type="button" className="opx-lane-more" onClick={onToggle}>Show less</button>}
+            {expanded && tickets.length > LANE_PAGE_SIZE && <button type="button" className="opx-lane-more" onClick={onToggle}>{t('workflow.board.showLess')}</button>}
           </>
         )}
       </div>
@@ -453,6 +454,8 @@ function Lane({ lane, loading, expanded, onToggle, cardProps }) {
 
 export default function MaintenanceWorkflow() {
   const { t } = useI18n();
+  // Lane names/hints in the active language — never read them off the raw constants.
+  const laneDefs = useLanes();
   const toast = useToast();
   const { can } = usePermissions();
   const { user } = useAuth();
@@ -549,19 +552,19 @@ export default function MaintenanceWorkflow() {
     tickets: (columns[l.key] || []).filter(matchesFilters),
   })), [columns, matchesFilters]);
 
-  const primaryLanes = useMemo(() => buildLanes(PRIMARY_LANES), [buildLanes]);
+  const primaryLanes = useMemo(() => buildLanes(laneDefs.primary), [buildLanes, laneDefs]);
   // Always show every stage lane (empty ones render their "No tickets" state) so the board keeps a
   // stable shape and no stage is ever hidden.
-  const exceptionLanes = useMemo(() => buildLanes(EXCEPTION_LANES), [buildLanes]);
+  const exceptionLanes = useMemo(() => buildLanes(laneDefs.exception), [buildLanes, laneDefs]);
   const allLanes = useMemo(() => [...primaryLanes, ...exceptionLanes], [primaryLanes, exceptionLanes]);
   const allTickets = useMemo(() => allLanes.flatMap((l) => l.tickets), [allLanes]);
 
   // Guard: if the focused stage isn't a real lane key (e.g. a stale/bad ?stage= value), fall back to
   // the full board. Empty stages are fine — they render their own "No tickets" state.
   useEffect(() => {
-    const known = [...PRIMARY_LANES, ...EXCEPTION_LANES].some((l) => l.key === stageTab);
+    const known = laneDefs.all.some((l) => l.key === stageTab);
     if (stageTab !== 'all' && !known) setStageTab('all');
-  }, [stageTab]);
+  }, [stageTab, laneDefs]);
 
   // Deep-link sync — follow ?stage=… as it changes (e.g. picking a stage from the nav dropdown while
   // already on the board). No param → back to the full board.
@@ -641,13 +644,13 @@ export default function MaintenanceWorkflow() {
         <div className="mwf-toolbar">
           <div className="mwf-search">
             <Icon.Search className="h-4 w-4" />
-            <input className="opx-input" placeholder="Search tickets, vehicles, faults…" value={query} onChange={(e) => setQuery(e.target.value)} style={{ paddingLeft: 34 }} />
+            <input className="opx-input" placeholder={t('workflow.board.searchPlaceholder')} value={query} onChange={(e) => setQuery(e.target.value)} style={{ paddingLeft: 34 }} />
           </div>
           <select className="opx-select" value={sevFilter} onChange={(e) => setSevFilter(e.target.value)}>
             {SEV_FILTERS.map((f) => <option key={f.value || 'all'} value={f.value}>{f.label}</option>)}
           </select>
           {(query || sevFilter) && (
-            <button className="opx-btn" onClick={() => { setQuery(''); setSevFilter(''); }}>Clear</button>
+            <button className="opx-btn" onClick={() => { setQuery(''); setSevFilter(''); }}>{t('workflow.board.clear')}</button>
           )}
 
           <div className="mwf-toolbar-right">
@@ -661,8 +664,8 @@ export default function MaintenanceWorkflow() {
               <Icon.Activity className="h-4 w-4" /> {t('workflow.cycle.toggle')}
             </button>
             <div className="seg">
-              <button className={view === 'board' ? 'on' : ''} onClick={() => setView('board')}>Board</button>
-              <button className={view === 'list' ? 'on' : ''} onClick={() => setView('list')}>List</button>
+              <button className={view === 'board' ? 'on' : ''} onClick={() => setView('board')}>{t('workflow.board.viewBoard')}</button>
+              <button className={view === 'list' ? 'on' : ''} onClick={() => setView('list')}>{t('workflow.board.viewList')}</button>
             </div>
             {canManage && <button className="opx-btn" onClick={() => setModal({ action: 'complaint' })}>📣 {t('workflow.board.newComplaint')}</button>}
             {canLogistics && <button className="opx-btn primary" onClick={() => setModal({ action: 'request' })}><Icon.Plus className="h-4 w-4" /> {t('workflow.board.requestInspection')}</button>}
@@ -690,16 +693,24 @@ export default function MaintenanceWorkflow() {
 
         {/* LIST */}
         {view === 'list' && (
-          <CommandPanel title="All open tickets" label={`${visibleTickets.length}`} bodyFlush>
+          <CommandPanel title={t('workflow.board.allOpen')} label={`${visibleTickets.length}`} bodyFlush>
             <div className="opx-tblwrap">
               <table className="opx-tbl">
                 <thead>
-                  <tr><th>Vehicle</th><th>Stage</th><th>Severity</th><th>Garage</th><th>Faults</th><th>In stage</th><th className="r">Action</th></tr>
+                  <tr>
+                    <th>{t('workflow.board.cols.vehicle')}</th>
+                    <th>{t('workflow.board.cols.stage')}</th>
+                    <th>{t('workflow.board.cols.severity')}</th>
+                    <th>{t('workflow.board.cols.garage')}</th>
+                    <th>{t('workflow.board.cols.faults')}</th>
+                    <th>{t('workflow.board.cols.inStage')}</th>
+                    <th className="r">{t('workflow.board.cols.action')}</th>
+                  </tr>
                 </thead>
                 <tbody>
                   {visibleTickets.map((tk) => {
                     const a = stageAge(tk, t);
-                    const laneName = [...PRIMARY_LANES, ...EXCEPTION_LANES].find((l) => l.key === tk.workflow_status)?.name || tk.status_label || tk.workflow_status;
+                    const laneName = laneDefs.all.find((l) => l.key === tk.workflow_status)?.name || tk.status_label || tk.workflow_status;
                     return (
                       <tr key={tk.id} className={tk.fault_severity === 'critical' ? 'rt-crit' : ''} onClick={() => openDetail(tk)} style={{ cursor: 'pointer' }}>
                         <td><Link to={`/maintenance-workflow/${tk.id}`} className="opx-plate2" onClick={(e) => e.stopPropagation()}>{tk.plate || `#${tk.id}`}</Link><div className="opx-sub">{tk.car || ''}</div></td>
@@ -708,11 +719,11 @@ export default function MaintenanceWorkflow() {
                         <td className="opx-mono2">{tk.garage || '—'}</td>
                         <td className="opx-mono2">{(tk.tasks || []).length || '—'}</td>
                         <td className={`opx-mono2 ${a?.over ? 'mwf-over' : ''}`}>{a?.label || '—'}</td>
-                        <td className="r"><Link to={`/maintenance-workflow/${tk.id}`} className="opx-ibtn go" onClick={(e) => e.stopPropagation()}>Open</Link></td>
+                        <td className="r"><Link to={`/maintenance-workflow/${tk.id}`} className="opx-ibtn go" onClick={(e) => e.stopPropagation()}>{t('workflow.board.open')}</Link></td>
                       </tr>
                     );
                   })}
-                  {visibleTickets.length === 0 && !loading && <tr><td colSpan={7}><div className="opx-empty">No open tickets match the filters</div></td></tr>}
+                  {visibleTickets.length === 0 && !loading && <tr><td colSpan={7}><div className="opx-empty">{t('workflow.board.noMatch')}</div></td></tr>}
                 </tbody>
               </table>
             </div>

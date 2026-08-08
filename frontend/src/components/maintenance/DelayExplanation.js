@@ -7,7 +7,7 @@
 // recorded" clearly, so an overdue car with no explanation is itself an actionable signal.
 
 import { fmtDate } from '../../lib/format';
-import { delayReasonLabel } from '../../lib/maintenanceCheckpoints';
+import { useCheckpointVocab } from '../../lib/maintenanceCheckpoints';
 
 // Whole days between the previously promised ETA and the revised one (positive = the job slipped later).
 function delayDays(prev, next) {
@@ -28,6 +28,7 @@ function Field({ label, children }) {
 }
 
 export default function DelayExplanation({ checkpoint, className = '' }) {
+  const { delayReasonLabel } = useCheckpointVocab();
   const c = checkpoint;
 
   // No update at all — the ETA has never been revised, so there is nothing to explain.
