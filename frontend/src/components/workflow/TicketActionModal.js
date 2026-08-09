@@ -641,6 +641,20 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   // ticket, and only raises an inspection request when the driver explicitly ticks the box.
   const [observationRaise, setObservationRaise] = useState(false);
   const isObservation = action === 'request' && reason === OBSERVATION_CHOICE;
+  // "Already being looked at" — a car can be perfectly AVAILABLE and still have a live inspection
+  // request on it (a request sitting in the review queue never marks the car under maintenance), so the
+  // picker, which only hides cars in MAINTENANCE, still offers it. Asking the server the moment a car is
+  // picked lets the form say so up front, instead of letting the driver write it all out and be refused
+  // on submit. Best-effort: a failed fetch just leaves the note off — the server guard is the real fence.
+  const [inFlight, setInFlight] = useState(null);
+  useEffect(() => {
+    if (action !== 'request' || !vehicleId) { setInFlight(null); return undefined; }
+    let alive = true;
+    api.get(`/maintenance-tickets/vehicle/${vehicleId}/inspection-request`)
+      .then((r) => { if (alive) setInFlight(r.data?.data || null); })
+      .catch(() => { if (alive) setInFlight(null); });
+    return () => { alive = false; };
+  }, [action, vehicleId]);
   // The maintenance classification. On the inspector's decision ('decide') a test ALWAYS yields a
   // type — routine is the common case, so it's preselected; the inspector confirms or changes it.
   const [maintType, setMaintType] = useState(() => ticket?.maintenance_type || '');
@@ -1114,7 +1128,9 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
     // An out-of-range odometer would overflow the DB column — block every step that captures one.
     if (odoOutOfRange) return true;
     // An observation IS its note, so the text is mandatory there; a plain inspection request only needs a car.
-    if (action === 'request') return !vehicleId || (isObservation && !complaint.trim());
+    // A car with a request already in flight can't be flagged again (the server refuses it too) — but an
+    // observation is a note, not a request, so that path stays open.
+    if (action === 'request') return !vehicleId || (isObservation ? !complaint.trim() : !!inFlight);
     // Re-inspection: on FAIL, re-routing to a different garage needs a written reason (same-garage fail
     // is unaffected). On PASS the car is physically back, so the final QC odometer is mandatory — plus the
     // shared >10 km ack/note gate. No odometer is asked on the FAIL branch (the car goes back out).
@@ -1356,10 +1372,13 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
       // the inspection request that enters the review queue — otherwise this stays a pure internal note.
       if (isObservation) {
         const created = resp?.data?.data;
-        if (observationRaise && created?.id) {
+        // …and never when a request is already in flight for this car: the escalation reuses the same
+        // one-request-per-car path, so it would only bounce. The note itself is saved either way.
+        const raise = observationRaise && !inFlight;
+        if (raise && created?.id) {
           await api.post(`/driver-observations/${created.id}/request-inspection`);
         }
-        onDone?.(t(observationRaise ? 'workflow.success.observationInspection' : 'workflow.success.observation'));
+        onDone?.(t(raise ? 'workflow.success.observationInspection' : 'workflow.success.observation'));
         return;
       }
 
@@ -2638,6 +2657,29 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                 placeholder={t('workflow.ph.searchVehicle')}
               />
               {!isObservation && <p className="mt-1 text-xs text-slate-400">{t('workflow.hint.requestHideMaintenance')}</p>}
+              {/* The car is available, but an inspection is already in flight on it — say what stage it's
+                  at, who raised it and what they reported, so the driver can see their point is already
+                  made. Not a black box: the request itself is one click away. */}
+              {inFlight && (
+                <div className="mt-2 rounded-xl bg-amber-50 px-3 py-2.5 text-xs leading-relaxed text-amber-900 ring-1 ring-inset ring-amber-500/30">
+                  <p className="font-semibold">{t('workflow.hint.inFlightTitle')}</p>
+                  <p className="mt-0.5">
+                    {t(inFlight.state === 'inspection_diagnostic'
+                      ? 'workflow.hint.inFlightDriving'
+                      : inFlight.state === 'inspection_requested'
+                        ? 'workflow.hint.inFlightApproved'
+                        : 'workflow.hint.inFlightPending')}
+                  </p>
+                  <p className="mt-1 text-amber-800/80">
+                    {inFlight.is_system
+                      ? t('workflow.hint.inFlightBySystem', { when: fmtWhen(inFlight.requested_at, t) })
+                      : t('workflow.hint.inFlightBy', { who: inFlight.requested_by || '—', when: fmtWhen(inFlight.requested_at, t) })}
+                  </p>
+                  {inFlight.note && <p className="mt-1 text-amber-800/80">{t('workflow.hint.inFlightNote', { note: inFlight.note })}</p>}
+                  <p className="mt-1.5">{t(isObservation ? 'workflow.hint.inFlightObservation' : 'workflow.hint.inFlightBlocked')}</p>
+                  <a href={inFlight.url} className="mt-1 inline-block font-semibold underline hover:no-underline">{t('workflow.hint.inFlightLink')}</a>
+                </div>
+              )}
             </div>
             <div>
               <span className="mb-1.5 block text-sm font-medium text-slate-700">{t('workflow.reason.driverLabel')}</span>

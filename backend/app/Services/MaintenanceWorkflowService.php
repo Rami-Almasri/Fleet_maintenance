@@ -13,6 +13,7 @@ use App\Models\MaintenanceLineItem;
 use App\Models\MaintenanceSwap;
 use App\Models\MaintenanceTemporaryRelease;
 use App\Models\OdometerBlockEvent;
+use App\Models\ReviewReminder;
 use App\Models\User;
 use App\Models\Vehicle;
 use App\Models\GarageRecommendationDecision;
@@ -160,6 +161,7 @@ class MaintenanceWorkflowService
         private OdometerContinuityService $continuity,
         private LogisticsDispatchService $logistics,
         private DiagnosticGateService $gate,
+        private ReviewReminderService $reviewReminders,
     ) {}
 
     /**
@@ -628,6 +630,63 @@ class MaintenanceWorkflowService
     // ── STAGE 0 — Driver requests an inspection (NOT a ticket, NOT a diagnostic yet) ──
 
     /**
+     * The pre-ticket states in which an inspection is ALREADY IN FLIGHT for a car: it is waiting in the
+     * Controllers' review queue, it has been approved and is sitting with the Inspector, or he is
+     * test-driving it right now. None of these mark the car as under maintenance, which is exactly why
+     * the request form's picker (which hides `under_maintenance` cars) still offers such a car as
+     * "Available" — this list is the fact the picker cannot see.
+     *
+     * Deliberately NOT included: review_rejected (terminal — a rejected request must never block a new,
+     * better-argued one) and every committed ticket state (those cars are already hidden from the picker).
+     */
+    public const WF_INSPECTION_IN_FLIGHT = [
+        Maintenance::WF_PENDING_REVIEW,
+        Maintenance::WF_INSPECTION_REQUESTED,
+        Maintenance::WF_INSPECTION_DIAGNOSTIC,
+    ];
+
+    /**
+     * The car's LIVE in-flight inspection request, if any (soft-deleted rows excluded by the model scope).
+     * ONE source for two consumers that must never disagree: the read the request form calls to show the
+     * driver a note BEFORE they submit, and the duplicate guard inside requestInspection() below.
+     */
+    public function liveInspectionRequest(int $vehicleId): ?Maintenance
+    {
+        return Maintenance::query() // LIVE rows only — SoftDeletes applies, see [[softdelete-bypassed-by-raw-queries]]
+            ->where('vehicle_id', $vehicleId)
+            ->whereIn('workflow_status', self::WF_INSPECTION_IN_FLIGHT)
+            ->with('requester:id,name')
+            ->latest('id')
+            ->first();
+    }
+
+    /**
+     * The same fact shaped for the API: machine-readable CODES + params, never an English sentence — the
+     * frontend renders the note from its own i18n catalog (see [[reason-code-contract]]). Null when the
+     * car has nothing in flight, which is the normal case.
+     */
+    public function inspectionRequestState(int $vehicleId): ?array
+    {
+        $ticket = $this->liveInspectionRequest($vehicleId);
+        if (! $ticket) {
+            return null;
+        }
+
+        return [
+            'ticket_id'      => $ticket->id,
+            'state'          => $ticket->workflow_status,   // pending_review | inspection_requested | inspection_diagnostic
+            'trigger_reason' => $ticket->trigger_reason,
+            'request_origin' => $ticket->request_origin,
+            // requested_by is null on a system-raised request — the scanner, not a person.
+            'is_system'      => $ticket->requested_by === null,
+            'requested_by'   => $ticket->requester?->name ?? $ticket->driver,
+            'requested_at'   => $ticket->requested_at?->toIso8601String(),
+            'note'           => $ticket->customer_complaint,
+            'url'            => $this->link($ticket),
+        ];
+    }
+
+    /**
      * Stage 0. A Driver (Logistics) raises a "Request Inspection" on a car they suspect needs a look —
      * the new entry point the role-based design calls for. It is born in `pending_review`: no
      * ticket, no diagnostic, no contract, the car is NOT marked in maintenance (event_status 'IN').
@@ -651,6 +710,18 @@ class MaintenanceWorkflowService
         // Only an active-fleet car may enter the workflow — otherwise the ticket would be hidden
         // by the board's active-fleet filter the moment it's created.
         $this->assertActiveFleet($vehicle);
+
+        // ONE live request per car. The system scanner has always deduped this way (see
+        // InspectionsGenerateTasks, which skips a car already in the pipeline); the human path did not,
+        // so a car sitting in the review queue could be flagged again and again — each duplicate splitting
+        // one car's story across several rows in Lin & Marwa's queue. The form shows this same fact as a
+        // note the moment the car is picked; this is the server-side guard behind it.
+        if ($inFlight = $this->liveInspectionRequest($vehicleId)) {
+            throw new WorkflowTransitionException(
+                'This car already has an inspection request in progress — it does not need to be flagged again.',
+                ['field' => 'vehicle_id', 'ticket_id' => $inFlight->id, 'state' => $inFlight->workflow_status]
+            );
+        }
 
         // 'driver_reported' is accepted here but NOT at the HTTP layer (the controller validates against
         // TRIGGER_REASONS) — it belongs to the internal Driver Observation escalation, which passes its
@@ -1076,6 +1147,11 @@ class MaintenanceWorkflowService
 
             $this->cascade($ticket->vehicle_id);
 
+            // The request has been decided, so every "remind me to look at this again" anyone set on it is
+            // now noise — a Controller must never be pinged at 16:00 to review a car they sent to Abu
+            // Maroof at 14:00.
+            $this->reviewReminders->cancelOnDecision($ticket);
+
             $this->log->record($ticket, VehicleLogEvent::EVENT_REVIEW_APPROVED, $reviewer, [
                 'description' => 'Inspection request approved — sent to Abu Maroof (by ' . $reviewer->name . ')'
                                 . ($ticket->review_notes ? ': “' . $ticket->review_notes . '”' : ''),
@@ -1142,18 +1218,51 @@ class MaintenanceWorkflowService
      * Stage -1 → terminal. A Controller (Lin/Marwa) rejects an inspection request — it never reaches
      * the Inspector and nothing is sent externally. Same locking discipline as the approve path.
      *
-     * @param array{rejection_reason:string} $data
+     * TWO PARTS TO A REJECTION, and they answer different questions:
+     *   - `rejection_code`  — WHY, from a fixed list (Maintenance::REVIEW_REJECTION_REASONS). This is the
+     *     countable part: "we reject 40% of routine requests because the car is out on hire" is a fact you
+     *     can only get from a code, never from free text.
+     *   - `rejection_reason` — the human detail, in the reviewer's own words. Optional, EXCEPT with the
+     *     `other` code, which on its own records nothing.
+     * A code with no legacy text is fine; text with no code is accepted too, because every caller written
+     * before the code existed sends exactly that.
+     *
+     * `remind_at` is the "ask me again later" half: rejecting a request because the car is with a customer
+     * is not the same as deciding the car is fine, and this is what stops the second half of that thought
+     * from being lost. It books a personal reminder that deliberately OUTLIVES the rejection.
+     *
+     * @param array{rejection_reason?:?string, rejection_code?:?string, remind_at?:?string} $data
      */
     public function rejectInspectionReview(Maintenance $ticket, array $data, User $reviewer): Maintenance
     {
         $reason = trim((string) ($data['rejection_reason'] ?? ''));
-        if ($reason === '') {
+        $code   = trim((string) ($data['rejection_code'] ?? '')) ?: null;
+
+        if ($code !== null && ! array_key_exists($code, Maintenance::REVIEW_REJECTION_REASONS)) {
+            throw new WorkflowTransitionException('That is not a rejection reason we recognise.', [
+                'field' => 'rejection_code',
+            ]);
+        }
+
+        if ($code === null && $reason === '') {
             throw new WorkflowTransitionException('Say why this inspection request is being rejected.', [
+                'field' => 'rejection_code',
+            ]);
+        }
+
+        // "Other" is the escape hatch, and an escape hatch with nothing written in it records nothing at
+        // all — the one code that cannot stand alone.
+        if ($code === Maintenance::REVIEW_REJECT_OTHER && $reason === '') {
+            throw new WorkflowTransitionException('Choosing “Other reason” needs a short note saying what it was.', [
                 'field' => 'rejection_reason',
             ]);
         }
 
-        return DB::transaction(function () use ($ticket, $reason, $reviewer) {
+        // The moment the reviewer wants to revisit this, if they asked for one. Parsed before the
+        // transaction so a malformed date fails the whole rejection rather than half-applying it.
+        $remindAt = $this->parseReminderMoment($data['remind_at'] ?? null);
+
+        return DB::transaction(function () use ($ticket, $reason, $code, $remindAt, $reviewer) {
             $locked = Maintenance::where('id', $ticket->id)->lockForUpdate()->firstOrFail();
             if ($locked->workflow_status !== Maintenance::WF_PENDING_REVIEW) {
                 throw new WorkflowTransitionException('This request has already been reviewed.', [
@@ -1166,16 +1275,43 @@ class MaintenanceWorkflowService
             $locked->workflow_status         = Maintenance::WF_REVIEW_REJECTED;
             $locked->reviewed_by             = $reviewer->id;
             $locked->reviewed_at             = Carbon::now();
-            $locked->review_rejection_reason = $reason;
+            $locked->review_rejection_reason = $reason !== '' ? $reason : null;
+            $locked->review_rejection_code   = $code;
             $locked->save();
             $ticket = $locked;
 
             $this->cascade($ticket->vehicle_id);
 
+            // Nobody is waiting on this request any more — retire the "look at it again" reminders it
+            // collected while it sat in the queue. The revisit reminder booked below is a different kind
+            // and is created after this, so it is not swept up by it.
+            $this->reviewReminders->cancelOnDecision($ticket);
+
+            // The reason as a human reads it: the chosen reason, then the reviewer's own words if they
+            // added any. A legacy caller that sent only text still reads exactly as it did before.
+            $codeLabel = Maintenance::reviewRejectionLabel($code);
+            $said      = trim(($codeLabel ?: '') . ($reason !== '' ? ($codeLabel ? ' — ' : '') . '“' . $reason . '”' : ''));
+
             $this->log->record($ticket, VehicleLogEvent::EVENT_REVIEW_REJECTED, $reviewer, [
-                'description' => 'Inspection request rejected (by ' . $reviewer->name . '): “' . $reason . '”',
-                'meta'        => ['reviewed_by' => $reviewer->name, 'rejection_reason' => $reason],
+                'description' => 'Inspection request rejected (by ' . $reviewer->name . '): ' . $said,
+                'meta'        => [
+                    'reviewed_by'      => $reviewer->name,
+                    'rejection_reason' => $reason !== '' ? $reason : null,
+                    'rejection_code'   => $code,
+                ],
             ]);
+
+            // "Rejected for now — ask me again on the 14th." Personal to the reviewer, and deliberately
+            // NOT cancelled by the rejection that created it.
+            if ($remindAt) {
+                $this->reviewReminders->schedule(
+                    $ticket,
+                    $reviewer,
+                    $remindAt,
+                    $said !== '' ? 'You rejected this request: ' . $said : null,
+                    ReviewReminder::KIND_REJECTED_REVISIT,
+                );
+            }
 
             if ($ticket->requested_by && $ticket->requested_by !== $reviewer->id) {
                 $requester = User::find($ticket->requested_by);
@@ -1186,7 +1322,9 @@ class MaintenanceWorkflowService
                         'category' => 'maintenance',
                         'severity' => 'warning',
                         'title'    => 'Your inspection request was rejected · ' . $this->label($vehicle),
-                        'body'     => $reason,
+                        // The chosen reason travels with it — the person who raised the request is the one
+                        // who most needs to know WHICH reason, not just that someone said no.
+                        'body'     => $said !== '' ? $said : 'No reason was recorded.',
                         'url'      => $this->link($ticket),
                         'key'      => 'maint_wf:' . $ticket->id . ':review_rejected',
                         'icon'     => 'x',
@@ -1196,6 +1334,91 @@ class MaintenanceWorkflowService
 
             return $ticket->load($this->eager());
         });
+    }
+
+    /**
+     * "Remind me about this request later" — a Controller parks a request in the queue instead of
+     * deciding it now (the car is out on hire, the driver hasn't answered, it's the end of the shift).
+     *
+     * This is NOT a workflow transition and stamps nothing on the ticket: the request stays exactly where
+     * it is, visible to everyone, and the only thing recorded is that one person wants to be pinged about
+     * it at one moment. Deciding it later cancels the ping.
+     *
+     * Accepts EITHER a preset key ('2h', 'tomorrow_morning', …) or an explicit `remind_at` timestamp; the
+     * preset wins if both arrive, because it is the one the reviewer actually clicked.
+     *
+     * @param array{preset?:?string, remind_at?:?string, note?:?string} $data
+     */
+    public function remindAboutReview(Maintenance $ticket, array $data, User $user): ReviewReminder
+    {
+        if ($ticket->workflow_status !== Maintenance::WF_PENDING_REVIEW) {
+            throw new WorkflowTransitionException('This request has already been reviewed — there is nothing left to come back to.', [
+                'workflow_status' => $ticket->workflow_status,
+            ]);
+        }
+
+        $preset = trim((string) ($data['preset'] ?? '')) ?: null;
+        $when   = $preset
+            ? $this->reviewReminders->presetToMoment($preset)
+            : $this->parseReminderMoment($data['remind_at'] ?? null);
+
+        if (! $when) {
+            throw new WorkflowTransitionException('Say when you want to be reminded.', [
+                'field' => $preset ? 'preset' : 'remind_at',
+            ]);
+        }
+
+        return $this->reviewReminders->schedule(
+            $ticket,
+            $user,
+            $when,
+            $data['note'] ?? null,
+            ReviewReminder::KIND_PENDING_REVIEW,
+        );
+    }
+
+    /** Drop the caller's own reminder on a request ("actually, I'll deal with it now"). */
+    public function cancelReviewReminder(Maintenance $ticket, User $user): int
+    {
+        return $this->reviewReminders->cancelForUser($ticket, $user);
+    }
+
+    /**
+     * Read a caller-supplied reminder moment, and refuse the two that cannot mean anything.
+     *
+     * A moment in the PAST would fire on the dispatcher's very next pass — indistinguishable from "remind
+     * me now", which is what the request already does by sitting in the queue. A moment years out is
+     * almost always a mistyped year, and silently accepting it means the reminder simply never arrives and
+     * nobody ever learns why. A minute of slack absorbs the round-trip between the browser's clock and
+     * the server's.
+     */
+    private function parseReminderMoment(mixed $raw): ?Carbon
+    {
+        if ($raw === null || $raw === '' || $raw === false) {
+            return null;
+        }
+
+        try {
+            $when = Carbon::parse((string) $raw);
+        } catch (\Throwable) {
+            throw new WorkflowTransitionException('That reminder time could not be read.', [
+                'field' => 'remind_at',
+            ]);
+        }
+
+        if ($when->lt(Carbon::now()->subMinute())) {
+            throw new WorkflowTransitionException('That reminder time has already passed — pick a time in the future.', [
+                'field' => 'remind_at',
+            ]);
+        }
+
+        if ($when->gt(Carbon::now()->addYear())) {
+            throw new WorkflowTransitionException('That reminder is more than a year away — check the date.', [
+                'field' => 'remind_at',
+            ]);
+        }
+
+        return $when;
     }
 
     /**

@@ -16,6 +16,7 @@ use App\Models\MaintenanceTemporaryRelease;
 use App\Models\Vehicle;
 use App\Services\MaintenanceAnalyticsService;
 use App\Services\MaintenanceWorkflowService;
+use App\Services\ReviewReminderService;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
@@ -978,6 +979,23 @@ class MaintenanceWorkflowController extends Controller
     }
 
     /**
+     * Is an inspection ALREADY IN FLIGHT for this car — waiting in the review queue, with the Inspector,
+     * or being test-driven right now? Read-only, called by the Request Inspection form the moment a car is
+     * picked, so the driver is TOLD before they submit instead of being refused after. `data` is null when
+     * nothing is in flight (the normal case). Static-segment route precedes /{ticket}.
+     */
+    public function vehicleInspectionRequest(Vehicle $vehicle)
+    {
+        return $this->run(function () use ($vehicle) {
+            return ResponseHelper::SuccessResponse(
+                $this->workflow->inspectionRequestState($vehicle->id),
+                'Vehicle inspection request state retrieved',
+                200
+            );
+        });
+    }
+
+    /**
      * The RULEBOOK behind system-generated inspection requests — when and why the Proactive Diagnostic
      * Monitor asks for a test. Served live from DiagnosticGateService::rulebook() (thresholds read from
      * config, not retyped) so the Inspection Review Queue's explainer can never describe rules other than
@@ -1497,8 +1515,19 @@ class MaintenanceWorkflowController extends Controller
      */
     public function reviewQueue(Request $request)
     {
-        return $this->run(function () {
+        return $this->run(function () use ($request) {
             $tickets = $this->workflow->pendingReview();
+
+            // Attach THIS reviewer's own "remind me later" to each card. One query for the whole queue,
+            // not one per card — the queue routinely renders well over a hundred requests.
+            $mine = app(ReviewReminderService::class)
+                ->forUserAcross($tickets->pluck('id'), $request->user());
+            // setRelation, not setAttribute: a relation is never written back on save, so a stray
+            // ->save() further down any code path cannot try to persist a column that doesn't exist.
+            foreach ($tickets as $ticket) {
+                $ticket->setRelation('myReviewReminder', $mine->get($ticket->id));
+            }
+
             return ResponseHelper::SuccessResponse(MaintenanceWorkflowResource::collection($tickets), 'OK', 200);
         });
     }
@@ -1516,16 +1545,82 @@ class MaintenanceWorkflowController extends Controller
         });
     }
 
-    /** Reject a pending inspection request — terminates it, nothing sent externally. */
+    /**
+     * Reject a pending inspection request — terminates it, nothing sent externally.
+     *
+     * `rejection_code` is the countable WHY (see Maintenance::REVIEW_REJECTION_REASONS); `rejection_reason`
+     * is the reviewer's own words beside it and is only compulsory with the `other` code (enforced in the
+     * service, alongside the rest of the rule). It stays `nullable` here rather than `required` because
+     * every caller written before the code existed sends text and no code, and those must keep working.
+     * `remind_at` books the "ask me again later" revisit reminder.
+     */
     public function rejectReview(Request $request, Maintenance $ticket)
     {
         return $this->run(function () use ($request, $ticket) {
             $data = $request->validate([
-                'rejection_reason' => ['required', 'string', 'max:2000'],
+                'rejection_code'   => ['nullable', 'string', Rule::in(array_keys(Maintenance::REVIEW_REJECTION_REASONS))],
+                'rejection_reason' => ['nullable', 'string', 'max:2000'],
+                'remind_at'        => ['nullable', 'date'],
             ]);
 
             $ticket = $this->workflow->rejectInspectionReview($ticket, $data, $request->user());
             return ResponseHelper::SuccessResponse(MaintenanceWorkflowResource::make($ticket), 'Inspection request rejected', 200);
+        });
+    }
+
+    /** The fixed list of rejection reasons the queue's picker renders — code + label, from the model. */
+    public function reviewRejectionReasons()
+    {
+        return $this->run(function () {
+            $reasons = collect(Maintenance::REVIEW_REJECTION_REASONS)
+                ->map(fn ($label, $code) => [
+                    'code'  => $code,
+                    'label' => $label,
+                    // The one code that cannot stand on its own — the form uses this to make the note
+                    // required rather than hardcoding the knowledge a second time.
+                    'requires_note' => $code === Maintenance::REVIEW_REJECT_OTHER,
+                ])
+                ->values();
+
+            return ResponseHelper::SuccessResponse($reasons, 'OK', 200);
+        });
+    }
+
+    /**
+     * "Remind me about this request in 2 hours." Personal to the caller — it books nothing for anyone
+     * else and changes nothing about the request, which stays in the queue for whoever gets to it first.
+     */
+    public function remindReview(Request $request, Maintenance $ticket)
+    {
+        return $this->run(function () use ($request, $ticket) {
+            $data = $request->validate([
+                'preset'    => ['nullable', 'string', Rule::in(ReviewReminderService::presets())],
+                'remind_at' => ['nullable', 'date', 'required_without:preset'],
+                'note'      => ['nullable', 'string', 'max:500'],
+            ]);
+
+            $reminder = $this->workflow->remindAboutReview($ticket, $data, $request->user());
+
+            return ResponseHelper::SuccessResponse([
+                'id'        => $reminder->id,
+                'remind_at' => $reminder->remind_at->toIso8601String(),
+                'note'      => $reminder->note,
+                'kind'      => $reminder->kind,
+            ], 'Reminder set', 200);
+        });
+    }
+
+    /** Drop the caller's own reminder on a request. */
+    public function cancelReviewReminder(Request $request, Maintenance $ticket)
+    {
+        return $this->run(function () use ($request, $ticket) {
+            $cancelled = $this->workflow->cancelReviewReminder($ticket, $request->user());
+
+            return ResponseHelper::SuccessResponse(
+                ['cancelled' => $cancelled],
+                $cancelled ? 'Reminder cancelled' : 'You had no reminder on this request',
+                200,
+            );
         });
     }
 

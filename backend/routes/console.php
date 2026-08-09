@@ -145,6 +145,21 @@ Schedule::command('checkpoints:scan')
     ->twiceDailyAt(8, 20, 10)
     ->withoutOverlapping();
 
+// Inspection Review "remind me later" — fire the reminders a Controller set on a request in the review
+// queue ("this car is out on hire, ask me again in 2 hours").
+//
+// EVERY MINUTE, and the cadence is the whole point: a reminder is a PROMISE ABOUT A TIME. Someone who
+// asks for 30 minutes and is pinged at 39 stops trusting the feature and goes back to remembering things
+// themselves, which is the problem this was built to remove. A ten-minute wheel makes every preset late
+// by up to ten minutes; a one-minute wheel makes it late by up to one. The cost of that accuracy is one
+// indexed read of (status, remind_at) that returns nothing almost every time it runs.
+//
+// Rows leave the working set the instant they are marked sent, so this is safe to run by hand and safe
+// to run twice — which matters, because the scheduler is unverified on the server ([[scheduler-audit]]).
+Schedule::command('review-reminders:dispatch')
+    ->everyMinute()
+    ->withoutOverlapping();
+
 // Daily: keep the auto-derived oil-change Service Reminders in step with the Oil Change sheet data on
 // each car (last_service_odometer + service_interval_km). Creates a reminder for newly-matched cars and
 // refreshes 'auto' anchors; a reminder a human has edited (source='manual') is left untouched. Runs after

@@ -2300,6 +2300,20 @@ const en = {
       readyGate: 'Confirm the repair is done — the car is then ready for pickup. No odometer is needed here (the car didn’t move in the workshop); the return reading is taken at re-inspection.',
       collectFromGarage: 'Confirm you’ve picked the car up from the garage. A photo is required — this does not change the ticket’s stage, it just logs the handoff before the drive back.',
       arriveAtPark: 'Confirm the car is back at base. A photo is required. Minor repairs close automatically and the car goes straight back into the fleet; major repairs (critical/moderate) route to the Inspector for a final QA check first.',
+      // "Already being looked at" note — shown the moment a car with a live inspection request is
+      // picked, so the driver learns it from the form instead of from a rejection after submitting.
+      // The backend sends CODES (state / who / when); every sentence below is rendered here.
+      inFlightTitle: 'This car is already being looked at',
+      inFlightPending: 'It’s waiting in the inspection review queue — the office hasn’t decided on it yet.',
+      inFlightApproved: 'It’s been approved and is waiting for the inspector to test-drive it.',
+      inFlightDriving: 'The inspector is test-driving it right now.',
+      inFlightBy: 'Flagged by {who} · {when}',
+      inFlightBySystem: 'Raised automatically by the system · {when}',
+      inFlightNote: 'What was reported: “{note}”',
+      inFlightBlocked: 'One request per car — no need to flag it again. If you have something new to add, tell the office and it goes on the request that’s already open.',
+      inFlightObservation: 'You can still log your note — an observation is a record on the car, not a second request.',
+      inFlightObservationRaise: 'A request is already open for this car, so this note can’t raise a new one.',
+      inFlightLink: 'Open the request',
       requestBanner: 'Flag a car you think needs a look — the inspector is notified to test-drive it and decide.',
       requestHideMaintenance: 'Cars already in maintenance are hidden — they’re being handled, so you can’t flag them again here.',
       // Advisory eligibility line (not a hard block — the Controller still reviews every request).
@@ -6562,6 +6576,17 @@ const ar = {
       readyGate: 'أكّد انتهاء الإصلاح — تصبح السيارة بعدها جاهزة للاستلام. لا حاجة للعدّاد هنا (السيارة لم تتحرّك في الورشة)؛ تُؤخذ قراءة العودة عند إعادة الفحص.',
       collectFromGarage: 'أكّد أنك استلمت السيارة من الكراج. الصورة مطلوبة — هذا لا يغيّر مرحلة التذكرة، بل يسجّل التسليم قبل رحلة العودة.',
       arriveAtPark: 'أكّد عودة السيارة إلى المقر. الصورة مطلوبة. الإصلاحات البسيطة تُغلَق تلقائيًا وتعود السيارة مباشرة للأسطول؛ الإصلاحات الكبرى (حرجة/متوسطة) تُرسَل إلى المفتش لفحص جودة نهائي أولًا.',
+      inFlightTitle: 'هذه السيارة قيد المتابعة بالفعل',
+      inFlightPending: 'إنها في قائمة مراجعة الفحوصات — لم يبتّ فيها المكتب بعد.',
+      inFlightApproved: 'تمت الموافقة عليها وهي بانتظار أن يجرّبها المفتش.',
+      inFlightDriving: 'المفتش يجرّبها الآن.',
+      inFlightBy: 'أبلغ عنها {who} · {when}',
+      inFlightBySystem: 'رفعها النظام تلقائيًا · {when}',
+      inFlightNote: 'ما تم الإبلاغ عنه: «{note}»',
+      inFlightBlocked: 'طلب واحد لكل سيارة — لا حاجة للإبلاغ عنها مرة أخرى. إن كان لديك ما تضيفه، أبلغ المكتب ليُضاف إلى الطلب المفتوح.',
+      inFlightObservation: 'لا يزال بإمكانك تسجيل ملاحظتك — الملاحظة سجلّ على السيارة، وليست طلبًا ثانيًا.',
+      inFlightObservationRaise: 'يوجد طلب مفتوح لهذه السيارة، لذا لا يمكن لهذه الملاحظة أن ترفع طلبًا جديدًا.',
+      inFlightLink: 'افتح الطلب',
       requestBanner: 'أبلغ عن سيارة تظن أنها تحتاج فحصًا — يُشعَر المفتش ليجرّبها ويقرّر.',
       requestHideMaintenance: 'السيارات التي في الصيانة أصلًا مخفيّة — يجري التعامل معها، فلا يمكنك الإبلاغ عنها مرة أخرى من هنا.',
       // سطر إرشادي للأهلية (ليس منعًا صارمًا — يراجع المشرف كل طلب).

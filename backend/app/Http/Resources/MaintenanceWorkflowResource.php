@@ -516,8 +516,31 @@ class MaintenanceWorkflowResource extends JsonResource
                 'reviewed_at'       => optional($t->reviewed_at)->toIso8601String(),
                 'notes'             => $t->review_notes,
                 'rejection_reason'  => $t->review_rejection_reason,
+                // WHY it was rejected, as the stored code AND the sentence that code currently means. The
+                // code is what anything counting rejections must read; the label is presentation and may
+                // be reworded without rewriting history (see [[reason-code-contract]]). Both are null for
+                // requests rejected before the code existed — an honest "not recorded", never a guess.
+                'rejection_code'    => $t->review_rejection_code,
+                'rejection_label'   => Maintenance::reviewRejectionLabel($t->review_rejection_code),
                 'sent_at'           => optional($t->review_sent_at)->toIso8601String(),
             ],
+
+            // The CALLER'S OWN "remind me later" on this request, if they set one — never anyone else's.
+            // Two Controllers looking at the same card each see their own reminder or none, which is what
+            // makes "remind ME" honest. Populated by the review queue (which pre-loads them in one query);
+            // absent on every other endpoint, where the card is not rendered.
+            // relationLoaded(), NOT isset(): "the queue looked and this reviewer has no reminder" must
+            // serialise as an explicit null, and isset() on a null is false — which would drop the key
+            // entirely and make "no reminder" indistinguishable from "nobody looked".
+            'my_reminder' => $this->when(
+                $t->relationLoaded('myReviewReminder'),
+                fn () => ($r = $t->getRelation('myReviewReminder')) ? [
+                    'id'        => $r->id,
+                    'remind_at' => optional($r->remind_at)->toIso8601String(),
+                    'note'      => $r->note,
+                    'kind'      => $r->kind,
+                ] : null,
+            ),
 
             // Return-leg checkpoint (Ready for Pickup → In Our Park): whether the driver has already
             // collected the car from the garage — the frontend uses this to switch the single primary

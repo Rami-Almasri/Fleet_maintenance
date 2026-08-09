@@ -495,6 +495,10 @@ Route::middleware('auth:sanctum')->prefix('maintenance-tickets')->controller(Mai
     Route::get('/vehicle/{vehicle}/fault-insights', 'faultInsights')->middleware('permission:maintenance.view');
     // Park-duration (idle) — how long the car has sat since its last movement; feeds the Scheduled-tab intake.
     Route::get('/vehicle/{vehicle}/idle', 'vehicleIdle')->middleware('permission:maintenance.view');
+    // Is an inspection already in flight for this car (review queue / with the Inspector / being driven)?
+    // Read by the driver's Request Inspection form to show the note before submitting, so `logistics` —
+    // the permission that may file a request — is enough to read it.
+    Route::get('/vehicle/{vehicle}/inspection-request', 'vehicleInspectionRequest')->middleware('permission:maintenance.view|maintenance.logistics');
     // Awaiting-Invoice tracker: signed-off-but-uninvoiced tickets (STATIC — must precede /{ticket}).
     Route::get('/pending-invoices', 'pendingInvoices')->middleware('permission:maintenance.view');
     // Inspection Request Review Gate — Controllers' (Lin & Marwa) queue. STATIC — must precede /{ticket}.
@@ -502,6 +506,10 @@ Route::middleware('auth:sanctum')->prefix('maintenance-tickets')->controller(Mai
     // The rules behind system-raised requests — powers the queue's "when & why the system asks for a
     // test" explainer with the LIVE thresholds. STATIC — must precede /{ticket}.
     Route::get('/review-gate-rules', 'reviewGateRules')->middleware('permission:maintenance.manage');
+    // The fixed rejection-reason list the queue's picker renders (code + label). Read-only reference,
+    // gated on `view`: anyone who can see a rejected request should be able to read what its stored code
+    // means, without also being able to reject one. STATIC — must precede /{ticket}.
+    Route::get('/review/rejection-reasons', 'reviewRejectionReasons')->middleware('permission:maintenance.view');
     // Repair Quality Tracking — fleet-wide per-garage success rate + Possible Part Failure signals.
     // STATIC — must precede /{ticket}.
     Route::get('/repair-quality', 'repairQuality')->middleware('permission:maintenance.view');
@@ -548,6 +556,10 @@ Route::middleware('auth:sanctum')->prefix('maintenance-tickets')->controller(Mai
     // (→ sent to the Inspector, exactly as before) or reject (→ terminated, nothing sent).
     Route::post('/{ticket}/review/approve', 'approveReview')->middleware('permission:maintenance.manage');
     Route::post('/{ticket}/review/reject', 'rejectReview')->middleware('permission:maintenance.manage');
+    // "Remind me about this request later" — personal to the caller, books nothing for anyone else and
+    // changes nothing about the request itself, so it needs no more authority than reviewing does.
+    Route::post('/{ticket}/review/remind', 'remindReview')->middleware('permission:maintenance.manage');
+    Route::delete('/{ticket}/review/remind', 'cancelReviewReminder')->middleware('permission:maintenance.manage');
     // Legacy system requests that bypassed the gate before it existed (see pendingReview()) — retroactive
     // sign-off only, no stage change.
     Route::post('/{ticket}/review/acknowledge-legacy', 'acknowledgeLegacyReview')->middleware('permission:maintenance.manage');

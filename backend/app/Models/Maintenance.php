@@ -642,6 +642,48 @@ class Maintenance extends Model
     ];
 
     /**
+     * WHY an inspection request was rejected at the Controller review gate.
+     *
+     * The CODE is the stored fact and the only thing counted; the English beside it is presentation and
+     * may be reworded or translated without rewriting history (see [[reason-code-contract]]). The reviewer
+     * may still type a sentence — it lands in `review_rejection_reason` as the human detail, and is
+     * REQUIRED alongside `other`, which otherwise records nothing at all.
+     *
+     * This list is the contract the frontend renders and the validator enforces; adding a reason means
+     * adding it here, once.
+     */
+    public const REVIEW_REJECT_NOT_NEEDED   = 'not_needed';       // nothing actually wrong with the car
+    public const REVIEW_REJECT_DUPLICATE    = 'duplicate';        // another open request/ticket already covers it
+    public const REVIEW_REJECT_RECENTLY_DONE = 'recently_done';   // inspected or serviced too recently to repeat
+    public const REVIEW_REJECT_CAR_UNAVAILABLE = 'car_unavailable'; // on hire / off-site / not reachable
+    public const REVIEW_REJECT_WRONG_VEHICLE = 'wrong_vehicle';   // raised on the wrong car
+    public const REVIEW_REJECT_NO_DETAIL    = 'no_detail';        // not enough information to act on
+    public const REVIEW_REJECT_HANDLED_ELSEWHERE = 'handled_elsewhere'; // dealt with outside this queue
+    public const REVIEW_REJECT_OTHER        = 'other';            // anything else — the note carries it
+
+    /** Code → the sentence a reviewer reads. Order is the order the picker shows them in. */
+    public const REVIEW_REJECTION_REASONS = [
+        self::REVIEW_REJECT_NOT_NEEDED         => "The car doesn't need it",
+        self::REVIEW_REJECT_DUPLICATE          => 'Already covered by another request',
+        self::REVIEW_REJECT_RECENTLY_DONE      => 'Inspected or serviced recently',
+        self::REVIEW_REJECT_CAR_UNAVAILABLE    => "The car isn't available",
+        self::REVIEW_REJECT_WRONG_VEHICLE      => 'Raised on the wrong car',
+        self::REVIEW_REJECT_NO_DETAIL          => 'Not enough detail to act on',
+        self::REVIEW_REJECT_HANDLED_ELSEWHERE  => 'Already handled another way',
+        self::REVIEW_REJECT_OTHER              => 'Other reason',
+    ];
+
+    /** The sentence for a stored code — falls back to the raw code so an unknown value is never hidden. */
+    public static function reviewRejectionLabel(?string $code): ?string
+    {
+        if (! $code) {
+            return null;
+        }
+
+        return self::REVIEW_REJECTION_REASONS[$code] ?? $code;
+    }
+
+    /**
      * TEST KIND — which intake tab the diagnostic came from (a periodic test can be one of two kinds).
      * Purely a traceability tag on the ticket; both kinds flow through the same diagnostic → decide
      * pipeline and are tagged visit_context = routine (planned, so foresight ignores them):
@@ -851,7 +893,7 @@ class Maintenance extends Model
         'requested_by', 'requested_at',
         // Inspection Request Review Gate — Controller (Lin & Marwa) sign-off before the request is
         // sent to the Inspector.
-        'reviewed_by', 'reviewed_at', 'review_notes', 'review_rejection_reason', 'review_sent_at',
+        'reviewed_by', 'reviewed_at', 'review_notes', 'review_rejection_reason', 'review_rejection_code', 'review_sent_at',
         'follow_ups',
         // Stage-timing anchors — durations are subtraction over these (see migration).
         'test_started_at', 'returned_at',

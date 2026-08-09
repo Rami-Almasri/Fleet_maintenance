@@ -1,6 +1,14 @@
 // Inspection Request Review Gate — the Controllers' (Lin & Marwa) queue of Driver/system-generated
 // inspection requests awaiting approval before they are sent to the Inspector (Abu Maroof).
-// Approve sends the request on exactly as before; reject terminates it (requires a reason).
+//
+// Three outcomes, not two:
+//   Approve   — sends the request on to the Inspector, exactly as before.
+//   Reject    — terminates it. The reviewer picks a REASON from a fixed list (a code, so rejections can
+//               be counted) and may add their own words beside it; and may book a reminder to revisit it,
+//               because "not now" and "never" are different decisions.
+//   Remind me — decides nothing. The request stays in the queue for whoever gets to it first; the
+//               reviewer just asks to be pinged about it later. Personal: your reminder is yours, and it
+//               cancels itself the moment anyone approves or rejects the request.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import InspectionReviewAnalytics from '../components/analytics/InspectionReviewAnalytics';
@@ -13,7 +21,8 @@ import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
 import Icon from '../components/ui/Icon';
 import Modal from '../components/ui/Modal';
-import { Textarea } from '../components/ui/Field';
+import { Input, Textarea } from '../components/ui/Field';
+import { useI18n } from '../i18n/I18nContext';
 import { EmptyState } from '../components/ui/Misc';
 import { Skeleton } from '../components/ui/Skeleton';
 import TicketActionModal from '../components/workflow/TicketActionModal';
@@ -492,7 +501,8 @@ function MetaTile({ icon, label, value, sub, muted }) {
   );
 }
 
-function RequestCard({ tk, onApprove, onReject, onAcknowledge, ackBusy, highlight }) {
+function RequestCard({ tk, onApprove, onReject, onAcknowledge, onRemind, onCancelReminder, ackBusy, remindBusy, highlight }) {
+  const { tf } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const reasonTone = REASON_TONE[tk.trigger_reason] || 'slate';
   const reasonLabel = REASON_LABEL[tk.trigger_reason] || tk.trigger_reason;
@@ -691,6 +701,27 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, ackBusy, highligh
             Waiting for return — the car is with a customer. Review it once it's back and available to inspect.
           </p>
         )}
+
+        {/* YOUR reminder on this request — nobody else's, and nobody else can see it. */}
+        {tk.my_reminder && (
+          <div className="flex items-start gap-2 rounded-lg bg-indigo-50 px-3 py-2 text-xs text-indigo-800 ring-1 ring-inset ring-indigo-200">
+            <Icon.Clock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold">
+                {tf('review.remind.pill', 'You’ll be reminded at {when}', { when: whenLabel(tk.my_reminder.remind_at) })}
+              </p>
+              {tk.my_reminder.note && <p className="truncate text-[11px] text-indigo-600">{tk.my_reminder.note}</p>}
+            </div>
+            <button
+              type="button"
+              disabled={remindBusy}
+              onClick={() => onCancelReminder(tk)}
+              className="shrink-0 text-[11px] font-semibold text-indigo-600 underline-offset-2 hover:underline disabled:opacity-50"
+            >
+              {tf('review.remind.cancel', 'Cancel')}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* ── Actions ──────────────────────────────────────────────────────────────── */}
@@ -701,6 +732,15 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, ackBusy, highligh
           </Button>
         ) : (
           <>
+            {/* Deliberately NOT disabled while the car is out on hire — "the customer still has it, ask
+                me again after lunch" is precisely the case this button exists for, and it is the only
+                action on the card that is honest to take on a car you cannot inspect yet. */}
+            <Button variant="ghost" loading={remindBusy} onClick={() => onRemind(tk)}>
+              <Icon.Clock className="h-4 w-4" />
+              {tk.my_reminder
+                ? tf('review.remind.change', 'Change reminder')
+                : tf('review.remind.button', 'Remind me')}
+            </Button>
             <Button variant="danger" disabled={awaitingReturn} onClick={() => onReject(tk)}>
               <Icon.XCircle className="h-4 w-4" /> Reject
             </Button>
@@ -760,22 +800,180 @@ function ApproveModal({ ticket, onClose, onDone }) {
   );
 }
 
+// ── "Remind me later" plumbing ─────────────────────────────────────────────────────────────────
+// The presets the server accepts (ReviewReminderService::OFFSET_PRESETS + CLOCK_PRESETS). The KEY is the
+// contract — the label beside it is presentation and is translated at render time. "Tomorrow morning"
+// resolves server-side to 08:00 tomorrow, not to "24 hours from now": a reminder set at 19:00 that fires
+// at 19:00 the next day has missed the day it was meant to protect.
+const REMINDER_PRESETS = [
+  { key: '30m', labelKey: 'review.remind.in30m', labelEn: 'In 30 minutes' },
+  { key: '1h', labelKey: 'review.remind.in1h', labelEn: 'In 1 hour' },
+  { key: '2h', labelKey: 'review.remind.in2h', labelEn: 'In 2 hours' },
+  { key: '4h', labelKey: 'review.remind.in4h', labelEn: 'In 4 hours' },
+  { key: 'tomorrow_morning', labelKey: 'review.remind.tomorrow', labelEn: 'Tomorrow morning' },
+  { key: 'next_week', labelKey: 'review.remind.nextWeek', labelEn: 'Next week' },
+];
+
+// <input type="datetime-local"> speaks LOCAL wall-clock with no zone, so it can neither read nor emit an
+// ISO string. These two convert at the boundary; everything sent to the server is a real ISO instant.
+function toLocalInputValue(date) {
+  const d = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return d.toISOString().slice(0, 16);
+}
+
+function localInputToIso(value) {
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+// A sensible floor for the custom picker: now. Stops the obvious mistake (a time already past, which the
+// server rejects anyway) before it costs a round-trip.
+function nowLocalInput() {
+  return toLocalInputValue(new Date());
+}
+
+// "in 2 hours" / "tomorrow at 08:00" — the reminder read back to the person who set it.
+function whenLabel(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const sameDay = d.toDateString() === new Date().toDateString();
+  const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  return sameDay ? time : `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${time}`;
+}
+
+// The time half of both modals — preset chips plus a custom picker. Owns nothing: the parent holds the
+// chosen preset / custom value, because on the reject path that choice is optional and travels with the
+// rejection rather than being submitted on its own.
+function WhenPicker({ preset, custom, onPreset, onCustom, disabled }) {
+  const { tf } = useI18n();
+
+  return (
+    <div>
+      <div className="flex flex-wrap gap-1.5">
+        {REMINDER_PRESETS.map((p) => (
+          <button
+            key={p.key}
+            type="button"
+            disabled={disabled}
+            onClick={() => onPreset(p.key)}
+            className={`rounded-full px-3 py-1.5 text-xs font-semibold ring-1 ring-inset transition disabled:opacity-50 ${
+              preset === p.key
+                ? 'bg-indigo-600 text-white ring-indigo-600'
+                : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'
+            }`}
+          >
+            {tf(p.labelKey, p.labelEn)}
+          </button>
+        ))}
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => onPreset('custom')}
+          className={`rounded-full px-3 py-1.5 text-xs font-semibold ring-1 ring-inset transition disabled:opacity-50 ${
+            preset === 'custom'
+              ? 'bg-indigo-600 text-white ring-indigo-600'
+              : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'
+          }`}
+        >
+          {tf('review.remind.custom', 'Pick a time…')}
+        </button>
+      </div>
+
+      {preset === 'custom' && (
+        <div className="mt-2">
+          <Input
+            type="datetime-local"
+            label={tf('review.remind.customLabel', 'Remind me at')}
+            min={nowLocalInput()}
+            value={custom}
+            disabled={disabled}
+            onChange={(e) => onCustom(e.target.value)}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// The fixed rejection reasons, as a last resort. The server owns this list
+// (Maintenance::REVIEW_REJECTION_REASONS) and is fetched on open; this copy exists so a reviewer whose
+// network hiccups can still reject a request rather than being stuck staring at an empty picker. Codes
+// must match the server's exactly — the code is what gets stored and counted.
+const FALLBACK_REASONS = [
+  { code: 'not_needed', label: "The car doesn't need it" },
+  { code: 'duplicate', label: 'Already covered by another request' },
+  { code: 'recently_done', label: 'Inspected or serviced recently' },
+  { code: 'car_unavailable', label: "The car isn't available" },
+  { code: 'wrong_vehicle', label: 'Raised on the wrong car' },
+  { code: 'no_detail', label: 'Not enough detail to act on' },
+  { code: 'handled_elsewhere', label: 'Already handled another way' },
+  { code: 'other', label: 'Other reason', requires_note: true },
+];
+
 function RejectModal({ ticket, onClose, onDone }) {
   const toast = useToast();
-  const [reason, setReason] = useState('');
+  const { tf } = useI18n();
+  const [reasons, setReasons] = useState(FALLBACK_REASONS);
+  const [code, setCode] = useState('');
+  const [note, setNote] = useState('');
+  const [askAgain, setAskAgain] = useState(false);
+  const [preset, setPreset] = useState('tomorrow_morning');
+  const [custom, setCustom] = useState(nowLocalInput());
   const [busy, setBusy] = useState(false);
 
+  // Pull the live list; keep the fallback if it doesn't arrive. Never blocks the form.
+  useEffect(() => {
+    let alive = true;
+    api.get('/maintenance-tickets/review/rejection-reasons')
+      .then((r) => {
+        const list = r.data?.data;
+        if (alive && Array.isArray(list) && list.length) setReasons(list);
+      })
+      .catch(() => { /* the fallback list stands */ });
+    return () => { alive = false; };
+  }, []);
+
+  const chosen = reasons.find((r) => r.code === code) || null;
+  const noteRequired = !!chosen?.requires_note;
+
   const submit = async () => {
-    if (!reason.trim()) {
-      toast.error('Say why this request is being rejected');
+    if (!code) {
+      toast.error(tf('review.reject.needReason', 'Choose why this request is being rejected'));
       return;
     }
+    if (noteRequired && !note.trim()) {
+      toast.error(tf('review.reject.needNote', 'Add a short note saying what the reason was'));
+      return;
+    }
+
+    // The reminder half is optional, so an unusable custom time is caught here rather than silently
+    // dropping the "ask me again" the reviewer just asked for.
+    let remindAt = null;
+    if (askAgain) {
+      if (preset === 'custom') {
+        remindAt = localInputToIso(custom);
+        if (!remindAt) {
+          toast.error(tf('review.remind.badTime', 'Pick a valid time to be reminded'));
+          return;
+        }
+      } else {
+        remindAt = presetToIso(preset);
+      }
+    }
+
     setBusy(true);
     try {
-      await api.post(`/maintenance-tickets/${ticket.id}/review/reject`, { rejection_reason: reason });
-      onDone('Inspection request rejected');
+      await api.post(`/maintenance-tickets/${ticket.id}/review/reject`, {
+        rejection_code: code,
+        rejection_reason: note.trim() || null,
+        remind_at: remindAt,
+      });
+      onDone(remindAt
+        ? tf('review.reject.doneWithReminder', 'Rejected — you’ll be reminded to revisit it')
+        : tf('review.reject.done', 'Inspection request rejected'));
     } catch (e) {
-      toast.error(e.response?.data?.message || 'Could not reject this request');
+      toast.error(e.response?.data?.message || tf('review.reject.failed', 'Could not reject this request'));
     } finally {
       setBusy(false);
     }
@@ -785,32 +983,178 @@ function RejectModal({ ticket, onClose, onDone }) {
     <Modal
       open
       onClose={onClose}
-      title="Reject inspection request"
-      subtitle={`${ticket.plate || `#${ticket.id}`} · nothing will be sent externally`}
+      title={tf('review.reject.title', 'Reject inspection request')}
+      subtitle={`${ticket.plate || `#${ticket.id}`} · ${tf('review.reject.subtitle', 'nothing will be sent externally')}`}
       footer={(
         <>
-          <Button variant="secondary" onClick={onClose} disabled={busy}>Cancel</Button>
-          <Button variant="danger" onClick={submit} loading={busy}>Reject</Button>
+          <Button variant="secondary" onClick={onClose} disabled={busy}>{tf('common.cancel', 'Cancel')}</Button>
+          <Button variant="danger" onClick={submit} loading={busy}>{tf('review.reject.action', 'Reject')}</Button>
         </>
       )}
     >
-      <Textarea
-        label="Rejection reason"
-        required
-        rows={3}
-        value={reason}
-        onChange={(e) => setReason(e.target.value)}
-        placeholder="Why is this request being rejected?"
-      />
+      <fieldset>
+        <legend className="mb-1.5 text-sm font-semibold text-slate-700">
+          {tf('review.reject.why', 'Why is this being rejected?')}
+          <span className="text-rose-500"> *</span>
+        </legend>
+        <div className="space-y-1">
+          {reasons.map((r) => (
+            <label
+              key={r.code}
+              className={`flex cursor-pointer items-start gap-2.5 rounded-lg px-3 py-2 text-sm ring-1 ring-inset transition ${
+                code === r.code
+                  ? 'bg-rose-50 text-rose-900 ring-rose-300'
+                  : 'bg-white text-slate-700 ring-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              <input
+                type="radio"
+                name="rejection_code"
+                className="mt-0.5 h-4 w-4 shrink-0 accent-rose-600"
+                checked={code === r.code}
+                onChange={() => setCode(r.code)}
+              />
+              <span>{r.label}</span>
+            </label>
+          ))}
+        </div>
+      </fieldset>
+
+      <div className="mt-3">
+        <Textarea
+          label={noteRequired
+            ? tf('review.reject.noteRequired', 'What was the reason?')
+            : tf('review.reject.noteOptional', 'Anything to add (optional)')}
+          required={noteRequired}
+          rows={2}
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+        />
+        <p className="mt-1 text-[11px] text-slate-400">
+          {tf('review.reject.noteHint', 'The reason and this note both go back to whoever raised the request.')}
+        </p>
+      </div>
+
+      {/* "Not now" is not "never" — the second half of that thought, captured instead of lost. */}
+      <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2.5 ring-1 ring-inset ring-slate-200">
+        <label className="flex cursor-pointer items-start gap-2.5 text-sm font-medium text-slate-700">
+          <input
+            type="checkbox"
+            className="mt-0.5 h-4 w-4 shrink-0 accent-indigo-600"
+            checked={askAgain}
+            onChange={(e) => setAskAgain(e.target.checked)}
+          />
+          <span>
+            {tf('review.reject.askAgain', 'Remind me to look at this car again')}
+            <span className="block text-[11px] font-normal text-slate-500">
+              {tf('review.reject.askAgainHint', 'For a car that is fine today but should be checked later.')}
+            </span>
+          </span>
+        </label>
+        {askAgain && (
+          <div className="mt-2.5">
+            <WhenPicker preset={preset} custom={custom} onPreset={setPreset} onCustom={setCustom} disabled={busy} />
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+// Resolve a preset to an ISO instant CLIENT-side, for the reject path only — that endpoint takes a
+// timestamp, not a preset key, because the reminder rides along with the rejection. The "Remind me"
+// button sends the preset key itself and lets the server resolve it. Kept in step with
+// ReviewReminderService::presetToMoment.
+function presetToIso(preset) {
+  const d = new Date();
+  const mins = { '30m': 30, '1h': 60, '2h': 120, '4h': 240 }[preset];
+  if (mins) {
+    d.setMinutes(d.getMinutes() + mins);
+    return d.toISOString();
+  }
+  if (preset === 'tomorrow_morning') d.setDate(d.getDate() + 1);
+  else if (preset === 'next_week') d.setDate(d.getDate() + 7);
+  else return null;
+  d.setHours(8, 0, 0, 0);
+  return d.toISOString();
+}
+
+// "Remind me about this request later." Decides nothing — the request stays in the queue for whoever
+// gets to it first, and this reminder is the caller's alone.
+function RemindModal({ ticket, onClose, onDone }) {
+  const toast = useToast();
+  const { tf } = useI18n();
+  const [preset, setPreset] = useState('2h');
+  const [custom, setCustom] = useState(nowLocalInput());
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    const body = { note: note.trim() || null };
+    if (preset === 'custom') {
+      const iso = localInputToIso(custom);
+      if (!iso) {
+        toast.error(tf('review.remind.badTime', 'Pick a valid time to be reminded'));
+        return;
+      }
+      body.remind_at = iso;
+    } else {
+      // Send the KEY, not a computed time: the server owns what "tomorrow morning" means, and its clock
+      // is the one the dispatcher runs on.
+      body.preset = preset;
+    }
+
+    setBusy(true);
+    try {
+      const res = await api.post(`/maintenance-tickets/${ticket.id}/review/remind`, body);
+      const at = res.data?.data?.remind_at;
+      onDone(tf('review.remind.done', 'Reminder set for {when}', { when: whenLabel(at) }));
+    } catch (e) {
+      toast.error(e.response?.data?.message || tf('review.remind.failed', 'Could not set that reminder'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={tf('review.remind.title', 'Remind me about this request')}
+      subtitle={`${ticket.plate || `#${ticket.id}`} · ${tf('review.remind.subtitle', 'stays in the queue — nothing is decided')}`}
+      footer={(
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={busy}>{tf('common.cancel', 'Cancel')}</Button>
+          <Button variant="primary" onClick={submit} loading={busy}>{tf('review.remind.action', 'Remind me')}</Button>
+        </>
+      )}
+    >
+      <p className="text-sm text-slate-600">
+        {tf('review.remind.explain', 'The request stays where it is and anyone can still act on it. Only you get this reminder, and it cancels itself if the request is approved or rejected before then.')}
+      </p>
+
+      <div className="mt-3">
+        <WhenPicker preset={preset} custom={custom} onPreset={setPreset} onCustom={setCustom} disabled={busy} />
+      </div>
+
+      <div className="mt-3">
+        <Textarea
+          label={tf('review.remind.note', 'What should the reminder say? (optional)')}
+          rows={2}
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+        />
+      </div>
     </Modal>
   );
 }
 
 export default function InspectionReviewQueue() {
   const toast = useToast();
+  const { tf } = useI18n();
   const { can } = usePermissions();
   const canManage = can('maintenance.manage');
-  const [modal, setModal] = useState(null); // { action: 'approve'|'reject'|'test'|'complaint', ticket }
+  const [modal, setModal] = useState(null); // { action: 'approve'|'reject'|'remind'|'request'|'complaint', ticket }
   const [vehicles, setVehicles] = useState([]);
 
   const fetcher = useCallback(async () => (await api.get('/maintenance-tickets/pending-review')).data.data, []);
@@ -871,6 +1215,22 @@ export default function InspectionReviewQueue() {
     setModal(null);
     if (message) toast.success(message);
     reload({ silent: true });
+  };
+
+  // Cancelling your own reminder is a one-click action on the card, so it lives here rather than behind
+  // a modal. Setting one opens RemindModal (you have to say WHEN).
+  const [remindBusyId, setRemindBusyId] = useState(null);
+  const onCancelReminder = async (tk) => {
+    setRemindBusyId(tk.id);
+    try {
+      await api.delete(`/maintenance-tickets/${tk.id}/review/remind`);
+      toast.success(tf('review.remind.cancelled', 'Reminder cancelled'));
+      reload({ silent: true });
+    } catch (e) {
+      toast.error(e.response?.data?.message || tf('review.remind.cancelFailed', 'Could not cancel that reminder'));
+    } finally {
+      setRemindBusyId(null);
+    }
   };
 
   const [ackBusyId, setAckBusyId] = useState(null);
@@ -934,7 +1294,10 @@ export default function InspectionReviewQueue() {
                 onApprove={(t) => setModal({ action: 'approve', ticket: t })}
                 onReject={(t) => setModal({ action: 'reject', ticket: t })}
                 onAcknowledge={onAcknowledge}
+                onRemind={(t) => setModal({ action: 'remind', ticket: t })}
+                onCancelReminder={onCancelReminder}
                 ackBusy={ackBusyId === tk.id}
+                remindBusy={remindBusyId === tk.id}
                 highlight={highlightId === tk.id}
               />
             ))}
@@ -948,6 +1311,11 @@ export default function InspectionReviewQueue() {
       )}
       {modal?.action === 'reject' && (
         <RejectModal ticket={modal.ticket} onClose={() => setModal(null)} onDone={onDone} />
+      )}
+      {/* "Remind me later" — decides nothing; the request stays in the queue and only the caller is
+          pinged. See RemindModal. */}
+      {modal?.action === 'remind' && (
+        <RemindModal ticket={modal.ticket} onClose={() => setModal(null)} onDone={onDone} />
       )}
       {/* Request Inspection — the driver "flag a car" form: vehicle + What happened? (test drive /
           customer / routine) + notes + optional photo/video. Born in pending_review, so it lands right
