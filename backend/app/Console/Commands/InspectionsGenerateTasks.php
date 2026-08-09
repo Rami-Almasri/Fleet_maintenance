@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Models\Contract;
 use App\Models\Maintenance;
 use App\Models\Vehicle;
 use App\Services\DiagnosticGateService;
@@ -28,7 +29,11 @@ use Illuminate\Support\Facades\Log;
  *   1. it is active fleet (Ready / Rented — Vehicle::ACTIVE_STATUSES), and
  *   2. DiagnosticGateService reports ≥1 due condition, and
  *   3. it has NO open workflow ticket already (Maintenance::openWorkflow — covers the pre-ticket
- *      "requested" state too, so we never double-request a car in the pipeline), and
+ *      "requested" state too, so we never double-request a car in the pipeline), and it has no OPEN
+ *      OfficeManager maintenance contract (type U): a car can be in the workshop on an OM contract with
+ *      no ticket here at all, and flagging that car for a test drive queues a decision about a car on a
+ *      lift. The same fact retires requests raised BEFORE the contract appeared — this run withdraws
+ *      those first (MaintenanceWorkflowService::withdrawRequestsForMaintenanceContracts()), and
  *   4. it passes the OIL SANITY CEILING — a service-due distance over max(20,000 km, 3 × interval) is
  *      almost certainly a bad odometer reading, so that oil condition is dropped and logged as a Data
  *      Anomaly instead of pushing nonsense to the Inspector. (Other conditions on the same car still
@@ -68,9 +73,34 @@ class InspectionsGenerateTasks extends Command
             'vehicle'  => $onlyId,
         ]);
 
+        // First, clear out requests that reality has already answered: a car that went into the workshop
+        // under an OfficeManager maintenance contract while its request sat in the review queue. Done
+        // BEFORE the scan so the counts below describe a queue that is actually current.
+        if (! $dry) {
+            $withdrawn = $workflow->withdrawRequestsForMaintenanceContracts();
+            if ($withdrawn > 0) {
+                $this->line("<comment>Withdrew {$withdrawn} pending request(s) — those cars are already in maintenance (OM contract).</comment>");
+                Log::info('Proactive Diagnostic Monitor — withdrew requests for cars already in maintenance', [
+                    'report'    => 'inspections_generate_tasks_scan',
+                    'withdrawn' => $withdrawn,
+                ]);
+            }
+        }
+
         // Cars already somewhere in the workflow pipeline (incl. the pre-ticket "requested" state) —
         // never raise a second request for them.
         $inPipeline = Maintenance::openWorkflow()
+            ->whereNotNull('vehicle_id')
+            ->pluck('vehicle_id')
+            ->flip();
+
+        // …and cars OfficeManager already has in the workshop under an open maintenance contract (type U).
+        // The workflow pipeline above doesn't know about them: a car can be in the garage on an OM contract
+        // with no ticket in this system at all, and flagging it for a routine test drive would put a card in
+        // the Controllers' queue for a car that is on a lift. Same fact that withdraws an existing request,
+        // applied one step earlier so the request is never raised in the first place.
+        $inOmMaintenance = Contract::where('contract_type', 'U')
+            ->currentlyOpen()
             ->whereNotNull('vehicle_id')
             ->pluck('vehicle_id')
             ->flip();
@@ -84,10 +114,14 @@ class InspectionsGenerateTasks extends Command
             ->where(fn ($q) => $q->where('for_sale', false)->orWhereNull('for_sale'))
             ->when($onlyId, fn ($q) => $q->whereKey($onlyId))
             ->orderBy('code')
-            ->chunkById(500, function ($vehicles) use (&$requests, &$anomalies, $inPipeline, $gate) {
+            ->chunkById(500, function ($vehicles) use (&$requests, &$anomalies, $inPipeline, $inOmMaintenance, $gate) {
                 foreach ($vehicles as $v) {
                     if ($inPipeline->has($v->id)) {
                         continue; // already in the pipeline
+                    }
+
+                    if ($inOmMaintenance->has($v->id)) {
+                        continue; // already in the workshop on an OM maintenance contract
                     }
 
                     $conditions = $gate->conditionsDue($v);

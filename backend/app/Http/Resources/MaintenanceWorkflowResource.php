@@ -523,6 +523,13 @@ class MaintenanceWorkflowResource extends JsonResource
                 'rejection_code'    => $t->review_rejection_code,
                 'rejection_label'   => Maintenance::reviewRejectionLabel($t->review_rejection_code),
                 'sent_at'           => optional($t->review_sent_at)->toIso8601String(),
+                // The system withdrew this request rather than a Controller rejecting it — the car went
+                // into the workshop under an OfficeManager maintenance contract while the request was
+                // still waiting. `auto_context` is the evidence (contract no, opened-at, customer) so the
+                // note on the card can be checked instead of believed. Both are null for every human
+                // decision, which is exactly how the queue tells the two apart.
+                'is_system_withdrawal' => Maintenance::isSystemWithdrawal($t->review_rejection_code),
+                'auto_context'      => $t->review_auto_context ?: null,
             ],
 
             // The CALLER'S OWN "remind me later" on this request, if they set one — never anyone else's.

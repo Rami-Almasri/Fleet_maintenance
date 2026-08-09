@@ -513,12 +513,18 @@ class OfficeManagerSync
         }
 
         $odometersBumped = 0;
+        $requestsWithdrawn = 0;
         if (! $dryRun) {
             // rebuild every customer's cached balance from the new contracts
             app(AccountingService::class)->recalcAllCustomers();
             // refresh each car's live operational_status (rented / in maintenance / available)
             // from the freshly-imported open contracts — the API's StatusNo can't tell us this.
             app(OperationsService::class)->reconcileAllOperationalStatus();
+            // A car that just went into the workshop under a maintenance contract (type U) may still have
+            // an inspection request sitting in the Controllers' review queue from before it went in. The
+            // contract answers it: withdraw the request and record which contract did it, so nobody is
+            // asked to approve a test drive for a car that is already on a lift.
+            $requestsWithdrawn = app(MaintenanceWorkflowService::class)->withdrawRequestsForMaintenanceContracts();
             // bring each car's odometer up to its freshest contract handover reading — the
             // car-card Milage lags behind the real OutMilage/InMilage the branch records.
             $odometersBumped = $this->reconcileOdometersFromContracts();
@@ -539,6 +545,7 @@ class OfficeManagerSync
                 'dry_run'                 => $dryRun,
                 'corrections'            => count($this->corrections),
                 'odometers_bumped'       => $odometersBumped,
+                'requests_withdrawn'     => $requestsWithdrawn,
                 'null_overwrites_prevented' => $this->nullOverwriteCount,
                 'null_overwrite_samples'  => $this->nullOverwriteSamples,
             ];

@@ -501,6 +501,81 @@ function MetaTile({ icon, label, value, sub, muted }) {
   );
 }
 
+// ── The system withdrew this request ──────────────────────────────────────────────────
+// A car that was flagged for a test drive can be in the workshop before anyone gets to the card:
+// OfficeManager opens a maintenance contract (type U) on it, and from that moment the request is asking
+// a Controller to decide about a car that has already gone. The system withdraws it — and this note is
+// the receipt. It names the contract, when it opened and for whom, so the decision that was taken out of
+// the Controller's hands is one they can check rather than one they have to trust
+// (see [[traceability-visibility-requirement]]).
+function WithdrawnNote({ ctx, at }) {
+  const opened = dueDate(ctx?.opened_at);
+  const label = ctx?.contract_no ? `#${ctx.contract_no}` : ctx?.contract_id ? `#${ctx.contract_id}` : null;
+
+  return (
+    <div className="overflow-hidden rounded-xl bg-gradient-to-br from-violet-50 via-indigo-50 to-white ring-1 ring-inset ring-violet-200">
+      <div className="flex items-start gap-3 px-3.5 py-3">
+        <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-violet-100 text-violet-600 ring-1 ring-inset ring-violet-200">
+          <Icon.Invoice className="h-4 w-4" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-[11px] font-bold uppercase tracking-wide text-violet-500">
+            Withdrawn by the system
+          </p>
+          <p className="mt-0.5 text-sm font-semibold leading-snug text-slate-800">
+            This car is already in maintenance — OfficeManager opened a maintenance contract for it.
+          </p>
+          <p className="mt-1 text-xs leading-relaxed text-slate-600">
+            The request was raised before that contract existed, so nobody needs to decide it any more.
+            Nothing was sent to Abu Maroof.
+          </p>
+
+          {/* The evidence, not the claim. */}
+          <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-violet-200/70 pt-2.5 text-[11px] text-slate-600">
+            {label && (
+              <span className="inline-flex items-center gap-1.5">
+                <Icon.Invoice className="h-3.5 w-3.5 text-violet-400" />
+                <span className="text-slate-400">Contract</span>
+                {ctx?.contract_id ? (
+                  <Link
+                    to={`/contracts/${ctx.contract_id}`}
+                    className="font-mono font-bold text-violet-700 underline-offset-2 hover:underline"
+                  >
+                    {label}
+                  </Link>
+                ) : (
+                  <span className="font-mono font-bold text-violet-700">{label}</span>
+                )}
+              </span>
+            )}
+            {opened && (
+              <span className="inline-flex items-center gap-1.5">
+                <Icon.Calendar className="h-3.5 w-3.5 text-violet-400" />
+                <span className="text-slate-400">Opened</span>
+                <span className="font-semibold text-slate-700">{opened}</span>
+              </span>
+            )}
+            {ctx?.customer && (
+              <span className="inline-flex min-w-0 items-center gap-1.5">
+                <Icon.Users className="h-3.5 w-3.5 text-violet-400" />
+                <span className="text-slate-400">Customer</span>
+                <span className="truncate font-semibold text-slate-700">{ctx.customer}</span>
+              </span>
+            )}
+            {at && (
+              <span className="inline-flex items-center gap-1.5">
+                <Icon.Clock className="h-3.5 w-3.5 text-violet-400" />
+                <span className="text-slate-400">Withdrawn</span>
+                <span className="font-semibold text-slate-700">{ago(at)}</span>
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function RequestCard({ tk, onApprove, onReject, onAcknowledge, onRemind, onCancelReminder, ackBusy, remindBusy, highlight }) {
   const { tf } = useI18n();
   const [expanded, setExpanded] = useState(false);
@@ -516,6 +591,10 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, onRemind, onCance
   const isSystem = origin ? origin === 'system_schedule' : !requested?.user_id;
   const fromObservation = origin === 'driver_observation';
   const isLegacy = !!tk.is_legacy_unreviewed;
+  // The system already answered this one: the car went into the workshop on an OM maintenance contract
+  // while the request was still waiting. It is on the card as NEWS, not work — no approve, no reject.
+  const isWithdrawn = !!tk.review?.is_system_withdrawal;
+  const withdrawnCtx = tk.review?.auto_context || null;
   // The car is out on hire — it can't be sent for inspection until it's physically back, so approval is
   // held (the downtime clock still counts against it; see the 15-day test-based rule).
   const awaitingReturn = tk.operational_status === 'rented';
@@ -540,6 +619,7 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, onRemind, onCance
       className={`scroll-mt-24 overflow-hidden rounded-2xl border bg-white shadow-soft transition-all duration-300 hover:shadow-md ${
         highlight
           ? 'border-indigo-400 ring-2 ring-indigo-400 ring-offset-2 shadow-lg'
+          : isWithdrawn ? 'border-violet-200 bg-slate-50/60'
           : isSystem ? 'border-indigo-200' : 'border-slate-200'
       }`}
     >
@@ -552,6 +632,13 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, onRemind, onCance
               {tk.plate || `#${tk.id}`}
             </Link>
             <div className="flex shrink-0 flex-col items-end gap-1">
+              {/* The outcome leads when there is one: a Controller scanning the queue must see at a glance
+                  that this card is settled before they read anything else on it. */}
+              {isWithdrawn && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-violet-700 ring-1 ring-inset ring-violet-200">
+                  <Icon.Check className="h-3 w-3" /> Withdrawn
+                </span>
+              )}
               {/* Reason (WHY) and Source (WHERE FROM) are two independent facts — both are shown, and
                   neither is inferred from the other. */}
               <Badge tone={reasonTone}>{reasonLabel}</Badge>
@@ -583,6 +670,9 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, onRemind, onCance
       </div>
 
       <div className="space-y-3 p-4">
+        {/* ── The system's own answer, first: this request is settled ──────────────── */}
+        {isWithdrawn && <WithdrawnNote ctx={withdrawnCtx} at={tk.review?.reviewed_at} />}
+
         {/* ── Driver's report (expandable when long) ───────────────────────────────── */}
         {complaint && (
           <div className="rounded-lg bg-slate-50 px-3 py-2 ring-1 ring-inset ring-slate-100">
@@ -695,7 +785,7 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, onRemind, onCance
           </p>
         )}
 
-        {!isLegacy && awaitingReturn && (
+        {!isLegacy && !isWithdrawn && awaitingReturn && (
           <p className="flex items-center gap-1.5 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 ring-1 ring-inset ring-amber-200">
             <Icon.Clock className="h-3.5 w-3.5 shrink-0" />
             Waiting for return — the car is with a customer. Review it once it's back and available to inspect.
@@ -726,7 +816,20 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, onRemind, onCance
 
       {/* ── Actions ──────────────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-end gap-2 border-t border-slate-100 bg-slate-50/50 px-4 py-3">
-        {isLegacy ? (
+        {isWithdrawn ? (
+          // Nothing to decide. The only useful move left is to go and look at the car that is in the shop,
+          // so that is the only button — an Approve/Reject pair here would be offering a choice that no
+          // longer exists.
+          <>
+            <span className="mr-auto text-[11px] text-slate-400">No action needed</span>
+            <Link
+              to={`/vehicles/${tk.vehicle_id}`}
+              className="inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold text-slate-600 transition-colors hover:bg-slate-100"
+            >
+              <Icon.Car className="h-4 w-4" /> Open the car
+            </Link>
+          </>
+        ) : isLegacy ? (
           <Button variant="secondary" loading={ackBusy} onClick={() => onAcknowledge(tk)}>
             <Icon.Check className="h-4 w-4" /> Acknowledge
           </Button>
@@ -1165,6 +1268,13 @@ export default function InspectionReviewQueue() {
 
   const tickets = useMemo(() => data || [], [data]);
 
+  // Two different things arrive on this endpoint and they must never be counted as one. `awaiting` is
+  // work: requests a Controller still has to decide. `withdrawn` is news: requests the system already
+  // settled because the car went into the workshop on an OM maintenance contract — kept visible for a
+  // week so the card doesn't just vanish from under whoever saw it yesterday.
+  const awaiting = useMemo(() => tickets.filter((t) => !t.review?.is_system_withdrawal), [tickets]);
+  const withdrawn = useMemo(() => tickets.filter((t) => t.review?.is_system_withdrawal), [tickets]);
+
   // Deep-link focus — the Action Center links here as /inspection-review?ticket=<id> when a Controller
   // clicks "Review Request" on a maint_review_pending alert. Scroll that exact card into view and pulse
   // a highlight ring so they land on the right request, not the top of a long queue.
@@ -1254,7 +1364,7 @@ export default function InspectionReviewQueue() {
           <div>
             <div className="opx-hint" style={{ letterSpacing: '.16em', textTransform: 'uppercase', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 10 }}>
               Controller Approval Gate
-              {!loading && <span style={{ color: 'var(--cyan)', fontWeight: 700 }}>· {tickets.length} awaiting</span>}
+              {!loading && <span style={{ color: 'var(--cyan)', fontWeight: 700 }}>· {awaiting.length} awaiting</span>}
             </div>
             <h1 className="font-display" style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-.02em', color: 'var(--ink)', margin: 0 }}>Inspection Review Queue</h1>
             <p style={{ marginTop: 6, fontSize: 13.5, color: 'var(--ink-3)' }}>Requests awaiting Controller approval before they reach Abu Maroof.</p>
@@ -1284,24 +1394,69 @@ export default function InspectionReviewQueue() {
           />
         ) : (
           <>
-          {/* Analytics — the shape of the queue, before the request cards. */}
-          <InspectionReviewAnalytics tickets={tickets} />
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            {tickets.map((tk) => (
-              <RequestCard
-                key={tk.id}
-                tk={tk}
-                onApprove={(t) => setModal({ action: 'approve', ticket: t })}
-                onReject={(t) => setModal({ action: 'reject', ticket: t })}
-                onAcknowledge={onAcknowledge}
-                onRemind={(t) => setModal({ action: 'remind', ticket: t })}
-                onCancelReminder={onCancelReminder}
-                ackBusy={ackBusyId === tk.id}
-                remindBusy={remindBusyId === tk.id}
-                highlight={highlightId === tk.id}
-              />
-            ))}
-          </div>
+          {awaiting.length === 0 ? (
+            <EmptyState
+              icon={<Icon.Check className="h-7 w-7" />}
+              title="All caught up"
+              message="No inspection requests are waiting for review."
+            />
+          ) : (
+            <>
+              {/* Analytics — the shape of the queue, before the request cards. Withdrawn requests are
+                  excluded: they are not a backlog and would distort every count on it. */}
+              <InspectionReviewAnalytics tickets={awaiting} />
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                {awaiting.map((tk) => (
+                  <RequestCard
+                    key={tk.id}
+                    tk={tk}
+                    onApprove={(t) => setModal({ action: 'approve', ticket: t })}
+                    onReject={(t) => setModal({ action: 'reject', ticket: t })}
+                    onAcknowledge={onAcknowledge}
+                    onRemind={(t) => setModal({ action: 'remind', ticket: t })}
+                    onCancelReminder={onCancelReminder}
+                    ackBusy={ackBusyId === tk.id}
+                    remindBusy={remindBusyId === tk.id}
+                    highlight={highlightId === tk.id}
+                  />
+                ))}
+              </div>
+            </>
+          )}
+
+          {/* Settled by the system — below the work, never mixed into it. */}
+          {withdrawn.length > 0 && (
+            <div className="space-y-3 pt-2">
+              <div className="flex items-center gap-3">
+                <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-violet-500">
+                  <Icon.Invoice className="h-3.5 w-3.5" />
+                  Withdrawn — already in maintenance
+                  <span className="rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] text-violet-700">{withdrawn.length}</span>
+                </span>
+                <span className="h-px flex-1 bg-slate-200" />
+              </div>
+              <p className="text-xs text-slate-500">
+                OfficeManager opened a maintenance contract on these cars after the request was raised, so the
+                system withdrew it — nothing to decide. They disappear from here after a week.
+              </p>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                {withdrawn.map((tk) => (
+                  <RequestCard
+                    key={tk.id}
+                    tk={tk}
+                    onApprove={(t) => setModal({ action: 'approve', ticket: t })}
+                    onReject={(t) => setModal({ action: 'reject', ticket: t })}
+                    onAcknowledge={onAcknowledge}
+                    onRemind={(t) => setModal({ action: 'remind', ticket: t })}
+                    onCancelReminder={onCancelReminder}
+                    ackBusy={ackBusyId === tk.id}
+                    remindBusy={remindBusyId === tk.id}
+                    highlight={highlightId === tk.id}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
           </>
         )}
       </div>

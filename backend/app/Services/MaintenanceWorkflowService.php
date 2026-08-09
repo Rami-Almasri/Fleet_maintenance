@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Exceptions\WorkflowTransitionException;
+use App\Models\Contract;
 use App\Models\FaultCause;
 use App\Models\InspectorPadFlag;
 use App\Models\Maintenance;
@@ -144,6 +145,13 @@ class MaintenanceWorkflowService
 
     /** The role that coordinates drivers — auto-watched (and alerted) on any prioritised ticket. */
     private const SUPERVISOR_ROLE = 'supervisor';
+
+    /**
+     * How long a system-withdrawn request keeps showing in the review queue as a notice. Long enough that
+     * a Controller who saw the card before a weekend still learns what happened to it; short enough that
+     * the queue stays a list of decisions to make, not an archive.
+     */
+    private const WITHDRAWN_NOTICE_DAYS = 7;
 
     /**
      * Whether the auto-generated closing summary inlines the final repair cost. Kept OFF while the
@@ -1028,13 +1036,26 @@ class MaintenanceWorkflowService
                     $q2->where('workflow_status', Maintenance::WF_INSPECTION_REQUESTED)
                         ->whereNull('requested_by')
                         ->whereNull('reviewed_by');
+                })
+                // Requests the SYSTEM withdrew because the car went into the workshop under an OM
+                // maintenance contract. They need no decision — they are here so the Controller who saw
+                // the card yesterday finds out what happened to it instead of watching it disappear.
+                // They age out after a week: it is a notice, not a backlog.
+                ->orWhere(function ($q3) {
+                    $q3->where('workflow_status', Maintenance::WF_REVIEW_REJECTED)
+                        ->whereIn('review_rejection_code', array_keys(Maintenance::REVIEW_SYSTEM_WITHDRAWAL_REASONS))
+                        ->where('reviewed_at', '>=', Carbon::now()->subDays(self::WITHDRAWN_NOTICE_DAYS));
                 });
         })
             // Load the driver's attached evidence (photo/video) too, so the reviewer sees what the driver
             // saw right on the queue card — not just the count. Only this queue needs it inline.
             ->with(array_merge($this->eager(), ['media']))
             ->orderByDesc('requested_at')
-            ->get();
+            ->get()
+            // Decisions first, notices after. A withdrawn request is news, not work, and must never push a
+            // request that still needs a Controller below the fold just because it is newer.
+            ->sortBy(fn ($t) => $t->workflow_status === Maintenance::WF_REVIEW_REJECTED ? 1 : 0)
+            ->values();
 
         // Attach each car's last REAL inspection/test-drive (before this request) so the reviewer can see
         // when it was last looked at — and what was found — before approving yet another inspection.
@@ -1333,6 +1354,157 @@ class MaintenanceWorkflowService
             }
 
             return $ticket->load($this->eager());
+        });
+    }
+
+    /**
+     * The car went into the workshop while its request was still waiting to be reviewed — withdraw it.
+     *
+     * THE BUG THIS CLOSES. The Proactive Diagnostic Monitor flags a car for a test drive at 07:30 and the
+     * request lands in the Controllers' queue. A day (or a week) later OfficeManager opens a maintenance
+     * contract (type U) on that same car: it is now physically in the workshop, and every other screen in
+     * the system says "In Maintenance". Only the review queue never heard — so a Controller still sees a
+     * live "Needs Test Drive" card and is asked to decide about a car that has already gone. Rejecting it
+     * by hand is not a decision anybody should have to make; the fact already decided it.
+     *
+     * So the system withdraws it, and — because a card that vanishes silently is just a different kind of
+     * lie — it records WHICH contract did it (number, opened-at, customer) in `review_auto_context`, and
+     * the queue keeps showing the request for a week as a withdrawn card carrying that note.
+     *
+     * Only `pending_review` requests are touched. Anything a human already approved is a real ticket with
+     * an Inspector attached and is none of this method's business, and a car whose ONLY open maintenance
+     * contract is the one this very workflow opened at dispatch is not "already in maintenance" — it is
+     * this request, later. Both are excluded below.
+     *
+     * Idempotent: runs after every contract sync, withdraws nothing on the second pass.
+     *
+     * @return int how many requests were withdrawn
+     */
+    public function withdrawRequestsForMaintenanceContracts(): int
+    {
+        $pending = Maintenance::where('workflow_status', Maintenance::WF_PENDING_REVIEW)
+            ->whereNotNull('vehicle_id')
+            ->with('vehicle')
+            ->get();
+
+        if ($pending->isEmpty()) {
+            return 0;
+        }
+
+        // One query for every open maintenance contract on the affected cars — newest first, so a car with
+        // more than one open U contract is explained by the one that actually put it in the shop today.
+        $contracts = Contract::where('contract_type', 'U')
+            ->currentlyOpen()
+            ->whereIn('vehicle_id', $pending->pluck('vehicle_id')->unique()->all())
+            ->with('customer:id,name_en')
+            ->orderByDesc('out_date')
+            ->orderByDesc('id')
+            ->get()
+            ->groupBy('vehicle_id');
+
+        $withdrawn = 0;
+        foreach ($pending as $ticket) {
+            $contract = ($contracts[$ticket->vehicle_id] ?? collect())->first(
+                // Never withdraw a request because of the contract its own ticket opened downstream.
+                fn ($c) => $c->id !== $ticket->linked_contract_id
+            );
+            if (! $contract) {
+                continue;
+            }
+
+            if ($this->withdrawOneForMaintenanceContract($ticket, $contract)) {
+                $withdrawn++;
+            }
+        }
+
+        return $withdrawn;
+    }
+
+    /**
+     * Withdraw ONE pending request against ONE open maintenance contract, under a row lock so a Controller
+     * clicking Approve at the same moment as the sync cannot lose the race half-way. If the Controller got
+     * there first the ticket is no longer `pending_review` and we leave it entirely alone — a human decision
+     * outranks this one.
+     */
+    private function withdrawOneForMaintenanceContract(Maintenance $ticket, Contract $contract): bool
+    {
+        return DB::transaction(function () use ($ticket, $contract) {
+            $locked = Maintenance::where('id', $ticket->id)->lockForUpdate()->first();
+            if (! $locked || $locked->workflow_status !== Maintenance::WF_PENDING_REVIEW) {
+                return false; // a human decided it first
+            }
+
+            $openedAt = $contract->out_date ? Carbon::parse($contract->out_date) : null;
+            $customer = $contract->customer?->name_en;
+            $sentence = 'OfficeManager opened maintenance contract '
+                . ($contract->contract_no ? '#' . $contract->contract_no : '#' . $contract->id)
+                . ($openedAt ? ' on ' . $openedAt->format('d M Y') : '')
+                . ' — the car is already in maintenance.';
+
+            $locked->workflow_status         = Maintenance::WF_REVIEW_REJECTED;
+            // reviewed_by stays NULL on purpose: nobody reviewed this. Attributing it to a user would put a
+            // decision in a person's name that they never made.
+            $locked->reviewed_by             = null;
+            $locked->reviewed_at             = Carbon::now();
+            $locked->review_rejection_code   = Maintenance::REVIEW_REJECT_IN_MAINTENANCE_CONTRACT;
+            $locked->review_rejection_reason = $sentence;
+            // The evidence, so the note on the card is checkable rather than a claim.
+            $locked->review_auto_context     = array_filter([
+                'source'         => 'om_maintenance_contract',
+                'contract_id'    => $contract->id,
+                'contract_no'    => $contract->contract_no,
+                'contract_type'  => $contract->contract_type,
+                'opened_at'      => $openedAt?->toIso8601String(),
+                'customer'       => $customer,
+                'withdrawn_at'   => Carbon::now()->toIso8601String(),
+            ], fn ($v) => $v !== null && $v !== '');
+            $locked->save();
+            $ticket = $locked;
+
+            $this->cascade($ticket->vehicle_id);
+
+            // Nobody is waiting on this request any more — retire its "look at it again" reminders, exactly
+            // as a human rejection does.
+            $this->reviewReminders->cancelOnDecision($ticket);
+
+            $this->log->record($ticket, VehicleLogEvent::EVENT_REVIEW_REJECTED, null, [
+                'description' => 'Inspection request withdrawn by the system: ' . $sentence,
+                'meta'        => [
+                    'auto'             => true,
+                    'rejection_code'   => Maintenance::REVIEW_REJECT_IN_MAINTENANCE_CONTRACT,
+                    'contract_id'      => $contract->id,
+                    'contract_no'      => $contract->contract_no,
+                ],
+            ]);
+
+            // Retire the "awaiting review" ping from every Controller's bell. Leaving it there would send
+            // them to a card whose whole message is that there is nothing to do — the alert asked for a
+            // decision that no longer exists. (Scoped to this withdrawal; the human approve/reject paths
+            // are untouched.)
+            $this->notifier->resolveKeyForOthers('maint_wf:' . $ticket->id . ':pending_review');
+
+            // Tell the human who raised it (if a human did) that their request is no longer waiting — a
+            // system-raised request has no requester to tell.
+            if ($ticket->requested_by) {
+                $requester = User::find($ticket->requested_by);
+                if ($requester) {
+                    $vehicle = $ticket->loadMissing('vehicle')->vehicle;
+                    $this->notifier->notifyUser($requester, [
+                        'type'     => 'maint_review_withdrawn',
+                        'category' => 'maintenance',
+                        'severity' => 'info',
+                        'title'    => 'Your inspection request was withdrawn · ' . $this->label($vehicle),
+                        'body'     => $sentence,
+                        'url'      => $this->link($ticket),
+                        'key'      => 'maint_wf:' . $ticket->id . ':review_withdrawn',
+                        'icon'     => 'wrench',
+                        // Deep-links the bell straight to the card carrying the contract note.
+                        'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no, 'contract_no' => $contract->contract_no],
+                    ]);
+                }
+            }
+
+            return true;
         });
     }
 

@@ -673,6 +673,31 @@ class Maintenance extends Model
         self::REVIEW_REJECT_OTHER              => 'Other reason',
     ];
 
+    /**
+     * SYSTEM-ONLY withdrawal reasons — deliberately NOT in REVIEW_REJECTION_REASONS above.
+     *
+     * A reviewer can never pick these (the reject validator only accepts the human list), because they are
+     * not opinions: they are facts the system observed after the request was raised, which make the request
+     * moot before anyone gets to it. They still land in `review_rejection_code`, so anything counting
+     * rejections reads them the same way — but a report can separate "a Controller said no" from "reality
+     * moved on" by checking membership here.
+     *
+     *   in_maintenance_contract — OfficeManager opened a maintenance contract (type U) on the car. The car
+     *   is already in the workshop; asking a Controller to approve a test drive for it is asking about a
+     *   car that has already gone. See MaintenanceWorkflowService::withdrawRequestsForMaintenanceContracts().
+     */
+    public const REVIEW_REJECT_IN_MAINTENANCE_CONTRACT = 'in_maintenance_contract';
+
+    public const REVIEW_SYSTEM_WITHDRAWAL_REASONS = [
+        self::REVIEW_REJECT_IN_MAINTENANCE_CONTRACT => 'Already in maintenance (OfficeManager contract)',
+    ];
+
+    /** True when a stored rejection code was written by the system, not chosen by a reviewer. */
+    public static function isSystemWithdrawal(?string $code): bool
+    {
+        return $code !== null && array_key_exists($code, self::REVIEW_SYSTEM_WITHDRAWAL_REASONS);
+    }
+
     /** The sentence for a stored code — falls back to the raw code so an unknown value is never hidden. */
     public static function reviewRejectionLabel(?string $code): ?string
     {
@@ -680,7 +705,9 @@ class Maintenance extends Model
             return null;
         }
 
-        return self::REVIEW_REJECTION_REASONS[$code] ?? $code;
+        return self::REVIEW_REJECTION_REASONS[$code]
+            ?? self::REVIEW_SYSTEM_WITHDRAWAL_REASONS[$code]
+            ?? $code;
     }
 
     /**
@@ -894,6 +921,7 @@ class Maintenance extends Model
         // Inspection Request Review Gate — Controller (Lin & Marwa) sign-off before the request is
         // sent to the Inspector.
         'reviewed_by', 'reviewed_at', 'review_notes', 'review_rejection_reason', 'review_rejection_code', 'review_sent_at',
+        'review_auto_context',
         'follow_ups',
         // Stage-timing anchors — durations are subtraction over these (see migration).
         'test_started_at', 'returned_at',
@@ -961,6 +989,7 @@ class Maintenance extends Model
         'findings'             => 'array',
         'suggested_findings'   => 'array',
         'trigger_detail'       => 'array', // snapshot of WHY the system raised a periodic request (see systemRequestInspection)
+        'review_auto_context'  => 'array', // the contract facts behind a SYSTEM withdrawal (see REVIEW_SYSTEM_WITHDRAWAL_REASONS)
         'follow_ups'           => 'array',
         'test_odometer'        => 'integer',
         'report_odometer'      => 'integer',
