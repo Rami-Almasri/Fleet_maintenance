@@ -250,7 +250,7 @@ export const INBOX_CATEGORIES = [
     icon: 'wrench',
     blurb: 'Cars awaiting a test drive or re-inspection',
     empty: 'No test-drive notifications',
-    types: ['maint_review_pending', 'maint_review_approved', 'maint_review_rejected', 'maint_inspection_requested', 'maint_ready_reinspect', 'maint_reinspection_failed'],
+    types: ['maint_review_pending', 'maint_review_reminder', 'maint_review_approved', 'maint_review_rejected', 'maint_review_withdrawn', 'maint_inspection_requested', 'maint_ready_reinspect', 'maint_reinspection_failed'],
   },
 ];
 
@@ -392,7 +392,11 @@ export const LANES = [
     permission: 'maintenance.manage',
     blurb: 'The system suggests a car needs a test — approve or reject the request',
     empty: 'No test requests to approve',
-    types: ['maint_review_pending'],
+    // `maint_review_reminder` belongs here and not in a lane of its own: it IS a request awaiting this
+    // Controller's decision — the only difference is that they asked to be told about it later rather
+    // than being told about it when it arrived. A reminder that lands in a lane the reviewer doesn't
+    // watch is a reminder that did not happen.
+    types: ['maint_review_pending', 'maint_review_reminder'],
   },
   {
     key: 'test_interrupted',
@@ -435,6 +439,7 @@ export const TYPE_LABEL = {
   rental_expiring: 'Rental Expiring',
   overdue_maintenance: 'Overdue Maintenance',
   maint_checkpoint: 'Maintenance Progress',
+  maint_review_reminder: 'Reminder You Set',
   maint_invoice_missing: 'Invoice Not Entered',
   maintenance_back_open: 'Return Reconciliation',
   booking_in_maintenance: 'Booking In Maintenance',
@@ -575,6 +580,9 @@ export const ACTION_LABEL = {
   maint_ready_for_pickup: 'Go to Pickup',
   // Controller (Lin)
   maint_review_pending: 'Review Request',
+  // The reminder they set on themselves — the verb is the same, because the job is the same.
+  maint_review_reminder: 'Review Request',
+  maint_review_withdrawn: 'See why',
   maint_test_interrupted: 'Review Ticket',
 };
 
@@ -585,6 +593,9 @@ export const ACTION_LABEL = {
 // so it also corrects notifications already stored with the old url.
 export const ACTION_TARGET = {
   maint_review_pending: '/inspection-review',
+  // "Your request was withdrawn" — the queue is where the reason lives (which contract took the car, when
+  // it opened, for whom). The ticket view can only show that it ended, not why.
+  maint_review_withdrawn: '/inspection-review',
 };
 
 // The place a notification's action button should navigate to: the per-type override if any, else the
@@ -595,7 +606,7 @@ export const ACTION_TARGET = {
 // top of a long list to hunt for it.
 export const actionTarget = (n) => {
   const base = ACTION_TARGET[n?.type] || n?.url || null;
-  if (base && n?.type === 'maint_review_pending') {
+  if (base && (n?.type === 'maint_review_pending' || n?.type === 'maint_review_withdrawn')) {
     const ticket = n?.meta?.ticket_id;
     if (ticket) return `/inspection-review?ticket=${ticket}`;
   }

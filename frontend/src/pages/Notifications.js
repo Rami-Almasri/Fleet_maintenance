@@ -81,11 +81,26 @@ export default function Notifications() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState('');
 
+  // The types the ACTIVE lane is made of, sent to the server so the lane filters the whole feed rather
+  // than just the page that happens to be loaded.
+  //
+  // This was the bug: lanes used to be a purely client-side bucketing of the 15 rows fetched so far, so
+  // on a busy account (a thousand-plus unread alerts, fifteen per page) opening a lane to find one
+  // specific alert showed "nothing here" — the row existed, six pages down, and the lane never saw it.
+  // A quiet lane and an unfetched lane looked identical. `all` sends nothing and keeps the full feed.
+  const activeLaneTypes = useMemo(() => {
+    if (activeTab === 'all' || activeTab === 'other') return null;
+    const lane = lanes.find((l) => l.key === activeTab);
+    return lane?.types?.length ? lane.types.join(',') : null;
+  }, [activeTab, lanes]);
+
   const fetchPage = useCallback(async (p, replace) => {
     p === 1 ? setLoading(true) : setLoadingMore(true);
     setError('');
     try {
-      const { data } = await api.get('/notifications', { params: { filter, page: p } });
+      const params = { filter, page: p };
+      if (activeLaneTypes) params.types = activeLaneTypes;
+      const { data } = await api.get('/notifications', { params });
       const payload = data.data || {};
       setMeta({ last_page: payload.last_page || 1, total: payload.total || 0 });
       setItems((prev) => (replace ? payload.items : [...prev, ...(payload.items || [])]));
@@ -95,9 +110,10 @@ export default function Notifications() {
       setLoading(false);
       setLoadingMore(false);
     }
-  }, [filter]);
+  }, [filter, activeLaneTypes]);
 
-  // (Re)load from the top whenever the read filter changes.
+  // (Re)load from the top whenever the read filter OR the selected lane changes — switching lane is now
+  // a new server query, not a re-slice of what is already in memory.
   useEffect(() => { setPage(1); fetchPage(1, true); }, [fetchPage]);
 
   const loadMore = () => {
@@ -200,6 +216,15 @@ export default function Notifications() {
   }, [tabs, lanes]);
 
   // Per-tab counts feed the badge on each pill ("Complaints · 3").
+  //
+  // They are counted from the LOADED feed, which is only ever the pages fetched so far — so they have
+  // always been "at least this many", not a total. What changed is that a lane is now a server-side
+  // filter, so while one lane is selected the feed holds only that lane's rows and every other chip
+  // would count to zero. A chip reading 0 is a claim ("that lane is empty"), and it would be a false
+  // one, so the badges are frozen at the last unfiltered snapshot instead of being recomputed from a
+  // feed that cannot see the other lanes. Selecting `all` refreshes them.
+  const [laneCounts, setLaneCounts] = useState({ counts: { all: 0 }, unread: { all: 0 } });
+
   const countsByTab = useMemo(() => {
     const counts = { all: 0 };
     const unread = { all: 0 };
@@ -214,6 +239,13 @@ export default function Notifications() {
     }
     return { counts, unread };
   }, [items, laneKeys]);
+
+  // Only an unfiltered feed can speak for every lane.
+  useEffect(() => {
+    if (!activeLaneTypes) setLaneCounts(countsByTab);
+  }, [activeLaneTypes, countsByTab]);
+
+  const chipCounts = activeLaneTypes ? laneCounts : countsByTab;
 
   // Fall back to "All" if the active type-tab no longer exists (e.g. all its
   // notifications were dismissed or the filter changed).
@@ -366,8 +398,8 @@ export default function Notifications() {
                   key={t.key}
                   tab={t}
                   active={activeTab === t.key}
-                  count={countsByTab.counts[t.key] || 0}
-                  unread={countsByTab.unread[t.key] || 0}
+                  count={chipCounts.counts[t.key] || 0}
+                  unread={chipCounts.unread[t.key] || 0}
                   onClick={() => setActiveTab(t.key)}
                 />
               );

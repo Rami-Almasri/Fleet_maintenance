@@ -193,6 +193,28 @@ class InspectionReviewReasonAndReminderTest extends CrudTestCase
             ->where('status', ReviewReminder::STATUS_CANCELLED)->count());
     }
 
+    public function test_the_promised_time_survives_the_row_being_updated(): void
+    {
+        // REGRESSION. `remind_at` was first written as a `timestamp`, and MariaDB/MySQL silently gives
+        // the first non-nullable TIMESTAMP column in a table `ON UPDATE CURRENT_TIMESTAMP`. Marking a
+        // reminder sent then rewrote the very time it was promised for, so the record of what the
+        // reviewer asked for was destroyed by the act of honouring it. The column is DATETIME now, and
+        // this test is what stops it drifting back: touch the row, and the promise must not move.
+        $ticket = $this->pendingRequest();
+        $this->postJson("/api/maintenance-tickets/{$ticket->id}/review/remind", ['preset' => '4h'])->assertSuccessful();
+
+        $reminder = ReviewReminder::where('maintenance_id', $ticket->id)->firstOrFail();
+        $promised = $reminder->remind_at->toDateTimeString();
+
+        $reminder->forceFill(['status' => ReviewReminder::STATUS_SENT, 'sent_at' => Carbon::now()])->save();
+        $this->assertSame($promised, $reminder->refresh()->remind_at->toDateTimeString());
+
+        // The query-builder path (cancelOnDecision / cancelForUser) writes the same way and must not
+        // move it either.
+        ReviewReminder::where('id', $reminder->id)->update(['status' => ReviewReminder::STATUS_CANCELLED]);
+        $this->assertSame($promised, $reminder->refresh()->remind_at->toDateTimeString());
+    }
+
     public function test_a_reminder_in_the_past_is_refused(): void
     {
         $ticket = $this->pendingRequest();
@@ -316,6 +338,56 @@ class InspectionReviewReasonAndReminderTest extends CrudTestCase
 
         // Nothing half-applied: the request is still awaiting review.
         $this->assertSame(Maintenance::WF_PENDING_REVIEW, $ticket->refresh()->workflow_status);
+    }
+
+    public function test_the_reminder_alert_is_findable_by_its_lane_however_deep_the_feed(): void
+    {
+        // The reported bug: the reminder arrived, then vanished. It had not vanished — it was buried
+        // under a thousand newer alerts, fifteen to a page, while the Action Center bucketed lanes from
+        // only the page it had loaded. Filtering by type must reach the whole feed, not the page.
+        $ticket = $this->pendingRequest();
+        $this->postJson("/api/maintenance-tickets/{$ticket->id}/review/remind", ['preset' => '30m'])->assertSuccessful();
+
+        $reminder = ReviewReminder::where('maintenance_id', $ticket->id)->firstOrFail();
+        $reminder->forceFill(['remind_at' => Carbon::now()->subMinute()])->save();
+        Artisan::call('review-reminders:dispatch');
+
+        // Age the reminder deliberately. A test runs inside a single second, so "created later" is a tie
+        // the database breaks arbitrarily — the burial has to be made real, not assumed.
+        \Illuminate\Support\Facades\DB::table('notifications')
+            ->where('data', 'like', '%maint_review_reminder%')
+            ->update(['created_at' => Carbon::now()->subHour()]);
+
+        // Bury it: enough unrelated, NEWER alerts to push it well past the first page.
+        for ($i = 0; $i < 40; $i++) {
+            $this->admin->notify(new \App\Notifications\FleetAlert([
+                'type' => 'rental_expiring', 'category' => 'rental', 'severity' => 'info',
+                'title' => 'Noise ' . $i, 'body' => 'x', 'key' => 'noise:' . $i,
+            ]));
+        }
+
+        // Unfiltered, page 1 cannot see it any more.
+        $all = $this->getJson('/api/notifications?filter=unread&page=1');
+        $all->assertSuccessful();
+        $this->assertNotContains(
+            'maint_review_reminder',
+            collect($all->json('data.items'))->pluck('type')->all(),
+            'the fixture must actually bury the reminder, or this test proves nothing',
+        );
+
+        // Filtered to its lane, it is the first thing you see.
+        $lane = $this->getJson('/api/notifications?filter=unread&page=1&types=maint_review_pending,maint_review_reminder');
+        $lane->assertSuccessful();
+        $this->assertContains('maint_review_reminder', collect($lane->json('data.items'))->pluck('type')->all());
+    }
+
+    public function test_an_unmatchable_type_filter_returns_nothing_rather_than_everything(): void
+    {
+        $this->pendingRequest();
+
+        $res = $this->getJson('/api/notifications?filter=all&page=1&types=no_such_alert_type');
+        $res->assertSuccessful();
+        $this->assertSame(0, $res->json('data.total'));
     }
 
     // ── The dispatcher ────────────────────────────────────────────────────────────────────────────

@@ -61,8 +61,10 @@ class NotificationCategories
         // Test-drive / re-inspection events — the Inspector is asked to road-test a car.
         'test_drive' => [
             'maint_review_pending',       // Inspection Request Review Gate: awaiting Controller (Lin/Marwa) approval
+            'maint_review_reminder',      // a Controller's own "remind me later" on a request in that gate
             'maint_review_approved',      // review approved → sent to the Inspector
             'maint_review_rejected',      // review rejected → nothing sent
+            'maint_review_withdrawn',     // the system withdrew the request — the car is already in maintenance (OM contract)
             'maint_inspection_requested', // "this car needs a test drive" (Driver request or periodic)
             'maint_ready_reinspect',      // repair finished → single-shot re-inspection (a test drive)
             'maint_reinspection_failed',  // a re-inspection failed → back for another look

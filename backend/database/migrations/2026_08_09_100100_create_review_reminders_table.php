@@ -44,14 +44,24 @@ return new class extends Migration
             $table->string('kind', 24)->default('pending_review');
 
             // THE MOMENT. Stored, not derived — that is the whole point of this table.
-            $table->timestamp('remind_at');
+            //
+            // dateTime, NOT timestamp, and this is load-bearing. MariaDB/MySQL with
+            // explicit_defaults_for_timestamp=OFF silently gives the FIRST non-nullable TIMESTAMP column
+            // in a table `DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`. As a `timestamp` this
+            // column got exactly that — so marking a reminder sent, or cancelling it, overwrote the
+            // promised time with "now" and destroyed the only record of what the reviewer actually asked
+            // for. (It also wrote the DB session's local time into a column the app reads as UTC, which
+            // is how it surfaced: rows reading 14:39 that had fired at 11:39.) DATETIME carries no such
+            // implicit behaviour. The others are dateTime too, so no future column reshuffle can inherit
+            // the same trap by becoming "the first timestamp column".
+            $table->dateTime('remind_at');
             // What the reviewer wants to be reminded about, in their own words. Optional.
             $table->text('note')->nullable();
 
             // pending → sent, or → cancelled (by hand, or automatically when the request is decided).
             $table->string('status', 16)->default('pending');
-            $table->timestamp('sent_at')->nullable();
-            $table->timestamp('cancelled_at')->nullable();
+            $table->dateTime('sent_at')->nullable();
+            $table->dateTime('cancelled_at')->nullable();
             // Why it stopped mattering: 'reviewed' (someone decided the request), 'by_user', 'ticket_gone'.
             $table->string('cancelled_reason', 32)->nullable();
 

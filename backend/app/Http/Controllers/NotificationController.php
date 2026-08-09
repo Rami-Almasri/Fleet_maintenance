@@ -108,6 +108,43 @@ class NotificationController extends Controller
     }
 
     /**
+     * Narrow a notifications query to an explicit set of alert `type`s (the Action Center's lanes).
+     *
+     * Accepts `types=a,b,c` or `types[]=a&types[]=b`. Capped at 60 — the whole catalogue is around that
+     * size, so anything longer is a malformed request rather than a real lane, and the cap keeps a
+     * hostile caller from building an unbounded IN list.
+     *
+     * A present-but-unmatchable list matches NOTHING rather than everything. Only index() uses this
+     * today, where the cost of getting it wrong is merely a wrong list — but inCategory() next to it is
+     * also wired into the destructive clear() path, and "a bad parameter quietly means all rows" is how
+     * a user loses their entire feed. Both filters fail closed so that reuse stays safe.
+     *
+     * @template T of \Illuminate\Database\Eloquent\Builder|\Illuminate\Database\Eloquent\Relations\Relation
+     * @param  T  $query
+     * @return T
+     */
+    private function ofTypes($query, mixed $types)
+    {
+        if ($types === null || $types === '') {
+            return $query;
+        }
+
+        $list = collect(is_array($types) ? $types : explode(',', (string) $types))
+            ->map(fn ($t) => trim((string) $t))
+            ->filter()
+            ->unique()
+            ->take(60)
+            ->values()
+            ->all();
+
+        if (empty($list)) {
+            return $query->whereRaw('1 = 0');
+        }
+
+        return $query->whereIn('data->type', $list);
+    }
+
+    /**
      * Paginated history for the full notifications page.
      * Query: ?filter=all|unread  &  ?category=routine|complaints|test_drive  &  ?page=N  (15 per page).
      */
@@ -121,6 +158,15 @@ class NotificationController extends Controller
         }
 
         $this->inCategory($query, $request->query('category'));
+
+        // Narrow to an explicit list of alert types — what the Action Center's LANE picker sends.
+        //
+        // WHY THIS EXISTS: the page used to fetch 15 rows and then bucket them into lanes in the
+        // browser. That silently breaks the moment a feed is bigger than a page: a user with a
+        // thousand unread alerts would open the lane holding the one alert they were looking for and
+        // be told it was empty, because the row simply wasn't in the fifteen that had been fetched.
+        // A lane must filter the FEED, not the page. Unknown/empty list is a no-op.
+        $this->ofTypes($query, $request->query('types'));
 
         $page = $query->paginate(15);
 
