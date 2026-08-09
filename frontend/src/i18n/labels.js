@@ -2014,6 +2014,10 @@ const en = {
         // (a note), so a passing remark never opens an inspection ticket on its own.
         observation:       { label: 'I just noticed something about it',   sub: 'I tried it or rode in it — logging a note, not a repair request' },
       },
+      // Office voice — the Controller's own call, shown only to maintenance.manage (Lin & Marwa) and
+      // admins. Deliberately OUTSIDE the `driver` block: nothing happened to her, she decided the car is
+      // due a look. Not a trigger reason — it posts the Controller request as a proactive test drive.
+      office: { label: 'I think it needs a test now', sub: 'Nobody reported it and the system didn’t flag it — I still want it checked' },
     },
     type: {
       label: 'Maintenance type',
@@ -2053,6 +2057,7 @@ const en = {
       notesForInspector: 'Notes for the inspector (optional)',
       observationNote: 'What did you notice?',
       observationSubmit: 'Record note',
+      officeRequestSubmit: 'Send to inspector',
       followNote: 'Follow-up note',
       findingsTapAll: 'Findings — tap every issue you spotted',
       inspectChecklistTitle: 'Safety check — inspect these',
@@ -2318,6 +2323,9 @@ const en = {
       requestHideMaintenance: 'Cars already in maintenance are hidden — they’re being handled, so you can’t flag them again here.',
       // Advisory eligibility line (not a hard block — the Controller still reviews every request).
       requestEligibility: 'Only log a car you’ve actually been in — you drove it, tried it, or rode in it. If you only saw it from the outside, please don’t submit here.',
+      // Shown in place of the eligibility line when the office choice is picked: it says what changes,
+      // namely that this one does not wait in the review queue (she is the one who reviews it).
+      officeRequest: 'This is your own call, so it doesn’t wait for review — it goes straight to the inspector and he’s notified now.',
       observationBanner: 'This is recorded as a Driver Observation — an internal note on the car, not a repair request. It won’t open a maintenance ticket unless you ask for an inspection below.',
       observationRaise: 'Raise an inspection request now — sends it to the inspection-review queue. Leave it off to just record the note.',
       startBanner: 'Start the test drive for this car. You’ll file your report and decide next.',
@@ -2798,6 +2806,7 @@ const en = {
     },
     success: {
       request: '{who}: inspection requested — the inspector has been notified.',
+      requestOffice: '{who}: sent straight to the inspector — no review needed, he’s been notified.',
       observation: 'Observation logged — it’s on the car’s record.',
       observationInspection: 'Observation logged — inspection requested.',
       start: '{who}: test drive started — file your report.',
@@ -6294,6 +6303,8 @@ const ar = {
         // مسار ثانٍ في الواجهة فقط — ليس سببًا معتمدًا في الخادم. اختياره يسجّل «ملاحظة سائق» فقط.
         observation:       { label: 'لاحظت شيئًا عنها فحسب',     sub: 'جرّبتها أو ركبت فيها — تسجيل ملاحظة، وليس طلب إصلاح' },
       },
+      // بصوت المكتب — قرار المشرفة نفسها، ويظهر فقط لمن يملك صلاحية maintenance.manage وللمشرف العام.
+      office: { label: 'أرى أنها تحتاج فحصًا الآن', sub: 'لم يبلّغ عنها أحد ولم يرصدها النظام — ومع ذلك أريد فحصها' },
     },
     type: {
       label: 'نوع الصيانة',
@@ -6333,6 +6344,7 @@ const ar = {
       notesForInspector: 'ملاحظات للمفتش (اختياري)',
       observationNote: 'ماذا لاحظت؟',
       observationSubmit: 'تسجيل الملاحظة',
+      officeRequestSubmit: 'إرسال إلى المفتش',
       followNote: 'ملاحظة متابعة',
       findingsTapAll: 'الملاحظات — اختر كل مشكلة لاحظتها',
       inspectChecklistTitle: 'فحص السلامة — افحص هذه البنود',
@@ -6591,6 +6603,7 @@ const ar = {
       requestHideMaintenance: 'السيارات التي في الصيانة أصلًا مخفيّة — يجري التعامل معها، فلا يمكنك الإبلاغ عنها مرة أخرى من هنا.',
       // سطر إرشادي للأهلية (ليس منعًا صارمًا — يراجع المشرف كل طلب).
       requestEligibility: 'سجّل فقط عن سيارة كنت فيها فعلًا — قدتها أو جرّبتها أو ركبت فيها. إن كنت رأيتها من الخارج فقط، فالرجاء عدم الإرسال من هنا.',
+      officeRequest: 'هذا قرارك أنت، لذلك لا ينتظر المراجعة — يذهب مباشرةً إلى المفتش ويُشعَر به الآن.',
       observationBanner: 'يُسجَّل هذا كـ«ملاحظة سائق» — ملاحظة داخلية على السيارة، وليست طلب إصلاح. لن يُفتح أمر صيانة إلا إذا طلبت فحصًا بالأسفل.',
       observationRaise: 'ارفع طلب فحص الآن — يُرسَل إلى قائمة مراجعة الفحوصات. اتركه دون تحديد لتسجيل الملاحظة فقط.',
       startBanner: 'ابدأ تجربة القيادة لهذه السيارة. ستُسجّل تقريرك وتقرّر بعدها.',
@@ -7049,6 +7062,7 @@ const ar = {
     },
     success: {
       request: '{who}: تم طلب الفحص — تم إشعار المفتش.',
+      requestOffice: '{who}: أُرسلت مباشرةً إلى المفتش — بلا مراجعة، وتم إشعاره.',
       observation: 'تم تسجيل الملاحظة — أُضيفت إلى سجل السيارة.',
       observationInspection: 'تم تسجيل الملاحظة — وطُلب الفحص.',
       start: '{who}: بدأت تجربة القيادة — سجّل تقريرك.',

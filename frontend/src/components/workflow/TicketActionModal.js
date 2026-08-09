@@ -42,6 +42,7 @@ import OdometerContinuityHint from './OdometerContinuityHint';
 import SignaturePad from './SignaturePad';
 import { isPaused, ORIGIN_LABEL } from './meta';
 import { useAuth } from '../../auth/AuthContext';
+import { usePermissions } from '../../hooks/usePermissions';
 
 // Enterprise Handover Workflow — CONTRACT with backend/config/maintenance_handover.php. Small, fixed
 // enums, so hardcoded client-side rather than fetched.
@@ -141,7 +142,19 @@ const INSPECTION_TRIGGER_REASONS = ['test_drive', 'periodic'];
 // it from the driver-voice form. A person here reports what they experienced (test drive) or logs an
 // observation. The planner-facing `open` form (UC-1) still offers it via INSPECTION_TRIGGER_REASONS.
 const OBSERVATION_CHOICE = 'observation';
+// UI-ONLY third path, offered ONLY to the Controllers (Lin & Marwa, maintenance.manage) and admins.
+// Everything above is written in the driver's voice — "this happened to me while I was in the car".
+// A Controller sitting in the office has no such story: she judges from the record that a car is due a
+// look. Picking this leaves the driver endpoint entirely and posts the Controller's own Stage-0 request
+// (POST /maintenance-tickets/request-inspection → requestInspectionByController), which stamps
+// request_origin = controller and skips the review gate — she IS the review authority, so a request she
+// files would only be a request she then approves. Sent as trigger_reason = test_drive: a proactive
+// inspector-led check, which is exactly what she is asking for. See [[request-origin-vs-trigger-reason]].
+const OFFICE_CHOICE = 'office_call';
 const DRIVER_REQUEST_CHOICES = ['test_drive', OBSERVATION_CHOICE];
+// The office choice is appended last: the two driver-voice options belong together, and the eligibility
+// note ("only log a car you've actually been in") applies to them, not to this one.
+const requestChoices = (canManage) => (canManage ? [...DRIVER_REQUEST_CHOICES, OFFICE_CHOICE] : DRIVER_REQUEST_CHOICES);
 // Breakdown is the SOLE classification an operator ever picks. The backend still knows all six
 // (App\Models\Maintenance::MAINTENANCE_TYPES) so historic rows keep their value and the API stays
 // compatible, but the administrative types (Routine, Insurance / Non-Insurance Incident,
@@ -563,6 +576,11 @@ function HandoverFields({
 export default function TicketActionModal({ action, ticket, vehicles = [], garages = [], findingsCatalog = [], keywordMeta = {}, faultCausesCatalog = {}, assignableDrivers = [], allowedTypes = null, onClose, onDone }) {
   const { t, tf } = useI18n();
   const { user: currentUser } = useAuth();
+  // Gates the office-voice "I think it needs a test now" choice below. maintenance.manage IS the
+  // Controller authority (Lin & Marwa); super-admin passes through can() unconditionally. Advisory
+  // only — the endpoint it posts to carries the same middleware server-side.
+  const { can } = usePermissions();
+  const canManage = can('maintenance.manage');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [stale, setStale] = useState(false); // the ticket moved on under us (concurrent edit) → offer a refresh, not a red error
@@ -641,6 +659,9 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   // ticket, and only raises an inspection request when the driver explicitly ticks the box.
   const [observationRaise, setObservationRaise] = useState(false);
   const isObservation = action === 'request' && reason === OBSERVATION_CHOICE;
+  // The Controller's own request (office judgement, not a driver's experience). `canManage` is re-checked
+  // here so the mode can never survive a user who isn't allowed to file it, even if `reason` were stale.
+  const isOfficeRequest = action === 'request' && reason === OFFICE_CHOICE && canManage;
   // "Already being looked at" — a car can be perfectly AVAILABLE and still have a live inspection
   // request on it (a request sitting in the review queue never marks the car under maintenance), so the
   // picker, which only hides cars in MAINTENANCE, still offers it. Asking the server the moment a car is
@@ -965,6 +986,12 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
         // submit() handles the (optional) follow-up inspection call; `reason` is deliberately not sent.
         if (isObservation) {
           return { url: '/driver-observations', body: { vehicle_id: Number(vehicleId), note: complaint.trim() } };
+        }
+        // Controller's own call: a different endpoint (maintenance.manage), born past the review gate in
+        // the Inspector's queue and stamped request_origin = controller. `reason` is NOT sent — office_call
+        // is a UI key, never a trigger_reason; what she is asking for is a proactive test drive.
+        if (isOfficeRequest) {
+          return { url: `${base}/request-inspection`, body: { vehicle_id: Number(vehicleId), trigger_reason: 'test_drive', notes: complaint.trim() || null } };
         }
         return { url: `${base}/request`, body: { vehicle_id: Number(vehicleId), trigger_reason: reason, customer_complaint: complaint || null } };
       case 'start':
@@ -1425,7 +1452,8 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   function successMessage() {
     const who = ticket ? (ticket.plate || `#${ticket.id}`) : 'Ticket';
     switch (action) {
-      case 'request': return t('workflow.success.request', { who });
+      // The Controller's request skips the review queue, so it says where the car actually went.
+      case 'request': return t(isOfficeRequest ? 'workflow.success.requestOffice' : 'workflow.success.request', { who });
       case 'start': return t('workflow.success.start', { who });
       case 'followup': return t('workflow.success.followup', { who });
       case 'open': return t('workflow.success.open');
@@ -1486,6 +1514,8 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   // Submit-button label: the branching steps spell out their decision; the rest use the action's submit verb.
   const submitLabel = isObservation
     ? t('workflow.field.observationSubmit')
+    : isOfficeRequest
+    ? t('workflow.field.officeRequestSubmit')
     : action === 'reinspect'
     ? (reFail ? t('workflow.reinspect.failBack') : t('workflow.reinspect.passClose'))
     : action === 'decide'
@@ -2684,7 +2714,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
             <div>
               <span className="mb-1.5 block text-sm font-medium text-slate-700">{t('workflow.reason.driverLabel')}</span>
               <div className="grid gap-2">
-                {DRIVER_REQUEST_CHOICES.map((rv) => {
+                {requestChoices(canManage).map((rv) => {
                   const active = reason === rv;
                   return (
                     <button
@@ -2697,18 +2727,30 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                         {active && <span className="h-2 w-2 rounded-full bg-indigo-600" />}
                       </span>
                       <span className="min-w-0">
-                        <span className="block text-sm font-semibold text-slate-800">{t(`workflow.reason.driver.${rv}.label`)}</span>
-                        <span className="block text-xs text-slate-500">{t(`workflow.reason.driver.${rv}.sub`)}</span>
+                        {/* office_call lives outside the driver-voice block — it is the office's own
+                            judgement, not something that happened to whoever is filling this in. */}
+                        <span className="block text-sm font-semibold text-slate-800">{t(rv === OFFICE_CHOICE ? 'workflow.reason.office.label' : `workflow.reason.driver.${rv}.label`)}</span>
+                        <span className="block text-xs text-slate-500">{t(rv === OFFICE_CHOICE ? 'workflow.reason.office.sub' : `workflow.reason.driver.${rv}.sub`)}</span>
                       </span>
                     </button>
                   );
                 })}
               </div>
               {/* Who may file this at all — advisory, not a hard gate: the Controller reviews every
-                  request before it reaches the workshop. */}
-              <p className="mt-2 rounded-lg bg-amber-50/70 px-3 py-2 text-[11px] leading-relaxed text-amber-800 ring-1 ring-inset ring-amber-500/20">
-                {t('workflow.hint.requestEligibility')}
-              </p>
+                  request before it reaches the workshop. It speaks to the driver-voice choices only:
+                  the office choice is explicitly for a car nobody here has been in, so showing
+                  "only log a car you've actually been in" alongside it would contradict itself. */}
+              {!isOfficeRequest && (
+                <p className="mt-2 rounded-lg bg-amber-50/70 px-3 py-2 text-[11px] leading-relaxed text-amber-800 ring-1 ring-inset ring-amber-500/20">
+                  {t('workflow.hint.requestEligibility')}
+                </p>
+              )}
+              {/* …and what the office choice actually does: no review queue, straight to the inspector. */}
+              {isOfficeRequest && (
+                <p className="mt-2 rounded-lg bg-indigo-50/70 px-3 py-2 text-[11px] leading-relaxed text-indigo-800 ring-1 ring-inset ring-indigo-600/15">
+                  {t('workflow.hint.officeRequest')}
+                </p>
+              )}
               {/* A customer issue is NOT an inspection request — route it to the right entity. */}
               <p className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-[11px] leading-relaxed text-slate-500 ring-1 ring-inset ring-slate-100">
                 A customer reported a problem? Log it in the <a href="/complaints" className="font-semibold text-indigo-600 hover:underline">Complaints Center</a>. Just noticed something on return? Use <a href="/driver-observations" className="font-semibold text-indigo-600 hover:underline">Driver Observations</a>.
