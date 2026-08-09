@@ -83,7 +83,10 @@ class NotificationScanner
         'booking_readiness'      => 'booking_readiness.view', // rental desk: an upcoming booking whose car needs prep
         'deferred_maintenance_return' => 'maintenance.manage', // supervisors/ops: car back from rental still owes the workshop
         'part_delivery_overdue'       => 'parts.view',          // parts desk: a purchased part is past its promised delivery date
-        'test_interrupted'            => 'maintenance.manage',   // controllers (Leen): a recommended test lapsed because the car went back on rent
+        // Keyed on the TYPE the detector emits ('maint_test_interrupted'), NOT on its notification key
+        // ('test_interrupted:<id>'). It was keyed on the latter, so this lookup missed, userMayReceive()
+        // fell through to "no mapping ⇒ open to everyone", and the alert fanned out to the whole company.
+        'maint_test_interrupted'      => 'maintenance.manage',   // controllers (Leen): a car due a test is back from hire
         'maint_invoice_missing'       => 'maintenance.checkpoint.manage', // the Checkpoint lane's owners: car left the garage, bill never arrived
         'oil_projection'              => 'reminders.manage',              // ask the customer for a mileage reading — further narrowed by an allow-list, see userMayReceive()
         'oil_decision'                => 'reminders.manage',              // the car can't finish inside the tolerance: recall it, or accept + service on return
@@ -1103,20 +1106,43 @@ class NotificationScanner
 
     /**
      * TEST INTERRUPTED — a car the system RECOMMENDED for a test (a ticket sitting in the Inspection
-     * Request Review gate, WF_PENDING_REVIEW, awaiting the Controller's approval) whose vehicle has since
-     * gone back out on rent (operational_status = 'rented') before the test could be performed. The
-     * recommendation has effectively lapsed: it can't be actioned while the car is with a customer, so
-     * Leen (maintenance.manage) is told the recommended test could not be completed.
+     * Request Review gate, WF_PENDING_REVIEW, awaiting the Controller's approval) that went out to a
+     * customer before the test could be done, AND HAS SINCE COME BACK.
      *
-     * Pure detection over existing state — no new workflow event. Keyed per ticket; the moment the car
-     * returns (no longer 'rented') OR the review is actioned (ticket leaves WF_PENDING_REVIEW) the key
-     * drops from the active set and resolveStale() clears it.
+     * The trigger is the RETURN, not the departure. An open C contract means the car is with the customer:
+     * there is nothing anyone can do about the test, so nagging about it is pure noise — the request simply
+     * waits. The moment that contract closes the car is reachable again and the request becomes actionable,
+     * and THAT is the minute worth a notification: the window is short, because a free car gets re-rented.
+     *
+     * The two conditions, in the order the query applies them:
+     *   • no CURRENTLY-OPEN 'C' contract  → the rental is over, the car is back;
+     *   • some 'C' contract RETURNED (in_date) on or after the request was raised → the car really was out
+     *     on hire while this request sat in the queue.
+     * The second is what separates this lane from an ordinary pending review. Without it every request on
+     * every parked car would alert here, duplicating the Test Approvals lane.
+     *
+     * Read off contracts rather than vehicles.operational_status on purpose: that column is derived and
+     * maintenance OUTRANKS rented (a rented car sitting in the shop reads 'maintenance'), so it cannot
+     * answer "is this car still with a customer?". The contract can.
+     *
+     * Pure detection over existing state — no new workflow event. Keyed per ticket; the key drops from the
+     * active set (and resolveStale() clears it) when the review is actioned or the car goes back out.
      */
     private function testRecommendationsInterrupted(): Collection
     {
+        $wentOutAndCameBack = function ($q) {
+            $q->where('contract_type', 'C')
+                ->whereNotNull('in_date')
+                // The rental has to have ENDED after the request was raised — a contract that closed
+                // before it says nothing about this request.
+                ->whereRaw('contracts.in_date >= DATE(COALESCE(maintenances.requested_at, maintenances.created_at))');
+        };
+
         return Maintenance::query()
             ->where('workflow_status', Maintenance::WF_PENDING_REVIEW)
-            ->whereHas('vehicle', fn ($q) => $q->where('operational_status', 'rented'))
+            // Still with the customer → silent. The request waits; there is nothing to action.
+            ->whereDoesntHave('vehicle.contracts', fn ($q) => $q->where('contract_type', 'C')->currentlyOpen())
+            ->whereHas('vehicle.contracts', $wentOutAndCameBack)
             ->with('vehicle:id,plate_no,make,model,code')
             ->orderByDesc('id')
             ->limit(self::CAP)
@@ -1128,12 +1154,12 @@ class NotificationScanner
                     'type'     => 'maint_test_interrupted',
                     'category' => 'maintenance',
                     'severity' => 'warning',
-                    'title'    => 'Test interrupted · car back with customer',
+                    'title'    => 'Test can go ahead · car is back',
                     'body'     => trim(($v && $v->code ? '#' . $v->code . ' ' : '') . $car
                                     . ($v?->plate_no ? ' (' . $v->plate_no . ')' : '')
-                                    . ' was recommended for a test, but it has gone back out on rent before the'
-                                    . ' test could be done. The recommended test could not be completed — review'
-                                    . ' the pending request.'),
+                                    . ' was recommended for a test, but it went out on rent before the test'
+                                    . ' could be done. The rental has now ended and the car is back — action'
+                                    . ' the pending request before it is rented again.'),
                     'url'      => '/maintenance-workflow/' . $m->id,
                     'key'      => 'test_interrupted:' . $m->id,
                     'icon'     => 'alert',

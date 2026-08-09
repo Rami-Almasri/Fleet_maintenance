@@ -278,8 +278,8 @@ export const inboxCategoryOf = (n) => n?.group || TYPE_TO_INBOX[n?.type] || 'oth
 // backend NotificationScanner never writes an alert to a role that can't act on
 // it), so each lane naturally fills only for the person who owns it. Any received
 // type not claimed by a *visible* lane falls to the `other` catch-all, so nothing
-// is ever hidden. Two types (maint_vehicle_received, maint_test_interrupted) are
-// wired ahead of their backend hooks — the lane simply stays empty until they fire.
+// is ever hidden. One type (maint_vehicle_received) is wired ahead of its backend
+// hook — the lane simply stays empty until it fires.
 //
 // Each lane also carries a `group` — the stage of the job it belongs to — so the
 // Action Center's lane picker can cluster them under headings instead of showing
@@ -400,7 +400,7 @@ export const LANES = [
     label: 'Test Interrupted',
     icon: 'alert',
     permission: 'maintenance.manage',
-    blurb: 'A car due for a test went back on rent and has now returned — pick it up again',
+    blurb: 'A car due for a test went out on rent and has now returned — action it before it goes out again',
     empty: 'No interrupted tests',
     types: ['maint_test_interrupted'],
   },
