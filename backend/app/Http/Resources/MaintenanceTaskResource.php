@@ -132,6 +132,8 @@ class MaintenanceTaskResource extends JsonResource
             'parts_cost'     => (float) $t->parts_cost,
             'labor_cost'     => (float) $t->labor_cost,
             'total_cost'     => round((float) $t->parts_cost + (float) $t->labor_cost, 2),
+            // DERIVED CACHE of Σ(per-attempt stint labor_hours) — see `repair_time` for the real
+            // per-attempt breakdown. (On a stint-less on-site fault it holds the single manual entry.)
             'repair_hours'   => $t->repair_hours !== null ? (float) $t->repair_hours : null,
 
             // Fix-evidence videos attached when the fault was marked fixed (short-lived signed URLs).
@@ -169,7 +171,18 @@ class MaintenanceTaskResource extends JsonResource
                 'is_open'     => $a->released_at === null,
                 'outcome'     => $a->outcome,
                 'reason'      => $a->reason,
+                // Per-attempt manual labor (mechanic's actual hours) — carried by the stint that ends
+                // the attempt; immutable history, never overwritten by a later attempt.
+                'labor_hours' => $a->labor_hours !== null ? (float) $a->labor_hours : null,
             ])->values()),
+
+            // Per-fault REPAIR TIME (Derived) — attempt segmentation + cumulative elapsed/labor from the
+            // stint ledger. `elapsed` is wall-clock garage custody INCLUDING transit (stints open at
+            // dispatch) — deliberately not called "actual repair time"; the manual labor entries are.
+            // Cumulative covers THIS occurrence only: a recurrence after a passed re-inspection is a new
+            // task row and never sums into this one. Present only when stints are eager-loaded.
+            'repair_time'    => $this->whenLoaded('assignments',
+                fn () => app(\App\Services\FaultRepairTimeService::class)->forTask($t)),
         ];
     }
 

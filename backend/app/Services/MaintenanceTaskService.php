@@ -369,6 +369,12 @@ class MaintenanceTaskService
             'confirmed_at'        => Carbon::now(),
         ])->save();
 
+        // THE PER-FAULT WORK CLOCK STARTS HERE. The technician has physically looked at THIS fault and
+        // ruled on it, so this is the first moment attributable to this fault alone — unlike the stint's
+        // assigned_at, which is the shared dispatch instant every fault on the ticket carries. Fill-if-
+        // null so re-confirming never restarts the clock. See FaultRepairTimeService.
+        $this->markWorkStarted($task);
+
         // Only a CONFIRMED fault is allowed to open a recurring-fault review case. (Confirmed is now the
         // only accepted verdict — the "not a real fault" outcome is the separate Incorrect path.)
         if ($status === MaintenanceTask::CONFIRM_CONFIRMED) {
@@ -411,7 +417,7 @@ class MaintenanceTaskService
         return $task->fresh(['repairGateBy', 'currentVendor', 'recurrencePreviousTask.currentVendor']);
     }
 
-    public function setStatus(MaintenanceTask $task, string $status, User $actor, ?string $note = null, ?int $serviceOdometer = null): MaintenanceTask
+    public function setStatus(MaintenanceTask $task, string $status, User $actor, ?string $note = null, ?int $serviceOdometer = null, ?float $laborHours = null): MaintenanceTask
     {
         if (! in_array($status, MaintenanceTask::STATUSES, true)) {
             throw new WorkflowTransitionException('Unknown task status: ' . $status, ['field' => 'status']);
@@ -461,7 +467,7 @@ class MaintenanceTaskService
             );
         }
 
-        return DB::transaction(function () use ($task, $status, $actor, $note, $serviceOdometer) {
+        return DB::transaction(function () use ($task, $status, $actor, $note, $serviceOdometer, $laborHours) {
             $resolving = in_array($status, MaintenanceTask::TERMINAL, true);
 
             // The "what was done to fix it" note, kept distinct from the fault's inspection `notes`.
@@ -477,13 +483,30 @@ class MaintenanceTaskService
                         ? MaintenanceTaskAssignment::OUTCOME_CANCELLED
                         : MaintenanceTaskAssignment::OUTCOME_RESOLVED,
                     'released_by' => $actor->id,
-                ]);
+                    // The CURRENT attempt's manual labor time (mechanic's actual hours, not wall-clock),
+                    // stamped on the stint this resolve closes — the attempt-ending stint IS the
+                    // per-attempt record, so a later failed re-inspection can never overwrite it.
+                ] + ($laborHours !== null ? [
+                    'labor_hours'       => round($laborHours, 2),
+                    'labor_recorded_by' => $actor->id,
+                    'labor_recorded_at' => Carbon::now(),
+                ] : []));
+                if ($laborHours !== null) {
+                    // repair_hours is a DERIVED CACHE of Σ(stint labor) — except for a stint-less
+                    // on-site fault, where the single manual value lives here directly (write-once).
+                    $task->repair_hours = $open
+                        ? (float) $task->assignments()->whereNotNull('labor_hours')->sum('labor_hours')
+                        : ($task->repair_hours ?? round($laborHours, 2));
+                }
                 $task->resolved_at = Carbon::now();
                 $task->resolved_by = $actor->id;
             } elseif ($status === MaintenanceTask::STATUS_IN_PROGRESS) {
                 $task->started_at = $task->started_at ?? Carbon::now();
                 $task->resolved_at = null;
                 $task->resolved_by = null;
+                // Second per-fault work signal (the first is the confirmation verdict): someone
+                // deliberately put THIS fault into work. Fill-if-null — an earlier confirmation wins.
+                $this->markWorkStarted($task);
             } else { // back to pending — clear the resolution stamp
                 $task->resolved_at = null;
                 $task->resolved_by = null;
@@ -646,6 +669,26 @@ class MaintenanceTaskService
     }
 
     // ── helpers ───────────────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Start this fault's work clock on its CURRENT attempt (the open stint), if it hasn't started yet.
+     *
+     * Atomic fill-if-null: the first genuine per-fault work signal of the attempt wins and is never
+     * moved, so re-confirming a fault or toggling it through in_progress cannot restart or extend its
+     * measured time. A fault with no open stint (on-site job, not yet dispatched) is a silent no-op —
+     * the read layer then reports that fault on its clearly-labelled fallback basis instead.
+     */
+    private function markWorkStarted(MaintenanceTask $task): void
+    {
+        $open = $task->openAssignment()->first();
+        if (! $open) {
+            return;
+        }
+
+        MaintenanceTaskAssignment::whereKey($open->id)
+            ->whereNull('work_started_at')
+            ->update(['work_started_at' => Carbon::now()]);
+    }
 
     private function vendorName(int $vendorId): string
     {

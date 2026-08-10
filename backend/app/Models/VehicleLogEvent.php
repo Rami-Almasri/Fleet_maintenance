@@ -75,6 +75,7 @@ class VehicleLogEvent extends Model
     public const EVENT_SERVICE_LOGGED    = 'service_logged';    // a routine service fault (oil/battery) was completed → its Service Reminder rolled forward
     public const EVENT_TASK_REINSPECTION_FAILED = 'task_reinspection_failed'; // QC: the garage returned it unfixed, failed re-inspection
     public const EVENT_TASK_MARKED_INCORRECT    = 'task_marked_incorrect';    // delegate overruled the inspector — the fault was a mis-diagnosis
+    public const EVENT_TASK_LABOR_CORRECTED     = 'task_labor_corrected';     // an already-recorded attempt labor time was deliberately corrected (old → new + reason)
 
     // ── Severity Review (Diagnostic QC) — a supervisor's decision on an under-graded ticket ─────────
     public const EVENT_SEVERITY_UPGRADED    = 'severity_upgraded';    // QC upgrade applied: fault_severity raised to the recommendation

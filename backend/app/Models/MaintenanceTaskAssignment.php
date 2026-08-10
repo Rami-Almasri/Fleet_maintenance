@@ -31,15 +31,30 @@ class MaintenanceTaskAssignment extends Model
         self::OUTCOME_UNABLE, self::OUTCOME_CANCELLED, self::OUTCOME_FAILED_REINSPECTION,
     ];
 
+    /** Outcomes that END a repair ATTEMPT (transferred_out / unable continue the same attempt elsewhere). */
+    public const ATTEMPT_ENDING_OUTCOMES = [
+        self::OUTCOME_RESOLVED, self::OUTCOME_FAILED_REINSPECTION, self::OUTCOME_CANCELLED,
+    ];
+
     protected $fillable = [
         'maintenance_task_id', 'vendor_id',
-        'assigned_at', 'released_at', 'outcome', 'reason',
+        // work_started_at — when work actually began on THIS fault in this attempt (stamped by the
+        // per-fault confirmation verdict, else an explicit in_progress). assigned_at is dispatch, which
+        // is shared by every fault on the ticket, so it can never measure one fault on its own.
+        'assigned_at', 'work_started_at', 'released_at', 'outcome', 'reason',
         'assigned_by', 'released_by',
+        // Manual "actual mechanic time" for the attempt this stint ends — a human FACT, write-once
+        // (filled only while null; edits go through FaultRepairTimeService::overwriteAttemptLabor with
+        // an audit event). Never confused with the DERIVED wall-clock elapsed (assigned_at→released_at).
+        'labor_hours', 'labor_recorded_by', 'labor_recorded_at',
     ];
 
     protected $casts = [
-        'assigned_at' => 'datetime',
-        'released_at' => 'datetime',
+        'assigned_at'       => 'datetime',
+        'work_started_at'   => 'datetime',
+        'released_at'       => 'datetime',
+        'labor_hours'       => 'decimal:2',
+        'labor_recorded_at' => 'datetime',
     ];
 
     public function task(): BelongsTo
@@ -61,6 +76,11 @@ class MaintenanceTaskAssignment extends Model
     public function releasedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'released_by');
+    }
+
+    public function laborRecordedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'labor_recorded_by');
     }
 
     /** Stints still in progress (the car is at this garage now). */

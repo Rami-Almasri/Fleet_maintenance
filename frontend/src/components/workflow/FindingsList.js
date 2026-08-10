@@ -6,6 +6,8 @@
 // matched to its fault-task by symptom text — so opening a ticket shows at a glance which faults are
 // already done, without going through the Manage-faults panel.
 
+import { useI18n } from '../../i18n/I18nContext';
+
 const SOURCE = {
   inspector: { label: 'Inspector', chip: 'bg-violet-50 text-violet-700 ring-violet-200', dot: 'bg-violet-500' },
   garage:    { label: 'Garage',    chip: 'bg-amber-50 text-amber-700 ring-amber-200',   dot: 'bg-amber-500' },
@@ -37,6 +39,19 @@ const CONFIRM_BADGE = {
 
 // Normalise a symptom/finding label so "Rough idle / misfire" matches across whitespace/case quirks.
 const norm = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+// "2d 4h" / "6h 12m" from seconds — the AUTO-derived time the fault occupied a garage (dispatch →
+// release, summed across every attempt of THIS occurrence). Distinct from the manual labor hours: a
+// recurrence after a passed re-inspection is a new fault and starts its own clock.
+const fmtElapsed = (secs) => {
+  if (secs == null || secs <= 0) return null;
+  const d = Math.floor(secs / 86400);
+  const h = Math.floor((secs % 86400) / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+};
 
 // Part-request lifecycle → the little marker shown next to a part listed under its fault. Installed reads
 // as a green ✓ (fitted); the earlier stages get a coloured dot; the off-ramps read muted + struck-through.
@@ -76,6 +91,7 @@ function FaultParts({ parts }) {
 }
 
 export default function FindingsList({ findings = [], tasks = [], compact = false, paused = false, showPending = false }) {
+  const { t } = useI18n();
   if (!findings.length) {
     return compact ? null : <p className="text-xs text-slate-400">No findings recorded yet.</p>;
   }
@@ -126,6 +142,17 @@ export default function FindingsList({ findings = [], tasks = [], compact = fals
                 // (non-compact) view; a fault with parts breaks onto its own line so the list reads under it.
                 const task = taskBySymptom[norm(f.text)];
                 const parts = (!compact && task?.parts?.length) ? task.parts : null;
+                // PER-FAULT TIME. Only the WORK clock belongs to this fault alone — it runs from the
+                // moment the workshop confirmed/started THIS fault. Custody time (from dispatch) is the
+                // car's workshop time and is identical for every fault on the ticket, so it is NEVER
+                // shown as the fault's own duration; it only appears in the tooltip, named for what it
+                // is. 🔧 labor is the mechanic hours a human typed, summed per attempt (falling back to
+                // the legacy findings-JSON stamp on tickets closed before the per-attempt ledger).
+                const rt = task?.repair_time;
+                const work = fmtElapsed(rt?.cumulative_work_seconds);
+                const custody = fmtElapsed(rt?.cumulative_custody_seconds);
+                const attempts = rt?.attempt_count || 0;
+                const laborHours = task?.repair_hours ?? f.repair_hours ?? null;
                 const chip = (
                   <span
                     title={f.by ? `Added by ${f.by}` : undefined}
@@ -138,7 +165,31 @@ export default function FindingsList({ findings = [], tasks = [], compact = fals
                         accountability trail names where the fault was found (e.g. "🔧 Al Habtoor"). */}
                     {f.garage && <span className="font-medium opacity-70">· 🔧 {f.garage}</span>}
                     {f.severity && <span className="opacity-60">· {f.severity}</span>}
-                    {f.repair_hours != null && <span className="font-semibold opacity-80">· {f.repair_hours}h</span>}
+                    {/* This fault's own repair time — measured from the moment the workshop confirmed
+                        it, so two faults on the same car read differently. "×2" = two repair attempts
+                        (it came back from a failed re-inspection and the clock kept running). */}
+                    {work && (
+                      <span
+                        className="font-semibold opacity-80"
+                        title={t('workflow.task.workTip', { n: attempts, custody: custody || '—' })}
+                      >
+                        · ⏱ {work}{attempts > 1 ? ` ×${attempts}` : ''}
+                      </span>
+                    )}
+                    {/* No confirmation was ever recorded for this fault, so its own clock never started.
+                        We show the car's workshop time instead — explicitly labelled as the car's, never
+                        dressed up as this fault's duration. */}
+                    {!work && custody && (
+                      <span className="opacity-60" title={t('workflow.task.custodyOnlyTip')}>
+                        · 🚗 {custody}
+                      </span>
+                    )}
+                    {/* Actual mechanic hours entered at Mark Fixed (summed across attempts). */}
+                    {laborHours != null && Number(laborHours) > 0 && (
+                      <span className="font-semibold opacity-80" title={t('workflow.task.laborChipTip')}>
+                        · 🔧 {Number(laborHours)}h
+                      </span>
+                    )}
                     {/* Live fix status — so a fixed fault reads as done the moment the ticket is opened. */}
                     {badge && (
                       <span className={`ms-0.5 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold ring-1 ring-inset ${badge.cls}`}>

@@ -115,6 +115,7 @@ class VehicleStatusDashboardService
         VehicleLogEvent::EVENT_TASK_TRANSFERRED         => 'Fault Moved to Another Garage',
         VehicleLogEvent::EVENT_TASK_RESOLVED            => 'Fault Resolved',
         VehicleLogEvent::EVENT_TASK_REINSPECTION_FAILED => 'Fault Failed Re-inspection',
+        VehicleLogEvent::EVENT_TASK_LABOR_CORRECTED     => 'Labor Time Corrected',
         // Enterprise Handover Workflow
         VehicleLogEvent::EVENT_RETURNED_TO_SERVICE      => 'Paused & Returned to Service',
         VehicleLogEvent::EVENT_VEHICLE_RETURNED         => 'Vehicle Physically Returned',

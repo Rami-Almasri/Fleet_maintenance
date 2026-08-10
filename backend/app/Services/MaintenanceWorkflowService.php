@@ -4133,11 +4133,13 @@ class MaintenanceWorkflowService
             }
 
             // Granular time-per-fault: when the car comes back, the driver/dispatcher may attribute
-            // the ACTUAL repair time to each specific fault tag. We write the hours straight onto the
-            // matching finding object (the source of truth for the fault), so each tag carries its own
-            // repair time — the structured data that powers Garage Efficiency & Fault Recurrence reports.
+            // the mechanic's ACTUAL labor time to each specific fault. The AUTHORITATIVE record is the
+            // per-attempt stint ledger (FaultRepairTimeService — write-once per attempt, so a re-fix
+            // round can never overwrite attempt #1's hours). The findings-JSON stamp below is kept only
+            // as a display cache for the legacy closing summary; it is no longer read by analytics.
             if (! empty($data['repair_times']) && is_array($data['repair_times'])) {
                 $ticket->findings = $this->applyRepairTimes($ticket->findings ?? [], $data['repair_times']);
+                $this->recordAttemptLaborBatch($ticket, $data['repair_times'], $actor);
             }
 
             // Structured Parts + Labor breakdown: the garage step is the natural place to itemise the
@@ -6653,6 +6655,47 @@ class MaintenanceWorkflowService
     private function formatHours(float $hours): string
     {
         return rtrim(rtrim(number_format($hours, 1, '.', ''), '0'), '.') . 'h';
+    }
+
+    /**
+     * Persist the Make-Ready per-fault labor entries onto each fault's CURRENT attempt (the stint the
+     * mark-fixed already closed) via FaultRepairTimeService — write-once per attempt, so a duplicate
+     * submit is a harmless no-op and a re-fix round appends instead of overwriting. Rows are matched by
+     * `task_id` when the client sends one, else by the fault's symptom text (the legacy shape).
+     * Best-effort per row: one bad row must never roll back the Make-Ready transition.
+     *
+     * @param array<int, array{task_id?:int|string, text?:string, hours?:mixed}> $times
+     */
+    private function recordAttemptLaborBatch(Maintenance $ticket, array $times, User $actor): void
+    {
+        $svc   = app(\App\Services\FaultRepairTimeService::class);
+        $tasks = $ticket->tasks()->get();
+
+        foreach ($times as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $hours = $row['hours'] ?? null;
+            if ($hours === null || $hours === '' || ! is_numeric($hours)) {
+                continue;
+            }
+
+            $task = null;
+            if (! empty($row['task_id'])) {
+                $task = $tasks->firstWhere('id', (int) $row['task_id']);
+            } elseif (($text = $this->clean($row['text'] ?? null)) !== null) {
+                $task = $tasks->first(fn ($t) => mb_strtolower(trim((string) $t->symptom)) === mb_strtolower($text));
+            }
+            if (! $task) {
+                continue; // no matching fault on this ticket — the findings stamp still carries the label
+            }
+
+            try {
+                $svc->recordAttemptLabor($task, (float) $hours, $actor);
+            } catch (\Throwable $e) {
+                report($e);
+            }
+        }
     }
 
     /** Relations every transition returns hydrated for the API. */

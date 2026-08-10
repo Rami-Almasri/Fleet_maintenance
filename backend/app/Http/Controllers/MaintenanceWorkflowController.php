@@ -2659,6 +2659,16 @@ class MaintenanceWorkflowController extends Controller
                 );
             }
 
+            // Double-submit guard: the per-fault mechanics below (failReinspection bumps the blame
+            // counter) run BEFORE the ticket transition asserts — so a duplicate send-back must be
+            // stopped here, or a resent request would double-count reinspection_failures per fault.
+            if ($ticket->fresh()->workflow_status === Maintenance::WF_REINSPECTION_FAILED) {
+                throw new \App\Exceptions\WorkflowTransitionException(
+                    'This re-inspection failure was already recorded — the ticket is back with the supervisor for re-dispatch.',
+                    ['field' => 'workflow_status'],
+                );
+            }
+
             $user = $request->user();
             // Every fault this sign-off passes judgement on (an in-shop repair's faults are already
             // `completed` by the gate, an on-site job's are still open — both get a verdict). Cancelled
@@ -3184,6 +3194,10 @@ class MaintenanceWorkflowController extends Controller
                 // roll that car's recurring Service Reminder forward when the fault is a routine service;
                 // ignored for ordinary faults. Falls back to the ticket/vehicle reading when omitted.
                 'odometer' => ['nullable', 'integer', 'min:0'],
+                // Actual mechanic time for THIS repair attempt (Option A: per-attempt entry, cumulative
+                // is derived). Lands write-once on the stint this fix closes — distinct from the
+                // auto-derived wall-clock elapsed, which is never manually editable.
+                'labor_hours' => ['nullable', 'numeric', 'min:0', 'max:' . \App\Services\FaultRepairTimeService::MAX_ATTEMPT_LABOR_HOURS],
             ]);
 
             // Fix Evidence is MANDATORY to mark a fault fixed: a resolution note + at least one piece of
@@ -3198,7 +3212,14 @@ class MaintenanceWorkflowController extends Controller
                 }
             }
 
-            $this->tasks->setStatus($task, $data['status'], $request->user(), $data['note'] ?? null, $data['odometer'] ?? null);
+            $this->tasks->setStatus(
+                $task,
+                $data['status'],
+                $request->user(),
+                $data['note'] ?? null,
+                $data['odometer'] ?? null,
+                isset($data['labor_hours']) && $data['labor_hours'] !== '' ? (float) $data['labor_hours'] : null,
+            );
             return $this->ticketFor($task, 'Fault status updated');
         });
     }

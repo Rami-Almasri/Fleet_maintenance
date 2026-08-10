@@ -174,6 +174,9 @@ const FAULT_SEVERITY_OPTS = [
 
 // Submit-button tone per action (visual only). The footer further overrides this
 // for the branching decisions (reinspect pass/fail, decide requires/clear).
+// "2.5" / "3" — one decimal at most, trailing ".0" dropped, for the hours totals on the ready screen.
+const round1 = (n) => String(Math.round(Number(n) * 10) / 10);
+
 const baseTone = (action) => (['ready', 'serviced'].includes(action) ? 'success'
   : 'primary');
 
@@ -709,6 +712,11 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   const [inDate] = useState('');                    // reinspect-pass: date the car came back (blank → today)
   const [returnDate, setReturnDate] = useState('');
   const [feedback, setFeedback] = useState('');
+  // Mark ready — actual mechanic hours per fault, keyed by task id. This is the ONE screen where the
+  // whole job's time gets recorded: every fault is already fixed by the time this gate opens, so they
+  // can all be filled in together instead of one modal per fault. Labor only — the elapsed clock is
+  // measured automatically and is never typed.
+  const [faultTimes, setFaultTimes] = useState({});
   const [cost, setCost] = useState('');
   // reinspect-pass: defer the invoice — the car returns to service but the ticket parks in awaiting_invoice
   // (the paper invoice isn't ready). Default ON so the workflow never blocks on late paperwork.
@@ -872,6 +880,42 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
       case 'reinspect': return ticket?.park_odometer != null ? STAGE.REINSPECT : STAGE.RETURN;
       default: return null;
     }
+  }, [action, ticket]);
+
+  // ── Mark ready: time-per-fault ────────────────────────────────────────────────────────────────
+  // Every fault the ticket is closing out, each carrying any hours ALREADY recorded (`recorded`) so the
+  // screen shows locked history instead of an empty box that looks like nothing was captured. Cancelled
+  // faults (non-issues) are excluded — nobody spent mechanic time on them.
+  const readyFaults = useMemo(() => {
+    if (action !== 'ready') return [];
+    return (ticket?.tasks || [])
+      .filter((f) => f.status !== 'cancelled' && !f.is_incorrect)
+      .map((f) => ({
+        id: f.id,
+        symptom: f.symptom,
+        severity_emoji: f.severity_emoji,
+        recorded: f.repair_hours != null && Number(f.repair_hours) > 0 ? Number(f.repair_hours) : null,
+      }));
+  }, [action, ticket]);
+
+  // Hours booked on this screen PLUS what was already recorded — the number to sanity-check against the
+  // visit. Counting only what's typed here would let an "already recorded 8h" job look like 0h.
+  const laborTotal = useMemo(
+    () => readyFaults.reduce((sum, f) => {
+      const typed = Number(faultTimes[f.id]);
+      return sum + (f.recorded ?? (Number.isFinite(typed) && typed > 0 ? typed : 0));
+    }, 0),
+    [readyFaults, faultTimes],
+  );
+
+  // How long the car has actually been in this workshop — from the arrival check-in until now (the
+  // moment this screen is being submitted). Null when there's no arrival stamp to measure from, in
+  // which case we simply don't make the comparison rather than guessing at one.
+  const workshopHours = useMemo(() => {
+    const startedAt = ticket?.stage_timing?.repair_started_at;
+    if (action !== 'ready' || !startedAt) return null;
+    const hrs = (Date.now() - new Date(startedAt).getTime()) / 3600000;
+    return hrs > 0 ? hrs : null;
   }, [action, ticket]);
 
   const continuity = useMemo(
@@ -1315,6 +1359,15 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
           // No odometer here — the car doesn't move inside the workshop. Cost, parts & labor are NOT
           // captured at this step; they're itemised later through the invoice link.
           if (feedback) fd.append('garage_feedback', feedback);
+          // Time per fault: [{task_id, hours}] — the server records each against that fault's current
+          // repair attempt, write-once, so a re-submit or a second attempt can never overwrite history.
+          // Sent as a JSON string because this step posts multipart.
+          // `text` rides along so the ticket's closing summary still reads "Brake Pads (4h)"; `task_id`
+          // is what the authoritative per-attempt write matches on.
+          const times = readyFaults
+            .filter((f) => f.recorded == null && Number(faultTimes[f.id]) > 0)
+            .map((f) => ({ task_id: f.id, text: f.symptom, hours: Number(faultTimes[f.id]) }));
+          if (times.length) fd.append('repair_times', JSON.stringify(times));
         } else if (action === 'collectFromGarage') {
           // Garage-OUT reading (car leaves the garage) + the mandatory "received from garage" photo below.
           fd.append('return_odometer', String(Number(odometer)));
@@ -2169,6 +2222,68 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
             <div className="rounded-lg bg-indigo-50/60 px-3 py-2 text-xs text-indigo-700 ring-1 ring-inset ring-indigo-600/10">
               {t('workflow.hint.readyGate')}
             </div>
+
+            {/* TIME PER FAULT — the whole job in one screen. Every fault is already fixed at this gate,
+                so the mechanic's hours for each are entered together rather than one modal at a time.
+                A fault whose hours were already recorded (entered when it was marked fixed, or on an
+                earlier attempt) is shown locked: recorded time is immutable history, and re-submitting
+                this screen can never overwrite it. */}
+            {readyFaults.length > 0 && (
+              <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  {t('workflow.hint.readyTimeTitle')}
+                </p>
+                <p className="mt-0.5 text-[11px] text-slate-400">{t('workflow.hint.readyTimeHint')}</p>
+
+                <ul className="mt-2.5 space-y-1.5">
+                  {readyFaults.map((f) => (
+                    <li key={f.id} className="flex items-center gap-2">
+                      <span className="min-w-0 flex-1 truncate text-[13px] text-slate-700" title={f.symptom}>
+                        {f.severity_emoji ? `${f.severity_emoji} ` : ''}{f.symptom}
+                      </span>
+                      {f.recorded != null ? (
+                        <span className="shrink-0 rounded-lg bg-white px-2.5 py-1.5 text-[12px] font-semibold text-slate-500 ring-1 ring-inset ring-slate-200">
+                          {f.recorded}h {t('workflow.hint.readyAlreadyRecorded')}
+                        </span>
+                      ) : (
+                        <input
+                          type="number"
+                          min="0"
+                          max="24"
+                          step="0.25"
+                          inputMode="decimal"
+                          value={faultTimes[f.id] ?? ''}
+                          onChange={(e) => setFaultTimes((prev) => ({ ...prev, [f.id]: e.target.value }))}
+                          placeholder={t('workflow.hint.readyHoursPlaceholder')}
+                          className="w-28 shrink-0 rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm text-slate-700 placeholder:text-slate-400 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                        />
+                      )}
+                    </li>
+                  ))}
+                </ul>
+
+                {/* Sanity check against reality: the hours booked across all faults vs how long the car
+                    was actually in the workshop. Exceeding it is possible (two mechanics working in
+                    parallel) so this WARNS and never blocks — but it catches the typo that books three
+                    days of work into a two-day visit. */}
+                {laborTotal > 0 && workshopHours != null && (
+                  <div className={`mt-2.5 rounded-lg px-3 py-2 text-[11px] ring-1 ring-inset ${
+                    laborTotal > workshopHours
+                      ? 'bg-amber-50 text-amber-800 ring-amber-300'
+                      : 'bg-white text-slate-500 ring-slate-200'}`}
+                  >
+                    {t('workflow.hint.readyTimeTotal', {
+                      total: round1(laborTotal),
+                      workshop: round1(workshopHours),
+                    })}
+                    {laborTotal > workshopHours && (
+                      <span className="mt-0.5 block font-semibold">{t('workflow.hint.readyTimeExceeds')}</span>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             <Textarea label={t('workflow.field.garageFeedback')} value={feedback} onChange={(e) => setFeedback(e.target.value)} placeholder={t('workflow.ph.whatWasDone')} />
             {/* Cost, parts & labor are NOT captured here — they're itemised later via the invoice link. */}
           </>

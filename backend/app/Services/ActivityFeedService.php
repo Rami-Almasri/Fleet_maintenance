@@ -108,6 +108,7 @@ class ActivityFeedService
         VehicleLogEvent::EVENT_TASK_RESOLVED        => 'Fault resolved',
         VehicleLogEvent::EVENT_TASK_REINSPECTION_FAILED => 'Fault failed re-inspection',
         VehicleLogEvent::EVENT_TASK_MARKED_INCORRECT => 'Fault marked incorrect',
+        VehicleLogEvent::EVENT_TASK_LABOR_CORRECTED  => 'Labor time corrected',
         VehicleLogEvent::EVENT_SERVICE_LOGGED       => 'Routine service performed',
         VehicleLogEvent::EVENT_REVIEW_APPROVED      => 'Inspection review approved',
         VehicleLogEvent::EVENT_REVIEW_REJECTED      => 'Inspection review rejected',

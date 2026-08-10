@@ -38,6 +38,18 @@ const FIX_STAGE_LABEL = { presigning: 'Preparing upload…', uploading: 'Uploadi
 
 const TERMINAL = ['completed', 'cancelled'];
 
+// "2d 4h" / "6h 12m" from seconds — the auto-derived wall-clock display. Never editable: the manual
+// input below is LABOR time (mechanic's actual hours), a different metric kept deliberately separate.
+const fmtElapsed = (secs) => {
+  if (secs == null || secs <= 0) return null;
+  const d = Math.floor(secs / 86400);
+  const h = Math.floor((secs % 86400) / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+};
+
 // "12 Jul 2026" from an ISO string; empty when unparseable.
 const fmtDay = (iso) => {
   if (!iso) return '';
@@ -270,6 +282,8 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
       // 2) Mark the fault fixed + store the resolution note. For a routine service, also send the odometer
       //    at the change so its Service Reminder rolls forward from that reading.
       setFixStage('saving');
+      // Labor hours are NOT sent from here — they're captured for every fault at once on the Mark ready
+      // screen (see TicketActionModal), so the same number is asked for in exactly one place.
       const payload = { status: 'completed', note: fixNote || null };
       if (fixTask.routine_service_type && Number(fixOdometer) > 0) payload.odometer = Number(fixOdometer);
       apply(await api.post(`/maintenance-tasks/${fixTask.id}/status`, payload));
@@ -640,6 +654,36 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
                       {task.total_cost > 0 && (
                         <span className="text-slate-400">· {t('workflow.task.cost')} {Number(task.total_cost).toLocaleString()}</span>
                       )}
+                      {/* THIS fault's own repair time — measured from the workshop confirmation, so
+                          sibling faults on the same car read differently. Summed across all attempts of
+                          THIS occurrence; a recurrence after a passed re-inspection starts at zero. */}
+                      {task.repair_time?.cumulative_work_seconds > 0 && (
+                        <Tooltip content={t('workflow.task.workTip', {
+                          n: task.repair_time.attempt_count,
+                          custody: fmtElapsed(task.repair_time.cumulative_custody_seconds) || '—',
+                        })}>
+                          <span className="inline-flex cursor-help items-center gap-1 rounded-full bg-sky-50 px-2 py-0.5 font-medium text-sky-700 ring-1 ring-inset ring-sky-200">
+                            ⏱ {fmtElapsed(task.repair_time.cumulative_work_seconds)}
+                            {task.repair_time.attempt_count > 1 && ` · ×${task.repair_time.attempt_count}`}
+                          </span>
+                        </Tooltip>
+                      )}
+                      {/* Never confirmed → this fault has no clock of its own. Show the CAR's time,
+                          labelled as the car's, rather than passing a shared number off as the fault's. */}
+                      {!task.repair_time?.cumulative_work_seconds && task.repair_time?.cumulative_custody_seconds > 0 && (
+                        <Tooltip content={t('workflow.task.custodyOnlyTip')}>
+                          <span className="inline-flex cursor-help items-center gap-1 rounded-full bg-slate-50 px-2 py-0.5 font-medium text-slate-500 ring-1 ring-inset ring-slate-200">
+                            🚗 {fmtElapsed(task.repair_time.cumulative_custody_seconds)}
+                          </span>
+                        </Tooltip>
+                      )}
+                      {task.repair_hours != null && Number(task.repair_hours) > 0 && (
+                        <Tooltip content={t('workflow.task.laborChipTip')}>
+                          <span className="inline-flex cursor-help items-center gap-1 rounded-full bg-violet-50 px-2 py-0.5 font-medium text-violet-700 ring-1 ring-inset ring-violet-200">
+                            🔧 {t('workflow.task.laborChip', { n: Number(task.repair_hours) })}
+                          </span>
+                        </Tooltip>
+                      )}
                     </div>
                   </div>
 
@@ -805,6 +849,12 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
                         <p className="mt-1 text-[11px] text-slate-400">Schedules the next {fixTask.routine_service_type.replace('_', ' ')} reminder from this reading.</p>
                       </div>
                     )}
+
+                    {/* NO labor-time field here on purpose. Time for every fault is entered ONCE, on the
+                        "Mark ready" screen, where the whole job is closed out and all faults are listed
+                        together — asking for it per fault as well made the same number look like two
+                        different questions. The API still accepts labor_hours on this endpoint for
+                        callers that want it; the UI just doesn't ask twice. */}
 
                     <label className={`flex cursor-pointer items-center gap-2 rounded-lg border border-dashed px-3 py-2 text-sm hover:bg-emerald-50 ${fixVideo ? 'border-emerald-300 bg-white text-slate-600' : 'border-emerald-400 bg-white text-emerald-700'}`}>
                       <Icon.Video className="h-4 w-4 text-emerald-600" />
