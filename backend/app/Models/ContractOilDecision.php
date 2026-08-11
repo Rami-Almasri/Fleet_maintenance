@@ -53,6 +53,9 @@ class ContractOilDecision extends Model
     /** The oil change itself is open as a real ticket. */
     public const STAGE_OIL_SERVICE = 'oil_service';
 
+    /** The oil is changed and the car is ours — it now owes the customer their rental back. */
+    public const STAGE_RETURN_TO_CUSTOMER = 'return_to_customer';
+
     /** Everything the recall owed has been done. */
     public const STAGE_COMPLETED = 'completed';
 
@@ -100,7 +103,25 @@ class ContractOilDecision extends Model
         'oil_changed_at'           => 'datetime',
         'oil_changed_odometer'     => 'integer',
         'request_adopted'          => 'boolean',
+        'returned_to_customer_at'  => 'datetime',
+        'return_reminder_at'       => 'datetime',
     ];
+
+    /**
+     * Are we still holding a car whose oil is already done?
+     *
+     * The rental has not ended — the customer is paying for a car standing in our yard. This is the
+     * step that has no natural owner and no natural alarm, which is why it has both here: a stage of
+     * its own on every board, and a chase that keeps ringing until somebody hands the keys back.
+     */
+    public function owesReturnToCustomer(): bool
+    {
+        return $this->isOilChanged()
+            && $this->returned_to_customer_at === null
+            && $this->contract
+            && $this->contract->state !== 'closed'
+            && $this->contract->in_date === null;
+    }
 
     /** Where the oil will be changed, defaulting to the garage when nobody has said. */
     public function serviceLocation(): string
@@ -246,9 +267,13 @@ class ContractOilDecision extends Model
 
         // ── The far end: the oil change this whole relay existed to produce ──
         // A recorded change beats every other record, including an open service ticket: the oil IS
-        // changed, and the reading that proves it is on this row.
+        // changed, and the reading that proves it is on this row. But "the oil is done" is not the
+        // end of a RECALL — we took the car off a paying customer, and it is only finished when
+        // they have it back.
         if ($this->isOilChanged()) {
-            return self::STAGE_COMPLETED;
+            return $this->owesReturnToCustomer()
+                ? self::STAGE_RETURN_TO_CUSTOMER
+                : self::STAGE_COMPLETED;
         }
         if ($this->settled_ticket_id) {
             $ticket = $this->settledTicket;
@@ -263,17 +288,34 @@ class ContractOilDecision extends Model
             return self::STAGE_COMPLETED;
         }
 
-        // ── The inspection, once a reviewer has actually sent the car to the Inspector ──
-        // Anything past `pending_review` means a reviewer has released the car to the Inspector —
-        // the request has stopped waiting and become work. (Rejected/closed are terminal and fall
-        // through to the collection stages below, where the car's real position still shows.)
+        // ── Where the CAR is: the collection chain, which is the physical truth ──────────────
+        // Computed FIRST, before the inspection, because a reviewer approving the request early is
+        // an office decision — it does not move a car one metre. A recalled car may be approved
+        // while it is still at the customer's (the return is being organised, so the request is not
+        // waiting on chance), and if approval outranked this the board would announce "Being
+        // inspected" for a car nobody has collected, and quietly hide the Sales OK button that is
+        // the actual next action.
+        $where = $this->collectionStage();
+
+        // ── The inspection, once the request is released AND the car is genuinely here ──────
         $request = $this->inspectionTicket;
-        if ($request
+        $released = $request
             && $request->workflow_status !== Maintenance::WF_PENDING_REVIEW
-            && ! in_array($request->workflow_status, Maintenance::WF_TERMINAL, true)) {
+            && ! in_array($request->workflow_status, Maintenance::WF_TERMINAL, true);
+
+        if ($released && in_array($where, [self::STAGE_VEHICLE_COLLECTED, self::STAGE_AT_WORKSHOP], true)) {
             return self::STAGE_INSPECTION;
         }
 
+        return $where;
+    }
+
+    /**
+     * The physical half of the relay — where the car actually is, read from the Sales stamp and the
+     * collection's own status. Never from the inspection request: paperwork does not move cars.
+     */
+    private function collectionStage(): string
+    {
         if (! $this->isSalesConfirmed()) {
             return self::STAGE_WAITING_SALES;
         }

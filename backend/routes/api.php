@@ -306,6 +306,11 @@ Route::middleware('auth:sanctum')->group(function () {
         // …and the DRIVER too: on a parking job he is often the one who changes it, and making him
         // relay the number back to Leen to type in is how a reading stops being a reading.
         ->middleware('permission:reminders.manage|maintenance.manage|maintenance.logistics');
+    // GIVE THE CAR BACK. The oil is done, the customer is still paying, and the car is in our yard —
+    // this is what ends the recall and silences the chase. Same audience as recording the change:
+    // whoever is standing next to the car hands over the keys.
+    Route::post('Contract/{contract}/oil-returned', [\App\Http\Controllers\OilProjectionController::class, 'returnedToCustomer'])
+        ->middleware('permission:reminders.manage|maintenance.manage|maintenance.logistics');
     // The recall call queue — "phone the customer and arrange the return". A follow-up task, NOT a
     // logistics dispatch: no route, no driver, no ETA (see the OilRecallTask migration).
     Route::get('OilRecallTasks', [\App\Http\Controllers\OilProjectionController::class, 'recallTasks'])

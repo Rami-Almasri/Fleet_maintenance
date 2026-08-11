@@ -183,6 +183,7 @@ export const actionFor = (p) => {
         at_workshop:       'The car is at the workshop — review the follow-up request',
         inspection:        'Being inspected',
         oil_service:       'Oil change ticket is open',
+        return_to_customer: 'Oil changed — give the car back to the customer',
         completed:         'Done — the oil change this recall owed is finished',
         cancelled:         'Recall stood down',
       }[stage] || 'Recall agreed — arrange the return with the customer';
@@ -302,12 +303,15 @@ function Arrow() {
  */
 const RECALL_STAGES = [
   { key: 'waiting_sales',     label: 'Waiting for Sales', who: 'Sales must agree the return with the customer' },
+  // NB: `return_to_customer` is inserted after `oil_service` below — a recall does not end when the
+  // oil is changed, it ends when the customer has their rental back.
   { key: 'ready_for_driver',  label: 'Ready for driver',  who: 'Waleed / Abdullah arrange a driver' },
   { key: 'driver_assigned',   label: 'Driver assigned',   who: 'The driver is on the way to the customer' },
   { key: 'vehicle_collected', label: 'Vehicle collected', who: 'The car is with our driver' },
   { key: 'at_workshop',       label: 'At the workshop',   who: 'Review the follow-up request and send it in' },
   { key: 'inspection',        label: 'Inspection / test', who: 'Abu Maroof is testing the car' },
   { key: 'oil_service',       label: 'Oil change',        who: 'The oil service ticket is open' },
+  { key: 'return_to_customer', label: 'Give it back',     who: 'Hand the car back — the customer is still paying for it' },
   { key: 'completed',         label: 'Completed',         who: 'Everything this recall owed is done' },
 ];
 
@@ -343,138 +347,205 @@ function RecallRelay({ r, recall, canRecord, onChanged }) {
     }
   };
 
+  const total = RECALL_STAGES.length;
+  const parking = recall.service_location === 'parking';
+
   return (
-    <div className="rounded-lg border border-rose-200 bg-white p-3.5">
-      <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
-        <div className="text-[11px] font-bold uppercase tracking-wide text-rose-600">
-          Recall now · bringing the car back
+    <div className="overflow-hidden rounded-xl border border-rose-200 bg-white">
+      {/* ── Header: what this is, and the one-word answer to "where has it got to" ────────── */}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-rose-100 bg-rose-50/60 px-3.5 py-2">
+        <div className="flex items-center gap-2">
+          <span className="text-base leading-none" aria-hidden>🚗</span>
+          <span className="text-[11px] font-bold uppercase tracking-wider text-rose-700">
+            {tf('oil.recall.title', 'Recall · bringing the car back')}
+          </span>
         </div>
         <Badge tone={cancelled ? 'slate' : recall.stage === 'completed' ? 'green' : 'red'}>
-          {cancelled ? 'Stood down' : current?.label}
+          {cancelled ? tf('oil.recall.stoodDown', 'Stood down') : current?.label}
         </Badge>
       </div>
 
-      {/* The chain itself. Everything before the current step is done, everything after is waiting —
-          so nobody has to hold the sequence in their head. */}
-      {!cancelled && (
-        <ol className="mb-3 flex flex-wrap gap-1.5">
-          {RECALL_STAGES.map((s, i) => {
-            const done = i < stageIdx;
-            const now = i === stageIdx;
-            return (
-              <li
-                key={s.key}
-                title={s.who}
-                className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset ${
-                  now ? 'bg-rose-600 text-white ring-rose-600'
-                    : done ? 'bg-emerald-50 text-emerald-700 ring-emerald-200'
-                    : 'bg-slate-50 text-slate-400 ring-slate-200'}`}
-              >
-                {done ? '✓ ' : ''}{i + 1}. {s.label}
-              </li>
-            );
-          })}
-        </ol>
-      )}
-
-      {/* WHO acts now, in a sentence. The page must never leave someone wondering. */}
-      {current && !cancelled && (
-        <p className="mb-2.5 text-sm text-slate-700">
-          <span className="font-semibold">Next:</span> {current.who}.
-        </p>
-      )}
-
-      {/* WHERE the oil is being changed — and therefore who owns it. Stated on the card because it
-          is the difference between Abu Maroof waiting for a car and a Supervisor booking a garage. */}
-      {!cancelled && (
-        <p className="mb-2.5 text-sm text-slate-700">
-          <span className="font-semibold">{tf('oil.recall.where', 'Oil change at')}:</span>{' '}
-          {recall.service_location === 'parking'
-            ? tf('oil.recall.whereParking', 'our parking — Abu Maroof does it')
-            : tf('oil.recall.whereGarage', 'a garage — Waleed / Abdullah arrange it')}
-          {recall.request_adopted && (
-            <span className="ml-1 text-xs text-slate-500">
-              · {tf('oil.recall.adopted', 'added to the test request the system already raised')}
-            </span>
-          )}
-        </p>
-      )}
-
-      {/* Stage 1 — the gate. One button, and nothing has been dispatched until it is pressed. */}
-      {recall.awaiting_sales && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
-          <div className="text-sm font-bold text-amber-900">{tf('oil.recall.sales.title', 'Waiting for Sales OK')}</div>
-          <p className="mt-0.5 text-sm text-amber-800">
-            Ask Sales to arrange with the customer to return this car. No driver has been notified —
-            nobody is dispatched until Sales confirm the customer agreed.
-          </p>
-          {canRecord && (
-            <Button
-              size="sm"
-              variant="primary"
-              className="mt-2"
-              loading={busy}
-              onClick={() => post(
-                `/Contract/${r.contract_id}/oil-recall/sales-confirm`,
-                {},
-                'Sales confirmed — Waleed and Abdullah have been asked to arrange a driver',
-              )}
-            >
-              Sales OK — Customer confirmed
-            </Button>
-          )}
-        </div>
-      )}
-
-      {/* The confirmation, once it exists — who and when, because this is what released the driver. */}
-      {recall.sales?.confirmed && (
-        <p className="text-sm text-emerald-700">
-          ✓ Sales confirmed{recall.sales.confirmed_by ? ` by ${recall.sales.confirmed_by}` : ''}
-          {recall.sales.confirmed_at ? ` · ${fmtDate(recall.sales.confirmed_at)}` : ''}
-          {recall.sales.note ? ` — “${recall.sales.note}”` : ''}
-        </p>
-      )}
-
-      {/* Where the driver actually is — read from the logistics task, not restated here. */}
-      {recall.collection && (
-        <p className="mt-1 text-sm text-slate-600">
-          Collection #{recall.collection.task_id} · {recall.collection.phase}
-          {recall.collection.driver ? ` · ${recall.collection.driver}` : ' · no driver has claimed it yet'}
-        </p>
-      )}
-
-      {/* What the car owes when it lands. Oil change is a locked requirement; the test is the only
-          operational choice, and it belongs to whoever briefs the driver. */}
-      {!cancelled && recall.stage !== 'completed' && (
-        <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
-          <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-500">
-            Required when the car arrives
+      <div className="space-y-3 p-3.5">
+        {/* ── The chain, as a RAIL rather than eight competing chips ──────────────────────
+            Eight equal pills all shouting at once is the thing that made this unreadable. A rail
+            shows the same sequence at a glance: filled behind, bright at the current step, faint
+            ahead — and only the step you are ON gets words. */}
+        {!cancelled && (
+          <div>
+            <div className="flex items-center gap-1" role="list" aria-label={tf('oil.recall.progress', 'Recall progress')}>
+              {RECALL_STAGES.map((s, i) => (
+                <span
+                  key={s.key}
+                  role="listitem"
+                  title={`${i + 1}. ${s.label} — ${s.who}`}
+                  className={`h-1.5 flex-1 rounded-full transition-colors ${
+                    i < stageIdx ? 'bg-emerald-400'
+                      : i === stageIdx ? 'bg-rose-500'
+                      : 'bg-slate-200'}`}
+                />
+              ))}
+            </div>
+            <div className="mt-1.5 flex items-baseline justify-between gap-2">
+              <span className="text-sm font-bold text-slate-900">{current?.label}</span>
+              <span className="text-[11px] tabular-nums text-slate-400">
+                {tf('oil.recall.stepOf', 'step {n} of {total}', { n: stageIdx + 1, total })}
+              </span>
+            </div>
           </div>
-          <label className="flex items-center gap-2 text-sm text-slate-700">
-            <input
-              type="checkbox"
-              aria-label="Test / Inspection"
-              checked={!!test?.required}
-              disabled={!canRecord || busy}
-              onChange={(e) => post(
-                `/Contract/${r.contract_id}/oil-recall/instructions`,
-                { test_required: e.target.checked },
-                e.target.checked ? 'Test added to the driver’s instructions' : 'Test removed — the oil change still stands',
+        )}
+
+        {/* ── WHO ACTS NOW. The one line somebody reads if they read nothing else. ────────── */}
+        {current && !cancelled && (
+          <div className="flex items-start gap-2 rounded-lg bg-slate-900 px-3 py-2 text-white">
+            <span className="mt-0.5 text-xs" aria-hidden>➜</span>
+            <div className="min-w-0">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                {tf('oil.recall.nextUp', 'Next')}
+              </div>
+              <div className="text-sm font-semibold leading-snug">{current.who}</div>
+            </div>
+          </div>
+        )}
+
+        {/* ── The facts, as a two-column list instead of a paragraph pile ─────────────────── */}
+        {!cancelled && (
+          <dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1.5 text-sm">
+            <dt className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+              {tf('oil.recall.where', 'Oil change at')}
+            </dt>
+            <dd className="text-slate-800">
+              {parking
+                ? tf('oil.recall.whereParking', 'our parking — Abu Maroof does it')
+                : tf('oil.recall.whereGarage', 'a garage — Waleed / Abdullah arrange it')}
+              {recall.request_adopted && (
+                <span className="mt-0.5 block text-xs text-slate-500">
+                  {tf('oil.recall.adopted', 'added to the test request the system already raised')}
+                </span>
               )}
-            />
-            Test / Inspection
-            {!test?.decided && <span className="text-xs text-slate-400">(not specified yet)</span>}
-          </label>
-          <label className="mt-1 flex items-center gap-2 text-sm font-semibold text-rose-800">
-            <input type="checkbox" checked readOnly disabled aria-label="Oil change — required" />
-            🔒 Oil Change — REQUIRED
-          </label>
-          <p className="mt-1 text-xs text-slate-500">
-            This recall came from the oil projection, so the oil change cannot be removed. A test is
-            optional and can be added or dropped at any time before the car arrives.
-          </p>
-        </div>
-      )}
+            </dd>
+
+            <dt className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+              {tf('oil.recall.salesRow', 'Sales')}
+            </dt>
+            <dd className={recall.sales?.confirmed ? 'text-emerald-700' : 'text-amber-700'}>
+              {recall.sales?.confirmed ? (
+                <>
+                  <span className="font-semibold">✓ {tf('oil.recall.sales.confirmed', 'Confirmed')}</span>
+                  {recall.sales.confirmed_by ? ` · ${recall.sales.confirmed_by}` : ''}
+                  {recall.sales.confirmed_at ? ` · ${fmtDate(recall.sales.confirmed_at)}` : ''}
+                  {recall.sales.note ? <span className="block text-xs italic text-slate-500">“{recall.sales.note}”</span> : null}
+                </>
+              ) : (
+                <span className="font-semibold">{tf('oil.recall.sales.waitingRow', 'Not agreed with the customer yet')}</span>
+              )}
+            </dd>
+
+            <dt className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+              {tf('oil.recall.driverRow', 'Driver')}
+            </dt>
+            <dd className="text-slate-800">
+              {recall.collection
+                ? (
+                  <>
+                    {recall.collection.driver || tf('oil.recall.noDriverYet', 'nobody has claimed it yet')}
+                    <span className="text-slate-500"> · {recall.collection.phase} · #{recall.collection.task_id}</span>
+                  </>
+                )
+                : <span className="text-slate-500">{tf('oil.recall.notArranged', 'not arranged yet')}</span>}
+            </dd>
+          </dl>
+        )}
+
+        {/* ── The LAST step: the oil is done and we are still holding a paid-for car. ────────
+            Loud on purpose. Everything else in the system has gone quiet by now — the ticket is
+            closed, the workshop has moved on — while the customer is paying for a car in our yard.
+            The chase re-rings every few minutes until this is pressed. */}
+        {recall.owes_return && (
+          <div className="rounded-lg border-2 border-emerald-400 bg-emerald-50 p-3">
+            <div className="text-sm font-bold text-emerald-900">
+              ✅ {tf('oil.recall.return.title', 'Oil changed — now give the car back')}
+            </div>
+            <p className="mt-0.5 text-sm leading-snug text-emerald-800">
+              {tf('oil.recall.return.body', 'The work is finished and the customer is still paying for this car. Everyone gets a reminder every 5 minutes until it is back with them.')}
+            </p>
+            {canRecord && (
+              <Button
+                size="sm"
+                variant="primary"
+                className="mt-2"
+                loading={busy}
+                onClick={() => post(
+                  `/Contract/${r.contract_id}/oil-returned`,
+                  {},
+                  'Handed back — the reminder stops now',
+                )}
+              >
+                {tf('oil.recall.return.button', 'Returned to the customer')}
+              </Button>
+            )}
+          </div>
+        )}
+
+        {/* ── The gate. Nothing has reached a driver until this is pressed. ───────────────── */}
+        {recall.awaiting_sales && (
+          <div className="rounded-lg border border-amber-300 bg-amber-50 p-3">
+            <div className="text-sm font-bold text-amber-900">{tf('oil.recall.sales.title', 'Waiting for Sales OK')}</div>
+            <p className="mt-0.5 text-sm leading-snug text-amber-800">
+              {tf('oil.recall.sales.body', 'Ask Sales to agree the return with the customer. No driver has been told anything — nobody is dispatched until this is pressed.')}
+            </p>
+            {canRecord && (
+              <Button
+                size="sm"
+                variant="primary"
+                className="mt-2"
+                loading={busy}
+                onClick={() => post(
+                  `/Contract/${r.contract_id}/oil-recall/sales-confirm`,
+                  {},
+                  'Sales confirmed — Waleed and Abdullah have been asked to arrange a driver',
+                )}
+              >
+                {tf('oil.recall.sales.button', 'Sales OK — customer confirmed')}
+              </Button>
+            )}
+          </div>
+        )}
+
+        {/* ── What the car owes when it lands: one optional choice, one locked requirement ── */}
+        {!cancelled && recall.stage !== 'completed' && (
+          <div className="rounded-lg bg-slate-50 p-3 ring-1 ring-inset ring-slate-200">
+            <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+              {tf('oil.recall.required.title', 'When the car arrives')}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {/* The oil change first — it is the reason the customer is being interrupted. */}
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-rose-600 px-3 py-1 text-xs font-bold text-white">
+                <span aria-hidden>🔒</span> {tf('oil.recall.required.oil', 'Oil change')}
+              </span>
+              <label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ring-1 transition ${
+                test?.required ? 'bg-indigo-600 text-white ring-indigo-600' : 'bg-white text-slate-600 ring-slate-300 hover:bg-slate-100'}`}
+              >
+                <input
+                  type="checkbox"
+                  className="h-3 w-3"
+                  aria-label="Test / Inspection"
+                  checked={!!test?.required}
+                  disabled={!canRecord || busy}
+                  onChange={(e) => post(
+                    `/Contract/${r.contract_id}/oil-recall/instructions`,
+                    { test_required: e.target.checked },
+                    e.target.checked ? 'Test added to the driver’s instructions' : 'Test removed — the oil change still stands',
+                  )}
+                />
+                {tf('oil.recall.required.test', 'Test / inspection')}
+              </label>
+            </div>
+            <p className="mt-2 text-xs leading-snug text-slate-500">
+              {tf('oil.recall.required.note', 'The oil change is why this car is coming back, so it cannot be removed. The test is optional and can be changed until the car arrives.')}
+            </p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -638,8 +709,11 @@ export function VehicleCard({ r, canRecord, onReading, onDecide, onOilChange, on
       <div className={`rounded-lg border p-3.5 ${ACTION_BOX_TONE[a.tone]}`}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
-            <div className="text-base font-bold leading-snug">{a.headline}</div>
-            <div className="mt-0.5 text-sm opacity-80">{a.support}</div>
+            {/* On a recalled car the relay panel directly above has ALREADY said the stage, who acts
+                next and what the car owes. Repeating it here in bigger type is what turned the card
+                into a wall — so this box keeps only what is its own: the badges and the buttons. */}
+            {!recall && <div className="text-base font-bold leading-snug">{a.headline}</div>}
+            {!recall && <div className="mt-0.5 text-sm opacity-80">{a.support}</div>}
             {/* An arrival is a checklist, not a sentence — what to do the moment the car rolls in. */}
             {a.steps && (
               <ol className="mt-1.5 list-decimal space-y-0.5 pl-5 text-sm">

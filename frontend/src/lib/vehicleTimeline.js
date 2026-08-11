@@ -82,6 +82,8 @@ const EVENT_KIND = {
   oil_recall_sales_confirmed: 'followup', oil_recall_instructed: 'followup',
   // …but the change itself is a completed routine service, alongside service_logged.
   oil_change_recorded: 'routine',
+  // Handing the car back to the customer is coordination, not workshop work.
+  oil_recall_returned: 'followup',
   // Accident / incident
   handover_incident: 'accident', accident_visit: 'accident',
   // Reported by people (complaints entity + driver handover notes)

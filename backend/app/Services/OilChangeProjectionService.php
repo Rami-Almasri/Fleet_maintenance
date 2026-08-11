@@ -846,16 +846,22 @@ class OilChangeProjectionService
         try {
             $verb = $decision === ContractOilDecision::DECISION_RECALL ? 'recall now' : 'oil change on return';
 
-            // Reuse the open request an earlier decision on this contract already filed.
-            $existingId = ContractOilDecision::where('contract_id', $contract->id)
+            // Reuse the open request an earlier decision on this contract already filed — and carry
+            // its ADOPTED flag with it. decide() writes a new row every time, so reading the flag off
+            // the row being created would always say "false": a second "Recall now" on a car whose
+            // card belongs to the system would quietly re-label it as ours, and the protection that
+            // stops the oil lifecycle closing somebody else's safety check would rest on nothing.
+            $priorLink = ContractOilDecision::where('contract_id', $contract->id)
                 ->whereNotNull('inspection_ticket_id')
+                ->where('id', '!=', $row->id)
                 ->orderByDesc('id')
-                ->value('inspection_ticket_id');
-            $ticket = $existingId ? Maintenance::find($existingId) : null;
+                ->first();
+
+            $ticket = $priorLink?->inspection_ticket_id ? Maintenance::find($priorLink->inspection_ticket_id) : null;
             if ($ticket && in_array($ticket->workflow_status, Maintenance::WF_TERMINAL, true)) {
                 $ticket = null;
             }
-            $adopted = $ticket ? (bool) $row->request_adopted : false;
+            $adopted = $ticket ? (bool) $priorLink->request_adopted : false;
 
             // ADOPT the request the fleet ALREADY has. When the system has flagged this car for a
             // routine check and Leen says "yes, test it too", the oil change is added to THAT card
@@ -944,6 +950,142 @@ class OilChangeProjectionService
 
             return null;
         }
+    }
+
+    // ── Giving the car back ──────────────────────────────────────────────────────────────────
+
+    /** How often the "give the car back" chase re-rings while we are still holding the car. */
+    public const RETURN_CHASE_MINUTES = 5;
+
+    /**
+     * THE CAR IS BACK WITH THE CUSTOMER — the step that actually ends a recall.
+     *
+     * We interrupted a paying rental. The oil change is what the fleet wanted; the customer wants
+     * their car. Until this is stamped the recall is not finished, whatever the workshop has done,
+     * and the chase below keeps ringing.
+     *
+     * Idempotent — a second press returns the same row untouched.
+     */
+    public function markReturnedToCustomer(Contract $contract, User $actor, ?string $note = null): ContractOilDecision
+    {
+        $row = $this->latestDecision($contract);
+
+        if (! $row || ! $row->isOilChanged()) {
+            throw ValidationException::withMessages([
+                'return' => 'There is nothing to hand back yet — the oil change has not been recorded.',
+            ]);
+        }
+
+        if ($row->returned_to_customer_at !== null) {
+            return $row;
+        }
+
+        $row->forceFill([
+            'returned_to_customer_at'      => Carbon::now(),
+            'returned_to_customer_by_name' => $actor->name ?: $actor->email,
+        ])->save();
+
+        $this->logRecallEvent($row, VehicleLogEvent::EVENT_OIL_RECALL_RETURNED, $actor, [
+            'description' => 'Car handed back to the customer after the oil change'
+                           . ($note ? ' — ' . $note : '') . '.',
+            'meta' => [
+                'contract_id'     => $contract->id,
+                'contract_no'     => $contract->contract_no,
+                'oil_decision_id' => $row->id,
+                'held_minutes'    => $row->oil_changed_at?->diffInMinutes(Carbon::now()),
+            ],
+        ]);
+
+        return $row->fresh();
+    }
+
+    /**
+     * THE CHASE — ring the people holding the car, every few minutes, until it goes back.
+     *
+     * Deliberately noisy, and deliberately not a daily digest: this step is invisible by nature. The
+     * work is finished, the ticket is closed, the workshop has moved on — and a customer is paying
+     * for a car standing in our yard. Nothing else in the system will notice.
+     *
+     * Stateless by design. It re-reads the world every run and rings anyone whose last ring is older
+     * than the window, so it is safe to run every minute, restart mid-sweep, or run twice: the
+     * `return_reminder_at` stamp is what stops a double ring, not a queue of jobs.
+     *
+     * @return array{chased:int, notified:int}
+     */
+    public function chaseCustomerReturns(): array
+    {
+        $window  = Carbon::now()->subMinutes(self::RETURN_CHASE_MINUTES);
+        $chased  = 0;
+        $rung    = 0;
+
+        ContractOilDecision::query()
+            ->whereNotNull('oil_changed_at')
+            ->whereNull('returned_to_customer_at')
+            ->where(fn ($q) => $q->whereNull('return_reminder_at')->orWhere('return_reminder_at', '<=', $window))
+            ->with(['contract.customer', 'vehicle'])
+            ->orderBy('oil_changed_at')
+            ->limit(100)
+            ->get()
+            ->each(function (ContractOilDecision $row) use (&$chased, &$rung) {
+                // The contract may have closed since — the customer came and got it, or the rental
+                // ended. Nothing owed, and nothing to ring about.
+                if (! $row->owesReturnToCustomer()) {
+                    $row->forceFill(['returned_to_customer_at' => $row->returned_to_customer_at ?: Carbon::now()])->save();
+
+                    return;
+                }
+
+                $chased++;
+                $rung += $this->ringReturnChase($row);
+                $row->forceFill(['return_reminder_at' => Carbon::now()])->save();
+            });
+
+        return ['chased' => $chased, 'notified' => $rung];
+    }
+
+    /**
+     * One round of the chase for one car. Rung to the people who can actually act: whoever owns the
+     * work where the car is standing (Abu Maroof in our parking, the Supervisors at a garage) plus
+     * the Controllers who took the decision and will field the customer's call.
+     */
+    private function ringReturnChase(ContractOilDecision $row): int
+    {
+        $vehicle  = $row->vehicle;
+        $contract = $row->contract;
+        $plate    = $vehicle?->plate_no ?: ('#' . $row->vehicle_id);
+        $held     = $row->oil_changed_at ? $row->oil_changed_at->diffForHumans(null, true) : null;
+
+        $body = trim(sprintf(
+            "The oil change is done — this car is still with us and the customer is still paying for it.\n"
+            . "%s%s\nHand it back and press “Returned to the customer” to stop this reminder.",
+            $contract?->customer?->name_en ? 'Customer: ' . $contract->customer->name_en . '. ' : '',
+            $held ? 'Waiting ' . $held . ' since the oil was changed.' : '',
+        ));
+
+        $sent = 0;
+        foreach ($this->collectionOwners($row)->merge($this->controllers())->unique('id') as $user) {
+            app(NotificationScanner::class)->notifyUser($user, [
+                'type'     => 'oil_return_to_customer',
+                'category' => 'maintenance',
+                'severity' => 'warning',
+                'title'    => 'Give the car back · ' . $plate,
+                'body'     => $body,
+                'url'      => '/oil-projection',
+                // Keyed on the ROUND, not the decision: this alert is meant to re-ring, and a key
+                // that never changes is exactly what the notification scanner dedups away.
+                'key'      => 'oil_return:' . $row->id . ':' . Carbon::now()->format('YmdHi'),
+                'icon'     => 'truck',
+                'meta'     => [
+                    'contract_id'     => $row->contract_id,
+                    'vehicle_id'      => $row->vehicle_id,
+                    'oil_decision_id' => $row->id,
+                    'oil_changed_at'  => optional($row->oil_changed_at)->toIso8601String(),
+                ],
+            ]);
+            $sent++;
+        }
+
+        return $sent;
     }
 
     /**
@@ -1553,6 +1695,11 @@ class OilChangeProjectionService
             // True when the test this recall rides on was ALREADY in the review queue — the card is
             // the system's own request with the oil change added, not a second card for the same car.
             'request_adopted'     => $row->hasAdoptedRequest(),
+            // The last step: the oil is done and the customer is still paying for a car in our yard.
+            'owes_return'         => $row->owesReturnToCustomer(),
+            'returned_at'         => optional($row->returned_to_customer_at)->toIso8601String(),
+            'returned_by'         => $row->returned_to_customer_by_name,
+            'oil_changed_at'      => optional($row->oil_changed_at)->toIso8601String(),
         ];
     }
 

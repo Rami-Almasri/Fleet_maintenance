@@ -465,6 +465,32 @@ class OilProjectionController extends Controller
     }
 
     /**
+     * THE CAR IS BACK WITH THE CUSTOMER — the step that actually ends a recall.
+     *
+     * We took a car off a paying rental. The oil change is what the fleet wanted; the customer wants
+     * their car. Until this is pressed the chase keeps ringing every few minutes, because a car
+     * standing in our yard with its work finished is invisible to every other part of the system.
+     */
+    public function returnedToCustomer(Request $request, Contract $contract): JsonResponse
+    {
+        try {
+            $data = $request->validate([
+                'note' => ['nullable', 'string', 'max:1000'],
+            ]);
+
+            $decision = $this->projection->markReturnedToCustomer($contract, $request->user(), $data['note'] ?? null);
+
+            return ResponseHelper::SuccessResponse([
+                'decision'   => $decision,
+                'recall'     => $this->projection->recallState($decision),
+                'projection' => $this->projection->project($contract->fresh()),
+            ]);
+        } catch (Throwable $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
      * What the car owes once it has been collected — the dispatcher's instruction to the driver.
      *
      * `test_required` is the ONLY field. The oil change is not accepted here in any form: this

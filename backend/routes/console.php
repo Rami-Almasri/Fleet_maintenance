@@ -189,6 +189,15 @@ Schedule::command('oil:settle-returns')
     ->hourly()
     ->withoutOverlapping();
 
+// EVERY MINUTE: chase the cars whose oil change is finished but which are still standing in our
+// yard. The command itself only rings a car whose last reminder is older than its window (5 min),
+// so "every minute" costs one cheap indexed query and the noise is governed by the service, not by
+// the schedule. Every other sweep in this file can wait until tomorrow; this one is measured in
+// hours of a customer's paid rental, so it cannot.
+Schedule::command('oil:chase-returns')
+    ->everyMinute()
+    ->withoutOverlapping();
+
 // Every 10 min: push newly-logged vehicle timeline events (the maintenance-workflow audit trail)
 // to the "Vehicle Timeline" Google Sheet. Incremental via a high-water mark, so each run appends
 // only what's new — cheap and idempotent. Runs in the background so the Google write never blocks

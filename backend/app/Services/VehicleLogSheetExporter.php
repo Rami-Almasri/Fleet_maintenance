@@ -77,6 +77,7 @@ class VehicleLogSheetExporter
         'oil_recall_sales_confirmed' => 'Sales Confirmed Return',
         'oil_recall_instructed'      => 'Collection Instructions Set',
         'oil_change_recorded'        => 'Oil Changed',
+        'oil_recall_returned'        => 'Returned to Customer',
         'readiness_confirmed'       => 'Readiness Confirmed',
         'readiness_override'        => 'Readiness Override',
         'condition_graded'          => 'Condition Graded',

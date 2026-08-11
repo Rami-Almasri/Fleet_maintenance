@@ -134,6 +134,9 @@ function collectionStage(task, userId) {
   const st = task.status;
   const oil = task.oil_followup || null;
 
+  // The oil is done but the customer has not got their car back — the last step, and the one the
+  // 5-minute chase rings about. It outranks everything else: nothing else is owed.
+  if (oil?.owes_return) return 'give_back';
   if (oil?.oil_changed) return 'done';
   if (!task.assigned_to_id) return 'to_claim';
   if (task.assigned_to_id !== userId) return 'someone_else';
@@ -143,7 +146,7 @@ function collectionStage(task, userId) {
   return 'to_collect';   // dispatched / en_route — claimed, car still at the customer's
 }
 
-function CollectionsPanel({ tf, userId, onClaim, onReceive, onArrived, onOilChange, tasks, loading, busyId }) {
+function CollectionsPanel({ tf, userId, onClaim, onReceive, onArrived, onOilChange, onReturned, tasks, loading, busyId }) {
   return (
     <CommandPanel
       title={tf('queue.section.collections.title', 'Cars to collect from customers')}
@@ -175,10 +178,11 @@ function CollectionsPanel({ tf, userId, onClaim, onReceive, onArrived, onOilChan
             arrived:      parking
               ? tf('queue.collections.atParking', 'at the parking — oil change still owed')
               : tf('queue.collections.atWorkshop', 'at the workshop — oil change still owed'),
+            give_back:    tf('queue.collections.giveBack', 'oil done — the customer is waiting for it'),
           }[stage] || '';
 
           return (
-            <div key={task.id} className={`opx-card qc ${stage === 'arrived' ? 'sev-paused' : 'sev-crit'}`}>
+            <div key={task.id} className={`opx-card qc ${stage === 'give_back' ? 'sev-ok' : stage === 'arrived' ? 'sev-paused' : 'sev-crit'}`}>
               <span className="sev" />
               <div className="top">
                 <Link to={`/vehicles/${task.vehicle_id}`} className="opx-plate">
@@ -242,6 +246,13 @@ function CollectionsPanel({ tf, userId, onClaim, onReceive, onArrived, onOilChan
                     <span className="qc-locked">{tf('queue.collections.handedOver', 'Handed over — nothing left for you')}</span>
                   )
                 )}
+                {/* The last step. Green, because nothing is wrong — but it is still an action, and
+                    the reminder keeps ringing every 5 minutes until it is pressed. */}
+                {stage === 'give_back' && (
+                  <button type="button" className="opx-btn primary" disabled={busy} onClick={() => onReturned(task)}>
+                    {tf('queue.collections.returned', 'Returned to the customer')}
+                  </button>
+                )}
                 {stage === 'someone_else' && (
                   <span className="qc-locked">
                     {tf('queue.collections.taken', '{name} is collecting this one', { name: task.assigned_to_name })}
@@ -263,8 +274,13 @@ function CollectionsPanel({ tf, userId, onClaim, onReceive, onArrived, onOilChan
  * follow-up has spent days asking the customer for this number over the phone, and the driver is
  * standing in front of the dashboard. Once he drives off, it is history.
  */
-function CollectionReceivedModal({ task, tf, onClose, onDone, onError }) {
-  const [odometer, setOdometer] = useState('');
+function CollectionReceivedModal({ task, action = 'pickup', tf, onClose, onDone, onError }) {
+  const arriving = action === 'deliver';
+  const parking  = task.oil_followup?.service_location === 'parking';
+  // Arriving is the POST-trip capture: the driver has just driven the car in, so the reading is a
+  // few km on from the doorstep one. Pre-filling it makes the honest case one tap instead of a
+  // second trip to the dashboard — he still has to correct it if it doesn't match.
+  const [odometer, setOdometer] = useState(arriving && task.last_odometer?.km ? String(task.last_odometer.km) : '');
   const [photo, setPhoto] = useState(null);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState('');
@@ -301,8 +317,13 @@ function CollectionReceivedModal({ task, tf, onClose, onDone, onError }) {
       fd.append('odometer', entered);
       fd.append('odometer_photo', photo);
       if (note.trim()) fd.append('odometer_note', note.trim());
-      await api.post(`/logistics/${task.id}/pickup`, fd);
-      onDone(tf('queue.collections.receivedOk', 'Car received — it is with you now'));
+      // Same capture, two ends of the same trip: `pickup` at the customer's door, `deliver` on
+      // arrival. Both are mandatory on a collection, which is why this dialog serves both — a
+      // button that posts nothing just earns "The odometer field is required".
+      await api.post(`/logistics/${task.id}/${arriving ? 'deliver' : 'pickup'}`, fd);
+      onDone(arriving
+        ? tf('queue.collections.arrivedOk', 'Arrived — now record the oil change')
+        : tf('queue.collections.receivedOk', 'Car received — it is with you now'));
     } catch (e) {
       onError(e.response?.data?.message || tf('queue.collections.receiveFailed', 'Could not record that'));
     } finally {
@@ -315,7 +336,11 @@ function CollectionReceivedModal({ task, tf, onClose, onDone, onError }) {
       open
       onClose={() => !busy && onClose()}
       size="sm"
-      title={tf('queue.collections.receiveTitle', 'Car received from customer')}
+      title={arriving
+        ? (parking
+          ? tf('queue.collections.arrivedParking', 'Arrived at the parking')
+          : tf('queue.collections.arrivedWorkshop', 'Arrived at the workshop'))
+        : tf('queue.collections.receiveTitle', 'Car received from customer')}
       subtitle={`${task.plate || ''} — ${task.destination || ''}`}
       footer={(
         <div className="flex justify-end gap-2">
@@ -323,15 +348,20 @@ function CollectionReceivedModal({ task, tf, onClose, onDone, onError }) {
             {tf('common.cancel', 'Cancel')}
           </Button>
           <Button onClick={submit} loading={busy}>
-            {tf('queue.collections.confirmReceived', 'I have the car')}
+            {arriving
+              ? tf('queue.collections.confirmArrived', 'It is here')
+              : tf('queue.collections.confirmReceived', 'I have the car')}
           </Button>
         </div>
       )}
     >
       <div className="space-y-3">
         <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-inset ring-amber-200">
-          {tf('queue.collections.readingWhy',
-            'Read the dashboard before you drive off. This number is the reason the car is being collected.')}
+          {arriving
+            ? tf('queue.collections.arrivedWhy',
+              'Read the dashboard now you have parked it. This closes the trip and is the last reading before the oil change.')
+            : tf('queue.collections.readingWhy',
+              'Read the dashboard before you drive off. This number is the reason the car is being collected.')}
         </p>
         {/* THE NUMBER TO COMPARE AGAINST, stated before the empty box — a reading typed against
             nothing is a reading nobody can sanity-check. Source and date travel with it. */}
@@ -632,17 +662,21 @@ export default function MyMaintenanceQueue() {
     }
   };
 
-  // "I'm here" — the one-way leg closes on arrival, which is why the card must not depend on the
-  // move still being open to show its last step.
-  const arriveCollection = async (task) => {
+  // "I'm here" — the post-trip capture. It goes through the SAME dialog as the pick-up, because a
+  // collection demands the odometer at both ends and a button that posts nothing just earns a
+  // validation error. (It did exactly that until a real click found it.)
+  const arriveCollection = (task) => setReceiving({ task, action: 'deliver' });
+
+  // The last step, and the one the 5-minute chase exists for: the oil is done, the car is ours, and
+  // the customer is still paying for it. Pressing this is what stops the reminder.
+  const returnToCustomer = async (task) => {
     setCollBusy(task.id);
     try {
-      await api.post(`/logistics/${task.id}/deliver`, {});
-      toast.success(tf('queue.collections.arrivedOk', 'Arrived — now record the oil change'));
+      await api.post(`/Contract/${task.oil_followup?.contract_id}/oil-returned`, {});
+      toast.success(tf('queue.collections.returnedOk', 'Handed back — the reminder stops now'));
       await loadCollections();
-      reload({ silent: true });
     } catch (e) {
-      toast.error(e.response?.data?.message || tf('queue.collections.arriveFailed', 'Could not record the arrival'));
+      toast.error(e.response?.data?.message || tf('queue.collections.returnFailed', 'Could not record that'));
     } finally {
       setCollBusy(null);
     }
@@ -812,7 +846,10 @@ export default function MyMaintenanceQueue() {
                 <div className="qsections">
                   {/* Cars still at a customer's address. First panel on the driver's tab, because a
                       car nobody has fetched yet is the only job on this page that is standing still. */}
-                  {activeTab === 'driver' && (collLoading || collections.length > 0) && (
+                  {/* Shown to the DRIVER (he fetches and returns the car) and to the INSPECTOR —
+                      on a parking job Abu Maroof is the one who changes the oil, so the button that
+                      records it has to be where he already works, not on a driver's screen. */}
+                  {['driver', 'inspector'].includes(activeTab) && (collLoading || collections.length > 0) && (
                     <CollectionsPanel
                       tf={tf}
                       userId={user?.id}
@@ -820,9 +857,10 @@ export default function MyMaintenanceQueue() {
                       loading={collLoading}
                       busyId={collBusy}
                       onClaim={claimCollection}
-                      onReceive={setReceiving}
+                      onReceive={(task) => setReceiving({ task, action: 'pickup' })}
                       onArrived={arriveCollection}
                       onOilChange={setOilChanging}
+                      onReturned={returnToCustomer}
                     />
                   )}
                   {activeSections.map((s) => {
@@ -890,7 +928,8 @@ export default function MyMaintenanceQueue() {
           phone for days, and once the car is ours the moment has gone. */}
       {receiving && (
         <CollectionReceivedModal
-          task={receiving}
+          task={receiving.task}
+          action={receiving.action}
           tf={tf}
           onClose={() => setReceiving(null)}
           onDone={async (message) => {

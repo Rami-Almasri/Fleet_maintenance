@@ -127,21 +127,52 @@ class LogisticsDispatchController extends Controller
             $userId = $request->user()->id;
             $since  = now()->subHours(48);
 
+            // Abu Maroof does the change himself when the car comes to our parking, so those jobs are
+            // HIS card too — regardless of which driver happened to fetch the car. Without this the
+            // one person who has to act never sees the button, because the trip was somebody else's.
+            $parkingOwner = app(\App\Services\OilChangeProjectionService::class)
+                ->parkingOwners()->contains('id', $userId);
+
+            // An UNCLAIMED job is up for grabs — but only by someone who can actually drive it.
+            // Without this, Abu Maroof (who owns the parking lane, not the wheel) gets every pooled
+            // garage collection on his queue as well, which is noise he can do nothing about.
+            $canClaim = $request->user()->can('logistics.claim');
+
             $tasks = $this->withRelations(
                 LogisticsTask::where('purpose', LogisticsTask::PURPOSE_CUSTOMER_COLLECTION)
-                    ->where(function ($q) use ($userId, $since) {
+                    ->where(function ($q) use ($userId, $since, $parkingOwner, $canClaim) {
                         $q->where(fn ($open) => $open->whereNull('completed_at')
-                            ->where(fn ($mine) => $mine->whereNull('assigned_to_id')->orWhere('assigned_to_id', $userId)))
+                            ->where(function ($mine) use ($userId, $canClaim) {
+                                $mine->where('assigned_to_id', $userId);
+                                if ($canClaim) {
+                                    $mine->orWhereNull('assigned_to_id');
+                                }
+                            }))
                           ->orWhere(fn ($done) => $done->whereNotNull('completed_at')
                             ->where('assigned_to_id', $userId)
                             ->where('completed_at', '>=', $since));
+
+                        if ($parkingOwner) {
+                            // Every parking job still owing work, whoever drove it.
+                            $q->orWhereIn('vehicle_id', \App\Models\ContractOilDecision::query()
+                                ->where('service_location', \App\Models\ContractOilDecision::LOCATION_PARKING)
+                                ->where(fn ($d) => $d->whereNull('oil_changed_at')->orWhereNull('returned_to_customer_at'))
+                                ->select('vehicle_id'));
+                        }
                     })
             )->orderByDesc('dispatched_at')->limit(50)->get();
 
-            // A finished trip whose oil HAS been recorded is done in every sense — drop it, or the
-            // driver keeps a card he can do nothing with.
-            $tasks = $tasks->reject(fn (LogisticsTask $t) => ! $t->isActive()
-                && (bool) (LogisticsTaskResource::make($t)->resolve()['oil_followup']['oil_changed'] ?? false));
+            // A finished trip is only finished when the car is back with the customer. Drop it once
+            // the oil is recorded AND the keys are handed over — before that there is still a
+            // button on it, and dropping it early is how a car goes quiet in our yard.
+            $tasks = $tasks->reject(function (LogisticsTask $t) {
+                if ($t->isActive()) {
+                    return false;
+                }
+                $oil = LogisticsTaskResource::make($t)->resolve()['oil_followup'] ?? null;
+
+                return $oil && $oil['oil_changed'] && ! $oil['owes_return'];
+            });
 
             return ResponseHelper::SuccessResponse([
                 'tasks'   => LogisticsTaskResource::collection($tasks->values()),

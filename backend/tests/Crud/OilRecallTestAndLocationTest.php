@@ -183,6 +183,51 @@ class OilRecallTestAndLocationTest extends CrudTestCase
         $this->assertTrue($ctx['recall']['request_adopted']);
     }
 
+    /**
+     * Re-deciding a car must not quietly re-label somebody else's card as ours.
+     *
+     * decide() writes a NEW row every time (the history is the point), so "was this request adopted"
+     * has to be carried forward from the row that adopted it. Found by walking the flow twice on the
+     * same car: the second "Recall now" pointed at the system's request with `request_adopted` back
+     * to false — the card would have re-titled itself as an oil follow-up, and the guard that stops
+     * the oil lifecycle closing a safety check nobody cancelled would have been resting on nothing.
+     */
+    public function test_b4_re_deciding_keeps_the_request_marked_as_adopted(): void
+    {
+        $this->people();
+        $contract = $this->rentalWithReading(remainingDays: 10, reading: 7600);
+        $existing = $this->systemTestRequest($contract->vehicle_id);
+
+        $this->postJson('/api/Contract/' . $contract->id . '/oil-decision', [
+            'decision' => 'recall', 'test_required' => true, 'service_location' => 'garage',
+        ])->assertSuccessful();
+        $this->assertTrue($this->decision($contract)->hasAdoptedRequest());
+
+        // A second call on the same car — a revision, or simply someone tapping it again.
+        $this->postJson('/api/Contract/' . $contract->id . '/oil-decision', [
+            'decision' => 'recall', 'test_required' => true, 'service_location' => 'parking',
+        ])->assertSuccessful();
+
+        $latest = $this->decision($contract);
+        $this->assertSame($existing->id, $latest->inspection_ticket_id);
+        $this->assertTrue($latest->hasAdoptedRequest(), 'the card still belongs to the system, not to us');
+
+        // The damage this actually caused on the live fleet: the second decision took the "we raised
+        // this" branch and OVERWROTE the system's own reason and trigger_detail with the oil line.
+        // The card lost "Why the system flagged this" entirely.
+        $fresh = $existing->fresh();
+        $this->assertStringContainsString('Routine check overdue', $fresh->customer_complaint,
+            'the system\'s own reason must survive a re-decide');
+        $this->assertSame('post_downtime_check', $fresh->trigger_detail['source'],
+            'and so must the detail that explains why the system flagged the car');
+        $this->assertSame(15, $fresh->trigger_detail['idle_days']);
+        $this->assertSame($latest->id, $fresh->trigger_detail['oil_projection']['contract_oil_decision_id'],
+            'the oil layer sits alongside it, never on top');
+
+        $ctx = \App\Http\Resources\MaintenanceWorkflowResource::make($existing->fresh())->resolve()['oil_context'];
+        $this->assertTrue($ctx['recall']['request_adopted'], 'and the card says so');
+    }
+
     /** Finishing the oil must NEVER close an adopted request — the test has not been done. */
     public function test_b2_the_completed_oil_change_leaves_the_adopted_test_open(): void
     {
@@ -201,6 +246,95 @@ class OilRecallTestAndLocationTest extends CrudTestCase
         $this->assertContains($fresh->workflow_status, Maintenance::WF_PRE_TICKET,
             'the system asked for a test; changing the oil did not perform it');
         $this->assertStringContainsString('20,000 km', (string) $fresh->review_notes);
+    }
+
+    /**
+     * LEEN MAY APPROVE THE TEST WHILE THE CAR IS STILL OUT — and approving it must not pretend the
+     * car has arrived.
+     *
+     * A recalled car's return is being ORGANISED, so the request is not hostage to whether a
+     * customer happens to bring it back: the reviewer sends it to Abu Maroof now and the ordinary
+     * inspection workflow runs as it always does, with the oil change riding along. The trap that
+     * creates: the relay used to read the request first, so an early approval announced "Being
+     * inspected" for a car nobody had collected — and hid the Sales OK button that was the actual
+     * next action. Paperwork does not move cars.
+     */
+    public function test_b3_approving_early_sends_it_on_without_faking_the_cars_position(): void
+    {
+        $this->people();
+        $contract = $this->rentalWithReading(remainingDays: 10, reading: 7600);
+        $existing = $this->systemTestRequest($contract->vehicle_id);
+
+        $this->postJson('/api/Contract/' . $contract->id . '/oil-decision', [
+            'decision' => 'recall', 'test_required' => true, 'service_location' => 'garage',
+        ])->assertSuccessful();
+
+        $decision = $this->decision($contract);
+        $this->assertSame(ContractOilDecision::STAGE_WAITING_SALES, $decision->recallStage());
+
+        // Approved BEFORE Sales have agreed and before any driver has moved.
+        $this->postJson('/api/maintenance-tickets/' . $existing->id . '/review/approve', [])
+            ->assertSuccessful();
+        $this->assertSame(Maintenance::WF_INSPECTION_REQUESTED, $existing->fresh()->workflow_status,
+            'the ordinary workflow runs — the request is now in the Inspector\'s queue');
+
+        // …and the recall still says what is TRUE of the car.
+        $decision->refresh();
+        $this->assertSame(ContractOilDecision::STAGE_WAITING_SALES, $decision->recallStage(),
+            'an office decision must not move a car');
+        $this->assertFalse($decision->inOurCustody());
+        $this->assertTrue($decision->isAwaitingSalesConfirmation(), 'the Sales OK button must survive');
+
+        // The gate still works from there, and the chain carries on normally.
+        $this->postJson('/api/Contract/' . $contract->id . '/oil-recall/sales-confirm', [])->assertSuccessful();
+        $this->assertSame(ContractOilDecision::STAGE_READY_FOR_DRIVER, $decision->fresh()->recallStage());
+    }
+
+    /**
+     * THE INSPECTOR CANNOT FILE THE REPORT WITHOUT THE OIL CHANGE.
+     *
+     * "Oil Change" sits in the same Routine Maintenance list as Battery, Oil Filter, Air Filter and
+     * Coolant — five tick-boxes an inspector runs past in a second. On a recalled car it is not one
+     * of them: a customer's rental was interrupted for it. The picker renders it locked-on; this is
+     * the same rule where no crafted request, stale tab or future screen can get around it.
+     */
+    public function test_b5_the_inspector_cannot_file_a_report_that_drops_the_oil_change(): void
+    {
+        $this->people();
+        $contract = $this->rentalWithReading(remainingDays: 10, reading: 7600);
+        $existing = $this->systemTestRequest($contract->vehicle_id);
+
+        $this->postJson('/api/Contract/' . $contract->id . '/oil-decision', [
+            'decision' => 'recall', 'test_required' => true, 'service_location' => 'garage',
+        ])->assertSuccessful();
+
+        // Walk the request to the point the Inspector actually files a report from.
+        $wf = app(\App\Services\MaintenanceWorkflowService::class);
+        $ticket = $wf->approveInspectionReview(Maintenance::find($existing->id), [], $this->admin);
+        $ticket = $wf->startDiagnostic($ticket, ['test_odometer' => 5000], $this->admin);
+
+        // A report that mentions everything EXCEPT the reason the car was recalled.
+        $wf->submitReport($ticket, [
+            'symptoms'         => ['Battery Replacement', 'Air Filter'],
+            'severity'         => 'moderate',
+            'fault_severity'   => 'routine',
+            'maintenance_type' => Maintenance::TYPE_ROUTINE,
+        ], true, $this->admin);
+
+        $findings = collect($ticket->fresh()->findings)->pluck('text')->map(fn ($t) => mb_strtolower($t));
+        $this->assertTrue($findings->contains('oil change'), 'the oil change must survive the report');
+        $this->assertTrue($findings->contains('battery replacement'), 'and so must what the inspector actually found');
+
+        // Once it HAS been done the requirement is MET, not re-asserted — both the picker and the
+        // server-side append read the same flag, so neither puts the same job on the ticket twice.
+        $this->postJson('/api/Contract/' . $contract->id . '/oil-recall/sales-confirm', [])->assertSuccessful();
+        $this->postJson('/api/Contract/' . $contract->id . '/oil-change-done', ['odometer' => 20000])
+            ->assertSuccessful();
+
+        $actions = $this->decision($contract)->requiredActions();
+        $this->assertTrue($actions['oil_change']['required'], 'it stays the reason the customer was interrupted');
+        $this->assertTrue($actions['oil_change']['done'], 'but it is no longer outstanding');
+        $this->assertSame(20000, $actions['oil_change']['odometer']);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════════════════════
@@ -392,9 +526,17 @@ class OilRecallTestAndLocationTest extends CrudTestCase
         $this->postJson('/api/Contract/' . $contract->id . '/oil-change-done', ['odometer' => 20000])
             ->assertSuccessful();
 
-        // 6. …and only NOW is it off his screen, because there is nothing left to do.
-        $this->assertNull($mine(), 'a finished collection must not linger in the queue');
         $this->assertSame(20000, (int) Vehicle::findOrFail($contract->vehicle_id)->last_service_odometer);
+
+        // 6. The card STAYS — the customer is still paying for a car sitting in our parking, and
+        //    handing it back is the one job left on it.
+        $card = $mine();
+        $this->assertNotNull($card, 'the oil is done, but the car is still ours');
+        $this->assertTrue($card['oil_followup']['owes_return']);
+
+        // 7. …and only once the keys are back with the customer is it off his screen.
+        $this->postJson('/api/Contract/' . $contract->id . '/oil-returned', [])->assertSuccessful();
+        $this->assertNull($mine(), 'a finished collection must not linger in the queue');
     }
 
     // ═══════════════════════════════════════════════════════════════════════════════════════════

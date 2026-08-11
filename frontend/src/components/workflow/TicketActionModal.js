@@ -611,6 +611,16 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
     [ticket],
   );
 
+  // ── REQUIRED findings — settled before this screen, and not the inspector's to drop ────────
+  // An oil recall interrupted a paying customer's rental BECAUSE the car needs an oil change. By the
+  // time the car reaches this report that is a decision already taken, with a driver sent and a
+  // customer inconvenienced for it — so "Oil Change" arrives ticked and cannot be unticked here.
+  // It stops being required only once it has actually been recorded as done.
+  const requiredFindings = useMemo(() => {
+    const oil = ticket?.oil_context?.recall?.required_actions?.oil_change;
+    return oil?.required && !oil?.done ? ['Oil Change'] : [];
+  }, [ticket]);
+
   // Reality-check data — the car's LIVE oil/battery/tyre status, so the Decide/Garage-finding step can
   // warn the moment a routine keyword (Oil Change, Battery Replacement, Tire Rotation/Change) is tapped
   // while the car's own status says it isn't actually due. Best-effort: only fetched for the two steps
@@ -1766,7 +1776,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                   </ul>
                 </div>
               )}
-              <FindingsPicker catalog={findingsCatalog} keywordMeta={keywordMeta} value={symptoms} onChange={setSymptoms} locked={lockedFindings} suggested={dataSuggested} statusConditions={diagConditions} ticketId={ticket?.id ?? null} vehicleId={ticket?.vehicle_id ?? vehicleId ?? null} aiContext="test_findings" />
+              <FindingsPicker catalog={findingsCatalog} keywordMeta={keywordMeta} value={symptoms} onChange={setSymptoms} locked={lockedFindings} required={requiredFindings} requiredNote={"Required by the oil follow-up — the recall exists because this car needs an oil change."} suggested={dataSuggested} statusConditions={diagConditions} ticketId={ticket?.id ?? null} vehicleId={ticket?.vehicle_id ?? vehicleId ?? null} aiContext="test_findings" />
             </Step>
 
             {/* STEP 3 — diagnosis: probable cause per symptom, the chronic-fault + prior-repair intelligence
@@ -2799,7 +2809,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
           <>
             <div>
               <span className="mb-1.5 block text-sm font-medium text-slate-700">{t('workflow.field.newGarageIssues')}</span>
-              <FindingsPicker catalog={findingsCatalog} keywordMeta={keywordMeta} value={findingTags} onChange={setFindingTags} locked={lockedFindings} statusConditions={diagConditions} ticketId={ticket?.id ?? null} vehicleId={ticket?.vehicle_id ?? vehicleId ?? null} aiContext="garage_findings" />
+              <FindingsPicker catalog={findingsCatalog} keywordMeta={keywordMeta} value={findingTags} onChange={setFindingTags} locked={lockedFindings} required={requiredFindings} requiredNote={"Required by the oil follow-up — the recall exists because this car needs an oil change."} statusConditions={diagConditions} ticketId={ticket?.id ?? null} vehicleId={ticket?.vehicle_id ?? vehicleId ?? null} aiContext="garage_findings" />
             </div>
             {/* Symptom → Root-Cause — diagnose each garage-found issue (mandatory where a cause-list exists) */}
             {findingTags.length > 0 && (

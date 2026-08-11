@@ -399,15 +399,15 @@ test('a recalled car waits on Sales and offers the confirmation as the only acti
   const card = within((await screen.findByText('K 81836')).closest('[data-card]'));
 
   expect(card.getByText(/Waiting for Sales OK/)).toBeInTheDocument();
-  expect(card.getByText(/No driver has been notified/)).toBeInTheDocument();
-  expect(card.getByText(/Sales must agree the return with the customer/)).toBeInTheDocument();
-  // The mandatory half is visible from the first stage, and cannot be interacted with.
-  const oil = card.getByLabelText('Oil change — required');
-  expect(oil).toBeChecked();
-  expect(oil).toBeDisabled();
+  expect(card.getByText(/nobody is dispatched until this is pressed/)).toBeInTheDocument();
+  // WHO acts now, called out on its own — the one line somebody reads if they read nothing else.
+  expect(card.getByText('Sales must agree the return with the customer')).toBeInTheDocument();
+  // The mandatory half is visible from the first stage, and is not a control at all.
+  expect(card.getByText('Oil change')).toBeInTheDocument();
+  expect(card.queryByLabelText('Oil change — required')).not.toBeInTheDocument();
 
   api.post.mockResolvedValue({ data: { data: {} } });
-  fireEvent.click(card.getByText('Sales OK — Customer confirmed'));
+  fireEvent.click(card.getByText('Sales OK — customer confirmed'));
 
   await waitFor(() => expect(api.post).toHaveBeenCalledWith(
     '/Contract/91/oil-recall/sales-confirm', {},
@@ -423,11 +423,13 @@ test('a confirmed recall reports the confirmation and the collection instead of 
 
   const card = within((await screen.findByText('K 81836')).closest('[data-card]'));
 
-  expect(card.queryByText('Sales OK — Customer confirmed')).not.toBeInTheDocument();
-  expect(card.getByText(/Sales confirmed by Marwa/)).toBeInTheDocument();
-  expect(card.getByText(/Collection #44 · Awaiting driver/)).toBeInTheDocument();
-  expect(card.getByText(/no driver has claimed it yet/)).toBeInTheDocument();
-  expect(card.getByText(/Waleed \/ Abdullah arrange a driver/)).toBeInTheDocument();
+  expect(card.queryByText('Sales OK — customer confirmed')).not.toBeInTheDocument();
+  // The same three facts, now read as a labelled list instead of a pile of sentences.
+  expect(card.getByText(/Confirmed/)).toBeInTheDocument();
+  expect(card.getByText(/Marwa/)).toBeInTheDocument();
+  expect(card.getByText(/nobody has claimed it yet/)).toBeInTheDocument();
+  expect(card.getByText(/Awaiting driver · #44/)).toBeInTheDocument();
+  expect(card.getByText('Waleed / Abdullah arrange a driver')).toBeInTheDocument();
 });
 
 /** The test is the only instruction on offer — and posting it never mentions the oil change. */

@@ -3183,6 +3183,22 @@ class MaintenanceWorkflowService
                 : ($requiresMaintenance ? Maintenance::TYPE_ROUTINE : null),
         ];
 
+        // THE OIL CHANGE A RECALL OWES IS NOT OPTIONAL HERE EITHER.
+        // If this ticket came from an oil recall, a paying customer's rental was interrupted BECAUSE
+        // the car needs an oil change — a driver was sent, a customer inconvenienced. By the time the
+        // inspector files his report that is a decision already taken, not one of six routine boxes
+        // he may untick on his way past. The picker locks it; this is the same rule where it cannot
+        // be bypassed by a crafted request, a stale tab, or a future screen that forgets.
+        //
+        // Appended, never rejected: refusing the whole report would lose an inspector's real work
+        // over a checkbox, and the requirement is ours to re-assert, not his to satisfy.
+        if ($requiresMaintenance && $this->oilChangeIsOwed($ticket)) {
+            $already = array_filter($payload['symptoms'], fn ($s) => mb_strtolower($s) === 'oil change');
+            if (! $already) {
+                $payload['symptoms'][] = 'Oil Change';
+            }
+        }
+
         // A ticket must carry SOME finding (it explains the repair); a "no maintenance" clearance
         // may legitimately be empty (the car was fine).
         if ($requiresMaintenance && $payload['symptoms'] === [] && ! $payload['recommended_action'] && ! $payload['notes']) {
@@ -6892,6 +6908,38 @@ class MaintenanceWorkflowService
         $lines[] = '— Auto-generated on close · ' . Carbon::now()->format('d M Y') . ' · ' . $actor->name;
 
         return implode("\n", $lines);
+    }
+
+    /**
+     * Does this ticket owe an oil change that a recall already committed the fleet to?
+     *
+     * True only while it is genuinely outstanding: a recall exists, and the change has not been
+     * recorded. Once the workshop records it the requirement is MET, and re-adding it to a later
+     * report would put the same job on the ticket twice.
+     *
+     * Reads both shapes the reference takes — a request the oil lifecycle RAISED (whole
+     * trigger_detail) and one it ADOPTED (the oil layer under `oil_projection`).
+     */
+    private function oilChangeIsOwed(Maintenance $ticket): bool
+    {
+        $detail = $ticket->trigger_detail;
+        if (! is_array($detail)) {
+            return false;
+        }
+
+        $oil = ($detail['source'] ?? null) === 'oil_projection'
+            ? $detail
+            : ($detail['oil_projection'] ?? null);
+
+        if (! is_array($oil) || empty($oil['contract_oil_decision_id'])) {
+            return false;
+        }
+
+        $decision = \App\Models\ContractOilDecision::find($oil['contract_oil_decision_id']);
+
+        return $decision
+            && $decision->decision === \App\Models\ContractOilDecision::DECISION_RECALL
+            && ! $decision->isOilChanged();
     }
 
     private function clean(mixed $value): ?string

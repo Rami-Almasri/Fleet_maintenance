@@ -124,6 +124,9 @@ class LogisticsTaskResource extends JsonResource
             'decision_id'         => (int) $decision->id,
             'oil_changed'         => $decision->isOilChanged(),
             'odometer'            => $decision->oil_changed_odometer,
+            // The oil is done but the customer has not got the car back — the step the chase rings
+            // about, and the reason this card must stay on somebody's screen.
+            'owes_return'         => $decision->owesReturnToCustomer(),
             'service_location'    => $decision->serviceLocation(),
             'service_interval_km' => $this->vehicle?->service_interval_km !== null
                 ? (int) $this->vehicle->service_interval_km

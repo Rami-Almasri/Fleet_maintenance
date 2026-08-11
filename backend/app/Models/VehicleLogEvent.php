@@ -61,6 +61,8 @@ class VehicleLogEvent extends Model
     // The far end, and the only event here that changes the CAR rather than the arrangement: the oil
     // was physically changed and the reading recorded, so the next interval runs from that number.
     public const EVENT_OIL_CHANGE_RECORDED        = 'oil_change_recorded';        // recordOilChange(): oil changed at N km → the car's service anchor moved
+    // …and the step that actually ends a recall: the customer has their rental back.
+    public const EVENT_OIL_RECALL_RETURNED        = 'oil_recall_returned';        // markReturnedToCustomer(): car handed back after the change
     // ── Ticket DESTRUCTION — the one event that must outlive its own subject ────────────────────────
     // A deleted ticket used to leave no trace at all: its rows vanished (or, for `nullOnDelete` children
     // like this table, quietly detached), so "no history" and "history destroyed" were indistinguishable
@@ -183,6 +185,8 @@ class VehicleLogEvent extends Model
         self::EVENT_OIL_RECALL_INSTRUCTED      => Maintenance::FINDING_INSPECTOR,
         // …but the change itself is workshop work, physically performed on the car.
         self::EVENT_OIL_CHANGE_RECORDED        => Maintenance::FINDING_GARAGE,
+        // Handing the car back is coordination, not work on the car.
+        self::EVENT_OIL_RECALL_RETURNED        => Maintenance::FINDING_INSPECTOR,
         // Recommendation triage — a Supervisor's pre-garage management decision → inspector-side bucket.
         self::EVENT_RECOMMENDATION_APPROVED  => Maintenance::FINDING_INSPECTOR,
         self::EVENT_RECOMMENDATION_DISMISSED => Maintenance::FINDING_INSPECTOR,

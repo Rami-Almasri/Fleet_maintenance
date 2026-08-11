@@ -55,8 +55,23 @@ const CONDITION_FOR_KEYWORD = {
   'tire change':         'tyres',
 };
 
-function Chip({ label, tone, active, locked, lockedTitle, onClick }) {
+function Chip({ label, tone, active, locked, lockedTitle, required, requiredTitle, onClick }) {
   const dot = tone && RISK_DOT[tone] && !active ? <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${RISK_DOT[tone]}`} /> : null;
+
+  // REQUIRED is the opposite of locked, and must not look like it. Locked means "already reported,
+  // you cannot add it again" — greyed out and off. Required means "this IS being done, and you do
+  // not get to remove it": it renders SELECTED, in the selected colour, with a padlock.
+  if (required) {
+    return (
+      <span
+        title={requiredTitle}
+        aria-disabled="true"
+        className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-full bg-rose-600 px-3 py-1 text-xs font-semibold text-white ring-1 ring-rose-600"
+      >
+        <span aria-hidden>🔒</span> {label}
+      </span>
+    );
+  }
   if (locked) {
     return (
       <span
@@ -86,8 +101,8 @@ function Chip({ label, tone, active, locked, lockedTitle, onClick }) {
 // FindingsAiSuggestion): a Yes/No given on a real car during a real inspection is ground truth about
 // the vocabulary, and is filed apart from admin experiments on the keyword-library page. They are
 // optional — the picker works identically without them, the verdicts just lose their provenance.
-export default function FindingsPicker({ catalog, keywordMeta = {}, value = [], onChange, locked = [], onSiteOnly = false, onSiteKeywords = [], suggested = [], statusConditions = [], ticketId = null, vehicleId = null, aiContext = 'test_findings' }) {
-  const { t, lang } = useI18n();
+export default function FindingsPicker({ catalog, keywordMeta = {}, value = [], onChange, locked = [], required = [], requiredNote = null, onSiteOnly = false, onSiteKeywords = [], suggested = [], statusConditions = [], ticketId = null, vehicleId = null, aiContext = 'test_findings' }) {
+  const { t, tf, lang } = useI18n();
   const [custom, setCustom] = useState('');
   const [query, setQuery] = useState('');
   // Which category accordions are open. Everything starts CLOSED — the inspector opens the systems they
@@ -134,6 +149,25 @@ export default function FindingsPicker({ catalog, keywordMeta = {}, value = [], 
   );
   const isLocked = (k) => lockedSet.has(k.toLowerCase());
 
+  // ── REQUIRED findings — decided before this screen, and not removable on it ────────────────
+  // An oil recall is the case this exists for: the customer's rental was interrupted BECAUSE the car
+  // needs an oil change, so "Oil Change" is not one of six routine boxes an inspector may untick on
+  // his way past. It arrives selected and stays selected. (Locked ≠ required: locked means "already
+  // reported, don't add it twice"; required means "this is happening".)
+  const requiredSet = useMemo(
+    () => new Set(required.map((r) => String(r).toLowerCase())),
+    [required],
+  );
+  const isRequired = (k) => requiredSet.has(k.toLowerCase());
+
+  // Put them in the selection the moment the picker opens, so a report can never be submitted
+  // without them — and re-assert if anything downstream drops one.
+  useEffect(() => {
+    if (!required.length) return;
+    const missing = required.filter((r) => !value.some((v) => v.toLowerCase() === String(r).toLowerCase()));
+    if (missing.length) onChange([...value, ...missing]);
+  }, [required, value, onChange]);
+
   // Every keyword the catalog knows about — used to split the selection into "from the library"
   // vs "custom", so custom tags render in their own removable row.
   const known = useMemo(
@@ -162,7 +196,8 @@ export default function FindingsPicker({ catalog, keywordMeta = {}, value = [], 
 
   const has = (k) => value.some((v) => v.toLowerCase() === k.toLowerCase());
   const toggle = (k) => {
-    if (isLocked(k)) return; // already reported — never selectable
+    if (isLocked(k)) return;   // already reported — never selectable
+    if (isRequired(k)) return; // decided upstream — this one is not the inspector's to drop
     onChange(has(k) ? value.filter((v) => v.toLowerCase() !== k.toLowerCase()) : [...value, k]);
   };
 
@@ -431,6 +466,8 @@ export default function FindingsPicker({ catalog, keywordMeta = {}, value = [], 
                       active={has(k)}
                       locked={isLocked(k)}
                       lockedTitle={t('findingsPicker.alreadyReported')}
+                      required={isRequired(k)}
+                      requiredTitle={requiredNote || tf('findingsPicker.requiredNote', 'Required — decided before this step, and not removable here.')}
                       onClick={() => toggle(k)}
                     />
                   ))}

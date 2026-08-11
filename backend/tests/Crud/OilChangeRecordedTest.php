@@ -245,8 +245,9 @@ class OilChangeRecordedTest extends CrudTestCase
         $this->assertSame(Maintenance::WF_CLOSED, $request->workflow_status);
         $this->assertStringContainsString('20,000 km', (string) $request->review_notes);
 
-        // The relay reads "completed" and the review card says so in its own words.
-        $this->assertSame(ContractOilDecision::STAGE_COMPLETED, $decision->fresh()->recallStage());
+        // The relay has reached its last step — the work is done, the car is not back yet. (Handing
+        // it over is what reads "completed"; see test_c3.)
+        $this->assertSame(ContractOilDecision::STAGE_RETURN_TO_CUSTOMER, $decision->fresh()->recallStage());
         $ctx = $this->oilContext($decision);
         $this->assertSame('oil_service_completed', $ctx['current_action']);
         $this->assertSame(20000, $ctx['oil_changed']['odometer']);
@@ -285,6 +286,51 @@ class OilChangeRecordedTest extends CrudTestCase
         $ctx = $this->oilContext($decision);
         $this->assertSame('oil_service_completed', $ctx['current_action']);
         $this->assertTrue($ctx['recall']['required_actions']['test']['required']);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════════════════
+    //  C3 — THE RECALL ENDS WHEN THE CUSTOMER HAS THE CAR BACK, NOT WHEN THE OIL IS CHANGED
+    // ═══════════════════════════════════════════════════════════════════════════════════════════
+
+    /**
+     * The blind spot this closes: the moment the oil is recorded, every signal says "finished" —
+     * ticket closed, workshop moved on, board green — while the car stands in our yard on a rental
+     * the customer is still paying for. Nothing else in the system notices.
+     */
+    public function test_c3_a_car_still_in_our_yard_after_the_change_is_chased_until_it_goes_back(): void
+    {
+        [$contract, $decision] = $this->collectedRecall();
+
+        $this->postJson('/api/Contract/' . $contract->id . '/oil-change-done', ['odometer' => 20000])
+            ->assertSuccessful();
+
+        // The rental is still open, so the recall is NOT over.
+        $decision->refresh();
+        $this->assertTrue($decision->owesReturnToCustomer());
+        $this->assertSame(ContractOilDecision::STAGE_RETURN_TO_CUSTOMER, $decision->recallStage());
+        $this->assertTrue($this->service()->recallState($decision)['owes_return']);
+
+        // The chase rings the people who can act, and does not ring them twice inside its window.
+        $first = $this->service()->chaseCustomerReturns();
+        $this->assertSame(1, $first['chased']);
+        $this->assertGreaterThan(0, $first['notified'], 'somebody must actually be told');
+
+        $again = $this->service()->chaseCustomerReturns();
+        $this->assertSame(0, $again['chased'], 'a second sweep inside the window must stay silent');
+
+        // …and it keeps ringing once the window has passed.
+        $decision->forceFill(['return_reminder_at' => now()->subMinutes(OilChangeProjectionService::RETURN_CHASE_MINUTES + 1)])->save();
+        $this->assertSame(1, $this->service()->chaseCustomerReturns()['chased']);
+
+        // Handing the car back is what ends it — and stops the chase.
+        $this->postJson('/api/Contract/' . $contract->id . '/oil-returned', [])->assertSuccessful();
+
+        $decision->refresh();
+        $this->assertNotNull($decision->returned_to_customer_at);
+        $this->assertSame($this->admin->name, $decision->returned_to_customer_by_name);
+        $this->assertFalse($decision->owesReturnToCustomer());
+        $this->assertSame(ContractOilDecision::STAGE_COMPLETED, $decision->recallStage());
+        $this->assertSame(0, $this->service()->chaseCustomerReturns()['chased']);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════════════════════
