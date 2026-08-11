@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useNotifications } from '../hooks/useNotifications';
 import { usePermissions } from '../hooks/usePermissions';
+import { useI18n } from '../i18n/I18nContext';
 import { PageHeader, EmptyState, Card } from '../components/ui/Misc';
 import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
@@ -56,6 +57,7 @@ export default function Notifications() {
   const { unreadCount, refresh, markAllRead, clearAll } = useNotifications();
   const { can } = usePermissions();
   const toast = useToast();
+  const { t } = useI18n();
 
   // Maintenance Progress checkpoints (Waleed & Abdullah's lane): a `maint_checkpoint` reminder is
   // answered by FILING the update, not by reading a page — so its action opens the very same
@@ -296,14 +298,14 @@ export default function Notifications() {
 
         {/* ── Header ─────────────────────────────────────────────────────── */}
         <PageHeader
-          title="Action Center"
-          subtitle="Your to-do list — the tasks that need you, sorted into lanes for your role and ready to act on."
+          title={t('actionCenter.title')}
+          subtitle={t('actionCenter.subtitle')}
         >
           <Button variant="secondary" size="sm" onClick={onMarkAll} disabled={!unreadCount}>
-            Mark all read
+            {t('actionCenter.markAllRead')}
           </Button>
           <Button variant="secondary" size="sm" onClick={onClearAll} disabled={visible.length === 0}>
-            {activeTab === 'all' ? 'Clear all' : `Clear ${activeTabDef.label}`}
+            {activeTab === 'all' ? t('actionCenter.clearAll') : t('actionCenter.clearLane', { lane: activeTabDef.label })}
           </Button>
         </PageHeader>
 
@@ -311,7 +313,7 @@ export default function Notifications() {
             Action-required tiles double as one-click focus filters. */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <StatTile
-            label="Critical"
+            label={t('actionCenter.stat.critical')}
             value={stats.critical}
             tone="red"
             icon="alert"
@@ -320,7 +322,7 @@ export default function Notifications() {
             onClick={() => setFocus((f) => (f === 'critical' ? 'all' : 'critical'))}
           />
           <StatTile
-            label="Action required"
+            label={t('actionCenter.stat.action')}
             value={stats.action}
             tone="indigo"
             icon="check"
@@ -328,8 +330,8 @@ export default function Notifications() {
             disabled={stats.action === 0}
             onClick={() => setFocus((f) => (f === 'action' ? 'all' : 'action'))}
           />
-          <StatTile label="Unread" value={stats.unread} tone="blue" icon="bell" />
-          <StatTile label="In this lane" value={stats.total} tone="slate" icon={activeTabDef.icon || 'bell'} />
+          <StatTile label={t('actionCenter.stat.unread')} value={stats.unread} tone="blue" icon="bell" />
+          <StatTile label={t('actionCenter.stat.inLane')} value={stats.total} tone="slate" icon={activeTabDef.icon || 'bell'} />
         </div>
 
         {/* ── Control panel: lane picker + how the board is grouped ──────────
@@ -340,16 +342,16 @@ export default function Notifications() {
           {/* Toolbar row: section label · group-by · unread-only */}
           <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 bg-slate-50/60 px-4 py-2.5">
             <span className="text-[11px] font-bold uppercase tracking-[0.09em] text-slate-500">
-              Lanes
+              {t('actionCenter.lanes')}
             </span>
-            <span className="hidden text-xs text-slate-400 sm:inline">Pick the work you own</span>
+            <span className="hidden text-xs text-slate-400 sm:inline">{t('actionCenter.lanesHint')}</span>
 
             <div className="ms-auto flex flex-wrap items-center gap-2">
               {/* Group-by: priority vs time — the two ways an ops manager scans the board. */}
               <div className="inline-flex items-center gap-2">
-                <span className="hidden text-[11px] font-semibold uppercase tracking-wide text-slate-400 sm:inline">Group by</span>
-                <div className="inline-flex items-center rounded-xl bg-slate-200/60 p-1" role="group" aria-label="Group by">
-                  {[['priority', 'Priority'], ['time', 'Time']].map(([key, lbl]) => (
+                <span className="hidden text-[11px] font-semibold uppercase tracking-wide text-slate-400 sm:inline">{t('actionCenter.groupBy')}</span>
+                <div className="inline-flex items-center rounded-xl bg-slate-200/60 p-1" role="group" aria-label={t('actionCenter.groupBy')}>
+                  {[['priority', t('actionCenter.byPriority')], ['time', t('actionCenter.byTime')]].map(([key, lbl]) => (
                     <button
                       key={key}
                       type="button"
@@ -384,14 +386,14 @@ export default function Notifications() {
                   aria-hidden="true"
                   className={['h-2 w-2 rounded-full transition-colors', filter === 'unread' ? 'bg-white' : 'bg-slate-300'].join(' ')}
                 />
-                Unread only
+                {t('actionCenter.unreadOnly')}
               </button>
             </div>
           </div>
 
           {/* Lane picker — overview row on top, then one labelled row per stage of the
               job. Chips wrap onto as many lines as they need; nothing hides off-screen. */}
-          <nav aria-label="Notification lanes" className="divide-y divide-slate-100">
+          <nav aria-label={t('actionCenter.lanesNav')} className="divide-y divide-slate-100">
             {(() => {
               const chip = (t) => (
                 <LaneChip
@@ -419,7 +421,7 @@ export default function Notifications() {
                           </span>
                           {unread > 0
                             ? <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" aria-hidden="true" />
-                            : total === 0 && <span className="text-[11px] font-medium text-slate-300">clear</span>}
+                            : total === 0 && <span className="text-[11px] font-medium text-slate-300">{t('actionCenter.laneClear')}</span>}
                         </div>
                         <div className="flex min-w-0 flex-1 flex-wrap gap-2">
                           {g.items.map(chip)}
@@ -472,7 +474,7 @@ export default function Notifications() {
               message={focus === 'critical'
                 ? 'Nothing in this lane is critical right now — the highest-priority work is clear.'
                 : 'Every item here has already been actioned or read. Nice work.'}
-              action={<Button variant="secondary" size="sm" onClick={() => setFocus('all')}>Show everything</Button>}
+              action={<Button variant="secondary" size="sm" onClick={() => setFocus('all')}>{t('actionCenter.showEverything')}</Button>}
             />
           </Card>
         ) : (
@@ -579,6 +581,7 @@ const CTA_VARIANT = { critical: 'danger', warning: 'warning', info: 'primary', s
 // ─────────────────────────────────────────────────────────────────────────────
 
 function NotificationRow({ n, onAction, onMarkRead, onDismiss, grouped = false }) {
+  const { t } = useI18n();
   const theme = severityTheme(n.severity);
   const highlights = metaHighlights(n);
   let entities = metaEntities(n);
@@ -618,10 +621,10 @@ function NotificationRow({ n, onAction, onMarkRead, onDismiss, grouped = false }
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
               {settled
-                ? <Badge tone="slate">No longer applies</Badge>
+                ? <Badge tone="slate">{t('actionCenter.settled')}</Badge>
                 : <Badge tone={SEVERITY_TONE[n.severity] || 'blue'} dot>{theme.label}</Badge>}
               <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{kind}</span>
-              {!n.read && !settled && <span className={`h-2 w-2 shrink-0 rounded-full ${theme.dot}`} aria-label="unread" />}
+              {!n.read && !settled && <span className={`h-2 w-2 shrink-0 rounded-full ${theme.dot}`} aria-label={t('actionCenter.unreadDot')} />}
             </div>
             <h3 className={`mt-1.5 text-sm leading-snug ${n.read ? 'font-semibold text-slate-700' : 'font-bold text-slate-900'}`}>
               {n.title}
@@ -640,8 +643,8 @@ function NotificationRow({ n, onAction, onMarkRead, onDismiss, grouped = false }
                   type="button"
                   onClick={() => onDismiss(n.id)}
                   className="rounded-lg p-1 text-slate-300 opacity-0 transition-colors duration-150 hover:bg-slate-100 hover:text-slate-500 focus-visible:opacity-100 group-hover:opacity-100"
-                  title="Dismiss"
-                  aria-label="Dismiss notification"
+                  title={t('actionCenter.dismiss')}
+                  aria-label={t('actionCenter.dismissOne')}
                 >
                   <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M6 18L18 6M6 6l12 12" />
@@ -825,6 +828,7 @@ function SectionHeader({ accent, label, sub, count, unread }) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function PrioritySection({ severity, rows, children }) {
+  const { t } = useI18n();
   const theme = severityTheme(severity);
   const def = PRIORITY_SECTION[severity];
   const unread = rows.filter((r) => !r.read).length;
@@ -840,9 +844,9 @@ function PrioritySection({ severity, rows, children }) {
           </span>
           <div className="min-w-0">
             <p className="text-sm font-bold">Critical · {rows.length} need{rows.length === 1 ? 's' : ''} immediate attention</p>
-            <p className="text-xs text-red-50/90">Start here — highest-priority work in your fleet right now.</p>
+            <p className="text-xs text-red-50/90">{t('actionCenter.criticalLead')}</p>
           </div>
-          {unread > 0 && <span className="ms-auto rounded-full bg-white/20 px-2.5 py-1 text-[11px] font-bold tabular-nums">{unread} unread</span>}
+          {unread > 0 && <span className="ms-auto rounded-full bg-white/20 px-2.5 py-1 text-[11px] font-bold tabular-nums">{t('actionCenter.unreadCount', { n: unread })}</span>}
         </header>
         <div className="space-y-3 p-3">{children}</div>
       </section>

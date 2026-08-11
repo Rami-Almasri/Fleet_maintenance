@@ -124,14 +124,15 @@ function dueDate(iso) {
 // both, and printing the same three "findings" on every car. Per-car checks now come from
 // <SuggestedChecks>, and the standing checklist is rendered there as the agenda it is.
 function SystemDetail({ detail, suggested }) {
+  const { tf } = useI18n();
   const rules = Array.isArray(detail?.rules) ? detail.rules : [];
   const svc = detail?.service || null;
 
   const values = [
-    ['Current mileage', km(svc?.current_km)],
-    ['Service interval', km(svc?.interval_km)],
-    ['Overdue by', km(svc?.overdue_km)],
-    ['Next due', dueDate(svc?.next_due_at)],
+    [tf('reviewQueue.detail.currentKm', 'Current mileage'), km(svc?.current_km)],
+    [tf('reviewQueue.detail.intervalKm', 'Service interval'), km(svc?.interval_km)],
+    [tf('reviewQueue.detail.overdueBy', 'Overdue by'), km(svc?.overdue_km)],
+    [tf('reviewQueue.detail.nextDue', 'Next due'), dueDate(svc?.next_due_at)],
   ].filter(([, v]) => v);
 
   // Only the ticket's OWN stored suggestions — never re-derived from the checklist rules.
@@ -170,7 +171,7 @@ function SystemDetail({ detail, suggested }) {
 
       {chips.length > 0 && (
         <div className="mt-2">
-          <p className="text-[11px] text-slate-400">What this request is due for</p>
+          <p className="text-[11px] text-slate-400">{tf('reviewQueue.dueFor', 'What this request is due for')}</p>
           <div className="mt-1 flex flex-wrap gap-1">
             {chips.map((c) => (
               <span key={c} className="rounded-full bg-white px-2 py-0.5 text-[11px] font-medium text-indigo-700 ring-1 ring-inset ring-indigo-200">
@@ -284,6 +285,7 @@ function SectionTitle({ children, hint }) {
 }
 
 function SystemRulesPanel() {
+  const { tf } = useI18n();
   const [open, setOpen] = useState(false);
   const [book, setBook] = useState(null);
   const [state, setState] = useState('idle'); // idle | loading | error
@@ -348,10 +350,10 @@ function SystemRulesPanel() {
             </div>
           )}
           {state === 'error' && (
-            <p className="text-sm text-rose-600">Could not load this explanation — close and open it again to retry.</p>
+            <p className="text-sm text-rose-600">{tf('reviewQueue.rulebook.loadError', 'Could not load this explanation — close and open it again to retry.')}</p>
           )}
           {state === 'idle' && !book && (
-            <p className="text-sm text-slate-500">Nothing came back — the automatic check may not be switched on.</p>
+            <p className="text-sm text-slate-500">{tf('reviewQueue.rulebook.empty', 'Nothing came back — the automatic check may not be switched on.')}</p>
           )}
 
           {book && (
@@ -376,7 +378,9 @@ function SystemRulesPanel() {
               {/* 2 ── The journey, so the request in the queue has a visible origin. */}
               {Array.isArray(book.steps) && book.steps.length > 0 && (
                 <div>
-                  <SectionTitle hint="from the daily check to your decision">How it works</SectionTitle>
+                  <SectionTitle hint={tf('reviewQueue.rulebook.howItWorksHint', 'from the daily check to your decision')}>
+                    {tf('reviewQueue.rulebook.howItWorks', 'How it works')}
+                  </SectionTitle>
                   <FlowStrip steps={book.steps} />
                 </div>
               )}
@@ -384,7 +388,9 @@ function SystemRulesPanel() {
               {/* 3 ── The rules themselves: the heart of the panel. */}
               {Array.isArray(book.rules) && book.rules.length > 0 && (
                 <div>
-                  <SectionTitle hint="any one of these is enough">What makes a car due for a test</SectionTitle>
+                  <SectionTitle hint={tf('reviewQueue.rulebook.whatMakesDueHint', 'any one of these is enough')}>
+                    {tf('reviewQueue.rulebook.whatMakesDue', 'What makes a car due for a test')}
+                  </SectionTitle>
                   <div className="grid grid-cols-1 gap-2.5 lg:grid-cols-2">
                     {book.rules.map((r) => <RuleCard key={r.key} rule={r} />)}
                   </div>
@@ -395,7 +401,7 @@ function SystemRulesPanel() {
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 {Array.isArray(book.preconditions) && book.preconditions.length > 0 && (
                   <div className="rounded-xl bg-emerald-50/60 p-3.5 ring-1 ring-inset ring-emerald-100">
-                    <SectionTitle>Which cars it checks</SectionTitle>
+                    <SectionTitle>{tf('reviewQueue.rulebook.whichCars', 'Which cars it checks')}</SectionTitle>
                     <ul className="space-y-1.5">
                       {book.preconditions.map((p) => (
                         <li key={p} className="flex items-start gap-2 text-[13px] leading-relaxed text-slate-700">
@@ -409,7 +415,9 @@ function SystemRulesPanel() {
 
                 {Array.isArray(book.suppressions) && book.suppressions.length > 0 && (
                   <div className="rounded-xl bg-amber-50/60 p-3.5 ring-1 ring-inset ring-amber-100">
-                    <SectionTitle hint="so you can tell “not due” from “held back”">What it will not ask for</SectionTitle>
+                    <SectionTitle hint={tf('reviewQueue.rulebook.willNotAskHint', 'so you can tell “not due” from “held back”')}>
+                      {tf('reviewQueue.rulebook.willNotAsk', 'What it will not ask for')}
+                    </SectionTitle>
                     <ul className="space-y-2">
                       {book.suppressions.map((s) => (
                         <li key={s.label} className="text-[13px] leading-relaxed text-slate-700">
@@ -434,7 +442,7 @@ function SystemRulesPanel() {
 
               {/* 6 ── Engine vocabulary lives here, out of the operator's way. */}
               <details className="rounded-lg bg-slate-50 px-3 py-2 ring-1 ring-inset ring-slate-200">
-                <summary className="cursor-pointer text-xs font-semibold text-slate-600">Technical details</summary>
+                <summary className="cursor-pointer text-xs font-semibold text-slate-600">{tf('reviewQueue.rulebook.technical', 'Technical details')}</summary>
                 <div className="mt-2 space-y-1.5 text-[11px] text-slate-500">
                   <p>
                     Job: <code className="rounded bg-slate-900/90 px-1.5 py-0.5 font-mono text-slate-100">{book.schedule?.command}</code>
@@ -447,9 +455,12 @@ function SystemRulesPanel() {
                     </p>
                   )}
                   <p>
-                    Data Origin: every limit above is read live from <code className="font-mono">DiagnosticGateService</code>
-                    {' '}(config <code className="font-mono">features.diagnostic_gate</code>) — the same code that decides what is
-                    due, so this page cannot describe a rule that is not the one running.
+                    {/* The class and config keys are IDENTIFIERS, not prose — they are the same in every
+                        language, so they stay as literals rather than becoming translatable strings. */}
+                    {tf('reviewQueue.rulebook.dataOriginLead', 'Data Origin: every limit above is read live from')}
+                    {' '}<code className="font-mono">{'DiagnosticGateService'}</code>
+                    {' '}({tf('reviewQueue.rulebook.dataOriginConfig', 'config')} <code className="font-mono">{'features.diagnostic_gate'}</code>)
+                    {' '}{tf('reviewQueue.rulebook.dataOriginTail', '— the same code that decides what is due, so this page cannot describe a rule that is not the one running.')}
                   </p>
                 </div>
               </details>
@@ -577,14 +588,14 @@ function WithdrawnNote({ ctx, at }) {
             {fromLog && ctx?.garage && (
               <span className="inline-flex min-w-0 items-center gap-1.5">
                 <Icon.Wrench className="h-3.5 w-3.5 text-violet-400" />
-                <span className="text-slate-400">Garage</span>
+                <span className="text-slate-400">{tf('reviewQueue.garage', 'Garage')}</span>
                 <span className="truncate font-semibold text-slate-700">{ctx.garage}</span>
               </span>
             )}
             {fromLog && ctx?.service_main && (
               <span className="inline-flex min-w-0 items-center gap-1.5">
                 <Icon.Flag className="h-3.5 w-3.5 text-violet-400" />
-                <span className="text-slate-400">Work</span>
+                <span className="text-slate-400">{tf('reviewQueue.work', 'Work')}</span>
                 <span className="truncate font-semibold text-slate-700">{ctx.service_main}</span>
               </span>
             )}
@@ -620,7 +631,7 @@ function WithdrawnNote({ ctx, at }) {
             {label && (
               <span className="inline-flex items-center gap-1.5">
                 <Icon.Invoice className="h-3.5 w-3.5 text-violet-400" />
-                <span className="text-slate-400">Contract</span>
+                <span className="text-slate-400">{tf('reviewQueue.contract', 'Contract')}</span>
                 {ctx?.contract_id ? (
                   <Link
                     to={`/contracts/${ctx.contract_id}`}
@@ -636,21 +647,21 @@ function WithdrawnNote({ ctx, at }) {
             {opened && (
               <span className="inline-flex items-center gap-1.5">
                 <Icon.Calendar className="h-3.5 w-3.5 text-violet-400" />
-                <span className="text-slate-400">{fromLog ? 'Out since' : 'Opened'}</span>
+                <span className="text-slate-400">{fromLog ? tf('reviewQueue.outSince', 'Out since') : tf('reviewQueue.opened', 'Opened')}</span>
                 <span className="font-semibold text-slate-700">{opened}</span>
               </span>
             )}
             {ctx?.customer && (
               <span className="inline-flex min-w-0 items-center gap-1.5">
                 <Icon.Users className="h-3.5 w-3.5 text-violet-400" />
-                <span className="text-slate-400">Customer</span>
+                <span className="text-slate-400">{tf('reviewQueue.customer', 'Customer')}</span>
                 <span className="truncate font-semibold text-slate-700">{ctx.customer}</span>
               </span>
             )}
             {at && (
               <span className="inline-flex items-center gap-1.5">
                 <Icon.Clock className="h-3.5 w-3.5 text-violet-400" />
-                <span className="text-slate-400">Withdrawn</span>
+                <span className="text-slate-400">{tf('reviewQueue.withdrawn', 'Withdrawn')}</span>
                 <span className="font-semibold text-slate-700">{ago(at)}</span>
               </span>
             )}
@@ -725,7 +736,7 @@ function OilFollowUpNote({ ctx, onRecordOilChange }) {
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-700">
         <span>Decision: <strong>{decisionLabel}</strong>{ctx.decided_by ? ` by ${ctx.decided_by}` : ''}</span>
         {ctx.contract_no && <span>Contract: <strong>{ctx.contract_no}</strong></span>}
-        {ctx.settled && <span className="font-semibold text-emerald-700">Settled — car returned</span>}
+        {ctx.settled && <span className="font-semibold text-emerald-700">{tf('reviewQueue.settledReturned', 'Settled — car returned')}</span>}
       </div>
       {live && (
         <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-700">
@@ -847,7 +858,17 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, onRemind, onCance
   // OfficeManager closes the rental, so `operational_status` still says "rented" while the car is
   // standing in our workshop. Custody is the honest test, and the backend derives it from the
   // collection itself (`oil_context.in_our_custody`), never from the contract.
-  const awaitingReturn = tk.operational_status === 'rented' && !tk.oil_context?.in_our_custody;
+  //
+  // …and a RECALLED car is not "waiting" either, even before a driver has moved. A recall means the
+  // return is being actively organised — Sales are agreeing it, a collection follows — so the
+  // request is not hostage to whether a customer happens to bring the car back. Leen approves it
+  // now, the ordinary inspection workflow runs exactly as it always does, and the oil change rides
+  // along as a locked requirement. Holding it shut until the keys are physically in our hand only
+  // delays the queue Abu Maroof works from, for a car everyone already knows is coming.
+  const recallInFlight = !!tk.oil_context?.recall && !tk.oil_context?.settled;
+  const awaitingReturn = tk.operational_status === 'rented'
+    && !tk.oil_context?.in_our_custody
+    && !recallInFlight;
 
   const sev = tk.fault_severity ? SEV_META[tk.fault_severity] : null;
   const complaint = (tk.customer_complaint || '').trim();
@@ -1003,18 +1024,18 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, onRemind, onCance
         <div className="grid grid-cols-2 gap-2">
           <MetaTile
             icon={<Icon.Users className="h-3 w-3" />}
-            label="Requested by"
+            label={tf('reviewQueue.requestedBy', 'Requested by')}
             value={isSystem ? 'System' : (requested?.name || 'Driver')}
             sub={requested?.at ? ago(requested.at) : null}
           />
           <MetaTile
             icon={<Icon.Clock className="h-3 w-3" />}
-            label="Requested"
+            label={tf('reviewQueue.requested', 'Requested')}
             value={requested?.at ? fmtDateTime(requested.at) : '—'}
           />
           <MetaTile
             icon={<Icon.Wrench className="h-3 w-3" />}
-            label="Last maintenance"
+            label={tf('reviewQueue.lastMaintenance', 'Last maintenance')}
             value={!lm ? 'No record' : (lmOnboard ? 'None yet' : (dueDate(lm.at) || '—'))}
             sub={!lm
               ? null
@@ -1025,7 +1046,7 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, onRemind, onCance
           />
           <MetaTile
             icon={<Icon.Gauge className="h-3 w-3" />}
-            label="Since oil service"
+            label={tf('reviewQueue.sinceOil', 'Since oil service')}
             value={tk.last_service
               ? (kmSince != null ? `${Number(kmSince).toLocaleString()} km` : `${Number(tk.last_service.odometer).toLocaleString()} km`)
               : 'No record'}
@@ -1046,11 +1067,20 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, onRemind, onCance
         {!isLegacy && !isWithdrawn && awaitingReturn && (
           <p className="flex items-center gap-1.5 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 ring-1 ring-inset ring-amber-200">
             <Icon.Clock className="h-3.5 w-3.5 shrink-0" />
-            {/* On a recall the car is not simply "waiting" — somebody is actively fetching it, and
-                the reviewer needs to know which link of that chain they are waiting on. */}
-            {tk.oil_context?.recall
-              ? `Being recalled — ${OIL_STAGE_LABEL[tk.oil_context.recall.stage] || 'in progress'}. Review it once the driver has brought it in; the oil change is required either way.`
-              : "Waiting for return — the car is with a customer. Review it once it's back and available to inspect."}
+            Waiting for return — the car is with a customer. Review it once it&apos;s back and available to inspect.
+          </p>
+        )}
+
+        {/* A car whose RETURN IS BEING ORGANISED is not waiting on chance, so the request is not
+            held shut. Say which link of the chain it is on, and say plainly that approving now is
+            the intended move — otherwise an enabled Approve button beside a "rented" pill reads as
+            a bug rather than as the design. */}
+        {!isLegacy && !isWithdrawn && recallInFlight && !tk.oil_context?.in_our_custody && (
+          <p className="flex items-center gap-1.5 rounded-lg bg-indigo-50 px-3 py-2 text-xs text-indigo-800 ring-1 ring-inset ring-indigo-200">
+            <Icon.Check className="h-3.5 w-3.5 shrink-0" />
+            {tf('review.oil.approveNow',
+              'Being recalled — {stage}. You can approve it now: it waits in Abu Maroof’s queue until the car arrives, and the oil change is required either way.',
+              { stage: OIL_STAGE_LABEL[tk.oil_context.recall.stage] || 'in progress' })}
           </p>
         )}
 
@@ -1093,7 +1123,7 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, onRemind, onCance
           // so that is the only button — an Approve/Reject pair here would be offering a choice that no
           // longer exists.
           <>
-            <span className="mr-auto text-[11px] text-slate-400">No action needed</span>
+            <span className="mr-auto text-[11px] text-slate-400">{tf('reviewQueue.noAction', 'No action needed')}</span>
             <Link
               to={`/vehicles/${tk.vehicle_id}`}
               className="inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold text-slate-600 transition-colors hover:bg-slate-100"
@@ -1130,6 +1160,7 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, onRemind, onCance
 }
 
 function ApproveModal({ ticket, onClose, onDone }) {
+  const { tf } = useI18n();
   const toast = useToast();
   const [busy, setBusy] = useState(false);
 
@@ -1152,11 +1183,11 @@ function ApproveModal({ ticket, onClose, onDone }) {
     <Modal
       open
       onClose={onClose}
-      title="Approve inspection request"
+      title={tf('reviewQueue.approve', 'Approve inspection request')}
       subtitle={`${ticket.plate || `#${ticket.id}`} · will be sent to Abu Maroof`}
       footer={(
         <>
-          <Button variant="secondary" onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button variant="secondary" onClick={onClose} disabled={busy}>{tf('reviewQueue.cancel', 'Cancel')}</Button>
           <Button variant="success" onClick={submit} loading={busy}>Approve &amp; send</Button>
         </>
       )}
@@ -2079,12 +2110,12 @@ export default function InspectionReviewQueue() {
               Controller Approval Gate
               {!loading && <span style={{ color: 'var(--cyan)', fontWeight: 700 }}>· {awaiting.length} awaiting</span>}
             </div>
-            <h1 className="font-display" style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-.02em', color: 'var(--ink)', margin: 0 }}>Inspection Review Queue</h1>
-            <p style={{ marginTop: 6, fontSize: 13.5, color: 'var(--ink-3)' }}>Requests awaiting Controller approval before they reach Abu Maroof.</p>
+            <h1 className="font-display" style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-.02em', color: 'var(--ink)', margin: 0 }}>{tf('reviewQueue.title', 'Inspection Review Queue')}</h1>
+            <p style={{ marginTop: 6, fontSize: 13.5, color: 'var(--ink-3)' }}>{tf('reviewQueue.subtitle', 'Requests awaiting Controller approval before they reach Abu Maroof.')}</p>
           </div>
           <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap' }}>
             {canManage && <button className="opx-btn primary" onClick={() => setModal({ action: 'request' })}>+ Request Inspection</button>}
-            {canManage && <button className="opx-btn" onClick={() => setModal({ action: 'complaint' })}>📣 New complaint</button>}
+            {canManage && <button className="opx-btn" onClick={() => setModal({ action: 'complaint' })}>{tf('reviewQueue.newComplaint', '📣 New complaint')}</button>}
           </div>
         </div>
 
@@ -2123,8 +2154,8 @@ export default function InspectionReviewQueue() {
               {awaiting.length === 0 ? (
                 <EmptyState
                   icon={<Icon.Check className="h-7 w-7" />}
-                  title="All caught up"
-                  message="No inspection requests are waiting for review."
+                  title={tf('reviewQueue.allCaughtUp', 'All caught up')}
+                  message={tf('reviewQueue.allCaughtUpBody', 'No inspection requests are waiting for review.')}
                 />
               ) : (
                 <>
