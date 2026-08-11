@@ -39,13 +39,26 @@ class OilProjectionController extends Controller
         try {
             $only = (string) $request->query('status', '');
 
-            $rows = Contract::query()
+            $open = Contract::query()
                 ->currentlyOpen()
                 ->where('contract_type', 'C')
                 ->whereNotNull('vehicle_id')
                 ->with(['vehicle:id,code,make,model,plate_no,last_service_odometer,service_interval_km,odometer', 'customer:id,name_en'])
-                ->get()
-                ->map(function (Contract $c) {
+                ->get();
+
+            // "Has the system already asked for a test on this car?" — answered for the WHOLE board
+            // in one query rather than one per card, then handed to each row. A controller must see
+            // that before deciding, or they file a second request for a car that already has one.
+            $pendingTests = \App\Models\Maintenance::query()
+                ->whereIn('vehicle_id', $open->pluck('vehicle_id')->filter()->unique())
+                ->where('workflow_status', \App\Models\Maintenance::WF_PENDING_REVIEW)
+                ->whereNotIn('id', ContractOilDecision::whereNotNull('inspection_ticket_id')->select('inspection_ticket_id'))
+                ->orderBy('id')
+                ->get(['id', 'vehicle_id', 'created_at', 'trigger_reason', 'request_origin', 'customer_complaint'])
+                ->groupBy('vehicle_id');
+
+            $rows = $open
+                ->map(function (Contract $c) use ($pendingTests) {
                     $p = $this->projection->project($c);
 
                     return [
@@ -56,19 +69,31 @@ class OilProjectionController extends Controller
                         'plate'         => $c->vehicle?->plate_no,
                         'car'           => trim(($c->vehicle?->make ?? '') . ' ' . ($c->vehicle?->model ?? '')),
                         'out_date'      => $c->out_date?->toDateString(),
+                        // The odometer the SYSTEM holds — refreshed from this handover, so during an
+                        // open rental it is a rental's worth of stale. Shown on the board purely so
+                        // the caller can see how far the projection has moved past what we last stored.
+                        'stored_odometer' => $c->vehicle?->odometer,
+                        // The oil limit's own ingredients, so the board can print "last service
+                        // 20,535 + 7,000" instead of a figure that looks like it came from nowhere.
+                        'last_service_odometer' => $c->vehicle?->last_service_odometer,
+                        'service_interval_km'   => $c->vehicle?->service_interval_km,
                         'projection'    => $p,
+                        // The request already waiting in /inspection-review for this car, if any.
+                        'pending_test_request' => $this->pendingTestPayload(
+                            $pendingTests->get($c->vehicle_id)?->first()
+                        ),
                     ];
                 })
                 ->when($only !== '', fn ($rows) => $rows->where('projection.status', $only))
-                // Answerable decisions first (someone has to choose today), then the calls that would
-                // make the rest answerable, then everything running its course. No-data cars last —
-                // there is nothing to act on until someone captures a handover reading.
-                ->sortBy(fn ($r) => match (true) {
-                    ($r['projection']['decision_ready'] ?? false)                                  => 0,
-                    $r['projection']['oil_status'] === OilChangeProjectionService::OIL_RECALL_REQUIRED => 1,
-                    $r['projection']['status'] === 'chase_due'                                     => 2,
-                    $r['projection']['status'] === 'ok'                                            => 3,
-                    default                                                                        => 4,
+                // Ordered by the operational lane: interventions first, then the cars arriving
+                // today, then the calls to make, then everything running its course. No-data cars
+                // last — there is nothing to act on until someone captures a handover reading.
+                ->sortBy(fn ($r) => match ($r['projection']['lane'] ?? null) {
+                    OilChangeProjectionService::LANE_ACTION_REQUIRED   => 0,
+                    OilChangeProjectionService::LANE_SERVICE_ON_RETURN => 1,
+                    OilChangeProjectionService::LANE_CALL_CUSTOMER     => 2,
+                    OilChangeProjectionService::LANE_SAFE              => 3,
+                    default                                            => 4,
                 })
                 ->values();
 
@@ -89,6 +114,16 @@ class OilProjectionController extends Controller
                 'recall_required'            => $rows->where('projection.oil_status', OilChangeProjectionService::OIL_RECALL_REQUIRED)->count(),
                 'service_required_on_return' => $rows->where('projection.oil_status', OilChangeProjectionService::OIL_SERVICE_ON_RETURN)->count(),
                 'within_tolerance'           => $rows->where('projection.oil_status', OilChangeProjectionService::OIL_WITHIN_TOLERANCE)->count(),
+                // The operational lanes — the tabs the board is worked from. Counted from the same
+                // `lane` field that routes each card, so the tab count can never disagree with the
+                // cards inside it.
+                'lanes' => [
+                    'action_required'   => $rows->where('projection.lane', OilChangeProjectionService::LANE_ACTION_REQUIRED)->count(),
+                    'service_on_return' => $rows->where('projection.lane', OilChangeProjectionService::LANE_SERVICE_ON_RETURN)->count(),
+                    'call_customer'     => $rows->where('projection.lane', OilChangeProjectionService::LANE_CALL_CUSTOMER)->count(),
+                    'safe'              => $rows->where('projection.lane', OilChangeProjectionService::LANE_SAFE)->count(),
+                    'no_data'           => $rows->where('projection.lane', OilChangeProjectionService::LANE_NO_DATA)->count(),
+                ],
             ];
 
             return ResponseHelper::SuccessResponse([
@@ -117,6 +152,9 @@ class OilProjectionController extends Controller
             return ResponseHelper::SuccessResponse([
                 'contract_id' => $contract->id,
                 'projection'  => $this->projection->project($contract),
+                'pending_test_request' => $this->pendingTestPayload(
+                    $this->projection->pendingTestRequest($contract->vehicle_id)
+                ),
                 'readings'    => $contract->mileageReadings()
                     ->orderByDesc('reported_on')->orderByDesc('id')
                     ->get(['id', 'odometer', 'reported_on', 'source', 'reported_by', 'note', 'recorded_by', 'created_at']),
@@ -302,6 +340,11 @@ class OilProjectionController extends Controller
             $data = $request->validate([
                 'decision' => ['required', 'in:' . implode(',', ContractOilDecision::DECISIONS)],
                 'note'     => ['nullable', 'string', 'max:1000'],
+                // Leen's two operational choices, taken in the same breath as the decision.
+                // `test_required` null = "don't change what the fleet already believes" (the service
+                // defaults it to yes when the system already has a test request open on this car).
+                'test_required'    => ['nullable', 'boolean'],
+                'service_location' => ['nullable', 'in:' . implode(',', ContractOilDecision::LOCATIONS)],
             ]);
 
             $decision = $this->projection->decide(
@@ -309,10 +352,141 @@ class OilProjectionController extends Controller
                 $data['decision'],
                 $request->user(),
                 $data['note'] ?? null,
+                [
+                    'test_required'    => $data['test_required'] ?? null,
+                    'service_location' => $data['service_location'] ?? null,
+                ],
             );
 
             return ResponseHelper::SuccessResponse([
                 'decision'   => $decision,
+                'projection' => $this->projection->project($contract->fresh()),
+            ]);
+        } catch (Throwable $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
+     * The test request the fleet ALREADY has open on this car, if any.
+     *
+     * Read before deciding, so the person recalling a car is told "the system already asked for a
+     * test on this one" instead of unknowingly filing a second card for the same car in the same
+     * queue. Shaped as the dialog reads it: what it is, who asked, and why.
+     *
+     * @return array<string,mixed>|null
+     */
+    private function pendingTestPayload(?\App\Models\Maintenance $req): ?array
+    {
+        if (! $req) {
+            return null;
+        }
+
+        return [
+            'id'             => $req->id,
+            'requested_at'   => optional($req->created_at)->toIso8601String(),
+            'trigger_reason' => $req->trigger_reason,
+            'request_origin' => $req->request_origin,
+            // The system's own words for why this car was flagged — the sentence the review card
+            // shows. Trimmed, because it is read inside a dialog, not on a page of its own.
+            'reason'         => \Illuminate\Support\Str::limit((string) $req->customer_complaint, 220),
+        ];
+    }
+
+    /**
+     * SALES OK — Sales have agreed the return with the customer, so the recall may now move.
+     *
+     * The one gate between an oil decision and a driver being sent to a customer's doorstep. It is
+     * a confirmation, not a data-entry form: the actor is authenticated (the audit event records
+     * who), the note is optional colour. Safe to click twice — the service is idempotent, so a
+     * double tap never raises a second collection or rings the Supervisors again.
+     */
+    public function confirmSales(Request $request, Contract $contract): JsonResponse
+    {
+        try {
+            $data = $request->validate([
+                'note' => ['nullable', 'string', 'max:1000'],
+            ]);
+
+            $decision = $this->projection->confirmSales($contract, $request->user(), $data['note'] ?? null);
+
+            return ResponseHelper::SuccessResponse([
+                'decision'   => $decision,
+                'recall'     => $this->projection->recallState($decision),
+                'projection' => $this->projection->project($contract->fresh()),
+            ]);
+        } catch (Throwable $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
+     * THE OIL IS CHANGED — the one write that ends the follow-up and moves the car's own schedule.
+     *
+     * Takes the odometer the change was performed at and nothing else that matters: from that single
+     * number the service re-anchors the vehicle (next change = this reading + its interval), stores
+     * the reading so the projection recomputes from a fact, and stands down the recall, the
+     * collection and the announcing inspection request.
+     */
+    public function oilChanged(Request $request, Contract $contract): JsonResponse
+    {
+        try {
+            $data = $request->validate([
+                'odometer' => ['required', 'integer', 'min:2', 'max:9999999'],
+                'note'     => ['nullable', 'string', 'max:1000'],
+            ]);
+
+            $decision = $this->projection->recordOilChange(
+                $contract,
+                (int) $data['odometer'],
+                $request->user(),
+                $data['note'] ?? null,
+            );
+
+            $vehicle = $contract->fresh()->vehicle;
+
+            return ResponseHelper::SuccessResponse([
+                'decision'   => $decision,
+                'projection' => $this->projection->project($contract->fresh()),
+                // What the car's own profile now says — the point of recording it at all.
+                'vehicle'    => [
+                    'id'                    => $vehicle?->id,
+                    'last_service_odometer' => $vehicle?->last_service_odometer,
+                    'service_interval_km'   => $vehicle?->service_interval_km,
+                    'next_service_odometer' => $vehicle ? $this->projection->oilLimit($vehicle) : null,
+                    // The board's own ceiling, restated so nobody confuses the two: the service
+                    // point is the car's, the +grace allowance is the projection's.
+                    'allowed_max'           => $vehicle ? $this->projection->threshold($vehicle) : null,
+                ],
+            ]);
+        } catch (Throwable $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
+     * What the car owes once it has been collected — the dispatcher's instruction to the driver.
+     *
+     * `test_required` is the ONLY field. The oil change is not accepted here in any form: this
+     * recall exists because the oil lifecycle asked for it, so the requirement is derived from the
+     * decision itself and there is no request body that can switch it off.
+     */
+    public function collectionInstructions(Request $request, Contract $contract): JsonResponse
+    {
+        try {
+            $data = $request->validate([
+                'test_required' => ['required', 'boolean'],
+            ]);
+
+            $decision = $this->projection->setCollectionInstructions(
+                $contract,
+                (bool) $data['test_required'],
+                $request->user(),
+            );
+
+            return ResponseHelper::SuccessResponse([
+                'decision'   => $decision,
+                'recall'     => $this->projection->recallState($decision),
                 'projection' => $this->projection->project($contract->fresh()),
             ]);
         } catch (Throwable $e) {

@@ -27,6 +27,9 @@ import { useAuth } from '../auth/AuthContext';
 import { useI18n } from '../i18n/I18nContext';
 import { useToast } from '../components/ui/Toast';
 import Icon from '../components/ui/Icon';
+import Modal from '../components/ui/Modal';
+import Button from '../components/ui/Button';
+import { Input } from '../components/ui/Field';
 import {
   CommandPanel, KpiTile, LiveActivityFeed, JourneyMap, OpsClock, severityTone,
 } from '../components/ops';
@@ -34,6 +37,8 @@ import TicketActionModal from '../components/workflow/TicketActionModal';
 import BreakdownIntakeModal from '../components/workflow/BreakdownIntakeModal';
 import ComplaintTriageModal from '../components/workflow/ComplaintTriageModal';
 import { resolveAction, stageAge, ago, custodyBlocked, custodyHolderName, assignmentBlocked, assignedDriverName, ORIGIN_LABEL } from '../components/workflow/meta';
+// The oil change is recorded identically wherever it is recorded from — one dialog, one write path.
+import { OilChangeDialog } from './reminders/OilProjection';
 import './MyMaintenanceQueue.css';
 
 // Reason → chip class. The visible label comes from workflow.reasonShort.<value>.
@@ -100,6 +105,290 @@ function TimeInStage({ tk, t }) {
     <span className="now" style={age.over ? { color: 'var(--crit)' } : undefined} title={t('queue.timeInStage')}>
       {age.label}
     </span>
+  );
+}
+
+/**
+ * CARS TO COLLECT FROM CUSTOMERS — the driver's own heading for a job that is not like the others.
+ *
+ * Every other card on this page is a car we already hold. These are cars still sitting at a paying
+ * customer's address, waiting for someone to go and fetch them — raised by the oil follow-up once
+ * Sales have agreed the return. The driver should never have to open the dispatch board to find
+ * them, so they are shown here, where he already is, with the only two moves that exist:
+ *
+ *   Claim it            — the pooled job becomes his
+ *   Car received        — he has the keys; the odometer at the doorstep is captured with it
+ *
+ * That reading is the whole reason for the trip: the oil follow-up has been chasing it by phone for
+ * days, and the doorstep is the last moment it can be captured as a fact rather than a guess. It is
+ * therefore mandatory, with its photo, exactly as on any other maintenance-linked leg.
+ */
+/**
+ * Where a collection has actually got to, and therefore the ONE thing to do next.
+ *
+ * Read from the move's own status plus the oil follow-up behind it — never from a flag of its own,
+ * so the card can't claim the car is "still with the customer" while the task says it was picked up
+ * an hour ago. That contradiction is exactly what a derived stage prevents.
+ */
+function collectionStage(task, userId) {
+  const st = task.status;
+  const oil = task.oil_followup || null;
+
+  if (oil?.oil_changed) return 'done';
+  if (!task.assigned_to_id) return 'to_claim';
+  if (task.assigned_to_id !== userId) return 'someone_else';
+  // Legacy phases mean the same thing as picked_up: the car is moving, with him.
+  if (['picked_up', 'in_transit', 'to_destination'].includes(st)) return 'with_driver';
+  if (['delivered', 'at_destination', 'returned', 'completed'].includes(st) || !task.is_open) return 'arrived';
+  return 'to_collect';   // dispatched / en_route — claimed, car still at the customer's
+}
+
+function CollectionsPanel({ tf, userId, onClaim, onReceive, onArrived, onOilChange, tasks, loading, busyId }) {
+  return (
+    <CommandPanel
+      title={tf('queue.section.collections.title', 'Cars to collect from customers')}
+      dotColor="#f43f5e"
+      meta={tasks.length || null}
+    >
+      <p className="qsec-hint">
+        {tf('queue.section.collections.hint',
+          'The customer has agreed to give the car back. Go to them, take the keys, and read the odometer before you drive off.')}
+      </p>
+      <div className="qgrid">
+        {loading ? (
+          <div className="opx-skel" style={{ height: 128 }} />
+        ) : tasks.length === 0 ? (
+          <p className="opx-empty" style={{ gridColumn: '1 / -1', padding: '26px 10px' }}>
+            {tf('queue.section.collections.none', 'No cars to collect right now.')}
+          </p>
+        ) : tasks.map((task) => {
+          const busy = busyId === task.id;
+          const stage = collectionStage(task, userId);
+          const parking = task.oil_followup?.service_location === 'parking';
+          // WHERE the car is, in the driver's own words — derived from the same stage that picks the
+          // button, so the card can never say "still with the customer" under a "Picked up" chip.
+          const whereIsIt = {
+            to_claim:     tf('queue.collections.atCustomer', 'still with the customer'),
+            to_collect:   tf('queue.collections.atCustomer', 'still with the customer'),
+            someone_else: tf('queue.collections.atCustomer', 'still with the customer'),
+            with_driver:  tf('queue.collections.withYou', 'with you — drive it in'),
+            arrived:      parking
+              ? tf('queue.collections.atParking', 'at the parking — oil change still owed')
+              : tf('queue.collections.atWorkshop', 'at the workshop — oil change still owed'),
+          }[stage] || '';
+
+          return (
+            <div key={task.id} className={`opx-card qc ${stage === 'arrived' ? 'sev-paused' : 'sev-crit'}`}>
+              <span className="sev" />
+              <div className="top">
+                <Link to={`/vehicles/${task.vehicle_id}`} className="opx-plate">
+                  {task.plate || `#${task.vehicle_id}`}
+                </Link>
+                <div className="model">
+                  {task.car || '—'}
+                  <span>{whereIsIt}</span>
+                </div>
+              </div>
+
+              <div className="qc-chips">
+                <span className="opx-chip crit"><span className="cd" />{task.status_label}</span>
+                <span className="opx-chip paused">
+                  <span className="cd" />
+                  {tf('queue.collections.takeTo', 'Take it to {where}', { where: task.destination })}
+                </span>
+              </div>
+
+              {/* The dispatcher's brief — who to collect from, and what the car owes on arrival.
+                  Shown in full: it is the driver's only instruction. */}
+              {task.notes && <p className="qc-quote" title={task.notes}>“{task.notes}”</p>}
+
+              {(task.last_odometer?.km ?? task.previous_odometer) != null && (
+                <div className="qc-pos">
+                  <Icon.Gauge className="h-3.5 w-3.5" />
+                  <span>
+                    {tf('queue.collections.lastKnown', 'Last known odometer')}:{' '}
+                    {(task.last_odometer?.km ?? task.previous_odometer).toLocaleString()} km
+                    {task.last_odometer?.on ? ` · ${task.last_odometer.on}` : ''}
+                  </span>
+                </div>
+              )}
+
+              {/* ONE button, and it is whichever step this car is actually at. The job walks
+                  Claim → Received → Arrived → Oil changed, and the card walks with it. */}
+              <div className="qc-foot">
+                {stage === 'to_claim' && (
+                  <button type="button" className="opx-btn primary" disabled={busy} onClick={() => onClaim(task)}>
+                    {tf('queue.collections.claim', 'Claim it')}
+                  </button>
+                )}
+                {stage === 'to_collect' && (
+                  <button type="button" className="opx-btn primary" disabled={busy} onClick={() => onReceive(task)}>
+                    {tf('queue.collections.received', 'Car received from customer')}
+                  </button>
+                )}
+                {stage === 'with_driver' && (
+                  <button type="button" className="opx-btn primary" disabled={busy} onClick={() => onArrived(task)}>
+                    {parking
+                      ? tf('queue.collections.arrivedParking', 'Arrived at the parking')
+                      : tf('queue.collections.arrivedWorkshop', 'Arrived at the workshop')}
+                  </button>
+                )}
+                {stage === 'arrived' && (
+                  task.oil_followup ? (
+                    <button type="button" className="opx-btn primary" disabled={busy} onClick={() => onOilChange(task)}>
+                      {tf('queue.collections.oilChanged', 'Oil changed — record it')}
+                    </button>
+                  ) : (
+                    <span className="qc-locked">{tf('queue.collections.handedOver', 'Handed over — nothing left for you')}</span>
+                  )
+                )}
+                {stage === 'someone_else' && (
+                  <span className="qc-locked">
+                    {tf('queue.collections.taken', '{name} is collecting this one', { name: task.assigned_to_name })}
+                  </span>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </CommandPanel>
+  );
+}
+
+/**
+ * "Car received from customer" — the moment custody passes, captured with the reading that proves it.
+ *
+ * The odometer and its photo are REQUIRED here and nowhere else in this flow can they be: the oil
+ * follow-up has spent days asking the customer for this number over the phone, and the driver is
+ * standing in front of the dashboard. Once he drives off, it is history.
+ */
+function CollectionReceivedModal({ task, tf, onClose, onDone, onError }) {
+  const [odometer, setOdometer] = useState('');
+  const [photo, setPhoto] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState('');
+
+  // The freshest number we hold, with its provenance — a customer reading from last Tuesday beats
+  // the car's stored odometer, which was last refreshed when it left the branch.
+  const last = task.last_odometer || null;
+  const previous = last?.km ?? task.previous_odometer ?? null;
+  const entered = odometer === '' ? null : Number(odometer);
+  // Backwards mileage is a data-entry problem, not a fact — say so before it is sent.
+  const backwards = entered != null && previous != null && entered < previous;
+  const sourceLabel = {
+    customer: tf('queue.collections.srcCustomer', 'reported by the customer'),
+    staff:    tf('queue.collections.srcStaff', 'recorded by us'),
+    handover: tf('queue.collections.srcHandover', 'from the handover — not refreshed since'),
+  }[last?.source] || null;
+
+  const submit = async () => {
+    if (!entered || Number.isNaN(entered)) {
+      return onError(tf('queue.collections.needOdo', 'Enter the odometer reading from the dashboard'));
+    }
+    if (!photo) {
+      return onError(tf('queue.collections.needPhoto', 'Take a photo of the odometer'));
+    }
+    // A reading BELOW what we already hold is not refused — the dashboard in front of the driver
+    // outranks a number somebody read out over the phone — but it must not pass silently either.
+    // The explanation rides onto the permanent audit trail beside the reading.
+    if (backwards && note.trim().length < 3) {
+      return onError(tf('queue.collections.needNote', 'Say why the reading is lower than what we hold'));
+    }
+    setBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append('odometer', entered);
+      fd.append('odometer_photo', photo);
+      if (note.trim()) fd.append('odometer_note', note.trim());
+      await api.post(`/logistics/${task.id}/pickup`, fd);
+      onDone(tf('queue.collections.receivedOk', 'Car received — it is with you now'));
+    } catch (e) {
+      onError(e.response?.data?.message || tf('queue.collections.receiveFailed', 'Could not record that'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      open
+      onClose={() => !busy && onClose()}
+      size="sm"
+      title={tf('queue.collections.receiveTitle', 'Car received from customer')}
+      subtitle={`${task.plate || ''} — ${task.destination || ''}`}
+      footer={(
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
+            {tf('common.cancel', 'Cancel')}
+          </Button>
+          <Button onClick={submit} loading={busy}>
+            {tf('queue.collections.confirmReceived', 'I have the car')}
+          </Button>
+        </div>
+      )}
+    >
+      <div className="space-y-3">
+        <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-inset ring-amber-200">
+          {tf('queue.collections.readingWhy',
+            'Read the dashboard before you drive off. This number is the reason the car is being collected.')}
+        </p>
+        {/* THE NUMBER TO COMPARE AGAINST, stated before the empty box — a reading typed against
+            nothing is a reading nobody can sanity-check. Source and date travel with it. */}
+        {previous != null && (
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+            <div className="text-xs font-semibold text-slate-500">
+              {tf('queue.collections.lastKnown', 'Last known odometer')}
+            </div>
+            <div className="text-lg font-bold tabular-nums text-slate-900">
+              {previous.toLocaleString()} km
+            </div>
+            <div className="text-xs text-slate-500">
+              {sourceLabel}
+              {last?.on ? ` · ${last.on}` : ''}
+              {last?.by ? ` · ${last.by}` : ''}
+            </div>
+          </div>
+        )}
+        <Input
+          label={tf('queue.collections.odoLabel', 'Odometer now (km)')}
+          type="number"
+          required
+          value={odometer}
+          onChange={(e) => setOdometer(e.target.value)}
+          placeholder={previous != null ? String(previous) : '20000'}
+        />
+        {previous != null && entered != null && (
+          <p className={`text-xs ${backwards ? 'font-semibold text-rose-600' : 'text-slate-600'}`}>
+            {backwards
+              ? tf('queue.collections.backwards', 'That is below the last known reading ({km} km) — check the number.', { km: previous.toLocaleString() })
+              : tf('queue.collections.driven', '{km} km driven since that reading.', { km: (entered - previous).toLocaleString() })}
+          </p>
+        )}
+        {/* Not a block — the dash in front of you outranks a number given over the phone. But it is
+            written down, next to the reading, forever. */}
+        {backwards && (
+          <Input
+            label={tf('queue.collections.noteLabel', 'Why is it lower?')}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder={tf('queue.collections.notePlaceholder', 'e.g. the customer read it wrong on the phone')}
+          />
+        )}
+        <label className="block text-sm text-slate-700">
+          <span className="mb-1 block font-medium">
+            {tf('queue.collections.photoLabel', 'Photo of the odometer')}
+          </span>
+          <input
+            type="file"
+            accept="image/*"
+            capture="environment"
+            onChange={(e) => setPhoto(e.target.files?.[0] || null)}
+            className="block w-full text-sm"
+          />
+        </label>
+      </div>
+    </Modal>
   );
 }
 
@@ -249,7 +538,7 @@ function QueueCard({ tk, can, userId, onAct, readonly = false }) {
 }
 
 export default function MyMaintenanceQueue() {
-  const { t } = useI18n();
+  const { t, tf } = useI18n();
   const toast = useToast();
   const { can } = usePermissions();
   const { user } = useAuth();
@@ -304,6 +593,60 @@ export default function MyMaintenanceQueue() {
       .catch(() => { /* leave the picker empty on failure */ });
     return () => { alive = false; };
   }, [canDelegate]);
+
+  // ── Cars to collect from customers ────────────────────────────────────────────────────────
+  // A collection lives in the logistics lane (it is a movement), but the driver works from THIS
+  // page, so it is fetched here and shown as its own panel. Pool + my own, deduped: an unclaimed
+  // job and one I have already claimed are the same card at two stages of the same job.
+  const [collections, setCollections] = useState([]);
+  const [collLoading, setCollLoading] = useState(true);
+  const [collBusy, setCollBusy] = useState(null);
+  const [receiving, setReceiving] = useState(null);
+  const [oilChanging, setOilChanging] = useState(null);
+
+  const loadCollections = useCallback(async () => {
+    try {
+      // One endpoint, because "what can I still do about this collection" is a server question: it
+      // includes a trip already delivered whose oil change nobody has recorded yet.
+      const res = await api.get('/logistics/my-collections');
+      setCollections(res.data?.data?.tasks || []);
+    } catch {
+      setCollections([]);          // a failed side-panel must never take the queue down with it
+    } finally {
+      setCollLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadCollections(); }, [loadCollections]);
+
+  const claimCollection = async (task) => {
+    setCollBusy(task.id);
+    try {
+      await api.post(`/logistics/${task.id}/claim`);
+      toast.success(tf('queue.collections.claimed', 'Yours — go and collect it'));
+      await loadCollections();
+    } catch (e) {
+      toast.error(e.response?.data?.message || tf('queue.collections.claimFailed', 'Could not claim that job'));
+    } finally {
+      setCollBusy(null);
+    }
+  };
+
+  // "I'm here" — the one-way leg closes on arrival, which is why the card must not depend on the
+  // move still being open to show its last step.
+  const arriveCollection = async (task) => {
+    setCollBusy(task.id);
+    try {
+      await api.post(`/logistics/${task.id}/deliver`, {});
+      toast.success(tf('queue.collections.arrivedOk', 'Arrived — now record the oil change'));
+      await loadCollections();
+      reload({ silent: true });
+    } catch (e) {
+      toast.error(e.response?.data?.message || tf('queue.collections.arriveFailed', 'Could not record the arrival'));
+    } finally {
+      setCollBusy(null);
+    }
+  };
 
   const roles = useMemo(() => data?.roles || {}, [data]);
   const sections = useMemo(() => data?.sections || {}, [data]);
@@ -467,6 +810,21 @@ export default function MyMaintenanceQueue() {
             <div className="opx-grid opx-c12">
               <div className="opx-span-8">
                 <div className="qsections">
+                  {/* Cars still at a customer's address. First panel on the driver's tab, because a
+                      car nobody has fetched yet is the only job on this page that is standing still. */}
+                  {activeTab === 'driver' && (collLoading || collections.length > 0) && (
+                    <CollectionsPanel
+                      tf={tf}
+                      userId={user?.id}
+                      tasks={collections}
+                      loading={collLoading}
+                      busyId={collBusy}
+                      onClaim={claimCollection}
+                      onReceive={setReceiving}
+                      onArrived={arriveCollection}
+                      onOilChange={setOilChanging}
+                    />
+                  )}
                   {activeSections.map((s) => {
                     const tickets = sections[s.key] || [];
                     const count = counts[s.key] ?? tickets.length;
@@ -526,6 +884,41 @@ export default function MyMaintenanceQueue() {
           </>
         )}
       </div>
+
+      {/* "Car received from customer" — custody passes to us, and the odometer at the doorstep is
+          captured with it. Mandatory: this reading is what the oil follow-up has been chasing by
+          phone for days, and once the car is ours the moment has gone. */}
+      {receiving && (
+        <CollectionReceivedModal
+          task={receiving}
+          tf={tf}
+          onClose={() => setReceiving(null)}
+          onDone={async (message) => {
+            setReceiving(null);
+            toast.success(message);
+            await loadCollections();
+            reload({ silent: true });
+          }}
+          onError={(message) => toast.error(message)}
+        />
+      )}
+
+      {/* The last step of a collection: the oil this whole trip existed for. Same dialog the Oil
+          Follow-up board uses — one write path, so the car's service anchor moves identically
+          whether Leen, Abu Maroof or the driver types the number. */}
+      {oilChanging && (
+        <OilChangeDialog
+          row={{
+            contract_id:         oilChanging.oil_followup?.contract_id,
+            plate:               oilChanging.plate,
+            car:                 oilChanging.car,
+            service_interval_km: oilChanging.oil_followup?.service_interval_km,
+            projection:          { expected: oilChanging.last_odometer?.km ?? oilChanging.previous_odometer },
+          }}
+          onClose={() => setOilChanging(null)}
+          onSaved={async () => { await loadCollections(); reload({ silent: true }); }}
+        />
+      )}
 
       {/* Breakdown Intake — a technician reports a not-driveable car → grounded ticket in the dispatch queue. */}
       {modal?.action === 'breakdown' && (

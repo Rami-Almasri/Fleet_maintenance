@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api/client';
 import useFetch from '../../hooks/useFetch';
 import { PageHeader, SearchInput, EmptyState, ErrorState } from '../../components/ui/Misc';
 import MetricCard, { MetricGrid } from '../../components/ui/MetricCard';
-import DataTable, { SectionCard } from '../../components/ui/Table';
+import { SectionCard } from '../../components/ui/Table';
 import Badge from '../../components/ui/Badge';
 import Button from '../../components/ui/Button';
 import Modal from '../../components/ui/Modal';
@@ -12,45 +12,25 @@ import FilterChips from '../../components/ui/FilterChips';
 import { Input, Textarea } from '../../components/ui/Field';
 import { useToast } from '../../components/ui/Toast';
 import { usePermissions } from '../../hooks/usePermissions';
+import { useI18n } from '../../i18n/I18nContext';
 import { num, fmtDate } from '../../lib/format';
 
 /**
  * Oil Mileage Follow-up — the queue Leen and Marwa work.
  *
- * A car on a long rental burns through its oil interval days after it leaves, and the odometer we hold
- * stops being true the moment it drives off. So each day the backend projects where the car has probably
- * reached (a flat 200 km/day business assumption) and, when that projection crosses the service point,
- * it asks for a REAL number from the customer.
+ * A car on a long rental burns through its oil interval days after it leaves, and the odometer we
+ * hold stops being true the moment it drives off. Each day the backend projects where the car has
+ * probably reached (a flat 200 km/day business assumption) and, when that projection crosses the
+ * service point, it asks for a REAL number from the customer.
  *
- * What that number is FOR is the point of this page. Reaching the oil limit is not an emergency — the
- * fleet allows a car to run a tolerance past it. The operational question is narrower:
+ * The board is one clean card per car, read top to bottom in the order a controller thinks:
+ *   who is out → how long is left → what real number do we hold → where is it heading → today's action.
  *
- *     will this car still be inside the allowance when the customer brings it back?
- *
- * Answering it takes the reading, the days the rental still has to run, and nothing else. Most cars come
- * back inside the allowance and are simply serviced on return, with nobody interrupted. Only a car that
- * cannot finish inside it reaches a human, and that human has exactly two answers: recall it now, or
- * accept the overrun and change the oil at close.
- *
- * Everything shown here is computed by OilChangeProjectionService; the page derives no thresholds of its
- * own, and it renders the API's own `basis` string so the arithmetic is never a black box.
+ * READABILITY IS THE DESIGN. Plain white cards, large numbers, plain-English labels, one action
+ * sentence. Everything shown is computed by OilChangeProjectionService; the page derives no
+ * thresholds of its own, and it renders the API's own `basis` string so the arithmetic is never a
+ * black box.
  */
-
-/** The chase axis — "do we have a number we can trust?" */
-const STATUS = {
-  chase_due: { tone: 'red',   label: 'Needs a call' },
-  ok:        { tone: 'green', label: 'Within limit' },
-  no_data:   { tone: 'slate', label: 'Can’t project' },
-};
-
-/** The decision axis — "given the number we have, what happens to this car?" */
-const OIL_STATUS = {
-  decision_required:          { tone: 'red',    label: 'Decision needed' },
-  recall_required:            { tone: 'amber',  label: 'Recall — bring it back' },
-  service_required_on_return: { tone: 'amber',  label: 'Oil change on return' },
-  within_tolerance:           { tone: 'green',  label: 'Within tolerance' },
-  no_data:                    { tone: 'slate',  label: 'Can’t project' },
-};
 
 const DECISION_LABEL = {
   recall: 'Recall now',
@@ -79,10 +59,9 @@ const dueBackIn = (p) => {
 };
 
 /**
- * The verdict in one plain sentence. Deliberately operational language — no "anchor", no "threshold",
- * no "projection" — because the person reading it is about to pick up a phone, not debug a model.
- * Every sentence carries the three numbers the decision is actually made on: where it will land, what
- * it is allowed to reach, and how long it has left to run.
+ * The verdict in one plain sentence — kept for the DIALOGS, where whoever is mid-call wants the whole
+ * situation restated before they commit a number or a decision. The board itself renders no
+ * paragraphs; the cards carry the same facts as big numbers and one action line.
  */
 export const reasonFor = (p) => {
   if (!p) return '—';
@@ -119,6 +98,592 @@ export const reasonFor = (p) => {
       return `Likely around ${num(p.expected)} km. Next check around ${fmtDate(p.breach_on)}.`;
   }
 };
+
+/**
+ * The operational LANE — ONE primary action per car. The backend computes this (`projection.lane`)
+ * and is authoritative; the fallback derivation below implements the identical priority for any
+ * payload that predates the field:
+ *
+ *   1. a returned car never reaches this board (the API only serves open rentals);
+ *   2. due back TODAY (or overdue) and still out  ⇒ service_on_return — never a customer call;
+ *   3. an agreed recall or an answerable decision ⇒ action_required;
+ *   4. a stale number with days still to run      ⇒ call_customer;
+ *   5. everything else                            ⇒ safe.
+ */
+export const laneFor = (p) => {
+  if (p?.lane) return p.lane;
+  if (!p || p.status === 'no_data' || p.oil_status === 'no_data') return 'no_data';
+  // No oil question ⇒ nothing to do, whatever the return date. A car that finishes before it even
+  // reaches its oil point must never be put in front of a person just because it comes back today.
+  const concern = ['decision_required', 'recall_required', 'service_required_on_return'].includes(p.oil_status)
+    || p.status === 'chase_due';
+  if (!concern) return 'safe';
+  // A decision about a car nowhere near its oil point is not today's business (see the backend's
+  // DECISION_WINDOW_DAYS) — the fact stands, the card stays quiet until the car is close.
+  if (p.oil_status === 'decision_required' && p.decision_due_soon === false && p.status !== 'chase_due') return 'safe';
+  if (p.return_date_known && p.remaining_days === 0) return 'service_on_return';
+  if (p.oil_status === 'recall_required' || p.decision_ready) return 'action_required';
+  if (p.oil_status === 'decision_required' || p.status === 'chase_due') return 'call_customer';
+  return 'safe';
+};
+
+export const LANES = [
+  { key: 'action_required',   label: 'Action required',   tone: 'red' },
+  { key: 'service_on_return', label: 'Service on return', tone: 'amber' },
+  { key: 'call_customer',     label: 'Call customer',     tone: 'amber' },
+  { key: 'safe',              label: 'Safe / scheduled',  tone: 'green' },
+  { key: 'no_data',           label: 'Can’t project',     tone: 'slate' },
+];
+
+/**
+ * The card's verdict: the lane label plus the short line (and, for an arrival, the steps) behind
+ * it. Derived from the lane so a card can never contradict the tab it sits in.
+ */
+export const actionFor = (p) => {
+  const lane = laneFor(p);
+
+  if (lane === 'no_data') {
+    return {
+      key: 'no_data', lane, tone: 'slate', label: 'Can’t project',
+      headline: 'Capture a handover reading',
+      support: 'No mileage recorded at handover — the projection cannot start.',
+    };
+  }
+
+  const age = p.days_elapsed;
+  const ageText = age == null ? null : `${age} ${age === 1 ? 'day' : 'days'} old`;
+  const fromCustomer = p.anchor_source === 'reading';
+
+  if (lane === 'service_on_return') {
+    return {
+      key: 'return_today', lane, tone: 'amber', label: 'Service on return',
+      headline: '🔧 Service on return — the car is due back today',
+      support: 'Don’t call the customer — they are already returning the car. Catch it on arrival:',
+      steps: [
+        'Read the actual odometer as soon as it arrives',
+        'Compare it with the oil limit and the allowed maximum',
+        'Do the oil service if it is required',
+        'Enter the actual reading here to close the loop',
+      ],
+      chase: true,
+    };
+  }
+
+  if (lane === 'action_required') {
+    if (p.oil_status === 'recall_required') {
+      // The recall's own stage is the headline — "recall agreed" stopped being useful the moment
+      // the relay existed, because the person reading this needs to know whose move it is now.
+      const stage = p.decision?.recall?.stage;
+      const by = p.decision?.decided_by ? ` by ${p.decision.decided_by}` : '';
+      const headline = {
+        waiting_sales:     'Waiting for Sales — ask them to arrange the return',
+        ready_for_driver:  'Sales confirmed — a driver must be arranged',
+        driver_assigned:   'A driver is on the way to collect the car',
+        vehicle_collected: 'The car is with our driver',
+        at_workshop:       'The car is at the workshop — review the follow-up request',
+        inspection:        'Being inspected',
+        oil_service:       'Oil change ticket is open',
+        completed:         'Done — the oil change this recall owed is finished',
+        cancelled:         'Recall stood down',
+      }[stage] || 'Recall agreed — arrange the return with the customer';
+
+      // Once the car is OURS the story changes completely: there is no customer to phone and no
+      // reading to ask for, because the driver read the dashboard when he took the keys. From here
+      // the only outstanding thing is the oil change itself.
+      const ours = p.decision?.recall?.in_our_custody;
+
+      return {
+        key: 'recall', lane, tone: 'red', label: 'Action required',
+        headline,
+        support: ours
+          ? 'The customer no longer has this car — record the oil change once it is done.'
+          : `Recall agreed${by}. The oil change is required whatever else happens to this car.`,
+        // Suppresses "Enter reading": asking for a customer reading on a car standing in our own
+        // workshop invites a number nobody observed, over the one the driver actually captured.
+        inOurHands: !!ours,
+      };
+    }
+    return {
+      key: 'decide', lane, tone: 'red', label: 'Action required',
+      headline: 'Recall now, or oil change on return?',
+      support: `Fresh customer reading — ${num(p.anchor_odometer)} km. Both answers are safe on this number.`,
+      decide: true,
+    };
+  }
+
+  if (lane === 'call_customer') {
+    return {
+      key: 'call', lane, tone: 'amber', label: 'Call customer',
+      headline: '📞 Call customer for an odometer reading',
+      support: p.oil_status === 'decision_required'
+        ? (fromCustomer
+            ? `Last reading is ${ageText}`
+            : `No customer reading yet — estimate runs from handover${ageText ? ` (${ageText})` : ''}`)
+          + '. No decision until a fresh number is in.'
+        : 'Estimated past the oil point — confirm with a real number.',
+      chase: true,
+    };
+  }
+
+  if (p.oil_status === 'service_required_on_return') {
+    return {
+      key: 'on_return', lane, tone: 'green', label: 'Safe / scheduled',
+      headline: 'Nothing to do — oil change booked for the return',
+      support: 'Passes the oil point but finishes inside grace.',
+    };
+  }
+
+  // A decision that is real but not yet TODAY's — typically a car whose oil was just changed and
+  // which cannot finish a long rental inside the new interval either. Say so plainly rather than
+  // showing a green card with no explanation, and say when it will be asked.
+  if (p.oil_status === 'decision_required' && p.decision_due_soon === false) {
+    const away = p.oil_limit != null && p.expected != null ? p.oil_limit - p.expected : null;
+    return {
+      key: 'not_yet', lane, tone: 'green', label: 'Safe / scheduled',
+      headline: 'Nothing to do yet — it will need another oil change before this rental ends',
+      support: away != null
+        ? `Still ${num(away)} km from the ${num(p.oil_limit)} km oil point. We'll ask what to do when it gets close.`
+        : 'We’ll ask what to do when it gets close to the oil point.',
+    };
+  }
+
+  return {
+    key: 'safe', lane, tone: 'green', label: 'Safe / scheduled',
+    headline: 'Nothing to do',
+    support: 'Comes back before the oil point.',
+  };
+};
+
+const ACTION_BOX_TONE = {
+  red:   'border-rose-200 bg-rose-50 text-rose-900',
+  amber: 'border-amber-200 bg-amber-50 text-amber-900',
+  green: 'border-emerald-200 bg-emerald-50 text-emerald-900',
+  slate: 'border-slate-200 bg-slate-50 text-slate-700',
+};
+
+/** One big number with a plain-English label. Large and calm — no boxes, no abbreviations. */
+function Stat({ label, value, sub, pill, pillTone, highlight }) {
+  return (
+    <div>
+      <div className="text-xs font-semibold text-slate-500">{label}</div>
+      <div className="mt-0.5 flex flex-wrap items-baseline gap-2">
+        <span className={`text-xl font-bold tabular-nums ${highlight ? 'text-indigo-700' : 'text-slate-900'}`}>{value}</span>
+        {pill && <Badge tone={pillTone}>{pill}</Badge>}
+      </div>
+      {sub && <div className="mt-0.5 text-xs text-slate-500">{sub}</div>}
+    </div>
+  );
+}
+
+/** A titled group of related numbers — the card is read group by group, never as a number soup. */
+function Group({ title, children }) {
+  return (
+    <div className="rounded-lg border border-slate-100 bg-slate-50/70 p-3">
+      <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">{title}</div>
+      <div className="flex flex-wrap items-start gap-x-6 gap-y-3">{children}</div>
+    </div>
+  );
+}
+
+/** The quiet arrow between chronological mileage figures. */
+function Arrow() {
+  return <span className="hidden self-center text-lg text-slate-300 sm:inline" aria-hidden="true">→</span>;
+}
+
+/**
+ * The RECALL RELAY — the stages a recalled car actually passes through, in order.
+ *
+ * A recall is not one act, it is a handover chain: Sales agrees the return with the customer, the
+ * Supervisors find a driver, the driver collects the car, it arrives, it is inspected, the oil is
+ * changed. None of these are invented states — each is read from the record that owns it (the Sales
+ * stamp, the logistics task's phase, the follow-up request, the service ticket). They are listed
+ * here so the card can always answer the only question that matters: what happens next, and who
+ * does it?
+ */
+const RECALL_STAGES = [
+  { key: 'waiting_sales',     label: 'Waiting for Sales', who: 'Sales must agree the return with the customer' },
+  { key: 'ready_for_driver',  label: 'Ready for driver',  who: 'Waleed / Abdullah arrange a driver' },
+  { key: 'driver_assigned',   label: 'Driver assigned',   who: 'The driver is on the way to the customer' },
+  { key: 'vehicle_collected', label: 'Vehicle collected', who: 'The car is with our driver' },
+  { key: 'at_workshop',       label: 'At the workshop',   who: 'Review the follow-up request and send it in' },
+  { key: 'inspection',        label: 'Inspection / test', who: 'Abu Maroof is testing the car' },
+  { key: 'oil_service',       label: 'Oil change',        who: 'The oil service ticket is open' },
+  { key: 'completed',         label: 'Completed',         who: 'Everything this recall owed is done' },
+];
+
+const STAGE_INDEX = Object.fromEntries(RECALL_STAGES.map((s, i) => [s.key, i]));
+
+/**
+ * The recall's own panel: where it has got to, the single action available now, and the work the
+ * car owes when it lands.
+ *
+ * The oil change is rendered as a LOCKED requirement, not a checkbox with a tick in it. This recall
+ * exists because the oil lifecycle asked for it, so nobody — here or through the API — gets to turn
+ * it into "just test the car" and lose the reason the customer was interrupted in the first place.
+ */
+function RecallRelay({ r, recall, canRecord, onChanged }) {
+  const { tf } = useI18n();
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const stageIdx = STAGE_INDEX[recall.stage] ?? 0;
+  const cancelled = recall.stage === 'cancelled';
+  const current = RECALL_STAGES[stageIdx];
+  const test = recall.required_actions?.test;
+
+  const post = async (url, body, okMessage) => {
+    setBusy(true);
+    try {
+      await api.post(url, body);
+      toast.success(okMessage);
+      onChanged?.();
+    } catch (e) {
+      toast.error(e.response?.data?.message || 'Could not save that.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-rose-200 bg-white p-3.5">
+      <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
+        <div className="text-[11px] font-bold uppercase tracking-wide text-rose-600">
+          Recall now · bringing the car back
+        </div>
+        <Badge tone={cancelled ? 'slate' : recall.stage === 'completed' ? 'green' : 'red'}>
+          {cancelled ? 'Stood down' : current?.label}
+        </Badge>
+      </div>
+
+      {/* The chain itself. Everything before the current step is done, everything after is waiting —
+          so nobody has to hold the sequence in their head. */}
+      {!cancelled && (
+        <ol className="mb-3 flex flex-wrap gap-1.5">
+          {RECALL_STAGES.map((s, i) => {
+            const done = i < stageIdx;
+            const now = i === stageIdx;
+            return (
+              <li
+                key={s.key}
+                title={s.who}
+                className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset ${
+                  now ? 'bg-rose-600 text-white ring-rose-600'
+                    : done ? 'bg-emerald-50 text-emerald-700 ring-emerald-200'
+                    : 'bg-slate-50 text-slate-400 ring-slate-200'}`}
+              >
+                {done ? '✓ ' : ''}{i + 1}. {s.label}
+              </li>
+            );
+          })}
+        </ol>
+      )}
+
+      {/* WHO acts now, in a sentence. The page must never leave someone wondering. */}
+      {current && !cancelled && (
+        <p className="mb-2.5 text-sm text-slate-700">
+          <span className="font-semibold">Next:</span> {current.who}.
+        </p>
+      )}
+
+      {/* WHERE the oil is being changed — and therefore who owns it. Stated on the card because it
+          is the difference between Abu Maroof waiting for a car and a Supervisor booking a garage. */}
+      {!cancelled && (
+        <p className="mb-2.5 text-sm text-slate-700">
+          <span className="font-semibold">{tf('oil.recall.where', 'Oil change at')}:</span>{' '}
+          {recall.service_location === 'parking'
+            ? tf('oil.recall.whereParking', 'our parking — Abu Maroof does it')
+            : tf('oil.recall.whereGarage', 'a garage — Waleed / Abdullah arrange it')}
+          {recall.request_adopted && (
+            <span className="ml-1 text-xs text-slate-500">
+              · {tf('oil.recall.adopted', 'added to the test request the system already raised')}
+            </span>
+          )}
+        </p>
+      )}
+
+      {/* Stage 1 — the gate. One button, and nothing has been dispatched until it is pressed. */}
+      {recall.awaiting_sales && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+          <div className="text-sm font-bold text-amber-900">{tf('oil.recall.sales.title', 'Waiting for Sales OK')}</div>
+          <p className="mt-0.5 text-sm text-amber-800">
+            Ask Sales to arrange with the customer to return this car. No driver has been notified —
+            nobody is dispatched until Sales confirm the customer agreed.
+          </p>
+          {canRecord && (
+            <Button
+              size="sm"
+              variant="primary"
+              className="mt-2"
+              loading={busy}
+              onClick={() => post(
+                `/Contract/${r.contract_id}/oil-recall/sales-confirm`,
+                {},
+                'Sales confirmed — Waleed and Abdullah have been asked to arrange a driver',
+              )}
+            >
+              Sales OK — Customer confirmed
+            </Button>
+          )}
+        </div>
+      )}
+
+      {/* The confirmation, once it exists — who and when, because this is what released the driver. */}
+      {recall.sales?.confirmed && (
+        <p className="text-sm text-emerald-700">
+          ✓ Sales confirmed{recall.sales.confirmed_by ? ` by ${recall.sales.confirmed_by}` : ''}
+          {recall.sales.confirmed_at ? ` · ${fmtDate(recall.sales.confirmed_at)}` : ''}
+          {recall.sales.note ? ` — “${recall.sales.note}”` : ''}
+        </p>
+      )}
+
+      {/* Where the driver actually is — read from the logistics task, not restated here. */}
+      {recall.collection && (
+        <p className="mt-1 text-sm text-slate-600">
+          Collection #{recall.collection.task_id} · {recall.collection.phase}
+          {recall.collection.driver ? ` · ${recall.collection.driver}` : ' · no driver has claimed it yet'}
+        </p>
+      )}
+
+      {/* What the car owes when it lands. Oil change is a locked requirement; the test is the only
+          operational choice, and it belongs to whoever briefs the driver. */}
+      {!cancelled && recall.stage !== 'completed' && (
+        <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+          <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-500">
+            Required when the car arrives
+          </div>
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              aria-label="Test / Inspection"
+              checked={!!test?.required}
+              disabled={!canRecord || busy}
+              onChange={(e) => post(
+                `/Contract/${r.contract_id}/oil-recall/instructions`,
+                { test_required: e.target.checked },
+                e.target.checked ? 'Test added to the driver’s instructions' : 'Test removed — the oil change still stands',
+              )}
+            />
+            Test / Inspection
+            {!test?.decided && <span className="text-xs text-slate-400">(not specified yet)</span>}
+          </label>
+          <label className="mt-1 flex items-center gap-2 text-sm font-semibold text-rose-800">
+            <input type="checkbox" checked readOnly disabled aria-label="Oil change — required" />
+            🔒 Oil Change — REQUIRED
+          </label>
+          <p className="mt-1 text-xs text-slate-500">
+            This recall came from the oil projection, so the oil change cannot be removed. A test is
+            optional and can be added or dropped at any time before the car arrives.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * One car, one card, one action. Reads top to bottom in the order a controller thinks:
+ * who is out → how long is left → what number do we hold → where is it heading → what do I do today.
+ */
+export function VehicleCard({ r, canRecord, onReading, onDecide, onOilChange, onChanged }) {
+  const { tf } = useI18n();
+  const p = r.projection || {};
+  const a = actionFor(p);
+  // The recall relay, when this car is on one. Only an OPEN recall has a chain left to run.
+  const recall = p.decision?.recall && !p.decision?.settled_at ? p.decision.recall : null;
+
+  const age = p.days_elapsed;
+  // How stale the number is drives the whole page: a fresh reading is a decision, an old one is a call.
+  const ageTone = age == null ? 'slate' : age <= 1 ? 'green' : age <= 7 ? 'amber' : 'red';
+  const d = p.return_date_known ? p.remaining_days : null;
+  const fromCustomer = p.anchor_source === 'reading';
+  const over = p.over_tolerance_km;
+
+  // "We think it needs the oil change in ~N days": how long the 200 km/day pace takes to reach the
+  // oil limit from today's estimate. Negative ⇒ the estimate says it is already past the oil point.
+  const kmToOil = p.oil_limit != null && p.expected != null ? p.oil_limit - p.expected : null;
+  const daysToOil = kmToOil == null || !p.rate ? null : Math.ceil(kmToOil / p.rate);
+
+  return (
+    <div
+      data-card
+      className={`space-y-4 rounded-xl border bg-white p-5 shadow-sm ${
+        a.key === 'decide' ? 'border-rose-300' : 'border-slate-200'}`}
+    >
+      {/* Header: the car, the people, and the verdict — nothing else. */}
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="truncate text-lg font-bold text-slate-900">{r.car || r.plate || `Contract ${r.contract_id}`}</div>
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-sm text-slate-600">
+            {r.vehicle_id
+              ? <Link to={`/vehicles/${r.vehicle_id}`} className="font-semibold text-slate-800 hover:text-indigo-600">{r.plate || `#${r.vehicle_id}`}</Link>
+              : <span className="font-semibold text-slate-800">{r.plate || '—'}</span>}
+            <span>· Contract {r.contract_no || r.contract_id}</span>
+            {r.customer && <span>· {r.customer}</span>}
+          </div>
+        </div>
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          <Badge tone={a.tone}>{a.label}</Badge>
+          {/* The rental clock lives in the header — it frames every other number on the card. */}
+          <Badge tone={d === 0 ? 'red' : d != null && d <= 3 ? 'amber' : 'slate'}>
+            {d == null ? 'No return date' : d === 0 ? 'Due back today' : `${d} ${d === 1 ? 'day' : 'days'} left`}
+          </Badge>
+          {/* An oil service recorded AHEAD of the anchor: informational when plausible, loud when
+              the sheet row physically contradicts the mileage evidence. */}
+          {p.oil_service_state === 'mid_rental_service' && <Badge tone="slate">Mid-rental oil service</Badge>}
+          {p.oil_service_state === 'suspicious' && <Badge tone="red">Odometer conflict</Badge>}
+        </div>
+      </div>
+
+      {/* Group 1 — the mileage story, left to right in the order it happened. */}
+      <Group title="Mileage — where is the car?">
+        {/* The handover reading under its OWN name — never dressed up as the latest reading. */}
+        <Stat
+          label="Handover reading"
+          value={p.handover_odometer != null ? `${num(p.handover_odometer)} km` : '—'}
+          sub={p.handover_on ? `${fmtDate(p.handover_on)} · contract` : 'not recorded'}
+        />
+        <Arrow />
+        <Stat
+          label="Latest known odometer"
+          value={p.anchor_odometer != null ? `${num(p.anchor_odometer)} km` : '—'}
+          pill={age != null ? `${age}d old` : undefined}
+          pillTone={ageTone}
+          highlight
+          sub={p.anchor_on ? `${fmtDate(p.anchor_on)} · ${fromCustomer ? 'customer reading' : 'contract handover'}` : 'no reading held'}
+        />
+        <Arrow />
+        <Stat
+          label="Today (est.)"
+          value={p.expected != null ? `${num(p.expected)} km` : '—'}
+          pill={p.expected != null ? 'projection' : undefined}
+          pillTone="slate"
+          sub={p.expected != null && p.anchor_odometer != null && age != null
+            ? `= ${num(p.anchor_odometer)} + ${age}d × ${num(p.rate)} km`
+            : undefined}
+        />
+        <Arrow />
+        <Stat
+          label="Return (est.)"
+          value={p.expected_return != null ? `${num(p.expected_return)} km` : '—'}
+          sub={!p.return_due_on
+            ? 'no return date on the contract'
+            : d === 0
+              ? 'due back today — same as today’s estimate'
+              : `back ${fmtDate(p.return_due_on)}`}
+        />
+      </Group>
+
+      {/* Group 2 — the oil schedule, from the last change to the hard maximum. */}
+      <Group title="Oil service — when is it due?">
+        <Stat
+          label="Last oil change"
+          value={r.last_service_odometer != null ? `${num(r.last_service_odometer)} km` : '—'}
+          sub="Oil Change sheet"
+        />
+        <Stat
+          label="Interval"
+          value={r.service_interval_km != null ? `${num(r.service_interval_km)} km` : '—'}
+        />
+        <Stat
+          label="Oil limit"
+          value={p.oil_limit != null ? `${num(p.oil_limit)} km` : '—'}
+          sub="last change + interval"
+        />
+        <Stat
+          label="Max allowed"
+          value={p.allowed_max != null ? `${num(p.allowed_max)} km` : '—'}
+          sub={p.tolerance != null ? `limit + ${num(p.tolerance)} km grace` : undefined}
+        />
+        <Stat
+          label="Change due"
+          value={daysToOil == null ? '—' : daysToOil <= 0 ? 'now' : `~${daysToOil} ${daysToOil === 1 ? 'day' : 'days'}`}
+          sub={daysToOil == null ? undefined : daysToOil <= 0 ? 'estimate is past the oil point' : 'at the current pace'}
+        />
+      </Group>
+
+      {/* The oil-service reading explained in one line — surfaced, never silently trusted. */}
+      {p.oil_service_state === 'mid_rental_service' && (
+        <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+          Oil service recorded at {num(p.oil_service_odometer)} km, after the last known reading
+          ({num(p.anchor_odometer)} km) — a mid-rental service, not an error. The sheet carries no
+          service date, so the estimate still runs from the last dated reading.
+        </div>
+      )}
+      {p.oil_service_state === 'suspicious' && (
+        <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
+          Oil service recorded at {num(p.oil_service_odometer)} km — {num(p.oil_service_ahead_km)} km
+          ahead of the last known reading, further than this car could have driven. Verify the sheet
+          row before relying on the oil limit.
+        </div>
+      )}
+
+      {/* The deadline sentence: the latest the oil can be changed, against where we think the car
+          is TODAY. One plain string so it reads like speech, not like a table. */}
+      {p.allowed_max != null && p.expected != null && (
+        <div className={`rounded-lg border-l-4 px-3 py-2 text-sm font-semibold tabular-nums ${
+          p.expected > p.allowed_max
+            ? 'border-rose-400 bg-rose-50 text-rose-800'
+            : 'border-slate-300 bg-slate-50 text-slate-700'}`}
+        >
+          {p.expected > p.allowed_max
+            ? `Must be changed by ${num(p.allowed_max)} km at the latest — estimated now ${num(p.expected)} km, already ${num(p.expected - p.allowed_max)} km past.`
+            : `Must be changed by ${num(p.allowed_max)} km at the latest — estimated now ${num(p.expected)} km, ${num(p.allowed_max - p.expected)} km to go.`}
+        </div>
+      )}
+
+      {/* The recall relay — only on a car actually being brought back. Sits directly above today's
+          action, because on those cars the relay IS today's action. */}
+      {recall && <RecallRelay r={r} recall={recall} canRecord={canRecord} onChanged={onChanged} />}
+
+      {/* Today's action — one bold line, one quiet line, and the buttons. Nothing to read twice. */}
+      <div className={`rounded-lg border p-3.5 ${ACTION_BOX_TONE[a.tone]}`}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-base font-bold leading-snug">{a.headline}</div>
+            <div className="mt-0.5 text-sm opacity-80">{a.support}</div>
+            {/* An arrival is a checklist, not a sentence — what to do the moment the car rolls in. */}
+            {a.steps && (
+              <ol className="mt-1.5 list-decimal space-y-0.5 pl-5 text-sm">
+                {a.steps.map((s) => <li key={s}>{s}</li>)}
+              </ol>
+            )}
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+            {over != null && (over > 0
+              ? <Badge tone="red">{num(over)} km over grace</Badge>
+              : <Badge tone="green">{num(Math.abs(over))} km inside grace</Badge>)}
+            {canRecord && a.key !== 'no_data' && (
+              <>
+                {/* The customer's reading is only askable while the customer HAS the car. */}
+                {!a.inOurHands && (
+                  <Button size="sm" variant={a.chase ? 'primary' : 'ghost'} onClick={() => onReading(r)}>
+                    Enter reading
+                  </Button>
+                )}
+                {/* The far end — and ONLY once the car is physically ours. While it is still with
+                    the customer (waiting for Sales, waiting for a driver) there is no oil change to
+                    record and no dash to read; offering it there invites a number that was never
+                    observed. Custody comes from the collection itself, not the contract. */}
+                {p.decision && !p.decision.settled_at && p.decision.recall?.in_our_custody && (
+                  <Button size="sm" variant="primary" onClick={() => onOilChange(r)}>
+                    {tf('oil.done.button', 'Oil changed')}
+                  </Button>
+                )}
+                {/* Only offered once the projection rests on a fresh reading — nobody should be asked
+                    to recall a customer's car on the strength of a 200 km/day assumption. */}
+                {a.decide && (
+                  <>
+                    <Button size="sm" variant="danger" onClick={() => onDecide(r, 'recall')}>Recall now</Button>
+                    <Button size="sm" variant="secondary" onClick={() => onDecide(r, 'defer')}>Do it on return</Button>
+                  </>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /**
  * Enter the number the customer read off the dash.
@@ -159,7 +724,17 @@ export function ReadingDialog({ row, onClose, onSaved }) {
         reported_by: reportedBy || null,
         note: note || null,
       });
-      setResult(data?.data?.projection || null);
+      const saved = data?.data || {};
+      setResult(saved.projection || null);
+      // The new reading re-anchors EVERYTHING — so every number in this dialog moves with it:
+      // the verdict sentence up top, the Expected-today reference, and the history list all
+      // re-render from the recalculated projection instead of the one loaded on open.
+      setDetail((d) => ({
+        ...(d || {}),
+        projection: saved.projection || d?.projection,
+        readings: saved.reading ? [saved.reading, ...(d?.readings || [])] : (d?.readings || []),
+      }));
+      setOdometer('');
       toast.success('Reading saved — recalculated');
       onSaved();
     } catch (e) {
@@ -192,6 +767,16 @@ export function ReadingDialog({ row, onClose, onSaved }) {
     >
       <div className="space-y-4">
         <div className="rounded-lg bg-slate-50 p-3 text-sm text-slate-700">{reasonFor(projection)}</div>
+
+        {/* The reference number for the call: a customer figure close to this = tracking normally. */}
+        {projection?.expected != null && (
+          <div className="rounded-lg border border-indigo-100 bg-indigo-50 p-3 text-sm text-indigo-900">
+            Expected today: <strong>{num(projection.expected)} km</strong>
+            <span className="ml-1 text-xs text-indigo-700">
+              — if the customer reports a value close to this, the rental is tracking normally.
+            </span>
+          </div>
+        )}
 
         {result && (
           <div className={`rounded-lg border p-3 text-sm ${resultTone}`}>
@@ -228,20 +813,33 @@ export function ReadingDialog({ row, onClose, onSaved }) {
 
         <div>
           <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
-            Previous readings
+            Odometer history
           </div>
-          {readings.length === 0 ? (
+          {readings.length === 0 && projection?.handover_odometer == null ? (
             <div className="text-sm text-slate-500">
-              None yet — the projection is still running from the mileage recorded at handover.
+              No readings held for this rental yet.
             </div>
           ) : (
             <ul className="divide-y divide-slate-100 text-sm">
               {readings.map((r) => (
                 <li key={r.id} className="flex items-center justify-between py-1.5">
                   <span className="font-medium text-slate-800">{num(r.odometer)} km</span>
-                  <span className="text-slate-500">{fmtDate(r.reported_on)}{r.reported_by ? ` · ${r.reported_by}` : ''}</span>
+                  <span className="text-slate-500">{fmtDate(r.reported_on)}{r.reported_by ? ` · ${r.reported_by}` : ' · customer reading'}</span>
                 </li>
               ))}
+              {/* The evidence trail bottoms out at the handover — every row says its source. */}
+              {projection?.handover_odometer != null && (
+                <li className="flex items-center justify-between py-1.5">
+                  <span className="font-medium text-slate-800">{num(projection.handover_odometer)} km</span>
+                  <span className="text-slate-500">{fmtDate(projection.handover_on)} · contract handover</span>
+                </li>
+              )}
+              {projection?.oil_service_odometer != null && projection?.oil_service_state && (
+                <li className="flex items-center justify-between py-1.5">
+                  <span className="font-medium text-slate-800">{num(projection.oil_service_odometer)} km</span>
+                  <span className="text-slate-500">date unknown · oil service (sheet)</span>
+                </li>
+              )}
             </ul>
           )}
         </div>
@@ -251,23 +849,154 @@ export function ReadingDialog({ row, onClose, onSaved }) {
 }
 
 /**
+ * THE OIL IS CHANGED — one number, and this car's follow-up is over.
+ *
+ * Everything else on this page is arrangement: a projection, a decision, a phone call, a driver.
+ * None of it changes the car's oil life. This does — the workshop reads the dash after the change,
+ * types that number, and the car's next service runs from it (reading + interval), the projection
+ * re-anchors on a fact instead of a 200 km/day guess, and the recall stands down on its own.
+ *
+ * The dialog states what the number will DO before it is saved, and states what it DID after — the
+ * person entering it is changing the car's schedule, and must see that, not just a green toast.
+ */
+export function OilChangeDialog({ row, onClose, onSaved }) {
+  const { tf } = useI18n();
+  const toast = useToast();
+  const [odometer, setOdometer] = useState('');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(null);
+  const p = row.projection || {};
+
+  const interval = row.service_interval_km ?? null;
+  const entered = odometer === '' ? null : Number(odometer);
+  // The preview: what the car's profile will say the moment this is saved.
+  const nextDue = entered != null && !Number.isNaN(entered) && interval != null ? entered + interval : null;
+
+  const submit = async () => {
+    if (odometer === '' || Number.isNaN(Number(odometer))) {
+      return toast.error(tf('oil.done.needOdometer', 'Enter the odometer the oil was changed at'));
+    }
+    setBusy(true);
+    try {
+      const { data } = await api.post(`/Contract/${row.contract_id}/oil-change-done`, {
+        odometer: Number(odometer),
+        note: note || null,
+      });
+      setDone(data?.data?.vehicle || null);
+      toast.success(tf('oil.done.saved', 'Oil change recorded — the car’s next service has moved'));
+      onSaved();
+    } catch (e) {
+      toast.error(e.response?.data?.message || tf('oil.done.failed', 'Could not record the oil change'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      open
+      onClose={() => !busy && onClose()}
+      title={`${tf('oil.done.title', 'Oil changed')} — ${row.plate || row.car || row.contract_id}`}
+      subtitle={row.customer ? `${row.customer} · ${row.contract_no || row.contract_id}` : undefined}
+      footer={(
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
+            {done ? tf('common.close', 'Close') : tf('common.cancel', 'Cancel')}
+          </Button>
+          {!done && (
+            <Button onClick={submit} loading={busy}>
+              {tf('oil.done.save', 'Record the oil change')}
+            </Button>
+          )}
+        </div>
+      )}
+    >
+      <div className="space-y-3 text-sm">
+        {done ? (
+          // What it actually did — the car's own schedule, in its own numbers.
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-emerald-900">
+            <div className="font-semibold">{tf('oil.done.result', 'Done. This car’s schedule now reads:')}</div>
+            <div className="mt-1">
+              {tf('oil.done.lastChange', 'Last oil change')}: <strong>{num(done.last_service_odometer)} km</strong>
+            </div>
+            <div>
+              {tf('oil.done.nextChange', 'Next oil change')}: <strong>{num(done.next_service_odometer)} km</strong>
+              {' '}({num(done.last_service_odometer)} + {num(done.service_interval_km)})
+            </div>
+            <div>
+              {tf('oil.done.allowedMax', 'Follow-up allowance')}: <strong>{num(done.allowed_max)} km</strong>
+              {' '}— {tf('oil.done.graceNote', 'the board keeps its 500 km grace on top of the new limit')}
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="rounded-lg bg-slate-50 p-3 text-slate-700">
+              {tf('oil.done.intro', 'Enter the odometer the oil was actually changed at. That number becomes this car’s new service point — everything after it is measured from there.')}
+            </div>
+            <Input
+              label={tf('oil.done.odoLabel', 'Odometer at the oil change (km)')}
+              type="number"
+              required
+              value={odometer}
+              onChange={(e) => setOdometer(e.target.value)}
+              placeholder={p.expected != null ? String(p.expected) : '20000'}
+            />
+            {nextDue != null && (
+              <div className="rounded-lg border border-indigo-100 bg-indigo-50 p-3 text-indigo-900">
+                {tf('oil.done.preview', 'Next oil change will be set to')}{' '}
+                <strong>{num(nextDue)} km</strong> ({num(entered)} + {num(interval)}).
+              </div>
+            )}
+            <Textarea
+              label={tf('oil.done.noteLabel', 'Note (optional)')}
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              rows={2}
+            />
+            <ul className="list-disc space-y-1 pl-5 text-xs text-slate-600">
+              <li>{tf('oil.done.effect1', 'The car’s profile is updated: last change and next change.')}</li>
+              <li>{tf('oil.done.effect2', 'This follow-up closes — the recall call and any driver collection stand down.')}</li>
+              <li>{tf('oil.done.effect3', 'The inspection request raised for this car is resolved.')}</li>
+            </ul>
+          </>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+/**
  * The call itself, on a car that cannot finish the rental inside its allowance.
  *
- * Confirmed rather than fired from a bare table button, because one of the two answers means phoning a
+ * Confirmed rather than fired from a bare card button, because one of the two answers means phoning a
  * paying customer to ask for their car back — and the person doing that should see the figures they are
  * doing it on, spelled out, one more time.
  */
 export function DecisionDialog({ row, decision, onClose, onDecided }) {
+  const { tf } = useI18n();
   const toast = useToast();
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const p = row.projection || {};
   const recall = decision === 'recall';
 
+  // Does the fleet ALREADY want this car tested? Usually the system's own "routine check overdue"
+  // card sitting in /inspection-review. If it does, the honest default is yes — silently dropping a
+  // safety check the system asked for is not a decision anyone took.
+  const already = row.pending_test_request || null;
+  const [testRequired, setTestRequired] = useState(Boolean(already));
+  // WHERE the change happens decides WHO is told, so it is asked here, not left to a later screen.
+  const [location, setLocation] = useState('garage');
+
   const submit = async () => {
     setBusy(true);
     try {
-      await api.post(`/Contract/${row.contract_id}/oil-decision`, { decision, note: note || null });
+      await api.post(`/Contract/${row.contract_id}/oil-decision`, {
+        decision,
+        note: note || null,
+        ...(recall ? { test_required: testRequired, service_location: location } : {}),
+      });
       toast.success(recall ? 'Recall recorded' : 'Oil change booked for the return');
       onDecided();
       onClose();
@@ -304,14 +1033,123 @@ export function DecisionDialog({ row, decision, onClose, onDecided }) {
           </div>
         </div>
 
-        <p className="text-slate-700">
-          {recall
-            ? 'This raises a call for you to make: contact the customer and agree a day to bring the car '
-              + 'in. No driver is dispatched and no collection is booked — that stays a conversation. The '
-              + 'oil-change ticket is raised on its own the moment the car is back.'
-            : 'The rental runs to its end and the overrun is accepted. Nothing to chase — the oil-change '
-              + 'ticket is raised on its own the moment the car is back.'}
-        </p>
+        {/* ── The two operational choices, asked once, at the moment the recall is agreed ────── */}
+        {recall && (
+          <div className="space-y-3 rounded-lg border border-indigo-200 bg-indigo-50/60 p-3">
+            {/* 1. Is this car also being tested? */}
+            {already ? (
+              <div>
+                <div className="text-sm font-bold text-indigo-900">
+                  {tf('oil.decide.alreadyAsked', 'The system has already asked for a test on this car')}
+                </div>
+                <p className="mt-0.5 text-xs text-indigo-800">
+                  {tf('oil.decide.alreadyAskedWhy', 'Request #{id}, waiting in the review queue:', { id: already.id })}{' '}
+                  <span className="italic">“{already.reason}”</span>
+                </p>
+                <label className="mt-1.5 flex items-start gap-2 text-sm text-slate-800">
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={testRequired}
+                    onChange={(e) => setTestRequired(e.target.checked)}
+                  />
+                  <span>
+                    {tf('oil.decide.useExisting', 'Do the test too — add the oil change to that request')}
+                    <span className="block text-xs text-slate-500">
+                      {tf('oil.decide.useExistingWhy', 'No second card is created. Unticked, that request is left exactly as it is and the oil change goes straight to a driver.')}
+                    </span>
+                  </span>
+                </label>
+              </div>
+            ) : (
+              <label className="flex items-start gap-2 text-sm text-slate-800">
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={testRequired}
+                  onChange={(e) => setTestRequired(e.target.checked)}
+                />
+                <span>
+                  {tf('oil.decide.alsoTest', 'Test the car as well')}
+                  <span className="block text-xs text-slate-500">
+                    {tf('oil.decide.alsoTestWhy', 'Files an inspection request for the review queue. Leave it off and this is an oil change only.')}
+                  </span>
+                </span>
+              </label>
+            )}
+
+            {/* 2. Where — which is the same question as who. */}
+            <div>
+              <div className="text-sm font-semibold text-slate-800">
+                {tf('oil.decide.whereTitle', 'Where will the oil be changed?')}
+              </div>
+              <div className="mt-1 flex flex-wrap gap-4">
+                <label className="flex items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="radio"
+                    name="oil-service-location"
+                    checked={location === 'garage'}
+                    onChange={() => setLocation('garage')}
+                  />
+                  {tf('oil.decide.atGarage', 'At a garage')}
+                </label>
+                <label className="flex items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="radio"
+                    name="oil-service-location"
+                    checked={location === 'parking'}
+                    onChange={() => setLocation('parking')}
+                  />
+                  {tf('oil.decide.inParking', 'In our parking')}
+                </label>
+              </div>
+              <p className="mt-1 text-xs text-slate-600">
+                {location === 'parking'
+                  ? tf('oil.decide.parkingWho', 'Abu Maroof is told to do the change when the car lands. The driver is told to bring it to the parking.')
+                  : tf('oil.decide.garageWho', 'Waleed and Abdullah are told to arrange the garage. The driver is told to bring it to the workshop.')}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* The exact consequence, spelled out BEFORE the confirm — the two answers run two
+            different operational workflows and the person clicking must know which. */}
+        <div className="rounded-lg border border-slate-200 bg-white p-3">
+          <div className="text-sm font-bold text-slate-800">{recall ? '🚨 Recall now — this will:' : '🔧 Service on return — this will:'}</div>
+          <ul className="mt-1.5 list-disc space-y-1 pl-5 text-sm text-slate-700">
+            {recall ? (
+              <>
+                <li>Raise a call for you: ask Sales to agree the return with the customer.</li>
+                <li><strong>Notify no driver yet</strong> — nobody is dispatched until you click
+                  “Sales OK — Customer confirmed” on this card.</li>
+                <li>
+                  {location === 'parking'
+                    ? tf('oil.decide.thenParking', 'Then, on Sales OK: send a driver to collect it, and tell Abu Maroof to change the oil in the parking.')
+                    : tf('oil.decide.thenGarage', 'Then, on Sales OK: ask Waleed and Abdullah to arrange a driver and a garage.')}
+                </li>
+                <li>
+                  {!testRequired
+                    ? tf('oil.decide.noRequest', 'File no inspection request — this is an oil change, not a test.')
+                    : already
+                      ? tf('oil.decide.addToRequest', 'Add the oil change to the test request already waiting (#{id}) — no second card.', { id: already.id })
+                      : tf('oil.decide.newRequest', 'File the inspection follow-up with these figures for the Inspector.')}
+                </li>
+                <li>Require the actual odometer when the car is received — and an oil change,
+                  whatever else is done to the car.</li>
+              </>
+            ) : (
+              <>
+                <li>The customer keeps the car until the agreed return — nobody is called.</li>
+                <li>File the inspection follow-up so the return is expected, with these figures.</li>
+                <li>On return: actual odometer read, oil checked, service ticket raised automatically.</li>
+                <li>Cancel any recall call or collection that was previously open.</li>
+              </>
+            )}
+          </ul>
+          <p className="mt-1.5 text-xs text-slate-500">
+            The figures stay live: a newer odometer reading updates the follow-up automatically.
+          </p>
+        </div>
 
         <Textarea
           label="Why (optional)"
@@ -420,10 +1258,13 @@ export function RecallQueue({ tasks, canRecord, onChanged }) {
 export default function OilProjection() {
   const { can } = usePermissions();
   const canRecord = can('reminders.manage');
-  const [filter, setFilter] = useState('decision_required');
+  const [filter, setFilter] = useState('call_customer');
+  const [due, setDue] = useState('any');       // secondary: due window
+  const [freshness, setFreshness] = useState('any'); // secondary: reading age
   const [q, setQ] = useState('');
   const [active, setActive] = useState(null);
   const [deciding, setDeciding] = useState(null);   // { row, decision }
+  const [changing, setChanging] = useState(null);   // the car whose completed oil change is being recorded
 
   const fetcher = useCallback(async () => {
     // The board and the recall queue are one screen's worth of work, so they load together — a
@@ -434,166 +1275,54 @@ export default function OilProjection() {
     ]);
     return { ...(board.data.data || {}), recallTasks: recalls.data?.data?.tasks || [] };
   }, []);
-  // Modal open ⇒ pause polling, so the table can't reshuffle under someone mid-call.
+  // Modal open ⇒ pause polling, so the board can't reshuffle under someone mid-call.
   const { data, loading, error, reload } = useFetch(fetcher, [], {
     refreshInterval: 60000,
-    paused: () => Boolean(active || deciding),
+    paused: () => Boolean(active || deciding || changing),
   });
 
   const contracts = useMemo(() => data?.contracts || [], [data]);
   const summary = data?.summary || {
     chase_due: 0, ok: 0, no_data: 0, total: 0,
-    decision_required: 0, recall_required: 0, service_required_on_return: 0, within_tolerance: 0,
+    decision_required: 0, awaiting_reading: 0, recall_required: 0,
+    service_required_on_return: 0, within_tolerance: 0,
   };
+
+  // One classification, used for the tabs, the counts and the cards alike — a card can never sit
+  // under a tab whose count didn't include it.
+  const laneCounts = useMemo(() => {
+    const counts = { action_required: 0, service_on_return: 0, call_customer: 0, safe: 0, no_data: 0 };
+    contracts.forEach((r) => { counts[laneFor(r.projection)] += 1; });
+    return counts;
+  }, [contracts]);
 
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase();
     let list = contracts;
-    // "Decision needed" means answerable TODAY — a decision resting on a days-old projection is a
-    // phone call, not a choice, and the backend says which is which (`decision_ready`). The chase
-    // filter reads the chase axis; the rest read the decision axis. A car can appear under both.
-    if (filter === 'decision_required') list = list.filter((r) => r.projection?.decision_ready);
-    else if (filter === 'awaiting_reading') {
-      list = list.filter((r) => r.projection?.oil_status === 'decision_required' && !r.projection?.decision_ready);
-    } else if (filter === 'chase_due') list = list.filter((r) => r.projection?.status === 'chase_due');
-    else if (filter !== 'all') list = list.filter((r) => r.projection?.oil_status === filter);
+    if (filter !== 'all') list = list.filter((r) => laneFor(r.projection) === filter);
+    // Secondary filters narrow WITHIN the lane view — they never reclassify a car.
+    if (due !== 'any') {
+      list = list.filter((r) => {
+        const d = r.projection?.return_date_known ? r.projection?.remaining_days : null;
+        if (d == null) return false;
+        if (due === 'today') return d === 0;
+        if (due === 'tomorrow') return d === 1;
+        if (due === '1-3') return d >= 1 && d <= 3;
+        if (due === '4-7') return d >= 4 && d <= 7;
+        return d >= 8;
+      });
+    }
+    if (freshness !== 'any') {
+      list = list.filter((r) => {
+        const age = r.projection?.days_elapsed;
+        if (age == null) return false;
+        return freshness === 'fresh' ? age <= 1 : age > 1;
+      });
+    }
     if (!needle) return list;
     return list.filter((r) => `${r.plate || ''} ${r.car || ''} ${r.customer || ''} ${r.contract_no || ''}`
       .toLowerCase().includes(needle));
-  }, [contracts, filter, q]);
-
-  const columns = [
-    {
-      key: 'vehicle',
-      header: 'Vehicle',
-      cellClass: 'font-medium',
-      render: (r) => (
-        <div className="min-w-0">
-          {r.vehicle_id ? (
-            <Link to={`/vehicles/${r.vehicle_id}`} className="font-semibold text-slate-900 hover:text-indigo-600">
-              {r.plate || `#${r.vehicle_id}`}
-            </Link>
-          ) : <span className="font-semibold text-slate-900">{r.plate || '—'}</span>}
-          <div className="truncate text-xs text-slate-500">{r.car}</div>
-        </div>
-      ),
-    },
-    {
-      key: 'customer',
-      header: 'Customer',
-      render: (r) => (
-        <div className="min-w-0">
-          <div className="truncate text-slate-800">{r.customer || '—'}</div>
-          <div className="truncate text-xs text-slate-500">{r.contract_no}</div>
-        </div>
-      ),
-    },
-    {
-      key: 'due',
-      header: 'Due back',
-      render: (r) => {
-        const p = r.projection || {};
-        if (!p.return_date_known) return <span className="text-slate-400">Not stated</span>;
-        return (
-          <div>
-            <div className="text-slate-800">{fmtDate(p.return_due_on)}</div>
-            <div className="text-xs text-slate-500">
-              {p.remaining_days === 0 ? 'today' : `${p.remaining_days}d to run`}
-            </div>
-          </div>
-        );
-      },
-    },
-    {
-      key: 'projected',
-      header: 'Now',
-      render: (r) => (r.projection?.expected != null
-        ? <span className="text-slate-700">{num(r.projection.expected)} km</span>
-        : <span className="text-slate-400">—</span>),
-    },
-    {
-      key: 'on_return',
-      header: 'On return',
-      render: (r) => (r.projection?.expected_return != null
-        ? <span className="font-semibold text-slate-900">{num(r.projection.expected_return)} km</span>
-        : <span className="text-slate-400">—</span>),
-    },
-    {
-      key: 'allowance',
-      header: 'Allowed max',
-      render: (r) => {
-        const p = r.projection || {};
-        if (p.allowed_max == null) return <span className="text-slate-400">—</span>;
-        return (
-          <div>
-            <div className="text-slate-700">{num(p.allowed_max)} km</div>
-            <div className="text-xs text-slate-500">{num(p.oil_limit)} + {num(p.tolerance)}</div>
-          </div>
-        );
-      },
-    },
-    {
-      key: 'margin',
-      header: 'Against allowance',
-      render: (r) => {
-        const m = r.projection?.over_tolerance_km;
-        if (m == null) return <span className="text-slate-400">—</span>;
-        return m > 0
-          ? <Badge tone="red">{num(m)} km over</Badge>
-          : <Badge tone="green">{num(Math.abs(m))} km spare</Badge>;
-      },
-    },
-    {
-      key: 'status',
-      header: 'Status',
-      render: (r) => {
-        const p = r.projection || {};
-        // A car that will bust its allowance on an ESTIMATE is not reported as a decision — it is
-        // reported as what it is: a car whose real mileage we don't know yet.
-        const s = (p.oil_status === 'decision_required' && !p.decision_ready)
-          ? { tone: 'amber', label: 'Needs a number first' }
-          : (OIL_STATUS[p.oil_status] || OIL_STATUS.no_data);
-        return (
-          <div className="space-y-1">
-            <Badge tone={s.tone}>{s.label}</Badge>
-            {p.status === 'chase_due' && <div><Badge tone={STATUS.chase_due.tone}>{STATUS.chase_due.label}</Badge></div>}
-          </div>
-        );
-      },
-    },
-    {
-      key: 'why',
-      header: 'Why',
-      render: (r) => <div className="max-w-md text-xs text-slate-600">{reasonFor(r.projection)}</div>,
-    },
-    {
-      key: 'action',
-      header: '',
-      render: (r) => {
-        if (!canRecord) return null;
-        const p = r.projection || {};
-        return (
-          <div className="flex flex-wrap justify-end gap-1.5">
-            <Button size="sm" variant={p.status === 'chase_due' ? 'primary' : 'ghost'} onClick={() => setActive(r)}>
-              Enter reading
-            </Button>
-            {/* Only offered once the projection rests on a fresh reading — nobody should be asked to
-                recall a customer's car on the strength of a 200 km/day assumption. */}
-            {p.decision_ready && (
-              <>
-                <Button size="sm" variant="danger" onClick={() => setDeciding({ row: r, decision: 'recall' })}>
-                  Recall now
-                </Button>
-                <Button size="sm" variant="secondary" onClick={() => setDeciding({ row: r, decision: 'defer' })}>
-                  Do it on return
-                </Button>
-              </>
-            )}
-          </div>
-        );
-      },
-    },
-  ];
+  }, [contracts, filter, due, freshness, q]);
 
   if (error) return <ErrorState title="Could not load the follow-up queue" message={error} onRetry={reload} />;
 
@@ -605,13 +1334,14 @@ export default function OilProjection() {
       />
 
       <MetricGrid cols={4}>
-        <MetricCard label="Decision needed" value={summary.decision_required} tone="red" loading={loading}
-          tooltip="Projected on a fresh customer reading to finish past the allowed maximum. Recall it, or accept the overrun and service it on return." />
-        <MetricCard label="Needs a call" value={summary.chase_due} tone="amber" loading={loading}
-          tooltip="The number we hold is a projection, not a reading. Phone the customer — a long rental will always look like it busts its allowance until a real number says otherwise." />
-        <MetricCard label="Oil change on return" value={summary.service_required_on_return} tone="amber" loading={loading}
-          tooltip="Will pass the oil point but finish inside the allowance. The rental runs on; the change is raised when the car is back." />
-        <MetricCard label="Cars out" value={summary.total} tone="slate" loading={loading} />
+        <MetricCard label="Action required" value={laneCounts.action_required} tone="red" loading={loading}
+          tooltip="An agreed recall to arrange, or a fresh reading proving the car cannot finish inside its allowance. Someone must act before the return." />
+        <MetricCard label="Service on return" value={laneCounts.service_on_return} tone="amber" loading={loading}
+          tooltip="Due back today (or overdue). Don’t call — read the actual odometer when the car arrives, check the oil and service if required." />
+        <MetricCard label="Call customer" value={laneCounts.call_customer} tone="amber" loading={loading}
+          tooltip="Still days to run on a stale number. Phone the customer for the real odometer before anything is decided." />
+        <MetricCard label="Safe / scheduled" value={laneCounts.safe} tone="green" loading={loading}
+          tooltip="No intervention needed — finishes inside its allowance; any oil change is raised automatically at the return." />
       </MetricGrid>
 
       {/* The calls the decisions created, above the board that creates them. */}
@@ -624,7 +1354,7 @@ export default function OilProjection() {
       <SectionCard
         title="Follow-up queue"
         subtitle={data?.model
-          ? `Projected at ${num(data.model.rate_km_per_day)} km/day, with a ${num(data.model.tolerance_km ?? data.model.grace_km)} km tolerance above each car's oil limit.`
+          ? `Projected at ${num(data.model.rate_km_per_day)} km/day, with a ${num(data.model.tolerance_km ?? data.model.grace_km)} km grace above each car's oil limit.`
           : undefined}
         actions={(
           <div className="flex flex-wrap items-center gap-2">
@@ -633,53 +1363,92 @@ export default function OilProjection() {
               value={filter}
               onChange={setFilter}
               options={[
-                { key: 'decision_required', label: `Decision needed (${summary.decision_required})` },
-                { key: 'chase_due', label: `Needs a call (${summary.chase_due})` },
-                { key: 'awaiting_reading', label: `Needs a number first (${summary.awaiting_reading})` },
-                { key: 'recall_required', label: `Recall (${summary.recall_required})` },
-                { key: 'service_required_on_return', label: `On return (${summary.service_required_on_return})` },
-                { key: 'within_tolerance', label: `Within tolerance (${summary.within_tolerance})` },
-                { key: 'no_data', label: `Can’t project (${summary.no_data})` },
+                { key: 'call_customer', label: `Call customer (${laneCounts.call_customer})` },
+                { key: 'service_on_return', label: `Service on return (${laneCounts.service_on_return})` },
+                { key: 'action_required', label: `Action required (${laneCounts.action_required})` },
+                { key: 'safe', label: `Safe / scheduled (${laneCounts.safe})` },
+                { key: 'no_data', label: `Can’t project (${laneCounts.no_data})` },
                 { key: 'all', label: `All (${summary.total})` },
               ]}
             />
+            {/* Narrow WITHIN the lane — these never move a car between lanes. */}
+            <select
+              value={due}
+              onChange={(e) => setDue(e.target.value)}
+              className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-700"
+              aria-label="Due window"
+            >
+              <option value="any">Due: any</option>
+              <option value="today">Due today</option>
+              <option value="tomorrow">Due tomorrow</option>
+              <option value="1-3">Due in 1–3 days</option>
+              <option value="4-7">Due in 4–7 days</option>
+              <option value="8+">Due in 8+ days</option>
+            </select>
+            <select
+              value={freshness}
+              onChange={(e) => setFreshness(e.target.value)}
+              className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-700"
+              aria-label="Reading age"
+            >
+              <option value="any">Reading: any</option>
+              <option value="fresh">Reading fresh (≤1d)</option>
+              <option value="stale">Reading stale (&gt;1d)</option>
+            </select>
           </div>
         )}
       >
-        {!loading && rows.length === 0 ? (
+        {loading && rows.length === 0 ? (
+          <div className="py-10 text-center text-sm text-slate-400">Loading the fleet position…</div>
+        ) : rows.length === 0 ? (
           <EmptyState
             title="Nothing to decide"
             message="No car currently out on rental is projected to finish past its oil allowance."
           />
         ) : (
-          <DataTable
-            columns={columns}
-            rows={rows}
-            rowKey={(r) => r.contract_id}
-            loading={loading}
-            highlightRow={(r) => r.projection?.oil_status === 'decision_required'}
-          />
+          <div className="grid gap-4 xl:grid-cols-2">
+            {rows.map((r) => (
+              <VehicleCard
+                key={r.contract_id}
+                r={r}
+                canRecord={canRecord}
+                onReading={setActive}
+                onDecide={(row, decision) => setDeciding({ row, decision })}
+                onOilChange={setChanging}
+                onChanged={() => reload({ silent: true })}
+              />
+            ))}
+          </div>
         )}
       </SectionCard>
 
-      {/* The three states, stated once, so nobody has to infer them from badge colours. */}
-      <div className="grid gap-2 text-xs text-slate-600 sm:grid-cols-3">
+      {/* The four lanes, stated once, so nobody has to infer them from badge colours. */}
+      <div className="grid gap-2 text-xs text-slate-600 sm:grid-cols-2 xl:grid-cols-4">
         <div className="rounded-lg border border-slate-200 p-2.5">
-          <Badge tone="green">Within tolerance</Badge>
-          <div className="mt-1.5">Comes back before it even reaches the oil point. No action.</div>
-        </div>
-        <div className="rounded-lg border border-slate-200 p-2.5">
-          <Badge tone="amber">Oil change on return</Badge>
+          <Badge tone="amber">Call customer</Badge>
           <div className="mt-1.5">
-            Passes the oil point but finishes inside the allowance. No decision needed — the rental
-            continues and the oil change is raised as soon as the car is back.
+            Still days to run on a stale number. Phone for the real odometer before anything is decided.
           </div>
         </div>
         <div className="rounded-lg border border-slate-200 p-2.5">
-          <Badge tone="red">Decision needed</Badge>
+          <Badge tone="amber">Service on return</Badge>
           <div className="mt-1.5">
-            Cannot finish inside the allowance. Someone must choose: <strong>recall now</strong> (raises a
-            call to arrange the return) or <strong>do it on return</strong> (defer until the contract closes).
+            Due back today. Don’t call — read the actual odometer when it arrives, check the oil and
+            service if required.
+          </div>
+        </div>
+        <div className="rounded-lg border border-slate-200 p-2.5">
+          <Badge tone="red">Action required</Badge>
+          <div className="mt-1.5">
+            Cannot finish inside the allowance on a fresh reading, or a recall is already agreed.
+            Someone must choose: <strong>recall now</strong> or <strong>do it on return</strong>.
+          </div>
+        </div>
+        <div className="rounded-lg border border-slate-200 p-2.5">
+          <Badge tone="green">Safe / scheduled</Badge>
+          <div className="mt-1.5">
+            Finishes inside its allowance. Any oil change is raised automatically as soon as the car
+            is back.
           </div>
         </div>
       </div>
@@ -690,7 +1459,8 @@ export default function OilProjection() {
           <span className="font-semibold">Data origin:</span>{' '}
           {data.model.basis}. Oil limit comes from the Oil Change sheet anchors on each car; remaining days
           come from the contract’s own duration; customer-reported readings are stored against the contract
-          and never change the car’s odometer.
+          and never change the car’s odometer. “Stored” is the odometer the system holds for the car — it was
+          last refreshed at handover, so during a rental it lags the projection by design.
         </div>
       )}
 
@@ -698,6 +1468,14 @@ export default function OilProjection() {
         <ReadingDialog
           row={active}
           onClose={() => setActive(null)}
+          onSaved={() => reload({ silent: true })}
+        />
+      )}
+
+      {changing && (
+        <OilChangeDialog
+          row={changing}
+          onClose={() => setChanging(null)}
           onSaved={() => reload({ silent: true })}
         />
       )}

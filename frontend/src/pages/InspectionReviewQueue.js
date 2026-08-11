@@ -21,6 +21,8 @@ import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
 import Icon from '../components/ui/Icon';
 import Modal from '../components/ui/Modal';
+import Tabs from '../components/ui/Tabs';
+import DataTable from '../components/ui/Table';
 import { Input, Textarea } from '../components/ui/Field';
 import { useI18n } from '../i18n/I18nContext';
 import { EmptyState } from '../components/ui/Misc';
@@ -28,6 +30,9 @@ import { Skeleton } from '../components/ui/Skeleton';
 import TicketActionModal from '../components/workflow/TicketActionModal';
 import ComplaintIntakeModal from '../components/workflow/ComplaintIntakeModal';
 import SuggestedChecks from '../components/workflow/SuggestedChecks';
+import { num } from '../lib/format';
+// The oil change is recorded identically wherever it is recorded from — one dialog, one write path.
+import { OilChangeDialog } from './reminders/OilProjection';
 
 // Note: `customer_reported` here is a LEGACY driver-request reason — real customer complaints are their own
 // entity now (Complaints Center), so it reads "Customer-reported", not "Customer complaint".
@@ -508,9 +513,34 @@ function MetaTile({ icon, label, value, sub, muted }) {
 // the receipt. It names the contract, when it opened and for whom, so the decision that was taken out of
 // the Controller's hands is one they can check rather than one they have to trust
 // (see [[traceability-visibility-requirement]]).
+//
+// Three facts can do it, and the note reads differently for each: the car is away on an OM contract, the
+// car is away per the garage log, or — the rule the other two are only snapshots of — the car went and
+// CAME BACK, which restarted the count the request was quoting.
 function WithdrawnNote({ ctx, at }) {
+  const { tf } = useI18n();
   const opened = dueDate(ctx?.opened_at);
+  // Two facts can withdraw a request: an OfficeManager maintenance contract, or — while workshop trips
+  // are still recorded on the sheet rather than as OM contracts — a garage-log event (sheet-imported or
+  // hand-entered) showing the car went out and hasn't come back. Same note, different evidence.
+  const fromLog = ctx?.source === 'workshop_log';
+  // …and the third: the car has been to a workshop and COME BACK since the request was raised. The two
+  // above describe a car that is away right now; this one is the count itself — it restarted on the day
+  // the car returned, so what the system asked for is no longer due.
+  const fromClock = ctx?.source === 'clock_restarted';
+  const returned = dueDate(ctx?.anchor_at);
   const label = ctx?.contract_no ? `#${ctx.contract_no}` : ctx?.contract_id ? `#${ctx.contract_id}` : null;
+  // Where the "it came back" fact came from — a closed ticket, the garage log, or an OM contract.
+  const anchorLabel = {
+    workflow: tf('review.withdrawn.clock.srcTicket', 'Ticket'),
+    legacy: tf('review.withdrawn.clock.srcLog', 'Garage log'),
+    om_contract: tf('review.withdrawn.clock.srcContract', 'Contract'),
+  }[ctx?.anchor_source] || null;
+  const anchorLink = ctx?.anchor_source === 'workflow' && ctx?.anchor_source_id
+    ? `/maintenance-workflow/${ctx.anchor_source_id}`
+    : ctx?.anchor_source === 'om_contract' && ctx?.anchor_source_id
+      ? `/contracts/${ctx.anchor_source_id}`
+      : null;
 
   return (
     <div className="overflow-hidden rounded-xl bg-gradient-to-br from-violet-50 via-indigo-50 to-white ring-1 ring-inset ring-violet-200">
@@ -523,15 +553,70 @@ function WithdrawnNote({ ctx, at }) {
             Withdrawn by the system
           </p>
           <p className="mt-0.5 text-sm font-semibold leading-snug text-slate-800">
-            This car is already in maintenance — OfficeManager opened a maintenance contract for it.
+            {fromClock
+              ? tf('review.withdrawn.clock.title', 'This car went to the workshop and came back after the request was raised.')
+              : fromLog
+                ? 'This car is already in the workshop — the garage log shows it went out and has not come back.'
+                : 'This car is already in maintenance — OfficeManager opened a maintenance contract for it.'}
           </p>
           <p className="mt-1 text-xs leading-relaxed text-slate-600">
-            The request was raised before that contract existed, so nobody needs to decide it any more.
-            Nothing was sent to Abu Maroof.
+            {fromClock
+              ? tf(
+                  'review.withdrawn.clock.body',
+                  'The count started again the day it came back{when}, so the check the system asked for is no longer due.',
+                  { when: returned ? ` (${returned})` : '' },
+                )
+              : fromLog
+                ? 'The trip was recorded on the maintenance log after this request was raised, so nobody needs to decide it any more.'
+                : 'The request was raised before that contract existed, so nobody needs to decide it any more.'}
+            {' '}Nothing was sent to Abu Maroof.
           </p>
 
           {/* The evidence, not the claim. */}
           <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-violet-200/70 pt-2.5 text-[11px] text-slate-600">
+            {fromLog && ctx?.garage && (
+              <span className="inline-flex min-w-0 items-center gap-1.5">
+                <Icon.Wrench className="h-3.5 w-3.5 text-violet-400" />
+                <span className="text-slate-400">Garage</span>
+                <span className="truncate font-semibold text-slate-700">{ctx.garage}</span>
+              </span>
+            )}
+            {fromLog && ctx?.service_main && (
+              <span className="inline-flex min-w-0 items-center gap-1.5">
+                <Icon.Flag className="h-3.5 w-3.5 text-violet-400" />
+                <span className="text-slate-400">Work</span>
+                <span className="truncate font-semibold text-slate-700">{ctx.service_main}</span>
+              </span>
+            )}
+            {fromClock && returned && (
+              <span className="inline-flex items-center gap-1.5">
+                <Icon.Calendar className="h-3.5 w-3.5 text-violet-400" />
+                <span className="text-slate-400">{tf('review.withdrawn.clock.cameBack', 'Came back')}</span>
+                <span className="font-semibold text-slate-700">{returned}</span>
+              </span>
+            )}
+            {fromClock && anchorLabel && (
+              <span className="inline-flex min-w-0 items-center gap-1.5">
+                <Icon.Wrench className="h-3.5 w-3.5 text-violet-400" />
+                <span className="text-slate-400">{tf('review.withdrawn.clock.per', 'Per')}</span>
+                {anchorLink ? (
+                  <Link to={anchorLink} className="font-semibold text-violet-700 underline-offset-2 hover:underline">
+                    {anchorLabel} #{ctx.anchor_source_id}
+                  </Link>
+                ) : (
+                  <span className="truncate font-semibold text-slate-700">
+                    {anchorLabel}{ctx?.anchor_source_id ? ` #${ctx.anchor_source_id}` : ''}
+                  </span>
+                )}
+              </span>
+            )}
+            {fromClock && ctx?.request_created_at && (
+              <span className="inline-flex items-center gap-1.5">
+                <Icon.Flag className="h-3.5 w-3.5 text-violet-400" />
+                <span className="text-slate-400">{tf('review.withdrawn.clock.asked', 'Asked')}</span>
+                <span className="font-semibold text-slate-700">{dueDate(ctx.request_created_at)}</span>
+              </span>
+            )}
             {label && (
               <span className="inline-flex items-center gap-1.5">
                 <Icon.Invoice className="h-3.5 w-3.5 text-violet-400" />
@@ -551,7 +636,7 @@ function WithdrawnNote({ ctx, at }) {
             {opened && (
               <span className="inline-flex items-center gap-1.5">
                 <Icon.Calendar className="h-3.5 w-3.5 text-violet-400" />
-                <span className="text-slate-400">Opened</span>
+                <span className="text-slate-400">{fromLog ? 'Out since' : 'Opened'}</span>
                 <span className="font-semibold text-slate-700">{opened}</span>
               </span>
             )}
@@ -576,7 +661,167 @@ function WithdrawnNote({ ctx, at }) {
   );
 }
 
-function RequestCard({ tk, onApprove, onReject, onAcknowledge, onRemind, onCancelReminder, ackBusy, remindBusy, highlight }) {
+/**
+ * Oil Service Follow-up — a request raised by an oil recall/defer decision on /oil-projection.
+ * The figures are LIVE: the backend recomputes them from the decision's contract on every read, so
+ * a fresh odometer reading changes this block everywhere at once. `at_decision` (shown only when it
+ * differs) is the frozen audit answer to "what did the Controller see when they decided".
+ */
+const OIL_ACTION_META = {
+  oil_change_required:   { label: 'OIL CHANGE REQUIRED',   cls: 'bg-rose-100 text-rose-700 ring-rose-200' },
+  oil_service_completed: { label: 'OIL SERVICE COMPLETED', cls: 'bg-emerald-100 text-emerald-700 ring-emerald-200' },
+  // The recall relay, stated as what is actually happening. "Collection in progress" used to be
+  // shown from the moment a recall was decided, which claimed a driver was moving before anyone had
+  // even spoken to the customer.
+  awaiting_sales:        { label: 'WAITING FOR SALES OK',  cls: 'bg-amber-100 text-amber-700 ring-amber-200' },
+  awaiting_driver:       { label: 'AWAITING A DRIVER',     cls: 'bg-amber-100 text-amber-700 ring-amber-200' },
+  collection_in_progress:{ label: 'COLLECTION IN PROGRESS', cls: 'bg-amber-100 text-amber-700 ring-amber-200' },
+  vehicle_collected:     { label: 'VEHICLE COLLECTED',     cls: 'bg-indigo-100 text-indigo-700 ring-indigo-200' },
+  service_on_return:     { label: 'SERVICE ON RETURN',     cls: 'bg-amber-100 text-amber-700 ring-amber-200' },
+  inspection_only:       { label: 'INSPECTION ONLY',       cls: 'bg-slate-100 text-slate-600 ring-slate-200' },
+};
+
+/** The recall relay's stages, as the review side names them. */
+const OIL_STAGE_LABEL = {
+  waiting_sales:     'Waiting for Sales',
+  ready_for_driver:  'Ready for driver',
+  driver_assigned:   'Driver assigned',
+  vehicle_collected: 'Vehicle collected',
+  at_workshop:       'At the workshop',
+  inspection:        'Inspection / test',
+  oil_service:       'Oil change',
+  completed:         'Completed',
+  cancelled:         'Stood down',
+};
+
+function OilFollowUpNote({ ctx, onRecordOilChange }) {
+  const { tf } = useI18n();
+  if (!ctx) return null;
+  const live = ctx.live;
+  const snap = ctx.at_decision;
+  const over = live?.over_allowance_km;
+  const decisionLabel = ctx.decision === 'recall' ? 'Recall now' : 'Do it on return';
+  const cleared = over != null && over <= 0;
+  const action = OIL_ACTION_META[ctx.current_action];
+  const recall = ctx.recall;
+  return (
+    <div className="rounded-lg bg-amber-50/70 px-3 py-2 ring-1 ring-inset ring-amber-200/70">
+      <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+        <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-amber-700">
+          <Icon.Flag className="h-3 w-3" />
+          {/* An ADOPTED card is the system's own test request with the oil change added to it — it
+              must not claim to have come from the oil board, or the reason above it reads as a lie. */}
+          {ctx.recall?.request_adopted
+            ? tf('review.oil.addedTo', 'Oil change added to this test request · Source: Oil Projection')
+            : 'Oil Service Follow-up · Source: Oil Projection'}
+        </p>
+        {/* The CURRENT action, stated — nobody infers it from raw numbers. */}
+        {action && (
+          <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold tracking-wide ring-1 ring-inset ${action.cls}`}>
+            {action.label}
+          </span>
+        )}
+      </div>
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-700">
+        <span>Decision: <strong>{decisionLabel}</strong>{ctx.decided_by ? ` by ${ctx.decided_by}` : ''}</span>
+        {ctx.contract_no && <span>Contract: <strong>{ctx.contract_no}</strong></span>}
+        {ctx.settled && <span className="font-semibold text-emerald-700">Settled — car returned</span>}
+      </div>
+      {live && (
+        <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-700">
+          <span>Latest reading: <strong>{num(live.anchor_odometer)} km</strong>{live.anchor_source === 'reading' ? ' (customer)' : ' (handover)'}</span>
+          <span>Est. return: <strong>{num(live.expected_return)} km</strong></span>
+          <span>Allowed max: <strong>{num(live.allowed_max)} km</strong></span>
+          {over != null && (cleared
+            ? <span className="font-semibold text-emerald-700">Now inside the allowance ({num(Math.abs(over))} km spare)</span>
+            : <span className="font-semibold text-rose-700">{num(over)} km over the allowance</span>)}
+        </div>
+      )}
+      {snap && live && snap.over_allowance != null && over != null && snap.over_allowance !== Math.max(0, over) && (
+        <p className="mt-1.5 border-t border-amber-200/70 pt-1.5 text-[11px] text-slate-500">
+          At decision time the projection said {num(snap.over_allowance)} km over — a newer reading has
+          updated the figures above.
+        </p>
+      )}
+
+      {/* ── The recall relay: how the car is actually getting here, and what it owes on arrival ── */}
+      {recall && (
+        <div className="mt-2 border-t border-amber-200/70 pt-2">
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-700">
+            <span>Stage: <strong>{OIL_STAGE_LABEL[recall.stage] || recall.stage}</strong></span>
+            {/* Where it is going, and therefore who owns the change when it lands. */}
+            <span>
+              {tf('review.oil.where', 'Oil change at')}:{' '}
+              <strong>
+                {recall.service_location === 'parking'
+                  ? tf('review.oil.whereParking', 'our parking · Abu Maroof')
+                  : tf('review.oil.whereGarage', 'a garage · Waleed / Abdullah')}
+              </strong>
+            </span>
+            <span>
+              Sales:{' '}
+              {recall.sales?.confirmed
+                ? <strong className="text-emerald-700">{tf('review.oil.sales.confirmed', 'Confirmed')}{recall.sales.confirmed_by ? ` · ${recall.sales.confirmed_by}` : ''}</strong>
+                : <strong className="text-amber-700">{tf('review.oil.sales.waiting', 'Waiting')}</strong>}
+            </span>
+            <span>
+              Driver:{' '}
+              <strong>
+                {!recall.collection ? 'Not arranged'
+                  : recall.collection.driver ? `${recall.collection.driver} · ${recall.collection.phase}`
+                  : recall.collection.phase}
+              </strong>
+            </span>
+          </div>
+
+          {/* The required work. The oil change is rendered as a locked requirement — this card is
+              where a reviewer decides what to send in, and "just test it" must not be reachable. */}
+          {recall.required_actions && (
+            <div className="mt-1.5 flex flex-wrap items-center gap-3 text-xs">
+              <span className={recall.required_actions.test?.required ? 'font-semibold text-slate-800' : 'text-slate-400'}>
+                {recall.required_actions.test?.required ? '☑' : '☐'} Inspection / Test
+              </span>
+              {/* The requirement never disappears — it is why the customer was interrupted. What
+                  changes is whether it has been MET, and the reading that proves it. */}
+              {ctx.oil_changed ? (
+                <span className="rounded-md bg-emerald-100 px-2 py-0.5 font-bold text-emerald-700 ring-1 ring-inset ring-emerald-200">
+                  ✅ {tf('review.oil.done.pill', 'Oil changed at {km} km', { km: num(ctx.oil_changed.odometer) })}
+                </span>
+              ) : (
+                <span className="rounded-md bg-rose-100 px-2 py-0.5 font-bold text-rose-700 ring-1 ring-inset ring-rose-200">
+                  🔒 Oil Change — REQUIRED
+                </span>
+              )}
+              {/* The car is ours and the oil is still owed: this is the moment, and this is where
+                  the person holding it already is. One number ends the whole follow-up. */}
+              {!ctx.oil_changed && ctx.in_our_custody && onRecordOilChange && (
+                <button
+                  type="button"
+                  onClick={onRecordOilChange}
+                  className="rounded-md bg-indigo-600 px-2 py-0.5 font-bold text-white hover:bg-indigo-500"
+                >
+                  {tf('review.oil.done.record', 'Oil changed — record it')}
+                </button>
+              )}
+            </div>
+          )}
+          {/* What it did to the car's own schedule — the reason the number was worth typing. */}
+          {ctx.oil_changed && (
+            <p className="mt-1.5 text-[11px] text-emerald-700">
+              {tf('review.oil.done.line', 'Oil changed at {km} km by {who} — next change due at {next} km.', {
+                km: num(ctx.oil_changed.odometer),
+                who: ctx.oil_changed.by || '—',
+                next: num(ctx.oil_changed.next_due),
+              })}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RequestCard({ tk, onApprove, onReject, onAcknowledge, onRemind, onCancelReminder, onRecordOilChange, ackBusy, remindBusy, highlight }) {
   const { tf } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const reasonTone = REASON_TONE[tk.trigger_reason] || 'slate';
@@ -597,7 +842,12 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, onRemind, onCance
   const withdrawnCtx = tk.review?.auto_context || null;
   // The car is out on hire — it can't be sent for inspection until it's physically back, so approval is
   // held (the downtime clock still counts against it; see the 15-day test-based rule).
-  const awaitingReturn = tk.operational_status === 'rented';
+  //
+  // …unless we have physically collected it. On an oil recall a driver takes the keys hours before
+  // OfficeManager closes the rental, so `operational_status` still says "rented" while the car is
+  // standing in our workshop. Custody is the honest test, and the backend derives it from the
+  // collection itself (`oil_context.in_our_custody`), never from the contract.
+  const awaitingReturn = tk.operational_status === 'rented' && !tk.oil_context?.in_our_custody;
 
   const sev = tk.fault_severity ? SEV_META[tk.fault_severity] : null;
   const complaint = (tk.customer_complaint || '').trim();
@@ -700,6 +950,14 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, onRemind, onCance
           </div>
         )}
 
+        {/* ── Oil-decision origin: live figures + frozen at-decision snapshot ──────── */}
+        {tk.oil_context && (
+          <OilFollowUpNote
+            ctx={tk.oil_context}
+            onRecordOilChange={onRecordOilChange ? () => onRecordOilChange(tk) : undefined}
+          />
+        )}
+
         {/* ── Attachments — the driver's photos/videos as previews ─────────────────── */}
         {Array.isArray(tk.media) && tk.media.length > 0 && (
           <div>
@@ -788,7 +1046,21 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, onRemind, onCance
         {!isLegacy && !isWithdrawn && awaitingReturn && (
           <p className="flex items-center gap-1.5 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 ring-1 ring-inset ring-amber-200">
             <Icon.Clock className="h-3.5 w-3.5 shrink-0" />
-            Waiting for return — the car is with a customer. Review it once it's back and available to inspect.
+            {/* On a recall the car is not simply "waiting" — somebody is actively fetching it, and
+                the reviewer needs to know which link of that chain they are waiting on. */}
+            {tk.oil_context?.recall
+              ? `Being recalled — ${OIL_STAGE_LABEL[tk.oil_context.recall.stage] || 'in progress'}. Review it once the driver has brought it in; the oil change is required either way.`
+              : "Waiting for return — the car is with a customer. Review it once it's back and available to inspect."}
+          </p>
+        )}
+
+        {/* Collected but the rental is still open on OfficeManager's books — say so, or the enabled
+            Approve button looks like a bug next to a "rented" pill. */}
+        {!isLegacy && !isWithdrawn && tk.operational_status === 'rented' && tk.oil_context?.in_our_custody && (
+          <p className="flex items-center gap-1.5 rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-800 ring-1 ring-inset ring-emerald-200">
+            <Icon.Check className="h-3.5 w-3.5 shrink-0" />
+            The car has been collected from the customer and is with us — you can send it in now. The
+            rental only closes on OfficeManager's side, so the car still reads as rented.
           </p>
         )}
 
@@ -1252,6 +1524,436 @@ function RemindModal({ ticket, onClose, onDone }) {
   );
 }
 
+// ── Tab 2 — Parked: the cars physically in a shop right now ───────────────────────────────────────
+// Driven by the SHOP STAY, not by which requests happened to be parked: a car on a lift belongs here
+// whether or not anyone had asked for a test on it. Same fact the countdown pauses the clock on, from
+// the same service, so the two tabs can never disagree about who is in the workshop.
+//
+// The card answers the four things a Controller actually needs: which visit parked it, how long it has
+// been in, what the car's last check was, and what happens to its test schedule when it comes out.
+
+const PARK_SOURCE = {
+  om_contract:  { chip: 'In OM maintenance', tone: 'bg-violet-50 text-violet-700 ring-violet-200', icon: 'Invoice' },
+  workshop_log: { chip: 'At a garage',       tone: 'bg-amber-50 text-amber-700 ring-amber-200',   icon: 'Wrench' },
+};
+
+function Fact({ label, children, strong = false }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{label}</div>
+      <div className={`mt-0.5 truncate text-[13px] ${strong ? 'font-bold text-slate-900' : 'font-medium text-slate-700'}`}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function ParkedCard({ row }) {
+  const { tf } = useI18n();
+  const p = row.parked;
+  const src = PARK_SOURCE[p.source] || PARK_SOURCE.workshop_log;
+  const req = row.request;
+  const test = row.last_test;
+
+  const visitLink = p.source === 'om_contract' && p.ref_id ? `/contracts/${p.ref_id}` : null;
+
+  return (
+    <div className="overflow-hidden rounded-xl bg-white ring-1 ring-inset ring-slate-200">
+      {/* Who, and what parked it */}
+      <div className="flex flex-wrap items-start justify-between gap-2 border-b border-slate-100 px-4 py-3">
+        <div className="min-w-0">
+          <Link to={`/vehicles/${row.vehicle_id}`} className="text-base font-bold text-slate-900 hover:text-indigo-600">
+            {row.plate_no || `#${row.vehicle_id}`}
+          </Link>
+          <span className="ms-2 text-sm text-slate-400">{[row.make, row.model].filter(Boolean).join(' ')}</span>
+        </div>
+        <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold ring-1 ring-inset ${src.tone}`}>
+          <Icon.Wrench className="h-3.5 w-3.5" />
+          {p.source === 'om_contract'
+            ? tf('review.parked.omChip', 'In OM maintenance')
+            : tf('review.parked.garageChip', 'At a garage')}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 gap-x-4 gap-y-3 px-4 py-3 sm:grid-cols-4">
+        <Fact label={p.source === 'om_contract' ? tf('review.parked.contract', 'Contract') : tf('review.parked.garage', 'Garage')}>
+          {visitLink
+            ? <Link to={visitLink} className="text-violet-700 underline-offset-2 hover:underline">{p.label || `#${p.ref_id}`}</Link>
+            : (p.label || '—')}
+        </Fact>
+        <Fact label={tf('review.parked.started', 'Went in')}>{p.started_at ? dueDate(p.started_at) : '—'}</Fact>
+        <Fact label={tf('review.parked.inShop', 'In the shop')} strong>
+          {p.days_in_shop === null || p.days_in_shop === undefined
+            ? '—'
+            : `${p.days_in_shop} ${p.days_in_shop === 1 ? tf('review.parked.day', 'day') : tf('review.parked.days', 'days')}`}
+        </Fact>
+        <Fact label={tf('review.parked.work', 'Work')}>{p.work || '—'}</Fact>
+      </div>
+
+      {/* What the car's history says — the real test if there is one, otherwise the record the count
+          actually runs from. Never one dressed up as the other. */}
+      <div className="grid grid-cols-2 gap-x-4 gap-y-3 border-t border-slate-100 bg-slate-50/60 px-4 py-3 sm:grid-cols-2">
+        <Fact label={tf('review.parked.lastTest', 'Last test drive')}>
+          {test
+            ? <>{dueDate(test.at)} <span className="text-slate-400">· {test.days_ago}d</span></>
+            : <span className="text-slate-400">{tf('review.parked.noTest', 'None on record')}</span>}
+        </Fact>
+        <Fact label={tf('review.parked.lastReady', 'Last came back ready')}>
+          {row.anchor?.at
+            ? <>{dueDate(row.anchor.at)} <span className="text-slate-400">· {row.anchor.days_ago}d</span></>
+            : '—'}
+        </Fact>
+      </div>
+
+      {/* The recommendation that was already pending when it went in — preserved, not lost. */}
+      <div className="border-t border-slate-100 px-4 py-3">
+        <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+          {tf('review.parked.recommendation', 'Test recommendation')}
+        </div>
+        {req ? (
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-[13px]">
+            <span className="font-semibold text-slate-800">
+              {req.was_parked_by_this_visit
+                ? tf('review.parked.reqParked', 'Already pending before this visit — parked by it')
+                : tf('review.parked.reqOpen', 'Open request on this car')}
+            </span>
+            <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ring-1 ring-inset ${
+              req.source_lane === 'oil_projection'
+                ? 'bg-amber-50 text-amber-700 ring-amber-200'
+                : 'bg-indigo-50 text-indigo-700 ring-indigo-200'
+            }`}>
+              {req.source_lane === 'oil_projection'
+                ? tf('review.parked.laneOil', 'Source: Oil Projection')
+                : tf('review.parked.laneTest', 'Source: Test schedule')}
+            </span>
+            <Link to={`/maintenance-workflow/${req.ticket_id}`} className="text-xs text-violet-700 underline-offset-2 hover:underline">
+              #{req.ticket_id}
+            </Link>
+            {req.raised_at && <span className="text-xs text-slate-400">{tf('review.parked.raised', 'raised')} {dueDate(req.raised_at)}</span>}
+          </div>
+        ) : (
+          <div className="mt-1 text-[13px] text-slate-500">{tf('review.parked.noReq', 'None — nothing was pending when it went in.')}</div>
+        )}
+      </div>
+
+      {/* State + what happens next. */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-slate-100 bg-violet-50/50 px-4 py-2.5 text-xs">
+        <span className="inline-flex items-center gap-1.5 font-bold text-violet-700">
+          <Icon.Clock className="h-3.5 w-3.5" />
+          {tf('review.parked.paused', 'Countdown paused while in the shop')}
+        </span>
+        <span className="text-slate-500">{row.on_release}</span>
+      </div>
+    </div>
+  );
+}
+
+function ParkedInShopPanel() {
+  const { tf } = useI18n();
+  const fetcher = useCallback(async () => (await api.get('/maintenance-tickets/parked-in-shop')).data.data, []);
+  const { data, loading, error } = useFetch(fetcher, []);
+  const [source, setSource] = useState('all');
+
+  const rows = useMemo(() => data?.rows || [], [data]);
+  const summary = data?.summary || {};
+  const outside = data?.outside_fleet || [];
+
+  const shown = useMemo(
+    () => (source === 'all' ? rows : rows.filter((r) => r.parked.source === source)),
+    [rows, source],
+  );
+
+  // Only the OM maintenance contract parks a car (features.diagnostic_gate.workshop_log_parks is
+  // off), so there is normally ONE source and a filter row would just repeat the same number twice.
+  // The chips appear only if a second source is ever switched back on and actually has cars in it.
+  const sources = [
+    { key: 'om_contract', label: tf('review.parked.omChip', 'In OM maintenance'), n: summary.om_contract || 0 },
+    { key: 'workshop_log', label: tf('review.parked.garageChip', 'At a garage'), n: summary.workshop_log || 0 },
+  ].filter((c) => c.n > 0);
+  const chips = sources.length > 1
+    ? [{ key: 'all', label: tf('review.parked.allChip', 'All in the shop'), n: summary.total || 0 }, ...sources]
+    : [];
+
+  return (
+    <div role="tabpanel" id="panel-withdrawn" aria-labelledby="tab-withdrawn" className="space-y-4">
+      <p className="text-xs text-slate-500">
+        {tf(
+          'review.parked.blurb',
+          'These cars are in the workshop right now on an OfficeManager maintenance contract — that contract is the only thing that puts a car here. While a car is in here it is not treated as a rental car and its test countdown is paused, so parked days never make it look overdue. When OM closes the contract the car leaves this tab, the count starts again from the day it came back, and the next morning scan re-checks it.',
+        )}
+      </p>
+
+      {error && <div className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{String(error)}</div>}
+
+      <div className="flex flex-wrap items-center gap-2">
+        {chips.length > 0 ? chips.map((c) => (
+          <button
+            key={c.key}
+            type="button"
+            onClick={() => setSource(c.key)}
+            className={`rounded-full px-3 py-1 text-xs font-medium ring-1 ring-inset transition ${
+              source === c.key ? 'bg-indigo-50 text-indigo-700 ring-indigo-200' : 'bg-white text-slate-500 ring-slate-200 hover:text-slate-800'
+            }`}
+          >
+            {c.label} <span className="tabular-nums opacity-60">{c.n}</span>
+          </button>
+        )) : (
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-violet-50 px-3 py-1 text-xs font-semibold text-violet-700 ring-1 ring-inset ring-violet-200">
+            <Icon.Wrench className="h-3.5 w-3.5" />
+            {tf('review.parked.omChip', 'In OM maintenance')} <span className="tabular-nums opacity-70">{summary.total || 0}</span>
+          </span>
+        )}
+        {summary.with_request > 0 && (
+          <span className="ms-auto self-center text-xs text-slate-400">
+            {summary.with_request} {tf('review.parked.hadRequest', 'had a test request pending when they went in')}
+          </span>
+        )}
+      </div>
+
+      {loading ? (
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <Skeleton className="h-56 rounded-xl" />
+          <Skeleton className="h-56 rounded-xl" />
+        </div>
+      ) : shown.length === 0 ? (
+        <EmptyState
+          icon={<Icon.Check className="h-7 w-7" />}
+          title={tf('review.parked.emptyTitle', 'Nothing in the shop')}
+          message={tf('review.parked.emptyBody', 'No car is on a maintenance contract or an open garage trip right now.')}
+        />
+      ) : (
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          {shown.map((r) => <ParkedCard key={r.vehicle_id} row={r} />)}
+        </div>
+      )}
+
+      {/* Cars in a shop that the planning board does not cover either — named, not silently dropped. */}
+      {outside.length > 0 && (
+        <p className="text-[11px] text-slate-400">
+          {tf('review.parked.outside', 'Also in a shop but outside the operational fleet (not scheduled for tests):')}{' '}
+          {outside.map((v) => `${v.plate_no} (${v.for_sale ? tf('review.parked.forSale', 'for sale') : v.status})`).join(', ')}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ── Tab 3 — the planning board: when is each car due ──────────────────────────────────────────────
+// The queue answers "what has the system asked for". This answers the question before it. Same
+// rulebook read forwards — a car in the Overdue or Due-today lane is exactly a car the 07:30 scan
+// raises, because both come from DiagnosticGateService. No second definition of "due" anywhere.
+//
+// Three of the lanes deliberately carry NO countdown, because a number there would be a lie: the car
+// is already spoken for, being worked on, or sitting in a shop with the clock paused and no way to
+// know when it will be released.
+
+const LANES = [
+  { key: 'overdue',     label: 'Overdue',           tone: 'text-rose-700',   dot: 'bg-rose-500' },
+  { key: 'today',       label: 'Due today',         tone: 'text-rose-600',   dot: 'bg-rose-400' },
+  { key: 'tomorrow',    label: 'Due tomorrow',      tone: 'text-amber-700',  dot: 'bg-amber-500' },
+  { key: 'soon',        label: 'Due in 2–3 days',   tone: 'text-amber-600',  dot: 'bg-amber-300' },
+  { key: 'later',       label: 'Due later',         tone: 'text-slate-600',  dot: 'bg-slate-300' },
+  { key: 'requested',   label: 'Already requested', tone: 'text-indigo-600', dot: 'bg-indigo-400' },
+  { key: 'in_workflow', label: 'Being worked on',   tone: 'text-indigo-600', dot: 'bg-indigo-300' },
+  { key: 'parked',      label: 'Parked — paused',   tone: 'text-violet-700', dot: 'bg-violet-400' },
+];
+
+const ANCHOR_SOURCE_LABEL = {
+  workflow: 'Ticket',
+  legacy: 'Garage log',
+  om_contract: 'Maintenance contract',
+  onboarding: 'Since we got it',
+};
+
+const OPERATIONAL_LABEL = {
+  rented: 'Rented',
+  available: 'Ready',
+  maintenance: 'In workshop',
+  in_transit: 'Moving',
+  test: 'On test',
+  transfer: 'Transfer',
+  sale_prep: 'Sale prep',
+};
+
+/** The one sentence the whole board exists for: when is this car due? */
+function Countdown({ r }) {
+  const { tf } = useI18n();
+
+  if (r.bucket === 'parked') {
+    return <span className="font-semibold text-violet-700">{tf('review.board.paused', 'Paused — in the shop')}</span>;
+  }
+  if (r.bucket === 'in_workflow') {
+    return <span className="font-semibold text-indigo-600">{tf('review.board.pausedWork', 'Paused — being worked on')}</span>;
+  }
+  if (r.bucket === 'requested') {
+    return <span className="font-semibold text-indigo-600">{tf('review.board.requested', 'Already requested')}</span>;
+  }
+  if (r.days_over) {
+    return (
+      <span className="font-bold text-rose-600">
+        {tf('review.board.overdue', 'Overdue by {n} days', { n: r.days_over })}
+      </span>
+    );
+  }
+  if (r.days_left === 0) return <span className="font-bold text-rose-600">{tf('review.board.today', 'Test today')}</span>;
+  if (r.days_left === 1) return <span className="font-bold text-amber-600">{tf('review.board.tomorrow', 'Test in 1 day')}</span>;
+  if (r.days_left > 1) {
+    return (
+      <span className={r.days_left <= 3 ? 'font-semibold text-amber-600' : 'font-medium text-slate-700'}>
+        {tf('review.board.inDays', 'Test in {n} days', { n: r.days_left })}
+      </span>
+    );
+  }
+  return <span className="text-slate-300">—</span>;
+}
+
+function FleetCountdownPanel() {
+  const { tf } = useI18n();
+  // Whole-fleet walk (~150 cars, ~4s) — fetched once when the tab is opened, not polled. Nothing here
+  // changes minute to minute: the clock ticks in days and the scan runs once a morning.
+  const fetcher = useCallback(async () => (await api.get('/maintenance-tickets/test-countdown')).data.data, []);
+  const { data, loading, error } = useFetch(fetcher, []);
+  const [lane, setLane] = useState('all');
+
+  const rows = useMemo(() => data?.rows || [], [data]);
+  const buckets = data?.buckets || {};
+  const limits = data?.limits || {};
+
+  const shown = useMemo(
+    () => (lane === 'all' ? rows : rows.filter((r) => r.bucket === lane)),
+    [rows, lane],
+  );
+
+  const columns = [
+    {
+      key: 'plate_no',
+      header: tf('review.board.vehicle', 'Vehicle'),
+      render: (r) => (
+        <Link to={`/vehicles/${r.vehicle_id}`} className="font-semibold text-slate-800 hover:text-indigo-600">
+          {r.plate_no || `#${r.vehicle_id}`}
+          <span className="ms-2 block text-[11px] font-normal text-slate-400">{[r.make, r.model].filter(Boolean).join(' ')}</span>
+        </Link>
+      ),
+    },
+    {
+      key: 'operational_status',
+      header: tf('review.board.status', 'Status'),
+      render: (r) => {
+        const l = OPERATIONAL_LABEL[r.operational_status] || r.operational_status || '—';
+        const parked = r.bucket === 'parked';
+        return (
+          <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset ${
+            parked ? 'bg-violet-50 text-violet-700 ring-violet-200'
+              : r.operational_status === 'rented' ? 'bg-sky-50 text-sky-700 ring-sky-200'
+                : 'bg-slate-50 text-slate-600 ring-slate-200'
+          }`}>{l}</span>
+        );
+      },
+    },
+    {
+      key: 'last_test',
+      header: tf('review.board.lastTest', 'Last test'),
+      // The real test drive if the car has one; otherwise say plainly what the count DOES run from
+      // rather than passing a workshop return off as a test.
+      render: (r) => (r.last_test
+        ? <span className="text-slate-700">{dueDate(r.last_test.at)}<span className="ms-1 text-slate-400">· {r.last_test.days_ago}d</span></span>
+        : (
+          <span className="text-[11px] text-slate-400">
+            {tf('review.board.noTest', 'no test on record')}
+            {r.anchor?.at && <><br />{tf('review.board.readySince', 'ready since')} {dueDate(r.anchor.at)}</>}
+          </span>
+        )),
+    },
+    {
+      key: 'due_on',
+      header: tf('review.board.nextTest', 'Next test'),
+      render: (r) => (r.due_on
+        ? <span className="text-slate-700">{dueDate(r.due_on)}</span>
+        : <span className="text-slate-300">—</span>),
+    },
+    {
+      key: 'countdown',
+      header: tf('review.board.countdown', 'Countdown'),
+      render: (r) => <Countdown r={r} />,
+    },
+    {
+      key: 'why',
+      header: tf('review.board.why', 'Why'),
+      render: (r) => (
+        <span className="text-[11px] leading-snug text-slate-600">
+          {r.why || '—'}
+          {r.anchor?.source && r.bucket !== 'parked' && (
+            <span className="mt-0.5 block text-slate-400">
+              {tf('review.board.countingFrom', 'Counting from')}{' '}
+              {r.anchor.source === 'workflow' && r.anchor.source_id
+                ? <Link to={`/maintenance-workflow/${r.anchor.source_id}`} className="text-violet-600 underline-offset-2 hover:underline">{ANCHOR_SOURCE_LABEL.workflow} #{r.anchor.source_id}</Link>
+                : r.anchor.source === 'om_contract' && r.anchor.source_id
+                  ? <Link to={`/contracts/${r.anchor.source_id}`} className="text-violet-600 underline-offset-2 hover:underline">{ANCHOR_SOURCE_LABEL.om_contract} #{r.anchor.source_id}</Link>
+                  : (ANCHOR_SOURCE_LABEL[r.anchor.source] || r.anchor.source)}
+            </span>
+          )}
+          {r.bucket === 'parked' && r.on_release && (
+            <span className="mt-0.5 block text-violet-500">{r.on_release}</span>
+          )}
+        </span>
+      ),
+    },
+  ];
+
+  return (
+    <div role="tabpanel" id="panel-countdown" aria-labelledby="tab-countdown" className="space-y-4">
+      <p className="text-xs text-slate-500">
+        {tf(
+          'review.board.blurb',
+          'Every car we are running and when it is next due for a test. The count runs from the day the car was last ready — a closed ticket, a garage-log return, or a maintenance contract that closed — whichever is latest, and it pauses entirely while the car is in a shop, so parked days never make a car look overdue.',
+        )}
+        {limits.downtime_days
+          ? ` (${tf('review.board.limit', 'Limit')}: ${limits.downtime_days}d ${tf('review.board.afterRental', 'once it has been rented since its last check')}, ${limits.inactive_days}d ${tf('review.board.ifUnrented', 'if it has not')}.)`
+          : ''}
+      </p>
+
+      {error && <div className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{String(error)}</div>}
+
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => setLane('all')}
+          className={`rounded-full px-3 py-1 text-xs font-medium ring-1 ring-inset transition ${
+            lane === 'all' ? 'bg-indigo-50 text-indigo-700 ring-indigo-200' : 'bg-white text-slate-500 ring-slate-200 hover:text-slate-800'
+          }`}
+        >
+          {tf('review.board.allCars', 'All cars')} <span className="tabular-nums opacity-60">{rows.length}</span>
+        </button>
+        {LANES.filter((l) => (buckets[l.key] || 0) > 0).map((l) => (
+          <button
+            key={l.key}
+            type="button"
+            onClick={() => setLane(l.key)}
+            className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ring-1 ring-inset transition ${
+              lane === l.key ? 'bg-indigo-50 text-indigo-700 ring-indigo-200' : 'bg-white text-slate-500 ring-slate-200 hover:text-slate-800'
+            }`}
+          >
+            <span className={`h-1.5 w-1.5 rounded-full ${l.dot}`} />
+            {l.label} <span className="tabular-nums opacity-60">{buckets[l.key]}</span>
+          </button>
+        ))}
+      </div>
+
+      <DataTable
+        columns={columns}
+        rows={shown}
+        rowKey={(r) => r.vehicle_id}
+        loading={loading}
+        dense
+        stickyHeader
+        highlightRow={(r) => r.bucket === 'overdue' || r.bucket === 'today'}
+        empty={tf('review.board.empty', 'No cars in this lane.')}
+      />
+    </div>
+  );
+}
+
+
 export default function InspectionReviewQueue() {
   const toast = useToast();
   const { tf } = useI18n();
@@ -1269,11 +1971,19 @@ export default function InspectionReviewQueue() {
   const tickets = useMemo(() => data || [], [data]);
 
   // Two different things arrive on this endpoint and they must never be counted as one. `awaiting` is
-  // work: requests a Controller still has to decide. `withdrawn` is news: requests the system already
-  // settled because the car went into the workshop on an OM maintenance contract — kept visible for a
-  // week so the card doesn't just vanish from under whoever saw it yesterday.
+  // work: requests a Controller still has to decide. `withdrawn` is the parked pile — requests the
+  // system answered with "that car is IN THE SHOP RIGHT NOW", and the backend keeps one only while that
+  // is still true (open OM type-U contract / open garage-log trip). A car that came back is recounted,
+  // not carded, so nothing here is stale by construction.
   const awaiting = useMemo(() => tickets.filter((t) => !t.review?.is_system_withdrawal), [tickets]);
-  const withdrawn = useMemo(() => tickets.filter((t) => t.review?.is_system_withdrawal), [tickets]);
+
+  // Three tabs, three questions. This one: what needs a decision. Tab 2: which cars are in a shop
+  // right now (its own endpoint, keyed off the shop stay — not off this payload, because a car on a
+  // lift belongs there whether or not a request happened to be parked on it). Tab 3: what the system
+  // is about to ask for. The parked tab carries no badge here on purpose: the only honest count comes
+  // from its own query, and a stale number on the tab would contradict the list inside it.
+  const [tab, setTab] = useState('awaiting');
+  const activeTab = tab;
 
   // Deep-link focus — the Action Center links here as /inspection-review?ticket=<id> when a Controller
   // clicks "Review Request" on a maint_review_pending alert. Scroll that exact card into view and pulse
@@ -1292,6 +2002,9 @@ export default function InspectionReviewQueue() {
 
     const match = tickets.find((t) => String(t.id) === String(targetTicket));
     if (match) {
+      // The card may live on the other tab — a "See why" bell for a withdrawn request lands here. Switch
+      // to its tab first, or the deep-link would scroll to a card that isn't rendered.
+      if (match.review?.is_system_withdrawal) setTab('withdrawn');
       setHighlightId(match.id);
       requestAnimationFrame(() => {
         document.getElementById(`review-card-${match.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1386,76 +2099,63 @@ export default function InspectionReviewQueue() {
             <Skeleton className="h-32 rounded-xl" />
             <Skeleton className="h-32 rounded-xl" />
           </div>
-        ) : tickets.length === 0 ? (
-          <EmptyState
-            icon={<Icon.Check className="h-7 w-7" />}
-            title="All caught up"
-            message="No inspection requests are waiting for review."
-          />
         ) : (
           <>
-          {awaiting.length === 0 ? (
-            <EmptyState
-              icon={<Icon.Check className="h-7 w-7" />}
-              title="All caught up"
-              message="No inspection requests are waiting for review."
-            />
-          ) : (
-            <>
-              {/* Analytics — the shape of the queue, before the request cards. Withdrawn requests are
-                  excluded: they are not a backlog and would distort every count on it. */}
-              <InspectionReviewAnalytics tickets={awaiting} />
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                {awaiting.map((tk) => (
-                  <RequestCard
-                    key={tk.id}
-                    tk={tk}
-                    onApprove={(t) => setModal({ action: 'approve', ticket: t })}
-                    onReject={(t) => setModal({ action: 'reject', ticket: t })}
-                    onAcknowledge={onAcknowledge}
-                    onRemind={(t) => setModal({ action: 'remind', ticket: t })}
-                    onCancelReminder={onCancelReminder}
-                    ackBusy={ackBusyId === tk.id}
-                    remindBusy={remindBusyId === tk.id}
-                    highlight={highlightId === tk.id}
-                  />
-                ))}
-              </div>
-            </>
-          )}
+          {/* Three tabs, three questions: what needs a decision; which cars are in a shop right now;
+              and — the other direction entirely — what the system is about to ask for. All three
+              always render, so the workshop and planning views are reachable on a quiet day with an
+              empty queue; each of the last two loads its own data when opened. */}
+          <Tabs
+            ariaLabel="Inspection review sections"
+            active={activeTab}
+            onChange={setTab}
+            tabs={[
+              { key: 'awaiting', label: tf('review.tabs.awaiting', 'Awaiting review'), badge: awaiting.length, icon: <Icon.Clock className="h-4 w-4" /> },
+              { key: 'withdrawn', label: tf('review.tabs.inShop', 'Parked — car in the shop'), icon: <Icon.Wrench className="h-4 w-4" /> },
+              { key: 'countdown', label: tf('review.tabs.countdown', 'When each car is due'), icon: <Icon.Calendar className="h-4 w-4" /> },
+            ]}
+          />
 
-          {/* Settled by the system — below the work, never mixed into it. */}
-          {withdrawn.length > 0 && (
-            <div className="space-y-3 pt-2">
-              <div className="flex items-center gap-3">
-                <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-violet-500">
-                  <Icon.Invoice className="h-3.5 w-3.5" />
-                  Withdrawn — already in maintenance
-                  <span className="rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] text-violet-700">{withdrawn.length}</span>
-                </span>
-                <span className="h-px flex-1 bg-slate-200" />
-              </div>
-              <p className="text-xs text-slate-500">
-                OfficeManager opened a maintenance contract on these cars after the request was raised, so the
-                system withdrew it — nothing to decide. They disappear from here after a week.
-              </p>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                {withdrawn.map((tk) => (
-                  <RequestCard
-                    key={tk.id}
-                    tk={tk}
-                    onApprove={(t) => setModal({ action: 'approve', ticket: t })}
-                    onReject={(t) => setModal({ action: 'reject', ticket: t })}
-                    onAcknowledge={onAcknowledge}
-                    onRemind={(t) => setModal({ action: 'remind', ticket: t })}
-                    onCancelReminder={onCancelReminder}
-                    ackBusy={ackBusyId === tk.id}
-                    remindBusy={remindBusyId === tk.id}
-                    highlight={highlightId === tk.id}
-                  />
-                ))}
-              </div>
+          {activeTab === 'countdown' ? (
+            <FleetCountdownPanel />
+          ) : activeTab === 'awaiting' ? (
+            <div role="tabpanel" id="panel-awaiting" aria-labelledby="tab-awaiting" className="space-y-6">
+              {awaiting.length === 0 ? (
+                <EmptyState
+                  icon={<Icon.Check className="h-7 w-7" />}
+                  title="All caught up"
+                  message="No inspection requests are waiting for review."
+                />
+              ) : (
+                <>
+                  {/* Analytics — the shape of the queue, before the request cards. Withdrawn requests are
+                      excluded: they are not a backlog and would distort every count on it. */}
+                  <InspectionReviewAnalytics tickets={awaiting} />
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    {awaiting.map((tk) => (
+                      <RequestCard
+                        key={tk.id}
+                        tk={tk}
+                        onApprove={(t) => setModal({ action: 'approve', ticket: t })}
+                        onReject={(t) => setModal({ action: 'reject', ticket: t })}
+                        onAcknowledge={onAcknowledge}
+                        onRemind={(t) => setModal({ action: 'remind', ticket: t })}
+                        onCancelReminder={onCancelReminder}
+                        onRecordOilChange={(t) => setModal({ action: 'oil_change', ticket: t })}
+                        ackBusy={ackBusyId === tk.id}
+                        remindBusy={remindBusyId === tk.id}
+                        highlight={highlightId === tk.id}
+                      />
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
+          ) : (
+            /* Cars physically in a shop — its own endpoint, driven by the shop stay rather than by
+               which requests happened to be parked, so a car on a lift shows up here whether or not
+               anyone had asked for a test on it. */
+            <ParkedInShopPanel />
           )}
           </>
         )}
@@ -1466,6 +2166,22 @@ export default function InspectionReviewQueue() {
       )}
       {modal?.action === 'reject' && (
         <RejectModal ticket={modal.ticket} onClose={() => setModal(null)} onDone={onDone} />
+      )}
+      {/* THE OIL WAS CHANGED. The same one-number dialog the Oil Follow-up board uses — reused, not
+          re-implemented, so both surfaces write the car's service anchor exactly the same way. */}
+      {modal?.action === 'oil_change' && (
+        <OilChangeDialog
+          row={{
+            contract_id:         modal.ticket.oil_context?.contract_id,
+            contract_no:         modal.ticket.oil_context?.contract_no,
+            plate:               modal.ticket.plate,
+            car:                 modal.ticket.car,
+            service_interval_km: modal.ticket.oil_context?.live?.service_interval_km,
+            projection:          { expected: modal.ticket.oil_context?.live?.expected },
+          }}
+          onClose={() => setModal(null)}
+          onSaved={() => reload({ silent: true })}
+        />
       )}
       {/* "Remind me later" — decides nothing; the request stays in the queue and only the caller is
           pinged. See RemindModal. */}

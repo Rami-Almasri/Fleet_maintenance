@@ -2301,6 +2301,10 @@ const en = {
       blankDateToday: 'Leave the date blank to use today.',
       requiresMaintenance: 'Opens a maintenance ticket and notifies the supervisor to pick a garage; all drivers are then alerted to collect.',
       noMaintenance: 'Closes the diagnostic — no ticket is created.',
+      // Shown when the report contradicts itself: findings were tapped, yet the decision says the car is clear.
+      clearanceWithFindingsTitle: 'You listed {n} finding(s) on this car',
+      clearanceWithFindingsBody: 'A car with findings needs a ticket — closing the diagnostic here would record these faults and leave them with nobody to repair them. Untick anything that is not a real fault, or choose “Requires maintenance”.',
+      clearanceWithFindingsCta: 'Go back to the findings',
       arrivalGate: 'Check the car in at the garage. The arrival odometer reading and its photo are required — no repairs or costs are logged here.',
       readyGate: 'Confirm the repair is done — the car is then ready for pickup. No odometer is needed here (the car didn’t move in the workshop); the return reading is taken at re-inspection.',
       // Time-per-fault block on the Mark ready screen.
@@ -2384,6 +2388,7 @@ const en = {
       needOdometerCheck: 'Confirm the odometer reading',
       needCauses: 'A probable cause for every finding',
       needSeverity: 'A fault severity grade',
+      needNoFindings: 'Remove the {n} finding(s), or open a ticket instead',
     },
     // "Requires Parts" — the inspector reports a technical need and submitting the report sends it straight
     // to the parts team. The wording says so plainly: he is not ordering or approving anything, but he IS
@@ -2631,6 +2636,12 @@ const en = {
       expectedReturn: 'Back {date}',
       expectedOverdue: 'Due {date}',
       expectedReturnTip: 'Expected return date — when the garage promised the car back.',
+      // Where the repair happens, decided by the inspector at the Decide step.
+      onSite: 'On-site',
+      inShop: 'In garage',
+      onSiteTip: 'On-site (mobile) job — the work is done where the car is parked. It is never dispatched to a garage and stays available.',
+      inShopTip: 'Workshop job — the car goes out to a garage to be repaired.',
+      onSiteNoGarage: 'On-site — no garage',
       sentBackTipSame: 'Came back broken after re-inspection — sent back to the SAME garage: {to}.',
       sentBackTipChanged: 'Came back broken after re-inspection — moved to a DIFFERENT garage: {from} → {to}.',
       findings: 'findings',
@@ -6600,6 +6611,9 @@ const ar = {
       blankDateToday: 'اترك التاريخ فارغًا لاستخدام تاريخ اليوم.',
       requiresMaintenance: 'يفتح تذكرة صيانة ويُشعر المشرف لاختيار كراج — ثم يُنبَّه جميع السائقين للاستلام.',
       noMaintenance: 'يُغلق التشخيص — لا تُنشأ أي تذكرة.',
+      clearanceWithFindingsTitle: 'سجّلت {n} ملاحظة على هذه المركبة',
+      clearanceWithFindingsBody: 'المركبة التي عليها ملاحظات تحتاج تذكرة — إغلاق التشخيص هنا سيُسجّل هذه الأعطال ولن يتولّاها أحد. أزِل ما ليس عطلاً حقيقياً، أو اختر «تحتاج صيانة».',
+      clearanceWithFindingsCta: 'العودة إلى الملاحظات',
       arrivalGate: 'سجّل وصول السيارة إلى الكراج. قراءة عدّاد الوصول وصورتها مطلوبتان — لا يُسجَّل أي إصلاح أو تكلفة هنا.',
       readyGate: 'أكّد انتهاء الإصلاح — تصبح السيارة بعدها جاهزة للاستلام. لا حاجة للعدّاد هنا (السيارة لم تتحرّك في الورشة)؛ تُؤخذ قراءة العودة عند إعادة الفحص.',
       // كتلة «الوقت لكل عطل» في شاشة تجهيز السيارة.
@@ -6676,6 +6690,7 @@ const ar = {
       needOdometerCheck: 'تأكيد قراءة العدّاد',
       needCauses: 'سبب محتمل لكل ملاحظة',
       needSeverity: 'درجة خطورة العطل',
+      needNoFindings: 'احذف الملاحظات ({n})، أو افتح تذكرة بدلاً من ذلك',
     },
     requiredParts: {
       toggle: 'هذا الإصلاح يحتاج قطع غيار',
@@ -6918,6 +6933,11 @@ const ar = {
       expectedReturn: 'العودة {date}',
       expectedOverdue: 'مستحقة {date}',
       expectedReturnTip: 'تاريخ العودة المتوقع — الموعد الذي وعد به الكراج بإعادة السيارة.',
+      onSite: 'في الموقع',
+      inShop: 'في الكراج',
+      onSiteTip: 'عمل في الموقع — يُنفَّذ حيث تقف السيارة. لا تُرسَل إلى كراج وتبقى متاحة.',
+      inShopTip: 'عمل في الورشة — تخرج السيارة إلى كراج للإصلاح.',
+      onSiteNoGarage: 'في الموقع — بدون كراج',
       sentBackTipSame: 'عادت معطّلة بعد إعادة الفحص — أُعيدت إلى الكراج نفسه: {to}.',
       sentBackTipChanged: 'عادت معطّلة بعد إعادة الفحص — نُقلت إلى كراج مختلف: {from} ← {to}.',
       findings: 'ملاحظات',

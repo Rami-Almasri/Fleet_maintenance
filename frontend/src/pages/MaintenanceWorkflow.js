@@ -256,6 +256,19 @@ function TicketCard({ tk, tone, laneKey, laneName, can, userId, active, onSelect
           {tk.fault_severity && (
             <span className={`opx-chip ${sevCls}`}><span className="cd" />{tk.fault_severity_emoji} {t(`workflow.faultSeverity.${tk.fault_severity}`)}</span>
           )}
+          {/* WHERE this repair happens — the decision taken at Decide, and until now invisible on the
+              board. Without it an on-site job read "Not dispatched" like any car waiting for a garage,
+              so a dispatcher could not tell a car that is WAITING for a workshop from one that was never
+              going to a workshop at all. Shown on every ticket, not just the on-site ones: "in garage" is
+              the answer to the same question, and a chip that appears only sometimes teaches nobody. */}
+          {tk.repair_location && (
+            <span
+              className={`mwf-pill ${tk.is_on_site ? 'onsite' : 'shop'}`}
+              title={t(tk.is_on_site ? 'workflow.board.onSiteTip' : 'workflow.board.inShopTip')}
+            >
+              {tk.is_on_site ? '🧰' : '🏭'} {t(tk.is_on_site ? 'workflow.board.onSite' : 'workflow.board.inShop')}
+            </span>
+          )}
           {/* Parts blocker — the car is sitting on an outstanding part request. Purely visual: the ticket
               keeps its lane and the vehicle keeps its operational status. Hover/focus lists exactly what
               is owed (name ×qty — stage) so a dispatcher knows WHY without opening the ticket.
@@ -329,7 +342,12 @@ function TicketCard({ tk, tone, laneKey, laneName, can, userId, active, onSelect
           <div className="mwf-tasks">
             <div className="mwf-tasks-hd">
               <Icon.Wrench className="h-3 w-3" />
-              <span className="gn" title={tk.garage || ''}>{tk.garage || <em>{t('workflow.task.unassigned')}</em>}</span>
+              {/* "Not dispatched" is only true of a car that is SUPPOSED to go to a garage. An on-site
+                  job never is, so it says where the work actually happens instead of reading as a car
+                  nobody has sent anywhere. A mobile vendor, when one is recorded, still shows by name. */}
+              <span className="gn" title={tk.garage || t(tk.is_on_site ? 'workflow.board.onSiteTip' : 'workflow.task.noGarage')}>
+                {tk.garage || <em>{t(tk.is_on_site ? 'workflow.board.onSiteNoGarage' : 'workflow.task.unassigned')}</em>}
+              </span>
               <span className="ct">{tasks.length}</span>
             </div>
             {tasks.map((task) => {

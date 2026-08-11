@@ -168,7 +168,9 @@ class DiagnosticGateService
                     'severity'  => 'moderate',
                     'axis'      => 'date',
                     'plain'     => 'It has been more than ' . $downtime . ' days since the car left the workshop, and it has been rented since then.',
-                    'note'      => 'The days keep counting while the car is out with a customer. They only pause while the car is being handled in a workshop.',
+                    'note'      => 'The days keep counting while the car is out with a customer. They only pause while the car is being handled in a workshop — '
+                        . 'either on a ticket here, or on a maintenance contract in OfficeManager. The day the car comes back, the count starts again from zero. '
+                        . 'If two records say it came back on different days, the later day wins.',
                     'chip'      => $downtime . ' days',
                     'agenda'    => 'Check ' . $this->humanList(self::POST_DOWNTIME_CHECKLIST),
                 ],
@@ -190,6 +192,10 @@ class DiagnosticGateService
                 [
                     'label' => 'A kilometre reading that cannot be true',
                     'why'   => 'If a car looks more than ' . number_format(self::OIL_ANOMALY_FLOOR_KM) . ' km past its oil change (or three times its interval, whichever is bigger), that is a wrong odometer, not a real car. The oil part is dropped and reported as a data problem instead of being sent to the inspector. Anything else on the same car is still requested.',
+                ],
+                [
+                    'label' => 'The car went to the workshop after the system asked',
+                    'why'   => 'A request the system raised is taken back off this queue once the car has been to a workshop and come back — the count started again on the day it returned, so the reason the system asked no longer exists. It moves to the withdrawn list with the date it came back. A request a person made is never taken back this way; only a person can close that.',
                 ],
                 [
                     'label' => 'The safety list is a "go look", not a verdict',
@@ -235,6 +241,345 @@ class DiagnosticGateService
     public function idleInfo(Vehicle $vehicle): array
     {
         return $this->downtimeInfo($vehicle);
+    }
+
+    /**
+     * "How many days before the system asks for a test on this car?" — the countdown the review queue's
+     * fleet tab renders, one row per car.
+     *
+     * The queue only ever shows cars the system has ALREADY asked about. This answers the question that
+     * comes before it: which cars are coming, and when. It is the same rulebook read forwards instead of
+     * backwards — no second definition of "due", so a car listed here at 0 days is exactly a car the
+     * 07:30 scan raises.
+     *
+     * The number is the DATE clock (post-downtime, or inactivity for a car never rented since its last
+     * test). It is deliberately not a number in the four cases where a number would be a lie:
+     *
+     *   due_now            — a rule has already fired (any rule, including the km-based oil/reminder
+     *                        ones, which have no day count at all). The next scan raises it.
+     *   in_pipeline        — already requested or in a workflow; the scan skips this car, so no clock is
+     *                        running towards a NEW request.
+     *   held               — in the shop (active workflow or open OM maintenance contract). The clock is
+     *                        paused and restarts from zero when the car comes back.
+     *   waiting_for_rental — the limit has passed but the car has not been rented since its last test, so
+     *                        the post-downtime rule withholds. Its inactivity clock is the live one.
+     *
+     * @param  array<int,true>  $inPipeline  vehicle_id ⇒ true, prefetched by fleetTestCountdown()
+     * @return array<string,mixed>
+     */
+    public function testCountdown(Vehicle $vehicle, array $inPipeline = [], ?array $prefetchedLog = null): array
+    {
+        $anchor = $this->readyAnchor($vehicle);
+        $stay   = $this->shopStay($vehicle, $prefetchedLog);
+        $row    = [
+            'vehicle_id'   => $vehicle->id,
+            'plate_no'     => $vehicle->plate_no,
+            'make'         => $vehicle->make,
+            'model'        => $vehicle->model,
+            'status'       => $vehicle->status,
+            // Rental / movement state. While the car is in a shop this is NOT "rented", whatever a
+            // stale contract row says — being on a lift is not being out with a customer.
+            'operational_status' => $stay ? 'maintenance' : $vehicle->operational_status,
+            // The record the count runs from — never a bare number without the evidence behind it.
+            'anchor'       => $anchor,
+            // The last REAL test drive, which most cars simply do not have. Kept separate from the
+            // anchor so the UI can never pass "came back from a garage" off as "was tested".
+            'last_test'    => $this->lastTest($vehicle),
+            'days_since'   => $anchor['days_ago'],
+            'days_left'    => null,
+            'days_over'    => null,
+            'due_on'       => null,
+            'parked'       => $stay ? [
+                'source'       => $stay['source'],
+                'ref_id'       => $stay['ref_id'],
+                'label'        => $stay['label'],
+                'contract_no'  => $stay['contract_no'],
+                'garage'       => $stay['garage'],
+                'work'         => $stay['work'],
+                'started_at'   => optional($stay['started_at'])->toDateString(),
+                'days_in_shop' => $stay['days_in_shop'],
+            ] : null,
+            'reasons'      => [],
+            'why'          => null,
+        ];
+
+        if (! $this->enabled() || in_array($vehicle->status, self::LEFT_FLEET, true)) {
+            return array_merge($row, [
+                'state'      => 'not_monitored',
+                'bucket'     => 'not_monitored',
+                'limit_days' => $this->downtimeLimitDays(),
+                'why'        => 'This car is not in the active fleet, so the system does not check it.',
+            ]);
+        }
+
+        $idle  = $this->downtimeInfo($vehicle, $prefetchedLog);
+        $limit = (int) $idle['limit'];
+
+        // PARKED WINS. A car on a lift is not counting down towards anything, and saying "due in 3
+        // days" about it would be a promise the system cannot keep — it does not know when the shop
+        // will release it. OM contracts carry no planned end date while they are open, so there is no
+        // honest "maintenance ends on" to show; what IS knowable is what happens next, and that is
+        // stated instead. Checked BEFORE the pipeline test so a parked car with a live ticket still
+        // reads as parked, which is the physically true thing about it.
+        if (! empty($idle['held']) && $stay !== null) {
+            return array_merge($row, [
+                'state'      => 'parked',
+                'bucket'     => 'parked',
+                'limit_days' => $limit,
+                'why'        => $stay['source'] === 'om_contract'
+                    ? 'In OM maintenance since ' . optional($stay['started_at'])->format('d M Y')
+                        . ' (' . $stay['days_in_shop'] . ' ' . ($stay['days_in_shop'] === 1 ? 'day' : 'days') . '). The countdown is paused.'
+                    : 'At ' . ($stay['garage'] ?: 'a garage') . ' since ' . optional($stay['started_at'])->format('d M Y')
+                        . ' (' . $stay['days_in_shop'] . ' ' . ($stay['days_in_shop'] === 1 ? 'day' : 'days') . '). The countdown is paused.',
+                'on_release' => 'When the visit closes, the count starts again from the day it comes back.',
+            ]);
+        }
+
+        // Being actively worked on under a ticket (test drive started / committed repair) — also held,
+        // but with no shop stay behind it, so it is the workflow that is holding the clock.
+        if (! empty($idle['held'])) {
+            return array_merge($row, [
+                'state'      => 'in_workflow',
+                // Its OWN lane, not 'parked': these cars are being worked on under a ticket but are not
+                // in a shop, and folding them together would have the board claim 81 cars are on lifts
+                // when 58 are.
+                'bucket'     => 'in_workflow',
+                'limit_days' => $limit,
+                'why'        => 'Being worked on right now, so the countdown is paused.',
+                'on_release' => 'When the ticket closes, the count starts again from that day.',
+            ]);
+        }
+
+        // Already asked for — the scan skips this car, so no clock is running towards a NEW request.
+        if (isset($inPipeline[$vehicle->id])) {
+            return array_merge($row, [
+                'state'      => 'in_pipeline',
+                'bucket'     => 'requested',
+                'limit_days' => $limit,
+                'why'        => 'A request for this car is already open, so the system will not raise another.',
+            ]);
+        }
+
+        $daysSince = (int) ($idle['days'] ?? 0);
+
+        // Anything due right now wins the label, whatever axis it came from (km or date).
+        $due = $this->dueChecks($vehicle, $idle);
+        if ($due !== []) {
+            $row['reasons'] = array_values(array_map(fn ($c) => [
+                'key'      => $c['key'] ?? null,
+                'label'    => $c['label'] ?? null,
+                'severity' => $c['severity'] ?? null,
+                'detail'   => $c['detail'] ?? ($c['why'] ?? null),
+            ], $due));
+
+            // Overdue is only meaningful on the DATE clock. A car due on kilometres (oil, a service
+            // reminder) has no "days late" at all, so it reports due-today rather than inventing one.
+            $over   = max(0, $daysSince - $limit);
+            $labels = implode(', ', array_filter(array_column($row['reasons'], 'label')));
+
+            return array_merge($row, [
+                'state'      => 'due_now',
+                'bucket'     => $over > 0 ? 'overdue' : 'today',
+                'limit_days' => $limit,
+                'days_left'  => 0,
+                'days_over'  => $over > 0 ? $over : null,
+                'due_on'     => Carbon::now()->startOfDay()->toDateString(),
+                'why'        => $over > 0
+                    ? $labels . ' — ' . $daysSince . ' days since it was last ready, ' . $over . ' past the ' . $limit . '-day limit.'
+                    : $labels . ' — ' . $daysSince . ' days since it was last ready (limit ' . $limit . ').',
+            ]);
+        }
+
+        // The limit lapsed, but the car has not been back on the road since its last test, so the
+        // post-downtime rule deliberately withholds. Its longer inactivity clock is the live one.
+        if (! empty($idle['awaiting_service'])) {
+            $inactive = $this->inactivityLimitDays();
+            $left     = max(0, $inactive - $daysSince);
+
+            return array_merge($row, [
+                'state'      => 'waiting_for_rental',
+                'bucket'     => $this->bucketFor($left),
+                'limit_days' => $inactive,
+                'days_left'  => $left,
+                'due_on'     => Carbon::now()->startOfDay()->addDays($left)->toDateString(),
+                'why'        => 'Past the ' . $limit . '-day limit (' . $daysSince . ' days) but not rented since its last check, '
+                    . 'so no test is asked for yet. If it stays unused it is checked at ' . $inactive . ' days.',
+            ]);
+        }
+
+        $left = max(0, $limit - $daysSince);
+
+        return array_merge($row, [
+            'state'      => 'counting',
+            'bucket'     => $this->bucketFor($left),
+            'limit_days' => $limit,
+            'days_left'  => $left,
+            'due_on'     => Carbon::now()->startOfDay()->addDays($left)->toDateString(),
+            'why'        => $daysSince . ' of ' . $limit . ' days since it was last ready'
+                . ($vehicle->operational_status === 'rented' ? ', and it is out on hire.' : '.'),
+        ]);
+    }
+
+    /** Which planning lane a countdown falls in — the grouping the planning board renders. */
+    private function bucketFor(int $daysLeft): string
+    {
+        return match (true) {
+            $daysLeft <= 0 => 'today',
+            $daysLeft === 1 => 'tomorrow',
+            $daysLeft <= 3 => 'soon',
+            default => 'later',
+        };
+    }
+
+    /**
+     * The whole active fleet's countdown, soonest first. The two fleet-wide facts — which cars already
+     * have an open request, and which are sitting in a garage per the log — are resolved ONCE here
+     * rather than per row: the same sets InspectionsGenerateTasks refuses to raise for, so the planning
+     * board and the scan can never disagree about who is spoken for or who is on a lift.
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    public function fleetTestCountdown(): array
+    {
+        $inPipeline = Maintenance::openWorkflow()
+            ->whereNotNull('vehicle_id')
+            ->pluck('vehicle_id')
+            ->flip()
+            ->map(fn () => true)
+            ->all();
+
+        $log = $this->openWorkshopLogEvents(null);
+
+        $rows = [];
+        Vehicle::whereIn('status', Vehicle::ACTIVE_STATUSES)
+            ->where(fn ($q) => $q->where('for_sale', false)->orWhereNull('for_sale'))
+            ->orderBy('code')
+            ->chunkById(500, function ($vehicles) use (&$rows, $inPipeline, $log) {
+                foreach ($vehicles as $v) {
+                    $rows[] = $this->testCountdown($v, $inPipeline, $log);
+                }
+            });
+
+        // Soonest first; rows with no number (parked / requested / not monitored) sink to the bottom,
+        // because "no date" is not "date zero". Overdue cars sort above due-today by how late they are.
+        $rank = ['overdue' => 0, 'today' => 1, 'tomorrow' => 2, 'soon' => 3, 'later' => 4, 'requested' => 5, 'in_workflow' => 6, 'parked' => 7, 'not_monitored' => 8];
+        usort($rows, function ($a, $b) use ($rank) {
+            $ra = $rank[$a['bucket']] ?? 9;
+            $rb = $rank[$b['bucket']] ?? 9;
+            if ($ra !== $rb) {
+                return $ra <=> $rb;
+            }
+            // Within overdue: the latest first. Within the rest: the soonest first.
+            if ($a['bucket'] === 'overdue') {
+                return ($b['days_over'] ?? 0) <=> ($a['days_over'] ?? 0);
+            }
+
+            return (($a['days_left'] ?? PHP_INT_MAX) <=> ($b['days_left'] ?? PHP_INT_MAX))
+                ?: strcmp((string) $a['plate_no'], (string) $b['plate_no']);
+        });
+
+        return $rows;
+    }
+
+    /**
+     * Every car physically in a shop right now, with the story a Controller needs: which visit parked
+     * it, since when, what the car's last check was, and — the part that was missing — the test request
+     * that was already pending when it went in, so a recommendation made before the visit is not simply
+     * lost from view.
+     *
+     * Driven by the SHOP STAY, not by the requests: a car in the shop belongs on this list whether or
+     * not anyone had asked for a test on it. That is the fix — the old tab could only ever show cars
+     * that happened to have a parked request, so most cars in the shop were invisible on it.
+     *
+     * @return array{rows:array<int,array<string,mixed>>,outside_fleet:array<int,array<string,mixed>>}
+     */
+    public function fleetParked(): array
+    {
+        $outsideFleet = [];
+        $log = $this->openWorkshopLogEvents(null);
+
+        $onContract = Contract::where('contract_type', 'U')
+            ->currentlyOpen()
+            ->whereNotNull('vehicle_id')
+            ->pluck('vehicle_id')
+            ->map(fn ($v) => (int) $v)
+            ->all();
+
+        $ids = array_values(array_unique(array_merge($onContract, array_keys($log))));
+        if ($ids === []) {
+            return ['rows' => [], 'outside_fleet' => []];
+        }
+
+        // The request each car had when it went in — parked (system-withdrawn) or still awaiting a
+        // decision. Newest per car. This is the "previous recommendation" the visit interrupted.
+        $requests = Maintenance::query()
+            ->whereIn('vehicle_id', $ids)
+            ->whereIn('workflow_status', [Maintenance::WF_PENDING_REVIEW, Maintenance::WF_REVIEW_REJECTED, Maintenance::WF_INSPECTION_REQUESTED])
+            ->orderByDesc('id')
+            ->get(['id', 'vehicle_id', 'workflow_status', 'request_origin', 'trigger_reason', 'trigger_detail', 'created_at', 'requested_at', 'review_rejection_code', 'review_auto_context'])
+            ->groupBy('vehicle_id');
+
+        $rows = [];
+        foreach (Vehicle::whereIn('id', $ids)->orderBy('code')->get() as $v) {
+            $stay = $this->shopStay($v, $log);
+            if (! $stay) {
+                continue; // released between the two queries — it belongs on the planning board now
+            }
+
+            // SAME SCOPE AS THE PLANNING BOARD. A car that is suspended or up for sale is not part of
+            // the operational fleet the countdown covers, and listing it here would make the two tabs
+            // disagree about how many cars are in the shop — the very confusion this rewrite removes.
+            // Flagged rather than silently dropped, so "why is my suspended car missing" has an answer.
+            $inActiveFleet = in_array($v->status, Vehicle::ACTIVE_STATUSES, true) && ! $v->for_sale;
+            if (! $inActiveFleet) {
+                $outsideFleet[] = ['plate_no' => $v->plate_no, 'status' => $v->status, 'for_sale' => (bool) $v->for_sale];
+                continue;
+            }
+
+            $req = ($requests[$v->id] ?? collect())->first();
+            $anchor = $this->readyAnchor($v);
+
+            $rows[] = [
+                'vehicle_id' => $v->id,
+                'plate_no'   => $v->plate_no,
+                'make'       => $v->make,
+                'model'      => $v->model,
+                'parked'     => [
+                    'source'       => $stay['source'],
+                    'ref_id'       => $stay['ref_id'],
+                    'label'        => $stay['label'],
+                    'contract_no'  => $stay['contract_no'],
+                    'garage'       => $stay['garage'],
+                    'work'         => $stay['work'],
+                    'customer'     => $stay['customer'],
+                    'started_at'   => optional($stay['started_at'])->toDateString(),
+                    'days_in_shop' => $stay['days_in_shop'],
+                ],
+                'anchor'    => $anchor,
+                'last_test' => $this->lastTest($v),
+                // The recommendation that existed before the visit — preserved, not deleted.
+                'request'   => $req ? [
+                    'ticket_id'      => $req->id,
+                    'status'         => $req->workflow_status,
+                    'origin'         => $req->request_origin,
+                    'trigger_reason' => $req->trigger_reason,
+                    // Which lane raised it — a routine test, or an Oil Projection follow-up. The two
+                    // must stay tellable apart (they answer to different rules entirely).
+                    'source_lane'    => (is_array($req->trigger_detail) && ($req->trigger_detail['source'] ?? null) === 'oil_projection')
+                        ? 'oil_projection'
+                        : 'test_schedule',
+                    'raised_at'      => optional($req->requested_at ?? $req->created_at)->toIso8601String(),
+                    'parked_code'    => $req->review_rejection_code,
+                    'was_parked_by_this_visit' => Maintenance::isSystemWithdrawal($req->review_rejection_code),
+                ] : null,
+                'on_release' => 'The count starts again from the day it comes back, and the next morning scan re-checks it.',
+            ];
+        }
+
+        // Longest in the shop first — that is the one worth chasing.
+        usort($rows, fn ($a, $b) => ($b['parked']['days_in_shop'] ?? 0) <=> ($a['parked']['days_in_shop'] ?? 0));
+
+        return ['rows' => $rows, 'outside_fleet' => $outsideFleet];
     }
 
     /** Absolute floor for the oil sanity ceiling, in km — used when 3× the interval is smaller. */
@@ -642,7 +987,7 @@ class DiagnosticGateService
      *
      * @return array{eligible:bool,free:bool,with_customer:bool,idle_since:?string,days:?int,limit:int,exceeded:bool,awaiting_service?:bool,held:bool,anchor_reason:?string,anchor_ticket_id:?int,anchor_source:?string,anchor_odometer:?int}
      */
-    private function downtimeInfo(Vehicle $vehicle): array
+    private function downtimeInfo(Vehicle $vehicle, ?array $prefetchedLog = null): array
     {
         $limit   = $this->downtimeLimitDays();
         $inFleet = ! in_array($vehicle->status, self::LEFT_FLEET, true);
@@ -681,6 +1026,29 @@ class DiagnosticGateService
                 'anchor_reason'    => 'in_progress',
                 'anchor_ticket_id' => $active['source_id'],
                 'anchor_source'    => 'workflow_active',
+                'anchor_odometer'  => null,
+            ];
+        }
+
+        // HELD while the car is physically in a shop. Same rule as above, for the stay that leaves no
+        // ticket behind: an open OM type-'U' contract, or an open garage-log trip. The car is on a lift,
+        // so the countdown must not run out underneath it and declare a parked car overdue — and it
+        // restarts on its own the moment the stay ends, because the return date becomes the newest
+        // lastReadyAnchor. Parked days therefore never count as time the car was out being used.
+        $stay = $this->shopStay($vehicle, $prefetchedLog);
+        if ($stay !== null) {
+            return [
+                'eligible'         => true,
+                'free'             => false,   // it is at the garage — not free to inspect
+                'with_customer'    => false,   // in the shop is not with a renter, whatever the rental row says
+                'idle_since'       => optional($stay['started_at'])->toDateString(),
+                'days'             => $stay['days_in_shop'] ?? 0,   // days since it went IN (not "idle")
+                'limit'            => $limit,
+                'exceeded'         => false,   // held: cannot expire while the car is in the shop
+                'held'             => true,
+                'anchor_reason'    => $stay['source'] === 'om_contract' ? 'in_maintenance_contract' : 'in_workshop_log',
+                'anchor_ticket_id' => $stay['source'] === 'workshop_log' ? $stay['ref_id'] : null,
+                'anchor_source'    => $stay['source'],
                 'anchor_odometer'  => null,
             ];
         }
@@ -767,9 +1135,13 @@ class DiagnosticGateService
      *   • LEGACY timeline — a pre-workflow maintenance that CLOSED (rows with no workflow_status, only
      *     the old TEST / IN / OUT / FOLLOWUP stages): the car came back "IN" (actual_in_date set), whose
      *     return date is the legacy equivalent of "ready after maintenance".
+     *   • OM CONTRACT — a type-'U' OfficeManager maintenance contract that CLOSED: its `in_date` is the
+     *     day the car physically came back from the garage. A workshop stint booked only as a contract
+     *     leaves no maintenances row at all, so without this the clock would keep counting straight
+     *     through a three-week visit as if the car had never moved.
      *
      * A new-workflow record is preferred ONLY when it is genuinely the latest completed event; a NEWER
-     * legacy IN/OUT/FOLLOWUP close overrides it. Fields are never merged across records — the winning
+     * legacy IN/OUT/FOLLOWUP close or a NEWER contract return overrides it. Fields are never merged across records — the winning
      * record supplies the WHOLE anchor (result, timestamp, odometer, source). If neither source has a
      * record we fall back to the onboarding/purchase date, so a car with no history still trips the limit.
      *
@@ -780,6 +1152,7 @@ class DiagnosticGateService
         $candidates = array_filter([
             $this->workflowReadyAnchor($vehicle),
             $this->legacyReadyAnchor($vehicle),
+            $this->omContractReadyAnchor($vehicle),
         ]);
 
         if ($candidates !== []) {
@@ -839,6 +1212,177 @@ class DiagnosticGateService
             'at'        => $at ? Carbon::parse($at)->startOfDay() : null,
             'source_id' => (int) $ticket->id,
         ];
+    }
+
+    /** Lookback for "the car is still in the shop per the garage log" — mirrors FleetUtilizationService::activeShopStays(). */
+    private const WORKSHOP_LOG_LOOKBACK_DAYS = 60;
+
+    /**
+     * Does the garage log get to park a car, or is the OfficeManager contract the only fact that may?
+     * OFF by owner's decision — see config/features.php for why, and for what turning it on restores.
+     */
+    public function workshopLogParks(): bool
+    {
+        return (bool) config('features.diagnostic_gate.workshop_log_parks', false);
+    }
+
+    /**
+     * IS THIS CAR AT A GARAGE RIGHT NOW — the single answer, used by every surface that asks.
+     *
+     * THE OFFICEMANAGER MAINTENANCE CONTRACT (type 'U') IS THE FACT. A car is parked when OM has an
+     * open maintenance contract on it, and not otherwise. The garage log can act as a second source
+     * but is switched OFF (`workshopLogParks()`): it was a stand-in from before every workshop trip
+     * opened a contract, and it is not reliable enough to freeze a car's test clock on.
+     *
+     * Returns the whole stay, not just a flag, so a card can say WHICH visit parked the car and since
+     * when — no bare claims. Null when the car is out of the shop.
+     *
+     * @return array{source:string,ref_id:int,label:?string,contract_no:?string,garage:?string,work:?string,started_at:?Carbon,days_in_shop:?int,customer:?string}|null
+     */
+    public function shopStay(Vehicle $vehicle, ?array $prefetchedLog = null): ?array
+    {
+        $contract = $this->openMaintenanceContract($vehicle);
+        if ($contract) {
+            $since = $contract->out_date ? Carbon::parse($contract->out_date)->startOfDay() : null;
+
+            return [
+                'source'       => 'om_contract',
+                'ref_id'       => (int) $contract->id,
+                'label'        => $contract->contract_no ? '#' . $contract->contract_no : '#' . $contract->id,
+                'contract_no'  => $contract->contract_no,
+                'garage'       => null,
+                'work'         => null,
+                'started_at'   => $since,
+                'days_in_shop' => $since ? (int) $since->diffInDays(Carbon::now()->startOfDay()) : null,
+                'customer'     => $contract->relationLoaded('customer') ? $contract->customer?->name_en : null,
+            ];
+        }
+
+        if (! $this->workshopLogParks()) {
+            return null; // no OM contract ⇒ not parked. The log does not get a vote.
+        }
+
+        $event = $prefetchedLog !== null
+            ? ($prefetchedLog[$vehicle->id] ?? null)
+            : ($this->openWorkshopLogEvents([$vehicle->id])[$vehicle->id] ?? null);
+
+        if (! $event) {
+            return null;
+        }
+
+        $since = $event->out_date ? Carbon::parse($event->out_date)->startOfDay() : null;
+
+        return [
+            'source'       => 'workshop_log',
+            'ref_id'       => (int) $event->id,
+            'label'        => trim((string) $event->garage) ?: null,
+            'contract_no'  => null,
+            'garage'       => trim((string) $event->garage) ?: null,
+            'work'         => trim((string) $event->service_main) ?: null,
+            'started_at'   => $since,
+            'days_in_shop' => $since ? (int) $since->diffInDays(Carbon::now()->startOfDay()) : null,
+            'customer'     => null,
+        ];
+    }
+
+    /**
+     * Each car's currently-open workshop-log event, keyed by vehicle_id — only cars whose LATEST
+     * sheet/manual event says the car is at a garage right now. Cars whose latest event came back
+     * (stage 'IN' or a past return date) or whose visit is older than the lookback are absent.
+     *
+     * LIVE VIEW — the Maintenance model's SoftDeletes scope applies, so a deleted event releases the car.
+     *
+     * @param  int[]|null  $vehicleIds  limit to these vehicles (null = whole fleet)
+     * @return array<int,Maintenance>
+     */
+    public function openWorkshopLogEvents(?array $vehicleIds): array
+    {
+        // The switch lives here as well as in shopStay(), so the REQUEST SWEEPS that read this
+        // (withdrawRequestsForWorkshopLog, the monitor's refusal set) go quiet with it. Otherwise the
+        // log would still be parking requests for cars this page reports as counting down — the exact
+        // two-answers-to-one-question split this service exists to prevent.
+        if (! $this->workshopLogParks()) {
+            return [];
+        }
+
+        if ($vehicleIds === []) {
+            return [];
+        }
+
+        $today = Carbon::today();
+        $floor = $today->copy()->subDays(self::WORKSHOP_LOG_LOOKBACK_DAYS);
+
+        $latest = [];
+        // Ascending order → the last write per vehicle is its latest event ("latest event wins", the
+        // same rule the board and FleetUtilizationService use).
+        foreach (Maintenance::query()
+            ->whereIn('origin', Maintenance::WORKSHOP_LOG_ORIGINS)
+            ->whereNotNull('vehicle_id')
+            ->when($vehicleIds !== null, fn ($q) => $q->whereIn('vehicle_id', $vehicleIds))
+            ->whereNotNull('out_date')
+            ->whereDate('out_date', '<=', $today->toDateString())
+            ->orderBy('out_date')->orderBy('id')
+            ->get(['id', 'vehicle_id', 'origin', 'out_date', 'actual_in_date', 'event_status', 'garage', 'service_main']) as $e) {
+            $latest[(int) $e->vehicle_id] = $e;
+        }
+
+        $open = [];
+        foreach ($latest as $vid => $e) {
+            $stillOut = $e->actual_in_date === null || $e->actual_in_date->gte($today);
+            $recent   = $e->out_date->gte($floor);
+            if ($e->event_status !== 'IN' && $stillOut && $recent) {
+                $open[$vid] = $e;
+            }
+        }
+
+        return $open;
+    }
+
+    /**
+     * The car's last REAL test drive — a diagnostic that was actually driven (`inspected_at`), which is
+     * a different and much rarer fact than "the car last came out of a workshop". Only 24 tickets in the
+     * whole history carry one, so most cars honestly have no test on record and the countdown runs from
+     * their workshop return instead (see lastReadyAnchor). Kept separate precisely so the UI can say
+     * which of the two it is showing rather than passing one off as the other.
+     *
+     * @return array{at:string,days_ago:int,ticket_id:int,result:string}|null
+     */
+    public function lastTest(Vehicle $vehicle): ?array
+    {
+        $t = Maintenance::query()
+            ->where('vehicle_id', $vehicle->id)
+            ->whereNotNull('inspected_at')
+            ->orderByDesc('inspected_at')
+            ->first(['id', 'inspected_at', 'workflow_status']);
+
+        if (! $t || ! $t->inspected_at) {
+            return null;
+        }
+
+        $at = Carbon::parse($t->inspected_at);
+
+        return [
+            'at'        => $at->toIso8601String(),
+            'days_ago'  => (int) $at->copy()->startOfDay()->diffInDays(Carbon::now()->startOfDay()),
+            'ticket_id' => (int) $t->id,
+            'result'    => (string) $t->workflow_status,
+        ];
+    }
+
+    /**
+     * The car's currently OPEN OfficeManager maintenance contract (type 'U'), if any — the car is at a
+     * garage right now under a contract, whether or not anyone opened a ticket for the visit. Newest
+     * first, so a car with overlapping rows reports the one it actually went in on last.
+     */
+    private function openMaintenanceContract(Vehicle $vehicle): ?Contract
+    {
+        return Contract::query()
+            ->where('vehicle_id', $vehicle->id)
+            ->where('contract_type', 'U')
+            ->currentlyOpen()
+            ->orderByDesc('out_date')
+            ->orderByDesc('id')
+            ->first(['id', 'contract_no', 'out_date']);
     }
 
     /**
@@ -916,6 +1460,41 @@ class DiagnosticGateService
             'source_id' => $legacy->id,
             'odometer'  => null,
             'result'    => $legacy->event_status ?: 'IN',
+        ];
+    }
+
+    /**
+     * The newest CLOSED OfficeManager maintenance contract (type 'U') for the car — its `in_date` is the
+     * day the car came back from the garage, which is the same "ready after maintenance" moment the other
+     * two sources record, just booked in OfficeManager instead of on a ticket or the sheet.
+     *
+     * `in_date` is the source of truth for "returned" (see Contract::scopeCurrentlyOpen) — a row whose
+     * `state` was never flipped to 'closed' still counts as returned once it carries one. Contracts hold
+     * no odometer of their own, so that field stays null.
+     *
+     * @return array{at:Carbon,reason:string,source:string,source_id:int,odometer:?int,result:string}|null
+     */
+    private function omContractReadyAnchor(Vehicle $vehicle): ?array
+    {
+        $contract = Contract::query()
+            ->where('vehicle_id', $vehicle->id)
+            ->where('contract_type', 'U')
+            ->whereNotNull('in_date')
+            ->orderByDesc('in_date')
+            ->orderByDesc('id')
+            ->first(['id', 'contract_no', 'in_date']);
+
+        if (! $contract || ! $contract->in_date) {
+            return null;
+        }
+
+        return [
+            'at'        => Carbon::parse($contract->in_date)->startOfDay(),
+            'reason'    => 'maintenance',
+            'source'    => 'om_contract',
+            'source_id' => (int) $contract->id,
+            'odometer'  => null,
+            'result'    => 'returned',
         ];
     }
 

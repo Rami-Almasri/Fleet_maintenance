@@ -1194,6 +1194,13 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
     }
   }
 
+  // A report may not contradict itself. Findings ARE the reason a car needs a ticket, so tapping faults
+  // and then filing "no maintenance needed" states two opposite things at once. It used to save happily
+  // and lose them: the findings are written to the ticket either way, but a cleared diagnostic is
+  // terminal and never promotes them into fault tasks, so nobody would ever see those faults again.
+  // The server enforces the same rule (MaintenanceWorkflowService::submitReport) — this is the readable half.
+  const clearanceWithFindings = action === 'decide' && !requiresMaintenance && symptoms.length > 0;
+
   // ---- minimal client guard (the server is the source of truth) ----
   function invalid() {
     // An out-of-range odometer would overflow the DB column — block every step that captures one.
@@ -1229,7 +1236,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
     // is no longer gated here — it can be set later. The end-of-test-drive odometer is OPTIONAL here
     // (the inspector may record it), but if entered it must clear the same continuity/>10 km note gate
     // as every other capture (odoGateBlocked is false when blank).
-    if (action === 'decide') return (requiresMaintenance && (!faultSeverity || !rootCausesComplete(symptoms, faultCausesCatalog, causes))) || odoGateBlocked;
+    if (action === 'decide') return (requiresMaintenance && (!faultSeverity || !rootCausesComplete(symptoms, faultCausesCatalog, causes))) || clearanceWithFindings || odoGateBlocked;
     if (action === 'followup') return !followNote.trim();
     if (action === 'dispatch') return !odometer || Number(odometer) < 1 || !photo || compressing || odoGateBlocked;
     // Recovery (towing): the odometer + its photo AND the recovery unit name are all mandatory (the
@@ -1562,6 +1569,10 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
     odoGateBlocked && { step: 1, label: t('workflow.decideStep.needOdometerCheck') },
     requiresMaintenance && !causesComplete && { step: 3, label: t('workflow.decideStep.needCauses') },
     requiresMaintenance && !faultSeverity && { step: 5, label: t('workflow.decideStep.needSeverity') },
+    // The two halves of this report may not contradict each other: findings ARE the reason a car needs
+    // a ticket, so a report that lists them cannot also say "no maintenance needed". Points at step 2,
+    // because untick-the-findings is the fix when the inspector really means the car is clear.
+    clearanceWithFindings && { step: 2, label: t('workflow.decideStep.needNoFindings', { n: symptoms.length }) },
   ].filter(Boolean);
 
   // Submit-button label: the branching steps spell out their decision; the rest use the action's submit verb.
@@ -1733,7 +1744,9 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                 symptoms.length > 0
                   ? t('findingsPicker.selectedCount', { count: symptoms.length })
                   : t('workflow.decideStep.notAnswered'),
-                symptoms.length > 0 || !requiresMaintenance,
+                // "Answered" cuts both ways: a ticket needs at least one finding, and a clearance needs
+                // none — a step showing 3 findings under a "no maintenance" decision is not complete.
+                requiresMaintenance ? symptoms.length > 0 : symptoms.length === 0,
               )}
               title={t('workflow.decideStep.findingsTitle')}
               hint={t('workflow.decideStep.findingsHint')}
@@ -1833,9 +1846,30 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                   {t('workflow.decision.noNeed')}
                 </button>
               </div>
-              <p className="text-xs text-slate-400">
-                {requiresMaintenance ? t('workflow.hint.requiresMaintenance') : t('workflow.hint.noMaintenance')}
-              </p>
+              {/* The contradiction, said where it is made. A refusal the inspector only meets at a greyed-out
+                  submit button is a puzzle; here it names the faults that are in the way and what to do. */}
+              {clearanceWithFindings ? (
+                <div className="rounded-xl bg-amber-50 px-3 py-2.5 text-xs text-amber-800 ring-1 ring-inset ring-amber-200">
+                  <p className="font-semibold">{t('workflow.hint.clearanceWithFindingsTitle', { n: symptoms.length })}</p>
+                  <p className="mt-0.5 leading-snug">{t('workflow.hint.clearanceWithFindingsBody')}</p>
+                  <ul className="mt-1.5 flex flex-wrap gap-1">
+                    {symptoms.map((s) => (
+                      <li key={s} className="rounded-full bg-white px-2 py-0.5 font-medium text-amber-900 ring-1 ring-amber-200">{s}</li>
+                    ))}
+                  </ul>
+                  <button
+                    type="button"
+                    onClick={() => setActiveStep(2)}
+                    className="mt-2 rounded-lg bg-amber-600 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-amber-700"
+                  >
+                    {t('workflow.hint.clearanceWithFindingsCta')}
+                  </button>
+                </div>
+              ) : (
+                <p className="text-xs text-slate-400">
+                  {requiresMaintenance ? t('workflow.hint.requiresMaintenance') : t('workflow.hint.noMaintenance')}
+                </p>
+              )}
 
               {/* Inspector's official classification — the authoritative source; Driver's request carries none.
                   Only relevant when the car actually needs work: hidden once "No maintenance needed" is chosen. */}

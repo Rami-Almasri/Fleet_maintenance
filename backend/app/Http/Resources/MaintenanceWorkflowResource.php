@@ -220,6 +220,11 @@ class MaintenanceWorkflowResource extends JsonResource
             // at detection. Null for human-raised requests. The Inspection Review Queue renders this so a
             // machine request explains itself (see MaintenanceWorkflowService::buildTriggerDetail).
             'trigger_detail'        => $t->trigger_detail ?: null,
+            // Oil follow-up context for a request raised by an oil recall/defer decision. LIVE by
+            // construction: resolved decision → contract → projection on every read, so a fresh
+            // odometer reading changes these figures everywhere at once — the at-decision snapshot
+            // stays inside trigger_detail for audit. Null for every other ticket.
+            'oil_context'           => $this->oilContext($t),
             'test_drive_report'     => $t->test_drive_report,
             'severity'              => $t->severity,
 
@@ -703,5 +708,128 @@ class MaintenanceWorkflowResource extends JsonResource
             'name'    => $name,
             'at'      => $at ? $at->toIso8601String() : null,
         ], $meta);
+    }
+
+    /**
+     * The oil-decision story behind an oil-projection follow-up request — recomputed LIVE from the
+     * referenced decision's contract so a new reading is authoritative over any stale figure. The
+     * frozen `at_decision` block answers "what did the Controller see when they decided".
+     */
+    private function oilContext(Maintenance $t): ?array
+    {
+        $detail = $t->trigger_detail;
+        if (! is_array($detail)) {
+            return null;
+        }
+
+        // Two shapes, one meaning. A request the oil lifecycle RAISED is entirely an oil follow-up,
+        // so its whole trigger_detail is the oil payload. A request it ADOPTED — the system's own
+        // routine check, with the oil change added to it — keeps its own detail and carries the oil
+        // layer under `oil_projection`, so the card can still explain why the system flagged the car.
+        if (($detail['source'] ?? null) !== 'oil_projection') {
+            $detail = is_array($detail['oil_projection'] ?? null) ? $detail['oil_projection'] : null;
+            if (! $detail) {
+                return null;
+            }
+        }
+
+        try {
+            $decision = \App\Models\ContractOilDecision::with('contract.vehicle')
+                ->find($detail['contract_oil_decision_id'] ?? 0);
+            if (! $decision || ! $decision->contract) {
+                return [
+                    'decision'    => $detail['decision'] ?? null,
+                    'decided_by'  => $detail['decided_by'] ?? null,
+                    'contract_no' => $detail['contract_no'] ?? null,
+                    'live'        => null,
+                    'at_decision' => $detail['figures_at_decision'] ?? null,
+                ];
+            }
+
+            $p = app(\App\Services\OilChangeProjectionService::class)->project($decision->contract);
+
+            // What is required NOW — derived from the freshest truth available, in priority order:
+            // a raised execution ticket beats everything (done or in progress); a settled decision
+            // with NO ticket means the actual return mileage proved oil was not due; while the car
+            // is still out, the live projection speaks.
+            $service = $decision->settled_ticket_id ? Maintenance::find($decision->settled_ticket_id) : null;
+            $recall  = app(\App\Services\OilChangeProjectionService::class)->recallState($decision);
+
+            if ($decision->isOilChanged()) {
+                // The car has HAD its oil changed and the reading is on the decision. Nothing this
+                // card can say outranks that — not an open ticket, not the projection.
+                $action = 'oil_service_completed';
+            } elseif ($service) {
+                $action = in_array($service->workflow_status, Maintenance::WF_TERMINAL, true)
+                    ? 'oil_service_completed'
+                    : 'oil_change_required';
+            } elseif ($decision->settled_at) {
+                $action = 'inspection_only';
+            } elseif (($p['over_tolerance_km'] ?? 0) > 0) {
+                // A recall says what it is actually DOING, not a blanket "collection in progress" —
+                // a car nobody has agreed to collect yet is waiting on Sales, and the card must not
+                // claim a driver is on the way when the driver pool has not been told anything.
+                $action = $decision->decision === 'recall'
+                    ? match ($recall['stage'] ?? null) {
+                        \App\Models\ContractOilDecision::STAGE_WAITING_SALES    => 'awaiting_sales',
+                        \App\Models\ContractOilDecision::STAGE_READY_FOR_DRIVER => 'awaiting_driver',
+                        \App\Models\ContractOilDecision::STAGE_VEHICLE_COLLECTED,
+                        \App\Models\ContractOilDecision::STAGE_AT_WORKSHOP      => 'vehicle_collected',
+                        default                                                 => 'collection_in_progress',
+                    }
+                    : 'service_on_return';
+            } else {
+                $action = 'inspection_only';
+            }
+
+            return [
+                'decision'    => $decision->decision,
+                'decided_by'  => $decision->decided_by_name,
+                'decided_at'  => $decision->created_at?->toIso8601String(),
+                'contract_no' => $decision->contract->contract_no,
+                // The card's own write target: recording the completed change posts against this
+                // contract, so the id travels with the context rather than being looked up again.
+                'contract_id' => $decision->contract_id,
+                // The completed change, when there is one — the reading it was done at, and what
+                // the car's profile now says about the next one.
+                'oil_changed' => $decision->isOilChanged() ? [
+                    'at'        => $decision->oil_changed_at?->toIso8601String(),
+                    'odometer'  => $decision->oil_changed_odometer,
+                    'by'        => $decision->oil_changed_by_name,
+                    'note'      => $decision->oil_change_note,
+                    'next_due'  => $p['oil_limit'],
+                ] : null,
+                'settled'     => $decision->settled_at !== null,
+                'current_action'    => $action,
+                'service_ticket_id' => $decision->settled_ticket_id,
+                // The recall relay — where Sales, the driver and the car have actually got to, plus
+                // the required actions the workshop must honour (oil change locked). Null for a defer.
+                'recall'            => $recall,
+                // CAN this request be reviewed yet? The rental contract stays open until
+                // OfficeManager closes it, so `operational_status` reads "rented" for hours after a
+                // driver has taken the keys. Custody is the honest answer, and it lives on the
+                // collection, not the contract.
+                'in_our_custody'    => (bool) ($recall['in_our_custody'] ?? false),
+                'live'        => [
+                    'anchor_odometer'   => $p['anchor_odometer'],
+                    'anchor_source'     => $p['anchor_source'],
+                    'anchor_on'         => $p['anchor_on'],
+                    'expected'          => $p['expected'],
+                    'expected_return'   => $p['expected_return'],
+                    'oil_limit'         => $p['oil_limit'],
+                    'allowed_max'       => $p['allowed_max'],
+                    // The car's own interval, so the review side can show what the next service
+                    // point becomes before anyone commits a reading.
+                    'service_interval_km' => $decision->contract->vehicle?->service_interval_km,
+                    'over_allowance_km' => $p['over_tolerance_km'],
+                    'oil_status'        => $p['oil_status'],
+                    'lane'              => $p['lane'],
+                    'remaining_days'    => $p['remaining_days'],
+                ],
+                'at_decision' => $detail['figures_at_decision'] ?? null,
+            ];
+        } catch (\Throwable $e) {
+            return null;
+        }
     }
 }

@@ -50,6 +50,17 @@ class VehicleLogEvent extends Model
     // temporarilyReleaseVehicle() / returnTemporarilyReleasedVehicle().
     public const EVENT_TEMP_RELEASED        = 'temp_released';        // car temporarily taken out of the workshop, ticket stays open
     public const EVENT_TEMP_RETURNED        = 'temp_returned';        // car brought back to the workshop, distance recorded
+
+    // ── Oil recall relay (a car brought back mid-rental for oil) ────────────────────────────────────
+    // The gate and the brief. The first is the moment a recall is allowed to move at all — Sales have
+    // agreed the return with the customer — and it is the only thing standing between an oil decision
+    // and a driver being sent to a customer's doorstep, so it is audited as its own event rather than
+    // folded into a generic status update.
+    public const EVENT_OIL_RECALL_SALES_CONFIRMED = 'oil_recall_sales_confirmed'; // confirmSales(): Sales agreed the return → collection released
+    public const EVENT_OIL_RECALL_INSTRUCTED      = 'oil_recall_instructed';      // setCollectionInstructions(): what the car owes on arrival (oil change always)
+    // The far end, and the only event here that changes the CAR rather than the arrangement: the oil
+    // was physically changed and the reading recorded, so the next interval runs from that number.
+    public const EVENT_OIL_CHANGE_RECORDED        = 'oil_change_recorded';        // recordOilChange(): oil changed at N km → the car's service anchor moved
     // ── Ticket DESTRUCTION — the one event that must outlive its own subject ────────────────────────
     // A deleted ticket used to leave no trace at all: its rows vanished (or, for `nullOnDelete` children
     // like this table, quietly detached), so "no history" and "history destroyed" were indistinguishable
@@ -167,6 +178,11 @@ class VehicleLogEvent extends Model
         self::EVENT_INCIDENT_ACKNOWLEDGED     => Maintenance::FINDING_INSPECTOR, // a management sign-off clearing the gate
         self::EVENT_TEMP_RELEASED             => Maintenance::FINDING_INSPECTOR, // an operational decision to take the car out
         self::EVENT_TEMP_RETURNED             => Maintenance::FINDING_GARAGE,    // the car is back at the workshop
+        // Both are office-side coordination decisions, not workshop work.
+        self::EVENT_OIL_RECALL_SALES_CONFIRMED => Maintenance::FINDING_INSPECTOR,
+        self::EVENT_OIL_RECALL_INSTRUCTED      => Maintenance::FINDING_INSPECTOR,
+        // …but the change itself is workshop work, physically performed on the car.
+        self::EVENT_OIL_CHANGE_RECORDED        => Maintenance::FINDING_GARAGE,
         // Recommendation triage — a Supervisor's pre-garage management decision → inspector-side bucket.
         self::EVENT_RECOMMENDATION_APPROVED  => Maintenance::FINDING_INSPECTOR,
         self::EVENT_RECOMMENDATION_DISMISSED => Maintenance::FINDING_INSPECTOR,

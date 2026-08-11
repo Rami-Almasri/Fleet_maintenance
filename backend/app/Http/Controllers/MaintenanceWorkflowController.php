@@ -1008,6 +1008,74 @@ class MaintenanceWorkflowController extends Controller
         });
     }
 
+    /**
+     * The whole active fleet's countdown to its next system-raised test — one row per car, soonest
+     * first. The review queue shows cars the system has already asked about; this answers the question
+     * before it ("which cars are coming, and when"), read from the SAME rulebook so the two can never
+     * disagree. Read-only; gated with the queue itself.
+     */
+    public function testCountdown(\App\Services\DiagnosticGateService $gate)
+    {
+        return $this->run(function () use ($gate) {
+            $rows = $gate->fleetTestCountdown();
+
+            $summary = ['total' => count($rows)];
+            foreach ($rows as $r) {
+                $summary[$r['state']] = ($summary[$r['state']] ?? 0) + 1;
+            }
+
+            $buckets = [];
+            foreach ($rows as $r) {
+                $buckets[$r['bucket']] = ($buckets[$r['bucket']] ?? 0) + 1;
+            }
+
+            return ResponseHelper::SuccessResponse([
+                'rows'    => $rows,
+                'summary' => $summary,
+                'buckets' => $buckets,
+                // The live thresholds the numbers were produced with, so the page can label them
+                // without hard-coding a limit that config can change underneath it.
+                'limits'  => [
+                    'downtime_days' => $gate->downtimeLimitDays(),
+                    'inactive_days' => $gate->inactivityLimitDays(),
+                ],
+            ], 'Fleet test countdown retrieved', 200);
+        });
+    }
+
+    /**
+     * Every car physically in a shop right now — driven by the SHOP STAY (open OM type-U contract, or
+     * an open garage-log trip), not by whether a request happened to be parked on it. Carries the
+     * visit, the car's last check, and the recommendation that was already pending when it went in.
+     */
+    public function parkedInShop(\App\Services\DiagnosticGateService $gate)
+    {
+        return $this->run(function () use ($gate) {
+            $result = $gate->fleetParked();
+            $rows   = $result['rows'];
+
+            $bySource = [];
+            $withRequest = 0;
+            foreach ($rows as $r) {
+                $bySource[$r['parked']['source']] = ($bySource[$r['parked']['source']] ?? 0) + 1;
+                if ($r['request']) {
+                    $withRequest++;
+                }
+            }
+
+            return ResponseHelper::SuccessResponse([
+                'rows'    => $rows,
+                // Cars in a shop that are NOT part of the operational fleet (suspended / up for sale).
+                // Reported, never silently dropped — the planning board does not cover them either.
+                'outside_fleet' => $result['outside_fleet'],
+                'summary' => [
+                    'total'        => count($rows),
+                    'with_request' => $withRequest,
+                ] + $bySource,
+            ], 'Parked vehicles retrieved', 200);
+        });
+    }
+
     // ── Transitions ──────────────────────────────────────────────────────────
 
     /**

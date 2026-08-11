@@ -44,6 +44,20 @@ class ImportMaintenanceSheet extends Command
             return self::FAILURE;
         }
 
+        // Post-pass: a row that just landed can be the fact that answers a pending inspection request —
+        // the car is already at a garage. Withdraw those now so the Controllers' queue re-counts with
+        // the import instead of waiting for someone to open it.
+        if (! $dry) {
+            try {
+                $withdrawn = app(\App\Services\MaintenanceWorkflowService::class)->withdrawRequestsForWorkshopLog();
+                if ($withdrawn > 0) {
+                    $this->line("<comment>Withdrew {$withdrawn} pending inspection request(s) — those cars are in the workshop per this log.</comment>");
+                }
+            } catch (Throwable $e) {
+                $this->warn('Withdraw sweep failed (import itself succeeded): ' . $e->getMessage());
+            }
+        }
+
         $this->newLine();
         $this->table(['Metric', 'Count'], [
             [$dry ? 'Would create' : 'Created', $r['imported']],

@@ -41,7 +41,14 @@ class LogisticsDispatchController extends Controller
     private function withRelations($query)
     {
         return $query->with([
-            'vehicle:id,plate_no,make,model',
+            // `odometer` is NOT optional here: the driver's pre-trip capture is checked against it
+            // (Odometer Continuity), and without the column the card silently shows no baseline at
+            // all — the reading is then typed against nothing.
+            // `odometer` and `service_interval_km` are NOT optional here: the driver's pre-trip
+            // capture is checked against the first (Odometer Continuity), and a collection card
+            // shows the second to preview what the next service point becomes ("18,900 + 7,000").
+            // Omit either and the card silently renders a blank where a number belongs.
+            'vehicle:id,plate_no,make,model,odometer,service_interval_km',
             'events' => fn ($q) => $q->orderByDesc('occurred_at'),
         ]);
     }
@@ -96,6 +103,50 @@ class LogisticsDispatchController extends Controller
                 'tasks'   => LogisticsTaskResource::collection($tasks),
                 'summary' => ['mine' => $tasks->count()],
             ], 'My logistics queue retrieved', 200);
+        } catch (\Exception $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
+     * CARS TO COLLECT FROM CUSTOMERS — the driver's own panel on /my-maintenance-queue.
+     *
+     * Deliberately NOT just "open tasks assigned to me". A collection's job is not finished when the
+     * car is parked: the oil change it was raised for still has to be recorded, and the driver is
+     * often the one who does it. A one-way move CLOSES the moment he marks it delivered, so serving
+     * only open tasks would make the card vanish one step before its last step.
+     *
+     * So the list is: every open collection he could act on (unclaimed, or his), PLUS his recently
+     * delivered ones whose oil change is still outstanding. Bounded to 48 hours — a collection from
+     * last week whose oil nobody recorded is a supervision problem for the board, not a live card in
+     * a driver's queue.
+     */
+    public function myCollections(Request $request)
+    {
+        try {
+            $userId = $request->user()->id;
+            $since  = now()->subHours(48);
+
+            $tasks = $this->withRelations(
+                LogisticsTask::where('purpose', LogisticsTask::PURPOSE_CUSTOMER_COLLECTION)
+                    ->where(function ($q) use ($userId, $since) {
+                        $q->where(fn ($open) => $open->whereNull('completed_at')
+                            ->where(fn ($mine) => $mine->whereNull('assigned_to_id')->orWhere('assigned_to_id', $userId)))
+                          ->orWhere(fn ($done) => $done->whereNotNull('completed_at')
+                            ->where('assigned_to_id', $userId)
+                            ->where('completed_at', '>=', $since));
+                    })
+            )->orderByDesc('dispatched_at')->limit(50)->get();
+
+            // A finished trip whose oil HAS been recorded is done in every sense — drop it, or the
+            // driver keeps a card he can do nothing with.
+            $tasks = $tasks->reject(fn (LogisticsTask $t) => ! $t->isActive()
+                && (bool) (LogisticsTaskResource::make($t)->resolve()['oil_followup']['oil_changed'] ?? false));
+
+            return ResponseHelper::SuccessResponse([
+                'tasks'   => LogisticsTaskResource::collection($tasks->values()),
+                'summary' => ['mine' => $tasks->count()],
+            ], 'Customer collections retrieved', 200);
         } catch (\Exception $e) {
             return ResponseHelper::fromException($e);
         }
@@ -466,7 +517,10 @@ class LogisticsDispatchController extends Controller
      */
     private function requiresOdometer(LogisticsTask $task): bool
     {
-        return (bool) ($task->round_trip || $task->maintenance_id);
+        // A collection from a customer ALWAYS demands it: the reading at the doorstep is the reason
+        // the trip exists (it is what the oil follow-up has been chasing by phone for days), and it
+        // is the last chance to capture it before the car is ours and the number is history.
+        return (bool) ($task->round_trip || $task->maintenance_id || $task->isCustomerCollection());
     }
 
     /** Store the odometer photo (best-effort) once the transition has committed, if one was sent. */

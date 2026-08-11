@@ -21,6 +21,7 @@ use App\Models\GarageRecommendationDecision;
 use App\Models\VehicleLogEvent;
 use App\Models\Vendor;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -1030,6 +1031,22 @@ class MaintenanceWorkflowService
      */
     public function pendingReview()
     {
+        // Re-count before serving: sweep out requests reality already answered — a car that went into
+        // the workshop on an OM maintenance contract OR on a garage-log event (sheet/hand-entered) since
+        // the last look, and a system request whose car has since been to a workshop and COME BACK (its
+        // count restarted, so it is no longer due). The OM sync runs hourly and the sheet import has no
+        // schedule at all, so without this the queue (and its "N awaiting" count) can lie for hours.
+        // Throttled: the page polls every 8s and the sweep answers the same way for a minute.
+        if (Cache::add('review-queue:withdraw-sweep', 1, 60)) {
+            try {
+                $this->withdrawRequestsForMaintenanceContracts();
+                $this->withdrawRequestsForWorkshopLog();
+                $this->withdrawRequestsWhoseConditionCleared();
+            } catch (\Throwable $e) {
+                report($e); // a failed sweep must never take the queue down with it
+            }
+        }
+
         $tickets = Maintenance::where(function ($q) {
             $q->where('workflow_status', Maintenance::WF_PENDING_REVIEW)
                 ->orWhere(function ($q2) {
@@ -1037,14 +1054,22 @@ class MaintenanceWorkflowService
                         ->whereNull('requested_by')
                         ->whereNull('reviewed_by');
                 })
-                // Requests the SYSTEM withdrew because the car went into the workshop under an OM
-                // maintenance contract. They need no decision — they are here so the Controller who saw
-                // the card yesterday finds out what happened to it instead of watching it disappear.
-                // They age out after a week: it is a notice, not a backlog.
+                // Requests the SYSTEM parked because the car is IN THE SHOP RIGHT NOW — an open OM
+                // maintenance contract, or an open workshop-log trip. They need no decision; they are
+                // here so the Controller who saw the card yesterday can see where it went, and so the
+                // page answers "which of my test requests are waiting on a car that is being worked
+                // on". The shop stay is the whole lifetime of the card (scoped below): the car comes
+                // out, the card goes, and the system recounts that car from its new service anchor.
+                //
+                // Deliberately NOT `condition_cleared`: that withdrawal means the car has ALREADY been
+                // and come back, so its request is simply finished — the recount is the answer, not a
+                // card. Showing those turned a 30-decision queue into 143 rows.
                 ->orWhere(function ($q3) {
                     $q3->where('workflow_status', Maintenance::WF_REVIEW_REJECTED)
-                        ->whereIn('review_rejection_code', array_keys(Maintenance::REVIEW_SYSTEM_WITHDRAWAL_REASONS))
-                        ->where('reviewed_at', '>=', Carbon::now()->subDays(self::WITHDRAWN_NOTICE_DAYS));
+                        ->whereIn('review_rejection_code', [
+                            Maintenance::REVIEW_REJECT_IN_MAINTENANCE_CONTRACT,
+                            Maintenance::REVIEW_REJECT_IN_WORKSHOP_LOG,
+                        ]);
                 });
         })
             // Load the driver's attached evidence (photo/video) too, so the reviewer sees what the driver
@@ -1056,6 +1081,42 @@ class MaintenanceWorkflowService
             // request that still needs a Controller below the fold just because it is newer.
             ->sortBy(fn ($t) => $t->workflow_status === Maintenance::WF_REVIEW_REJECTED ? 1 : 0)
             ->values();
+
+        // 🛑 AN "IT IS IN THE SHOP" NOTICE IS ONLY NEWS WHILE THE CAR IS STILL IN THE SHOP.
+        // The two shop-presence withdrawals (open OM maintenance contract / open workshop-log trip)
+        // answer a request with "the car is being looked at right now". The moment the car comes back
+        // out that sentence is no longer true, the request it answered is long dead, and the card is
+        // pure backlog — it was pushing the queue from 30 real decisions to 143 rows. So the notice
+        // lives exactly as long as the shop stay does: the car leaves, the notice leaves, the count
+        // resets. (`condition_cleared` is deliberately NOT scoped here: that notice says the car has
+        // ALREADY been and come back, so requiring it to still be in the shop would delete it always.)
+        // Each notice is scoped by THE SAME FACT THAT PRODUCED IT — an open OM maintenance contract
+        // for the contract sweep, an open workshop-log trip for the log sweep — so the notice and its
+        // reason can never disagree (a generic "is it in maintenance?" test does not see a sheet-only
+        // trip, and would delete a notice whose fact is still perfectly true).
+        $shopNotices = $tickets->filter(fn ($t) => $t->workflow_status === Maintenance::WF_REVIEW_REJECTED
+            && $t->vehicle_id
+            && in_array($t->review_rejection_code, [
+                Maintenance::REVIEW_REJECT_IN_MAINTENANCE_CONTRACT,
+                Maintenance::REVIEW_REJECT_IN_WORKSHOP_LOG,
+            ], true));
+
+        if ($shopNotices->isNotEmpty()) {
+            $ids = $shopNotices->pluck('vehicle_id')->unique()->values()->all();
+            $onContract = Contract::where('contract_type', 'U')->currentlyOpen()
+                ->whereIn('vehicle_id', $ids)->pluck('vehicle_id')->map(fn ($v) => (int) $v)->flip();
+            $onLog = $this->openWorkshopLogEvents($ids);
+
+            $tickets = $tickets->reject(function ($t) use ($shopNotices, $onContract, $onLog) {
+                if (! $shopNotices->contains('id', $t->id)) {
+                    return false;
+                }
+
+                return $t->review_rejection_code === Maintenance::REVIEW_REJECT_IN_MAINTENANCE_CONTRACT
+                    ? ! $onContract->has((int) $t->vehicle_id)
+                    : ! isset($onLog[(int) $t->vehicle_id]);
+            })->values();
+        }
 
         // Attach each car's last REAL inspection/test-drive (before this request) so the reviewer can see
         // when it was last looked at — and what was found — before approving yet another inspection.
@@ -1421,6 +1482,171 @@ class MaintenanceWorkflowService
     }
 
     /**
+     * TRANSITIONAL twin of the contract sweep above — the garage LOG (sheet-imported + hand-entered
+     * workshop events) as the withdrawing fact.
+     *
+     * While workshop trips are still being recorded on the N-Maintenance sheet instead of as OM
+     * maintenance contracts, a car can be physically at a garage with no type-U contract anywhere — and
+     * its inspection request would sit in the Controllers' queue asking about a car that has already
+     * gone. So, for now, the log answers the request the same way a contract does, and the "N awaiting"
+     * count re-counts. Once every trip opens an OM contract this sweep should stop finding anything on
+     * its own (the contract sweep runs first at every call site); it can then be retired.
+     *
+     * Same rules as the maintenance board: per car the LATEST live workshop-log event wins, and it only
+     * counts as "in the shop" if it is still open (stage ≠ 'IN', no past return date) AND recent
+     * (out_date within WORKSHOP_LOG_LOOKBACK_DAYS) — ~70% of historical sheet rows are an OUT whose
+     * return was never logged, and an ancient unclosed OUT must not withdraw anything.
+     *
+     * Idempotent, row-locked, and a human decision always outranks it (see systemWithdraw()).
+     *
+     * @return int how many requests were withdrawn
+     */
+    public function withdrawRequestsForWorkshopLog(): int
+    {
+        $pending = Maintenance::where('workflow_status', Maintenance::WF_PENDING_REVIEW)
+            ->whereNotNull('vehicle_id')
+            ->with('vehicle')
+            ->get();
+
+        if ($pending->isEmpty()) {
+            return 0;
+        }
+
+        $events = $this->openWorkshopLogEvents($pending->pluck('vehicle_id')->unique()->all());
+
+        $withdrawn = 0;
+        foreach ($pending as $ticket) {
+            $event = $events[$ticket->vehicle_id] ?? null;
+            // Never withdraw a request because of its own row — a workflow ticket IS a `maintenances`
+            // row with origin 'manual'. A pending request has no out_date and sits at stage 'IN', so it
+            // can't qualify above; this guard makes that impossibility explicit rather than assumed.
+            if (! $event || $event->id === $ticket->id) {
+                continue;
+            }
+
+            if ($this->withdrawOneForWorkshopEvent($ticket, $event)) {
+                $withdrawn++;
+            }
+        }
+
+        return $withdrawn;
+    }
+
+    /**
+     * The rule the two sweeps above are only snapshots of: the car has been to a workshop and COME BACK
+     * since the system asked for a test.
+     *
+     * Both sweeps above ask "is the car away RIGHT NOW?", so they stop protecting the queue the moment the
+     * car returns — which is precisely when the request became most obsolete. A stint that opened and
+     * closed between two sweeps (or before those sweeps existed) leaves its request sitting in the queue
+     * for ever, still quoting a day count the fleet stopped agreeing with weeks ago.
+     *
+     * The count is the arbiter. DiagnosticGateService::readyAnchor() is the single answer to "when did
+     * this car last come back ready", across all three records that can say so — a closed workflow
+     * ticket, a legacy garage-log return, or a closed OM maintenance contract — and it always takes the
+     * LATEST of them. If that day falls after the request was raised, the clock has already restarted:
+     * the condition the system complained about is gone, so the request goes with it.
+     *
+     * Deliberately limited to `system_schedule` requests. A driver, inspector or customer asked for a
+     * reason a clock cannot see, and only a person may answer that. See request_origin — WHERE a request
+     * came from is exactly the axis that decides whether it may be retired automatically.
+     *
+     * Idempotent, row-locked, and a human decision always outranks it (see systemWithdraw()).
+     *
+     * @return int how many requests were withdrawn
+     */
+    public function withdrawRequestsWhoseConditionCleared(): int
+    {
+        $pending = Maintenance::where('workflow_status', Maintenance::WF_PENDING_REVIEW)
+            ->where('request_origin', Maintenance::SOURCE_SYSTEM_SCHEDULE)
+            ->whereNotNull('vehicle_id')
+            ->with('vehicle')
+            ->get();
+
+        $withdrawn = 0;
+        foreach ($pending as $ticket) {
+            if (! $ticket->vehicle || ! $ticket->created_at) {
+                continue;
+            }
+
+            $anchor = $this->gate->readyAnchor($ticket->vehicle);
+            if (! ($anchor['at'] ?? null)) {
+                continue;
+            }
+
+            // Never let a ticket retire itself: a request that later closed as its own maintenance visit
+            // would otherwise be its own evidence. (A pending_review row is not terminal so it cannot be
+            // the anchor today — this makes that impossibility explicit rather than assumed.)
+            if (($anchor['source_id'] ?? null) === $ticket->id && ($anchor['source'] ?? null) !== 'om_contract') {
+                continue;
+            }
+
+            // Whole days only: a return recorded on the same date the request was raised is not proof the
+            // workshop visit came after it, so it does not count.
+            $returnedAt = Carbon::parse($anchor['at'])->startOfDay();
+            if (! $returnedAt->greaterThan($ticket->created_at->copy()->startOfDay())) {
+                continue;
+            }
+
+            if ($this->withdrawOneForClearedCondition($ticket, $anchor, $returnedAt)) {
+                $withdrawn++;
+            }
+        }
+
+        return $withdrawn;
+    }
+
+    /** Withdraw ONE pending system request whose clock has restarted — same lock, same rules. */
+    private function withdrawOneForClearedCondition(Maintenance $ticket, array $anchor, Carbon $returnedAt): bool
+    {
+        $sentence = 'The car came back from maintenance on ' . $returnedAt->format('d M Y')
+            . ' — the check clock restarted, so this routine test is no longer due.';
+
+        return $this->systemWithdraw(
+            $ticket,
+            Maintenance::REVIEW_REJECT_CONDITION_CLEARED,
+            $sentence,
+            // The evidence: which record says the car came back, and when the request it answers was made.
+            [
+                'source'             => 'clock_restarted',
+                'anchor_at'          => $returnedAt->toIso8601String(),
+                'anchor_reason'      => $anchor['reason'] ?? null,       // maintenance | test
+                'anchor_source'      => $anchor['source'] ?? null,       // workflow | legacy | om_contract
+                'anchor_source_id'   => $anchor['source_id'] ?? null,
+                'request_created_at' => $ticket->created_at?->toIso8601String(),
+            ],
+            ['anchor_source' => $anchor['source'] ?? null, 'anchor_source_id' => $anchor['source_id'] ?? null],
+        );
+    }
+
+    /**
+     * Every vehicle currently in the shop per the garage log — the refusal set for the Proactive
+     * Diagnostic Monitor (never raise a request for a car already at a garage), the same fact the
+     * sweep above uses to withdraw one raised earlier.
+     *
+     * MOVED to DiagnosticGateService (2026-08-11): "is this car at a garage right now" is a fact about
+     * a car, and the gate is the one place allowed to answer it — the countdown, the parked list, the
+     * clock hold and these sweeps must never disagree about who is in the shop. Delegated, not copied.
+     *
+     * @return int[]
+     */
+    public function vehicleIdsInWorkshopLog(): array
+    {
+        return array_keys($this->openWorkshopLogEvents(null));
+    }
+
+    /**
+     * Each car's currently-open workshop-log event, keyed by vehicle_id. @see DiagnosticGateService.
+     *
+     * @param  int[]|null  $vehicleIds  limit to these vehicles (null = whole fleet)
+     * @return array<int,Maintenance>
+     */
+    private function openWorkshopLogEvents(?array $vehicleIds): array
+    {
+        return $this->gate->openWorkshopLogEvents($vehicleIds);
+    }
+
+    /**
      * Withdraw ONE pending request against ONE open maintenance contract, under a row lock so a Controller
      * clicking Approve at the same moment as the sync cannot lose the race half-way. If the Controller got
      * there first the ticket is no longer `pending_review` and we leave it entirely alone — a human decision
@@ -1428,36 +1654,83 @@ class MaintenanceWorkflowService
      */
     private function withdrawOneForMaintenanceContract(Maintenance $ticket, Contract $contract): bool
     {
-        return DB::transaction(function () use ($ticket, $contract) {
+        $openedAt = $contract->out_date ? Carbon::parse($contract->out_date) : null;
+        $sentence = 'OfficeManager opened maintenance contract '
+            . ($contract->contract_no ? '#' . $contract->contract_no : '#' . $contract->id)
+            . ($openedAt ? ' on ' . $openedAt->format('d M Y') : '')
+            . ' — the car is already in maintenance.';
+
+        return $this->systemWithdraw(
+            $ticket,
+            Maintenance::REVIEW_REJECT_IN_MAINTENANCE_CONTRACT,
+            $sentence,
+            // The evidence, so the note on the card is checkable rather than a claim.
+            [
+                'source'        => 'om_maintenance_contract',
+                'contract_id'   => $contract->id,
+                'contract_no'   => $contract->contract_no,
+                'contract_type' => $contract->contract_type,
+                'opened_at'     => $openedAt?->toIso8601String(),
+                'customer'      => $contract->customer?->name_en,
+            ],
+            ['contract_id' => $contract->id, 'contract_no' => $contract->contract_no],
+        );
+    }
+
+    /** Withdraw ONE pending request against ONE open workshop-log event — same lock, same rules. */
+    private function withdrawOneForWorkshopEvent(Maintenance $ticket, Maintenance $event): bool
+    {
+        $garage   = trim((string) $event->garage) ?: null;
+        $sentence = 'The garage log shows this car went '
+            . ($garage ? 'to ' . $garage . ' ' : 'to a garage ')
+            . 'on ' . $event->out_date->format('d M Y')
+            . ' and has not come back — it is already in maintenance.';
+
+        return $this->systemWithdraw(
+            $ticket,
+            Maintenance::REVIEW_REJECT_IN_WORKSHOP_LOG,
+            $sentence,
+            // The evidence: which log row (sheet-imported or hand-entered), which garage, since when.
+            [
+                'source'       => 'workshop_log',
+                'event_id'     => $event->id,
+                'event_origin' => $event->origin,
+                'garage'       => $garage,
+                'service_main' => trim((string) $event->service_main) ?: null,
+                'opened_at'    => $event->out_date->toIso8601String(),
+            ],
+            ['event_id' => $event->id, 'garage' => $garage],
+        );
+    }
+
+    /**
+     * The shared mechanics of every SYSTEM withdrawal: flip the request to review_rejected with a
+     * system-only code, under a row lock so a Controller clicking Approve at the same moment cannot lose
+     * the race half-way. If the Controller got there first the ticket is no longer `pending_review` and
+     * we leave it entirely alone — a human decision outranks this one.
+     *
+     * @param array $context  stored in review_auto_context (a `withdrawn_at` stamp is added here)
+     * @param array $meta     extra keys for the vehicle-log entry and the requester's notification
+     */
+    private function systemWithdraw(Maintenance $ticket, string $code, string $sentence, array $context, array $meta = []): bool
+    {
+        return DB::transaction(function () use ($ticket, $code, $sentence, $context, $meta) {
             $locked = Maintenance::where('id', $ticket->id)->lockForUpdate()->first();
             if (! $locked || $locked->workflow_status !== Maintenance::WF_PENDING_REVIEW) {
                 return false; // a human decided it first
             }
-
-            $openedAt = $contract->out_date ? Carbon::parse($contract->out_date) : null;
-            $customer = $contract->customer?->name_en;
-            $sentence = 'OfficeManager opened maintenance contract '
-                . ($contract->contract_no ? '#' . $contract->contract_no : '#' . $contract->id)
-                . ($openedAt ? ' on ' . $openedAt->format('d M Y') : '')
-                . ' — the car is already in maintenance.';
 
             $locked->workflow_status         = Maintenance::WF_REVIEW_REJECTED;
             // reviewed_by stays NULL on purpose: nobody reviewed this. Attributing it to a user would put a
             // decision in a person's name that they never made.
             $locked->reviewed_by             = null;
             $locked->reviewed_at             = Carbon::now();
-            $locked->review_rejection_code   = Maintenance::REVIEW_REJECT_IN_MAINTENANCE_CONTRACT;
+            $locked->review_rejection_code   = $code;
             $locked->review_rejection_reason = $sentence;
-            // The evidence, so the note on the card is checkable rather than a claim.
-            $locked->review_auto_context     = array_filter([
-                'source'         => 'om_maintenance_contract',
-                'contract_id'    => $contract->id,
-                'contract_no'    => $contract->contract_no,
-                'contract_type'  => $contract->contract_type,
-                'opened_at'      => $openedAt?->toIso8601String(),
-                'customer'       => $customer,
-                'withdrawn_at'   => Carbon::now()->toIso8601String(),
-            ], fn ($v) => $v !== null && $v !== '');
+            $locked->review_auto_context     = array_filter(
+                $context + ['withdrawn_at' => Carbon::now()->toIso8601String()],
+                fn ($v) => $v !== null && $v !== ''
+            );
             $locked->save();
             $ticket = $locked;
 
@@ -1469,12 +1742,7 @@ class MaintenanceWorkflowService
 
             $this->log->record($ticket, VehicleLogEvent::EVENT_REVIEW_REJECTED, null, [
                 'description' => 'Inspection request withdrawn by the system: ' . $sentence,
-                'meta'        => [
-                    'auto'             => true,
-                    'rejection_code'   => Maintenance::REVIEW_REJECT_IN_MAINTENANCE_CONTRACT,
-                    'contract_id'      => $contract->id,
-                    'contract_no'      => $contract->contract_no,
-                ],
+                'meta'        => ['auto' => true, 'rejection_code' => $code] + $meta,
             ]);
 
             // Retire the "awaiting review" ping from every Controller's bell. Leaving it there would send
@@ -1498,8 +1766,8 @@ class MaintenanceWorkflowService
                         'url'      => $this->link($ticket),
                         'key'      => 'maint_wf:' . $ticket->id . ':review_withdrawn',
                         'icon'     => 'wrench',
-                        // Deep-links the bell straight to the card carrying the contract note.
-                        'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no, 'contract_no' => $contract->contract_no],
+                        // Deep-links the bell straight to the card carrying the withdrawal note.
+                        'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no] + $meta,
                     ]);
                 }
             }
@@ -2921,6 +3189,25 @@ class MaintenanceWorkflowService
             throw new WorkflowTransitionException('Add at least a symptom, an action, or a note before opening a maintenance ticket.', [
                 'field' => 'test_drive_report',
             ]);
+        }
+
+        // THE MIRROR RULE — a clearance may not carry findings. Without it the two halves of the Decide
+        // step could contradict each other: an inspector tapped real faults and still filed "no
+        // maintenance needed", and the report saved happily. The damage was silent, not cosmetic —
+        // the findings below are written to the row REGARDLESS of the decision, but a cleared diagnostic
+        // is terminal and never runs syncFromFindings(), so those faults became first-class evidence
+        // attached to a ticket that no lane, no garage and no queue would ever show again. The car went
+        // back into service carrying faults the platform had recorded and buried in the same click.
+        // A car with findings needs a ticket: the inspector must either untick them or open one.
+        if (! $requiresMaintenance && $payload['symptoms'] !== []) {
+            throw new WorkflowTransitionException(
+                'This report lists ' . count($payload['symptoms']) . ' finding(s), so it cannot be filed as “no maintenance needed”. '
+                . 'Remove the findings, or choose “Requires maintenance” and open the ticket.',
+                [
+                    'field'    => 'test_drive_report',
+                    'findings' => $payload['symptoms'],
+                ],
+            );
         }
 
         // The inspector's chosen root cause per symptom (Symptom → Root-Cause diagnostic), keyed by

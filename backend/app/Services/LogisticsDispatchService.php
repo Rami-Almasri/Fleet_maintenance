@@ -107,6 +107,65 @@ class LogisticsDispatchService
     }
 
     /**
+     * Raise the driver COLLECTION task for an oil recall — go to the customer, collect the car,
+     * bring it to the workshop. This is the sanctioned exception to dispatch()'s open-rental guard:
+     * the whole point of a recall is that the car IS on an open rental. Differences from a plain
+     * dispatch, all deliberate:
+     *
+     *   - the vehicle's operational_status is NOT touched — the customer still holds the car, and
+     *     nothing may claim it is "in transit" until a driver has actually picked it up;
+     *   - the task is linked to the oil follow-up inspection request via maintenance_id, so the
+     *     chain decision → request → collection → arrival stays traceable;
+     *   - pooled by default (any logistics.claim driver may take it), same claim/notify machinery.
+     *
+     * Idempotent per vehicle: an existing open move is returned untouched instead of duplicated.
+     */
+    public function dispatchOilRecallCollection(
+        Vehicle $vehicle,
+        ?int $maintenanceId,
+        string $notes,
+        User $actor,
+        string $destination = 'Workshop',
+    ): LogisticsTask {
+        $existing = LogisticsTask::open()->where('vehicle_id', $vehicle->id)->first();
+        if ($existing) {
+            return $existing;
+        }
+
+        return DB::transaction(function () use ($vehicle, $maintenanceId, $notes, $actor, $destination) {
+            $task = LogisticsTask::create([
+                'vehicle_id'        => $vehicle->id,
+                'vehicle_plate'     => $vehicle->plate_no,
+                'vehicle_label'     => trim($vehicle->make . ' ' . $vehicle->model) ?: null,
+                'maintenance_id'    => $maintenanceId,
+                // What kind of job this is, as a fact rather than a phrase in the notes. It is what
+                // puts the car under "Cars to collect from customers" in the driver's own queue, and
+                // what makes the odometer compulsory at the doorstep.
+                'purpose'           => LogisticsTask::PURPOSE_CUSTOMER_COLLECTION,
+                // Where the driver is taking it — our parking or a garage. The driver must be told
+                // the actual destination, not a generic "Workshop", or he drives to the wrong place.
+                'destination'       => $destination,
+                'round_trip'        => false,
+                'assigned_by_id'    => $actor->id,
+                'assigned_by_name'  => $actor->name ?: $actor->email,
+                'status'            => LogisticsTask::STATUS_DISPATCHED,
+                'status_changed_at' => now(),
+                'notes'             => $notes,
+                'dispatched_at'     => now(),
+            ]);
+
+            $this->recordEvent($task, LogisticsTaskEvent::EVENT_DISPATCHED, $actor, [
+                'to_status' => $task->status,
+                'note'      => 'Oil recall — collect from the customer. Pooled, awaiting a driver to claim',
+            ]);
+
+            $this->notifier->notifyByPermission('logistics.claim', $this->dispatchPayload($task, $vehicle, true), $actor->id);
+
+            return $task;
+        });
+    }
+
+    /**
      * Raise the physical-transport task for a maintenance GARAGE TRANSFER — the custodian who will drive
      * the car from the old garage to the new one. Unlike a plain dispatch() this is intentionally allowed
      * while the car is on an open rental/maintenance contract (the whole point is that the car is IN

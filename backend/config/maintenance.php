@@ -110,6 +110,16 @@ return [
         // rather than the prediction rate. A contract's own `miles_allowed_pd` overrides it.
         'allowance_km_per_day' => (int) env('OIL_PROJECTION_ALLOWANCE_KM', 250),
 
+        // Plausibility headroom for a MID-RENTAL oil-service reading. The Oil Change sheet's
+        // "LAST CHANGE" km sometimes lands AHEAD of the newest reading we hold for the rental —
+        // usually a genuine mid-rental service, occasionally a wrong plate or a typo. The rule:
+        // a service km the car could have reached at the prediction rate since its anchor
+        // (i.e. ≤ today's projection + this margin) is classified `mid_rental_service`; anything
+        // beyond that is `suspicious` and must be verified against the sheet by a human before
+        // being relied on. The margin mirrors the grace: it absorbs normal rate error without
+        // blessing impossible jumps.
+        'service_plausibility_margin_km' => (int) env('OIL_SERVICE_PLAUSIBILITY_MARGIN_KM', 500),
+
         // GO-LIVE FLOOR for the return sweep (oil:settle-returns). A rental that comes back past its
         // oil point owes a change even when nobody was ever asked about it — but only from the day
         // this flow was switched on. Without this floor the first run would sweep up every car that
@@ -126,6 +136,18 @@ return [
             fn ($v) => (int) trim($v),
             explode(',', (string) env('OIL_PROJECTION_USER_IDS', ''))
         ))),
+
+        // WHO does the change when Leen sends the car to OUR PARKING instead of a garage — Abu
+        // Maroof. Same doctrine as every other recipient list in this file: a named allow-list
+        // first, and when it is empty a fallback that is narrowed by ROLE, never a bare permission.
+        // `maintenance.initiate` alone would also match Lin, Marwa and the QA accounts, and a job
+        // handed to everyone is a job nobody owns. See [[checkpoint-reminder-recipient-rules]].
+        'parking_user_ids'     => array_values(array_filter(array_map(
+            fn ($v) => (int) trim($v),
+            explode(',', (string) env('OIL_PARKING_USER_IDS', ''))
+        ))),
+        'parking_fallback_permission' => env('OIL_PARKING_PERMISSION', 'maintenance.initiate'),
+        'parking_fallback_roles'      => ['inspector'],
     ],
 
 ];

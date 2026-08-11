@@ -203,6 +203,19 @@ class OfficeManagerSync
                 if (array_key_exists('odometer', $data) && (int) ($vehicle->odometer ?? 0) > (int) $data['odometer']) {
                     $data['odometer'] = (int) $vehicle->odometer;
                 }
+                // Battery date only ever goes FORWARD, for the same reason and by the same rule. This
+                // column is no longer API-only: closing a ticket that carried a battery replacement
+                // stamps it here (Vehicle::recordServiceDone ← confirmRoutineServices). OM is a READ-ONLY
+                // replica for us — we can never push that date back to it — so every scheduled sync
+                // carried OM's older date over the change we had just recorded, resetting the car's
+                // battery age and re-raising the battery check for a battery fitted yesterday.
+                // Whoever holds the LATER date holds the truth: a battery cannot be fitted in the past.
+                if (array_key_exists('battery_last_changed', $data) && $vehicle->battery_last_changed) {
+                    $incoming = $data['battery_last_changed'];
+                    if ($incoming && $vehicle->battery_last_changed->gt(Carbon::parse($incoming))) {
+                        unset($data['battery_last_changed']);
+                    }
+                }
                 $vehicle->fill($data)->save();
                 $updated++;
             } else {
@@ -514,6 +527,7 @@ class OfficeManagerSync
 
         $odometersBumped = 0;
         $requestsWithdrawn = 0;
+        $requestsCleared = 0;
         if (! $dryRun) {
             // rebuild every customer's cached balance from the new contracts
             app(AccountingService::class)->recalcAllCustomers();
@@ -524,7 +538,12 @@ class OfficeManagerSync
             // an inspection request sitting in the Controllers' review queue from before it went in. The
             // contract answers it: withdraw the request and record which contract did it, so nobody is
             // asked to approve a test drive for a car that is already on a lift.
-            $requestsWithdrawn = app(MaintenanceWorkflowService::class)->withdrawRequestsForMaintenanceContracts();
+            $workflowService   = app(MaintenanceWorkflowService::class);
+            $requestsWithdrawn = $workflowService->withdrawRequestsForMaintenanceContracts();
+            // …and the other end of the same fact: a contract that CLOSED in this import means the car
+            // came back, which restarts its check clock. Any system request still asking for a test it
+            // raised before that return is now answered too.
+            $requestsCleared = $workflowService->withdrawRequestsWhoseConditionCleared();
             // bring each car's odometer up to its freshest contract handover reading — the
             // car-card Milage lags behind the real OutMilage/InMilage the branch records.
             $odometersBumped = $this->reconcileOdometersFromContracts();
@@ -546,6 +565,7 @@ class OfficeManagerSync
                 'corrections'            => count($this->corrections),
                 'odometers_bumped'       => $odometersBumped,
                 'requests_withdrawn'     => $requestsWithdrawn,
+                'requests_cleared'       => $requestsCleared,
                 'null_overwrites_prevented' => $this->nullOverwriteCount,
                 'null_overwrite_samples'  => $this->nullOverwriteSamples,
             ];

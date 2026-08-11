@@ -112,6 +112,21 @@ return [
         'enabled'       => env('FEATURE_DIAGNOSTIC_GATE', true),
         'downtime_days' => (int) env('DIAGNOSTIC_GATE_DOWNTIME_DAYS', 15),
         'inactive_days' => (int) env('DIAGNOSTIC_GATE_INACTIVE_DAYS', 30),
+
+        // Does the N-Maintenance GARAGE LOG (sheet-imported / hand-entered workshop rows) count as
+        // "this car is in the shop"?
+        //
+        // OFF (owner's decision, 2026-08-11): the OfficeManager maintenance contract is the only fact
+        // allowed to park a car. The log was a transitional stand-in from before every workshop trip
+        // opened a contract, and it is not trustworthy enough to freeze a car's test clock on: 34 of
+        // its 47 open rows are stage 'Test' rather than a repair, most carry no garage name, and
+        // roughly 70% of historical rows are an OUT whose return was never written down — which is why
+        // it needed a 60-day lookback to stay sane at all.
+        //
+        // Turning this back on restores the log as a second parking source everywhere at once (the
+        // clock hold, the parked tab, the planning board and the request sweeps) — they all read
+        // DiagnosticGateService, so they cannot drift apart.
+        'workshop_log_parks' => env('DIAGNOSTIC_GATE_WORKSHOP_LOG_PARKS', false),
     ],
 
     /*

@@ -97,11 +97,26 @@ class LogisticsTask extends Model
     /** Common destinations surfaced as quick-picks in the UI (free text is still allowed). */
     public const COMMON_DESTINATIONS = ['Deals on Wheels', 'Garage', 'Office', 'Showroom', 'Parking Yard'];
 
+    /**
+     * GO AND GET THE CAR FROM THE CUSTOMER — a collection, not an ordinary run.
+     *
+     * The car is somebody else's until the driver takes the keys, and the reading at the doorstep is
+     * the reason the trip exists, so this kind of move gets its own heading in the driver's queue and
+     * always demands the odometer at pick-up. See the `purpose` migration.
+     */
+    public const PURPOSE_CUSTOMER_COLLECTION = 'oil_recall_collection';
+
+    /** Is this move a collection from a customer's doorstep? */
+    public function isCustomerCollection(): bool
+    {
+        return $this->purpose === self::PURPOSE_CUSTOMER_COLLECTION;
+    }
+
     /** One-click status replies an assignee can send back to a "Ping location" (free text also allowed). */
     public const STATUS_PRESETS = ['At site', 'In traffic', 'Arrived'];
 
     protected $fillable = [
-        'vehicle_id', 'vehicle_plate', 'vehicle_label', 'maintenance_id',
+        'vehicle_id', 'vehicle_plate', 'vehicle_label', 'maintenance_id', 'purpose',
         'destination', 'round_trip',
         'assigned_to_id', 'assigned_to_name',
         'assigned_by_id', 'assigned_by_name',
@@ -169,7 +184,9 @@ class LogisticsTask extends Model
      */
     public function requiresOdometer(): bool
     {
-        return (bool) ($this->round_trip || $this->maintenance_id);
+        // A collection always does: the reading at the customer's doorstep is the reason the trip
+        // exists, and once the car is ours that moment has gone.
+        return (bool) ($this->round_trip || $this->maintenance_id || $this->isCustomerCollection());
     }
 
     /**

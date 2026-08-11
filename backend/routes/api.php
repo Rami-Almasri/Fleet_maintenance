@@ -288,6 +288,24 @@ Route::middleware('auth:sanctum')->group(function () {
     // same call, acting on what the number just told them.
     Route::post('Contract/{contract}/oil-decision', [\App\Http\Controllers\OilProjectionController::class, 'decide'])
         ->middleware('permission:reminders.manage');
+    // The SALES GATE on a recall. Until this is clicked no driver hears anything — the car is a
+    // paying customer's until Sales say they have agreed to give it back. Same permission as the
+    // decision itself: it is the same person, closing the loop on the call they started.
+    Route::post('Contract/{contract}/oil-recall/sales-confirm', [\App\Http\Controllers\OilProjectionController::class, 'confirmSales'])
+        ->middleware('permission:reminders.manage');
+    // What the car owes after collection. Accepts `test_required` only — the oil change is derived
+    // from the recall, never posted, so no caller can remove it.
+    Route::post('Contract/{contract}/oil-recall/instructions', [\App\Http\Controllers\OilProjectionController::class, 'collectionInstructions'])
+        ->middleware('permission:reminders.manage');
+    // THE OIL WAS CHANGED. One number — the odometer it was changed at — and the follow-up ends:
+    // the car's next service runs from that reading, the projection re-anchors on it, and the
+    // recall, the collection and the announcing inspection request all stand down. Reachable by
+    // whoever is actually holding the car: the follow-up controllers OR the workshop side, which is
+    // why it accepts either permission instead of forcing the change to be relayed back to Leen.
+    Route::post('Contract/{contract}/oil-change-done', [\App\Http\Controllers\OilProjectionController::class, 'oilChanged'])
+        // …and the DRIVER too: on a parking job he is often the one who changes it, and making him
+        // relay the number back to Leen to type in is how a reading stops being a reading.
+        ->middleware('permission:reminders.manage|maintenance.manage|maintenance.logistics');
     // The recall call queue — "phone the customer and arrange the return". A follow-up task, NOT a
     // logistics dispatch: no route, no driver, no ETA (see the OilRecallTask migration).
     Route::get('OilRecallTasks', [\App\Http\Controllers\OilProjectionController::class, 'recallTasks'])
@@ -352,6 +370,10 @@ Route::middleware('auth:sanctum')->prefix('logistics')->controller(LogisticsDisp
     Route::get('/', 'index')->middleware('permission:logistics.view');                          // all open dispatches (board)
     Route::get('/pool', 'pool')->middleware('permission:logistics.view');                        // unclaimed moves up for grabs
     Route::get('/my-queue', 'myQueue');                                                          // current user's claimed queue
+    // Cars to collect FROM CUSTOMERS — the driver's panel on /my-maintenance-queue. Includes his
+    // just-delivered ones whose oil change is still unrecorded, because a one-way move closes on
+    // delivery and the card would otherwise vanish one step before its last step.
+    Route::get('/my-collections', 'myCollections');
     Route::get('/assignees', 'assignees')->middleware('permission:logistics.dispatch');          // people + destination presets
     Route::get('/drivers', 'roster')->middleware('permission:logistics.view');                   // driver availability roster (free / busy + what they're on)
     Route::post('/', 'store')->middleware('permission:logistics.dispatch');                      // coordinator raises a move
@@ -506,6 +528,12 @@ Route::middleware('auth:sanctum')->prefix('maintenance-tickets')->controller(Mai
     // The rules behind system-raised requests — powers the queue's "when & why the system asks for a
     // test" explainer with the LIVE thresholds. STATIC — must precede /{ticket}.
     Route::get('/review-gate-rules', 'reviewGateRules')->middleware('permission:maintenance.manage');
+    // The other side of the same rulebook: every active car and how many days until the system asks for
+    // a test on it. Powers the queue's fleet tab. STATIC — must precede /{ticket}.
+    Route::get('/test-countdown', 'testCountdown')->middleware('permission:maintenance.manage');
+    // Cars physically in a shop right now (open OM type-U contract or open garage-log trip), with the
+    // request each one had pending when it went in. STATIC — must precede /{ticket}.
+    Route::get('/parked-in-shop', 'parkedInShop')->middleware('permission:maintenance.manage');
     // The fixed rejection-reason list the queue's picker renders (code + label). Read-only reference,
     // gated on `view`: anyone who can see a rejected request should be able to read what its stored code
     // means, without also being able to reject one. STATIC — must precede /{ticket}.

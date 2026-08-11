@@ -685,11 +685,30 @@ class Maintenance extends Model
      *   in_maintenance_contract — OfficeManager opened a maintenance contract (type U) on the car. The car
      *   is already in the workshop; asking a Controller to approve a test drive for it is asking about a
      *   car that has already gone. See MaintenanceWorkflowService::withdrawRequestsForMaintenanceContracts().
+     *
+     *   in_workshop_log — the garage log (sheet-imported or hand-entered workshop event) shows the car went
+     *   OUT to a garage and has not come back. TRANSITIONAL: while workshop trips are still being recorded
+     *   on the sheet rather than as OM contracts, the sheet is the fact that answers the request; once every
+     *   trip opens an OM contract this code should stop firing on its own (the contract code fires first).
+     *   See MaintenanceWorkflowService::withdrawRequestsForWorkshopLog().
+     *
+     *   condition_cleared — the car has been to a workshop and COME BACK since the system raised the
+     *   request. The two codes above are snapshots of a car that is away right now; this one is the rule
+     *   that outlives them. The post-downtime clock counts from the day the car last came back
+     *   (DiagnosticGateService::readyAnchor), so a return that happened after the request was raised has
+     *   already restarted the count — the condition the system was complaining about is gone, whether or
+     *   not the stint was ever visible as an open contract. Only ever applied to a system_schedule
+     *   request: a person's request stands until a person answers it.
+     *   See MaintenanceWorkflowService::withdrawRequestsWhoseConditionCleared().
      */
     public const REVIEW_REJECT_IN_MAINTENANCE_CONTRACT = 'in_maintenance_contract';
+    public const REVIEW_REJECT_IN_WORKSHOP_LOG         = 'in_workshop_log';
+    public const REVIEW_REJECT_CONDITION_CLEARED       = 'condition_cleared';
 
     public const REVIEW_SYSTEM_WITHDRAWAL_REASONS = [
         self::REVIEW_REJECT_IN_MAINTENANCE_CONTRACT => 'Already in maintenance (OfficeManager contract)',
+        self::REVIEW_REJECT_IN_WORKSHOP_LOG         => 'Already in the workshop (garage log)',
+        self::REVIEW_REJECT_CONDITION_CLEARED       => 'Back from maintenance — the check clock restarted',
     ];
 
     /** True when a stored rejection code was written by the system, not chosen by a reviewer. */

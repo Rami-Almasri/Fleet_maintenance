@@ -155,6 +155,10 @@
 .mwf-parts-tip .ln{display:flex;align-items:baseline;gap:6px;justify-content:space-between}
 .mwf-parts-tip .ln .nm{font-weight:600;overflow-wrap:anywhere}
 .mwf-parts-tip .ln .st{flex:none;opacity:.68;font-size:10px;white-space:nowrap}
+/* Where the repair happens: on-site (mobile, car never leaves) vs in-shop (goes to a workshop).
+   Two distinct tones so the answer reads at a glance from across the board. */
+.mwf-pill.onsite{color:var(--avail);background:rgba(52,211,153,.12);border-color:rgba(52,211,153,.32)}
+.mwf-pill.shop{color:var(--rented);background:rgba(96,165,250,.12);border-color:rgba(96,165,250,.32)}
 .mwf-pill.due{color:var(--ink-2);background:var(--ov);border-color:var(--line)}
 .mwf-pill.due.over{color:var(--crit);background:rgba(251,113,133,.12);border-color:rgba(251,113,133,.34)}
 .opx-chip.moving{animation:mwf-pulse 1.6s ease-in-out infinite}

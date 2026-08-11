@@ -5,10 +5,12 @@ namespace App\Services;
 use App\Models\Contract;
 use App\Models\ContractMileageReading;
 use App\Models\ContractOilDecision;
+use App\Models\LogisticsTask;
 use App\Models\Maintenance;
 use App\Models\OilRecallTask;
 use App\Models\User;
 use App\Models\Vehicle;
+use App\Models\VehicleLogEvent;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -111,6 +113,102 @@ class OilChangeProjectionService
      */
     public const DECISION_FRESH_DAYS = 1;
 
+    /**
+     * How close to its oil point a car must be before "recall or defer?" is a question worth asking.
+     *
+     * The decision axis is pure arithmetic: any long rental will exceed its allowance eventually, so
+     * `expected_return > allowed_max` is true of a car with a WHOLE INTERVAL still in front of it.
+     * Found by walking the flow end to end: the moment an oil change was recorded — new limit, fresh
+     * anchor, 7,000 km of life ahead — the board immediately asked whether to recall the car again.
+     * Arithmetically right, operationally absurd, and precisely the noise this board exists to remove.
+     *
+     * So a decision only becomes today's business once the car is within a week's driving of its oil
+     * point. Before that the fact is still published (`oil_status` stays `decision_required` and the
+     * card says the rental cannot finish inside the allowance) — it simply is not put in front of a
+     * person yet, because nothing they decide today would be acted on for a month.
+     */
+    public const DECISION_WINDOW_DAYS = 7;
+
+    // ── The OPERATIONAL LANE ─────────────────────────────────────────────────────────────────
+    // One primary action per car, derived HERE so the board, the tab counts and any future
+    // consumer can never disagree. The decision/chase axes above stay authoritative for WHAT is
+    // true of the car; the lane says what a person DOES about it today, by strict priority:
+    //
+    //   1. A returned car never reaches this board at all (`Contract::currentlyOpen()`), and the
+    //      hourly oil:settle-returns sweep raises its ticket — so "actually returned" is handled
+    //      upstream of the lane, never mislabelled as a call.
+    //   2. Due back TODAY (or overdue) and still out ⇒ SERVICE_ON_RETURN. Phoning a customer to
+    //      ask about oil on the day they are already returning the car is operational nonsense —
+    //      the action is: when it arrives, read the real odometer, check the oil, service if due.
+    //   3. An intervention already agreed or answerable now ⇒ ACTION_REQUIRED (open recall, or a
+    //      fresh reading proving the allowance cannot survive the rental).
+    //   4. A stale number on a car that still has days to run ⇒ CALL_CUSTOMER.
+    //   5. Everything else ⇒ SAFE (within tolerance, or booked for service at close).
+
+    public const LANE_ACTION_REQUIRED   = 'action_required';
+    public const LANE_SERVICE_ON_RETURN = 'service_on_return';
+    public const LANE_CALL_CUSTOMER     = 'call_customer';
+    public const LANE_SAFE              = 'safe';
+    public const LANE_NO_DATA           = 'no_data';
+
+    /** @param array<string,mixed> $p a payload built by project() */
+    public function laneFor(array $p): string
+    {
+        if (($p['oil_status'] ?? self::OIL_NO_DATA) === self::OIL_NO_DATA) {
+            return self::LANE_NO_DATA;
+        }
+
+        // FIRST: is there an oil question at all? A car that finishes the rental before it even
+        // reaches its oil point has nothing to ask, answer or catch on arrival — whatever its
+        // return date. Putting a car with a full interval left in front of a person because it
+        // happens to come back today is exactly the noise this board exists to remove.
+        $concern = in_array($p['oil_status'], [
+            self::OIL_DECISION_REQUIRED,
+            self::OIL_RECALL_REQUIRED,
+            self::OIL_SERVICE_ON_RETURN,
+        ], true) || ($p['status'] ?? null) === 'chase_due';
+
+        // …but a DECISION about a car that is nowhere near its oil point is not today's business.
+        // A car whose oil was changed this morning is arithmetically certain to bust its allowance
+        // again before a 60-day rental ends — putting it back in front of a person the same day is
+        // how a queue teaches people to ignore it. The fact stays published; the card goes quiet
+        // until the car is within a week's driving of the point itself.
+        if ($p['oil_status'] === self::OIL_DECISION_REQUIRED
+            && ! ($p['decision_due_soon'] ?? true)
+            && ($p['status'] ?? null) !== 'chase_due') {
+            return self::LANE_SAFE;
+        }
+
+        if (! $concern) {
+            return self::LANE_SAFE;
+        }
+
+        // Only then does the arrival rule apply: a car with a real oil question that is due back
+        // today (or overdue) is caught on arrival, never phoned.
+        if (($p['return_date_known'] ?? false) && ($p['remaining_days'] ?? null) === 0) {
+            return self::LANE_SERVICE_ON_RETURN;
+        }
+        if ($p['oil_status'] === self::OIL_RECALL_REQUIRED || ($p['decision_ready'] ?? false)) {
+            return self::LANE_ACTION_REQUIRED;
+        }
+        if ($p['oil_status'] === self::OIL_DECISION_REQUIRED || ($p['status'] ?? null) === 'chase_due') {
+            return self::LANE_CALL_CUSTOMER;
+        }
+        return self::LANE_SAFE;
+    }
+
+    // ── Oil-service reading vs the projection anchor ─────────────────────────────────────────
+    // The sheet's "LAST CHANGE" km is a REAL dashboard observation (a workshop employee read the
+    // dash), but the sheet carries NO reliable date for it — so it can never become a projection
+    // anchor (no date ⇒ no days-elapsed). What it CAN do is contradict the anchor, and that
+    // contradiction is classified rather than hidden:
+
+    /** Oil service recorded ahead of the anchor, at a km the car could plausibly have reached. */
+    public const SERVICE_MID_RENTAL = 'mid_rental_service';
+
+    /** Oil service recorded ahead of anything the car could have reached — verify the sheet row. */
+    public const SERVICE_SUSPICIOUS = 'suspicious';
+
     /** Readings at or below this are the branch's "didn't record it" sentinels, never real mileage. */
     private const PLACEHOLDER_MAX = MileageBaselineService::PLACEHOLDER_MAX;
 
@@ -153,6 +251,46 @@ class OilChangeProjectionService
         $limit = $this->oilLimit($vehicle);
 
         return $limit === null ? null : $limit + $this->grace();
+    }
+
+    /**
+     * Classify the car's last oil-service reading AGAINST the projection anchor.
+     *
+     * Returns null when there is nothing to say: no service baseline, or the service km sits at or
+     * below the anchor (the normal case — the oil was changed before the car went out). When the
+     * service km is AHEAD of the anchor it is either a genuine mid-rental service or a bad sheet
+     * row, and the split is a plausibility test: could this car, driving at the prediction rate
+     * since its anchor date, actually have reached that odometer? Within today's projection plus
+     * the configured margin ⇒ `mid_rental_service` (informational). Beyond it ⇒ `suspicious` —
+     * the record physically contradicts the mileage evidence and a human must check the sheet
+     * before trusting anything derived from it (including the oil limit itself).
+     *
+     * Deliberately NEVER promotes the service km to an anchor: the sheet carries no reliable
+     * service date, and an undated reading cannot be projected forward.
+     *
+     * @return array{odometer:int, ahead_of_anchor_km:int, state:string}|null
+     */
+    public function serviceReadingState(Vehicle $vehicle, array $anchor, int $expected): ?array
+    {
+        $serviceKm = $vehicle->last_service_odometer;
+        if ($serviceKm === null || (int) $serviceKm <= self::PLACEHOLDER_MAX) {
+            return null;
+        }
+
+        $ahead = (int) $serviceKm - (int) $anchor['odometer'];
+        if ($ahead <= 0) {
+            return null;
+        }
+
+        $margin = max(0, (int) config('maintenance.oil_projection.service_plausibility_margin_km', 500));
+
+        return [
+            'odometer'           => (int) $serviceKm,
+            'ahead_of_anchor_km' => $ahead,
+            'state'              => (int) $serviceKm <= $expected + $margin
+                ? self::SERVICE_MID_RENTAL
+                : self::SERVICE_SUSPICIOUS,
+        ];
     }
 
     /**
@@ -221,7 +359,9 @@ class OilChangeProjectionService
      *   anchor_source:?string, reading_id:?int, days_elapsed:?int, rate:int, grace:int,
      *   km_to_threshold:?int, breach_on:?string, key:?string, oil_status:string, oil_limit:?int,
      *   tolerance:int, allowed_max:?int, return_due_on:?string, remaining_days:?int,
-     *   return_date_known:bool, expected_return:?int, over_tolerance_km:?int, decision:?array
+     *   return_date_known:bool, expected_return:?int, over_tolerance_km:?int, decision:?array,
+     *   handover_odometer:?int, handover_on:?string, oil_service_odometer:?int,
+     *   oil_service_ahead_km:?int, oil_service_state:?string
      * }
      */
     public function project(Contract $contract, ?Carbon $asOf = null): array
@@ -243,6 +383,14 @@ class OilChangeProjectionService
             'km_to_threshold' => null,
             'breach_on'       => null,
             'key'             => null,
+            // ── evidence trail ── the handover reading is published SEPARATELY from the anchor so
+            // no consumer ever has to guess which one it is looking at, and the oil-service reading
+            // is classified against the anchor instead of being silently trusted or hidden.
+            'handover_odometer'  => null,
+            'handover_on'        => null,
+            'oil_service_odometer' => null,
+            'oil_service_ahead_km' => null,
+            'oil_service_state'    => null,
             // ── decision axis ──
             'oil_status'        => self::OIL_NO_DATA,
             'oil_limit'         => null,
@@ -255,11 +403,23 @@ class OilChangeProjectionService
             'over_tolerance_km' => null,
             'decision'          => null,
             'decision_ready'    => false,
+            'decision_due_soon' => false,
+            'decision_window_km' => null,
+            'lane'              => self::LANE_NO_DATA,
         ];
 
         $vehicle = $contract->vehicle;
         if (! $vehicle) {
             return $base;
+        }
+
+        // The handover reading, published under its own name whatever the anchor turns out to be.
+        if ($contract->out_milage !== null && (int) $contract->out_milage > self::PLACEHOLDER_MAX && $contract->out_date) {
+            $base['handover_odometer'] = (int) $contract->out_milage;
+            $base['handover_on']       = Carbon::parse($contract->out_date)->toDateString();
+        }
+        if ($vehicle->last_service_odometer !== null && (int) $vehicle->last_service_odometer > self::PLACEHOLDER_MAX) {
+            $base['oil_service_odometer'] = (int) $vehicle->last_service_odometer;
         }
 
         $oilLimit  = $this->oilLimit($vehicle);
@@ -302,8 +462,15 @@ class OilChangeProjectionService
 
         $decision  = $this->latestDecision($contract);
         $oilStatus = $this->classify($expectedReturn, $oilLimit, $threshold, $decision, $anchor);
+        $service   = $this->serviceReadingState($vehicle, $anchor, $expected);
 
-        return [
+        // How near the car is to the oil point itself — the difference between "this rental cannot
+        // finish inside its allowance" (arithmetic, often about a date a month away) and "somebody
+        // should decide about this car today".
+        $window  = $rate * max(0, (int) config('maintenance.oil_projection.decision_window_days', self::DECISION_WINDOW_DAYS));
+        $dueSoon = $oilLimit === null || $expected >= ($oilLimit - $window);
+
+        $out = array_merge($base, [
             'status'          => $isDue ? 'chase_due' : 'ok',
             'expected'        => $expected,
             'threshold'       => $threshold,
@@ -336,8 +503,23 @@ class OilChangeProjectionService
             // car belongs in the chase queue, not the decision queue.
             'decision_ready'    => $oilStatus === self::OIL_DECISION_REQUIRED
                                 && $anchor['source'] === self::ANCHOR_READING
-                                && $daysElapsed <= self::DECISION_FRESH_DAYS,
-        ];
+                                && $daysElapsed <= self::DECISION_FRESH_DAYS
+                                && $dueSoon,
+            // Is the car actually NEAR the oil point it will overshoot? Published in its own right
+            // so the board can say "not yet — we'll ask when it gets close" instead of going quiet
+            // for reasons nobody can see.
+            'decision_due_soon' => $dueSoon,
+            'decision_window_km' => $window,
+            // ── evidence trail ──
+            'oil_service_ahead_km' => $service['ahead_of_anchor_km'] ?? null,
+            'oil_service_state'    => $service['state'] ?? null,
+        ]);
+
+        // The lane is derived LAST, from the finished payload, so it can never disagree with the
+        // axes it summarises.
+        $out['lane'] = $this->laneFor($out);
+
+        return $out;
     }
 
     /**
@@ -404,6 +586,9 @@ class OilChangeProjectionService
             'superseded'               => $decision->isOpen()
                 && $decision->decision === ContractOilDecision::DECISION_DEFER
                 && $this->supersedes($anchor, $decision),
+            // The recall relay — null unless this decision actually was a recall. The board reads
+            // its next action from here rather than re-deriving one from the raw figures.
+            'recall'                   => $this->recallState($decision),
         ];
     }
 
@@ -502,8 +687,13 @@ class OilChangeProjectionService
      * owes an oil change the moment it is back, and that flag is what the rest of the system
      * already understands by "owes maintenance".
      */
-    public function decide(Contract $contract, string $decision, ?User $actor = null, ?string $note = null): ContractOilDecision
-    {
+    public function decide(
+        Contract $contract,
+        string $decision,
+        ?User $actor = null,
+        ?string $note = null,
+        array $options = [],
+    ): ContractOilDecision {
         if (! in_array($decision, ContractOilDecision::DECISIONS, true)) {
             throw ValidationException::withMessages([
                 'decision' => 'Choose one: recall the car now, or do the oil change when it comes back.',
@@ -518,9 +708,14 @@ class OilChangeProjectionService
             ]);
         }
 
-        // The gate. `recall_required` is included so a recall can be revised to a defer.
+        // The gate. `recall_required` is included so a recall can be revised to a defer — and an
+        // OPEN prior decision keeps the question revisable in BOTH directions: once a defer is
+        // recorded the classifier reads the car as "booked for return", which must not lock the
+        // Controller out of escalating that same car to a recall while it is still out.
+        $prior    = $this->latestDecision($contract);
+        $revising = $prior !== null && $prior->isOpen();
         $decidable = [self::OIL_DECISION_REQUIRED, self::OIL_RECALL_REQUIRED];
-        if (! in_array($projection['oil_status'], $decidable, true)) {
+        if (! in_array($projection['oil_status'], $decidable, true) && ! $revising) {
             throw ValidationException::withMessages([
                 'decision' => 'This car is projected to finish inside the '
                             . number_format($projection['allowed_max']) . ' km allowance, so there is nothing to decide'
@@ -528,7 +723,31 @@ class OilChangeProjectionService
             ]);
         }
 
-        return DB::transaction(function () use ($contract, $decision, $actor, $note, $projection) {
+        // ── Leen's two operational choices, taken at the same moment as the decision ──────────
+        // `test_required`: is this car being tested as well? Leen answers it on the recall dialog,
+        // and her answer decides TWO things at once — whether a test is in the driver's brief, and
+        // whether an inspection request exists for this car at all.
+        //
+        // Silence is neither yes nor no. A caller that sends nothing is an older caller, not a
+        // person who decided against a test, so it keeps exactly the behaviour it always had: the
+        // announcing request is filed, and `test_required` stays NULL ("nobody has said yet") for
+        // the dispatcher to answer later through the collection instructions.
+        $pendingTest = $this->pendingTestRequest($contract->vehicle_id, $prior?->inspection_ticket_id);
+        $testChoice  = array_key_exists('test_required', $options) && $options['test_required'] !== null
+            ? (bool) $options['test_required']
+            : null;
+        $testRequired = $testChoice ?? $prior?->test_required;
+        $fileRequest  = $testChoice ?? true;
+
+        $location = $options['service_location'] ?? $prior?->service_location;
+        if ($location !== null && ! in_array($location, ContractOilDecision::LOCATIONS, true)) {
+            throw ValidationException::withMessages([
+                'service_location' => 'Say where the oil will be changed: at a garage, or in our parking.',
+            ]);
+        }
+        $location ??= ContractOilDecision::LOCATION_GARAGE;
+
+        return DB::transaction(function () use ($contract, $decision, $actor, $note, $projection, $prior, $testRequired, $fileRequest, $location, $pendingTest) {
             $row = ContractOilDecision::create([
                 'contract_id'              => $contract->id,
                 'vehicle_id'               => $contract->vehicle_id,
@@ -544,6 +763,13 @@ class OilChangeProjectionService
                 'is_auto'                  => false,
             ]);
 
+            // The two choices, stamped before anything reads them. Written with forceFill because
+            // they are operational instructions, not client-supplied attributes of the decision.
+            $row->forceFill([
+                'test_required'    => $testRequired,
+                'service_location' => $location,
+            ])->save();
+
             // Whatever was chosen, the car owes an oil change on return. Reuse the standing flag the
             // rest of the fleet already reads as "route this car to the garage when it lands".
             if ($contract->vehicle) {
@@ -554,16 +780,879 @@ class OilChangeProjectionService
                 );
             }
 
-            // A recall is a CONVERSATION, so it produces a task for the Controllers to have it —
-            // nothing more. Deferring is not a task: the rental simply runs its course.
+            // ONE follow-up request per contract in the EXISTING inspection workflow — created on
+            // the first decision, reused and re-stamped on every revision (never duplicated). The
+            // request carries a REFERENCE to this decision; every figure the inspection side shows
+            // is recomputed live from it.
+            //
+            // …and when the car is NOT being tested there is no request at all: the oil change is a
+            // driver job, and filing a test request for it would put a card in the review queue
+            // asking a Controller to approve an inspection nobody wants.
+            $ticket = $fileRequest
+                ? $this->syncInspectionFollowUp($contract, $projection, $decision, $actor, $row, $pendingTest)
+                : null;
+
             if ($decision === ContractOilDecision::DECISION_RECALL) {
+                // Carry the relay forward. Re-affirming a recall that Sales already agreed (a
+                // second "Recall now" tap, or a revision after a fresh reading) must NOT reset the
+                // car to "waiting for Sales" and orphan the collection a driver is already running.
+                $this->inheritRecallProgress($prior, $row);
+                // …but the choices just made are THIS decision's, so they win over what was carried.
+                $row->forceFill([
+                    'test_required'    => $testRequired,
+                    'service_location' => $location,
+                ])->save();
+
+                // The conversation: reach Sales, have them agree the return with the customer.
                 $this->openRecallTask($row, $contract, $projection, $actor, $note);
+
+                // 🛑 NO driver collection here, deliberately. The car belongs to a paying customer
+                // until Sales says they have agreed to give it back; dispatching a driver before
+                // that sends someone to a doorstep nobody has knocked on. The retrieval is raised
+                // by confirmSales() — the one gate — and only then does the driver pool hear
+                // anything at all. See [[oil-recall-sales-gate]].
             } else {
                 $this->cancelOpenRecallTasks($contract, 'Revised to "do it on return".');
+                $this->cancelRecallCollections($contract, $actor,
+                    'Oil decision revised to "do it on return" — the customer keeps the car until the agreed return.');
             }
 
             return $row;
         });
+    }
+
+    /**
+     * Create-or-reuse the ONE inspection follow-up request a decided contract owns, inside the
+     * EXISTING workflow (Stage-0 Controller request → Inspector's queue). The request stores a
+     * REFERENCE to the decision in `trigger_detail` (plus an at-decision snapshot for audit);
+     * everything the inspection side displays is recomputed live from that reference, so a new
+     * mileage reading changes the story everywhere at once.
+     *
+     * Best-effort by design: the decision row is the authoritative write, and a workflow that
+     * refuses (inactive fleet, missing actor) must never undo it.
+     */
+    private function syncInspectionFollowUp(
+        Contract $contract,
+        array $projection,
+        string $decision,
+        ?User $actor,
+        ContractOilDecision $row,
+        ?Maintenance $adoptable = null,
+    ): ?Maintenance {
+        if (! $actor || ! $contract->vehicle_id) {
+            return null; // the request must be attributable to the Controller who decided
+        }
+
+        try {
+            $verb = $decision === ContractOilDecision::DECISION_RECALL ? 'recall now' : 'oil change on return';
+
+            // Reuse the open request an earlier decision on this contract already filed.
+            $existingId = ContractOilDecision::where('contract_id', $contract->id)
+                ->whereNotNull('inspection_ticket_id')
+                ->orderByDesc('id')
+                ->value('inspection_ticket_id');
+            $ticket = $existingId ? Maintenance::find($existingId) : null;
+            if ($ticket && in_array($ticket->workflow_status, Maintenance::WF_TERMINAL, true)) {
+                $ticket = null;
+            }
+            $adopted = $ticket ? (bool) $row->request_adopted : false;
+
+            // ADOPT the request the fleet ALREADY has. When the system has flagged this car for a
+            // routine check and Leen says "yes, test it too", the oil change is added to THAT card
+            // rather than filing a second request for the same car on the same day. Two cards for
+            // one car is how a queue stops being believed.
+            if (! $ticket && $adoptable) {
+                $ticket  = $adoptable;
+                $adopted = true;
+            }
+
+            if (! $ticket) {
+                // Filed with a STUB note: the workflow log quotes the whole note inside its own
+                // finite description line; the full figures go on the ticket right after.
+                $ticket = app(MaintenanceWorkflowService::class)->requestInspectionByController([
+                    'vehicle_id'         => (int) $contract->vehicle_id,
+                    'trigger_reason'     => 'test_drive',   // a proactive check, in the office-request pattern
+                    'customer_complaint' => sprintf('Oil follow-up — %s (contract %s).', $verb, $contract->contract_no ?? $contract->id),
+                    'test_kind'          => Maintenance::TEST_ROUTINE_CHECK,
+                ], $actor);
+
+                // The follow-up WAITS in the review queue rather than jumping straight to the
+                // Inspector: /inspection-review is the waiting room for a car that is still out
+                // (its card shows "Waiting for return"), and approving it when the car actually
+                // arrives is what hands it to the Inspector. The Controller stamps stay — the
+                // request remains fully attributable.
+                $ticket->workflow_status = Maintenance::WF_PENDING_REVIEW;
+            }
+
+            $overAllowance = max(0, (int) ($projection['over_tolerance_km'] ?? 0));
+
+            // The reference (authoritative) + an at-decision snapshot (audit): "what did the
+            // Controller see when they decided" stays answerable even after readings move on.
+            $oilDetail = [
+                'source'                   => 'oil_projection',
+                'contract_oil_decision_id' => $row->id,
+                'contract_id'              => $contract->id,
+                'contract_no'              => $contract->contract_no,
+                'decision'                 => $decision,
+                'decided_by'               => $actor->name,
+                'adopted_request'          => $adopted,
+                'figures_at_decision'      => [
+                    'anchor_odometer' => $projection['anchor_odometer'],
+                    'expected_return' => $projection['expected_return'],
+                    'oil_limit'       => $projection['oil_limit'],
+                    'allowed_max'     => $projection['allowed_max'],
+                    'over_allowance'  => $overAllowance,
+                    'remaining_days'  => $projection['remaining_days'],
+                ],
+            ];
+            $oilLine = sprintf(
+                'Oil follow-up — %s. Moved more than expected: ~%s km over the %s km max (return ~%s km; last reading %s km, contract %s). Check oil on arrival.',
+                $verb,
+                number_format($overAllowance),
+                number_format((int) $projection['allowed_max']),
+                number_format((int) $projection['expected_return']),
+                number_format((int) $projection['anchor_odometer']),
+                $contract->contract_no ?? $contract->id,
+            );
+
+            if ($adopted) {
+                // An adopted request keeps its OWN reason and its own trigger detail — the system's
+                // "why this car was flagged" is evidence, not scaffolding, and overwriting it would
+                // leave a card that can no longer explain why it exists. The oil layer is added
+                // ALONGSIDE it, under its own key, and the review card renders both.
+                $detail = is_array($ticket->trigger_detail) ? $ticket->trigger_detail : [];
+                $detail['oil_projection'] = $oilDetail;
+                $ticket->trigger_detail   = $detail;
+
+                if (! str_contains((string) $ticket->customer_complaint, 'Oil follow-up')) {
+                    $ticket->customer_complaint = trim((string) $ticket->customer_complaint) . "\n\n" . $oilLine;
+                }
+            } else {
+                $ticket->trigger_detail     = $oilDetail;
+                $ticket->customer_complaint = $oilLine;
+            }
+            $ticket->save();
+
+            $row->forceFill([
+                'inspection_ticket_id' => $ticket->id,
+                'request_adopted'      => $adopted,
+            ])->save();
+
+            return $ticket;
+        } catch (\Throwable $e) {
+            report($e);
+
+            return null;
+        }
+    }
+
+    /**
+     * DOES THE FLEET ALREADY WANT THIS CAR TESTED? — the request sitting in /inspection-review.
+     *
+     * The commonest case by far is the system's own "routine check overdue" card: the car has been
+     * out 15 days, the scheduler flagged it, and it is waiting for a Controller. If Leen is now
+     * recalling that same car for oil, filing a SECOND request would put two cards for one car in
+     * one queue — so this finds the first one, and the oil change is added to it instead.
+     *
+     * Deliberately narrow: only a request that is still WAITING for a decision (nothing already
+     * approved and running), never one the oil lifecycle raised itself, and never a request that is
+     * already linked to this contract's own decision.
+     */
+    public function pendingTestRequest(?int $vehicleId, ?int $excludeTicketId = null): ?Maintenance
+    {
+        if (! $vehicleId) {
+            return null;
+        }
+
+        return Maintenance::query()
+            ->where('vehicle_id', $vehicleId)
+            ->where('workflow_status', Maintenance::WF_PENDING_REVIEW)
+            ->when($excludeTicketId, fn ($q) => $q->where('id', '!=', $excludeTicketId))
+            // Never adopt an oil follow-up — including one raised for a different contract on the
+            // same car. Adopting it would nest the oil story inside itself.
+            ->whereNotIn('id', ContractOilDecision::whereNotNull('inspection_ticket_id')->select('inspection_ticket_id'))
+            ->orderBy('id')
+            ->first();
+    }
+
+    // ── The Sales gate ───────────────────────────────────────────────────────────────────────
+
+    /**
+     * SALES OK — the customer has agreed to bring the car back. This is the gate the whole recall
+     * waits behind, and the only place a driver collection is ever raised.
+     *
+     * The person clicking this is not typing the customer's answer into a form; they are recording
+     * that they spoke to Sales and Sales confirmed. That is why it takes one click and an
+     * authenticated actor and nothing else — the note is optional colour, never the evidence.
+     *
+     * Strictly once. A second click returns the same row untouched: no second collection, no second
+     * alert to the Supervisors, no second anything. The `sales_confirmed_at` stamp is what makes
+     * that true, and it is written before any notification goes out.
+     *
+     * @throws ValidationException when there is no open recall to confirm
+     */
+    public function confirmSales(Contract $contract, User $actor, ?string $note = null): ContractOilDecision
+    {
+        $row = $this->latestDecision($contract);
+
+        if (! $row || $row->decision !== ContractOilDecision::DECISION_RECALL || ! $row->isOpen()) {
+            throw ValidationException::withMessages([
+                'sales' => 'There is no open recall on this rental to confirm. Choose "Recall now" first.',
+            ]);
+        }
+
+        // Already confirmed — say yes, change nothing. Re-tapping a button that has already fired
+        // must never cost the fleet a duplicate driver run.
+        if ($row->isSalesConfirmed()) {
+            return $row;
+        }
+
+        $projection = $this->project($contract);
+
+        return DB::transaction(function () use ($contract, $row, $actor, $note, $projection) {
+            $row->forceFill([
+                'sales_confirmed_at'      => Carbon::now(),
+                'sales_confirmed_by'      => $actor->id,
+                'sales_confirmed_by_name' => $actor->name ?: $actor->email,
+                'sales_note'              => $note,
+            ])->save();
+
+            // The call this recall raised has served its purpose — the customer has agreed. Moved
+            // to `contacted` rather than closed: the car is not back yet, and the Controllers still
+            // own the conversation until it is.
+            OilRecallTask::open()->where('contract_id', $contract->id)->get()
+                ->each(fn (OilRecallTask $t) => $t->forceFill([
+                    'status'       => OilRecallTask::STATUS_CONTACTED,
+                    'claimed_by'   => $t->claimed_by ?: $actor->id,
+                    'claimed_at'   => $t->claimed_at ?: Carbon::now(),
+                    'outcome_note' => trim(($t->outcome_note ? $t->outcome_note . ' · ' : '')
+                                    . 'Sales confirmed the customer will return the car'
+                                    . ($note ? ' — ' . $note : '') . '.'),
+                ])->save());
+
+            // NOW the movement exists. One task, linked to the same follow-up request.
+            $task = $this->openRecallCollection($contract, $row, $projection, $actor);
+            if ($task) {
+                $row->forceFill(['collection_task_id' => $task->id])->save();
+            }
+
+            $this->logRecallEvent($row, VehicleLogEvent::EVENT_OIL_RECALL_SALES_CONFIRMED, $actor, [
+                'description' => 'Sales confirmed the customer will return the car — driver collection released'
+                               . ($task ? ' (dispatch #' . $task->id . ')' : '') . '.',
+                'meta' => [
+                    'contract_id'        => $contract->id,
+                    'contract_no'        => $contract->contract_no,
+                    'oil_decision_id'    => $row->id,
+                    'collection_task_id' => $task?->id,
+                    'from_stage'         => ContractOilDecision::STAGE_WAITING_SALES,
+                    'to_stage'           => $row->fresh()->recallStage(),
+                    'sales_note'         => $note,
+                    'confirmed_by'       => $actor->name,
+                ],
+            ]);
+
+            $this->notifySupervisorsOfCollection($contract, $row->fresh(), $projection, $actor, $task);
+
+            return $row->fresh();
+        });
+    }
+
+    /**
+     * The dispatcher's instruction for what happens to the car after it is collected.
+     *
+     * The ONLY thing this accepts is whether a test/inspection is wanted. The oil change is not on
+     * the form — not as a locked field, not as an ignored field, it is simply not an input — so
+     * there is no request shape, honest or crafted, that can turn it off. A recall that came from
+     * the oil projection owes an oil change by definition; see ContractOilDecision::requiredActions().
+     *
+     * @throws ValidationException when there is no open recall to instruct
+     */
+    public function setCollectionInstructions(Contract $contract, bool $testRequired, User $actor): ContractOilDecision
+    {
+        $row = $this->latestDecision($contract);
+
+        if (! $row || $row->decision !== ContractOilDecision::DECISION_RECALL || ! $row->isOpen()) {
+            throw ValidationException::withMessages([
+                'test_required' => 'There is no open recall on this rental to give instructions for.',
+            ]);
+        }
+
+        return DB::transaction(function () use ($contract, $row, $testRequired, $actor) {
+            $row->forceFill(['test_required' => $testRequired])->save();
+
+            // Rewrite the driver's brief so the person doing the collecting reads the same required
+            // work the workshop will read. The task is the driver's copy; this row is the record.
+            $task = $row->collectionTask;
+            if ($task && $task->isActive()) {
+                $task->notes = $this->collectionBrief($contract, $row);
+                $task->save();
+            }
+
+            $this->logRecallEvent($row, VehicleLogEvent::EVENT_OIL_RECALL_INSTRUCTED, $actor, [
+                'description' => 'After collection: ' . ($testRequired ? 'inspection/test + ' : '')
+                               . 'oil change (required — this recall came from the oil projection).',
+                'meta' => [
+                    'contract_id'      => $contract->id,
+                    'oil_decision_id'  => $row->id,
+                    'required_actions' => $row->requiredActions(),
+                ],
+            ]);
+
+            return $row->fresh();
+        });
+    }
+
+    // ── The far end: the oil was actually changed ────────────────────────────────────────────
+
+    /**
+     * THE OIL IS CHANGED — one number, and the whole follow-up ends.
+     *
+     * Everything upstream of this is arrangement: the projection predicts, a Controller decides,
+     * Sales agree, a driver collects. None of it changes a single kilometre of the car's oil life.
+     * This does. The workshop reads the dash after the change and enters that number, and from it:
+     *
+     *   • the car's service anchor moves      (Vehicle::recordOilService — the SOLE writer of
+     *     `last_service_odometer`, which also rolls the recurring oil ServiceReminder forward, so
+     *     the vehicle profile now says "next change at reading + interval": 20,000 → 27,000);
+     *   • the projection re-anchors           (the reading is stored against the contract, so the
+     *     board recomputes from a REAL number instead of a 200 km/day guess, and the car drops out
+     *     of the queue by arithmetic rather than by someone dismissing it);
+     *   • the follow-up closes                (the decision is stamped and settled, the recall call
+     *     and any collection still out are stood down, the announcing inspection request is
+     *     resolved, and the standing deferred-maintenance flag is cleared).
+     *
+     * The 500 km grace is untouched here on purpose: it belongs to the PROJECTION (how far a car may
+     * run past its limit before it becomes a question), never to the service record. The next cycle
+     * starts at the reading, and the grace is added again on top of the new limit by threshold().
+     *
+     * Idempotent: recording it twice returns the first record untouched — one oil change, one anchor.
+     *
+     * @throws ValidationException when there is no open follow-up, or the reading is not credible
+     */
+    public function recordOilChange(Contract $contract, int $odometer, User $actor, ?string $note = null): ContractOilDecision
+    {
+        $vehicle = $contract->vehicle;
+        if (! $vehicle) {
+            throw ValidationException::withMessages(['odometer' => 'This contract has no vehicle.']);
+        }
+
+        $row = $this->latestDecision($contract);
+        if (! $row) {
+            throw ValidationException::withMessages([
+                'odometer' => 'There is no oil follow-up on this rental. Decide "Recall now" or'
+                            . ' "Do it on return" first, so the change is recorded against something.',
+            ]);
+        }
+
+        // Already recorded. Say yes and change nothing — a double tap must never move the anchor a
+        // second time and hand the car a fresh interval it has not earned.
+        if ($row->isOilChanged()) {
+            return $row;
+        }
+
+        if ($odometer <= self::PLACEHOLDER_MAX) {
+            throw ValidationException::withMessages([
+                'odometer' => 'Enter the odometer the oil was changed at.',
+            ]);
+        }
+
+        // The same discipline as a customer reading: mileage does not run backwards. Getting this
+        // wrong here is worse than on the board — a low number becomes the car's service anchor and
+        // silently shortens (or parks) its next interval.
+        $anchor = $this->anchor($contract);
+        if ($anchor && $odometer < $anchor['odometer']) {
+            throw ValidationException::withMessages([
+                'odometer' => 'The reading is below the last known odometer ('
+                            . number_format($anchor['odometer']) . ' km). Check the number.',
+            ]);
+        }
+        if ($vehicle->last_service_odometer !== null && $odometer < (int) $vehicle->last_service_odometer) {
+            throw ValidationException::withMessages([
+                'odometer' => 'The reading is below the last recorded oil service ('
+                            . number_format((int) $vehicle->last_service_odometer) . ' km). Check the number.',
+            ]);
+        }
+
+        return DB::transaction(function () use ($contract, $vehicle, $row, $odometer, $actor, $note, $anchor) {
+            // 1. The reading itself, against the contract — this is what re-anchors the projection.
+            //    Source STAFF: a workshop reading off the dash is our own capture, not a phone call.
+            ContractMileageReading::create([
+                'contract_id' => $contract->id,
+                'vehicle_id'  => $vehicle->id,
+                'odometer'    => $odometer,
+                'reported_on' => Carbon::now()->toDateString(),
+                'recorded_by' => $actor->id,
+                'reported_by' => $actor->name ?: $actor->email,
+                'source'      => ContractMileageReading::SOURCE_STAFF,
+                'note'        => trim('Odometer at the oil change' . ($note ? ' — ' . $note : '')),
+            ]);
+
+            // 2. The car itself. ONE writer for the service anchor, fleet-wide — this rolls both the
+            //    vehicle's `last_service_odometer` and the recurring oil ServiceReminder.
+            $vehicle->recordOilService($odometer);
+
+            // 3. The follow-up is finished. `settled_at` with no ticket is what keeps the hourly
+            //    return sweep from minting an oil ticket for a change that has already been done.
+            $row->forceFill([
+                'oil_changed_at'       => Carbon::now(),
+                'oil_changed_odometer' => $odometer,
+                'oil_changed_by'       => $actor->id,
+                'oil_changed_by_name'  => $actor->name ?: $actor->email,
+                'oil_change_note'      => $note,
+                'settled_at'           => Carbon::now(),
+            ])->save();
+
+            $done = 'Oil changed at ' . number_format($odometer) . ' km by ' . ($actor->name ?: $actor->email) . '.';
+
+            $nextDue = $odometer + (int) $vehicle->fresh()->service_interval_km;
+            $outcome = $done . ' Next change due at ' . number_format($nextDue) . ' km.';
+
+            // 4. Everything that was only ever asking for this change stands down.
+            $this->cancelOpenRecallTasks($contract, $done);
+            $this->cancelRecallCollections($contract, $actor, $done . ' Collection no longer needed.');
+
+            // The announcing inspection request is resolved ONLY if the oil was all it was waiting
+            // for. A recall that also asked for a test still owes that test, and closing the request
+            // here would quietly delete it — the card instead keeps its place in the review queue
+            // and now reads "oil changed", so the reviewer approves it for the test alone.
+            if ($row->test_required || $row->hasAdoptedRequest()) {
+                $this->annotateInspectionFollowUp($contract, $outcome . ' The test is still owed.');
+            } else {
+                $this->resolveInspectionFollowUp($contract, null, $outcome);
+            }
+
+            app(OperationsService::class)->resolveDeferredMaintenance($vehicle);
+
+            $fresh = $vehicle->fresh();
+            $this->logRecallEvent($row, VehicleLogEvent::EVENT_OIL_CHANGE_RECORDED, $actor, [
+                'description' => $done . ' Next change due at '
+                               . number_format((int) $fresh->last_service_odometer + (int) $fresh->service_interval_km)
+                               . ' km (' . number_format((int) $fresh->service_interval_km) . ' km interval).',
+                'meta' => [
+                    'contract_id'          => $contract->id,
+                    'contract_no'          => $contract->contract_no,
+                    'oil_decision_id'      => $row->id,
+                    'odometer'             => $odometer,
+                    'previous_anchor'      => $anchor['odometer'] ?? null,
+                    'next_due_odometer'    => (int) $fresh->last_service_odometer + (int) $fresh->service_interval_km,
+                    'service_interval_km'  => (int) $fresh->service_interval_km,
+                    'note'                 => $note,
+                ],
+            ]);
+
+            return $row->fresh();
+        });
+    }
+
+    /**
+     * The retrieval leg of a recall: a pooled driver collection through the existing logistics
+     * lane. Raised ONLY after Sales have confirmed (see confirmSales). Idempotent — the dispatch
+     * service returns an existing open move untouched — linked to the follow-up request via
+     * maintenance_id, and deliberately silent about the vehicle's operational status: the customer
+     * holds the car until a driver actually picks it up, and that pick-up is the custody fact.
+     */
+    private function openRecallCollection(Contract $contract, ContractOilDecision $row, array $projection, ?User $actor): ?LogisticsTask
+    {
+        if (! $actor || ! $contract->vehicle) {
+            return null;
+        }
+
+        try {
+            return app(LogisticsDispatchService::class)->dispatchOilRecallCollection(
+                $contract->vehicle,
+                $row->inspection_ticket_id,
+                $this->collectionBrief($contract, $row, $projection),
+                $actor,
+                $this->destinationFor($row),
+            );
+        } catch (\Throwable $e) {
+            report($e);
+
+            return null;
+        }
+    }
+
+    /**
+     * The driver's brief — what to collect, from whom, and what the car owes when it lands. The
+     * oil change is stated as a requirement, not a suggestion: the driver is not being asked to
+     * decide it, only to carry it with the car.
+     */
+    private function collectionBrief(Contract $contract, ContractOilDecision $row, ?array $projection = null): string
+    {
+        $projection ??= [
+            'expected_return'   => $row->expected_return_odometer,
+            'allowed_max'       => $row->allowed_max,
+            'over_tolerance_km' => (int) $row->expected_return_odometer - (int) $row->allowed_max,
+        ];
+
+        $required = $row->test_required
+            ? 'Inspection/test + OIL CHANGE (required)'
+            : 'OIL CHANGE (required)';
+
+        return sprintf(
+            'Oil recall — collect from customer %s (contract %s) and bring it to %s.'
+            . ' Sales confirmed the return. Projected ~%s km vs %s km max (%s km over).'
+            . ' Odometer reading on collection. Required after arrival: %s.',
+            $contract->customer?->name_en ?? 'the customer',
+            $contract->contract_no ?? $contract->id,
+            $this->destinationFor($row),
+            number_format((int) $projection['expected_return']),
+            number_format((int) $projection['allowed_max']),
+            number_format(max(0, (int) ($projection['over_tolerance_km'] ?? 0))),
+            $required,
+        );
+    }
+
+    /** Where the driver is taking the car, in the words the driver reads on his own queue. */
+    private function destinationFor(ContractOilDecision $row): string
+    {
+        return $row->serviceLocation() === ContractOilDecision::LOCATION_PARKING
+            ? 'Parking'
+            : 'Workshop';
+    }
+
+    /**
+     * WHO is told to make the oil change happen — decided by WHERE it happens, nothing else.
+     *
+     *   parking → the Inspector (Abu Maroof) does it himself in our own yard;
+     *   garage  → the Supervisors (Waleed & Abdullah) arrange it with a garage.
+     *
+     * The driver pool hears about the collection either way, from the dispatch itself — he is
+     * fetching the car in both cases, and neither audience replaces him.
+     *
+     * @return \Illuminate\Support\Collection<int,User>
+     */
+    public function collectionOwners(ContractOilDecision $row): \Illuminate\Support\Collection
+    {
+        if ($row->serviceLocation() === ContractOilDecision::LOCATION_PARKING) {
+            return $this->parkingOwners();
+        }
+
+        return $this->collectionSupervisors();
+    }
+
+    /**
+     * Abu Maroof — the person who changes the oil when the car comes to our own parking.
+     *
+     * Resolved the same way every other recipient list in this codebase is: a named allow-list
+     * first, and only then a permission fallback NARROWED BY ROLE. The bare permission would also
+     * match Lin, Marwa and the QA accounts, and a job handed to everyone is a job nobody owns.
+     *
+     * @return \Illuminate\Support\Collection<int,User>
+     */
+    public function parkingOwners(): \Illuminate\Support\Collection
+    {
+        $ids = array_values(array_filter((array) config('maintenance.oil_projection.parking_user_ids', [])));
+        if ($ids) {
+            return User::whereIn('id', $ids)->where('status', 'active')->orderBy('id')->get();
+        }
+
+        $permission = (string) config('maintenance.oil_projection.parking_fallback_permission', 'maintenance.initiate');
+        $roles      = array_filter((array) config('maintenance.oil_projection.parking_fallback_roles', []));
+
+        // No role configured ⇒ no automatic fallback at all, and the caller says so rather than
+        // broadcasting. Silence that is visible beats an alert nobody owns.
+        if (! $roles) {
+            Log::warning('Oil recall: no parking recipient configured — nobody was told to change the oil');
+
+            return collect();
+        }
+
+        return User::permission($permission)->role($roles)->where('status', 'active')->orderBy('id')->get();
+    }
+
+    /**
+     * Tell the Supervisors (Waleed & Abdullah) to arrange a driver — the ONE alert this gate fires,
+     * and never before Sales have confirmed.
+     *
+     * Sent to the same audience the workshop's own follow-up goes to, resolved through the shared
+     * recipient rule (named allow-list first, then supervisors by role) rather than broadcast to a
+     * bare permission — a job handed to everyone is a job nobody owns. The driver POOL is alerted
+     * separately by the dispatch itself; nobody is auto-assigned, which is the point: the
+     * Supervisors pick the driver through the existing logistics board.
+     */
+    private function notifySupervisorsOfCollection(
+        Contract $contract,
+        ContractOilDecision $row,
+        array $projection,
+        User $actor,
+        ?LogisticsTask $task,
+    ): void {
+        $vehicle = $contract->vehicle;
+        $car     = trim(($vehicle?->plate_no ? $vehicle->plate_no . ' · ' : '')
+                      . trim(($vehicle?->make ?? '') . ' ' . ($vehicle?->model ?? '')));
+        $over    = max(0, (int) ($projection['over_tolerance_km'] ?? 0));
+        $parking = $row->serviceLocation() === ContractOilDecision::LOCATION_PARKING;
+
+        // The ask is different for each audience, so the sentence is too: the Inspector is being
+        // told to do the work, the Supervisors to arrange it. A single generic "please handle this"
+        // is how a job ends up owned by nobody.
+        $body = trim(sprintf(
+            "%s — customer return confirmed by Sales. %s\n"
+            . "Reason: oil service required (%s km past the %s km allowance).\n"
+            . 'A driver is collecting it and bringing it to %s. Required on arrival: %s.',
+            $car ?: ('Vehicle #' . $contract->vehicle_id),
+            $parking
+                ? 'The oil change is to be done in our parking — please do it when the car lands.'
+                : 'Please arrange a driver and a garage for the oil change.',
+            number_format($over),
+            number_format((int) ($projection['allowed_max'] ?? $row->allowed_max)),
+            $parking ? 'the parking' : 'the garage',
+            $row->test_required ? 'inspection/test + oil change (required)' : 'oil change (required)',
+        ));
+
+        foreach ($this->collectionOwners($row) as $user) {
+            app(NotificationScanner::class)->notifyUser($user, [
+                'type'     => 'oil_recall_collection',
+                'category' => 'maintenance',
+                'severity' => 'warning',
+                'title'    => ($parking ? 'Oil change in the parking · ' : 'Arrange a driver · ')
+                            . ($vehicle?->plate_no ?: 'oil recall'),
+                'body'     => $body,
+                // Straight to the move itself, so the alert IS the way in to the work.
+                'url'      => $task ? '/logistics?task=' . $task->id : '/logistics',
+                // Keyed on the decision, not the moment: a retried confirm cannot double-ring.
+                'key'      => 'oil_recall_collection:' . $row->id,
+                'icon'     => 'truck',
+                'meta'     => [
+                    'contract_id'        => $contract->id,
+                    'vehicle_id'         => $contract->vehicle_id,
+                    'plate'              => $vehicle?->plate_no,
+                    'oil_decision_id'    => $row->id,
+                    'collection_task_id' => $task?->id,
+                    'inspection_ticket_id' => $row->inspection_ticket_id,
+                    'required_actions'   => $row->requiredActions(),
+                    'service_location'   => $row->serviceLocation(),
+                ],
+            ]);
+        }
+    }
+
+    /**
+     * WHO arranges the driver: the Supervisors (Waleed & Abdullah). Resolved through the shared
+     * checkpoint recipient rule so this feature can never drift into broadcasting to everyone
+     * holding `maintenance.delegate` — on the live fleet that also matches admins and QA accounts.
+     *
+     * @return \Illuminate\Support\Collection<int,User>
+     */
+    public function collectionSupervisors(): \Illuminate\Support\Collection
+    {
+        return app(MaintenanceCheckpointService::class)->defaultRecipients();
+    }
+
+    /**
+     * Carry a still-running recall forward onto a re-affirmed decision row.
+     *
+     * `decide()` writes a NEW row every time (the history is the point), so without this a second
+     * "Recall now" — or a revision after a fresh reading — would produce a row with no Sales stamp
+     * and no collection link, and the board would ask for a confirmation that already happened
+     * while a driver was on the road. The relay belongs to the CAR, not to the row.
+     */
+    private function inheritRecallProgress(?ContractOilDecision $prior, ContractOilDecision $row): void
+    {
+        if (! $prior || ! $prior->isSalesConfirmed()) {
+            return;
+        }
+
+        $task = $prior->collectionTask;
+
+        $row->forceFill([
+            'sales_confirmed_at'      => $prior->sales_confirmed_at,
+            'sales_confirmed_by'      => $prior->sales_confirmed_by,
+            'sales_confirmed_by_name' => $prior->sales_confirmed_by_name,
+            'sales_note'              => $prior->sales_note,
+            // Only a LIVE move carries over. A cancelled/finished collection stays with the row it
+            // belonged to, and the new decision starts from "find a driver" instead of pointing at
+            // a movement that is over.
+            'collection_task_id'      => $task && $task->isActive() ? $task->id : null,
+            'test_required'           => $prior->test_required,
+        ])->save();
+    }
+
+    /**
+     * Append a recall step to the vehicle's audit trail. Anchored to the follow-up REQUEST when
+     * there is one, so the whole story — recall, Sales OK, instructions, inspection, oil change —
+     * reads as one ticket's history rather than scattered vehicle notes.
+     */
+    private function logRecallEvent(ContractOilDecision $row, string $event, User $actor, array $opts): void
+    {
+        try {
+            $log     = app(VehicleLogService::class);
+            $request = $row->inspectionTicket;
+
+            if ($request) {
+                $log->record($request, $event, $actor, $opts);
+
+                return;
+            }
+
+            if ($row->vehicle) {
+                $log->recordVehicle($row->vehicle, $event, $actor, $opts + ['source_tag' => 'oil_recall']);
+            }
+        } catch (\Throwable $e) {
+            report($e);   // an audit write must never sink the transition it describes
+        }
+    }
+
+    /**
+     * The recall relay as every consumer reads it: which stage, who acts next, what Sales said,
+     * where the driver is, and what the car owes on arrival.
+     *
+     * Derived on every read from the records that own each fact — this service invents no state of
+     * its own beyond the Sales stamp. Null for anything that is not an open recall.
+     */
+    public function recallState(?ContractOilDecision $row): ?array
+    {
+        if (! $row || $row->decision !== ContractOilDecision::DECISION_RECALL) {
+            return null;
+        }
+
+        $stage = $row->recallStage();
+        $task  = $row->collectionTask;
+
+        return [
+            'decision_id' => $row->id,
+            'stage'       => $stage,
+            // WHO must act now. The board's whole job is to answer this without anyone guessing.
+            'owner'       => match ($stage) {
+                ContractOilDecision::STAGE_WAITING_SALES     => 'sales',
+                ContractOilDecision::STAGE_READY_FOR_DRIVER  => 'supervisor',
+                ContractOilDecision::STAGE_DRIVER_ASSIGNED,
+                ContractOilDecision::STAGE_VEHICLE_COLLECTED => 'driver',
+                ContractOilDecision::STAGE_AT_WORKSHOP       => 'controller',
+                ContractOilDecision::STAGE_INSPECTION        => 'inspector',
+                ContractOilDecision::STAGE_OIL_SERVICE       => 'workshop',
+                default                                      => null,
+            },
+            'awaiting_sales'    => $row->isAwaitingSalesConfirmation(),
+            'in_our_custody'    => $row->inOurCustody(),
+            'sales' => [
+                'confirmed'    => $row->isSalesConfirmed(),
+                'confirmed_at' => optional($row->sales_confirmed_at)->toIso8601String(),
+                'confirmed_by' => $row->sales_confirmed_by_name,
+                'note'         => $row->sales_note,
+            ],
+            'collection' => $task ? [
+                'task_id'   => $task->id,
+                'status'    => $task->status,
+                'phase'     => $task->phaseLabel(),
+                'driver'    => $task->assigned_to_name,
+                'claimed'   => $task->assigned_to_id !== null,
+                'active'    => $task->isActive(),
+                'destination' => $task->destination,
+            ] : null,
+            'required_actions'    => $row->requiredActions(),
+            'inspection_ticket_id' => $row->inspection_ticket_id,
+            'service_ticket_id'    => $row->settled_ticket_id,
+            // WHERE the change happens, and therefore who owns it. Published so no consumer has to
+            // re-derive the routing rule that decided who was told.
+            'service_location'    => $row->serviceLocation(),
+            'owner_role'          => $row->serviceLocation() === ContractOilDecision::LOCATION_PARKING
+                ? 'inspector'
+                : 'supervisor',
+            // True when the test this recall rides on was ALREADY in the review queue — the card is
+            // the system's own request with the oil change added, not a second card for the same car.
+            'request_adopted'     => $row->hasAdoptedRequest(),
+        ];
+    }
+
+    /** Stand down any open recall collection for this contract's car (revision, or the car came back). */
+    private function cancelRecallCollections(Contract $contract, ?User $actor, string $why): void
+    {
+        if (! $actor || ! $contract->vehicle_id) {
+            return;
+        }
+
+        try {
+            $ticketIds = ContractOilDecision::where('contract_id', $contract->id)
+                ->whereNotNull('inspection_ticket_id')
+                ->pluck('inspection_ticket_id');
+
+            $tasks = LogisticsTask::open()
+                ->where('vehicle_id', $contract->vehicle_id)
+                ->where(function ($q) use ($ticketIds) {
+                    $q->whereIn('maintenance_id', $ticketIds)
+                        ->orWhere('notes', 'like', 'Oil recall%');
+                })
+                ->get();
+
+            $svc = app(LogisticsDispatchService::class);
+            foreach ($tasks as $task) {
+                $task->notes = trim(($task->notes ? $task->notes . ' · ' : '') . $why);
+                $task->save();
+                $svc->cancel($task, $actor);
+            }
+        } catch (\Throwable $e) {
+            report($e);
+        }
+    }
+
+    /**
+     * Close the announcing follow-up request once the car is back and the REAL service ticket
+     * exists — but only while it is still a request (pre-ticket); an inspection the Inspector has
+     * already started is never yanked away.
+     */
+    private function resolveInspectionFollowUp(Contract $contract, ?Maintenance $serviceTicket, string $note): void
+    {
+        try {
+            $ids = ContractOilDecision::where('contract_id', $contract->id)
+                ->whereNotNull('inspection_ticket_id')
+                ->pluck('inspection_ticket_id')
+                ->unique();
+
+            // A request we ADOPTED is not ours to close. It was already in the queue asking for a
+            // test of its own (typically the system's routine check), and the oil change has not
+            // performed that test — closing it here would silently delete a safety check nobody
+            // cancelled. It gets the outcome written on it instead.
+            $adopted = ContractOilDecision::where('contract_id', $contract->id)
+                ->where('request_adopted', true)
+                ->pluck('inspection_ticket_id')
+                ->filter()
+                ->unique();
+
+            foreach ($ids as $id) {
+                $req = Maintenance::find($id);
+                if (! $req || ($serviceTicket && (int) $req->id === (int) $serviceTicket->id)) {
+                    continue;
+                }
+                if ($adopted->contains($id)) {
+                    $this->annotateInspectionFollowUp($contract, $note);
+                    continue;
+                }
+                if (! in_array($req->workflow_status, Maintenance::WF_PRE_TICKET, true)) {
+                    continue;
+                }
+                $req->workflow_status = Maintenance::WF_CLOSED;
+                $req->review_notes = trim(((string) $req->review_notes !== '' ? $req->review_notes . ' · ' : '') . $note);
+                $req->save();
+            }
+        } catch (\Throwable $e) {
+            report($e);
+        }
+    }
+
+    /**
+     * Write an outcome onto the announcing follow-up request WITHOUT closing it — for the case where
+     * the oil is done but the request still has work of its own (a test the recall asked for).
+     */
+    private function annotateInspectionFollowUp(Contract $contract, string $note): void
+    {
+        try {
+            $id = ContractOilDecision::where('contract_id', $contract->id)
+                ->whereNotNull('inspection_ticket_id')
+                ->orderByDesc('id')
+                ->value('inspection_ticket_id');
+
+            $req = $id ? Maintenance::find($id) : null;
+            if (! $req || ! in_array($req->workflow_status, Maintenance::WF_PRE_TICKET, true)) {
+                return;
+            }
+
+            $req->review_notes = trim(((string) $req->review_notes !== '' ? $req->review_notes . ' · ' : '') . $note);
+            $req->save();
+        } catch (\Throwable $e) {
+            report($e);
+        }
     }
 
     /**
@@ -721,9 +1810,13 @@ class OilChangeProjectionService
             ? $returned
             : ($this->project($contract, $contract->in_date ? Carbon::parse($contract->in_date) : null)['expected'] ?? null);
 
-        // Owed when somebody decided it was, or when the car simply came back past its oil point.
-        $owed = $decision !== null || ($oilLimit !== null && $finalKm !== null && $finalKm >= $oilLimit);
-        if (! $owed) {
+        // THE ACTUAL MILEAGE DECIDES. The projection recommended, the Controller chose, but the
+        // number the car actually came back on is the only thing that makes an oil change real:
+        // a car that returns short of its oil limit gets NO forced change, whatever the model
+        // predicted at decision time. A decision with a not-due return still settles (the
+        // follow-up is resolved as "inspection only"); no decision + not due = nothing to do.
+        $due = $oilLimit !== null && $finalKm !== null && $finalKm >= $oilLimit;
+        if ($decision === null && ! $due) {
             return null;
         }
 
@@ -739,20 +1832,23 @@ class OilChangeProjectionService
             return null;
         }
 
-        return DB::transaction(function () use ($contract, $vehicle, $decision, $finalKm, $actor) {
-            try {
-                $ticket = app(MaintenanceWorkflowService::class)
-                    ->openServiceTicket($vehicle, 'Oil Change', $finalKm, $actor);
-            } catch (\Throwable $e) {
-                // A car that has left the fleet (sold / disposed) can't enter the workflow. That is a
-                // legitimate outcome, not a failure of this sweep.
-                Log::warning('Oil settle: could not open the service ticket', [
-                    'contract_id' => $contract->id,
-                    'vehicle_id'  => $vehicle->id,
-                    'error'       => $e->getMessage(),
-                ]);
+        return DB::transaction(function () use ($contract, $vehicle, $decision, $finalKm, $actor, $due, $oilLimit) {
+            $ticket = null;
+            if ($due) {
+                try {
+                    $ticket = app(MaintenanceWorkflowService::class)
+                        ->openServiceTicket($vehicle, 'Oil Change', $finalKm, $actor);
+                } catch (\Throwable $e) {
+                    // A car that has left the fleet (sold / disposed) can't enter the workflow. That is a
+                    // legitimate outcome, not a failure of this sweep.
+                    Log::warning('Oil settle: could not open the service ticket', [
+                        'contract_id' => $contract->id,
+                        'vehicle_id'  => $vehicle->id,
+                        'error'       => $e->getMessage(),
+                    ]);
 
-                return null;
+                    return null;
+                }
             }
 
             $row = $decision ?: ContractOilDecision::create([
@@ -767,20 +1863,65 @@ class OilChangeProjectionService
                 'is_auto'                  => true,
             ]);
 
-            $row->forceFill(['settled_at' => Carbon::now(), 'settled_ticket_id' => $ticket->id])->save();
+            $row->forceFill(['settled_at' => Carbon::now(), 'settled_ticket_id' => $ticket?->id])->save();
+
+            if ($ticket) {
+                // The EXECUTION ticket carries the same story reference the request did — the oil
+                // change is the action the inspection follow-up produced, never an orphan.
+                $ticket->trigger_detail = [
+                    'source'                   => 'oil_projection',
+                    'contract_oil_decision_id' => $row->id,
+                    'contract_id'              => $contract->id,
+                    'contract_no'              => $contract->contract_no,
+                    'decision'                 => $row->decision,
+                    'inspection_request_id'    => $row->inspection_ticket_id,
+                    'actual_return_km'         => $finalKm,
+                ];
+                $ticket->save();
+            }
 
             // The car is back, so the "arrange the return" call has served its purpose. Closed as
             // DONE, not cancelled — the job was completed by the car arriving.
+            $recallOutcome = $ticket
+                ? 'Car returned; oil change raised as ticket #' . $ticket->id . '.'
+                : 'Car returned inside its oil limit — no change needed.';
             OilRecallTask::open()->where('contract_id', $contract->id)->get()
                 ->each(fn (OilRecallTask $t) => $t->forceFill([
                     'status'       => OilRecallTask::STATUS_DONE,
-                    'outcome_note' => trim(($t->outcome_note ? $t->outcome_note . ' · ' : '')
-                                    . 'Car returned; oil change raised as ticket #' . $ticket->id . '.'),
+                    'outcome_note' => trim(($t->outcome_note ? $t->outcome_note . ' · ' : '') . $recallOutcome),
                     'completed_at' => Carbon::now(),
                 ])->save());
 
+            // The car came back on its own terms: stand down any collection run still out, and
+            // resolve the announcing follow-up request with what the ACTUAL mileage proved.
+            $this->cancelRecallCollections($contract, $actor,
+                'Car returned — collection no longer needed.' . ($ticket ? ' Oil ticket #' . $ticket->id . ' raised.' : ''));
+            $this->resolveInspectionFollowUp($contract, $ticket, $ticket
+                ? 'Settled on return — oil service raised as ticket #' . $ticket->id
+                    . ' (actual ' . number_format((int) $finalKm) . ' km).'
+                : 'Resolved on return — oil NOT due (actual ' . number_format((int) $finalKm)
+                    . ' km, limit ' . number_format((int) $oilLimit) . ' km). Inspection only.');
+
             // The debt is now a ticket; the standing flag has done its job.
             app(OperationsService::class)->resolveDeferredMaintenance($vehicle);
+
+            // The notification follows the CURRENT state: the actual figures, not the projection.
+            if ($ticket) {
+                foreach ($this->controllers() as $user) {
+                    app(NotificationScanner::class)->notifyUser($user, [
+                        'type'     => 'oil_due_on_return',
+                        'category' => 'maintenance',
+                        'severity' => 'warning',
+                        'title'    => 'Oil Change Required · ' . ($vehicle->plate_no ?: ('#' . $vehicle->id)),
+                        'body'     => 'Returned on ' . number_format((int) $finalKm) . ' km — oil limit '
+                                    . number_format((int) $oilLimit) . ' km. Ticket #' . $ticket->id . ' raised.',
+                        'url'      => '/maintenance-workflow?ticket=' . $ticket->id,
+                        'key'      => 'oil_settle:' . $contract->id,
+                        'icon'     => 'wrench',
+                        'meta'     => ['contract_id' => $contract->id, 'ticket_id' => $ticket->id],
+                    ]);
+                }
+            }
 
             return $ticket;
         });

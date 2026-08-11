@@ -566,24 +566,249 @@ class OilChangeProjectionTest extends CrudTestCase
     }
 
     /**
-     * THE BOUNDARY. Recalling a car creates a call to make and nothing else. No LogisticsTask, no
-     * dispatch, no driver — that module does not exist for this path yet, and a half-specified
-     * transport job sitting in a driver's queue would be worse than none.
+     * TEST B — THE SALES GATE (owner ruling 2026-08-11, narrowing the 2026-08-10 ruling): a recall
+     * raises the Controllers' call and the inspection follow-up, and NOTHING ELSE. No driver hears
+     * about it until somebody records that Sales agreed the return with the customer.
+     *
+     * This is the whole point of the gate, so it is asserted from the driver's side: a user holding
+     * `logistics.claim` must have been told nothing at all.
      */
-    public function test_recalling_creates_no_logistics_record(): void
+    public function test_recall_raises_no_driver_collection_until_sales_confirm(): void
     {
         $this->oilControllers();
-        $before = LogisticsTask::count();
+        $driver = User::create([
+            'name' => 'Pool Driver', 'email' => 'drv.' . uniqid() . '@fleet.test',
+            'password' => Hash::make('password'), 'status' => 'active',
+        ]);
+        $driver->givePermissionTo('logistics.claim');
 
         $contract = $this->rentalWithReading(remainingDays: 30, reading: 7600);
+
         $this->postJson('/api/Contract/' . $contract->id . '/oil-decision', ['decision' => 'recall'])
             ->assertSuccessful();
 
-        $this->assertSame($before, LogisticsTask::count(), 'a recall is a conversation, not a dispatch');
-        $this->assertSame(0, LogisticsTask::where('vehicle_id', $contract->vehicle_id)->count());
+        // The follow-up request exists, referenced from the decision, carrying the source tag.
+        $decision = ContractOilDecision::where('contract_id', $contract->id)->orderByDesc('id')->first();
+        $this->assertNotNull($decision->inspection_ticket_id);
+        $req = Maintenance::find($decision->inspection_ticket_id);
+        $this->assertSame(Maintenance::WF_PENDING_REVIEW, $req->workflow_status);   // waits on /inspection-review
+        $this->assertSame('oil_projection', $req->trigger_detail['source'] ?? null);
+        $this->assertSame('IN', $req->event_status);   // a request, not a garage event
 
-        // And no maintenance ticket either — the car is still with the customer.
-        $this->assertSame(0, Maintenance::where('vehicle_id', $contract->vehicle_id)->count());
+        // NO movement, and no driver told anything.
+        $this->assertSame(0, LogisticsTask::where('vehicle_id', $contract->vehicle_id)->count(),
+            'no collection may exist before Sales confirm the customer agreed');
+        $this->assertSame(0, $driver->notifications()->count(), 'the driver pool must hear nothing yet');
+        $this->assertSame(ContractOilDecision::STAGE_WAITING_SALES, $decision->recallStage());
+
+        // Sales confirm → NOW the collection exists, pooled, linked, honest about custody.
+        $this->postJson('/api/Contract/' . $contract->id . '/oil-recall/sales-confirm', [
+            'note' => 'Customer will hand it over Thursday.',
+        ])->assertSuccessful();
+
+        $move = LogisticsTask::open()->where('vehicle_id', $contract->vehicle_id)->first();
+        $this->assertNotNull($move, 'Sales OK must release the driver collection');
+        $this->assertNull($move->assigned_to_id, 'pooled — nobody is auto-assigned');
+        $this->assertSame($req->id, $move->maintenance_id, 'collection is linked to the follow-up request');
+        $this->assertStringContainsString('Oil recall', (string) $move->notes);
+        $this->assertStringContainsString('OIL CHANGE (required)', (string) $move->notes);
+        $this->assertSame($move->id, $decision->fresh()->collection_task_id);
+        $this->assertNotSame('in_transit', $contract->vehicle->fresh()->operational_status,
+            'the customer holds the car until a driver actually collects it');
+
+        // The pool was pinged once, through the EXISTING dispatch notification.
+        $this->assertSame(1, $this->alertCount($driver, 'logistics_dispatch:' . $move->id));
+
+        // Re-taking the same decision, and re-confirming, duplicate nothing.
+        $this->postJson('/api/Contract/' . $contract->id . '/oil-decision', ['decision' => 'recall'])
+            ->assertSuccessful();
+        $this->postJson('/api/Contract/' . $contract->id . '/oil-recall/sales-confirm', [])
+            ->assertSuccessful();
+        $this->assertSame(1, LogisticsTask::where('vehicle_id', $contract->vehicle_id)->count());
+        $this->assertSame(1, Maintenance::where('vehicle_id', $contract->vehicle_id)->count());
+        $this->assertSame(1, $this->alertCount($driver, 'logistics_dispatch:' . $move->id));
+
+        // …and the re-affirmed decision inherits the relay instead of asking for Sales again.
+        $latest = ContractOilDecision::where('contract_id', $contract->id)->orderByDesc('id')->first();
+        $this->assertTrue($latest->isSalesConfirmed(), 'a re-affirmed recall keeps the confirmation it already had');
+        $this->assertSame($move->id, $latest->collection_task_id);
+    }
+
+    /**
+     * TEST A — "Do it on return", end to end: no retrieval, a waiting follow-up with LIVE figures,
+     * and the return settles everything automatically — service ticket raised, follow-up closed.
+     */
+    public function test_defer_waits_for_the_return_and_settles_automatically(): void
+    {
+        $this->oilControllers();
+        $contract = $this->rentalWithReading(remainingDays: 2, reading: 7700);   // return ~8,100 → 100 over
+
+        $this->postJson('/api/Contract/' . $contract->id . '/oil-decision', ['decision' => 'defer'])
+            ->assertSuccessful();
+
+        // No retrieval of any kind: the customer keeps the car.
+        $this->assertSame(0, LogisticsTask::where('vehicle_id', $contract->vehicle_id)->count());
+        $this->assertSame(0, OilRecallTask::open()->where('contract_id', $contract->id)->count());
+
+        // The follow-up request is linked, and the resource serves LIVE figures from the decision.
+        $decision = ContractOilDecision::where('contract_id', $contract->id)->orderByDesc('id')->first();
+        $req = Maintenance::find($decision->inspection_ticket_id);
+        $ctx = \App\Http\Resources\MaintenanceWorkflowResource::make($req)->resolve()['oil_context'];
+        $this->assertSame('defer', $ctx['decision']);
+        $this->assertSame(100, $ctx['live']['over_allowance_km']);
+        $this->assertSame(100, $ctx['at_decision']['over_allowance']);
+
+        // The car comes back (as the OM sync would record it): the single settlement funnel runs.
+        $contract->forceFill(['state' => 'closed', 'in_date' => now()->toDateString(), 'in_milage' => 8100])->save();
+        $serviceTicket = $this->service()->settleOnReturn($contract->fresh());
+
+        $this->assertNotNull($serviceTicket, 'the owed oil change is raised without anyone re-filing it');
+        $this->assertSame($serviceTicket->id, $decision->fresh()->settled_ticket_id);
+        // The announcing request closes in favour of the real ticket — no stale queue entry.
+        $this->assertSame(Maintenance::WF_CLOSED, $req->fresh()->workflow_status);
+        $this->assertStringContainsString('Settled on return', (string) $req->fresh()->review_notes);
+
+        // The EXECUTION ticket is linked to the story, never an orphan — and the current action is
+        // stated, derived from the actual return mileage.
+        $this->assertSame('oil_projection', $serviceTicket->fresh()->trigger_detail['source'] ?? null);
+        $this->assertSame($req->id, $serviceTicket->fresh()->trigger_detail['inspection_request_id']);
+        $this->assertSame(8100, $serviceTicket->fresh()->trigger_detail['actual_return_km']);
+        $svcCtx = \App\Http\Resources\MaintenanceWorkflowResource::make($serviceTicket->fresh())->resolve()['oil_context'];
+        $this->assertSame('oil_change_required', $svcCtx['current_action']);
+
+        // The notification follows the CURRENT state — actual figures, not the projection.
+        [$lin] = [User::where('name', 'Lin')->first()];
+        $this->assertSame(1, $this->alertCount($lin, 'oil_settle:' . $contract->id));
+
+        // The oil is ACTUALLY changed: the authoritative cycle restarts from the SERVICE odometer.
+        $contract->vehicle->recordOilService(8100);
+        $freshVehicle = $contract->vehicle->fresh();
+        $this->assertSame(8100, (int) $freshVehicle->last_service_odometer);
+        $this->assertSame(8100 + (int) $freshVehicle->service_interval_km, $this->service()->oilLimit($freshVehicle),
+            'the next interval runs from the ACTUAL service odometer — the old projection no longer drives the car');
+
+        // Closing the execution ticket completes the workflow (the close path may re-anchor the
+        // service baseline again through the existing closed-loop writer — that is ITS job).
+        $serviceTicket->forceFill(['workflow_status' => Maintenance::WF_CLOSED])->save();
+        $svcCtx = \App\Http\Resources\MaintenanceWorkflowResource::make($serviceTicket->fresh())->resolve()['oil_context'];
+        $this->assertSame('oil_service_completed', $svcCtx['current_action']);
+    }
+
+    /**
+     * TESTS B/D — THE ACTUAL MILEAGE WINS. A car that comes back INSIDE its oil limit gets no
+     * forced oil change, whatever the projection predicted at decision time: the decision settles
+     * without a ticket, and the follow-up resolves as "inspection only".
+     */
+    public function test_return_inside_the_limit_forces_no_oil_change(): void
+    {
+        $this->oilControllers();
+        $contract = $this->rentalWithReading(remainingDays: 5, reading: 7600);   // projected 600 over
+
+        $this->postJson('/api/Contract/' . $contract->id . '/oil-decision', ['decision' => 'recall'])
+            ->assertSuccessful();
+        $decision = ContractOilDecision::where('contract_id', $contract->id)->orderByDesc('id')->first();
+        $req = Maintenance::find($decision->inspection_ticket_id);
+
+        // The customer barely drove: actual return 6,900 km — under the 7,000 km oil limit.
+        $contract->forceFill(['state' => 'closed', 'in_date' => now()->toDateString(), 'in_milage' => 6900])->save();
+        $this->assertNull($this->service()->settleOnReturn($contract->fresh()), 'no ticket is minted for oil that is not due');
+
+        // Settled WITHOUT a service ticket; the follow-up says why; nothing is left open anywhere.
+        $decision->refresh();
+        $this->assertNotNull($decision->settled_at);
+        $this->assertNull($decision->settled_ticket_id);
+        $this->assertSame(Maintenance::WF_CLOSED, $req->fresh()->workflow_status);
+        $this->assertStringContainsString('oil NOT due', (string) $req->fresh()->review_notes);
+        $this->assertSame(0, LogisticsTask::open()->where('vehicle_id', $contract->vehicle_id)->count());
+        $this->assertSame(0, OilRecallTask::open()->where('contract_id', $contract->id)->count());
+        $this->assertSame(1, Maintenance::where('vehicle_id', $contract->vehicle_id)->count(), 'the request is the only record — no oil ticket');
+
+        // The current action reflects the proven truth, with the decision snapshot kept for audit.
+        $ctx = \App\Http\Resources\MaintenanceWorkflowResource::make($req->fresh())->resolve()['oil_context'];
+        $this->assertSame('inspection_only', $ctx['current_action']);
+        $this->assertSame(600, $ctx['at_decision']['over_allowance']);
+        // And no "oil due" notification went out — the state never called for one.
+        $lin = User::where('name', 'Lin')->first();
+        $this->assertSame(0, $this->alertCount($lin, 'oil_settle:' . $contract->id));
+    }
+
+    /**
+     * TEST C — the decision changes, both directions: ONE follow-up request throughout, the
+     * collection appears on escalation and stands down on de-escalation. No duplicates, no
+     * stranded driver tasks.
+     */
+    public function test_changing_the_decision_transitions_the_same_workflow(): void
+    {
+        $this->oilControllers();
+        $contract = $this->rentalWithReading(remainingDays: 5, reading: 7600);
+
+        // DEFER first: follow-up exists, no retrieval.
+        $this->postJson('/api/Contract/' . $contract->id . '/oil-decision', ['decision' => 'defer'])
+            ->assertSuccessful();
+        $ticketId = ContractOilDecision::where('contract_id', $contract->id)->orderByDesc('id')
+            ->value('inspection_ticket_id');
+        $this->assertNotNull($ticketId);
+        $this->assertSame(0, LogisticsTask::open()->where('vehicle_id', $contract->vehicle_id)->count());
+
+        // Escalate DEFER → RECALL: same request re-stamped, still no movement — the recall is
+        // waiting on Sales, and a car nobody has agreed to collect has no collection.
+        $this->postJson('/api/Contract/' . $contract->id . '/oil-decision', ['decision' => 'recall'])
+            ->assertSuccessful();
+        $latest = ContractOilDecision::where('contract_id', $contract->id)->orderByDesc('id')->first();
+        $this->assertSame('recall', $latest->decision);
+        $this->assertSame($ticketId, $latest->inspection_ticket_id, 'the SAME follow-up request is reused');
+        $this->assertSame(1, Maintenance::where('vehicle_id', $contract->vehicle_id)->count());
+        $this->assertSame(0, LogisticsTask::open()->where('vehicle_id', $contract->vehicle_id)->count());
+        $this->assertSame('recall', Maintenance::find($ticketId)->trigger_detail['decision']);
+
+        // Sales confirm → the collection appears against the same request.
+        $this->postJson('/api/Contract/' . $contract->id . '/oil-recall/sales-confirm', [])
+            ->assertSuccessful();
+        $this->assertSame(1, LogisticsTask::open()->where('vehicle_id', $contract->vehicle_id)->count());
+
+        // De-escalate RECALL → DEFER: collection cancelled, call cancelled, request stays.
+        $this->postJson('/api/Contract/' . $contract->id . '/oil-decision', ['decision' => 'defer'])
+            ->assertSuccessful();
+        $this->assertSame(0, LogisticsTask::open()->where('vehicle_id', $contract->vehicle_id)->count());
+        $this->assertSame(0, OilRecallTask::open()->where('contract_id', $contract->id)->count());
+        $this->assertSame('defer', Maintenance::find($ticketId)->trigger_detail['decision']);
+        $this->assertSame(1, Maintenance::where('vehicle_id', $contract->vehicle_id)->count());
+    }
+
+    /**
+     * TEST D — the actual mileage is authoritative over the projection: a newer reading (and an
+     * OM-shortened rental) clears the overrun and the inspection side shows the NEW truth, with
+     * the at-decision snapshot preserved as history — then a worse reading escalates the figures.
+     */
+    public function test_a_new_reading_rewrites_the_follow_up_figures_live(): void
+    {
+        $this->oilControllers();
+        $contract = $this->rentalWithReading(remainingDays: 5, reading: 7600);   // 600 over at decision
+
+        $this->postJson('/api/Contract/' . $contract->id . '/oil-decision', ['decision' => 'defer'])
+            ->assertSuccessful();
+        $req = Maintenance::find(
+            ContractOilDecision::where('contract_id', $contract->id)->orderByDesc('id')->value('inspection_ticket_id'),
+        );
+
+        $ctx = \App\Http\Resources\MaintenanceWorkflowResource::make($req)->resolve()['oil_context'];
+        $this->assertSame(600, $ctx['live']['over_allowance_km']);
+
+        // A fresh reading arrives and OfficeManager shortens the rental to tomorrow:
+        // 7,650 + 1 × 200 = 7,850 — inside the 8,000 km allowance. The overrun is GONE.
+        $this->postJson('/api/Contract/' . $contract->id . '/mileage-reading', ['odometer' => 7650])
+            ->assertSuccessful();
+        $contract->fresh()->forceFill(['days' => 2])->save();   // out yesterday + 2 days ⇒ due tomorrow
+
+        $ctx = \App\Http\Resources\MaintenanceWorkflowResource::make($req->fresh())->resolve()['oil_context'];
+        $this->assertLessThanOrEqual(0, $ctx['live']['over_allowance_km'], 'the stale 600-over must not survive');
+        $this->assertSame(600, $ctx['at_decision']['over_allowance'], 'the audit snapshot is preserved');
+
+        // The opposite direction: a reading proving the car is far worse escalates the live figures.
+        $this->postJson('/api/Contract/' . $contract->id . '/mileage-reading', ['odometer' => 8900])
+            ->assertSuccessful();
+        $ctx = \App\Http\Resources\MaintenanceWorkflowResource::make($req->fresh())->resolve()['oil_context'];
+        $this->assertSame(8900 + 200 - 8000, $ctx['live']['over_allowance_km']);   // 1,100 over
     }
 
     /**
@@ -646,6 +871,11 @@ class OilChangeProjectionTest extends CrudTestCase
 
         $row = $data['tasks'][0];
         $this->assertSame('open', $row['status']);
+        // Sales agree the return, which is what puts a collection in a driver's queue at all — so
+        // the "car arrived by itself" assertion at the end has something real to stand down.
+        $this->postJson('/api/Contract/' . $contract->id . '/oil-recall/sales-confirm', [])
+            ->assertSuccessful();
+        $this->assertSame(1, LogisticsTask::open()->where('vehicle_id', $contract->vehicle_id)->count());
         $this->assertSame('oil_tolerance_exceeded_before_return', $row['reason_code']);
         $this->assertSame(13600, $row['expected_return_odometer']);
         $this->assertSame(5600, $row['over_tolerance_km']);
@@ -670,8 +900,13 @@ class OilChangeProjectionTest extends CrudTestCase
         $this->assertNotNull($task->completed_at);
         $this->assertStringContainsString('oil change raised as ticket', $task->outcome_note);
 
-        // Closed by the car arriving — still no logistics record anywhere in the story.
-        $this->assertSame(0, LogisticsTask::where('vehicle_id', $contract->vehicle_id)->count());
+        // The collection the recall raised stood down the moment the car arrived by itself —
+        // nothing is left open in a driver's queue for a car already in the yard.
+        $this->assertSame(0, LogisticsTask::open()->where('vehicle_id', $contract->vehicle_id)->count());
+        $this->assertSame(
+            LogisticsTask::STATUS_CANCELLED,
+            LogisticsTask::where('vehicle_id', $contract->vehicle_id)->orderByDesc('id')->value('status'),
+        );
     }
 
     /**
@@ -923,5 +1158,222 @@ class OilChangeProjectionTest extends CrudTestCase
         $rows = collect($data['contracts']);
         $this->assertSame('decision_required', $rows->firstWhere('contract_id', $decide->id)['projection']['oil_status']);
         $this->assertSame('service_required_on_return', $rows->firstWhere('contract_id', $onReturn->id)['projection']['oil_status']);
+    }
+
+    // ── Odometer evidence trail ──────────────────────────────────────────────────────────────
+    // The projection publishes WHERE each number came from: the handover reading under its own
+    // name, and the sheet's oil-service km classified against the anchor rather than silently
+    // trusted (it has no reliable date, so it can never become an anchor itself).
+
+    /** Scenario A: only the handover reading exists — it is the anchor AND says so. */
+    public function test_handover_only_evidence_is_published_and_never_decision_ready(): void
+    {
+        $p = $this->service()->project($this->rental(58));
+
+        $this->assertSame('handover', $p['anchor_source']);
+        $this->assertSame(self::OUT_KM, $p['handover_odometer']);
+        $this->assertSame(now()->subDays(58)->toDateString(), $p['handover_on']);
+        $this->assertSame(self::OUT_KM + 58 * 200, $p['expected']);
+        // Arithmetically far past its allowance, but the anchor is a stale handover figure — so
+        // this is a phone call, never a decision.
+        $this->assertSame('decision_required', $p['oil_status']);
+        $this->assertFalse($p['decision_ready']);
+        // Oil service (0 km) predates the anchor — nothing to flag.
+        $this->assertNull($p['oil_service_state']);
+    }
+
+    /** Scenario B: an oil service the car could plausibly have reached = mid-rental service, not an error. */
+    public function test_plausible_mid_rental_oil_service_is_flagged_as_informational(): void
+    {
+        $contract = $this->rental(5);   // anchor 6,500 · expected 7,500
+        Vehicle::whereKey($contract->vehicle_id)->update(['last_service_odometer' => 7000]);
+
+        $p = $this->service()->project($contract->fresh());
+
+        $this->assertSame(7000, $p['oil_service_odometer']);
+        $this->assertSame(500, $p['oil_service_ahead_km']);
+        $this->assertSame(OilChangeProjectionService::SERVICE_MID_RENTAL, $p['oil_service_state']);
+        // The anchor does NOT move: the service km has no date and cannot be projected from.
+        $this->assertSame('handover', $p['anchor_source']);
+        $this->assertSame(self::OUT_KM, $p['anchor_odometer']);
+    }
+
+    /** Scenario C: an oil service beyond anything the car could have reached = suspicious conflict. */
+    public function test_implausible_oil_service_reading_is_flagged_suspicious_and_not_trusted(): void
+    {
+        $contract = $this->rental(5);   // anchor 6,500 · expected 7,500 · margin 500 ⇒ plausible ≤ 8,000
+        Vehicle::whereKey($contract->vehicle_id)->update(['last_service_odometer' => 30390]);
+
+        $p = $this->service()->project($contract->fresh());
+
+        $this->assertSame(30390, $p['oil_service_odometer']);
+        $this->assertSame(OilChangeProjectionService::SERVICE_SUSPICIOUS, $p['oil_service_state']);
+        // Still not an anchor, still not decision-ready — the record is surfaced, not obeyed.
+        $this->assertSame('handover', $p['anchor_source']);
+        $this->assertFalse($p['decision_ready']);
+    }
+
+    /** The plausibility boundary itself: expected + margin is mid-rental; one km past it is suspicious. */
+    public function test_service_plausibility_boundary_follows_the_configured_margin(): void
+    {
+        config(['maintenance.oil_projection.service_plausibility_margin_km' => 500]);
+        $contract = $this->rental(5);   // expected 7,500 ⇒ boundary 8,000
+
+        Vehicle::whereKey($contract->vehicle_id)->update(['last_service_odometer' => 8000]);
+        $this->assertSame(
+            OilChangeProjectionService::SERVICE_MID_RENTAL,
+            $this->service()->project($contract->fresh())['oil_service_state'],
+        );
+
+        Vehicle::whereKey($contract->vehicle_id)->update(['last_service_odometer' => 8001]);
+        $this->assertSame(
+            OilChangeProjectionService::SERVICE_SUSPICIOUS,
+            $this->service()->project($contract->fresh())['oil_service_state'],
+        );
+    }
+
+    // ── The operational lane ─────────────────────────────────────────────────────────────────
+    // One primary action per car. THE RULE THIS EXISTS FOR: a car due back TODAY is never routed
+    // to "call the customer" just because its reading is stale — the customer is already bringing
+    // it back; the action is to read the real odometer on arrival and service if due.
+
+    /** An open rental that went out $daysAgo days ago on a contracted duration of $days days. */
+    private function rentalWithDuration(int $daysAgo, int $days): Contract
+    {
+        return Contract::create([
+            'contract_no'   => 'C-' . strtoupper(uniqid()),
+            'contract_type' => 'C',
+            'state'         => 'open',
+            'vehicle_id'    => $this->car(),
+            'customer_id'   => $this->makeCustomer(),
+            'out_date'      => now()->subDays($daysAgo)->toDateString(),
+            'out_milage'    => self::OUT_KM,
+            'days'          => $days,
+        ]);
+    }
+
+    /** Case 1: due back today + stale reading ⇒ SERVICE ON RETURN, never a customer call. */
+    public function test_a_car_due_back_today_is_service_on_return_not_a_call(): void
+    {
+        $p = $this->service()->project($this->rentalWithDuration(daysAgo: 60, days: 60));
+
+        $this->assertSame(0, $p['remaining_days']);
+        $this->assertSame('handover', $p['anchor_source']);                     // reading is 60d stale
+        $this->assertSame('decision_required', $p['oil_status']);               // axes stay authoritative
+        $this->assertSame(OilChangeProjectionService::LANE_SERVICE_ON_RETURN, $p['lane']);
+    }
+
+    /** An OVERDUE rental (past its return date, still out) is also an arrival to catch, not a call. */
+    public function test_an_overdue_rental_is_service_on_return(): void
+    {
+        $p = $this->service()->project($this->rentalWithDuration(daysAgo: 64, days: 60));
+
+        $this->assertSame(0, $p['remaining_days']);
+        $this->assertSame(OilChangeProjectionService::LANE_SERVICE_ON_RETURN, $p['lane']);
+    }
+
+    /**
+     * THE NOISE GUARD. A car due back today with a FULL oil interval still in front of it has no
+     * oil question — it must not be dragged into "Service on return" (or any human's lane) merely
+     * because today happens to be its return date. Real case: a Maybach 7,089 km inside its grace,
+     * ~33 days from its next change, shown as an arrival to catch.
+     */
+    public function test_a_car_due_today_with_oil_life_left_is_safe_not_an_arrival_to_catch(): void
+    {
+        // 2 days into a 2-day hire: due back today, projected 6,900 km against a 7,000 km oil limit.
+        $p = $this->service()->project($this->rentalWithDuration(daysAgo: 2, days: 2));
+
+        $this->assertSame(0, $p['remaining_days']);
+        $this->assertSame('within_tolerance', $p['oil_status']);
+        $this->assertSame(OilChangeProjectionService::LANE_SAFE, $p['lane']);
+    }
+
+    /** Case 2: due back tomorrow with a stale reading ⇒ CALL CUSTOMER. */
+    public function test_a_stale_car_due_tomorrow_is_call_customer(): void
+    {
+        $p = $this->service()->project($this->rentalWithDuration(daysAgo: 60, days: 61));
+
+        $this->assertSame(1, $p['remaining_days']);
+        $this->assertSame(OilChangeProjectionService::LANE_CALL_CUSTOMER, $p['lane']);
+    }
+
+    /** Case 3: a fresh reading proving the allowance cannot survive the rental ⇒ ACTION REQUIRED. */
+    public function test_a_fresh_over_allowance_reading_is_action_required(): void
+    {
+        $contract = $this->rentalWithReading(remainingDays: 5, reading: 7600);
+        $p = $this->service()->project($contract->fresh());
+
+        $this->assertTrue($p['decision_ready']);
+        $this->assertSame(OilChangeProjectionService::LANE_ACTION_REQUIRED, $p['lane']);
+    }
+
+    /** Case 6: a car well inside its interval ⇒ SAFE; a car with no anchor ⇒ NO_DATA, never safe. */
+    public function test_safe_and_no_data_lanes(): void
+    {
+        // 1 day into a 2-day hire: return lands on 6,500 + 2×200 = 6,900, under the 7,000 bare limit.
+        $p = $this->service()->project($this->rentalWithDuration(daysAgo: 1, days: 2));
+        $this->assertSame('within_tolerance', $p['oil_status']);
+        $this->assertSame(OilChangeProjectionService::LANE_SAFE, $p['lane']);
+
+        $bare = $this->rental(3);
+        $bare->forceFill(['out_milage' => null])->save();
+        $this->assertSame(OilChangeProjectionService::LANE_NO_DATA, $this->service()->project($bare->fresh())['lane']);
+    }
+
+    /** Case 4/5: a car that has actually RETURNED leaves this board entirely — it is settled, not phoned. */
+    public function test_a_returned_car_is_not_on_the_board_at_all(): void
+    {
+        $gone = $this->rentalWithDuration(daysAgo: 60, days: 60);
+        $gone->forceFill(['state' => 'closed', 'in_date' => now()->toDateString(), 'in_milage' => 20000])->save();
+
+        $data = data_get($this->getJson('/api/OilProjection')->json(), 'data');
+        $this->assertNull(collect($data['contracts'])->firstWhere('contract_id', $gone->id));
+    }
+
+    /**
+     * A recall/defer decision also puts the car in front of the INSPECTOR: one Stage-0 test
+     * request per contract, its note spelling out how far past expectation the car has run —
+     * and a revised decision never files a second one.
+     */
+    public function test_deciding_files_one_test_request_with_the_overrun_note(): void
+    {
+        $contract = $this->rentalWithReading(remainingDays: 5, reading: 7600);
+
+        $this->postJson('/api/Contract/' . $contract->id . '/oil-decision', ['decision' => 'recall'])
+            ->assertSuccessful();
+
+        $ticket = Maintenance::where('vehicle_id', $contract->vehicle_id)
+            ->where('workflow_status', Maintenance::WF_PENDING_REVIEW)
+            ->first();
+
+        $this->assertNotNull($ticket, 'the decision should file a test request for the Inspector');
+        $this->assertSame(Maintenance::SOURCE_CONTROLLER, $ticket->request_origin);
+        // The note carries the figures the decision was made on: overrun, limit, landing point.
+        $this->assertStringContainsString('recall now', (string) $ticket->customer_complaint);
+        $this->assertStringContainsString('Moved more than expected', (string) $ticket->customer_complaint);
+        $this->assertStringContainsString('600 km over the 8,000 km max', (string) $ticket->customer_complaint);
+        $this->assertStringContainsString('return ~8,600 km', (string) $ticket->customer_complaint);
+        $this->assertStringContainsString('7,600 km', (string) $ticket->customer_complaint); // latest reading
+
+        // Revising the answer (recall → defer, the allowed direction) records a new decision but
+        // files NO second request — the car already sits in the Inspector's queue.
+        $this->postJson('/api/Contract/' . $contract->id . '/oil-decision', ['decision' => 'defer'])
+            ->assertSuccessful();
+
+        $this->assertSame(1, Maintenance::where('vehicle_id', $contract->vehicle_id)
+            ->where('workflow_status', Maintenance::WF_PENDING_REVIEW)->count());
+    }
+
+    /** Scenario D: a fresh customer reading outranks everything and unlocks the decision. */
+    public function test_fresh_customer_reading_becomes_the_anchor_and_unlocks_the_decision(): void
+    {
+        $contract = $this->rentalWithReading(remainingDays: 5, reading: 7600);
+        $p = $this->service()->project($contract->fresh());
+
+        $this->assertSame('reading', $p['anchor_source']);
+        $this->assertSame(7600, $p['anchor_odometer']);
+        // The handover stays published alongside — renaming, not overwriting.
+        $this->assertSame(5000, $p['handover_odometer']);   // rentalWithReading's out mileage
+        $this->assertTrue($p['decision_ready']);
     }
 }

@@ -78,11 +78,24 @@ class InspectionsGenerateTasks extends Command
         // BEFORE the scan so the counts below describe a queue that is actually current.
         if (! $dry) {
             $withdrawn = $workflow->withdrawRequestsForMaintenanceContracts();
-            if ($withdrawn > 0) {
-                $this->line("<comment>Withdrew {$withdrawn} pending request(s) — those cars are already in maintenance (OM contract).</comment>");
-                Log::info('Proactive Diagnostic Monitor — withdrew requests for cars already in maintenance', [
+            // TRANSITIONAL: while workshop trips are still recorded on the sheet instead of as OM
+            // contracts, the garage log answers a pending request the same way a contract does.
+            $withdrawn += $workflow->withdrawRequestsForWorkshopLog();
+            // …and the rule those two are snapshots of: a system request whose car has since been to a
+            // workshop and COME BACK. Its count restarted on the day it returned, so what the request
+            // asked for is no longer due — whether or not the visit is still open anywhere.
+            $cleared = $workflow->withdrawRequestsWhoseConditionCleared();
+            if ($withdrawn > 0 || $cleared > 0) {
+                if ($withdrawn > 0) {
+                    $this->line("<comment>Withdrew {$withdrawn} pending request(s) — those cars are already in maintenance (OM contract or garage log).</comment>");
+                }
+                if ($cleared > 0) {
+                    $this->line("<comment>Withdrew {$cleared} system request(s) — those cars came back from maintenance, so the check clock restarted.</comment>");
+                }
+                Log::info('Proactive Diagnostic Monitor — withdrew requests reality already answered', [
                     'report'    => 'inspections_generate_tasks_scan',
                     'withdrawn' => $withdrawn,
+                    'cleared'   => $cleared,
                 ]);
             }
         }
@@ -105,6 +118,11 @@ class InspectionsGenerateTasks extends Command
             ->pluck('vehicle_id')
             ->flip();
 
+        // …and cars the GARAGE LOG has in the workshop (latest live sheet/hand-entered event still open).
+        // TRANSITIONAL twin of the contract set above — while trips are recorded on the sheet rather than
+        // as OM contracts, this is what keeps a car on a lift out of the Controllers' queue.
+        $inWorkshopLog = collect($workflow->vehicleIdsInWorkshopLog())->flip();
+
         // Walk active fleet; partition into real REQUESTS (with their agenda) vs oil DATA ANOMALIES.
         $requests  = [];
         $anomalies = [];
@@ -114,7 +132,7 @@ class InspectionsGenerateTasks extends Command
             ->where(fn ($q) => $q->where('for_sale', false)->orWhereNull('for_sale'))
             ->when($onlyId, fn ($q) => $q->whereKey($onlyId))
             ->orderBy('code')
-            ->chunkById(500, function ($vehicles) use (&$requests, &$anomalies, $inPipeline, $inOmMaintenance, $gate) {
+            ->chunkById(500, function ($vehicles) use (&$requests, &$anomalies, $inPipeline, $inOmMaintenance, $inWorkshopLog, $gate) {
                 foreach ($vehicles as $v) {
                     if ($inPipeline->has($v->id)) {
                         continue; // already in the pipeline
@@ -122,6 +140,10 @@ class InspectionsGenerateTasks extends Command
 
                     if ($inOmMaintenance->has($v->id)) {
                         continue; // already in the workshop on an OM maintenance contract
+                    }
+
+                    if ($inWorkshopLog->has($v->id)) {
+                        continue; // already in the workshop per the garage log (sheet/hand-entered event)
                     }
 
                     $conditions = $gate->conditionsDue($v);

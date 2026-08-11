@@ -25,6 +25,52 @@ class ContractOilDecision extends Model
 
     public const DECISIONS = [self::DECISION_RECALL, self::DECISION_DEFER];
 
+    // ── The recall's operational stages ──────────────────────────────────────────────────────
+    // A recall is not one act, it is a relay: Sales agrees the return, a driver is found, the car
+    // is collected, it arrives, it is inspected, the oil is changed. NONE of these are new stored
+    // states — each one is READ from the record that already owns it (this row's sales stamp, the
+    // LogisticsTask's phase, the follow-up request's workflow_status, the service ticket). They
+    // exist so the board can always answer "what happens next, and who does it".
+
+    /** Recall ordered; nobody has agreed the return with the customer yet. Nothing is dispatched. */
+    public const STAGE_WAITING_SALES = 'waiting_sales';
+
+    /** Sales confirmed. The collection is raised and the Supervisors have been asked for a driver. */
+    public const STAGE_READY_FOR_DRIVER = 'ready_for_driver';
+
+    /** A driver owns the job and is on the way to the customer. */
+    public const STAGE_DRIVER_ASSIGNED = 'driver_assigned';
+
+    /** The driver has the car — custody has passed from the customer to us. */
+    public const STAGE_VEHICLE_COLLECTED = 'vehicle_collected';
+
+    /** The car is at the workshop; the follow-up request is now reviewable. */
+    public const STAGE_AT_WORKSHOP = 'at_workshop';
+
+    /** The inspection/test is running. */
+    public const STAGE_INSPECTION = 'inspection';
+
+    /** The oil change itself is open as a real ticket. */
+    public const STAGE_OIL_SERVICE = 'oil_service';
+
+    /** Everything the recall owed has been done. */
+    public const STAGE_COMPLETED = 'completed';
+
+    /** The recall was stood down (revised to "do it on return"). */
+    public const STAGE_CANCELLED = 'cancelled';
+
+    // ── WHERE the oil gets changed — and therefore WHO is told ───────────────────────────────
+    // Not a preference and not derivable: it is Leen's call on the day, and it routes the job to a
+    // different person. The driver is told in both cases; he is the one fetching the car.
+
+    /** Our own parking — the Inspector (Abu Maroof) does the change. */
+    public const LOCATION_PARKING = 'parking';
+
+    /** An external garage — the Supervisors arrange it. */
+    public const LOCATION_GARAGE = 'garage';
+
+    public const LOCATIONS = [self::LOCATION_GARAGE, self::LOCATION_PARKING];
+
     protected $fillable = [
         'contract_id',
         'vehicle_id',
@@ -49,7 +95,31 @@ class ContractOilDecision extends Model
         'remaining_days'           => 'integer',
         'is_auto'                  => 'boolean',
         'settled_at'               => 'datetime',
+        'sales_confirmed_at'       => 'datetime',
+        'test_required'            => 'boolean',
+        'oil_changed_at'           => 'datetime',
+        'oil_changed_odometer'     => 'integer',
+        'request_adopted'          => 'boolean',
     ];
+
+    /** Where the oil will be changed, defaulting to the garage when nobody has said. */
+    public function serviceLocation(): string
+    {
+        return in_array($this->service_location, self::LOCATIONS, true)
+            ? $this->service_location
+            : self::LOCATION_GARAGE;
+    }
+
+    /**
+     * Is the inspection request this recall points at one we ADOPTED rather than raised?
+     *
+     * An adopted request (typically the system's own "routine check overdue") carries a test the oil
+     * change does not perform, so the oil lifecycle must never close it. See the migration.
+     */
+    public function hasAdoptedRequest(): bool
+    {
+        return (bool) $this->request_adopted && $this->inspection_ticket_id !== null;
+    }
 
     public function contract(): BelongsTo
     {
@@ -72,9 +142,178 @@ class ContractOilDecision extends Model
         return $this->belongsTo(Maintenance::class, 'settled_ticket_id');
     }
 
+    /** The inspection FOLLOW-UP request this decision raised — announces the car before it arrives. */
+    public function inspectionTicket(): BelongsTo
+    {
+        return $this->belongsTo(Maintenance::class, 'inspection_ticket_id');
+    }
+
     /** Still owed: nobody has turned it into a ticket yet. */
     public function isOpen(): bool
     {
         return $this->settled_at === null;
+    }
+
+    /** The person who confirmed Sales had agreed the return with the customer. */
+    public function salesConfirmedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'sales_confirmed_by');
+    }
+
+    /** The ONE driver collection this recall raised — the movement, owned by the logistics lane. */
+    public function collectionTask(): BelongsTo
+    {
+        return $this->belongsTo(LogisticsTask::class, 'collection_task_id');
+    }
+
+    /** A recall that is still waiting for Sales to agree the return with the customer. */
+    public function isAwaitingSalesConfirmation(): bool
+    {
+        return $this->decision === self::DECISION_RECALL
+            && $this->isOpen()
+            && $this->sales_confirmed_at === null;
+    }
+
+    /** Sales have agreed the return — the collection may be raised and the drivers told. */
+    public function isSalesConfirmed(): bool
+    {
+        return $this->sales_confirmed_at !== null;
+    }
+
+    /** The person who recorded the completed oil change. */
+    public function oilChangedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'oil_changed_by');
+    }
+
+    /**
+     * The oil has actually been changed and the reading recorded — the ONE fact that ends this
+     * follow-up. Everything before it (decision, Sales OK, collection, inspection) is arrangement.
+     */
+    public function isOilChanged(): bool
+    {
+        return $this->oil_changed_at !== null;
+    }
+
+    /**
+     * What must happen to this car once it is back, as facts rather than checkboxes.
+     *
+     * The oil change is NOT stored and NOT settable. This recall exists because the oil lifecycle
+     * said the car needs oil attention, so "oil change required" is simply what a recall MEANS —
+     * derive it and nobody can write it away later by re-saving the row with one box unticked.
+     * The test is the opposite: a genuine operational instruction the dispatcher gives the driver,
+     * which is why it is the only half that is stored (and the only half the API accepts).
+     *
+     * @return array{oil_change:array{required:bool,locked:bool,reason:string}, test:array{required:bool,locked:bool,decided:bool}}
+     */
+    public function requiredActions(): array
+    {
+        return [
+            'oil_change' => [
+                'required' => true,
+                'locked'   => true,
+                // A code, not a sentence — the wording belongs to the UI. See [[reason-code-contract]].
+                'reason'   => 'oil_projection_recall',
+                // Required stays true forever (it is why this recall exists); `done` is the separate
+                // question of whether the workshop has actually performed it, with the reading it
+                // was performed at. A requirement that quietly disappears once it is met loses the
+                // reason the customer was interrupted in the first place.
+                'done'     => $this->isOilChanged(),
+                'done_at'  => optional($this->oil_changed_at)->toIso8601String(),
+                'odometer' => $this->oil_changed_odometer,
+                'done_by'  => $this->oil_changed_by_name,
+            ],
+            'test' => [
+                'required' => (bool) $this->test_required,
+                'locked'   => false,
+                'decided'  => $this->test_required !== null,
+            ],
+        ];
+    }
+
+    /**
+     * Where this recall has actually got to — derived, never stored.
+     *
+     * Read in strict outcome-first order: what the car has already been through beats what it is
+     * waiting for, so a car whose oil ticket is closed reads "completed" even though every earlier
+     * record still exists. Null for a defer — there is no relay to run.
+     */
+    public function recallStage(): ?string
+    {
+        if ($this->decision !== self::DECISION_RECALL) {
+            return null;
+        }
+
+        // ── The far end: the oil change this whole relay existed to produce ──
+        // A recorded change beats every other record, including an open service ticket: the oil IS
+        // changed, and the reading that proves it is on this row.
+        if ($this->isOilChanged()) {
+            return self::STAGE_COMPLETED;
+        }
+        if ($this->settled_ticket_id) {
+            $ticket = $this->settledTicket;
+
+            return $ticket && in_array($ticket->workflow_status, Maintenance::WF_TERMINAL, true)
+                ? self::STAGE_COMPLETED
+                : self::STAGE_OIL_SERVICE;
+        }
+        if ($this->settled_at) {
+            // Settled with no ticket: the car came back and the ACTUAL mileage proved oil was not
+            // due. The recall is finished either way — the arithmetic answered it, not a person.
+            return self::STAGE_COMPLETED;
+        }
+
+        // ── The inspection, once a reviewer has actually sent the car to the Inspector ──
+        // Anything past `pending_review` means a reviewer has released the car to the Inspector —
+        // the request has stopped waiting and become work. (Rejected/closed are terminal and fall
+        // through to the collection stages below, where the car's real position still shows.)
+        $request = $this->inspectionTicket;
+        if ($request
+            && $request->workflow_status !== Maintenance::WF_PENDING_REVIEW
+            && ! in_array($request->workflow_status, Maintenance::WF_TERMINAL, true)) {
+            return self::STAGE_INSPECTION;
+        }
+
+        if (! $this->isSalesConfirmed()) {
+            return self::STAGE_WAITING_SALES;
+        }
+
+        $task = $this->collectionTask;
+        if (! $task) {
+            // Sales agreed but no movement is on file — the collection could not be raised. Say
+            // "find a driver", which is the true next action, rather than inventing progress.
+            return self::STAGE_READY_FOR_DRIVER;
+        }
+
+        if ($task->status === LogisticsTask::STATUS_CANCELLED) {
+            return self::STAGE_CANCELLED;
+        }
+
+        return match ($task->status) {
+            LogisticsTask::STATUS_DISPATCHED => self::STAGE_READY_FOR_DRIVER,
+            LogisticsTask::STATUS_EN_ROUTE   => self::STAGE_DRIVER_ASSIGNED,
+            LogisticsTask::STATUS_PICKED_UP,
+            LogisticsTask::STATUS_IN_TRANSIT,
+            LogisticsTask::STATUS_TO_DESTINATION => self::STAGE_VEHICLE_COLLECTED,
+            default => self::STAGE_AT_WORKSHOP,   // delivered / returned / legacy arrivals
+        };
+    }
+
+    /**
+     * Is the car physically ours right now? The LogisticsTask pick-up step is the custody fact —
+     * the rental contract stays open until OfficeManager closes it, so `vehicles.operational_status`
+     * still reads "rented" long after a driver has taken the keys. Anything that asks "can we work
+     * on this car yet" must ask this, not the contract.
+     */
+    public function inOurCustody(): bool
+    {
+        $stage = $this->recallStage();
+
+        return in_array($stage, [
+            self::STAGE_VEHICLE_COLLECTED,
+            self::STAGE_AT_WORKSHOP,
+            self::STAGE_INSPECTION,
+            self::STAGE_OIL_SERVICE,
+        ], true);
     }
 }

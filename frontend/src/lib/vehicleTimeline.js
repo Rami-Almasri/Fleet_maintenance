@@ -78,6 +78,10 @@ const EVENT_KIND = {
   // Follow-up (custody / release / resume)
   returned_to_service: 'followup', resumed: 'followup', vehicle_returned: 'followup',
   temp_released: 'followup', temp_returned: 'followup', follow_up: 'followup',
+  // Oil recall relay — coordinating a car back from a customer is follow-up, not workshop work.
+  oil_recall_sales_confirmed: 'followup', oil_recall_instructed: 'followup',
+  // …but the change itself is a completed routine service, alongside service_logged.
+  oil_change_recorded: 'routine',
   // Accident / incident
   handover_incident: 'accident', accident_visit: 'accident',
   // Reported by people (complaints entity + driver handover notes)
