@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api/client';
 import { useI18n } from '../../i18n/I18nContext';
@@ -20,7 +20,17 @@ import InvoicesPanel from './InvoicesPanel';
 import TicketParts from './TicketParts';
 import SuggestedChecks from './SuggestedChecks';
 import { resolveAction, allows, ctaLabel, ago, fmtDuration, fmtDateTime, SEVERITY_CHIP, custodyBlocked, custodyHolderName, isAtGarage, isPausable, isPaused, isPausedOut, isTempReleasable, isTemporarilyReleased, canOrderParts, ORIGIN_LABEL } from './meta';
-import { SHOW_VIDEO_REVIEW } from '../../config/features';
+import { SHOW_VIDEO_REVIEW, SHOW_FINANCIALS } from '../../config/features';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The ticket drawer reads top-down as: WHERE the car is → WHAT is blocking it →
+// the detail, split across four tabs. Everything used to sit in one 15-section
+// scroll where the audit trail, the money and the odometer story all carried the
+// same visual weight, so the one thing a reader actually had to act on — an open
+// blocker, an unfixed fault — was found by scrolling past everything else. The
+// deck answers that before anything is opened; the tabs keep each answer one
+// click away instead of one scroll-hunt away.
+// ─────────────────────────────────────────────────────────────────────────────
 
 // workflow_status → the lane colour, reused for the status pill so the drawer reads as the
 // same ticket the user clicked on the board.
@@ -29,12 +39,34 @@ const STATUS_TONE = {
   inspection_pending: '#a855f7', awaiting_dispatch: '#a855f7',
   in_transit: '#f97316', under_repair: '#f97316', repair_review: '#7c3aed',
   ready_for_pickup: '#0ea5e9', in_our_park: '#0ea5e9',
-  ready_for_reinspection: '#10b981', closed: '#64748b', diagnostic_cleared: '#10b981',
+  ready_for_reinspection: '#10b981', reinspection_failed: '#dc2626',
+  closed: '#64748b', diagnostic_cleared: '#10b981',
   paused_returned_to_service: '#64748b',
 };
 
 // The audit trail, in lifecycle order. Label keys live under workflow.detail.handoff.<key>.
 const HANDOFF_ORDER = ['requested', 'inspected', 'dispatched', 'repair_started', 'ready', 'closed'];
+
+// The canonical six-stage journey, drawn as a compact rail on the deck. Mirrors the full-page
+// command view (TicketCommandView) so the same ticket tells the same story on both surfaces.
+const JOURNEY = [
+  { key: 'requested',  handoffKey: 'requested',      Glyph: Icon.Flag },
+  { key: 'inspected',  handoffKey: 'inspected',      Glyph: Icon.Search },
+  { key: 'dispatched', handoffKey: 'dispatched',     Glyph: Icon.Truck },
+  { key: 'repair',     handoffKey: 'repair_started', Glyph: Icon.Wrench },
+  { key: 'ready',      handoffKey: 'ready',          Glyph: Icon.Check },
+  { key: 'closed',     handoffKey: 'closed',         Glyph: Icon.Shield },
+];
+const STATUS_STEP = {
+  inspection_requested: 0, inspection_diagnostic: 1,
+  inspection_pending: 2, awaiting_dispatch: 2, in_transit: 2,
+  under_repair: 3, repair_review: 3,
+  ready_for_pickup: 4, in_our_park: 4, ready_for_reinspection: 4,
+  // A failed re-inspection sends the car back to the supervisor's dispatch decision — it regresses.
+  reinspection_failed: 2,
+  closed: 5, diagnostic_cleared: 5,
+};
+const isTerminal = (s) => s === 'closed' || s === 'diagnostic_cleared';
 
 // Mileage-timeline dot colour by how the reading was produced (test drive = violet, garage moves =
 // orange, contract handovers = blue, a human correction = amber) — mirrors the workflow lane tones.
@@ -64,6 +96,15 @@ const DIAG_TONE = {
 };
 const DIAG_STATUS_WORD = { overdue: 'Overdue', due: 'Due', ok: 'OK', no_data: '—' };
 
+// The four reading modes of a ticket. Anything self-fetching only mounts (and only calls its
+// endpoint) once its tab is opened, so the drawer costs less to open than the old single scroll.
+const TABS = [
+  { key: 'overview', en: 'Overview',      Glyph: Icon.Info },
+  { key: 'money',    en: 'Parts & money', Glyph: Icon.Coins },
+  { key: 'quality',  en: 'Quality',       Glyph: Icon.Shield },
+  { key: 'history',  en: 'History',       Glyph: Icon.Activity },
+];
+
 // A short, locale-formatted day ("13 Jun 2026") from a 'YYYY-MM-DD' string.
 const fmtDay = (d) => {
   if (!d) return '—';
@@ -74,18 +115,34 @@ const fmtDay = (d) => {
   }
 };
 
+const fmtAED = (n) => `AED ${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
 // ── Small presentational helpers ──────────────────────────────────────────────
-function Section({ title, icon, action, children }) {
+
+// A titled panel. Collapsible so a reader can fold away the parts of a tab they are not reading
+// (the mileage story and the procurement rail are long by nature); `defaultOpen` sets the initial
+// state, `count` puts the size of the section in its header so it can be judged while folded.
+function Section({ title, icon, action, count, defaultOpen = true, children }) {
+  const [open, setOpen] = useState(defaultOpen);
   return (
     <section className="overflow-hidden rounded-xl border border-slate-200/70 bg-white shadow-soft">
       <div className="flex items-center justify-between gap-2 border-b border-slate-100 bg-slate-50/60 px-4 py-2.5">
-        <h3 className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.08em] text-slate-500">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="group flex min-w-0 flex-1 items-center gap-2 text-start"
+        >
+          <Icon.ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-300 transition group-hover:text-slate-500 ${open ? '' : '-rotate-90 rtl:rotate-90'}`} />
           {icon}
-          {title}
-        </h3>
+          <h3 className="truncate text-[11px] font-bold uppercase tracking-[0.08em] text-slate-500 group-hover:text-slate-700">{title}</h3>
+          {count != null && count > 0 && (
+            <span className="shrink-0 rounded-full bg-slate-200/70 px-1.5 py-0.5 text-[10px] font-bold text-slate-600">{count}</span>
+          )}
+        </button>
         {action}
       </div>
-      <div className="px-4 py-4">{children}</div>
+      {open && <div className="px-4 py-4">{children}</div>}
     </section>
   );
 }
@@ -100,14 +157,68 @@ function Fact({ label, value, mono }) {
   );
 }
 
+// One number on the deck. Deliberately flat and quiet — the deck's job is to be read in one pass,
+// so the tiles carry no borders competing with the status pill above them.
+function Stat({ label, value, hint, tone = 'text-white' }) {
+  return (
+    <div className="min-w-0 rounded-lg bg-white/[0.06] px-2.5 py-2 ring-1 ring-inset ring-white/10">
+      <p className="truncate text-[10px] font-medium uppercase tracking-wide text-slate-400">{label}</p>
+      <p className={`mt-0.5 truncate font-display text-base font-bold leading-tight ${tone}`}>{value}</p>
+      {hint && <p className="truncate text-[10px] text-slate-400">{hint}</p>}
+    </div>
+  );
+}
+
+// The six-stage rail. Reached stages glow in the lane colour, the live one pulses, and a regression
+// (a failed re-inspection) simply moves the live node back — the stages ahead go dark again.
+function JourneyRail({ tk, tone, t }) {
+  const current = STATUS_STEP[tk.workflow_status] ?? 0;
+  const terminal = isTerminal(tk.workflow_status);
+  return (
+    <div className="flex items-center">
+      {JOURNEY.map((step, i) => {
+        const done = i < current || (terminal && i <= current);
+        const active = i === current && !terminal;
+        const { Glyph } = step;
+        const at = tk.handoffs?.[step.handoffKey]?.at;
+        return (
+          <Fragment key={step.key}>
+            <span
+              className="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition"
+              style={{
+                background: done || active ? `${tone}33` : 'rgba(255,255,255,0.05)',
+                boxShadow: `inset 0 0 0 1px ${done || active ? tone : 'rgba(255,255,255,0.12)'}${active ? `, 0 0 0 3px ${tone}22` : ''}`,
+              }}
+              title={`${t(`workflow.detail.handoff.${step.handoffKey}`)}${at ? ` · ${fmtDateTime(at)}` : ''}`}
+            >
+              {active && (
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-40" style={{ background: tone }} />
+              )}
+              <Glyph className="relative h-3.5 w-3.5" style={{ color: done || active ? tone : '#64748b' }} />
+            </span>
+            {i < JOURNEY.length - 1 && (
+              <span
+                className="h-px flex-1"
+                style={{ background: i < current ? tone : 'rgba(255,255,255,0.12)' }}
+              />
+            )}
+          </Fragment>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function TicketDetailDrawer({ ticketId, summary, can, userId, onAct, onClose, reloadKey = 0, garages = [], findingsCatalog = [] }) {
-  const { t } = useI18n();
+  const { t, tf, tp } = useI18n();
   const [tk, setTk] = useState(summary || null);
+  const [tab, setTab] = useState('overview');
   const [photos, setPhotos] = useState([]);
   const [mileage, setMileage] = useState(null); // { current, baseline, synced_at, history[], total, distance }
   const [mileageLoading, setMileageLoading] = useState(true);
   const [mileageErr, setMileageErr] = useState(false);
   const [diag, setDiag] = useState(null); // { idle, last_check, conditions[] } — diagnostic context panel
+  const [money, setMoney] = useState(null); // { blockers, amount } — reported up by FinancialStory
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [ackBusyId, setAckBusyId] = useState(null); // Handover Comparison Report — incident id being acknowledged
@@ -155,8 +266,14 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ticketId, reloadKey]);
 
+  // A different ticket is a different story — start it on Overview rather than wherever the last
+  // one was left. reloadKey is deliberately NOT a dependency: acting on a ticket must not throw the
+  // reader back to the first tab.
+  useEffect(() => { setTab('overview'); setMoney(null); }, [ticketId]);
+
   // Mileage story loads on its own track (independent of the ticket fetch) so it always resolves to a
   // real state — data, empty, or error — and never leaves the section stuck or silently missing.
+  // It stays eager (not deferred to the History tab) because the deck reads the odometer from it.
   useEffect(() => {
     if (!ticketId) return undefined;
     let alive = true;
@@ -179,6 +296,24 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
     api.get(`/maintenance-tickets/${ticketId}/diagnostic-context`)
       .then((r) => { if (alive) setDiag(r.data?.data || null); })
       .catch(() => { if (alive) setDiag(null); });
+    return () => { alive = false; };
+  }, [ticketId, reloadKey]);
+
+  // The financial blockers are read TWICE on purpose: once here for the deck and the tab badge, and
+  // again by FinancialStory when the money tab is opened. The deck has to be able to say "this ticket
+  // cannot close" before anyone clicks anything, and the alternative — keeping the whole panel mounted
+  // and hidden — makes an invisible component the source of a visible claim. The endpoint is a cheap
+  // read, so the duplicate call buys a deck that is never wrong.
+  useEffect(() => {
+    if (!ticketId) return undefined;
+    let alive = true;
+    api.get(`/maintenance-tickets/${ticketId}/financial-story`)
+      .then((r) => {
+        if (!alive) return;
+        const blockers = (r.data?.data ?? r.data)?.blockers || [];
+        setMoney({ blockers: blockers.length, amount: blockers.reduce((s, b) => s + Number(b.amount || 0), 0) });
+      })
+      .catch(() => { if (alive) setMoney(null); });
     return () => { alive = false; };
   }, [ticketId, reloadKey]);
 
@@ -234,6 +369,30 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
   const showVideo = SHOW_VIDEO_REVIEW && tk && (tk.has_video
     || ['under_repair', 'repair_review', 'ready_for_pickup', 'in_our_park', 'ready_for_reinspection', 'reinspection_failed', 'closed'].includes(tk.workflow_status));
   const timing = tk?.stage_timing?.durations || {};
+  const showInvoices = tk && (tk.invoices?.length > 0 || (can('maintenance.manage') && tk.tasks?.length > 0));
+
+  // What stops this ticket moving, in the order a reader cares about: who has the car, what is unfixed,
+  // what is unpaid. Rendered on the deck so none of it has to be discovered by scrolling.
+  const alerts = useMemo(() => {
+    if (!tk) return [];
+    const out = [];
+    if (allowed && custodyLocked) out.push({ tone: 'amber', text: custodyHint });
+    if (readyBlocked) out.push({ tone: 'amber', text: readyHint });
+    if (money?.blockers > 0) {
+      // The amount is appended outside the sentence: the sentence has six Arabic plural forms and the
+      // figure has none, so keeping them separate stops the translator having to repeat the number.
+      const suffix = SHOW_FINANCIALS && money.amount > 0 ? ` · ${fmtAED(money.amount)}` : '';
+      out.push({ tone: 'amber', text: tp('workflow.detail.deck.moneyBlocked', money.blockers) + suffix, tab: 'money' });
+    }
+    if (tk.workflow_status === 'reinspection_failed') {
+      out.push({
+        tone: 'red',
+        text: tf('workflow.detail.deck.reinspectFailed', 'Re-inspection failed — the car went back to the garage'),
+        tab: 'quality',
+      });
+    }
+    return out;
+  }, [tk, allowed, custodyLocked, custodyHint, readyBlocked, readyHint, money, tf, tp]);
 
   const footer = tk && (
     <div className="flex flex-wrap items-center justify-end gap-2">
@@ -247,7 +406,7 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
         <Button size="sm" variant="secondary" onClick={() => onAct('finding', tk)}>{t('workflow.board.addFinding')}</Button>
       )}
       {can('parts.request') && canOrderParts(tk) && (
-        <Button size="sm" variant="secondary" onClick={() => setPartsOpenSignal((n) => n + 1)}>
+        <Button size="sm" variant="secondary" onClick={() => { setTab('money'); setPartsOpenSignal((n) => n + 1); }}>
           <Icon.Wrench className="h-3.5 w-3.5" /> Request Part
         </Button>
       )}
@@ -313,591 +472,752 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
         <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error}</div>
       ) : loading && !tk ? (
         <div className="space-y-4">
-          <Skeleton className="h-20 rounded-xl" />
-          <Skeleton className="h-32 rounded-xl" />
+          <Skeleton className="h-32 rounded-2xl" />
+          <Skeleton className="h-10 rounded-xl" />
           <Skeleton className="h-40 rounded-xl" />
         </div>
       ) : tk ? (
-        <div className="space-y-4">
-          {/* Status banner — customer-complaint flag FIRST (top priority), then fault severity, status. */}
-          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-soft">
-            {tk.trigger_reason === 'customer_reported' && (
-              <span
-                className="inline-flex items-center gap-1 rounded-full bg-rose-600 px-2.5 py-1 text-sm font-bold uppercase tracking-wide text-white shadow-sm ring-1 ring-inset ring-rose-700/40"
-                title={tk.customer_complaint || ''}
-              >
-                📣 {t('workflow.complaint.badge')}
-              </span>
-            )}
-            {tk.fault_severity && (
-              <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-sm font-bold ring-1 ring-inset ${SEVERITY_CHIP[tk.fault_severity_tone] || SEVERITY_CHIP.amber}`}>
-                {tk.fault_severity_emoji} {t(`workflow.faultSeverity.${tk.fault_severity}`)}
-              </span>
-            )}
-            <span
-              className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm font-bold"
-              style={{ background: `${tone}1a`, color: tone }}
-            >
-              <span className="h-2 w-2 rounded-full" style={{ background: tone }} />
-              {tk.status_label}
-            </span>
-            {/* Temporarily out — the car left the workshop mid-repair (road test / customer test). Its
-                workflow_status stays at the repair stage, so without this the banner would read "In
-                Workshop" while the car is physically gone. This makes the OUT state explicit, so the
-                "Return to workshop" action reads correctly (it only shows while the car is out). */}
-            {isTemporarilyReleased(tk) && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-1 text-sm font-bold text-amber-800 ring-1 ring-inset ring-amber-300">
-                🚗 {t('workflow.tempRelease.outBadge')}
-              </span>
-            )}
-            <div className="ms-auto flex items-center gap-3">
-              {/* Jump from the quick drawer to the full-page command view. */}
-              <Link
-                to={`/maintenance-workflow/${ticketId}`}
-                className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-700"
-              >
-                <Icon.ArrowRight className="h-3.5 w-3.5" /> Open full view
-              </Link>
-              <Link
-                to={`/vehicles/${tk.vehicle_id}`}
-                className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-slate-700"
-              >
-                <Icon.Car className="h-3.5 w-3.5" /> {t('workflow.detail.openVehicle')}
-              </Link>
+        <>
+          {/* ── The deck ──────────────────────────────────────────────────────
+              Where the car is, how far along it is, the four numbers that decide
+              whether anyone needs to act, and what is blocking it. Dark on
+              purpose: it is the one fixed reference point above four tabs of
+              white panels, and it should never be mistaken for one of them. */}
+          <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-slate-900 via-slate-900 to-indigo-950 px-4 py-4 shadow-lg ring-1 ring-slate-900/40">
+            {/* a wash of the lane colour, so the deck itself carries the ticket's status */}
+            <div
+              aria-hidden
+              className="pointer-events-none absolute -end-16 -top-20 h-56 w-56 rounded-full opacity-25 blur-3xl"
+              style={{ background: tone }}
+            />
+
+            <div className="relative">
+              {/* Status line — customer-complaint flag FIRST (top priority), then severity, then status. */}
+              <div className="flex flex-wrap items-center gap-2">
+                {tk.trigger_reason === 'customer_reported' && (
+                  <span
+                    className="inline-flex items-center gap-1 rounded-full bg-rose-600 px-2.5 py-1 text-xs font-bold uppercase tracking-wide text-white shadow-sm ring-1 ring-inset ring-rose-400/40"
+                    title={tk.customer_complaint || ''}
+                  >
+                    📣 {t('workflow.complaint.badge')}
+                  </span>
+                )}
+                <span
+                  className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm font-bold"
+                  style={{ background: `${tone}26`, color: tone, boxShadow: `inset 0 0 0 1px ${tone}55` }}
+                >
+                  <span className="h-2 w-2 rounded-full" style={{ background: tone }} />
+                  {tk.status_label}
+                </span>
+                {tk.fault_severity && (
+                  <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-bold ring-1 ring-inset ${SEVERITY_CHIP[tk.fault_severity_tone] || SEVERITY_CHIP.amber}`}>
+                    {tk.fault_severity_emoji} {t(`workflow.faultSeverity.${tk.fault_severity}`)}
+                  </span>
+                )}
+                {/* Temporarily out — the car left the workshop mid-repair (road test / customer test). Its
+                    workflow_status stays at the repair stage, so without this the deck would read "In
+                    Workshop" while the car is physically gone. This makes the OUT state explicit, so the
+                    "Return to workshop" action reads correctly (it only shows while the car is out). */}
+                {isTemporarilyReleased(tk) && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-amber-400/20 px-2.5 py-1 text-xs font-bold text-amber-200 ring-1 ring-inset ring-amber-400/40">
+                    🚗 {t('workflow.tempRelease.outBadge')}
+                  </span>
+                )}
+              </div>
+
+              {/* How far the ticket has travelled, in one glance. */}
+              <div className="mt-3.5">
+                <JourneyRail tk={tk} tone={tone} t={t} />
+              </div>
+
+              {/* The four numbers. Cost is hidden entirely when financials are switched off. */}
+              <div className={`mt-3.5 grid gap-2 ${SHOW_FINANCIALS ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3'}`}>
+                <Stat
+                  label={tf('workflow.detail.deck.faultsOpen', 'Faults open')}
+                  value={`${openFaults} / ${tk.tasks_progress?.total ?? tk.tasks?.length ?? 0}`}
+                  tone={openFaults > 0 ? 'text-amber-300' : 'text-emerald-300'}
+                  hint={tf(openFaults > 0 ? 'workflow.detail.deck.faultsStill' : 'workflow.detail.deck.faultsClear', openFaults > 0 ? 'still to fix' : 'all cleared')}
+                />
+                <Stat
+                  label={tf('workflow.detail.deck.downtime', 'Downtime')}
+                  value={fmtDuration(timing.total_downtime)}
+                  hint={timing.at_garage != null ? tf('workflow.detail.deck.downtimeHint', '{dur} at garage', { dur: fmtDuration(timing.at_garage) }) : null}
+                />
+                <Stat
+                  label={tf('workflow.detail.deck.odometer', 'Odometer')}
+                  value={mileage?.current != null ? `${Number(mileage.current).toLocaleString()}` : '—'}
+                  hint={t('workflow.stage.kmShort')}
+                />
+                {SHOW_FINANCIALS && (
+                  <Stat
+                    label={tf('workflow.detail.deck.cost', 'Repair cost')}
+                    value={tk.cost != null ? fmtAED(tk.cost) : '—'}
+                    tone={money?.blockers > 0 ? 'text-amber-300' : 'text-white'}
+                    hint={money?.blockers > 0 ? tf('workflow.detail.deck.costHint', '{n} unbilled', { n: money.blockers }) : null}
+                  />
+                )}
+              </div>
+
+              {/* Blockers. Clickable when the answer lives on another tab. */}
+              {alerts.length > 0 && (
+                <div className="mt-3 space-y-1.5">
+                  {alerts.map((a, i) => {
+                    const cls = a.tone === 'red'
+                      ? 'bg-red-500/15 text-red-200 ring-red-400/30'
+                      : 'bg-amber-400/15 text-amber-100 ring-amber-300/30';
+                    const body = (
+                      <>
+                        <Icon.Alert className="h-3.5 w-3.5 shrink-0" />
+                        <span className="min-w-0 flex-1">{a.text}</span>
+                        {a.tab && <Icon.ArrowRight className="h-3.5 w-3.5 shrink-0 opacity-70" />}
+                      </>
+                    );
+                    return a.tab ? (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => setTab(a.tab)}
+                        className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-start text-xs font-medium ring-1 ring-inset transition hover:brightness-125 ${cls}`}
+                      >
+                        {body}
+                      </button>
+                    ) : (
+                      <p key={i} className={`flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs font-medium ring-1 ring-inset ${cls}`}>
+                        {body}
+                      </p>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Ways out of the drawer. */}
+              <div className="mt-3 flex items-center gap-4 border-t border-white/10 pt-2.5">
+                <Link
+                  to={`/maintenance-workflow/${ticketId}`}
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-300 transition hover:text-indigo-200"
+                >
+                  <Icon.ArrowRight className="h-3.5 w-3.5" /> Open full view
+                </Link>
+                <Link
+                  to={`/vehicles/${tk.vehicle_id}`}
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-slate-400 transition hover:text-slate-200"
+                >
+                  <Icon.Car className="h-3.5 w-3.5" /> {t('workflow.detail.openVehicle')}
+                </Link>
+                {tk.linked_contract_no && (
+                  <span className="ms-auto font-mono text-[11px] text-slate-500">{tk.linked_contract_no}</span>
+                )}
+              </div>
             </div>
           </div>
 
-          {/* Audit trail — pinned to the TOP as the primary status reference. Sorted strictly by
-              timestamp DESC (most recent action at the top); ties fall back to the canonical lifecycle
-              order. Each stage links to the earlier one below with an up-arrow so the progression
-              reads bottom-to-top (Inspection requested → … → the latest action on top). */}
-          <Section title={t('workflow.detail.timeline')} icon={<Icon.Activity className="h-3.5 w-3.5 text-slate-400" />}>
-            <ol className="relative">
-              {(() => {
-                const steps = HANDOFF_ORDER.filter((k) => tk.handoffs?.[k]);
-                if (!steps.length) {
-                  return <li className="text-xs text-slate-400">{t('workflow.detail.noTimeline')}</li>;
-                }
-                const at = (k) => { const d = tk.handoffs[k]?.at ? new Date(tk.handoffs[k].at).getTime() : 0; return Number.isNaN(d) ? 0 : d; };
-                const sorted = steps.slice().sort((a, b) => (at(b) - at(a)) || (HANDOFF_ORDER.indexOf(b) - HANDOFF_ORDER.indexOf(a)));
-                return sorted.map((key, si) => {
-                  const h = tk.handoffs[key];
-                  const hasEarlierBelow = si < sorted.length - 1; // an up-arrow links to the stage below
-                  // 'dispatched'/'repair_started' carry odometer + garage/destination context so the
-                  // timeline reads as pickup → transit → arrival instead of a bare timestamp.
-                  const labelKey = key === 'dispatched' && h.is_recovery ? 'dispatched_recovery' : key;
-                  const subline = [
-                    h.odometer != null ? `${Number(h.odometer).toLocaleString()} km` : null,
-                    key === 'dispatched' ? h.destination : (key === 'repair_started' ? h.garage : null),
-                  ].filter(Boolean).join(' · ');
-                  return (
-                    <Fragment key={key}>
-                      <li className="relative flex gap-2.5 px-2 py-1">
-                        <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-indigo-500 ring-2 ring-white" />
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-semibold text-slate-800">{t(`workflow.detail.handoff.${labelKey}`)}</p>
-                          <p className="text-xs text-slate-500">
-                            {h.name ? `${h.name} · ` : ''}{fmtDateTime(h.at)}
-                            {h.at && <span className="text-slate-400"> · {ago(h.at, t)}</span>}
-                          </p>
-                          {subline && <p className="text-xs text-slate-400">{subline}</p>}
-                        </div>
-                      </li>
-                      {/* arrow FROM this stage TO the next one (above) → explicit workflow progression */}
-                      {hasEarlierBelow && (
-                        <li aria-hidden className="flex ps-0.5 py-0.5">
-                          <svg className="h-4 w-4 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5M6 11l6-6 6 6" /></svg>
-                        </li>
-                      )}
-                    </Fragment>
-                  );
-                });
-              })()}
-            </ol>
-          </Section>
+          {/* ── The tabs ──────────────────────────────────────────────────────
+              Sticky, so the reader never loses the way back while deep inside a
+              long panel. The negative margins let the bar span the drawer's full
+              width and cover the content scrolling beneath it. */}
+          <div className="sticky top-0 z-20 -mx-5 mt-4 border-b border-slate-200 bg-slate-50/95 px-5 py-2 backdrop-blur">
+            <div className="flex gap-1 overflow-x-auto" role="tablist">
+              {TABS.map(({ key, en, Glyph }) => {
+                const on = tab === key;
+                const badge = key === 'overview' ? (openFaults || null)
+                  : key === 'money' ? (money?.blockers || null)
+                    : null;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    role="tab"
+                    aria-selected={on}
+                    onClick={() => setTab(key)}
+                    className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                      on ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-200/60 hover:text-slate-800'
+                    }`}
+                  >
+                    <Glyph className="h-3.5 w-3.5" />
+                    {tf(`workflow.detail.tab.${key}`, en)}
+                    {badge != null && (
+                      <span className={`rounded-full px-1.5 text-[10px] font-bold ${on ? 'bg-white/20 text-white' : 'bg-amber-100 text-amber-700'}`}>
+                        {badge}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
 
-          {/* Key facts */}
-          <Section title={t('workflow.detail.overview')} icon={<Icon.Info className="h-3.5 w-3.5 text-slate-400" />}>
-            <dl className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
-              <Fact label={t('workflow.detail.reason')} value={tk.trigger_reason && (REASON_LABEL(t, tk.trigger_reason))} />
-              {/* WHERE the request came from — kept next to, and independent of, the reason above. */}
-              <Fact label={t('workflow.detail.source')} value={tk.request_origin_label || ORIGIN_LABEL[tk.request_origin] || null} />
-              <Fact label={t('workflow.detail.type')} value={tk.maintenance_type_label} />
-              <Fact label={t('workflow.detail.severity')} value={tk.severity} />
-              <Fact label={t('workflow.detail.garage')} value={tk.garage} />
-              {/* A recovery leg is a TOWING unit, not a driver — label it accordingly (+ operator phone). */}
-              {tk.is_recovery ? (
-                <Fact label={t('workflow.detail.recoveryUnit')} value={[tk.recovery_unit_name, tk.recovery_unit_phone].filter(Boolean).join(' · ')} />
-              ) : (
-                <Fact label={t('workflow.detail.driver')} value={tk.dispatched_by_name || tk.assigned_driver_name} />
-              )}
-              <Fact label={t('workflow.detail.contract')} value={tk.linked_contract_no} mono />
-              {tk.cost != null && <Fact label={t('workflow.detail.cost')} value={`AED ${Number(tk.cost).toLocaleString()}`} />}
-            </dl>
-            {/* customer_complaint holds the issue text for every origin — label it by trigger_reason so a
-                system routine agenda / driver note isn't mislabeled as a "Customer complaint". */}
-            {tk.customer_complaint && (
-              <div className="mt-3 border-t border-slate-100 pt-3">
-                <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
-                  {t(tk.trigger_reason === 'customer_reported' ? 'workflow.detail.complaint' : tk.trigger_reason === 'periodic' ? 'workflow.detail.agenda' : 'workflow.detail.driverNote')}
-                </p>
-                <p className="mt-1 text-sm text-slate-700">{tk.customer_complaint}</p>
+          <div className="mt-4 space-y-4">
+            {/* ══ OVERVIEW — what is wrong with this car and what will be done about it ══ */}
+            {tab === 'overview' && (
+              <>
+                <Section title={t('workflow.detail.overview')} icon={<Icon.Info className="h-3.5 w-3.5 text-slate-400" />}>
+                  <dl className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
+                    <Fact label={t('workflow.detail.reason')} value={tk.trigger_reason && (REASON_LABEL(t, tk.trigger_reason))} />
+                    {/* WHERE the request came from — kept next to, and independent of, the reason above. */}
+                    <Fact label={t('workflow.detail.source')} value={tk.request_origin_label || ORIGIN_LABEL[tk.request_origin] || null} />
+                    <Fact label={t('workflow.detail.type')} value={tk.maintenance_type_label} />
+                    <Fact label={t('workflow.detail.severity')} value={tk.severity} />
+                    <Fact label={t('workflow.detail.garage')} value={tk.garage} />
+                    {/* A recovery leg is a TOWING unit, not a driver — label it accordingly (+ operator phone). */}
+                    {tk.is_recovery ? (
+                      <Fact label={t('workflow.detail.recoveryUnit')} value={[tk.recovery_unit_name, tk.recovery_unit_phone].filter(Boolean).join(' · ')} />
+                    ) : (
+                      <Fact label={t('workflow.detail.driver')} value={tk.dispatched_by_name || tk.assigned_driver_name} />
+                    )}
+                    <Fact label={t('workflow.detail.contract')} value={tk.linked_contract_no} mono />
+                  </dl>
+                  {/* customer_complaint holds the issue text for every origin — label it by trigger_reason so a
+                      system routine agenda / driver note isn't mislabeled as a "Customer complaint". */}
+                  {tk.customer_complaint && (
+                    <div className="mt-3 border-t border-slate-100 pt-3">
+                      <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                        {t(tk.trigger_reason === 'customer_reported' ? 'workflow.detail.complaint' : tk.trigger_reason === 'periodic' ? 'workflow.detail.agenda' : 'workflow.detail.driverNote')}
+                      </p>
+                      <p className="mt-1 text-sm text-slate-700">{tk.customer_complaint}</p>
 
-                {/* The agenda text above is a FROZEN snapshot of why the request was raised, and for a
-                    system-scheduled check it is the standing safety list ("please check: Battery,
-                    Fluids, and Brakes") — the same wording on every idle car. On its own it tells the
-                    reader nothing about THIS vehicle. The live per-car picture goes directly beneath
-                    it, from the one service every surface reads, so whoever acts on the agenda sees
-                    what this car actually keeps coming back for. */}
-                <SuggestedChecks vehicleId={tk.vehicle_id} />
-              </div>
-            )}
-            {hasReport(tk.test_drive_report) && (
-              <div className="mt-3 border-t border-slate-100 pt-3">
-                <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">{t('workflow.detail.report')}</p>
-                <TestDriveReport report={tk.test_drive_report} tasks={tk.tasks} />
-              </div>
-            )}
-          </Section>
-
-          {/* Financial Story — LEADS the money section on purpose. It opens with what is still owed
-              before the ticket can close (the only part anyone must act on), then the narrative from
-              diagnosis to closure. The breakdown and lifecycle below explain the figures; this says what
-              to do about them. Self-fetching; silent when nothing financial has happened. */}
-          <Section title="Financial Story" icon={<Icon.Invoice className="h-3.5 w-3.5 text-slate-400" />}>
-            <FinancialStory ticketId={ticketId} reloadKey={reloadKey} />
-          </Section>
-
-          {/* Repair Cost Breakdown — the ticket's money read end to end: fault → required part → where the
-              part came from → its invoice → what fitting it cost → the total. Sits ABOVE the invoice list
-              on purpose: this is what the cost IS, the panels below are where it is edited. Self-fetching,
-              read-only, and renders nothing until the ticket has money or required parts. */}
-          {tk.tasks?.length > 0 && (
-            <Section title="Repair Cost Breakdown" icon={<Icon.Coins className="h-3.5 w-3.5 text-slate-400" />}>
-              <CostJourney ticketId={ticketId} reloadKey={reloadKey} />
-            </Section>
-          )}
-
-          {/* Procurement Lifecycle — request → PO → invoice → received → installed → return → paid →
-              closed, per part. Sits under the cost breakdown because it answers the other half of the
-              money question: not what it cost, but what has been ordered, received, fitted and paid.
-              Self-fetching; renders nothing when nothing was ever ordered for this ticket. */}
-          <Section title="Procurement Lifecycle" icon={<Icon.Route className="h-3.5 w-3.5 text-slate-400" />}>
-            <ProcurementLifecycle ticketId={ticketId} reloadKey={reloadKey} />
-          </Section>
-
-          {/* Invoices — One Ticket → Many Invoices: each garage's bill for the faults it fixed. Present
-              once the ticket carries faults (there's something to bill against). */}
-          {(tk.invoices?.length > 0 || (can('maintenance.manage') && tk.tasks?.length > 0)) && (
-            <Section title={t('workflow.invoices.title')} icon={<Icon.Invoice className="h-3.5 w-3.5 text-slate-400" />}>
-              <InvoicesPanel
-                ticket={tk}
-                garages={garages}
-                findingsCatalog={findingsCatalog}
-                canManage={can('maintenance.manage')}
-                onChanged={load}
-              />
-            </Section>
-          )}
-
-          {/* Diagnostic Context — the "why" behind the flag: how long the car has been idle, when it was
-              last checked (with a link to that visit), and the live oil / battery / tyre status against the
-              chosen limits. Lazily fetched; shown once it resolves. */}
-          {diag && (
-            <Section title="Diagnostic Context" icon={<Icon.Gauge className="h-3.5 w-3.5 text-slate-400" />}>
-              <div className="space-y-3">
-                <dl className="grid grid-cols-2 gap-x-4 gap-y-3">
-                  {diag.idle?.eligible && diag.idle.days != null && (
-                    <Fact
-                      label="Idle since last use"
-                      value={`${diag.idle.days} day${diag.idle.days === 1 ? '' : 's'}${diag.idle.idle_since ? ` · since ${fmtDay(diag.idle.idle_since)}` : ''}${diag.idle.exceeded ? ` (limit ${diag.idle.limit})` : ''}`}
-                    />
+                      {/* The agenda text above is a FROZEN snapshot of why the request was raised, and for a
+                          system-scheduled check it is the standing safety list ("please check: Battery,
+                          Fluids, and Brakes") — the same wording on every idle car. On its own it tells the
+                          reader nothing about THIS vehicle. The live per-car picture goes directly beneath
+                          it, from the one service every surface reads, so whoever acts on the agenda sees
+                          what this car actually keeps coming back for. */}
+                      <SuggestedChecks vehicleId={tk.vehicle_id} />
+                    </div>
                   )}
-                  <div className="flex flex-col gap-0.5">
-                    <dt className="text-[11px] font-medium uppercase tracking-wide text-slate-400">Last check</dt>
-                    <dd className="text-sm text-slate-800">
-                      {diag.last_check ? (
-                        <>
-                          {fmtDay(diag.last_check.date)}
-                          {diag.last_check.days_ago != null && <span className="text-slate-400"> · {diag.last_check.days_ago}d ago</span>}
-                          {diag.last_check.link && (
-                            <Link to={diag.last_check.link} className="ms-2 text-xs font-semibold text-indigo-600 hover:underline">View</Link>
-                          )}
-                          <div className="text-[11px] text-slate-400">{diag.last_check.label}</div>
-                        </>
-                      ) : (
-                        <span className="text-slate-400">No prior check on file</span>
-                      )}
-                    </dd>
-                  </div>
-                </dl>
+                  {hasReport(tk.test_drive_report) && (
+                    <div className="mt-3 border-t border-slate-100 pt-3">
+                      <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">{t('workflow.detail.report')}</p>
+                      <TestDriveReport report={tk.test_drive_report} tasks={tk.tasks} />
+                    </div>
+                  )}
+                </Section>
 
-                {diag.conditions?.length > 0 && (
-                  <div className="space-y-1.5">
-                    {diag.conditions.map((c) => (
-                      <div key={c.key} className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 ring-1 ring-inset ring-slate-100">
-                        <div className="min-w-0">
-                          <p className="text-sm font-semibold text-slate-800">{c.label}</p>
-                          <p className="text-xs text-slate-500">
-                            {c.summary}
-                            {c.current_km != null && <span className="text-slate-400"> · now {Number(c.current_km).toLocaleString()} km</span>}
-                            {c.last_service_km != null && <span className="text-slate-400"> · serviced at {Number(c.last_service_km).toLocaleString()} km</span>}
-                            {c.last_service_at && <span className="text-slate-400"> · on {fmtDay(c.last_service_at)}</span>}
-                            {c.last_changed && <span className="text-slate-400"> · changed {fmtDay(c.last_changed)}</span>}
-                          </p>
-                        </div>
-                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold ring-1 ring-inset ${DIAG_TONE[c.tone] || DIAG_TONE.gray}`}>
-                          {DIAG_STATUS_WORD[c.status] || c.status}
-                        </span>
-                      </div>
-                    ))}
+                {/* Delegation overlay */}
+                {tk.delegation?.status === 'driver_assigned' && tk.delegation.driver_name && (
+                  <div className="flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50/60 px-4 py-3 text-sm font-medium text-indigo-700">
+                    <Icon.Car className="h-4 w-4 shrink-0" />
+                    <span>{t('workflow.delegation.assigned')} · {tk.delegation.driver_name}</span>
+                    {tk.delegation.task && (
+                      <span className="ms-auto rounded bg-indigo-100 px-2 py-0.5 text-xs">{t(`workflow.delegation.${tk.delegation.task}`)}</span>
+                    )}
                   </div>
                 )}
-              </div>
-            </Section>
-          )}
 
-          {/* Delegation overlay */}
-          {tk.delegation?.status === 'driver_assigned' && tk.delegation.driver_name && (
-            <div className="flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50/60 px-4 py-3 text-sm font-medium text-indigo-700">
-              <Icon.Car className="h-4 w-4 shrink-0" />
-              <span>{t('workflow.delegation.assigned')} · {tk.delegation.driver_name}</span>
-              {tk.delegation.task && (
-                <span className="ms-auto rounded bg-indigo-100 px-2 py-0.5 text-xs">{t(`workflow.delegation.${tk.delegation.task}`)}</span>
-              )}
-            </div>
-          )}
+                {/* Findings */}
+                <Section
+                  title={t('workflow.detail.findings')}
+                  icon={<Icon.Flag className="h-3.5 w-3.5 text-slate-400" />}
+                  count={tk.findings?.length}
+                >
+                  {tk.findings?.length ? <FindingsList findings={tk.findings} tasks={tk.tasks} paused={isPaused(tk)} /> : (
+                    <p className="text-xs text-slate-400">{t('workflow.detail.noFindings')}</p>
+                  )}
+                </Section>
 
-          {/* Findings */}
-          <Section title={t('workflow.detail.findings')} icon={<Icon.Flag className="h-3.5 w-3.5 text-slate-400" />}>
-            {tk.findings?.length ? <FindingsList findings={tk.findings} tasks={tk.tasks} paused={isPaused(tk)} /> : (
-              <p className="text-xs text-slate-400">{t('workflow.detail.noFindings')}</p>
-            )}
-          </Section>
-
-          {/* "What the garage will do" — the expected work behind each fault, in plain words. It used to
-              live on the assign step, which one supervisor sees once; everyone who opens the ticket needs
-              to know what the car is having done to it, so it moved here. Prior repairs went the other
-              way, onto the assign step where the garage is actually being chosen ([[RepairOutlook]]).
-              Self-fetches and renders nothing when no finding resolves to a known fault. */}
-          <RepairOutlook ticketId={ticketId} />
-
-          {/* Required Parts — what the INSPECTOR said the repair would need. Sits directly above the Parts
-              board because it is the step before it: the coordinator turns these technical lines into real
-              part requests once the garage is chosen (or dismisses them with a reason). Self-fetches and
-              renders nothing when the inspection listed none. */}
-          <RequiredPartsPanel ticket={tk} />
-
-          {/* Parts — every part requested against this ticket + a technician's in-context "Request Part".
-              Approve/purchase/install still happen on the standalone /parts board. */}
-          {can('parts.view') && (
-            <TicketParts
-              ticketId={ticketId}
-              ticket={tk}
-              tasks={tk.tasks}
-              canView={can('parts.view')}
-              canRequest={can('parts.request')}
-              openSignal={partsOpenSignal}
-              onChanged={load}
-              variant="drawer"
-            />
-          )}
-
-          {/* Repair Quality Check — the post-repair inspection verdicts (Fixed / Problem still exists /
-              New problem found) recorded at sign-off. Self-fetches; renders nothing before the QC stage. */}
-          <RepairQualityCheck ticketId={ticketId} workflowStatus={tk.workflow_status} reloadKey={reloadKey} />
-
-          {/* Handover Comparison Report — pause vs. resume custody-handover snapshots, permanently
-              attached to the ticket's history. A breach that exceeded the configured thresholds shows
-              its linked Incident + an Acknowledge action (maintenance.manage only). */}
-          {tk.handover_comparisons?.length > 0 && (
-            <Section title={t('workflow.detail.handoverReport')} icon={<Icon.Shield className="h-3.5 w-3.5 text-slate-400" />}>
-              <div className="space-y-3">
-                {tk.handover_comparisons.map((c) => (
-                  <div key={c.id} className={`rounded-xl border px-3.5 py-3 ${c.exceeds_threshold ? 'border-red-200 bg-red-50/50' : 'border-slate-200 bg-slate-50/60'}`}>
-                    <div className="flex items-center justify-between gap-2">
-                      <span className={`inline-flex items-center gap-1.5 text-xs font-bold ${c.exceeds_threshold ? 'text-red-700' : 'text-emerald-700'}`}>
-                        <span className="h-2 w-2 rounded-full" style={{ background: c.exceeds_threshold ? '#ef4444' : '#10b981' }} />
-                        {c.exceeds_threshold ? t('workflow.detail.handoverBreach') : t('workflow.detail.handoverClean')}
-                      </span>
-                      <span className="text-[11px] text-slate-400">{fmtDateTime(c.generated_at)}</span>
-                    </div>
-                    <dl className="mt-2.5 grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
-                      <Fact label={t('workflow.detail.handoverMileageDelta')} value={c.mileage_delta != null ? `${c.mileage_delta > 0 ? '+' : ''}${Number(c.mileage_delta).toLocaleString()} km` : null} />
-                      <Fact label={t('workflow.detail.handoverFuelDelta')} value={c.fuel_delta} />
-                      <Fact label={t('workflow.detail.handoverNewDamages')} value={c.new_damages?.length ? c.new_damages.map((d) => d.location || d).join(', ') : null} />
-                      <Fact label={t('workflow.detail.handoverMissingAccessories')} value={c.missing_accessories?.length ? c.missing_accessories.join(', ') : null} />
-                      <Fact label={t('workflow.detail.handoverConditionChanges')} value={c.condition_changes && Object.keys(c.condition_changes).length ? Object.entries(c.condition_changes).map(([k, v]) => `${k}: ${v}`).join(', ') : null} />
-                    </dl>
-                    {c.exceeds_threshold && tk.active_incident && tk.active_incident.status === 'open' && (
-                      <div className="mt-3 flex items-center justify-between gap-2 rounded-lg bg-white px-3 py-2 ring-1 ring-inset ring-red-200">
-                        <div className="min-w-0">
-                          <p className="text-xs font-semibold text-red-700">{tk.active_incident.description || t('workflow.detail.incidentStatus')}</p>
-                          <p className="text-[11px] text-slate-400">{tk.active_incident.severity}</p>
+                {/* Diagnostic Context — the "why" behind the flag: how long the car has been idle, when it was
+                    last checked (with a link to that visit), and the live oil / battery / tyre status against the
+                    chosen limits. Lazily fetched; shown once it resolves. */}
+                {diag && (
+                  <Section title="Diagnostic Context" icon={<Icon.Gauge className="h-3.5 w-3.5 text-slate-400" />}>
+                    <div className="space-y-3">
+                      <dl className="grid grid-cols-2 gap-x-4 gap-y-3">
+                        {diag.idle?.eligible && diag.idle.days != null && (
+                          <Fact
+                            label="Idle since last use"
+                            value={`${diag.idle.days} day${diag.idle.days === 1 ? '' : 's'}${diag.idle.idle_since ? ` · since ${fmtDay(diag.idle.idle_since)}` : ''}${diag.idle.exceeded ? ` (limit ${diag.idle.limit})` : ''}`}
+                          />
+                        )}
+                        <div className="flex flex-col gap-0.5">
+                          <dt className="text-[11px] font-medium uppercase tracking-wide text-slate-400">Last check</dt>
+                          <dd className="text-sm text-slate-800">
+                            {diag.last_check ? (
+                              <>
+                                {fmtDay(diag.last_check.date)}
+                                {diag.last_check.days_ago != null && <span className="text-slate-400"> · {diag.last_check.days_ago}d ago</span>}
+                                {diag.last_check.link && (
+                                  <Link to={diag.last_check.link} className="ms-2 text-xs font-semibold text-indigo-600 hover:underline">View</Link>
+                                )}
+                                <div className="text-[11px] text-slate-400">{diag.last_check.label}</div>
+                              </>
+                            ) : (
+                              <span className="text-slate-400">No prior check on file</span>
+                            )}
+                          </dd>
                         </div>
-                        {can('maintenance.manage') && (
-                          <Button size="sm" variant="danger" loading={ackBusyId === tk.active_incident.id} onClick={() => acknowledgeIncident(tk.active_incident.id)}>
-                            {t('workflow.detail.acknowledgeIncident')}
-                          </Button>
+                      </dl>
+
+                      {diag.conditions?.length > 0 && (
+                        <div className="space-y-1.5">
+                          {diag.conditions.map((c) => (
+                            <div key={c.key} className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 ring-1 ring-inset ring-slate-100">
+                              <div className="min-w-0">
+                                <p className="text-sm font-semibold text-slate-800">{c.label}</p>
+                                <p className="text-xs text-slate-500">
+                                  {c.summary}
+                                  {c.current_km != null && <span className="text-slate-400"> · now {Number(c.current_km).toLocaleString()} km</span>}
+                                  {c.last_service_km != null && <span className="text-slate-400"> · serviced at {Number(c.last_service_km).toLocaleString()} km</span>}
+                                  {c.last_service_at && <span className="text-slate-400"> · on {fmtDay(c.last_service_at)}</span>}
+                                  {c.last_changed && <span className="text-slate-400"> · changed {fmtDay(c.last_changed)}</span>}
+                                </p>
+                              </div>
+                              <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold ring-1 ring-inset ${DIAG_TONE[c.tone] || DIAG_TONE.gray}`}>
+                                {DIAG_STATUS_WORD[c.status] || c.status}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </Section>
+                )}
+
+                {/* "What the garage will do" — the expected work behind each fault, in plain words. It used to
+                    live on the assign step, which one supervisor sees once; everyone who opens the ticket needs
+                    to know what the car is having done to it, so it moved here. Prior repairs went the other
+                    way, onto the assign step where the garage is actually being chosen ([[RepairOutlook]]).
+                    Self-fetches and renders nothing when no finding resolves to a known fault. */}
+                <RepairOutlook ticketId={ticketId} />
+
+                {/* Maintenance forecast — will this car need service soon? Km-to-interval + a projected date
+                    from the car's own usage rate, so a service is caught before it's missed on a long rental. */}
+                {mileage?.forecast && mileage.forecast.status !== 'no_data' && (() => {
+                  const f = mileage.forecast;
+                  const ftone = f.status === 'overdue'
+                    ? { box: 'bg-red-50 ring-red-200', text: 'text-red-700', dot: '#ef4444', label: t('workflow.detail.healthOverdue') }
+                    : f.status === 'due_soon'
+                      ? { box: 'bg-amber-50 ring-amber-200', text: 'text-amber-700', dot: '#f59e0b', label: t('workflow.detail.healthApproaching') }
+                      : { box: 'bg-emerald-50 ring-emerald-200', text: 'text-emerald-700', dot: '#10b981', label: t('workflow.detail.healthHealthy') };
+                  let projected = null;
+                  if (f.projected_date) {
+                    try { projected = new Date(f.projected_date).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }); } catch { projected = f.projected_date; }
+                  }
+                  return (
+                    <Section title={t('workflow.detail.forecast')} icon={<Icon.Activity className="h-3.5 w-3.5 text-slate-400" />}>
+                      <div className={`rounded-xl px-3.5 py-3 ring-1 ring-inset ${ftone.box}`}>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className={`inline-flex items-center gap-1.5 text-xs font-bold ${ftone.text}`}>
+                            <span className="h-2 w-2 rounded-full" style={{ backgroundColor: ftone.dot }} />
+                            {ftone.label}
+                          </span>
+                          {f.usage_rate != null ? (
+                            <span className="text-[11px] font-medium text-slate-500">{t('workflow.detail.forecastUsage', { rate: Number(f.usage_rate).toLocaleString() })}</span>
+                          ) : (
+                            <span className="text-[11px] text-slate-400">{t('workflow.detail.forecastNoRate')}</span>
+                          )}
+                        </div>
+                        <p className={`mt-1.5 font-display text-lg font-bold ${ftone.text}`}>
+                          {f.status === 'overdue'
+                            ? t('workflow.detail.forecastOverdueBy', { km: Number(Math.abs(f.overdue_km ?? f.remaining_km ?? 0)).toLocaleString() })
+                            : t('workflow.detail.forecastDueIn', { km: Number(Math.max(0, f.remaining_km ?? 0)).toLocaleString() })}
+                        </p>
+                        {projected && (
+                          <p className="mt-0.5 flex items-center gap-1.5 text-xs text-slate-500">
+                            <Icon.Calendar className="h-3.5 w-3.5 text-slate-400" />
+                            {t('workflow.detail.forecastProjected', { date: projected })}
+                          </p>
                         )}
                       </div>
-                    )}
-                    {c.exceeds_threshold && tk.active_incident?.status === 'acknowledged' && (
-                      <p className="mt-2 text-[11px] font-medium text-emerald-600">
-                        {t('workflow.detail.acknowledged')} · {tk.active_incident.acknowledged_by_name} · {fmtDateTime(tk.active_incident.acknowledged_at)}
-                      </p>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </Section>
-          )}
+                    </Section>
+                  );
+                })()}
+              </>
+            )}
 
-          {/* Video Evidence — the garage's repair videos (the permanent video record). Supervisors upload +
-              delete; anyone viewing the ticket can watch. Shown once the car has reached the garage. */}
-          {showVideo && (
-            <VideoEvidence ticketId={ticketId} canManage={can('maintenance.delegate')} reloadKey={reloadKey} onChange={load} />
-          )}
+            {/* ══ PARTS & MONEY — what it needed, where it came from, what it cost, what is owed ══ */}
+            {tab === 'money' && (
+              <>
+                {/* Financial Story LEADS the tab on purpose. It opens with what is still owed before the
+                    ticket can close (the only part anyone must act on), then the narrative from diagnosis
+                    to closure. The panels below explain the figures; this says what to do about them. */}
+                <Section title="Financial Story" icon={<Icon.Invoice className="h-3.5 w-3.5 text-slate-400" />}>
+                  <FinancialStory ticketId={ticketId} reloadKey={reloadKey} />
+                </Section>
 
-          {/* Maintenance forecast — will this car need service soon? Km-to-interval + a projected date
-              from the car's own usage rate, so a service is caught before it's missed on a long rental. */}
-          {mileage?.forecast && mileage.forecast.status !== 'no_data' && (() => {
-            const f = mileage.forecast;
-            const tone = f.status === 'overdue'
-              ? { box: 'bg-red-50 ring-red-200', text: 'text-red-700', dot: '#ef4444', label: t('workflow.detail.healthOverdue') }
-              : f.status === 'due_soon'
-                ? { box: 'bg-amber-50 ring-amber-200', text: 'text-amber-700', dot: '#f59e0b', label: t('workflow.detail.healthApproaching') }
-                : { box: 'bg-emerald-50 ring-emerald-200', text: 'text-emerald-700', dot: '#10b981', label: t('workflow.detail.healthHealthy') };
-            let projected = null;
-            if (f.projected_date) {
-              try { projected = new Date(f.projected_date).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }); } catch { projected = f.projected_date; }
-            }
-            return (
-              <Section title={t('workflow.detail.forecast')} icon={<Icon.Activity className="h-3.5 w-3.5 text-slate-400" />}>
-                <div className={`rounded-xl px-3.5 py-3 ring-1 ring-inset ${tone.box}`}>
-                  <div className="flex items-center justify-between gap-2">
-                    <span className={`inline-flex items-center gap-1.5 text-xs font-bold ${tone.text}`}>
-                      <span className="h-2 w-2 rounded-full" style={{ backgroundColor: tone.dot }} />
-                      {tone.label}
+                {/* Required Parts — what the INSPECTOR said the repair would need. Sits above the Parts
+                    board because it is the step before it: the coordinator turns these technical lines into
+                    real part requests once the garage is chosen (or dismisses them with a reason).
+                    Self-fetches and renders nothing when the inspection listed none. */}
+                <RequiredPartsPanel ticket={tk} />
+
+                {/* Parts — every part requested against this ticket + a technician's in-context "Request
+                    Part". Approve/purchase/install still happen on the standalone /parts board. */}
+                {can('parts.view') && (
+                  <TicketParts
+                    ticketId={ticketId}
+                    ticket={tk}
+                    tasks={tk.tasks}
+                    canView={can('parts.view')}
+                    canRequest={can('parts.request')}
+                    openSignal={partsOpenSignal}
+                    onChanged={load}
+                    variant="drawer"
+                  />
+                )}
+
+                {/* Repair Cost Breakdown — the ticket's money read end to end: fault → required part → where
+                    the part came from → its invoice → what fitting it cost → the total. Self-fetching,
+                    read-only, and renders nothing until the ticket has money or required parts. */}
+                {tk.tasks?.length > 0 && (
+                  <Section title="Repair Cost Breakdown" icon={<Icon.Coins className="h-3.5 w-3.5 text-slate-400" />}>
+                    <CostJourney ticketId={ticketId} reloadKey={reloadKey} />
+                  </Section>
+                )}
+
+                {/* Procurement Lifecycle — request → PO → invoice → received → installed → return → paid →
+                    closed, per part. It answers the other half of the money question: not what it cost, but
+                    what has been ordered, received, fitted and paid. Folded by default — it is the longest
+                    panel in the drawer and is read on purpose, not in passing. */}
+                <Section
+                  title="Procurement Lifecycle"
+                  icon={<Icon.Route className="h-3.5 w-3.5 text-slate-400" />}
+                  defaultOpen={false}
+                >
+                  <ProcurementLifecycle ticketId={ticketId} reloadKey={reloadKey} />
+                </Section>
+
+                {/* Invoices — One Ticket → Many Invoices: each garage's bill for the faults it fixed.
+                    Present once the ticket carries faults (there's something to bill against). */}
+                {showInvoices && (
+                  <Section
+                    title={t('workflow.invoices.title')}
+                    icon={<Icon.Invoice className="h-3.5 w-3.5 text-slate-400" />}
+                    count={tk.invoices?.length}
+                  >
+                    <InvoicesPanel
+                      ticket={tk}
+                      garages={garages}
+                      findingsCatalog={findingsCatalog}
+                      canManage={can('maintenance.manage')}
+                      onChanged={load}
+                    />
+                  </Section>
+                )}
+              </>
+            )}
+
+            {/* ══ QUALITY — was the repair actually good, and who vouches for it ══ */}
+            {tab === 'quality' && (
+              <>
+                {/* Repair Quality Check — the post-repair inspection verdicts (Fixed / Problem still exists /
+                    New problem found) recorded at sign-off. Self-fetches; renders nothing before the QC stage. */}
+                <RepairQualityCheck ticketId={ticketId} workflowStatus={tk.workflow_status} reloadKey={reloadKey} />
+
+                {/* Handover Comparison Report — pause vs. resume custody-handover snapshots, permanently
+                    attached to the ticket's history. A breach that exceeded the configured thresholds shows
+                    its linked Incident + an Acknowledge action (maintenance.manage only). */}
+                {tk.handover_comparisons?.length > 0 && (
+                  <Section
+                    title={t('workflow.detail.handoverReport')}
+                    icon={<Icon.Shield className="h-3.5 w-3.5 text-slate-400" />}
+                    count={tk.handover_comparisons.length}
+                  >
+                    <div className="space-y-3">
+                      {tk.handover_comparisons.map((c) => (
+                        <div key={c.id} className={`rounded-xl border px-3.5 py-3 ${c.exceeds_threshold ? 'border-red-200 bg-red-50/50' : 'border-slate-200 bg-slate-50/60'}`}>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className={`inline-flex items-center gap-1.5 text-xs font-bold ${c.exceeds_threshold ? 'text-red-700' : 'text-emerald-700'}`}>
+                              <span className="h-2 w-2 rounded-full" style={{ background: c.exceeds_threshold ? '#ef4444' : '#10b981' }} />
+                              {c.exceeds_threshold ? t('workflow.detail.handoverBreach') : t('workflow.detail.handoverClean')}
+                            </span>
+                            <span className="text-[11px] text-slate-400">{fmtDateTime(c.generated_at)}</span>
+                          </div>
+                          <dl className="mt-2.5 grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
+                            <Fact label={t('workflow.detail.handoverMileageDelta')} value={c.mileage_delta != null ? `${c.mileage_delta > 0 ? '+' : ''}${Number(c.mileage_delta).toLocaleString()} km` : null} />
+                            <Fact label={t('workflow.detail.handoverFuelDelta')} value={c.fuel_delta} />
+                            <Fact label={t('workflow.detail.handoverNewDamages')} value={c.new_damages?.length ? c.new_damages.map((d) => d.location || d).join(', ') : null} />
+                            <Fact label={t('workflow.detail.handoverMissingAccessories')} value={c.missing_accessories?.length ? c.missing_accessories.join(', ') : null} />
+                            <Fact label={t('workflow.detail.handoverConditionChanges')} value={c.condition_changes && Object.keys(c.condition_changes).length ? Object.entries(c.condition_changes).map(([k, v]) => `${k}: ${v}`).join(', ') : null} />
+                          </dl>
+                          {c.exceeds_threshold && tk.active_incident && tk.active_incident.status === 'open' && (
+                            <div className="mt-3 flex items-center justify-between gap-2 rounded-lg bg-white px-3 py-2 ring-1 ring-inset ring-red-200">
+                              <div className="min-w-0">
+                                <p className="text-xs font-semibold text-red-700">{tk.active_incident.description || t('workflow.detail.incidentStatus')}</p>
+                                <p className="text-[11px] text-slate-400">{tk.active_incident.severity}</p>
+                              </div>
+                              {can('maintenance.manage') && (
+                                <Button size="sm" variant="danger" loading={ackBusyId === tk.active_incident.id} onClick={() => acknowledgeIncident(tk.active_incident.id)}>
+                                  {t('workflow.detail.acknowledgeIncident')}
+                                </Button>
+                              )}
+                            </div>
+                          )}
+                          {c.exceeds_threshold && tk.active_incident?.status === 'acknowledged' && (
+                            <p className="mt-2 text-[11px] font-medium text-emerald-600">
+                              {t('workflow.detail.acknowledged')} · {tk.active_incident.acknowledged_by_name} · {fmtDateTime(tk.active_incident.acknowledged_at)}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </Section>
+                )}
+
+                {/* Video Evidence — the garage's repair videos (the permanent video record). Supervisors
+                    upload + delete; anyone viewing the ticket can watch. Shown once the car reached the garage. */}
+                {showVideo && (
+                  <VideoEvidence ticketId={ticketId} canManage={can('maintenance.delegate')} reloadKey={reloadKey} onChange={load} />
+                )}
+
+                {/* Why this garage was chosen — the durable data-driven decision record */}
+                {tk.garage_recommendation && (
+                  <Section title={t('workflow.garageRec.why.title')} icon={<Icon.Wrench className="h-3.5 w-3.5 text-slate-400" />}>
+                    <WhyThisGarage rec={tk.garage_recommendation} t={t} />
+                  </Section>
+                )}
+
+                {/* Follow-up log */}
+                {tk.follow_ups?.length > 0 && (
+                  <Section
+                    title={t('workflow.detail.followLog')}
+                    icon={<Icon.Users className="h-3.5 w-3.5 text-slate-400" />}
+                    count={tk.follow_ups.length}
+                  >
+                    <ul className="space-y-2">
+                      {tk.follow_ups.map((f, i) => {
+                        const text = typeof f === 'string' ? f : (f.note || f.text || '');
+                        const by = typeof f === 'object' ? f.by : null;
+                        const at = typeof f === 'object' ? f.at : null;
+                        return (
+                          <li key={i} className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                            {text}
+                            {(by || at) && (
+                              <span className="mt-0.5 block text-[11px] text-slate-400">
+                                {by ? `${by}` : ''}{by && at ? ' · ' : ''}{at ? fmtDateTime(at) : ''}
+                              </span>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </Section>
+                )}
+
+                {/* Watchers */}
+                {tk.watchers?.length > 0 && (
+                  <Section
+                    title={t('workflow.detail.watchers')}
+                    icon={<Icon.Shield className="h-3.5 w-3.5 text-slate-400" />}
+                    count={tk.watchers.length}
+                  >
+                    <div className="flex flex-wrap gap-1.5">
+                      {tk.watchers.map((w) => <Badge key={w.id} tone="slate">{w.name}</Badge>)}
+                    </div>
+                  </Section>
+                )}
+              </>
+            )}
+
+            {/* ══ HISTORY — every hand that touched the car, and every odometer reading it left ══ */}
+            {tab === 'history' && (
+              <>
+                {/* Audit trail. Sorted strictly by timestamp DESC (most recent action at the top); ties fall
+                    back to the canonical lifecycle order. Each stage links to the earlier one below with an
+                    up-arrow so the progression reads bottom-to-top (Inspection requested → … → latest). */}
+                <Section title={t('workflow.detail.timeline')} icon={<Icon.Activity className="h-3.5 w-3.5 text-slate-400" />}>
+                  <ol className="relative">
+                    {(() => {
+                      const steps = HANDOFF_ORDER.filter((k) => tk.handoffs?.[k]);
+                      if (!steps.length) {
+                        return <li className="text-xs text-slate-400">{t('workflow.detail.noTimeline')}</li>;
+                      }
+                      const at = (k) => { const d = tk.handoffs[k]?.at ? new Date(tk.handoffs[k].at).getTime() : 0; return Number.isNaN(d) ? 0 : d; };
+                      const sorted = steps.slice().sort((a, b) => (at(b) - at(a)) || (HANDOFF_ORDER.indexOf(b) - HANDOFF_ORDER.indexOf(a)));
+                      return sorted.map((key, si) => {
+                        const h = tk.handoffs[key];
+                        const hasEarlierBelow = si < sorted.length - 1; // an up-arrow links to the stage below
+                        // 'dispatched'/'repair_started' carry odometer + garage/destination context so the
+                        // timeline reads as pickup → transit → arrival instead of a bare timestamp.
+                        const labelKey = key === 'dispatched' && h.is_recovery ? 'dispatched_recovery' : key;
+                        const subline = [
+                          h.odometer != null ? `${Number(h.odometer).toLocaleString()} km` : null,
+                          key === 'dispatched' ? h.destination : (key === 'repair_started' ? h.garage : null),
+                        ].filter(Boolean).join(' · ');
+                        return (
+                          <Fragment key={key}>
+                            <li className="relative flex gap-2.5 px-2 py-1">
+                              <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-indigo-500 ring-2 ring-white" />
+                              <div className="min-w-0 flex-1">
+                                <p className="text-sm font-semibold text-slate-800">{t(`workflow.detail.handoff.${labelKey}`)}</p>
+                                <p className="text-xs text-slate-500">
+                                  {h.name ? `${h.name} · ` : ''}{fmtDateTime(h.at)}
+                                  {h.at && <span className="text-slate-400"> · {ago(h.at, t)}</span>}
+                                </p>
+                                {subline && <p className="text-xs text-slate-400">{subline}</p>}
+                              </div>
+                            </li>
+                            {/* arrow FROM this stage TO the next one (above) → explicit workflow progression */}
+                            {hasEarlierBelow && (
+                              <li aria-hidden className="flex ps-0.5 py-0.5">
+                                <svg className="h-4 w-4 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5M6 11l6-6 6 6" /></svg>
+                              </li>
+                            )}
+                          </Fragment>
+                        );
+                      });
+                    })()}
+                  </ol>
+                </Section>
+
+                {/* Timing */}
+                {(timing.test_drive != null || timing.at_garage != null || timing.total_downtime != null) && (
+                  <Section title={t('workflow.detail.timing')} icon={<Icon.Clock className="h-3.5 w-3.5 text-slate-400" />}>
+                    <div className="grid grid-cols-3 gap-2 text-center">
+                      {[['testDrive', timing.test_drive], ['atGarage', timing.at_garage], ['totalDowntime', timing.total_downtime]].map(([k, v]) => (
+                        <div key={k} className="rounded-lg bg-slate-50 px-2 py-2">
+                          <p className="text-[10px] uppercase tracking-wide text-slate-400">{t(`workflow.detail.${k}`)}</p>
+                          <p className="mt-0.5 font-display text-sm font-bold text-slate-800">{fmtDuration(v)}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </Section>
+                )}
+
+                {/* Mileage — the car's REAL odometer up top, then a forward story of every reading and how
+                    it happened (test drive → garage → rentals → manual fixes), this ticket highlighted. */}
+                <Section
+                  title={t('workflow.detail.mileage')}
+                  icon={<Icon.Gauge className="h-3.5 w-3.5 text-slate-400" />}
+                  action={mileage?.total > 0 ? (
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500">
+                      {t('workflow.detail.mileageChanges', { n: mileage.total })}
                     </span>
-                    {f.usage_rate != null ? (
-                      <span className="text-[11px] font-medium text-slate-500">{t('workflow.detail.forecastUsage', { rate: Number(f.usage_rate).toLocaleString() })}</span>
-                    ) : (
-                      <span className="text-[11px] text-slate-400">{t('workflow.detail.forecastNoRate')}</span>
+                  ) : null}
+                >
+                  {/* Headline — the real current odometer + the baseline anchor. */}
+                  <div className="flex items-stretch gap-3">
+                    <div className="flex-1 rounded-lg bg-indigo-50 px-3 py-2.5 text-center">
+                      <p className="text-[11px] uppercase tracking-wide text-indigo-400">{t('workflow.detail.currentMileage')}</p>
+                      <p className="font-mono text-lg font-bold text-indigo-700">
+                        {mileage?.current != null ? `${Number(mileage.current).toLocaleString()} ${t('workflow.stage.kmShort')}` : '—'}
+                      </p>
+                    </div>
+                    {mileage?.baseline != null && (
+                      <div className="flex-1 rounded-lg bg-slate-50 px-3 py-2.5 text-center">
+                        <p className="text-[11px] uppercase tracking-wide text-slate-400">{t('workflow.detail.baselineMileage')}</p>
+                        <p className="font-mono text-sm font-bold text-slate-700">{Number(mileage.baseline).toLocaleString()}</p>
+                      </div>
                     )}
                   </div>
-                  <p className={`mt-1.5 font-display text-lg font-bold ${tone.text}`}>
-                    {f.status === 'overdue'
-                      ? t('workflow.detail.forecastOverdueBy', { km: Number(Math.abs(f.overdue_km ?? f.remaining_km ?? 0)).toLocaleString() })
-                      : t('workflow.detail.forecastDueIn', { km: Number(Math.max(0, f.remaining_km ?? 0)).toLocaleString() })}
-                  </p>
-                  {projected && (
-                    <p className="mt-0.5 flex items-center gap-1.5 text-xs text-slate-500">
-                      <Icon.Calendar className="h-3.5 w-3.5 text-slate-400" />
-                      {t('workflow.detail.forecastProjected', { date: projected })}
+
+                  {mileage?.distance != null && (
+                    <p className="mt-2 text-[11px] text-slate-400">
+                      {t('workflow.detail.mileageSummary', { km: Number(mileage.distance).toLocaleString(), n: mileage.total })}
                     </p>
                   )}
-                </div>
-              </Section>
-            );
-          })()}
 
-          {/* Mileage — the car's REAL odometer up top, then a forward story of every reading and how
-              it happened (test drive → garage → rentals → manual fixes), this ticket highlighted. */}
-          <Section
-            title={t('workflow.detail.mileage')}
-            icon={<Icon.Gauge className="h-3.5 w-3.5 text-slate-400" />}
-            action={mileage?.total > 0 ? (
-              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500">
-                {t('workflow.detail.mileageChanges', { n: mileage.total })}
-              </span>
-            ) : null}
-          >
-            {/* Headline — the real current odometer + the baseline anchor. */}
-            <div className="flex items-stretch gap-3">
-              <div className="flex-1 rounded-lg bg-indigo-50 px-3 py-2.5 text-center">
-                <p className="text-[11px] uppercase tracking-wide text-indigo-400">{t('workflow.detail.currentMileage')}</p>
-                <p className="font-mono text-lg font-bold text-indigo-700">
-                  {mileage?.current != null ? `${Number(mileage.current).toLocaleString()} ${t('workflow.stage.kmShort')}` : '—'}
-                </p>
-              </div>
-              {mileage?.baseline != null && (
-                <div className="flex-1 rounded-lg bg-slate-50 px-3 py-2.5 text-center">
-                  <p className="text-[11px] uppercase tracking-wide text-slate-400">{t('workflow.detail.baselineMileage')}</p>
-                  <p className="font-mono text-sm font-bold text-slate-700">{Number(mileage.baseline).toLocaleString()}</p>
-                </div>
-              )}
-            </div>
+                  {/* Odometer photos captured on this ticket (pickup / return). */}
+                  {photos.length > 0 && (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {photos.slice(0, 6).map((p) => (
+                        <a
+                          key={p.id}
+                          href={p.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="group relative h-16 w-16 overflow-hidden rounded-lg ring-1 ring-slate-200"
+                          title={`${p.phase === 'post' ? t('workflow.detail.back') : t('workflow.detail.out')} · ${fmtDateTime(p.captured_at) || ''}`}
+                        >
+                          <img src={p.url} alt="odometer" className="h-full w-full object-cover transition group-hover:scale-105" />
+                          <span className="absolute bottom-0 inset-x-0 bg-slate-900/60 px-1 py-0.5 text-center text-[9px] font-semibold uppercase text-white">
+                            {p.phase === 'post' ? t('workflow.detail.back') : t('workflow.detail.out')}
+                          </span>
+                        </a>
+                      ))}
+                    </div>
+                  )}
 
-            {mileage?.distance != null && (
-              <p className="mt-2 text-[11px] text-slate-400">
-                {t('workflow.detail.mileageSummary', { km: Number(mileage.distance).toLocaleString(), n: mileage.total })}
-              </p>
-            )}
-
-            {/* Odometer photos captured on this ticket (pickup / return). */}
-            {photos.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {photos.slice(0, 6).map((p) => (
-                  <a
-                    key={p.id}
-                    href={p.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="group relative h-16 w-16 overflow-hidden rounded-lg ring-1 ring-slate-200"
-                    title={`${p.phase === 'post' ? t('workflow.detail.back') : t('workflow.detail.out')} · ${fmtDateTime(p.captured_at) || ''}`}
-                  >
-                    <img src={p.url} alt="odometer" className="h-full w-full object-cover transition group-hover:scale-105" />
-                    <span className="absolute bottom-0 inset-x-0 bg-slate-900/60 px-1 py-0.5 text-center text-[9px] font-semibold uppercase text-white">
-                      {p.phase === 'post' ? t('workflow.detail.back') : t('workflow.detail.out')}
-                    </span>
-                  </a>
-                ))}
-              </div>
-            )}
-
-            {/* The story — one line per reading, read BOTTOM-TO-TOP: the first reading sits at the
-                bottom and each later one stacks above it, with an up-arrow between steps so the flow
-                reads upward. Each row is labelled by how the reading came to be. */}
-            {mileageLoading ? (
-              <div className="mt-4 space-y-2">
-                <Skeleton className="h-4 w-2/3" />
-                <Skeleton className="h-4 w-1/2" />
-                <Skeleton className="h-4 w-3/5" />
-              </div>
-            ) : mileageErr ? (
-              <p className="mt-3 text-xs text-red-500">{t('workflow.detail.mileageLoadError')}</p>
-            ) : mileage?.history?.length > 0 ? (
-              <>
-                {mileage.truncated && (
-                  <p className="mt-3 text-[11px] text-slate-400">
-                    {t('workflow.detail.mileageTruncated', { n: mileage.shown, total: mileage.total })}
-                  </p>
-                )}
-                <ol className="mt-3">
-                  {mileage.history.map((_, ri) => {
-                    // Render in REVERSE so the story flows bottom-to-top: the oldest reading is at the
-                    // bottom, the newest at the top. `i` stays the chronological index (0 = oldest) so
-                    // the "then …" connector and every label read correctly up the chain.
-                    const i = mileage.history.length - 1 - ri;
-                    const e = mileage.history[i];
-                    const Ico = MILEAGE_ICON[e.how] || Icon.Gauge;
-                    const hasEarlierBelow = ri < mileage.history.length - 1; // an up-arrow links to the step below
-                    return (
-                      <Fragment key={i}>
-                        <li className={`relative flex gap-2.5 rounded-lg px-2 py-1.5 ${e.this_ticket ? 'bg-indigo-50/70 ring-1 ring-inset ring-indigo-100' : ''}`}>
-                          {/* colour-coded dot marking how the reading was produced */}
-                          <span
-                            className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-white"
-                            style={{ backgroundColor: MILEAGE_TONE[e.how] || '#94a3b8' }}
-                          />
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-baseline justify-between gap-2">
-                              <p className="flex min-w-0 items-center gap-1.5 text-xs font-semibold text-slate-700">
-                                <Ico className="h-3.5 w-3.5 shrink-0 text-slate-400" />
-                                <span className="truncate">
-                                  {i > 0 && <span className="font-normal text-slate-400">{t('workflow.detail.mileageThen')} </span>}
-                                  {t(`workflow.detail.mileageHow.${e.how}`)}
-                                  {e.ref && <span className="ms-1.5 font-normal text-slate-400">{e.ref}</span>}
-                                </span>
-                              </p>
-                              <span className="shrink-0 text-[11px] text-slate-400">{fmtDateTime(e.at) || '—'}</span>
-                            </div>
-                            <div className="mt-0.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                              <span className="text-sm text-slate-600">
-                                {t('workflow.detail.mileageReadKm', { km: Number(e.value).toLocaleString() })}
-                              </span>
-                              {e.delta != null && e.delta !== 0 && (
-                                <span className={`font-mono text-[11px] font-semibold ${e.delta > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                                  {e.delta > 0 ? '+' : ''}{Number(e.delta).toLocaleString()} {t('workflow.stage.kmShort')}
-                                </span>
-                              )}
-                              {e.by && <span className="text-[11px] text-slate-500">{t('workflow.detail.mileageBy', { who: e.by })}</span>}
-                              {e.this_ticket && (
-                                <span className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-indigo-600">
-                                  {t('workflow.detail.mileageThisTicket')}
-                                </span>
-                              )}
-                              {/* Odometer Continuity verdict — a Discrepancy (backward reading) or garage
-                                  test-drive the Supervisor should eyeball. 'verified' is clean → no badge. */}
-                              {e.flag?.status && e.flag.status !== 'verified' && (
-                                <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${MILEAGE_FLAG_CLS[e.flag.status] || 'bg-slate-100 text-slate-600'}`}>
-                                  {t(`workflow.odo.status.${e.flag.status}`)}
-                                </span>
-                              )}
-                            </div>
-                            {e.note && <p className="mt-0.5 text-[11px] italic text-slate-500">“{e.note}”</p>}
-                          </div>
-                        </li>
-                        {/* up-arrow to the earlier step below → the story reads bottom-to-top */}
-                        {hasEarlierBelow && (
-                          <li aria-hidden className="flex justify-center py-0.5">
-                            <svg className="h-3.5 w-3.5 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5M6 11l6-6 6 6" /></svg>
-                          </li>
-                        )}
-                      </Fragment>
-                    );
-                  })}
-                </ol>
-              </>
-            ) : (
-              <p className="mt-3 text-xs text-slate-400">{t('workflow.detail.noMileageHistory')}</p>
-            )}
-          </Section>
-
-          {/* Timing */}
-          {(timing.test_drive != null || timing.at_garage != null || timing.total_downtime != null) && (
-            <Section title={t('workflow.detail.timing')} icon={<Icon.Clock className="h-3.5 w-3.5 text-slate-400" />}>
-              <div className="grid grid-cols-3 gap-2 text-center">
-                {[['testDrive', timing.test_drive], ['atGarage', timing.at_garage], ['totalDowntime', timing.total_downtime]].map(([k, v]) => (
-                  <div key={k} className="rounded-lg bg-slate-50 px-2 py-2">
-                    <p className="text-[10px] uppercase tracking-wide text-slate-400">{t(`workflow.detail.${k}`)}</p>
-                    <p className="mt-0.5 font-display text-sm font-bold text-slate-800">{fmtDuration(v)}</p>
-                  </div>
-                ))}
-              </div>
-            </Section>
-          )}
-
-          {/* Why this garage was chosen — the durable data-driven decision record */}
-          {tk.garage_recommendation && (
-            <Section title={t('workflow.garageRec.why.title')} icon={<Icon.Wrench className="h-3.5 w-3.5 text-slate-400" />}>
-              <WhyThisGarage rec={tk.garage_recommendation} t={t} />
-            </Section>
-          )}
-
-          {/* Follow-up log */}
-          {tk.follow_ups?.length > 0 && (
-            <Section title={t('workflow.detail.followLog')} icon={<Icon.Users className="h-3.5 w-3.5 text-slate-400" />}>
-              <ul className="space-y-2">
-                {tk.follow_ups.map((f, i) => {
-                  const text = typeof f === 'string' ? f : (f.note || f.text || '');
-                  const by = typeof f === 'object' ? f.by : null;
-                  const at = typeof f === 'object' ? f.at : null;
-                  return (
-                    <li key={i} className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">
-                      {text}
-                      {(by || at) && (
-                        <span className="mt-0.5 block text-[11px] text-slate-400">
-                          {by ? `${by}` : ''}{by && at ? ' · ' : ''}{at ? fmtDateTime(at) : ''}
-                        </span>
+                  {/* The story — one line per reading, read BOTTOM-TO-TOP: the first reading sits at the
+                      bottom and each later one stacks above it, with an up-arrow between steps so the flow
+                      reads upward. Each row is labelled by how the reading came to be. */}
+                  {mileageLoading ? (
+                    <div className="mt-4 space-y-2">
+                      <Skeleton className="h-4 w-2/3" />
+                      <Skeleton className="h-4 w-1/2" />
+                      <Skeleton className="h-4 w-3/5" />
+                    </div>
+                  ) : mileageErr ? (
+                    <p className="mt-3 text-xs text-red-500">{t('workflow.detail.mileageLoadError')}</p>
+                  ) : mileage?.history?.length > 0 ? (
+                    <>
+                      {mileage.truncated && (
+                        <p className="mt-3 text-[11px] text-slate-400">
+                          {t('workflow.detail.mileageTruncated', { n: mileage.shown, total: mileage.total })}
+                        </p>
                       )}
-                    </li>
-                  );
-                })}
-              </ul>
-            </Section>
-          )}
-
-          {/* Watchers */}
-          {tk.watchers?.length > 0 && (
-            <Section title={t('workflow.detail.watchers')} icon={<Icon.Shield className="h-3.5 w-3.5 text-slate-400" />}>
-              <div className="flex flex-wrap gap-1.5">
-                {tk.watchers.map((w) => <Badge key={w.id} tone="slate">{w.name}</Badge>)}
-              </div>
-            </Section>
-          )}
-        </div>
+                      <ol className="mt-3">
+                        {mileage.history.map((_, ri) => {
+                          // Render in REVERSE so the story flows bottom-to-top: the oldest reading is at the
+                          // bottom, the newest at the top. `i` stays the chronological index (0 = oldest) so
+                          // the "then …" connector and every label read correctly up the chain.
+                          const i = mileage.history.length - 1 - ri;
+                          const e = mileage.history[i];
+                          const Ico = MILEAGE_ICON[e.how] || Icon.Gauge;
+                          const hasEarlierBelow = ri < mileage.history.length - 1; // an up-arrow links to the step below
+                          return (
+                            <Fragment key={i}>
+                              <li className={`relative flex gap-2.5 rounded-lg px-2 py-1.5 ${e.this_ticket ? 'bg-indigo-50/70 ring-1 ring-inset ring-indigo-100' : ''}`}>
+                                {/* colour-coded dot marking how the reading was produced */}
+                                <span
+                                  className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-white"
+                                  style={{ backgroundColor: MILEAGE_TONE[e.how] || '#94a3b8' }}
+                                />
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-baseline justify-between gap-2">
+                                    <p className="flex min-w-0 items-center gap-1.5 text-xs font-semibold text-slate-700">
+                                      <Ico className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                                      <span className="truncate">
+                                        {i > 0 && <span className="font-normal text-slate-400">{t('workflow.detail.mileageThen')} </span>}
+                                        {t(`workflow.detail.mileageHow.${e.how}`)}
+                                        {e.ref && <span className="ms-1.5 font-normal text-slate-400">{e.ref}</span>}
+                                      </span>
+                                    </p>
+                                    <span className="shrink-0 text-[11px] text-slate-400">{fmtDateTime(e.at) || '—'}</span>
+                                  </div>
+                                  <div className="mt-0.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                                    <span className="text-sm text-slate-600">
+                                      {t('workflow.detail.mileageReadKm', { km: Number(e.value).toLocaleString() })}
+                                    </span>
+                                    {e.delta != null && e.delta !== 0 && (
+                                      <span className={`font-mono text-[11px] font-semibold ${e.delta > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                                        {e.delta > 0 ? '+' : ''}{Number(e.delta).toLocaleString()} {t('workflow.stage.kmShort')}
+                                      </span>
+                                    )}
+                                    {e.by && <span className="text-[11px] text-slate-500">{t('workflow.detail.mileageBy', { who: e.by })}</span>}
+                                    {e.this_ticket && (
+                                      <span className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-indigo-600">
+                                        {t('workflow.detail.mileageThisTicket')}
+                                      </span>
+                                    )}
+                                    {/* Odometer Continuity verdict — a Discrepancy (backward reading) or garage
+                                        test-drive the Supervisor should eyeball. 'verified' is clean → no badge. */}
+                                    {e.flag?.status && e.flag.status !== 'verified' && (
+                                      <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${MILEAGE_FLAG_CLS[e.flag.status] || 'bg-slate-100 text-slate-600'}`}>
+                                        {t(`workflow.odo.status.${e.flag.status}`)}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {e.note && <p className="mt-0.5 text-[11px] italic text-slate-500">“{e.note}”</p>}
+                                </div>
+                              </li>
+                              {/* up-arrow to the earlier step below → the story reads bottom-to-top */}
+                              {hasEarlierBelow && (
+                                <li aria-hidden className="flex justify-center py-0.5">
+                                  <svg className="h-3.5 w-3.5 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5M6 11l6-6 6 6" /></svg>
+                                </li>
+                              )}
+                            </Fragment>
+                          );
+                        })}
+                      </ol>
+                    </>
+                  ) : (
+                    <p className="mt-3 text-xs text-slate-400">{t('workflow.detail.noMileageHistory')}</p>
+                  )}
+                </Section>
+              </>
+            )}
+          </div>
+        </>
       ) : null}
     </Drawer>
   );

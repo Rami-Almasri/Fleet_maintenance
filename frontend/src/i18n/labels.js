@@ -2964,6 +2964,30 @@ const en = {
       followLog: 'Follow-up log',
       watchers: 'Watchers',
       openVehicle: 'Vehicle profile',
+      // The deck at the top of the ticket drawer: the four numbers and the blocker lines that have to
+      // be readable before anything is opened, plus the names of the four reading tabs beneath it.
+      deck: {
+        faultsOpen: 'Faults open',
+        faultsStill: 'still to fix',
+        faultsClear: 'all cleared',
+        downtime: 'Downtime',
+        downtimeHint: '{dur} at garage',
+        odometer: 'Odometer',
+        cost: 'Repair cost',
+        costHint: '{n} unbilled',
+        // Plural because Arabic needs six forms of "financial item"; the amount is appended after it.
+        moneyBlocked: {
+          one: '1 financial item still open — this ticket cannot close',
+          other: '{n} financial items still open — this ticket cannot close',
+        },
+        reinspectFailed: 'Re-inspection failed — the car went back to the garage',
+      },
+      tab: {
+        overview: 'Overview',
+        money: 'Parts & money',
+        quality: 'Quality',
+        history: 'History',
+      },
       // Handover Comparison Report — pause vs. resume custody-handover snapshots.
       handoverReport: 'Handover Comparison',
       handoverBreach: 'Discrepancy flagged',
@@ -7321,6 +7345,31 @@ const ar = {
       followLog: 'سجل المتابعة',
       watchers: 'المتابعون',
       openVehicle: 'ملف السيارة',
+      deck: {
+        faultsOpen: 'أعطال مفتوحة',
+        faultsStill: 'ما زالت للإصلاح',
+        faultsClear: 'كلّها مُنجزة',
+        downtime: 'مدة التوقف',
+        downtimeHint: '{dur} في الكراج',
+        odometer: 'العدّاد',
+        cost: 'تكلفة الإصلاح',
+        costHint: '{n} بلا فاتورة',
+        moneyBlocked: {
+          zero: 'لا توجد بنود مالية مفتوحة',
+          one: 'بند مالي واحد ما زال مفتوحًا — لا يمكن إغلاق هذه التذكرة',
+          two: 'بندان ماليان ما زالا مفتوحين — لا يمكن إغلاق هذه التذكرة',
+          few: '{n} بنود مالية ما زالت مفتوحة — لا يمكن إغلاق هذه التذكرة',
+          many: '{n} بندًا ماليًا ما زال مفتوحًا — لا يمكن إغلاق هذه التذكرة',
+          other: '{n} بند مالي ما زال مفتوحًا — لا يمكن إغلاق هذه التذكرة',
+        },
+        reinspectFailed: 'فشلت إعادة الفحص — عادت السيارة إلى الكراج',
+      },
+      tab: {
+        overview: 'نظرة عامة',
+        money: 'القطع والمال',
+        quality: 'الجودة',
+        history: 'السجل',
+      },
       loadError: 'تعذّر تحميل هذه التذكرة.',
       handoverReport: 'مقارنة التسليم والاستلام',
       handoverBreach: 'رُصد تباين',
