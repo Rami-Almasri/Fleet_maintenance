@@ -351,7 +351,9 @@ function BridgeLine({ label, hint, value, labelClass = 'text-slate-600', valueCl
 
 // A quiet "fact" chip for the flat header.
 // Count-up telemetry tile on the dossier command deck.
-function HeroStat({ label, value, unit }) {
+// `note` carries the tile's Data Origin (e.g. which source supplied the mileage) so the number
+// is never a bare figure the reader has to take on faith.
+function HeroStat({ label, value, unit, note }) {
   const n = useCountUp(Number(value) || 0, 1400);
   return (
     <div className="vhero-stat">
@@ -360,6 +362,7 @@ function HeroStat({ label, value, unit }) {
         {Math.round(n).toLocaleString()}
         {unit && <span className="unit">{unit}</span>}
       </div>
+      {note && <div className="vhero-stat-note">{note}</div>}
     </div>
   );
 }
@@ -705,7 +708,12 @@ export default function VehicleProfile() {
 
               {/* Telemetry tiles — the numbers count up on load */}
               <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                <HeroStat label={t('vehicleProfile.hero.odometer')} value={v.odometer} unit="km" />
+                <HeroStat
+                  label={t('vehicleProfile.hero.odometer')}
+                  value={v.odometer}
+                  unit="km"
+                  note={v.odometer_source ? t(`vehicleProfile.hero.odoSource.${v.odometer_source}`) : null}
+                />
                 <HeroStat label={t('vehicleProfile.hero.rentals')} value={contractTypeCounts.C || 0} />
                 <HeroStat label={t('vehicleProfile.hero.visits')} value={maintenance.length} />
                 <HeroStat label={t('vehicleProfile.hero.faults')} value={totalFaults} />

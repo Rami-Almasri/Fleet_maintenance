@@ -1153,6 +1153,16 @@ const en = {
       rentals: 'Rentals',
       visits: 'Workshop Visits',
       faults: 'Faults Logged',
+      // Data Origin for the current mileage. Several sources report it (OM, the Oil Change
+      // sheet, handovers, tickets, hand edits) and the HIGHEST reading wins — a car cannot
+      // un-drive kilometres — so this names whichever source is currently ahead.
+      odoSource: {
+        om: 'from OfficeManager',
+        sheet: 'from the Oil Change sheet',
+        contract: 'from a handover reading',
+        service: 'from a service ticket',
+        manual: 'entered by hand',
+      },
     },
     faults: {
       title: 'Fault Distribution',
@@ -4493,6 +4503,13 @@ const ar = {
       rentals: 'الإيجارات',
       visits: 'زيارات الورشة',
       faults: 'الأعطال المسجّلة',
+      odoSource: {
+        om: 'من أوفيس مانجر',
+        sheet: 'من جدول تغيير الزيت',
+        contract: 'من قراءة تسليم',
+        service: 'من تذكرة صيانة',
+        manual: 'أُدخلت يدويًا',
+      },
     },
     faults: {
       title: 'توزيع الأعطال',

@@ -37,6 +37,17 @@ const DECISION_LABEL = {
   defer:  'Do it on return',
 };
 
+/**
+ * Who supplied the reading the estimate runs from. The projection anchors on the NEWEST dated
+ * observation, whoever made it, so this must name the actual source — labelling a workshop
+ * reading "contract handover" would misattribute the one number the whole page rests on.
+ */
+const ANCHOR_LABELS = {
+  reading:  'customer reading',
+  sheet:    'Oil Change sheet',
+  handover: 'contract handover',
+};
+
 /** Why a recall was ordered. The API sends a code; the sentence is built here. */
 const RECALL_REASON = {
   oil_tolerance_exceeded_before_return:
@@ -565,7 +576,6 @@ export function VehicleCard({ r, canRecord, onReading, onDecide, onOilChange, on
   // How stale the number is drives the whole page: a fresh reading is a decision, an old one is a call.
   const ageTone = age == null ? 'slate' : age <= 1 ? 'green' : age <= 7 ? 'amber' : 'red';
   const d = p.return_date_known ? p.remaining_days : null;
-  const fromCustomer = p.anchor_source === 'reading';
   const over = p.over_tolerance_km;
 
   // "We think it needs the oil change in ~N days": how long the 200 km/day pace takes to reach the
@@ -619,7 +629,7 @@ export function VehicleCard({ r, canRecord, onReading, onDecide, onOilChange, on
           pill={age != null ? `${age}d old` : undefined}
           pillTone={ageTone}
           highlight
-          sub={p.anchor_on ? `${fmtDate(p.anchor_on)} · ${fromCustomer ? 'customer reading' : 'contract handover'}` : 'no reading held'}
+          sub={p.anchor_on ? `${fmtDate(p.anchor_on)} · ${ANCHOR_LABELS[p.anchor_source] || 'contract handover'}` : 'no reading held'}
         />
         <Arrow />
         <Stat
