@@ -137,7 +137,11 @@ class RolesAndPermissionsSeeder extends Seeder
             'maintenance.view', 'maintenance.delegate', 'maintenance.logistics',
             'maintenance.recurring.view',
             'maintenance.checkpoint.create', 'maintenance.checkpoint.manage',
-            'parts.view', 'parts.request',
+            // Parts board: the supervisor works the whole lane — raise the request, buy the part,
+            // mark it delivered, install it, send it back if it's wrong. What he does NOT get is the
+            // decision at the top of the lane: approving (or rejecting) a request is the money gate and
+            // stays with admin / maintenance manager (parts.investigate|maintenance.manage on the route).
+            'parts.view', 'parts.request', 'parts.purchase',
             'components.view', 'components.manage', // Asset Layer: authorized maintenance delegates hold asset custody
             'logistics.view', 'logistics.dispatch',
             'intelligence.view',   // picks the destination garage — needs to see who is good at what
