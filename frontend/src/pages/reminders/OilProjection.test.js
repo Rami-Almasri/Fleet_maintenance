@@ -91,6 +91,7 @@ const QUEUE = {
       // but the only number we have is a 200 km/day guess from the handover reading. Nobody can
       // answer for this car until someone phones the customer.
       contract_id: 95, contract_no: 'C-9005', customer: 'Samir Haddad',
+      customer_no: '5121', customer_phone: '0501234567', customer_whatsapp: '0509999999',
       vehicle_id: 9, plate: 'B 55510', car: 'TOYOTA COROLLA', out_date: '2026-07-28',
       projection: {
         ...LIMITS, status: 'chase_due', expected: 8200, km_to_threshold: -200,
@@ -765,6 +766,53 @@ test('the page declares how every number was derived', async () => {
   expect(screen.getByText(/expected on return = expected \+ remaining rental days × rate/)).toBeInTheDocument();
   expect(screen.getByText(/remaining days\s+come from the contract’s own duration/)).toBeInTheDocument();
   expect(screen.getByText(/never change the car’s odometer/)).toBeInTheDocument();
+});
+
+/**
+ * MAKING THE CALLS. The cards are for deciding one car at a time; twenty-six phone calls is a
+ * different job, and it needs the number on the screen. The call list is that job: the same lane,
+ * flattened, with who to ring and under which account.
+ */
+test('the call list carries the car, the customer and the number to dial', async () => {
+  recallTasks = [];
+  await load();
+  await chip(/Call customer \(1\)/);
+
+  fireEvent.click(await screen.findByText(/Call list \(1\)/));
+
+  const dialog = within(await screen.findByRole('dialog'));
+  expect(dialog.getByText('TOYOTA COROLLA')).toBeInTheDocument();
+  expect(dialog.getByText('B 55510')).toBeInTheDocument();
+  expect(dialog.getByText('Samir Haddad')).toBeInTheDocument();
+  expect(dialog.getByText('5121')).toBeInTheDocument();
+  // The number is a link that dials, not text somebody has to copy out.
+  expect(dialog.getByText('0501234567').closest('a')).toHaveAttribute('href', 'tel:0501234567');
+});
+
+/** The same list, written out — the caller can work off a phone or hand it to someone else. */
+test('the call list downloads as a CSV of every row it shows', async () => {
+  recallTasks = [];
+  const blobs = [];
+  const RealBlob = global.Blob;
+  global.Blob = function (parts, opts) { blobs.push(parts.join('')); return new RealBlob(parts, opts); };
+  global.URL.createObjectURL = jest.fn(() => 'blob:call-list');
+  global.URL.revokeObjectURL = jest.fn();
+  const click = jest.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+
+  try {
+    await load();
+    await chip(/Call customer \(1\)/);
+    fireEvent.click(await screen.findByText(/Call list \(1\)/));
+    fireEvent.click(await screen.findByText('Download CSV'));
+
+    expect(click).toHaveBeenCalled();
+    const csv = blobs.at(-1);
+    expect(csv).toContain('"Car","Plate","Customer","Phone","CX number","Contract"');
+    expect(csv).toContain('"TOYOTA COROLLA","B 55510","Samir Haddad","0501234567","5121","C-9005"');
+  } finally {
+    global.Blob = RealBlob;
+    click.mockRestore();
+  }
 });
 
 /** The verdict sentence is the page's editorial contract — asserted directly, free of rendering. */

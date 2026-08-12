@@ -43,7 +43,13 @@ class OilProjectionController extends Controller
                 ->currentlyOpen()
                 ->where('contract_type', 'C')
                 ->whereNotNull('vehicle_id')
-                ->with(['vehicle:id,code,make,model,plate_no,last_service_odometer,service_interval_km,odometer', 'customer:id,name_en'])
+                // The customer's phone numbers and account number travel with the row: this board is
+                // worked by phoning people, and a call list that makes someone open a second screen
+                // to find the number is a call list nobody uses.
+                ->with([
+                    'vehicle:id,code,make,model,plate_no,last_service_odometer,service_interval_km,odometer',
+                    'customer:id,name_en,customer_no,mobile1,mobile2,whatsapp',
+                ])
                 ->get();
 
             // "Has the system already asked for a test on this car?" — answered for the WHOLE board
@@ -65,6 +71,14 @@ class OilProjectionController extends Controller
                         'contract_id'   => $c->id,
                         'contract_no'   => $c->contract_no,
                         'customer'      => $c->customer?->name_en,
+                        // Who to ring, and under which account. `customer_phone` is the number to
+                        // dial first (mobile1, then whatsapp, then the second mobile) — the raw
+                        // fields ride along so a call list can show every number we hold.
+                        'customer_no'      => $c->customer?->customer_no,
+                        'customer_phone'   => $c->customer?->mobile1
+                                            ?: ($c->customer?->whatsapp ?: $c->customer?->mobile2),
+                        'customer_mobile2' => $c->customer?->mobile2,
+                        'customer_whatsapp'=> $c->customer?->whatsapp,
                         'vehicle_id'    => $c->vehicle?->id,
                         'plate'         => $c->vehicle?->plate_no,
                         'car'           => trim(($c->vehicle?->make ?? '') . ' ' . ($c->vehicle?->model ?? '')),

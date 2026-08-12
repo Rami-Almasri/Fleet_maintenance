@@ -32,20 +32,10 @@ import { num, fmtDate } from '../../lib/format';
  * black box.
  */
 
+// English lives beside the key in these tables; the visible text is resolved with t(…) at render.
 const DECISION_LABEL = {
   recall: 'Recall now',
   defer:  'Do it on return',
-};
-
-/**
- * Who supplied the reading the estimate runs from. The projection anchors on the NEWEST dated
- * observation, whoever made it, so this must name the actual source — labelling a workshop
- * reading "contract handover" would misattribute the one number the whole page rests on.
- */
-const ANCHOR_LABELS = {
-  reading:  'customer reading',
-  sheet:    'Oil Change sheet',
-  handover: 'contract handover',
 };
 
 /** Why a recall was ordered. The API sends a code; the sentence is built here. */
@@ -61,12 +51,20 @@ const RECALL_STATUS = {
   cancelled: { tone: 'slate', label: 'Withdrawn' },
 };
 
+/**
+ * The sentence builders below are plain module functions — they are called from tests and from other
+ * modules where no React context exists — so the translator is a PARAMETER, defaulting to an
+ * English passthrough that still fills {slots}.
+ */
+const asIs = (s, vars) => (vars ? String(s).replace(/\{(\w+)\}/g, (m, k) => (vars[k] != null ? vars[k] : m)) : s);
+
 /** How the rental's remaining run is phrased. Null days = the contract carries no duration. */
-const dueBackIn = (p) => {
-  if (!p?.return_date_known) return 'with no return date on the contract';
+const dueBackIn = (p, t = asIs) => {
+  if (!p?.return_date_known) return t('with no return date on the contract');
   const d = p.remaining_days;
-  if (d === 0) return 'due back today';
-  return `due back in ${d} ${d === 1 ? 'day' : 'days'}`;
+  if (d === 0) return t('due back today');
+  // Arabic has six plural categories — branch the ENGLISH and emit two separate phrases.
+  return d === 1 ? t('due back in 1 day') : t('due back in {n} days', { n: d });
 };
 
 /**
@@ -74,39 +72,41 @@ const dueBackIn = (p) => {
  * situation restated before they commit a number or a decision. The board itself renders no
  * paragraphs; the cards carry the same facts as big numbers and one action line.
  */
-export const reasonFor = (p) => {
+export const reasonFor = (p, t = asIs) => {
   if (!p) return '—';
   if (p.status === 'no_data' || p.oil_status === 'no_data') {
-    return 'No mileage was recorded when this car went out, so we can’t work out where it is now.';
+    return t('No mileage was recorded when this car went out, so we can’t work out where it is now.');
   }
 
-  const at = `${num(p.expected_return)} km`;
-  const allowance = `${num(p.allowed_max)} km allowance`;
+  const ret = num(p.expected_return);
+  const max = num(p.allowed_max);
+  const now = num(p.expected);
   const over = num(Math.max(p.over_tolerance_km ?? 0, 0));
 
   switch (p.oil_status) {
     case 'decision_required':
-      return `Likely around ${num(p.expected)} km now and ${dueBackIn(p)} — it would come back on about `
-        + `${at}, which is ${over} km past the ${allowance}. `
+      return `${t('Likely around {now} km now and {due} — it would come back on about {ret} km, which is {over} km past the {max} km allowance.', { now, due: dueBackIn(p, t), ret, over, max })} `
         + (p.decision_ready
-          ? 'Recall it now, or accept that and change the oil the day it returns.'
-          : 'That is an estimate, not a reading — get the real number from the customer before deciding anything.');
+          ? t('Recall it now, or accept that and change the oil the day it returns.')
+          : t('That is an estimate, not a reading — get the real number from the customer before deciding anything.'));
 
     case 'recall_required':
-      return `Recall agreed${p.decision?.decided_by ? ` by ${p.decision.decided_by}` : ''} — projected to `
-        + `reach ${at} against a ${allowance}. Arrange the return with the customer; the oil change is `
-        + 'raised automatically once the car is back.';
+      return p.decision?.decided_by
+        ? t('Recall agreed by {who} — projected to reach {ret} km against a {max} km allowance. Arrange the return with the customer; the oil change is raised automatically once the car is back.', { who: p.decision.decided_by, ret, max })
+        : t('Recall agreed — projected to reach {ret} km against a {max} km allowance. Arrange the return with the customer; the oil change is raised automatically once the car is back.', { ret, max });
 
     case 'service_required_on_return':
-      return `${dueBackIn(p).replace(/^with/, 'Out with')} and would come back on about ${at}, inside the `
-        + `${allowance}. Let the rental finish — the oil change is booked for the return.`;
+      return t('{lead} and would come back on about {ret} km, inside the {max} km allowance. Let the rental finish — the oil change is booked for the return.', {
+        lead: p?.return_date_known ? dueBackIn(p, t) : t('Out with no return date on the contract'),
+        ret,
+        max,
+      });
 
     case 'within_tolerance':
-      return `Likely around ${num(p.expected)} km — it comes back on about ${at}, still short of the `
-        + `${num(p.oil_limit)} km oil point. Nothing to do.`;
+      return t('Likely around {now} km — it comes back on about {ret} km, still short of the {limit} km oil point. Nothing to do.', { now, ret, limit: num(p.oil_limit) });
 
     default:
-      return `Likely around ${num(p.expected)} km. Next check around ${fmtDate(p.breach_on)}.`;
+      return t('Likely around {now} km. Next check around {date}.', { now, date: fmtDate(p.breach_on) });
   }
 };
 
@@ -150,31 +150,31 @@ export const LANES = [
  * The card's verdict: the lane label plus the short line (and, for an arrival, the steps) behind
  * it. Derived from the lane so a card can never contradict the tab it sits in.
  */
-export const actionFor = (p) => {
+export const actionFor = (p, t = asIs) => {
   const lane = laneFor(p);
 
   if (lane === 'no_data') {
     return {
-      key: 'no_data', lane, tone: 'slate', label: 'Can’t project',
-      headline: 'Capture a handover reading',
-      support: 'No mileage recorded at handover — the projection cannot start.',
+      key: 'no_data', lane, tone: 'slate', label: t('Can’t project'),
+      headline: t('Capture a handover reading'),
+      support: t('No mileage recorded at handover — the projection cannot start.'),
     };
   }
 
   const age = p.days_elapsed;
-  const ageText = age == null ? null : `${age} ${age === 1 ? 'day' : 'days'} old`;
+  const ageText = age == null ? null : (age === 1 ? t('1 day old') : t('{n} days old', { n: age }));
   const fromCustomer = p.anchor_source === 'reading';
 
   if (lane === 'service_on_return') {
     return {
-      key: 'return_today', lane, tone: 'amber', label: 'Service on return',
-      headline: '🔧 Service on return — the car is due back today',
-      support: 'Don’t call the customer — they are already returning the car. Catch it on arrival:',
+      key: 'return_today', lane, tone: 'amber', label: t('Service on return'),
+      headline: t('🔧 Service on return — the car is due back today'),
+      support: t('Don’t call the customer — they are already returning the car. Catch it on arrival:'),
       steps: [
-        'Read the actual odometer as soon as it arrives',
-        'Compare it with the oil limit and the allowed maximum',
-        'Do the oil service if it is required',
-        'Enter the actual reading here to close the loop',
+        t('Read the actual odometer as soon as it arrives'),
+        t('Compare it with the oil limit and the allowed maximum'),
+        t('Do the oil service if it is required'),
+        t('Enter the actual reading here to close the loop'),
       ],
       chase: true,
     };
@@ -185,8 +185,7 @@ export const actionFor = (p) => {
       // The recall's own stage is the headline — "recall agreed" stopped being useful the moment
       // the relay existed, because the person reading this needs to know whose move it is now.
       const stage = p.decision?.recall?.stage;
-      const by = p.decision?.decided_by ? ` by ${p.decision.decided_by}` : '';
-      const headline = {
+      const headlineEn = {
         waiting_sales:     'Waiting for Sales — ask them to arrange the return',
         ready_for_driver:  'Sales confirmed — a driver must be arranged',
         driver_assigned:   'A driver is on the way to collect the car',
@@ -205,43 +204,47 @@ export const actionFor = (p) => {
       const ours = p.decision?.recall?.in_our_custody;
 
       return {
-        key: 'recall', lane, tone: 'red', label: 'Action required',
-        headline,
+        key: 'recall', lane, tone: 'red', label: t('Action required'),
+        headline: t(headlineEn),
         support: ours
-          ? 'The customer no longer has this car — record the oil change once it is done.'
-          : `Recall agreed${by}. The oil change is required whatever else happens to this car.`,
+          ? t('The customer no longer has this car — record the oil change once it is done.')
+          : (p.decision?.decided_by
+            ? t('Recall agreed by {who}. The oil change is required whatever else happens to this car.', { who: p.decision.decided_by })
+            : t('Recall agreed. The oil change is required whatever else happens to this car.')),
         // Suppresses "Enter reading": asking for a customer reading on a car standing in our own
         // workshop invites a number nobody observed, over the one the driver actually captured.
         inOurHands: !!ours,
       };
     }
     return {
-      key: 'decide', lane, tone: 'red', label: 'Action required',
-      headline: 'Recall now, or oil change on return?',
-      support: `Fresh customer reading — ${num(p.anchor_odometer)} km. Both answers are safe on this number.`,
+      key: 'decide', lane, tone: 'red', label: t('Action required'),
+      headline: t('Recall now, or oil change on return?'),
+      support: t('Fresh customer reading — {km} km. Both answers are safe on this number.', { km: num(p.anchor_odometer) }),
       decide: true,
     };
   }
 
   if (lane === 'call_customer') {
+    const stale = fromCustomer
+      ? t('Last reading is {age}', { age: ageText })
+      : (ageText
+        ? t('No customer reading yet — estimate runs from handover ({age})', { age: ageText })
+        : t('No customer reading yet — estimate runs from handover'));
     return {
-      key: 'call', lane, tone: 'amber', label: 'Call customer',
-      headline: '📞 Call customer for an odometer reading',
+      key: 'call', lane, tone: 'amber', label: t('Call customer'),
+      headline: t('📞 Call customer for an odometer reading'),
       support: p.oil_status === 'decision_required'
-        ? (fromCustomer
-            ? `Last reading is ${ageText}`
-            : `No customer reading yet — estimate runs from handover${ageText ? ` (${ageText})` : ''}`)
-          + '. No decision until a fresh number is in.'
-        : 'Estimated past the oil point — confirm with a real number.',
+        ? t('{lead}. No decision until a fresh number is in.', { lead: stale })
+        : t('Estimated past the oil point — confirm with a real number.'),
       chase: true,
     };
   }
 
   if (p.oil_status === 'service_required_on_return') {
     return {
-      key: 'on_return', lane, tone: 'green', label: 'Safe / scheduled',
-      headline: 'Nothing to do — oil change booked for the return',
-      support: 'Passes the oil point but finishes inside grace.',
+      key: 'on_return', lane, tone: 'green', label: t('Safe / scheduled'),
+      headline: t('Nothing to do — oil change booked for the return'),
+      support: t('Passes the oil point but finishes inside grace.'),
     };
   }
 
@@ -251,18 +254,18 @@ export const actionFor = (p) => {
   if (p.oil_status === 'decision_required' && p.decision_due_soon === false) {
     const away = p.oil_limit != null && p.expected != null ? p.oil_limit - p.expected : null;
     return {
-      key: 'not_yet', lane, tone: 'green', label: 'Safe / scheduled',
-      headline: 'Nothing to do yet — it will need another oil change before this rental ends',
+      key: 'not_yet', lane, tone: 'green', label: t('Safe / scheduled'),
+      headline: t('Nothing to do yet — it will need another oil change before this rental ends'),
       support: away != null
-        ? `Still ${num(away)} km from the ${num(p.oil_limit)} km oil point. We'll ask what to do when it gets close.`
-        : 'We’ll ask what to do when it gets close to the oil point.',
+        ? t("Still {km} km from the {limit} km oil point. We'll ask what to do when it gets close.", { km: num(away), limit: num(p.oil_limit) })
+        : t('We’ll ask what to do when it gets close to the oil point.'),
     };
   }
 
   return {
-    key: 'safe', lane, tone: 'green', label: 'Safe / scheduled',
-    headline: 'Nothing to do',
-    support: 'Comes back before the oil point.',
+    key: 'safe', lane, tone: 'green', label: t('Safe / scheduled'),
+    headline: t('Nothing to do'),
+    support: t('Comes back before the oil point.'),
   };
 };
 
@@ -337,7 +340,7 @@ const STAGE_INDEX = Object.fromEntries(RECALL_STAGES.map((s, i) => [s.key, i]));
  * it into "just test the car" and lose the reason the customer was interrupted in the first place.
  */
 function RecallRelay({ r, recall, canRecord, onChanged }) {
-  const { tf } = useI18n();
+  const { t, tf } = useI18n();
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   const stageIdx = STAGE_INDEX[recall.stage] ?? 0;
@@ -352,7 +355,7 @@ function RecallRelay({ r, recall, canRecord, onChanged }) {
       toast.success(okMessage);
       onChanged?.();
     } catch (e) {
-      toast.error(e.response?.data?.message || 'Could not save that.');
+      toast.error(e.response?.data?.message || t('Could not save that.'));
     } finally {
       setBusy(false);
     }
@@ -372,7 +375,7 @@ function RecallRelay({ r, recall, canRecord, onChanged }) {
           </span>
         </div>
         <Badge tone={cancelled ? 'slate' : recall.stage === 'completed' ? 'green' : 'red'}>
-          {cancelled ? tf('oil.recall.stoodDown', 'Stood down') : current?.label}
+          {cancelled ? tf('oil.recall.stoodDown', 'Stood down') : (current ? t(current.label) : null)}
         </Badge>
       </div>
 
@@ -388,7 +391,7 @@ function RecallRelay({ r, recall, canRecord, onChanged }) {
                 <span
                   key={s.key}
                   role="listitem"
-                  title={`${i + 1}. ${s.label} — ${s.who}`}
+                  title={`${i + 1}. ${t(s.label)} — ${t(s.who)}`}
                   className={`h-1.5 flex-1 rounded-full transition-colors ${
                     i < stageIdx ? 'bg-emerald-400'
                       : i === stageIdx ? 'bg-rose-500'
@@ -397,7 +400,7 @@ function RecallRelay({ r, recall, canRecord, onChanged }) {
               ))}
             </div>
             <div className="mt-1.5 flex items-baseline justify-between gap-2">
-              <span className="text-sm font-bold text-slate-900">{current?.label}</span>
+              <span className="text-sm font-bold text-slate-900">{current ? t(current.label) : null}</span>
               <span className="text-[11px] tabular-nums text-slate-400">
                 {tf('oil.recall.stepOf', 'step {n} of {total}', { n: stageIdx + 1, total })}
               </span>
@@ -413,7 +416,7 @@ function RecallRelay({ r, recall, canRecord, onChanged }) {
               <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
                 {tf('oil.recall.nextUp', 'Next')}
               </div>
-              <div className="text-sm font-semibold leading-snug">{current.who}</div>
+              <div className="text-sm font-semibold leading-snug">{t(current.who)}</div>
             </div>
           </div>
         )}
@@ -488,7 +491,7 @@ function RecallRelay({ r, recall, canRecord, onChanged }) {
                 onClick={() => post(
                   `/Contract/${r.contract_id}/oil-returned`,
                   {},
-                  'Handed back — the reminder stops now',
+                  t('Handed back — the reminder stops now'),
                 )}
               >
                 {tf('oil.recall.return.button', 'Returned to the customer')}
@@ -513,7 +516,7 @@ function RecallRelay({ r, recall, canRecord, onChanged }) {
                 onClick={() => post(
                   `/Contract/${r.contract_id}/oil-recall/sales-confirm`,
                   {},
-                  'Sales confirmed — Waleed and Abdullah have been asked to arrange a driver',
+                  t('Sales confirmed — Waleed and Abdullah have been asked to arrange a driver'),
                 )}
               >
                 {tf('oil.recall.sales.button', 'Sales OK — customer confirmed')}
@@ -539,13 +542,13 @@ function RecallRelay({ r, recall, canRecord, onChanged }) {
                 <input
                   type="checkbox"
                   className="h-3 w-3"
-                  aria-label="Test / Inspection"
+                  aria-label={t('Test / Inspection')}
                   checked={!!test?.required}
                   disabled={!canRecord || busy}
                   onChange={(e) => post(
                     `/Contract/${r.contract_id}/oil-recall/instructions`,
                     { test_required: e.target.checked },
-                    e.target.checked ? 'Test added to the driver’s instructions' : 'Test removed — the oil change still stands',
+                    e.target.checked ? t('Test added to the driver’s instructions') : t('Test removed — the oil change still stands'),
                   )}
                 />
                 {tf('oil.recall.required.test', 'Test / inspection')}
@@ -566,9 +569,9 @@ function RecallRelay({ r, recall, canRecord, onChanged }) {
  * who is out → how long is left → what number do we hold → where is it heading → what do I do today.
  */
 export function VehicleCard({ r, canRecord, onReading, onDecide, onOilChange, onChanged }) {
-  const { tf } = useI18n();
+  const { t, tf } = useI18n();
   const p = r.projection || {};
-  const a = actionFor(p);
+  const a = actionFor(p, t);
   // The recall relay, when this car is on one. Only an OPEN recall has a chain left to run.
   const recall = p.decision?.recall && !p.decision?.settled_at ? p.decision.recall : null;
 
@@ -576,6 +579,7 @@ export function VehicleCard({ r, canRecord, onReading, onDecide, onOilChange, on
   // How stale the number is drives the whole page: a fresh reading is a decision, an old one is a call.
   const ageTone = age == null ? 'slate' : age <= 1 ? 'green' : age <= 7 ? 'amber' : 'red';
   const d = p.return_date_known ? p.remaining_days : null;
+  const fromCustomer = p.anchor_source === 'reading';
   const over = p.over_tolerance_km;
 
   // "We think it needs the oil change in ~N days": how long the 200 km/day pace takes to reach the
@@ -592,12 +596,12 @@ export function VehicleCard({ r, canRecord, onReading, onDecide, onOilChange, on
       {/* Header: the car, the people, and the verdict — nothing else. */}
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
-          <div className="truncate text-lg font-bold text-slate-900">{r.car || r.plate || `Contract ${r.contract_id}`}</div>
+          <div className="truncate text-lg font-bold text-slate-900">{r.car || r.plate || t('Contract {no}', { no: r.contract_id })}</div>
           <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-sm text-slate-600">
             {r.vehicle_id
               ? <Link to={`/vehicles/${r.vehicle_id}`} className="font-semibold text-slate-800 hover:text-indigo-600">{r.plate || `#${r.vehicle_id}`}</Link>
               : <span className="font-semibold text-slate-800">{r.plate || '—'}</span>}
-            <span>· Contract {r.contract_no || r.contract_id}</span>
+            <span>· {t('Contract {no}', { no: r.contract_no || r.contract_id })}</span>
             {r.customer && <span>· {r.customer}</span>}
           </div>
         </div>
@@ -605,109 +609,111 @@ export function VehicleCard({ r, canRecord, onReading, onDecide, onOilChange, on
           <Badge tone={a.tone}>{a.label}</Badge>
           {/* The rental clock lives in the header — it frames every other number on the card. */}
           <Badge tone={d === 0 ? 'red' : d != null && d <= 3 ? 'amber' : 'slate'}>
-            {d == null ? 'No return date' : d === 0 ? 'Due back today' : `${d} ${d === 1 ? 'day' : 'days'} left`}
+            {d == null ? t('No return date') : d === 0 ? t('Due back today') : d === 1 ? t('1 day left') : t('{n} days left', { n: d })}
           </Badge>
           {/* An oil service recorded AHEAD of the anchor: informational when plausible, loud when
               the sheet row physically contradicts the mileage evidence. */}
-          {p.oil_service_state === 'mid_rental_service' && <Badge tone="slate">Mid-rental oil service</Badge>}
-          {p.oil_service_state === 'suspicious' && <Badge tone="red">Odometer conflict</Badge>}
+          {p.oil_service_state === 'mid_rental_service' && <Badge tone="slate">{t('Mid-rental oil service')}</Badge>}
+          {p.oil_service_state === 'suspicious' && <Badge tone="red">{t('Odometer conflict')}</Badge>}
         </div>
       </div>
 
       {/* Group 1 — the mileage story, left to right in the order it happened. */}
-      <Group title="Mileage — where is the car?">
+      <Group title={t('Mileage — where is the car?')}>
         {/* The handover reading under its OWN name — never dressed up as the latest reading. */}
         <Stat
-          label="Handover reading"
+          label={t('Handover reading')}
           value={p.handover_odometer != null ? `${num(p.handover_odometer)} km` : '—'}
-          sub={p.handover_on ? `${fmtDate(p.handover_on)} · contract` : 'not recorded'}
+          sub={p.handover_on ? t('{date} · contract', { date: fmtDate(p.handover_on) }) : t('not recorded')}
         />
         <Arrow />
         <Stat
-          label="Latest known odometer"
+          label={t('Latest known odometer')}
           value={p.anchor_odometer != null ? `${num(p.anchor_odometer)} km` : '—'}
-          pill={age != null ? `${age}d old` : undefined}
+          pill={age != null ? t('{n}d old', { n: age }) : undefined}
           pillTone={ageTone}
           highlight
-          sub={p.anchor_on ? `${fmtDate(p.anchor_on)} · ${ANCHOR_LABELS[p.anchor_source] || 'contract handover'}` : 'no reading held'}
+          sub={p.anchor_on
+            ? (fromCustomer
+              ? t('{date} · customer reading', { date: fmtDate(p.anchor_on) })
+              : p.anchor_source === 'sheet'
+                ? t('{date} · Oil Change sheet', { date: fmtDate(p.anchor_on) })
+                : t('{date} · contract handover', { date: fmtDate(p.anchor_on) }))
+            : t('no reading held')}
         />
         <Arrow />
         <Stat
-          label="Today (est.)"
+          label={t('Today (est.)')}
           value={p.expected != null ? `${num(p.expected)} km` : '—'}
-          pill={p.expected != null ? 'projection' : undefined}
+          pill={p.expected != null ? t('projection') : undefined}
           pillTone="slate"
           sub={p.expected != null && p.anchor_odometer != null && age != null
-            ? `= ${num(p.anchor_odometer)} + ${age}d × ${num(p.rate)} km`
+            ? t('= {anchor} + {n}d × {rate} km', { anchor: num(p.anchor_odometer), n: age, rate: num(p.rate) })
             : undefined}
         />
         <Arrow />
         <Stat
-          label="Return (est.)"
+          label={t('Return (est.)')}
           value={p.expected_return != null ? `${num(p.expected_return)} km` : '—'}
           sub={!p.return_due_on
-            ? 'no return date on the contract'
+            ? t('no return date on the contract')
             : d === 0
-              ? 'due back today — same as today’s estimate'
-              : `back ${fmtDate(p.return_due_on)}`}
+              ? t('due back today — same as today’s estimate')
+              : t('back {date}', { date: fmtDate(p.return_due_on) })}
         />
       </Group>
 
       {/* Group 2 — the oil schedule, from the last change to the hard maximum. */}
-      <Group title="Oil service — when is it due?">
+      <Group title={t('Oil service — when is it due?')}>
         <Stat
-          label="Last oil change"
+          label={t('Last oil change')}
           value={r.last_service_odometer != null ? `${num(r.last_service_odometer)} km` : '—'}
-          sub="Oil Change sheet"
+          sub={t('Oil Change sheet')}
         />
         <Stat
-          label="Interval"
+          label={t('Interval')}
           value={r.service_interval_km != null ? `${num(r.service_interval_km)} km` : '—'}
         />
         <Stat
-          label="Oil limit"
+          label={t('Oil limit')}
           value={p.oil_limit != null ? `${num(p.oil_limit)} km` : '—'}
-          sub="last change + interval"
+          sub={t('last change + interval')}
         />
         <Stat
-          label="Max allowed"
+          label={t('Max allowed')}
           value={p.allowed_max != null ? `${num(p.allowed_max)} km` : '—'}
-          sub={p.tolerance != null ? `limit + ${num(p.tolerance)} km grace` : undefined}
+          sub={p.tolerance != null ? t('limit + {n} km grace', { n: num(p.tolerance) }) : undefined}
         />
         <Stat
-          label="Change due"
-          value={daysToOil == null ? '—' : daysToOil <= 0 ? 'now' : `~${daysToOil} ${daysToOil === 1 ? 'day' : 'days'}`}
-          sub={daysToOil == null ? undefined : daysToOil <= 0 ? 'estimate is past the oil point' : 'at the current pace'}
+          label={t('Change due')}
+          value={daysToOil == null ? '—' : daysToOil <= 0 ? t('now') : daysToOil === 1 ? t('~1 day') : t('~{n} days', { n: daysToOil })}
+          sub={daysToOil == null ? undefined : daysToOil <= 0 ? t('estimate is past the oil point') : t('at the current pace')}
         />
       </Group>
 
       {/* The oil-service reading explained in one line — surfaced, never silently trusted. */}
       {p.oil_service_state === 'mid_rental_service' && (
         <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-          Oil service recorded at {num(p.oil_service_odometer)} km, after the last known reading
-          ({num(p.anchor_odometer)} km) — a mid-rental service, not an error. The sheet carries no
-          service date, so the estimate still runs from the last dated reading.
+          {t('Oil service recorded at {km} km, after the last known reading ({anchor} km) — a mid-rental service, not an error. The sheet carries no service date, so the estimate still runs from the last dated reading.', { km: num(p.oil_service_odometer), anchor: num(p.anchor_odometer) })}
         </div>
       )}
       {p.oil_service_state === 'suspicious' && (
         <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
-          Oil service recorded at {num(p.oil_service_odometer)} km — {num(p.oil_service_ahead_km)} km
-          ahead of the last known reading, further than this car could have driven. Verify the sheet
-          row before relying on the oil limit.
+          {t('Oil service recorded at {km} km — {ahead} km ahead of the last known reading, further than this car could have driven. Verify the sheet row before relying on the oil limit.', { km: num(p.oil_service_odometer), ahead: num(p.oil_service_ahead_km) })}
         </div>
       )}
 
       {/* The deadline sentence: the latest the oil can be changed, against where we think the car
           is TODAY. One plain string so it reads like speech, not like a table. */}
       {p.allowed_max != null && p.expected != null && (
-        <div className={`rounded-lg border-l-4 px-3 py-2 text-sm font-semibold tabular-nums ${
+        <div className={`rounded-lg border-s-4 px-3 py-2 text-sm font-semibold tabular-nums ${
           p.expected > p.allowed_max
             ? 'border-rose-400 bg-rose-50 text-rose-800'
             : 'border-slate-300 bg-slate-50 text-slate-700'}`}
         >
           {p.expected > p.allowed_max
-            ? `Must be changed by ${num(p.allowed_max)} km at the latest — estimated now ${num(p.expected)} km, already ${num(p.expected - p.allowed_max)} km past.`
-            : `Must be changed by ${num(p.allowed_max)} km at the latest — estimated now ${num(p.expected)} km, ${num(p.allowed_max - p.expected)} km to go.`}
+            ? t('Must be changed by {max} km at the latest — estimated now {now} km, already {over} km past.', { max: num(p.allowed_max), now: num(p.expected), over: num(p.expected - p.allowed_max) })
+            : t('Must be changed by {max} km at the latest — estimated now {now} km, {left} km to go.', { max: num(p.allowed_max), now: num(p.expected), left: num(p.allowed_max - p.expected) })}
         </div>
       )}
 
@@ -726,21 +732,21 @@ export function VehicleCard({ r, canRecord, onReading, onDecide, onOilChange, on
             {!recall && <div className="mt-0.5 text-sm opacity-80">{a.support}</div>}
             {/* An arrival is a checklist, not a sentence — what to do the moment the car rolls in. */}
             {a.steps && (
-              <ol className="mt-1.5 list-decimal space-y-0.5 pl-5 text-sm">
+              <ol className="mt-1.5 list-decimal space-y-0.5 ps-5 text-sm">
                 {a.steps.map((s) => <li key={s}>{s}</li>)}
               </ol>
             )}
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-1.5">
             {over != null && (over > 0
-              ? <Badge tone="red">{num(over)} km over grace</Badge>
-              : <Badge tone="green">{num(Math.abs(over))} km inside grace</Badge>)}
+              ? <Badge tone="red">{t('{n} km over grace', { n: num(over) })}</Badge>
+              : <Badge tone="green">{t('{n} km inside grace', { n: num(Math.abs(over)) })}</Badge>)}
             {canRecord && a.key !== 'no_data' && (
               <>
                 {/* The customer's reading is only askable while the customer HAS the car. */}
                 {!a.inOurHands && (
                   <Button size="sm" variant={a.chase ? 'primary' : 'ghost'} onClick={() => onReading(r)}>
-                    Enter reading
+                    {t('Enter reading')}
                   </Button>
                 )}
                 {/* The far end — and ONLY once the car is physically ours. While it is still with
@@ -756,8 +762,8 @@ export function VehicleCard({ r, canRecord, onReading, onDecide, onOilChange, on
                     to recall a customer's car on the strength of a 200 km/day assumption. */}
                 {a.decide && (
                   <>
-                    <Button size="sm" variant="danger" onClick={() => onDecide(r, 'recall')}>Recall now</Button>
-                    <Button size="sm" variant="secondary" onClick={() => onDecide(r, 'defer')}>Do it on return</Button>
+                    <Button size="sm" variant="danger" onClick={() => onDecide(r, 'recall')}>{t('Recall now')}</Button>
+                    <Button size="sm" variant="secondary" onClick={() => onDecide(r, 'defer')}>{t('Do it on return')}</Button>
                   </>
                 )}
               </>
@@ -778,6 +784,7 @@ export function VehicleCard({ r, canRecord, onReading, onDecide, onOilChange, on
  * before they put the phone down.
  */
 export function ReadingDialog({ row, onClose, onSaved }) {
+  const { t } = useI18n();
   const toast = useToast();
   const [detail, setDetail] = useState(null);
   const [odometer, setOdometer] = useState('');
@@ -799,7 +806,7 @@ export function ReadingDialog({ row, onClose, onSaved }) {
 
   const submit = async () => {
     if (odometer === '' || Number.isNaN(Number(odometer))) {
-      return toast.error('Enter the odometer reading the customer gave you');
+      return toast.error(t('Enter the odometer reading the customer gave you'));
     }
     setBusy(true);
     try {
@@ -819,11 +826,11 @@ export function ReadingDialog({ row, onClose, onSaved }) {
         readings: saved.reading ? [saved.reading, ...(d?.readings || [])] : (d?.readings || []),
       }));
       setOdometer('');
-      toast.success('Reading saved — recalculated');
+      toast.success(t('Reading saved — recalculated'));
       onSaved();
     } catch (e) {
       // The API rejects a reading that runs backwards; surface its sentence, not a generic failure.
-      toast.error(e.response?.data?.message || 'Could not save the reading');
+      toast.error(e.response?.data?.message || t('Could not save the reading'));
     } finally {
       setBusy(false);
     }
@@ -840,56 +847,58 @@ export function ReadingDialog({ row, onClose, onSaved }) {
       open
       onClose={() => !busy && onClose()}
       size="lg"
-      title={`Mileage reading — ${row.plate || row.car || `contract ${row.contract_id}`}`}
-      subtitle={row.customer ? `${row.customer} · contract ${row.contract_no || row.contract_id}` : undefined}
+      title={t('Mileage reading — {car}', { car: row.plate || row.car || t('contract {no}', { no: row.contract_id }) })}
+      subtitle={row.customer ? t('{customer} · contract {no}', { customer: row.customer, no: row.contract_no || row.contract_id }) : undefined}
       footer={(
         <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose} disabled={busy}>Close</Button>
-          <Button onClick={submit} loading={busy}>Save reading</Button>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>{t('Close')}</Button>
+          <Button onClick={submit} loading={busy}>{t('Save reading')}</Button>
         </div>
       )}
     >
       <div className="space-y-4">
-        <div className="rounded-lg bg-slate-50 p-3 text-sm text-slate-700">{reasonFor(projection)}</div>
+        <div className="rounded-lg bg-slate-50 p-3 text-sm text-slate-700">{reasonFor(projection, t)}</div>
 
         {/* The reference number for the call: a customer figure close to this = tracking normally. */}
         {projection?.expected != null && (
           <div className="rounded-lg border border-indigo-100 bg-indigo-50 p-3 text-sm text-indigo-900">
-            Expected today: <strong>{num(projection.expected)} km</strong>
-            <span className="ml-1 text-xs text-indigo-700">
-              — if the customer reports a value close to this, the rental is tracking normally.
+            {/* Label and figure split deliberately: the value trails the colon in English AND
+                Arabic, so the bold number survives without stranding a clause in markup. */}
+            {t('Expected today:')} <strong>{num(projection.expected)} km</strong>
+            <span className="ms-1 text-xs text-indigo-700">
+              {t('— if the customer reports a value close to this, the rental is tracking normally.')}
             </span>
           </div>
         )}
 
         {result && (
           <div className={`rounded-lg border p-3 text-sm ${resultTone}`}>
-            <div className="font-semibold">Recalculated</div>
-            <div>{reasonFor(result)}</div>
+            <div className="font-semibold">{t('Recalculated')}</div>
+            <div>{reasonFor(result, t)}</div>
             {result.oil_status === 'decision_required' && (
               <div className="mt-1 text-xs">
-                Close this and choose <strong>Recall now</strong> or <strong>Do it on return</strong>.
+                {t('Close this and choose “Recall now” or “Do it on return”.')}
               </div>
             )}
           </div>
         )}
 
         <Input
-          label="Odometer reported by the customer (km)"
+          label={t('Odometer reported by the customer (km)')}
           type="number"
           required
           value={odometer}
           onChange={(e) => setOdometer(e.target.value)}
-          placeholder="e.g. 41200"
+          placeholder={t('e.g. 41200')}
         />
         <Input
-          label="Who gave the reading (optional)"
+          label={t('Who gave the reading (optional)')}
           value={reportedBy}
           onChange={(e) => setReportedBy(e.target.value)}
-          placeholder="Customer, over the phone"
+          placeholder={t('Customer, over the phone')}
         />
         <Textarea
-          label="Note (optional)"
+          label={t('Note (optional)')}
           value={note}
           onChange={(e) => setNote(e.target.value)}
           rows={2}
@@ -897,31 +906,31 @@ export function ReadingDialog({ row, onClose, onSaved }) {
 
         <div>
           <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
-            Odometer history
+            {t('Odometer history')}
           </div>
           {readings.length === 0 && projection?.handover_odometer == null ? (
             <div className="text-sm text-slate-500">
-              No readings held for this rental yet.
+              {t('No readings held for this rental yet.')}
             </div>
           ) : (
             <ul className="divide-y divide-slate-100 text-sm">
               {readings.map((r) => (
                 <li key={r.id} className="flex items-center justify-between py-1.5">
                   <span className="font-medium text-slate-800">{num(r.odometer)} km</span>
-                  <span className="text-slate-500">{fmtDate(r.reported_on)}{r.reported_by ? ` · ${r.reported_by}` : ' · customer reading'}</span>
+                  <span className="text-slate-500">{r.reported_by ? `${fmtDate(r.reported_on)} · ${r.reported_by}` : t('{date} · customer reading', { date: fmtDate(r.reported_on) })}</span>
                 </li>
               ))}
               {/* The evidence trail bottoms out at the handover — every row says its source. */}
               {projection?.handover_odometer != null && (
                 <li className="flex items-center justify-between py-1.5">
                   <span className="font-medium text-slate-800">{num(projection.handover_odometer)} km</span>
-                  <span className="text-slate-500">{fmtDate(projection.handover_on)} · contract handover</span>
+                  <span className="text-slate-500">{t('{date} · contract handover', { date: fmtDate(projection.handover_on) })}</span>
                 </li>
               )}
               {projection?.oil_service_odometer != null && projection?.oil_service_state && (
                 <li className="flex items-center justify-between py-1.5">
                   <span className="font-medium text-slate-800">{num(projection.oil_service_odometer)} km</span>
-                  <span className="text-slate-500">date unknown · oil service (sheet)</span>
+                  <span className="text-slate-500">{t('date unknown · oil service (sheet)')}</span>
                 </li>
               )}
             </ul>
@@ -1038,7 +1047,7 @@ export function OilChangeDialog({ row, onClose, onSaved }) {
               onChange={(e) => setNote(e.target.value)}
               rows={2}
             />
-            <ul className="list-disc space-y-1 pl-5 text-xs text-slate-600">
+            <ul className="list-disc space-y-1 ps-5 text-xs text-slate-600">
               <li>{tf('oil.done.effect1', 'The car’s profile is updated: last change and next change.')}</li>
               <li>{tf('oil.done.effect2', 'This follow-up closes — the recall call and any driver collection stand down.')}</li>
               <li>{tf('oil.done.effect3', 'The inspection request raised for this car is resolved.')}</li>
@@ -1058,7 +1067,7 @@ export function OilChangeDialog({ row, onClose, onSaved }) {
  * doing it on, spelled out, one more time.
  */
 export function DecisionDialog({ row, decision, onClose, onDecided }) {
-  const { tf } = useI18n();
+  const { t, tf } = useI18n();
   const toast = useToast();
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
@@ -1081,11 +1090,11 @@ export function DecisionDialog({ row, decision, onClose, onDecided }) {
         note: note || null,
         ...(recall ? { test_required: testRequired, service_location: location } : {}),
       });
-      toast.success(recall ? 'Recall recorded' : 'Oil change booked for the return');
+      toast.success(recall ? t('Recall recorded') : t('Oil change booked for the return'));
       onDecided();
       onClose();
     } catch (e) {
-      toast.error(e.response?.data?.message || 'Could not record the decision');
+      toast.error(e.response?.data?.message || t('Could not record the decision'));
     } finally {
       setBusy(false);
     }
@@ -1095,25 +1104,30 @@ export function DecisionDialog({ row, decision, onClose, onDecided }) {
     <Modal
       open
       onClose={() => !busy && onClose()}
-      title={`${DECISION_LABEL[decision]} — ${row.plate || row.car || `contract ${row.contract_id}`}`}
-      subtitle={row.customer ? `${row.customer} · contract ${row.contract_no || row.contract_id}` : undefined}
+      title={`${t(DECISION_LABEL[decision])} — ${row.plate || row.car || t('contract {no}', { no: row.contract_id })}`}
+      subtitle={row.customer ? t('{customer} · contract {no}', { customer: row.customer, no: row.contract_no || row.contract_id }) : undefined}
       footer={(
         <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>{t('Cancel')}</Button>
           <Button variant={recall ? 'danger' : 'primary'} onClick={submit} loading={busy}>
-            {DECISION_LABEL[decision]}
+            {t(DECISION_LABEL[decision])}
           </Button>
         </div>
       )}
     >
       <div className="space-y-3 text-sm">
         <div className="rounded-lg bg-slate-50 p-3 text-slate-700">
-          <div>Projected on return: <strong>{num(p.expected_return)} km</strong></div>
-          <div>Allowed maximum: <strong>{num(p.allowed_max)} km</strong>
-            {' '}({num(p.oil_limit)} km oil limit + {num(p.tolerance)} km tolerance)</div>
-          <div>Rental still to run: <strong>{p.return_date_known ? `${p.remaining_days} days` : 'not stated on the contract'}</strong></div>
+          <div>{t('Projected on return: {km} km', { km: num(p.expected_return) })}</div>
+          <div>{t('Allowed maximum: {max} km ({limit} km oil limit + {tol} km tolerance)', { max: num(p.allowed_max), limit: num(p.oil_limit), tol: num(p.tolerance) })}</div>
+          <div>
+            {p.return_date_known
+              ? (p.remaining_days === 1
+                ? t('Rental still to run: 1 day')
+                : t('Rental still to run: {n} days', { n: p.remaining_days }))
+              : t('Rental still to run: not stated on the contract')}
+          </div>
           <div className="mt-1 font-semibold text-rose-700">
-            {num(Math.max(p.over_tolerance_km ?? 0, 0))} km past what this car is allowed to run.
+            {t('{n} km past what this car is allowed to run.', { n: num(Math.max(p.over_tolerance_km ?? 0, 0)) })}
           </div>
         </div>
 
@@ -1199,13 +1213,12 @@ export function DecisionDialog({ row, decision, onClose, onDecided }) {
         {/* The exact consequence, spelled out BEFORE the confirm — the two answers run two
             different operational workflows and the person clicking must know which. */}
         <div className="rounded-lg border border-slate-200 bg-white p-3">
-          <div className="text-sm font-bold text-slate-800">{recall ? '🚨 Recall now — this will:' : '🔧 Service on return — this will:'}</div>
-          <ul className="mt-1.5 list-disc space-y-1 pl-5 text-sm text-slate-700">
+          <div className="text-sm font-bold text-slate-800">{recall ? t('🚨 Recall now — this will:') : t('🔧 Service on return — this will:')}</div>
+          <ul className="mt-1.5 list-disc space-y-1 ps-5 text-sm text-slate-700">
             {recall ? (
               <>
-                <li>Raise a call for you: ask Sales to agree the return with the customer.</li>
-                <li><strong>Notify no driver yet</strong> — nobody is dispatched until you click
-                  “Sales OK — Customer confirmed” on this card.</li>
+                <li>{t('Raise a call for you: ask Sales to agree the return with the customer.')}</li>
+                <li>{t('Notify no driver yet — nobody is dispatched until you click “Sales OK — Customer confirmed” on this card.')}</li>
                 <li>
                   {location === 'parking'
                     ? tf('oil.decide.thenParking', 'Then, on Sales OK: send a driver to collect it, and tell Abu Maroof to change the oil in the parking.')
@@ -1218,29 +1231,28 @@ export function DecisionDialog({ row, decision, onClose, onDecided }) {
                       ? tf('oil.decide.addToRequest', 'Add the oil change to the test request already waiting (#{id}) — no second card.', { id: already.id })
                       : tf('oil.decide.newRequest', 'File the inspection follow-up with these figures for the Inspector.')}
                 </li>
-                <li>Require the actual odometer when the car is received — and an oil change,
-                  whatever else is done to the car.</li>
+                <li>{t('Require the actual odometer when the car is received — and an oil change, whatever else is done to the car.')}</li>
               </>
             ) : (
               <>
-                <li>The customer keeps the car until the agreed return — nobody is called.</li>
-                <li>File the inspection follow-up so the return is expected, with these figures.</li>
-                <li>On return: actual odometer read, oil checked, service ticket raised automatically.</li>
-                <li>Cancel any recall call or collection that was previously open.</li>
+                <li>{t('The customer keeps the car until the agreed return — nobody is called.')}</li>
+                <li>{t('File the inspection follow-up so the return is expected, with these figures.')}</li>
+                <li>{t('On return: actual odometer read, oil checked, service ticket raised automatically.')}</li>
+                <li>{t('Cancel any recall call or collection that was previously open.')}</li>
               </>
             )}
           </ul>
           <p className="mt-1.5 text-xs text-slate-500">
-            The figures stay live: a newer odometer reading updates the follow-up automatically.
+            {t('The figures stay live: a newer odometer reading updates the follow-up automatically.')}
           </p>
         </div>
 
         <Textarea
-          label="Why (optional)"
+          label={t('Why (optional)')}
           value={note}
           onChange={(e) => setNote(e.target.value)}
           rows={2}
-          placeholder={recall ? 'Customer agreed to bring it in Thursday' : 'Customer is mid-trip; overrun accepted'}
+          placeholder={recall ? t('Customer agreed to bring it in Thursday') : t('Customer is mid-trip; overrun accepted')}
         />
       </div>
     </Modal>
@@ -1260,6 +1272,7 @@ export function DecisionDialog({ row, decision, onClose, onDecided }) {
  * figures the recall was ordered on, not figures that moved under them thirty seconds ago.
  */
 export function RecallQueue({ tasks, canRecord, onChanged }) {
+  const { t } = useI18n();
   const toast = useToast();
   const [busyId, setBusyId] = useState(null);
 
@@ -1267,10 +1280,10 @@ export function RecallQueue({ tasks, canRecord, onChanged }) {
     setBusyId(task.id);
     try {
       await api.patch(`/OilRecallTasks/${task.id}`, { status });
-      toast.success(status === 'contacted' ? 'Marked as contacted' : 'Recall closed');
+      toast.success(status === 'contacted' ? t('Marked as contacted') : t('Recall closed'));
       onChanged();
     } catch (e) {
-      toast.error(e.response?.data?.message || 'Could not update the recall');
+      toast.error(e.response?.data?.message || t('Could not update the recall'));
     } finally {
       setBusyId(null);
     }
@@ -1280,54 +1293,58 @@ export function RecallQueue({ tasks, canRecord, onChanged }) {
 
   return (
     <SectionCard
-      title={`Recalls to arrange (${tasks.length})`}
-      subtitle="Call the customer and agree a day to bring the car in. The oil-change ticket is raised on its own once the car is back."
+      title={t('Recalls to arrange ({n})', { n: tasks.length })}
+      subtitle={t('Call the customer and agree a day to bring the car in. The oil-change ticket is raised on its own once the car is back.')}
     >
       <ul className="divide-y divide-slate-100">
-        {tasks.map((t) => {
-          const s = RECALL_STATUS[t.status] || RECALL_STATUS.open;
+        {/* NB: the row is `task`, never `t` — `t` is the translator in this scope. */}
+        {tasks.map((task) => {
+          const s = RECALL_STATUS[task.status] || RECALL_STATUS.open;
           return (
-            <li key={t.id} className="flex flex-wrap items-start justify-between gap-3 py-3">
+            <li key={task.id} className="flex flex-wrap items-start justify-between gap-3 py-3">
               <div className="min-w-0 space-y-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  {t.vehicle_id
-                    ? <Link to={`/vehicles/${t.vehicle_id}`} className="font-semibold text-slate-900 hover:text-indigo-600">{t.plate || `#${t.vehicle_id}`}</Link>
-                    : <span className="font-semibold text-slate-900">{t.plate || '—'}</span>}
-                  <span className="text-xs text-slate-500">{t.car}</span>
-                  <Badge tone={s.tone}>{s.label}</Badge>
+                  {task.vehicle_id
+                    ? <Link to={`/vehicles/${task.vehicle_id}`} className="font-semibold text-slate-900 hover:text-indigo-600">{task.plate || `#${task.vehicle_id}`}</Link>
+                    : <span className="font-semibold text-slate-900">{task.plate || '—'}</span>}
+                  <span className="text-xs text-slate-500">{task.car}</span>
+                  <Badge tone={s.tone}>{t(s.label)}</Badge>
                 </div>
                 <div className="text-sm text-slate-700">
-                  {t.customer || 'Customer'}{t.contract_no ? ` · contract ${t.contract_no}` : ''}
+                  {task.customer || t('Customer')}{task.contract_no ? ` · ${t('contract {no}', { no: task.contract_no })}` : ''}
                 </div>
                 <div className="text-sm text-slate-600">
-                  {RECALL_REASON[t.reason_code] || 'Recall ordered.'}
+                  {RECALL_REASON[task.reason_code] ? t(RECALL_REASON[task.reason_code]) : t('Recall ordered.')}
                 </div>
                 {/* Everything the caller needs to say, in the order they'd say it. */}
                 <div className="text-xs text-slate-500">
-                  Customer reported <strong>{num(t.customer_reading)} km</strong>
-                  {t.customer_reading_on ? ` on ${fmtDate(t.customer_reading_on)}` : ''}
-                  {' · '}oil limit {num(t.oil_limit)} km
-                  {' · '}allowed {num(t.allowed_max)} km
-                  {' · '}would return on <strong>{num(t.expected_return_odometer)} km</strong>
-                  {t.over_tolerance_km ? ` (${num(t.over_tolerance_km)} km over)` : ''}
-                  {t.remaining_days != null ? ` · ${t.remaining_days}d left on the contract` : ''}
+                  {task.customer_reading_on
+                    ? t('Customer reported {km} km on {date}', { km: num(task.customer_reading), date: fmtDate(task.customer_reading_on) })
+                    : t('Customer reported {km} km', { km: num(task.customer_reading) })}
+                  {' · '}{t('oil limit {km} km', { km: num(task.oil_limit) })}
+                  {' · '}{t('allowed {km} km', { km: num(task.allowed_max) })}
+                  {' · '}{task.over_tolerance_km
+                    ? t('would return on {km} km ({over} km over)', { km: num(task.expected_return_odometer), over: num(task.over_tolerance_km) })
+                    : t('would return on {km} km', { km: num(task.expected_return_odometer) })}
+                  {task.remaining_days != null ? ` · ${t('{n}d left on the contract', { n: task.remaining_days })}` : ''}
                 </div>
                 <div className="text-xs text-slate-400">
-                  Recalled by {t.created_by || 'system'}{t.decided_at ? ` · ${fmtDate(t.decided_at)}` : ''}
-                  {t.claimed_by ? ` · picked up by ${t.claimed_by}` : ''}
+                  {t('Recalled by {who}', { who: task.created_by || t('system') })}
+                  {task.decided_at ? ` · ${fmtDate(task.decided_at)}` : ''}
+                  {task.claimed_by ? ` · ${t('picked up by {who}', { who: task.claimed_by })}` : ''}
                 </div>
-                {t.note && <div className="text-xs italic text-slate-500">“{t.note}”</div>}
+                {task.note && <div className="text-xs italic text-slate-500">“{task.note}”</div>}
               </div>
 
               {canRecord && (
                 <div className="flex shrink-0 gap-1.5">
-                  {t.status === 'open' && (
-                    <Button size="sm" variant="secondary" loading={busyId === t.id} onClick={() => move(t, 'contacted')}>
-                      Customer contacted
+                  {task.status === 'open' && (
+                    <Button size="sm" variant="secondary" loading={busyId === task.id} onClick={() => move(task, 'contacted')}>
+                      {t('Customer contacted')}
                     </Button>
                   )}
-                  <Button size="sm" variant="ghost" loading={busyId === t.id} onClick={() => move(t, 'done')}>
-                    Close
+                  <Button size="sm" variant="ghost" loading={busyId === task.id} onClick={() => move(task, 'done')}>
+                    {t('Close')}
                   </Button>
                 </div>
               )}
@@ -1339,7 +1356,107 @@ export function RecallQueue({ tasks, canRecord, onChanged }) {
   );
 }
 
+/**
+ * The call list — who to phone, on which number, about which car.
+ *
+ * The board is one big card per car because each card carries a decision. Making twenty-six calls
+ * is a different job: it wants a flat list with the phone number on it. Same rows, same lane, no
+ * new fetch — everything below comes from the payload the board already holds, and the CSV is that
+ * same list written out so it can be worked from a phone or handed to someone else.
+ */
+export function CallListDialog({ rows, laneLabel, onClose }) {
+  const { t } = useI18n();
+
+  const csvRows = useMemo(() => rows.map((r) => ({
+    car:      r.car || '',
+    plate:    r.plate || '',
+    customer: r.customer || '',
+    phone:    r.customer_phone || '',
+    cx:       r.customer_no || '',
+    contract: r.contract_no || '',
+  })), [rows]);
+
+  const download = () => {
+    const head = [t('Car'), t('Plate'), t('Customer'), t('Phone'), t('CX number'), t('Contract')];
+    const cell = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const lines = csvRows.map((r) => [r.car, r.plate, r.customer, r.phone, r.cx, r.contract].map(cell).join(','));
+    // A leading BOM so Excel opens Arabic customer names as Arabic, not as mojibake.
+    const blob = new Blob(['﻿' + [head.map(cell).join(','), ...lines].join('\r\n')], {
+      type: 'text/csv;charset=utf-8',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `oil-call-list-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      size="xl"
+      title={t('Call list')}
+      subtitle={t('{n} car(s) in “{lane}”. Everything you need to make the call.', { n: rows.length, lane: laneLabel })}
+      footer={(
+        <div className="flex items-center justify-between gap-2">
+          <Button variant="secondary" onClick={download} disabled={!rows.length}>{t('Download CSV')}</Button>
+          <Button variant="ghost" onClick={onClose}>{t('Close')}</Button>
+        </div>
+      )}
+    >
+      {rows.length === 0 ? (
+        <div className="py-8 text-center text-sm text-slate-400">{t('No cars in this list.')}</div>
+      ) : (
+        <div className="max-h-[60vh] overflow-auto">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="px-2 py-2 text-start">{t('Car')}</th>
+                <th className="px-2 py-2 text-start">{t('Plate')}</th>
+                <th className="px-2 py-2 text-start">{t('Customer')}</th>
+                <th className="px-2 py-2 text-start">{t('Phone')}</th>
+                <th className="px-2 py-2 text-start">{t('CX number')}</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {rows.map((r) => (
+                <tr key={r.contract_id} className="align-top">
+                  <td className="px-2 py-2 text-slate-700">
+                    {r.car || '—'}
+                    {r.contract_no && <div className="text-xs text-slate-400">{r.contract_no}</div>}
+                  </td>
+                  <td className="px-2 py-2 font-medium text-slate-900">
+                    {r.vehicle_id
+                      ? <Link to={`/vehicles/${r.vehicle_id}`} className="text-indigo-600 hover:text-indigo-700">{r.plate || `#${r.vehicle_id}`}</Link>
+                      : (r.plate || '—')}
+                  </td>
+                  <td className="px-2 py-2 text-slate-700">{r.customer || '—'}</td>
+                  <td className="px-2 py-2">
+                    {r.customer_phone
+                      ? <a href={`tel:${r.customer_phone}`} className="font-medium text-indigo-600 hover:text-indigo-700" dir="ltr">{r.customer_phone}</a>
+                      : <span className="text-slate-400">{t('No number on file')}</span>}
+                    {r.customer_whatsapp && r.customer_whatsapp !== r.customer_phone && (
+                      <div className="text-xs text-slate-500" dir="ltr">{t('WhatsApp')}: {r.customer_whatsapp}</div>
+                    )}
+                    {r.customer_mobile2 && r.customer_mobile2 !== r.customer_phone && (
+                      <div className="text-xs text-slate-500" dir="ltr">{r.customer_mobile2}</div>
+                    )}
+                  </td>
+                  <td className="px-2 py-2 text-slate-700" dir="ltr">{r.customer_no || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 export default function OilProjection() {
+  const { t } = useI18n();
   const { can } = usePermissions();
   const canRecord = can('reminders.manage');
   const [filter, setFilter] = useState('call_customer');
@@ -1349,6 +1466,7 @@ export default function OilProjection() {
   const [active, setActive] = useState(null);
   const [deciding, setDeciding] = useState(null);   // { row, decision }
   const [changing, setChanging] = useState(null);   // the car whose completed oil change is being recorded
+  const [callList, setCallList] = useState(false);  // the flat "who do I phone" view of the current lane
 
   const fetcher = useCallback(async () => {
     // The board and the recall queue are one screen's worth of work, so they load together — a
@@ -1362,7 +1480,7 @@ export default function OilProjection() {
   // Modal open ⇒ pause polling, so the board can't reshuffle under someone mid-call.
   const { data, loading, error, reload } = useFetch(fetcher, [], {
     refreshInterval: 60000,
-    paused: () => Boolean(active || deciding || changing),
+    paused: () => Boolean(active || deciding || changing || callList),
   });
 
   const contracts = useMemo(() => data?.contracts || [], [data]);
@@ -1408,24 +1526,24 @@ export default function OilProjection() {
       .toLowerCase().includes(needle));
   }, [contracts, filter, due, freshness, q]);
 
-  if (error) return <ErrorState title="Could not load the follow-up queue" message={error} onRetry={reload} />;
+  if (error) return <ErrorState title={t('Could not load the follow-up queue')} message={error} onRetry={reload} />;
 
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Oil Mileage Follow-up"
-        subtitle="Cars out on rental whose oil limit is coming up. Get the real odometer from the customer — the question is whether the car can finish the rental inside its allowance, not whether it has passed the limit."
+        title={t('Oil Mileage Follow-up')}
+        subtitle={t('Cars out on rental whose oil limit is coming up. Get the real odometer from the customer — the question is whether the car can finish the rental inside its allowance, not whether it has passed the limit.')}
       />
 
       <MetricGrid cols={4}>
-        <MetricCard label="Action required" value={laneCounts.action_required} tone="red" loading={loading}
-          tooltip="An agreed recall to arrange, or a fresh reading proving the car cannot finish inside its allowance. Someone must act before the return." />
-        <MetricCard label="Service on return" value={laneCounts.service_on_return} tone="amber" loading={loading}
-          tooltip="Due back today (or overdue). Don’t call — read the actual odometer when the car arrives, check the oil and service if required." />
-        <MetricCard label="Call customer" value={laneCounts.call_customer} tone="amber" loading={loading}
-          tooltip="Still days to run on a stale number. Phone the customer for the real odometer before anything is decided." />
-        <MetricCard label="Safe / scheduled" value={laneCounts.safe} tone="green" loading={loading}
-          tooltip="No intervention needed — finishes inside its allowance; any oil change is raised automatically at the return." />
+        <MetricCard label={t('Action required')} value={laneCounts.action_required} tone="red" loading={loading}
+          tooltip={t('An agreed recall to arrange, or a fresh reading proving the car cannot finish inside its allowance. Someone must act before the return.')} />
+        <MetricCard label={t('Service on return')} value={laneCounts.service_on_return} tone="amber" loading={loading}
+          tooltip={t('Due back today (or overdue). Don’t call — read the actual odometer when the car arrives, check the oil and service if required.')} />
+        <MetricCard label={t('Call customer')} value={laneCounts.call_customer} tone="amber" loading={loading}
+          tooltip={t('Still days to run on a stale number. Phone the customer for the real odometer before anything is decided.')} />
+        <MetricCard label={t('Safe / scheduled')} value={laneCounts.safe} tone="green" loading={loading}
+          tooltip={t('No intervention needed — finishes inside its allowance; any oil change is raised automatically at the return.')} />
       </MetricGrid>
 
       {/* The calls the decisions created, above the board that creates them. */}
@@ -1436,23 +1554,23 @@ export default function OilProjection() {
       />
 
       <SectionCard
-        title="Follow-up queue"
+        title={t('Follow-up queue')}
         subtitle={data?.model
-          ? `Projected at ${num(data.model.rate_km_per_day)} km/day, with a ${num(data.model.tolerance_km ?? data.model.grace_km)} km grace above each car's oil limit.`
+          ? t("Projected at {rate} km/day, with a {grace} km grace above each car's oil limit.", { rate: num(data.model.rate_km_per_day), grace: num(data.model.tolerance_km ?? data.model.grace_km) })
           : undefined}
         actions={(
           <div className="flex flex-wrap items-center gap-2">
-            <SearchInput value={q} onChange={setQ} placeholder="Plate, customer, contract…" />
+            <SearchInput value={q} onChange={setQ} placeholder={t('Plate, customer, contract…')} />
             <FilterChips
               value={filter}
               onChange={setFilter}
               options={[
-                { key: 'call_customer', label: `Call customer (${laneCounts.call_customer})` },
-                { key: 'service_on_return', label: `Service on return (${laneCounts.service_on_return})` },
-                { key: 'action_required', label: `Action required (${laneCounts.action_required})` },
-                { key: 'safe', label: `Safe / scheduled (${laneCounts.safe})` },
-                { key: 'no_data', label: `Can’t project (${laneCounts.no_data})` },
-                { key: 'all', label: `All (${summary.total})` },
+                { key: 'call_customer', label: `${t('Call customer')} (${laneCounts.call_customer})` },
+                { key: 'service_on_return', label: `${t('Service on return')} (${laneCounts.service_on_return})` },
+                { key: 'action_required', label: `${t('Action required')} (${laneCounts.action_required})` },
+                { key: 'safe', label: `${t('Safe / scheduled')} (${laneCounts.safe})` },
+                { key: 'no_data', label: `${t('Can’t project')} (${laneCounts.no_data})` },
+                { key: 'all', label: `${t('All')} (${summary.total})` },
               ]}
             />
             {/* Narrow WITHIN the lane — these never move a car between lanes. */}
@@ -1460,34 +1578,38 @@ export default function OilProjection() {
               value={due}
               onChange={(e) => setDue(e.target.value)}
               className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-700"
-              aria-label="Due window"
+              aria-label={t('Due window')}
             >
-              <option value="any">Due: any</option>
-              <option value="today">Due today</option>
-              <option value="tomorrow">Due tomorrow</option>
-              <option value="1-3">Due in 1–3 days</option>
-              <option value="4-7">Due in 4–7 days</option>
-              <option value="8+">Due in 8+ days</option>
+              <option value="any">{t('Due: any')}</option>
+              <option value="today">{t('Due today')}</option>
+              <option value="tomorrow">{t('Due tomorrow')}</option>
+              <option value="1-3">{t('Due in 1–3 days')}</option>
+              <option value="4-7">{t('Due in 4–7 days')}</option>
+              <option value="8+">{t('Due in 8+ days')}</option>
             </select>
             <select
               value={freshness}
               onChange={(e) => setFreshness(e.target.value)}
               className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-700"
-              aria-label="Reading age"
+              aria-label={t('Reading age')}
             >
-              <option value="any">Reading: any</option>
-              <option value="fresh">Reading fresh (≤1d)</option>
-              <option value="stale">Reading stale (&gt;1d)</option>
+              <option value="any">{t('Reading: any')}</option>
+              <option value="fresh">{t('Reading fresh (≤1d)')}</option>
+              <option value="stale">{t('Reading stale (>1d)')}</option>
             </select>
+            {/* The cards are for deciding; this is for dialling. Same rows, phone numbers on them. */}
+            <Button size="sm" variant="secondary" onClick={() => setCallList(true)} disabled={!rows.length}>
+              {t('Call list')} ({rows.length})
+            </Button>
           </div>
         )}
       >
         {loading && rows.length === 0 ? (
-          <div className="py-10 text-center text-sm text-slate-400">Loading the fleet position…</div>
+          <div className="py-10 text-center text-sm text-slate-400">{t('Loading the fleet position…')}</div>
         ) : rows.length === 0 ? (
           <EmptyState
-            title="Nothing to decide"
-            message="No car currently out on rental is projected to finish past its oil allowance."
+            title={t('Nothing to decide')}
+            message={t('No car currently out on rental is projected to finish past its oil allowance.')}
           />
         ) : (
           <div className="grid gap-4 xl:grid-cols-2">
@@ -1509,30 +1631,27 @@ export default function OilProjection() {
       {/* The four lanes, stated once, so nobody has to infer them from badge colours. */}
       <div className="grid gap-2 text-xs text-slate-600 sm:grid-cols-2 xl:grid-cols-4">
         <div className="rounded-lg border border-slate-200 p-2.5">
-          <Badge tone="amber">Call customer</Badge>
+          <Badge tone="amber">{t('Call customer')}</Badge>
           <div className="mt-1.5">
-            Still days to run on a stale number. Phone for the real odometer before anything is decided.
+            {t('Still days to run on a stale number. Phone for the real odometer before anything is decided.')}
           </div>
         </div>
         <div className="rounded-lg border border-slate-200 p-2.5">
-          <Badge tone="amber">Service on return</Badge>
+          <Badge tone="amber">{t('Service on return')}</Badge>
           <div className="mt-1.5">
-            Due back today. Don’t call — read the actual odometer when it arrives, check the oil and
-            service if required.
+            {t('Due back today. Don’t call — read the actual odometer when it arrives, check the oil and service if required.')}
           </div>
         </div>
         <div className="rounded-lg border border-slate-200 p-2.5">
-          <Badge tone="red">Action required</Badge>
+          <Badge tone="red">{t('Action required')}</Badge>
           <div className="mt-1.5">
-            Cannot finish inside the allowance on a fresh reading, or a recall is already agreed.
-            Someone must choose: <strong>recall now</strong> or <strong>do it on return</strong>.
+            {t('Cannot finish inside the allowance on a fresh reading, or a recall is already agreed. Someone must choose: recall now or do it on return.')}
           </div>
         </div>
         <div className="rounded-lg border border-slate-200 p-2.5">
-          <Badge tone="green">Safe / scheduled</Badge>
+          <Badge tone="green">{t('Safe / scheduled')}</Badge>
           <div className="mt-1.5">
-            Finishes inside its allowance. Any oil change is raised automatically as soon as the car
-            is back.
+            {t('Finishes inside its allowance. Any oil change is raised automatically as soon as the car is back.')}
           </div>
         </div>
       </div>
@@ -1540,12 +1659,17 @@ export default function OilProjection() {
       {/* Traceability: the page states the arithmetic behind every number it shows. */}
       {data?.model?.basis && (
         <div className="text-xs text-slate-500">
-          <span className="font-semibold">Data origin:</span>{' '}
-          {data.model.basis}. Oil limit comes from the Oil Change sheet anchors on each car; remaining days
-          come from the contract’s own duration; customer-reported readings are stored against the contract
-          and never change the car’s odometer. “Stored” is the odometer the system holds for the car — it was
-          last refreshed at handover, so during a rental it lags the projection by design.
+          <span className="font-semibold">{t('Data origin:')}</span>{' '}
+          {t('{basis}. Oil limit comes from the Oil Change sheet anchors on each car; remaining days come from the contract’s own duration; customer-reported readings are stored against the contract and never change the car’s odometer. “Stored” is the odometer the system holds for the car — it was last refreshed at handover, so during a rental it lags the projection by design.', { basis: data.model.basis })}
         </div>
+      )}
+
+      {callList && (
+        <CallListDialog
+          rows={rows}
+          laneLabel={t(LANES.find((l) => l.key === filter)?.label || 'All')}
+          onClose={() => setCallList(false)}
+        />
       )}
 
       {active && (
