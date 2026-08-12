@@ -322,7 +322,9 @@ class MileageBaselineService
         }
 
         $old = $v->odometer !== null ? (int) $v->odometer : null;
-        $v->odometer = $a['latest_valid'];
+        $v->odometer           = $a['latest_valid'];
+        $v->odometer_source    = 'contract';
+        $v->odometer_source_at = now();
         if ($a['baseline'] !== null) {
             $v->baseline_odometer  = $a['baseline'];
             $v->baseline_synced_at = now();
@@ -381,7 +383,9 @@ class MileageBaselineService
                     || ($cur - $target > self::JUMP_FLOOR_KM);                      // typo above chain -> heal down
 
                 if ($shouldCorrect && $cur !== $target) {
-                    $updates['odometer'] = $target;
+                    $updates['odometer']           = $target;
+                    $updates['odometer_source']    = 'contract';
+                    $updates['odometer_source_at'] = $now;
                     $odoCorrected++;
                     if (count($samples) < 25) {
                         $samples[] = ['plate' => $r['plate'], 'from' => $cur, 'to' => $target];

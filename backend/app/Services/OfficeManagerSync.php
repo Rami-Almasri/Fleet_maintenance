@@ -199,9 +199,17 @@ class OfficeManagerSync
                 }
                 // Odometer only ever goes UP: OM often has the same car typed in twice with the
                 // real mileage on one row and a 0/1 placeholder on the other. Keep the highest so
-                // a stale/placeholder duplicate row can't lower a good reading.
-                if (array_key_exists('odometer', $data) && (int) ($vehicle->odometer ?? 0) > (int) $data['odometer']) {
-                    $data['odometer'] = (int) $vehicle->odometer;
+                // a stale/placeholder duplicate row can't lower a good reading. The same rule
+                // settles OM against the "Oil Change" sheet's MILAGE column (OilChangeImporter)
+                // and against a reading captured on a ticket — a car cannot un-drive kilometres,
+                // so whoever holds the higher number holds the truth, and stamps their name on it.
+                if (array_key_exists('odometer', $data)) {
+                    if ((int) ($vehicle->odometer ?? 0) >= (int) $data['odometer']) {
+                        unset($data['odometer']);   // ours is already at or ahead of OM's — leave it be
+                    } else {
+                        $data['odometer_source']    = 'om';
+                        $data['odometer_source_at'] = now();
+                    }
                 }
                 // Battery date only ever goes FORWARD, for the same reason and by the same rule. This
                 // column is no longer API-only: closing a ticket that carried a battery replacement
@@ -606,7 +614,9 @@ class OfficeManagerSync
                     ) ev
                 ) ranked WHERE rn = 1
             ) r ON r.vehicle_id = v.id
-            SET v.odometer = r.reading
+            SET v.odometer = r.reading,
+                v.odometer_source = 'contract',
+                v.odometer_source_at = NOW()
             WHERE r.reading > v.odometer
               AND (v.origin IS NULL OR v.origin <> 'web')
         SQL);

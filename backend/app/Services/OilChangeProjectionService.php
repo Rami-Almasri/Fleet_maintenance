@@ -59,18 +59,25 @@ use Illuminate\Validation\ValidationException;
  *
  * ── The anchor ─────────────────────────────────────────────────────────────────────────────
  * The anchor starts at the branch handover reading (`contracts.out_milage` on the day the car
- * went out) and is REPLACED by each customer-reported reading. That single moving anchor is
+ * went out) and is REPLACED by any NEWER dated observation — a customer-reported reading, or the
+ * "Oil Change" sheet's MILAGE column dated by its LAST EDIT stamp. That single moving anchor is
  * what makes the daily evaluation stateless: it never needs to know how many chases have
  * happened, it just reads the newest one. It is also what re-arms the alert — the dedup key
  * carries the anchor, so a new reading mints a new key and the next chase can fire.
  *
+ * A sheet reading moves the NUMBERS but never triggers the RECALL question on its own
+ * (`decision_ready` still demands a customer reading). LAST EDIT stamps the row, not the mileage
+ * cell, so editing a note re-dates the row without anybody having looked at the dashboard —
+ * fine for showing a fresher estimate, not good enough to interrupt a paying customer's rental.
+ *
  * ── Degraded behaviour ─────────────────────────────────────────────────────────────────────
- * Consumes E6 (odometer chain), currently 🔴. When the anchor is missing or is one of the
- * branch's "no reading" placeholders (null / 0 / 1), we return `no_data` and predict NOTHING.
- * We do not fall back to `vehicles.odometer`: for an open contract that column was itself
- * refreshed FROM this contract's handover reading, so if the handover reading is a placeholder
- * the car's odometer is stale by one whole rental. A visible "can't project this car" beats a
- * confident wrong date — the same discipline serviceStatus() follows by refusing to guess.
+ * Consumes E6 (odometer chain), currently 🔴. When no dated anchor exists, or every candidate is
+ * one of the branch's "no reading" placeholders (null / 0 / 1), we return `no_data` and predict
+ * NOTHING. There is still no blanket fallback to `vehicles.odometer`: for an open contract that
+ * column is usually just this contract's own handover reading echoed back, so trusting it would
+ * dress a placeholder up as a fact. Only a reading that names an independent observer AND
+ * carries the date it was taken (today: the sheet) is admitted. A visible "can't project this
+ * car" beats a confident wrong date — the discipline serviceStatus() follows by refusing to guess.
  *
  * Produces: nothing persistent. Every value here is recomputed on read.
  */
@@ -81,6 +88,12 @@ class OilChangeProjectionService
 
     /** Anchor came from a customer-reported mid-rental reading. */
     public const ANCHOR_READING = 'reading';
+
+    /**
+     * Anchor came from the "Oil Change" sheet's MILAGE column — a workshop employee read the
+     * dashboard and typed it in, dated by the sheet's own LAST EDIT stamp.
+     */
+    public const ANCHOR_SHEET = 'sheet';
 
     // ── The decision axis (`oil_status`) ─────────────────────────────────────────────────────
     // Deliberately SEPARATE from `status`, which stays the chase axis ("do we need to phone the
@@ -312,8 +325,36 @@ class OilChangeProjectionService
     }
 
     /**
-     * The current projection anchor: the newest customer-reported reading, else the branch
-     * handover reading the car left on.
+     * The current projection anchor: the NEWEST dated reading we hold for this car.
+     *
+     * Three sources can supply one, and they are ranked by the date the reading was TAKEN, not by
+     * which table it lives in — the whole model is "anchor + days elapsed", so the freshest
+     * observation is always the best starting point whoever wrote it down:
+     *
+     *   1. a customer-reported mid-rental reading  (ContractMileageReading.reported_on)
+     *   2. the "Oil Change" sheet's MILAGE column  (vehicles.odometer_reading_on ← LAST EDIT)
+     *   3. the branch handover reading             (contracts.out_date / out_milage)
+     *
+     * WHY THE SHEET IS ALLOWED IN HERE. This method used to refuse `vehicles.odometer` outright,
+     * on the reasoning that for an open contract that column had itself been refreshed FROM this
+     * contract's handover reading — so consulting it just echoed the handover back, and a
+     * placeholder handover made it stale by a whole rental. That reasoning was correct for the
+     * writers that existed then (the OM car card and the handover chain), and it is exactly why
+     * this is still not a blanket `vehicles.odometer` fallback.
+     *
+     * The sheet is different in kind. A workshop employee physically read the dashboard and typed
+     * the number in, mid-rental, with no reference to any handover — it is an independent
+     * observation, and the sheet stamps LAST EDIT so we know when it was made. So it is admitted
+     * on exactly the same terms as a customer reading: only when it is DATED, only when it beats
+     * the handover on date, and never as a bare number.
+     *
+     * Guarded narrowly on purpose:
+     *   - `odometer_source` must be 'sheet'. A car whose odometer was last written by the OM sync
+     *     or by the handover chain is NOT admitted — that would resurrect the circular echo.
+     *   - `odometer_reading_on` must exist. An undated reading cannot be projected forward, and
+     *     falling back to the import timestamp would date a weeks-old figure as today.
+     *   - it must not predate the handover. A sheet row edited before the car went out describes
+     *     the previous rental; the handover is the newer fact and keeps the anchor.
      *
      * @return array{odometer:int, at:Carbon, source:string, reading_id:?int}|null
      */
@@ -334,14 +375,46 @@ class OilChangeProjectionService
         }
 
         $out = $contract->out_milage;
-        if ($out === null || (int) $out <= self::PLACEHOLDER_MAX || ! $contract->out_date) {
-            return null; // no trustworthy starting point — see the class docblock
+        $handover = ($out !== null && (int) $out > self::PLACEHOLDER_MAX && $contract->out_date)
+            ? [
+                'odometer'   => (int) $out,
+                'at'         => Carbon::parse($contract->out_date)->startOfDay(),
+                'source'     => self::ANCHOR_HANDOVER,
+                'reading_id' => null,
+            ]
+            : null;
+
+        $sheet = $this->sheetAnchor($contract->vehicle);
+
+        // Newest dated observation wins. With both present and same-dated, the handover stays —
+        // it is the reading taken at the moment custody changed hands, which is the more precise
+        // fact about where this rental started.
+        if ($sheet && (! $handover || $sheet['at']->gt($handover['at']))) {
+            return $sheet;
+        }
+
+        return $handover;   // null here = no trustworthy starting point, see the class docblock
+    }
+
+    /**
+     * The "Oil Change" sheet's MILAGE as a dated anchor candidate, or null when it cannot serve as
+     * one. See anchor() for why this is deliberately not a general `vehicles.odometer` fallback.
+     *
+     * @return array{odometer:int, at:Carbon, source:string, reading_id:?int}|null
+     */
+    private function sheetAnchor(?Vehicle $vehicle): ?array
+    {
+        if (! $vehicle
+            || $vehicle->odometer_source !== self::ANCHOR_SHEET
+            || $vehicle->odometer_reading_on === null
+            || (int) ($vehicle->odometer ?? 0) <= self::PLACEHOLDER_MAX) {
+            return null;
         }
 
         return [
-            'odometer'   => (int) $out,
-            'at'         => Carbon::parse($contract->out_date)->startOfDay(),
-            'source'     => self::ANCHOR_HANDOVER,
+            'odometer'   => (int) $vehicle->odometer,
+            'at'         => $vehicle->odometer_reading_on->copy()->startOfDay(),
+            'source'     => self::ANCHOR_SHEET,
             'reading_id' => null,
         ];
     }

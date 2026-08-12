@@ -155,7 +155,11 @@ class OdometerChangeRequestController extends Controller
             $before  = $vehicle?->odometer;
 
             if ($vehicle) {
-                $vehicle->update(['odometer' => $odometerRequest->requested_odometer]);
+                $vehicle->update([
+                    'odometer'           => $odometerRequest->requested_odometer,
+                    'odometer_source'    => 'manual',
+                    'odometer_source_at' => now(),
+                ]);
 
                 // Leave a trace on the car's own event trail so the correction shows up in its history,
                 // not only in this queue. Best-effort — never blocks the approval.

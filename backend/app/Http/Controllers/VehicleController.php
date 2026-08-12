@@ -1025,6 +1025,13 @@ class VehicleController extends Controller
                         200
                     );
                 }
+
+                // A small edit applies now — and says so on the car card, so the mileage is not
+                // mistaken for a figure that came from OM or the sheet.
+                if ($requested !== $previous) {
+                    $data['odometer_source']    = 'manual';
+                    $data['odometer_source_at'] = now();
+                }
             }
 
             $vehicle = $this->vehicleService->update($data, $vehicle);

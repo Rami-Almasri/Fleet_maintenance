@@ -131,6 +131,86 @@ class SyncPreservesRecordedServiceTest extends CrudTestCase
         );
     }
 
+    public function test_the_sheet_mileage_wins_when_it_is_ahead_of_ours(): void
+    {
+        $vehicle = Vehicle::find($this->makeVehicle(['odometer' => 56458]));
+        $vehicle->update(['vin' => 'ODOVIN0000000001']);
+
+        // The garage read the cluster and typed it into the sheet; OfficeManager has not caught up.
+        $result = $this->importOilSheet([
+            ['Chassis', 'MILAGE', 'LAST CHANGE', 'VALIDITY'],
+            ['ODOVIN0000000001', '71,092', '70,000', '10000'],
+        ]);
+
+        $vehicle->refresh();
+        $this->assertSame(71092, (int) $vehicle->odometer, 'the sheet\'s fresher reading must land');
+        $this->assertSame('sheet', $vehicle->odometer_source, 'and the car card must say where it came from');
+        $this->assertSame(1, $result['odometer_raised'] ?? 0);
+    }
+
+    public function test_the_sheet_cannot_lower_a_mileage_we_already_hold(): void
+    {
+        $vehicle = Vehicle::find($this->makeVehicle(['odometer' => 88000]));
+        $vehicle->update(['vin' => 'ODOVIN0000000002']);
+
+        // The sheet is stale — it was last filled in weeks ago, before the car did another 6,000 km.
+        // Writing it back would make a car un-drive kilometres and re-open services already handled.
+        $result = $this->importOilSheet([
+            ['Chassis', 'MILAGE', 'LAST CHANGE', 'VALIDITY'],
+            ['ODOVIN0000000002', '82,000', '80,000', '10000'],
+        ]);
+
+        $vehicle->refresh();
+        $this->assertSame(88000, (int) $vehicle->odometer, 'a sync may never walk the odometer backwards');
+        $this->assertSame(1, $result['odometer_preserved'] ?? 0, 'the run must report that it kept ours');
+    }
+
+    public function test_the_om_sync_cannot_lower_a_mileage_the_sheet_gave_us(): void
+    {
+        $vehicle = Vehicle::find($this->makeVehicle(['odometer' => 40000]));
+        $vehicle->update(['vin' => 'ODOVIN0000000003', 'car_serial' => 90003, 'origin' => 'api']);
+
+        // The sheet put the car at 71,092 km this morning.
+        $this->importOilSheet([
+            ['Chassis', 'MILAGE'],
+            ['ODOVIN0000000003', '71,092'],
+        ]);
+        $this->assertSame(71092, (int) $vehicle->fresh()->odometer);
+
+        // Tonight's OM sync still carries the older car-card figure. It must lose, and must not
+        // relabel the reading as its own — the number on screen is still the sheet's.
+        $this->syncApiVehicles([[
+            'CarSerial'  => 90003,
+            'CarOwnerNo' => $this->ourOwnerNo(),
+            'ChasisNo'   => 'ODOVIN0000000003',
+            'CarNo'      => $vehicle->plate_no,
+            'Milage'     => 56458,
+        ]]);
+
+        $vehicle->refresh();
+        $this->assertSame(71092, (int) $vehicle->odometer, 'the nightly sync must not undo the sheet\'s reading');
+        $this->assertSame('sheet', $vehicle->odometer_source);
+    }
+
+    public function test_the_om_sync_still_wins_when_it_is_the_one_that_is_ahead(): void
+    {
+        $vehicle = Vehicle::find($this->makeVehicle(['odometer' => 30000]));
+        $vehicle->update(['vin' => 'ODOVIN0000000004', 'car_serial' => 90004, 'origin' => 'api']);
+
+        // Neither source owns the number — whoever is ahead holds the truth, and that cuts both ways.
+        $this->syncApiVehicles([[
+            'CarSerial'  => 90004,
+            'CarOwnerNo' => $this->ourOwnerNo(),
+            'ChasisNo'   => 'ODOVIN0000000004',
+            'CarNo'      => $vehicle->plate_no,
+            'Milage'     => 34500,
+        ]]);
+
+        $vehicle->refresh();
+        $this->assertSame(34500, (int) $vehicle->odometer);
+        $this->assertSame('om', $vehicle->odometer_source);
+    }
+
     public function test_the_om_sync_still_moves_the_battery_date_forward(): void
     {
         $vehicle = Vehicle::find($this->makeVehicle(['odometer' => 60000]));

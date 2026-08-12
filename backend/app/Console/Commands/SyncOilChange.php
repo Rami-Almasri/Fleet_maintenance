@@ -39,6 +39,9 @@ class SyncOilChange extends Command
         $this->info("Updated   : {$result['updated']}");
         $this->info("Unmatched : {$result['unmatched']}");
         $this->info("Skipped   : {$result['skipped']}");
+        $this->info("Oil anchor kept (ours was newer) : {$result['preserved']}");
+        $this->info("Mileage raised from the sheet    : {$result['odometer_raised']}");
+        $this->info("Mileage kept (ours was higher)   : {$result['odometer_preserved']}");
 
         if (! empty($result['problems'])) {
             $this->newLine();

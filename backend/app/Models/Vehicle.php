@@ -55,6 +55,24 @@ class Vehicle extends Model
     public const ACTIVE_STATUSES = ['ready', 'rented'];
 
     /**
+     * Where the car's CURRENT mileage came from — the writer that last raised `odometer`.
+     *
+     * Several sources report the same car's mileage and they disagree constantly: the OM car
+     * card is only as fresh as the last time someone typed into OfficeManager, the "Oil Change"
+     * sheet is filled in by hand at the garage, a handover is recorded at the branch counter.
+     * None of them is wrong — each is a real reading taken at a different moment. So we never
+     * pick a winning SOURCE; we pick the winning READING (the highest, see advanceOdometer)
+     * and record which source supplied it, so the car card can show its own provenance.
+     */
+    public const ODOMETER_SOURCES = [
+        'om'       => 'OfficeManager car card',
+        'sheet'    => 'Oil Change sheet',
+        'contract' => 'Contract handover reading',
+        'service'  => 'Service / repair ticket',
+        'manual'   => 'Entered by hand',
+    ];
+
+    /**
      * Visual Condition Grade (Abu Marouf) — a manual cosmetic/condition assessment kept
      * SEPARATE from the OM lifecycle `status` and the live `operational_status`:
      *   green  = Perfect (fully available, no issues)
@@ -123,6 +141,9 @@ class Vehicle extends Model
         'cleaning_status',
         'gps_last_seen_at',
         'odometer',
+        'odometer_source',
+        'odometer_source_at',
+        'odometer_reading_on',
         'engine_hours',
         'source',
         // --- specs & rental defaults from the OfficeManager API car card ---
@@ -180,6 +201,8 @@ class Vehicle extends Model
         'miles_allowed_pd' => 'integer',
         'miles_allowed_pm' => 'integer',
         'service_due_km' => 'integer',
+        'odometer_source_at' => 'datetime',
+        'odometer_reading_on' => 'date',
         'last_service_odometer' => 'integer',
         'service_interval_km' => 'integer',
         'service_synced_at' => 'datetime',
@@ -308,7 +331,7 @@ class Vehicle extends Model
         // 1) Vehicle anchor — what serviceStatus() and the oil alert read. The reading also
         //    advances the car's live odometer (monotonic), so serviceStatus() recomputes
         //    "km left" against a current mileage rather than a stale API value.
-        $this->advanceOdometer($odometer);
+        $this->advanceOdometer($odometer, 'service');
         $this->last_service_odometer = $odometer;
         $this->service_synced_at = now();
         $this->save();
@@ -371,7 +394,7 @@ class Vehicle extends Model
         if ($serviceType === 'battery') {
             $this->battery_last_changed = $date;
         }
-        $this->advanceOdometer($odometer);
+        $this->advanceOdometer($odometer, 'service');
         if ($this->isDirty()) {
             $this->save();
         }
@@ -399,12 +422,34 @@ class Vehicle extends Model
      * never rolls back — so a LOWER reading at service time is ignored rather than trusted; only
      * a higher one becomes the new current mileage that serviceStatus() reads. Does not save on
      * its own: the caller persists as part of its own write.
+     *
+     * This is the ONE rule that decides between two competing readings of the same car — the OM
+     * car card, the "Oil Change" sheet's MILAGE column, a handover, a closed ticket: the HIGHER
+     * one wins, because a car cannot un-drive kilometres. Whoever wins stamps their name on
+     * odometer_source so the car card can say where its mileage came from.
+     *
+     * @param  string|null  $source  one of ODOMETER_SOURCES; null keeps whatever is stamped.
+     * @return bool  true when the reading actually moved the odometer forward.
      */
-    protected function advanceOdometer(int $reading): void
+    public function advanceOdometer(int $reading, ?string $source = null): bool
     {
-        if ($reading > 0 && ($this->odometer === null || $reading > $this->odometer)) {
-            $this->odometer = $reading;
+        if ($reading <= 0 || ($this->odometer !== null && $reading <= (int) $this->odometer)) {
+            return false;
         }
+
+        $this->odometer = $reading;
+        if ($source !== null) {
+            $this->odometer_source    = $source;
+            $this->odometer_source_at = now();
+        }
+
+        return true;
+    }
+
+    /** Plain-language name of whoever supplied the current mileage, for the car card. */
+    public function odometerSourceLabel(): ?string
+    {
+        return self::ODOMETER_SOURCES[$this->odometer_source] ?? null;
     }
 
     /** The car's Maintenance-Workflow audit trail (append-only), newest event first. */

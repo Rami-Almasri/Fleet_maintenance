@@ -191,6 +191,12 @@ class VehicleResource extends JsonResource
                     && ! (bool) ($this->open_booking_count ?? 0)
             ),
             "odometer" => $this->odometer,
+            // Where this mileage came from — the sheet, OM, a handover, a ticket or a hand edit.
+            // The highest reading wins between them (Vehicle::advanceOdometer), so the label says
+            // which source is currently ahead rather than which source "owns" the number.
+            "odometer_source" => $this->odometer_source,
+            "odometer_source_label" => $this->resource->odometerSourceLabel(),
+            "odometer_source_at" => optional($this->odometer_source_at)->toIso8601String(),
             "engine_hours" => $this->engine_hours,
             "source" => $this->source,
             // --- specs from the API car card ---
