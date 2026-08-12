@@ -849,13 +849,14 @@ export default function MyMaintenanceQueue() {
                   {/* Shown to the DRIVER (he fetches and returns the car) and to the INSPECTOR —
                       on a parking job Abu Maroof is the one who changes the oil, so the button that
                       records it has to be where he already works, not on a driver's screen.
-                      ALWAYS rendered on the driver's tab, empty or not, exactly like every other
-                      section here. Hiding it when empty made the whole feature unfindable: there
-                      was no way to tell an empty queue from a missing page. The inspector's tab
-                      only shows it when he actually has a parking job, because it is not his lane
-                      until one exists. */}
-                  {(activeTab === 'driver'
-                    || (activeTab === 'inspector' && (collLoading || collections.length > 0))) && (
+                      ALWAYS rendered on BOTH tabs, empty or not, exactly like every other section
+                      here. It was hidden when empty and the feature became unfindable — twice. The
+                      second time was worse: this page defaults to the INSPECTOR tab for anyone
+                      holding maintenance.initiate (which is Leen, and every admin), so the one tab
+                      it was hidden on was the tab most people land on. A heading with "nothing
+                      right now" is not noise; it is the difference between an empty queue and a
+                      page that appears never to have shipped. */}
+                  {['driver', 'inspector'].includes(activeTab) && (
                     <CollectionsPanel
                       tf={tf}
                       userId={user?.id}
