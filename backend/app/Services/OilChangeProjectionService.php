@@ -404,8 +404,27 @@ class OilChangeProjectionService
      */
     private function sheetAnchor(?Vehicle $vehicle): ?array
     {
-        if (! $vehicle
-            || $vehicle->odometer_source !== self::ANCHOR_SHEET
+        if (! $vehicle) {
+            return null;
+        }
+
+        // A CONSTRAINED eager load ("vehicle:id,plate_no,…") that omits these columns does not
+        // error — Eloquent hands back null for a column it never selected — so this method would
+        // quietly answer "no sheet reading" for every car and the whole board would fall back to
+        // handover anchors months out of date. That is precisely the bug that shipped: the board
+        // read stale while a full-model check on the same data read correctly. Rather than trust
+        // every future caller to remember two column names, detect the partial load and fill it in.
+        $attrs = $vehicle->getAttributes();
+        if (! array_key_exists('odometer_source', $attrs) || ! array_key_exists('odometer_reading_on', $attrs)) {
+            $missing = Vehicle::whereKey($vehicle->getKey())
+                ->first(['odometer', 'odometer_source', 'odometer_reading_on']);
+            if (! $missing) {
+                return null;
+            }
+            $vehicle = $missing;
+        }
+
+        if ($vehicle->odometer_source !== self::ANCHOR_SHEET
             || $vehicle->odometer_reading_on === null
             || (int) ($vehicle->odometer ?? 0) <= self::PLACEHOLDER_MAX) {
             return null;

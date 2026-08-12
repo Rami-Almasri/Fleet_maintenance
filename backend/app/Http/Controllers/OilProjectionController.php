@@ -47,7 +47,12 @@ class OilProjectionController extends Controller
                 // worked by phoning people, and a call list that makes someone open a second screen
                 // to find the number is a call list nobody uses.
                 ->with([
-                    'vehicle:id,code,make,model,plate_no,last_service_odometer,service_interval_km,odometer',
+                    // odometer_source + odometer_reading_on are NOT optional here: they are what let
+                    // the projection anchor on the Oil Change sheet's reading instead of a months-old
+                    // handover. Leaving them out of this list does not fail — Eloquent returns null
+                    // for an unselected column — it just silently drops every car back to the
+                    // handover anchor, which is exactly the stale board this list once produced.
+                    'vehicle:id,code,make,model,plate_no,last_service_odometer,service_interval_km,odometer,odometer_source,odometer_reading_on',
                     'customer:id,name_en,customer_no,mobile1,mobile2,whatsapp',
                 ])
                 ->get();
