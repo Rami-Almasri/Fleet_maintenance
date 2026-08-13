@@ -2972,7 +2972,7 @@ const en = {
 
       door: {
         inspection: {
-          label: 'Ask for a look',
+          label: 'Ask for a test',
           sub:   'Something is wrong and nobody knows what yet — the inspector test-drives it and decides.',
           lands: 'Goes to the inspector',
         },
@@ -7752,7 +7752,7 @@ const ar = {
 
       door: {
         inspection: {
-          label: 'اطلب فحصًا',
+          label: 'اطلب تجربة',
           sub:   'هناك خطب ما ولا أحد يعرف ما هو بعد — يجرّبها المفتش ويقرّر.',
           lands: 'تذهب إلى المفتش',
         },

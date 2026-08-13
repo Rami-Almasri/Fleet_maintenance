@@ -4,7 +4,7 @@
 // There are really TWO, and conflating them cost a day of workshop time every time somebody picked the
 // wrong one:
 //
-//   ASK FOR A LOOK   — something is wrong and nobody knows what. The inspector test-drives it and
+//   ASK FOR A TEST   — something is wrong and nobody knows what. The inspector test-drives it and
 //                      decides. Lands in the review queue (a driver) or straight with the inspector (a
 //                      controller, who IS the review authority).
 //   STRAIGHT TO THE  — nothing to diagnose. The parts arrived, the garage asked for it back, it's a
@@ -268,7 +268,7 @@ export default function SendCarInModal({ vehicles = [], onClose, onDone }) {
   useEffect(() => { setReason(''); setError(null); }, [door]);
 
   // Land on a door this person can actually submit through. An inspector holds `initiate` but not
-  // `logistics`: opening on "Ask for a look" would let him fill the whole form in and be refused by the
+  // `logistics`: opening on "Ask for a test" would let him fill the whole form in and be refused by the
   // route at the very end. The server's answer arrives a beat after mount, so this corrects for it.
   useEffect(() => {
     if (options && !options.can_request && options.can_dispatch) setDoor(DOOR_DISPATCH);

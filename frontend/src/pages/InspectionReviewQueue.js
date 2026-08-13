@@ -2247,7 +2247,7 @@ export default function InspectionReviewQueue() {
       {modal?.action === 'remind' && (
         <RemindModal ticket={modal.ticket} onClose={() => setModal(null)} onDone={onDone} />
       )}
-      {/* Send a car in — the two-door front form. "Ask for a look" is born in pending_review, so it
+      {/* Send a car in — the two-door front form. "Ask for a test" is born in pending_review, so it
           lands right back in this queue for a Controller to approve before it reaches Abu Maroof;
           "Straight to the garage" skips both and opens at Needs Dispatch. */}
       {modal?.action === 'request' && (
