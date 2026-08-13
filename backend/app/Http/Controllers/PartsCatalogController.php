@@ -55,7 +55,7 @@ class PartsCatalogController extends Controller
     public function index(Request $request)
     {
         $rows = ComponentCatalog::query()
-            ->withCount(['components', 'warranties', 'requiredParts'])
+            ->withCount(['components', 'warranties', 'requiredParts', 'partRequests', 'partPurchases'])
             ->when($request->filled('q'), fn ($q) => $q->search($request->string('q')))
             ->when($request->filled('category'), fn ($q) => $q->where('category_key', $request->string('category')))
             ->when($request->filled('tracking_mode'), fn ($q) => $q->where('tracking_mode', $request->string('tracking_mode')))
@@ -218,6 +218,12 @@ class PartsCatalogController extends Controller
             'fitted_components' => $part->components()->count(),
             'warranties'        => $part->warranties()->count(),
             'required_parts'    => $part->requiredParts()->count(),
+            // Added when purchases started recording WHICH catalog part was bought (see the
+            // add_catalog_identity_to_part_requests_and_purchases migration). Money history is the
+            // last thing that may be orphaned: a purchase whose part type vanished can no longer say
+            // what was bought, and every repeat-buy answer built on it silently changes.
+            'part_requests'     => $part->partRequests()->count(),
+            'purchases'         => $part->partPurchases()->count(),
         ]);
     }
 
@@ -228,6 +234,8 @@ class PartsCatalogController extends Controller
             'fitted_components' => 'fitted component',
             'warranties'        => 'warranty',
             'required_parts'    => 'required-part line',
+            'part_requests'     => 'part request',
+            'purchases'         => 'recorded purchase',
         ];
         $plurals = ['warranties' => 'warranties'];
 
@@ -255,6 +263,15 @@ class PartsCatalogController extends Controller
         $data = $request->validate([
             'name'          => ['required', 'string', 'max:120'],
             'name_ar'       => ['nullable', 'string', 'max:160'],
+            // The part's OTHER NAMES. These carry weight: two records whose wording lands in this
+            // list are treated as the same part, which is what makes the repeat-buy warning survive
+            // someone typing "dynamo" instead of "Alternator". A symptom does not belong here and
+            // neither does a name that fits two rows — both go in `aliases`. Nothing enforces that at
+            // this layer because the person editing the catalog is the authority on what the part is
+            // called; PartIdentityService independently refuses any surface it finds under two rows,
+            // so the worst outcome of a debatable entry is a match not made.
+            'identity_aliases'   => ['nullable', 'array', 'max:40'],
+            'identity_aliases.*' => ['nullable', 'string', 'max:120'],
             // Sent as an array by the page; each entry is one thing someone might type.
             'aliases'       => ['nullable', 'array', 'max:40'],
             // `nullable` because Laravel's ConvertEmptyStringsToNull middleware turns a blank alias
@@ -298,13 +315,15 @@ class PartsCatalogController extends Controller
 
         // Trim, drop blanks, de-duplicate case-insensitively. An alias list is a search index; a
         // blank or a repeat in it is pure noise that would surface the same row twice.
-        if (array_key_exists('aliases', $data)) {
-            $data['aliases'] = collect($data['aliases'] ?? [])
-                ->map(fn ($a) => trim((string) $a))
-                ->filter()
-                ->unique(fn ($a) => mb_strtolower($a))
-                ->values()
-                ->all();
+        foreach (['aliases', 'identity_aliases'] as $field) {
+            if (array_key_exists($field, $data)) {
+                $data[$field] = collect($data[$field] ?? [])
+                    ->map(fn ($a) => trim((string) $a))
+                    ->filter()
+                    ->unique(fn ($a) => mb_strtolower($a))
+                    ->values()
+                    ->all();
+            }
         }
 
         $data['is_active'] = $request->boolean('is_active', $existing->is_active ?? true);

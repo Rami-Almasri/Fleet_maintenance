@@ -63,9 +63,40 @@ class PartCatalogMatcherTest extends FoundationTestCase
     }
 
     /**
-     * THE RULE THAT MATTERS MOST. Aliases carry symptom wording, and a symptom does not identify a
-     * part: "brake noise" is as true of the discs and the caliper as of the pads. The picker's
-     * search MAY match it (a human then chooses); linking never may, because nobody is choosing.
+     * A curated OTHER NAME links, because it is a name. 'dynamo' is what half the workshop calls the
+     * alternator, and refusing it left every such record unattached forever — so the repeat-buy check
+     * could never see that the car already had one.
+     */
+    public function test_an_identity_alias_links(): void
+    {
+        foreach (['dynamo', 'generator', 'دينامو'] as $name) {
+            $hit = $this->matcher->resolve($name);
+
+            $this->assertSame('Alternator', $hit['candidate'], "'{$name}' is the alternator");
+            $this->assertSame(PartCatalogMatcher::MATCH_EXACT, $hit['matched_by']);
+        }
+    }
+
+    /**
+     * Wording claimed by TWO catalog rows resolves to nothing. 'fan motor' is said of the radiator fan
+     * and of the A/C blower; the config keeps it out of both identity lists by hand, and the matcher
+     * refuses it independently. Two guards, because the failure mode of one slip is a silent mislink.
+     */
+    public function test_wording_shared_by_two_parts_is_refused(): void
+    {
+        foreach (['fan motor', 'bumper'] as $ambiguous) {
+            $this->assertNull(
+                $this->matcher->resolve($ambiguous)['catalog_id'],
+                "'{$ambiguous}' fits two catalog rows and therefore identifies neither"
+            );
+        }
+    }
+
+    /**
+     * THE RULE THAT MATTERS MOST. The SEARCH alias list carries symptom wording, and a symptom does not
+     * identify a part: "brake noise" is as true of the discs and the caliper as of the pads. The
+     * picker's search MAY match it (a human then chooses); linking never may, because nobody is
+     * choosing. This is why the catalog carries two synonym lists instead of one.
      */
     public function test_symptom_aliases_never_link(): void
     {

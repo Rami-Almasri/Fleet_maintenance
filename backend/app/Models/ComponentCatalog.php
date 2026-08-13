@@ -43,7 +43,7 @@ class ComponentCatalog extends Model
     ];
 
     protected $fillable = [
-        'slug', 'name', 'name_ar', 'aliases', 'category_key', 'action_target', 'tracking_mode',
+        'slug', 'name', 'name_ar', 'aliases', 'identity_aliases', 'category_key', 'action_target', 'tracking_mode',
         'default_part_number', 'default_warranty_months', 'default_warranty_km',
         'expected_life_km', 'expected_life_months',
         'position_scheme', 'is_active', 'notes',
@@ -52,6 +52,7 @@ class ComponentCatalog extends Model
 
     protected $casts = [
         'aliases'                 => 'array',
+        'identity_aliases'        => 'array',
         'default_warranty_months' => 'integer',
         'default_warranty_km'     => 'integer',
         'expected_life_km'        => 'integer',
@@ -84,6 +85,18 @@ class ComponentCatalog extends Model
         return $this->hasMany(MaintenanceRequiredPart::class, 'component_catalog_id');
     }
 
+    /** The intents to buy this part type — what someone asked for, before any money moved. */
+    public function partRequests(): HasMany
+    {
+        return $this->hasMany(PartRequest::class, 'component_catalog_id');
+    }
+
+    /** The money actually spent on this part type. The record the repeat-buy warning reads. */
+    public function partPurchases(): HasMany
+    {
+        return $this->hasMany(PartPurchase::class, 'component_catalog_id');
+    }
+
     public function scopeActive(Builder $query): Builder
     {
         return $query->where('is_active', true);
@@ -96,7 +109,13 @@ class ComponentCatalog extends Model
      * "دينمو", "dynamo" or "battery not charging" — and all four have to land on the same row, or he
      * gives up and types free text again, which is the problem this catalog exists to end.
      *
-     * `aliases` is a JSON column matched with a plain LIKE against its raw text rather than with
+     * BOTH synonym lists are searched. `identity_aliases` holds the other NAMES of the part and is
+     * also trusted to prove two records are the same part; `aliases` holds symptom wording and the
+     * names too ambiguous to decide between two rows, and is search-only. The distinction matters
+     * everywhere else in the system and matters not at all here: a person is about to read the
+     * results and choose, so the box should find the row by any word that could lead to it.
+     *
+     * They are JSON columns matched with a plain LIKE against their raw text rather than with
      * JSON_CONTAINS. Deliberate, for two reasons: JSON_CONTAINS needs an exact element match, so it
      * cannot do the substring matching a search box needs ("not cooling" would miss "ac not cooling");
      * and the JSON functions differ between the local MariaDB and the production MySQL 8, which is a
@@ -121,9 +140,28 @@ class ComponentCatalog extends Model
             $q->where('name', 'like', $needle)
                 ->orWhere('name_ar', 'like', $needle)
                 ->orWhere('aliases', 'like', $needle)
+                ->orWhere('identity_aliases', 'like', $needle)
                 ->orWhere('slug', 'like', $needle)
                 ->orWhere('default_part_number', 'like', $needle);
         });
+    }
+
+    /**
+     * Every wording that NAMES this part — the surfaces that may be trusted to prove two records
+     * refer to the same thing.
+     *
+     * Its own names, its slug, and the curated other-names list. NOT `aliases`, which carries symptom
+     * wording and ambiguous trade names; see {@see \App\Services\PartIdentityService} for why that
+     * asymmetry exists and what enforces it.
+     *
+     * @return array<int,string>
+     */
+    public function identitySurfaces(): array
+    {
+        return array_values(array_filter(array_merge(
+            [$this->name, $this->name_ar, $this->slug],
+            $this->identity_aliases ?? []
+        ), fn ($s) => trim((string) $s) !== ''));
     }
 
     /** Display name in the caller's language, falling back to English when no Arabic term is set. */

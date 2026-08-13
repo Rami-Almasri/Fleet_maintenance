@@ -44,6 +44,16 @@ class AppServiceProvider extends ServiceProvider
             \App\Services\RepairIntelligence\Query\ProjectionRepairHistoryQuery::class,
         );
 
+        // The parts vocabulary index, built once per process instead of once per lookup.
+        //
+        // Both services cache a scan of the whole component_catalog (132 rows) on first use. They are
+        // consulted from a model hook that runs on EVERY part request and purchase save, so resolving
+        // them fresh each time turned a seeding loop of 3,500 purchases into 3,500 catalog queries.
+        // Singletons also give the process ONE view of the vocabulary, which is what makes flush()
+        // (after a catalog edit) mean something.
+        $this->app->singleton(\App\Services\PartCatalogMatcher::class);
+        $this->app->singleton(\App\Services\PartIdentityService::class);
+
         // The maintenance intelligence pipeline. Capabilities are registered HERE and nowhere else:
         // a capability's only job is to answer "what does history tell us?", so the decision about
         // which ones exist — and therefore which can ever reach a user — stays in one place.

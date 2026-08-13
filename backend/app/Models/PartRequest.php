@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\HasPartIdentity;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -18,6 +19,10 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  */
 class PartRequest extends Model
 {
+    /** Fills component_catalog_id / part_name_key on every save — see the trait for why the caller
+     *  is not trusted with it. */
+    use HasPartIdentity;
+
     public const SOURCE_CUSTOMER = 'customer';
     public const SOURCE_GARAGE    = 'garage';
     public const SOURCES = [self::SOURCE_CUSTOMER, self::SOURCE_GARAGE];
@@ -68,6 +73,8 @@ class PartRequest extends Model
         'source', 'status',
         'vehicle_id', 'customer_id', 'maintenance_id', 'maintenance_task_id',
         'part_name', 'part_number', 'category_key', 'part_class', 'repair_location',
+        // WHICH part this is, as opposed to what it was called. See PartIdentityService.
+        'component_catalog_id', 'catalog_matched_by', 'part_name_key',
         'quantity', 'reason', 'estimated_price', 'currency', 'notes',
         'requested_by', 'requested_by_name', 'requested_at',
         'reviewed_by', 'reviewed_by_name', 'reviewed_at', 'review_notes',
@@ -140,6 +147,12 @@ class PartRequest extends Model
     public function vehicle(): BelongsTo
     {
         return $this->belongsTo(Vehicle::class);
+    }
+
+    /** The part TYPE being requested, when it is known. Null on history written before the picker. */
+    public function catalogPart(): BelongsTo
+    {
+        return $this->belongsTo(ComponentCatalog::class, 'component_catalog_id');
     }
 
     public function customer(): BelongsTo

@@ -31,6 +31,7 @@ class PartWorkflowService
 {
     public function __construct(
         private PartIntelligenceService $intel,
+        private PartIdentityService $identity,
         private VehicleLogService $log,
         private NotificationScanner $notifier,
         private ComponentService $components,
@@ -62,6 +63,9 @@ class PartWorkflowService
             'part_number'         => $data['part_number'] ?? null,
             'category_key'        => $data['category_key'] ?? null,
             'part_class'          => $this->intel->classify($data['part_name'], $data['part_number'] ?? null, $data['category_key'] ?? null),
+            // WHICH part this is. See stampIdentity(): the catalog id when the requester picked from the
+            // list, else whatever the wording strictly resolves to, plus this row's own normalised name.
+            ...$this->stampIdentity($data['component_catalog_id'] ?? null, $data['part_name']),
             // Garage-source requests inherit the ticket's location (in_shop→garage / on_site→onsite);
             // otherwise take what the caller supplied.
             'repair_location'     => $data['repair_location'] ?? $this->locationFromTicket($ticket),
@@ -90,6 +94,38 @@ class PartWorkflowService
         return $req->fresh();
     }
 
+    /**
+     * The identity columns for a new request: WHICH part this is, and this row's own wording normalised.
+     *
+     * When the caller supplies a catalog id the requester picked it from the list, and that is the
+     * strongest thing anyone can say about identity — recorded as `catalog_matched_by = 'picked'` so a
+     * human's assertion is never confused with the matcher's. With no id, the wording goes through
+     * PartCatalogMatcher, which is strict and returns nothing rather than guessing; an unresolved line
+     * still gets its `part_name_key`, so it can at least be recognised by its own spelling later.
+     *
+     * @return array{component_catalog_id:int|null, catalog_matched_by:string|null, part_name_key:string|null}
+     */
+    private function stampIdentity(?int $catalogId, ?string $partName): array
+    {
+        $key = $this->identity->nameKey($partName);
+
+        if ($catalogId) {
+            return [
+                'component_catalog_id' => $catalogId,
+                'catalog_matched_by'   => 'picked',
+                'part_name_key'        => $key,
+            ];
+        }
+
+        $hit = $this->identity->identityFor(null, $partName);
+
+        return [
+            'component_catalog_id' => $hit['catalog_id'],
+            'catalog_matched_by'   => $hit['catalog_id'] ? PartIdentityService::VIA_NAME : null,
+            'part_name_key'        => $key,
+        ];
+    }
+
     /** Best-effort duplicate heads-up when a part is REQUESTED (pre-approval). Never throws, never blocks. */
     private function flagRequestDuplicate(PartRequest $req, User $actor): void
     {
@@ -97,7 +133,7 @@ class PartWorkflowService
             $fault   = $req->task;
             $verdict = $this->intel->detectDuplicate(
                 $req->vehicle_id, $req->part_name, $req->part_number, $req->category_key, $req->part_class,
-                null, false, $fault?->category_key, $fault?->symptom
+                null, false, $fault?->category_key, $fault?->symptom, $req->component_catalog_id
             );
             if (empty($verdict['duplicate'])) {
                 return;
@@ -106,10 +142,17 @@ class PartWorkflowService
             $prev      = $this->intel->duplicateContext($verdict)['previous'] ?? null;
             $sameFault = ! empty($verdict['same_fault']);
 
+            // When the earlier buy was written down DIFFERENTLY, say so in the same breath. Without it
+            // the reader sees a warning about "Alternator" pointing at a purchase called "دينامو" and
+            // concludes the system is confused — the one wording that must never be left implicit.
+            $alsoKnownAs = $this->earlierWordingClause($verdict, $prev);
+
             $this->logVehicle($req->vehicle_id, VehicleLogEvent::EVENT_PART_DUPLICATE_FLAGGED, $actor, $req->maintenance_id, [
                 'description' => ($sameFault ? 'Same part re-requested for the SAME fault: ' : 'Possible duplicate part requested: ') . $req->part_name
-                                 . ($verdict['days_between'] !== null ? " (last bought {$verdict['days_between']}d ago)" : ''),
-                'meta'        => ['part_request_id' => $req->id, 'priority' => $verdict['priority'], 'same_fault' => $sameFault, 'stage' => 'request'],
+                                 . ($verdict['days_between'] !== null ? " (last bought {$verdict['days_between']}d ago" : '')
+                                 . ($verdict['days_between'] !== null ? $alsoKnownAs . ')' : ''),
+                'meta'        => ['part_request_id' => $req->id, 'priority' => $verdict['priority'], 'same_fault' => $sameFault,
+                                  'stage' => 'request', 'matched_via' => $verdict['matched_via'] ?? null],
             ]);
 
             $this->notifier->notifyByAnyPermission(['parts.investigate'], [
@@ -124,6 +167,7 @@ class PartWorkflowService
                       . '. Likely a failed repair — review before approval.'
                     : "{$req->requested_by_name} requested {$req->part_name} for a vehicle that already received it "
                       . ($verdict['days_between'] !== null ? "{$verdict['days_between']} day(s) ago" : 'recently')
+                      . $alsoKnownAs
                       . '. Please review before approval.',
                 'url'      => '/parts?vehicle_id=' . $req->vehicle_id,
                 'key'      => 'part_dup_req:' . $req->id,
@@ -137,6 +181,28 @@ class PartWorkflowService
         } catch (\Throwable $e) {
             report($e); // intelligence is advisory — a failure here must never fail the request
         }
+    }
+
+    /**
+     * ", recorded then as «دينامو»" — or an empty string when the two buys were spelled the same.
+     *
+     * Only claimed for a name-rung match: on a catalog match the two records may still be worded
+     * differently, but the identity rests on a human's choice rather than on the wording, and leading
+     * with the spelling would misdescribe why the warning fired.
+     */
+    private function earlierWordingClause(array $verdict, ?array $prev): string
+    {
+        $earlier = $prev['part_name'] ?? null;
+
+        if (! $earlier || ($verdict['matched_via'] ?? null) !== PartIdentityService::VIA_NAME) {
+            return '';
+        }
+
+        $today = $verdict['identity']['part_name'] ?? null;
+
+        return $this->identity->nameKey($earlier) === $this->identity->nameKey($today)
+            ? ''
+            : ", recorded then as “{$earlier}”";
     }
 
     /**
@@ -219,7 +285,10 @@ class PartWorkflowService
 
             $verdict = $this->intel->detectDuplicate(
                 $req->vehicle_id, $req->part_name, $req->part_number, $req->category_key, $partClass, null, true,
-                $fault?->category_key, $fault?->symptom
+                $fault?->category_key, $fault?->symptom,
+                // The identity the requester established. Passing it is what lets this see a prior buy
+                // recorded under a different name for the same part.
+                $req->component_catalog_id
             );
 
             $purchase = new PartPurchase();
@@ -232,6 +301,13 @@ class PartWorkflowService
                 'part_number'         => $req->part_number,
                 'category_key'        => $req->category_key,
                 'part_class'          => $partClass,
+                // Carried from the request, not re-derived: the purchase is a snapshot of what was
+                // approved, and re-resolving the wording here could land on a different catalog row if
+                // the catalog changed in between — the purchase would then claim an identity nobody
+                // approved.
+                'component_catalog_id' => $req->component_catalog_id,
+                'catalog_matched_by'   => $req->catalog_matched_by,
+                'part_name_key'        => $req->part_name_key ?: $this->identity->nameKey($req->part_name),
                 'purchase_source'     => $data['purchase_source'],
                 'source_vendor_id'    => $data['source_vendor_id'] ?? null,
                 'source_name'         => $data['source_name'] ?? null,

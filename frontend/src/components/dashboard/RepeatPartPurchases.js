@@ -201,11 +201,19 @@ function RepeatRow({ row }) {
         )}
       </div>
 
-      {/* Identity evidence — matching two agreeing SKUs is a stronger claim than matching two names. */}
+      {/* Identity evidence. Two buys each IDENTIFIED as the same catalog part is the strongest claim
+          available — a human made that call on each of them. Matching on the wording is weaker and says
+          so. Never left implicit: the pair is an accusation, and the reader is entitled to its basis. */}
       <p className="mt-1 text-[11px] text-slate-400">
-        {row.matched_by === 'part_number'
-          ? t('Matched on part number {number} — both buys carry the same SKU.', { number: row.part_number })
+        {row.matched_by === 'catalog'
+          ? t('Both buys were recorded as {part} — the same part, whatever each was called.', { part: row.catalog_part?.name || row.part_name })
           : t('Matched on part name. The two buys carry different (or no) part numbers, which is normal when suppliers differ.')}
+        {/* The brand suffix or a different word is exactly the case the old string comparison missed. */}
+        {row.same_wording === false && (
+          <span className="ms-1.5 rounded bg-cyan-50 px-1.5 py-px font-medium text-cyan-700">
+            {t('written differently each time')}
+          </span>
+        )}
         {demo && <span className="ms-2 rounded-full bg-amber-50 px-1.5 py-px font-semibold text-amber-700 ring-1 ring-inset ring-amber-200">{t('Demo data')}</span>}
       </p>
 

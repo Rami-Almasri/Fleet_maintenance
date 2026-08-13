@@ -62,6 +62,9 @@ class PartPurchaseController extends Controller
             $data = $request->validate([
                 'vehicle_id'         => ['required', 'exists:vehicles,id'],
                 'part_name'          => ['nullable', 'string', 'max:255'],
+                // The catalog part the buyer picked. THE important field on this endpoint: with it the
+                // check sees every other name the part is known by, without it only the exact wording.
+                'component_catalog_id' => ['nullable', 'integer', 'exists:component_catalog,id'],
                 'part_number'        => ['nullable', 'string', 'max:255'],
                 'category_key'       => ['nullable', 'string', 'max:60'],
                 // The FAULT this part is for — enables the stronger Vehicle + Part + Fault duplicate signal.
@@ -71,15 +74,17 @@ class PartPurchaseController extends Controller
                 'include_history'    => ['nullable', 'boolean'],
             ]);
 
+            $catalogId = isset($data['component_catalog_id']) ? (int) $data['component_catalog_id'] : null;
+
             $verdict = $this->intel->detectDuplicate(
                 (int) $data['vehicle_id'], $data['part_name'] ?? null, $data['part_number'] ?? null, $data['category_key'] ?? null,
-                null, null, false, $data['fault_category_key'] ?? null, $data['fault_symptom'] ?? null
+                null, null, false, $data['fault_category_key'] ?? null, $data['fault_symptom'] ?? null, $catalogId
             );
 
             $history = $request->boolean('include_history', true)
                 ? $this->intel->partHistory(
                     (int) $data['vehicle_id'], $data['part_name'] ?? null, $data['part_number'] ?? null,
-                    $data['category_key'] ?? null, null, $verdict['part_class']
+                    $data['category_key'] ?? null, null, $verdict['part_class'], $catalogId
                 )
                 : null;
 
@@ -90,6 +95,10 @@ class PartPurchaseController extends Controller
                 'part_class'   => $verdict['part_class'],
                 'days_between' => $verdict['days_between'],
                 'window_days'  => $verdict['window_days'],
+                // Why the earlier purchase counts as this same part: 'catalog' (a human identified both),
+                // 'name' (a known other name for it) or 'part_number'. The modal leads with it whenever
+                // it is not 'catalog', because that is the case where the two records look unalike.
+                'matched_via'  => $verdict['matched_via'] ?? null,
                 'context'      => $this->intel->duplicateContext($verdict),
                 // The unwindowed record. Present even when `duplicate` is false — "no alert" is not the same
                 // as "no history", and the buyer is entitled to the difference.

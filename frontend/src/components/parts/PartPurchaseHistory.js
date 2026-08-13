@@ -35,11 +35,17 @@ function Fact({ label, children }) {
   );
 }
 
-function PurchaseRow({ rec }) {
+function PurchaseRow({ rec, askedFor }) {
   const { t } = useI18n();
   const price = rec.total_price ?? rec.unit_price;
   const cur = rec.currency && rec.currency !== 'AED' ? ` ${rec.currency}` : '';
   const source = sourceLabel(t, rec.purchase_source);
+
+  // This row was written down differently from the part being asked about. Shown on the row itself,
+  // not only in the summary, so the reader can see WHICH purchase the claim rests on.
+  const otherWording = rec.part_name
+    && askedFor
+    && rec.part_name.trim().toLowerCase() !== askedFor.trim().toLowerCase();
 
   return (
     <li
@@ -65,6 +71,15 @@ function PurchaseRow({ rec }) {
           </span>
         )}
         <span className="ms-auto flex items-center gap-1.5">
+          {otherWording && (
+            <span
+              className="rounded bg-cyan-50 px-1.5 py-0.5 text-[11px] font-medium text-cyan-700"
+              dir="auto"
+              title={t('Recorded as “{earlier}” — matched as the same part.', { earlier: rec.part_name })}
+            >
+              {rec.part_name}
+            </span>
+          )}
           {rec.result && <Badge tone={RESULT_TONE[rec.result] || 'gray'}>{resultLabel(t, rec.result) || rec.result}</Badge>}
           {rec.flagged && <Badge tone="red">{t('Flagged')}</Badge>}
           {!rec.installed_at && <Badge tone="slate">{t('Not fitted')}</Badge>}
@@ -175,22 +190,31 @@ export default function PartPurchaseHistory({ history, partName, loading = false
         {s.failed > 0 && <Badge tone="red">{t('{n} failed', { n: num(s.failed) })}</Badge>}
         {s.flagged > 0 && <Badge tone="amber">{t('{n} flagged', { n: num(s.flagged) })}</Badge>}
         {s.never_installed > 0 && <Badge tone="slate">{t('{n} never fitted', { n: num(s.never_installed) })}</Badge>}
+        {/* Rows on this list that were WRITTEN DIFFERENTLY. Said out loud because a buyer scanning a
+            list titled "Alternator" and finding a row called "دينامو" would otherwise assume the
+            screen is wrong — and because it is the count that shows what identity matching bought. */}
+        {s.other_wording > 0 && (
+          <Badge tone="cyan">{t('{n} under another name', { n: num(s.other_wording) })}</Badge>
+        )}
         {s.in_alert_window > 0 && (
           <Badge tone="amber">{t('{n} within {d} day(s)', { n: num(s.in_alert_window), d: num(s.alert_window_days) })}</Badge>
         )}
       </div>
 
-      {/* Data origin: which identity actually found these rows. A name match means the part number on
-          this request matched nothing, so the list is only as good as the naming — say so, don't imply
-          a SKU-exact match the data cannot support. */}
-      {s.matched_by === 'part_name' && (
-        <p className="mt-1.5 text-[11px] text-slate-500">
-          {t('Matched by part name — no purchase carries this part number.')}
-        </p>
-      )}
+      {/* DATA ORIGIN — how this list was assembled, never left implicit. The whole feature rests on a
+          claim ("these are the same part") that the reader cannot verify by looking, so the basis for
+          it is stated: the catalog part it was identified as, and the other names that counted. */}
+      <p className="mt-1.5 text-[11px] text-slate-500" dir="auto">
+        {s.identified_via === 'catalog' || s.identified_via === 'name'
+          ? t('Matched as {part} — the part itself, not the wording.', { part: s.part_name })
+          : t('Matched on this exact wording only — this part is not linked to the catalog, so the same part bought under another name will not appear.')}
+        {s.other_names?.length
+          ? ` ${t('Also counts: {names}.', { names: s.other_names.join(', ') })}`
+          : ''}
+      </p>
 
       <ul className="mt-2.5 space-y-2">
-        {shown.map((rec) => <PurchaseRow key={rec.purchase_id} rec={rec} />)}
+        {shown.map((rec) => <PurchaseRow key={rec.purchase_id} rec={rec} askedFor={partName} />)}
       </ul>
 
       {(hidden > 0 || expanded) && records.length > DEFAULT_VISIBLE && (

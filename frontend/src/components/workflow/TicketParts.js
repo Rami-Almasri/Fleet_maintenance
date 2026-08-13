@@ -13,6 +13,7 @@ import { fmtAgo, aed, num } from '../../lib/format';
 import { canOrderParts } from './meta';
 import PartPurchaseHistory from '../parts/PartPurchaseHistory';
 import PartRecordModal from '../parts/PartRecordModal';
+import CatalogPartPicker from '../parts/CatalogPartPicker';
 import { useI18n } from '../../i18n/I18nContext';
 
 // Envelope-aware unwrap: the API wraps most payloads in { data: … }.
@@ -52,9 +53,17 @@ function ContextFact({ label, value }) {
 
 // ─── Request modal (pre-filled from the ticket) ──────────────────────────────
 // A part is ALWAYS requested against a ticket: Vehicle → Maintenance Ticket → Fault all come straight
-// from the ticket (read-only). The technician only types Part Name / Quantity / Price / Reason / Notes.
-// As the part name is typed we check the vehicle's recent purchase history and warn on a likely repeat
-// (the backend also alerts the admins on submit).
+// from the ticket (read-only). The technician CHOOSES the part and types Quantity / Price / Reason.
+//
+// THE PART IS PICKED FROM THE CATALOG, NOT TYPED. That is the whole reason the repeat-buy warning
+// works: picking stores WHICH part this is (component_catalog_id), so the check finds the earlier buy
+// even when it was written down as "دينامو" or "Shock Absorber — KYB". The free-text box this replaced
+// meant identity was a string comparison, and a warning that only fires when two people type the same
+// characters is a coincidence detector.
+//
+// Typing is still possible — "not in the list" — because a catalog that cannot be escaped blocks work
+// the day a genuinely new part arrives. It is the exception, and it says out loud what it costs: an
+// unidentified part can only ever be matched against its own spelling.
 function TicketPartRequestModal({ open, onClose, onCreated, ticket, tasks }) {
   const toast = useToast();
   const { t } = useI18n();
@@ -70,6 +79,30 @@ function TicketPartRequestModal({ open, onClose, onCreated, ticket, tasks }) {
   const [saving, setSaving] = useState(false);
   const [dup, setDup] = useState(null);       // live duplicate verdict for the current part name
   const [checking, setChecking] = useState(false);
+  // The vocabulary to pick from, fetched once when the modal first opens.
+  const [catalog, setCatalog] = useState([]);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  // The escape hatch: the part genuinely is not in the catalog and has to be described in words.
+  const [freeText, setFreeText] = useState(false);
+
+  useEffect(() => {
+    if (!open || catalog.length || catalogLoading) return undefined;
+
+    let alive = true;
+    setCatalogLoading(true);
+    api.get('/parts-catalog')
+      .then(({ data }) => {
+        if (!alive) return;
+        // Retired parts are not offered — they are things the fleet has stopped fitting.
+        setCatalog((data?.data?.parts || []).filter((p) => p.is_active));
+      })
+      // A catalog that will not load must not block a request: the form falls back to free text,
+      // which is worse data but still work the technician can finish.
+      .catch(() => { if (alive) setFreeText(true); })
+      .finally(() => { if (alive) setCatalogLoading(false); });
+
+    return () => { alive = false; };
+  }, [open, catalog.length, catalogLoading]);
 
   // Read at reset time without making the reset depend on the array's identity (see below).
   const faultOptionsRef = useRef(faultOptions);
@@ -85,6 +118,7 @@ function TicketPartRequestModal({ open, onClose, onCreated, ticket, tasks }) {
     const opts = faultOptionsRef.current;
     setForm({
       maintenance_task_id: opts.length === 1 ? String(opts[0].id) : '',
+      component_catalog_id: null,
       part_name: '',
       part_number: '',
       quantity: 1,
@@ -95,6 +129,7 @@ function TicketPartRequestModal({ open, onClose, onCreated, ticket, tasks }) {
     });
     setErrors({});
     setDup(null);
+    setFreeText(false);
   }, [open]);
 
   const set = (field, value) => setForm((f) => ({ ...f, [field]: value }));
@@ -105,20 +140,27 @@ function TicketPartRequestModal({ open, onClose, onCreated, ticket, tasks }) {
     return faultOptions.length === 1 ? faultOptions[0] : null;
   }, [faultOptions, form?.maintenance_task_id]);
 
-  // Live duplicate check — debounced on the part name/number (and fault) for THIS vehicle.
+  // Live duplicate check — debounced on the chosen part (and fault) for THIS vehicle.
+  //
+  // `component_catalog_id` is the field that matters here: with it the check asks "has this CAR had
+  // THIS PART before", whatever either record was called. Without it (free text) the question narrows
+  // to "has anyone typed these words before", which is all the old box could ever ask.
   const partName = form?.part_name || '';
   const partNumber = form?.part_number || '';
+  const catalogId = form?.component_catalog_id || null;
   const faultCategory = selectedFault?.category_key || '';
   const faultSymptom = selectedFault?.symptom || '';
   useEffect(() => {
-    if (!open || !ticket?.vehicle_id || partName.trim().length < 2) { setDup(null); return undefined; }
+    if (!open || !ticket?.vehicle_id || (!catalogId && partName.trim().length < 2)) { setDup(null); return undefined; }
     let alive = true;
     setChecking(true);
+    // A picked part needs no debounce — it arrives in one click, not keystroke by keystroke.
     const timer = setTimeout(() => {
       api.get('/part-purchases/duplicate-check', {
         params: {
           vehicle_id: ticket.vehicle_id,
-          part_name: partName.trim(),
+          component_catalog_id: catalogId || undefined,
+          part_name: partName.trim() || undefined,
           part_number: partNumber.trim() || undefined,
           fault_category_key: faultCategory || undefined,
           fault_symptom: faultSymptom || undefined,
@@ -127,9 +169,9 @@ function TicketPartRequestModal({ open, onClose, onCreated, ticket, tasks }) {
         .then((r) => { if (alive) setDup(payload(r)); })
         .catch(() => { if (alive) setDup(null); })
         .finally(() => { if (alive) setChecking(false); });
-    }, 500);
+    }, catalogId ? 0 : 500);
     return () => { alive = false; clearTimeout(timer); };
-  }, [open, ticket?.vehicle_id, partName, partNumber, faultCategory, faultSymptom]);
+  }, [open, ticket?.vehicle_id, catalogId, partName, partNumber, faultCategory, faultSymptom]);
 
   const submit = async () => {
     setSaving(true);
@@ -139,6 +181,8 @@ function TicketPartRequestModal({ open, onClose, onCreated, ticket, tasks }) {
         vehicle_id: ticket?.vehicle_id || null,
         maintenance_id: ticket?.id ? Number(ticket.id) : null,
         maintenance_task_id: form.maintenance_task_id ? Number(form.maintenance_task_id) : null,
+        // WHICH part — null only when the technician had to describe one the catalog does not carry.
+        component_catalog_id: form.component_catalog_id || null,
         part_name: form.part_name.trim(),
         part_number: form.part_number.trim() || null,
         quantity: Number(form.quantity) || 1,
@@ -168,6 +212,14 @@ function TicketPartRequestModal({ open, onClose, onCreated, ticket, tasks }) {
   const whenAgo = dup?.days_between != null
     ? (Number(dup.days_between) === 1 ? t('1 day ago') : t('{n} days ago', { n: num(dup.days_between) }))
     : t('recently');
+
+  // The earlier purchase was WRITTEN DOWN DIFFERENTLY. Without saying so, the warning reads as a bug:
+  // the technician asked about "Alternator" and is shown a purchase called "دينامو". This is the line
+  // that turns "the system is confused" into "ah — same part, different word".
+  const chosenName = (form?.part_name || '').trim();
+  const differentWording = prev?.part_name
+    && chosenName
+    && prev.part_name.trim().toLowerCase() !== chosenName.toLowerCase();
 
   return (
     <Modal
@@ -233,6 +285,13 @@ function TicketPartRequestModal({ open, onClose, onCreated, ticket, tasks }) {
                 </p>
               </>
             )}
+            {differentWording && (
+              <p className="mt-1.5 rounded-lg bg-white/60 px-2.5 py-1.5 text-xs font-medium">
+                {t('Recorded then as “{earlier}” — the same part under a different name.', { earlier: prev.part_name })}
+                {dup.context?.part?.name ? ` ${t('Both are {part}.', { part: dup.context.part.name })}` : ''}
+              </p>
+            )}
+
             <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-3">
               {prev.source_name && (
                 <div><dt className="font-semibold uppercase tracking-wide opacity-70">{t('Supplier')}</dt><dd>{prev.source_name}</dd></div>
@@ -255,14 +314,62 @@ function TicketPartRequestModal({ open, onClose, onCreated, ticket, tasks }) {
         {dup && <PartPurchaseHistory history={dup.history} partName={partName.trim()} />}
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Input
-            label={t('Part name')}
-            required
-            placeholder={t('e.g. Brake master cylinder')}
-            value={form.part_name}
-            error={errors.part_name?.[0]}
-            onChange={(e) => set('part_name', e.target.value)}
-          />
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">
+              {t('Part')} <span className="text-red-500">*</span>
+            </label>
+
+            {freeText ? (
+              <>
+                <Input
+                  placeholder={t('e.g. Brake master cylinder')}
+                  value={form.part_name}
+                  error={errors.part_name?.[0]}
+                  onChange={(e) => setForm((f) => ({ ...f, part_name: e.target.value, component_catalog_id: null }))}
+                />
+                {/* Say what typing costs, in the moment it is being chosen. Not a scolding — the
+                    technician may be right that the part is new — but the consequence is real and
+                    invisible otherwise. */}
+                <p className="mt-1 text-xs text-amber-700">
+                  {t('A typed part can only be matched against this exact wording — the repeat-buy check will not see it under another name. Add it to the Parts Catalog to fix that for good.')}
+                </p>
+                {catalog.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => { setFreeText(false); setForm((f) => ({ ...f, part_name: '' })); }}
+                    className="mt-1 text-xs font-medium text-sky-700 underline-offset-2 hover:underline"
+                  >
+                    {t('Choose from the catalog instead')}
+                  </button>
+                )}
+              </>
+            ) : (
+              <>
+                <CatalogPartPicker
+                  catalog={catalog}
+                  loading={catalogLoading}
+                  value={form.component_catalog_id ? form : null}
+                  onChange={(picked) => setForm((f) => ({
+                    ...f,
+                    component_catalog_id: picked?.component_catalog_id || null,
+                    part_name: picked?.part_name || '',
+                    // The catalog's default SKU is a starting point the buyer may correct; a manually
+                    // entered one is not overwritten by clearing the picker.
+                    part_number: picked?.part_number || f.part_number,
+                  }))}
+                />
+                {errors.part_name?.[0] && <p className="mt-1 text-xs text-red-600">{errors.part_name[0]}</p>}
+                <button
+                  type="button"
+                  onClick={() => setFreeText(true)}
+                  className="mt-1 text-xs font-medium text-slate-500 underline-offset-2 hover:underline"
+                >
+                  {t('Not in the list — type it instead')}
+                </button>
+              </>
+            )}
+          </div>
+
           <Input
             label={t('Part number')}
             placeholder={t('Optional')}

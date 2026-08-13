@@ -17,9 +17,14 @@ const PAGE_SIZE = 15;
 
 const TRACKING_TONE = { serialized: 'violet', batch: 'blue', consumable: 'gray' };
 
+// The two synonym lists, and the ONE difference that matters: `identity_aliases` are trusted to prove
+// two records are the same part, `aliases` are only ever searched. See the field's own hint text.
+const ALIAS_FIELDS = ['identity_aliases', 'aliases'];
+
 const emptyForm = {
   name: '',
   name_ar: '',
+  identity_aliases: [],
   aliases: [],
   category_key: '',
   tracking_mode: 'batch',
@@ -94,7 +99,8 @@ export default function PartsCatalog() {
   const [form, setForm] = useState(emptyForm);
   const [formErrors, setFormErrors] = useState({});
   const [saving, setSaving] = useState(false);
-  const [aliasDraft, setAliasDraft] = useState('');
+  // One in-progress chip per alias list — keyed by field so the two boxes cannot overwrite each other.
+  const [aliasDrafts, setAliasDrafts] = useState({ identity_aliases: '', aliases: '' });
 
   // delete / retire confirm
   const [toDelete, setToDelete] = useState(null);
@@ -109,7 +115,7 @@ export default function PartsCatalog() {
     setEditing(null);
     setForm({ ...emptyForm, category_key: categories[0]?.key || '' });
     setFormErrors({});
-    setAliasDraft('');
+    setAliasDrafts({ identity_aliases: '', aliases: '' });
     setModalOpen(true);
   };
 
@@ -118,6 +124,7 @@ export default function PartsCatalog() {
     setForm({
       name: p.name || '',
       name_ar: p.name_ar || '',
+      identity_aliases: p.identity_aliases || [],
       aliases: p.aliases || [],
       category_key: p.category_key || '',
       tracking_mode: p.tracking_mode || 'batch',
@@ -131,7 +138,7 @@ export default function PartsCatalog() {
       is_active: p.is_active,
     });
     setFormErrors({});
-    setAliasDraft('');
+    setAliasDrafts({ identity_aliases: '', aliases: '' });
     setModalOpen(true);
   };
 
@@ -145,28 +152,31 @@ export default function PartsCatalog() {
     setForm((f) => ({ ...f, tracking_mode: value, position_scheme: value === 'consumable' ? '' : f.position_scheme }));
   };
 
-  const addAlias = () => {
-    const v = aliasDraft.trim();
+  const setDraft = (field, value) => setAliasDrafts((d) => ({ ...d, [field]: value }));
+
+  const addAlias = (field) => {
+    const v = (aliasDrafts[field] || '').trim();
     if (!v) return;
     // Case-insensitive de-dupe, same rule the backend applies — so the form never shows the user a
     // list the server would silently collapse.
-    if (form.aliases.some((a) => a.toLowerCase() === v.toLowerCase())) {
-      setAliasDraft('');
+    if (form[field].some((a) => a.toLowerCase() === v.toLowerCase())) {
+      setDraft(field, '');
       return;
     }
-    setForm((f) => ({ ...f, aliases: [...f.aliases, v] }));
-    setAliasDraft('');
+    setForm((f) => ({ ...f, [field]: [...f[field], v] }));
+    setDraft(field, '');
   };
 
-  const removeAlias = (alias) => setForm((f) => ({ ...f, aliases: f.aliases.filter((a) => a !== alias) }));
+  const removeAlias = (field, alias) =>
+    setForm((f) => ({ ...f, [field]: f[field].filter((a) => a !== alias) }));
 
-  const onAliasKeyDown = (e) => {
+  const onAliasKeyDown = (field) => (e) => {
     // Enter and comma both commit — people type lists both ways.
     if (e.key === 'Enter' || e.key === ',') {
       e.preventDefault();
-      addAlias();
-    } else if (e.key === 'Backspace' && !aliasDraft && form.aliases.length) {
-      removeAlias(form.aliases[form.aliases.length - 1]);
+      addAlias(field);
+    } else if (e.key === 'Backspace' && !aliasDrafts[field] && form[field].length) {
+      removeAlias(field, form[field][form[field].length - 1]);
     }
   };
 
@@ -178,15 +188,19 @@ export default function PartsCatalog() {
     setFormErrors({});
     try {
       // A half-typed alias is what the user meant to add — commit it rather than dropping it.
-      const pendingAlias = aliasDraft.trim();
-      const aliases = pendingAlias && !form.aliases.some((a) => a.toLowerCase() === pendingAlias.toLowerCase())
-        ? [...form.aliases, pendingAlias]
-        : form.aliases;
+      const committed = {};
+      ALIAS_FIELDS.forEach((field) => {
+        const pending = (aliasDrafts[field] || '').trim();
+        committed[field] = pending && !form[field].some((a) => a.toLowerCase() === pending.toLowerCase())
+          ? [...form[field], pending]
+          : form[field];
+      });
 
       const payload = {
         name: form.name.trim(),
         name_ar: form.name_ar?.trim() || null,
-        aliases,
+        identity_aliases: committed.identity_aliases,
+        aliases: committed.aliases,
         category_key: form.category_key,
         tracking_mode: form.tracking_mode,
         position_scheme: form.position_scheme || null,
@@ -315,7 +329,9 @@ export default function PartsCatalog() {
     return parts.filter((p) => {
       const matchSearch =
         !q ||
-        [p.name, p.name_ar, p.slug, p.default_part_number, ...(p.aliases || [])]
+        // Both synonym lists are searched — they differ in what they are TRUSTED for, not in whether
+        // someone might type them into this box looking for the row.
+        [p.name, p.name_ar, p.slug, p.default_part_number, ...(p.identity_aliases || []), ...(p.aliases || [])]
           .some((f) => (f || '').toLowerCase().includes(q));
       const matchCategory = !category || p.category_key === category;
       const matchMode = !mode || p.tracking_mode === mode;
@@ -457,10 +473,25 @@ export default function PartsCatalog() {
                         <td className="border-b border-slate-100 px-5 py-3.5 text-slate-600">
                           {warranty || <span className="text-slate-300">—</span>}
                         </td>
+                        {/* Other names first and in their own colour: that count is the one with
+                            consequences — it is how many spellings the repeat-buy check will recognise
+                            as this part. The search count sits behind it as a plain total. */}
                         <td className="border-b border-slate-100 px-5 py-3.5">
-                          {p.aliases?.length ? (
-                            <span className="text-slate-600" title={p.aliases.join(' · ')}>
-                              {t('partsCatalog.nAliases', { n: num(p.aliases.length) })}
+                          {(p.identity_aliases?.length || p.aliases?.length) ? (
+                            <span className="inline-flex items-center gap-1.5">
+                              {p.identity_aliases?.length ? (
+                                <span
+                                  className="rounded bg-emerald-50 px-1.5 py-0.5 text-xs font-medium text-emerald-700"
+                                  title={p.identity_aliases.join(' · ')}
+                                >
+                                  {t('partsCatalog.nOtherNames', { n: num(p.identity_aliases.length) })}
+                                </span>
+                              ) : null}
+                              {p.aliases?.length ? (
+                                <span className="text-slate-500" title={p.aliases.join(' · ')}>
+                                  {t('partsCatalog.nAliases', { n: num(p.aliases.length) })}
+                                </span>
+                              ) : null}
                             </span>
                           ) : <span className="text-slate-300">—</span>}
                         </td>
@@ -598,24 +629,54 @@ export default function PartsCatalog() {
             <span className="font-medium">{modeLabel(form.tracking_mode)}:</span> {modeMeta(form.tracking_mode).hint}
           </div>
 
-          {/* ALIASES — the reason someone can find this part by describing the problem. */}
+          {/* OTHER NAMES — the list that makes "bought again" survive a change of wording. Anything
+              here is treated as this exact part, so a repeat buy is caught even when the earlier one
+              was written "dynamo" and this one says "Alternator". Kept visually distinct from the
+              search list below because the two carry completely different weight. */}
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">
+              {t('partsCatalog.fieldIdentityAliases')}
+            </label>
+            <div className="flex flex-wrap gap-1.5 rounded-lg border border-emerald-300 bg-white px-2 py-2 focus-within:ring-2 focus-within:ring-emerald-500">
+              {form.identity_aliases.map((a) => (
+                <span key={a} className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-1 text-xs text-emerald-700" dir="auto">
+                  {a}
+                  <button type="button" className="text-emerald-400 hover:text-emerald-700" onClick={() => removeAlias('identity_aliases', a)} aria-label={t('common.remove')}>×</button>
+                </span>
+              ))}
+              <input
+                className="min-w-[10rem] flex-1 border-0 p-1 text-sm outline-none focus:ring-0"
+                dir="auto"
+                value={aliasDrafts.identity_aliases}
+                placeholder={form.identity_aliases.length ? '' : t('partsCatalog.identityAliasPlaceholder')}
+                onChange={(e) => setDraft('identity_aliases', e.target.value)}
+                onKeyDown={onAliasKeyDown('identity_aliases')}
+                onBlur={() => addAlias('identity_aliases')}
+              />
+            </div>
+            <p className="mt-1 text-xs text-slate-500">{t('partsCatalog.identityAliasHint')}</p>
+            {formErrors.identity_aliases?.[0] && <p className="mt-1 text-xs text-red-600">{formErrors.identity_aliases[0]}</p>}
+          </div>
+
+          {/* SEARCH WORDS — the reason someone can find this part by describing the problem. Never used
+              to decide that two records are the same part; see the hint. */}
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700">{t('partsCatalog.fieldAliases')}</label>
             <div className="flex flex-wrap gap-1.5 rounded-lg border border-slate-300 bg-white px-2 py-2 focus-within:ring-2 focus-within:ring-indigo-500">
               {form.aliases.map((a) => (
                 <span key={a} className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-2 py-1 text-xs text-indigo-700" dir="auto">
                   {a}
-                  <button type="button" className="text-indigo-400 hover:text-indigo-700" onClick={() => removeAlias(a)} aria-label={t('common.remove')}>×</button>
+                  <button type="button" className="text-indigo-400 hover:text-indigo-700" onClick={() => removeAlias('aliases', a)} aria-label={t('common.remove')}>×</button>
                 </span>
               ))}
               <input
                 className="min-w-[10rem] flex-1 border-0 p-1 text-sm outline-none focus:ring-0"
                 dir="auto"
-                value={aliasDraft}
+                value={aliasDrafts.aliases}
                 placeholder={form.aliases.length ? '' : t('partsCatalog.aliasPlaceholder')}
-                onChange={(e) => setAliasDraft(e.target.value)}
-                onKeyDown={onAliasKeyDown}
-                onBlur={addAlias}
+                onChange={(e) => setDraft('aliases', e.target.value)}
+                onKeyDown={onAliasKeyDown('aliases')}
+                onBlur={() => addAlias('aliases')}
               />
             </div>
             <p className="mt-1 text-xs text-slate-500">{t('partsCatalog.aliasHint')}</p>

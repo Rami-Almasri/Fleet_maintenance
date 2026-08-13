@@ -48,9 +48,12 @@ class ComponentCatalogSeeder extends Seeder
             $attributes = [
                 'name'         => $entry['name'],
                 'name_ar'      => $entry['name_ar'] ?? null,
-                // Search synonyms for the picker — other trade names and the symptom wording people
-                // use instead of the part name. Never a fault vocabulary; see the config header.
-                'aliases'      => $entry['aliases'] ?? null,
+                // The two synonym lists, which are NOT interchangeable. `identity_aliases` holds only
+                // other names for this exact part and is trusted to prove two records are the same
+                // part; `aliases` holds symptom wording and names too ambiguous to pick a row with,
+                // and is search-only. Never a fault vocabulary either way; see the config header.
+                'aliases'          => $entry['aliases'] ?? null,
+                'identity_aliases' => $entry['identity_aliases'] ?? null,
                 'category_key' => $entry['category_key'],
                 // The action-vocabulary join (see the add_action_target migration). Synced from
                 // config like every other descriptive field, so the mapping lives beside the

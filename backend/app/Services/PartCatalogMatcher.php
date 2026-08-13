@@ -19,19 +19,26 @@ use Illuminate\Support\Collection;
  * and corrupt every count built on the catalog afterwards. Unmatched is a question for a human;
  * mismatched is a defect nobody notices.
  *
- * ALIASES ARE NOT USED FOR LINKING. This is the important asymmetry in the system. The catalog's
- * aliases deliberately mix other trade names ("dynamo") with SYMPTOM wording ("brake noise", "ac not
- * cooling"), because the search box wants both — a human types either and picks the right row from a
- * list. Linking has no human in the loop, and a symptom does not identify a part: "brake noise" is
- * as true of the discs and the caliper as of the pads. Matching on it would attach a specific part
- * to a complaint that never named one. So linking sees names, Arabic names and slugs only, while
- * ComponentCatalog::scopeSearch() (the picker) sees aliases too. Generous where a human decides,
- * strict where nobody does.
+ * SEARCH ALIASES ARE NOT USED FOR LINKING; IDENTITY ALIASES ARE. This is the important asymmetry in
+ * the system, and the reason the catalog carries two synonym lists instead of one.
+ *
+ * `aliases` is the search list. It deliberately mixes symptom wording ("brake noise", "ac not
+ * cooling") with trade names too ambiguous to decide a row ("fan motor" — radiator fan or A/C
+ * blower?), because the picker's box wants both: a human types either and chooses from the results.
+ * Linking has no human in the loop, and a symptom identifies nothing — "brake noise" is as true of
+ * the discs and the caliper as of the pads. So this matcher ignores `aliases` entirely.
+ *
+ * `identity_aliases` is the curated other-names list — 'dynamo' for the alternator, 'فحمات' for the
+ * pads — and every entry answers only "what else is this exact part called?". That IS a name, so it
+ * links, and it has to: without it "dynamo" stays unattached forever and the repeat-buy warning never
+ * sees that the car already has one. Ambiguity is still refused rather than arbitrated (see below).
+ *
+ * Generous where a human decides, strict where nobody does.
  *
  * The strategies, strongest first:
  *
- *   1. exact      — normalised text equals a catalog name, Arabic name or slug.
- *                   "brake pads (set)" → Brake Pads (set).
+ *   1. exact      — normalised text equals a catalog name, Arabic name, slug or identity alias.
+ *                   "brake pads (set)" → Brake Pads (set); "dynamo" → Alternator.
  *   2. core       — normalised text equals the catalog name with its parenthetical stripped.
  *                   "brake pads" → Brake Pads (set), because "(set)" is a bookkeeping convention of
  *                   ours, not part of what the part is called.
@@ -43,6 +50,11 @@ use Illuminate\Support\Collection;
  * words and resolved by longest match so "front brake discs" cannot land on "Brake Pads" merely
  * because both contain "brake". Where two catalog entries tie, the match is ABANDONED rather than
  * arbitrated — a tie means the wording genuinely does not distinguish them.
+ *
+ * That refusal now covers strategy 1 as well: a normalised form claimed by two different catalog rows
+ * resolves to NOTHING, whichever list it came from. It could only ever have arisen from a duplicate
+ * name or a debatable identity alias, and picking whichever row the query happened to return first is
+ * how a silent mislink gets written and never noticed.
  */
 class PartCatalogMatcher
 {
@@ -67,13 +79,26 @@ class PartCatalogMatcher
 
         $index = $this->index();
 
-        // 1 + 2: exact hit on any surface form (name / Arabic / alias / slug / parenthetical-free core).
-        $exact = $index->firstWhere('needle', $needle);
-        if ($exact) {
+        // 1 + 2: exact hit on any surface form (name / Arabic / identity alias / slug), then on a core.
+        // The kinds are tried in order of strength, so a true name still beats another row's core —
+        // ambiguity is only ever weighed between claims of EQUAL strength.
+        foreach ([self::MATCH_EXACT, self::MATCH_CORE] as $kind) {
+            $hits = $index->where('kind', $kind)->where('needle', $needle);
+            if ($hits->isEmpty()) {
+                continue;
+            }
+
+            // Two rows answering equally to the same wording cannot tell us which was meant. Refuse.
+            if ($hits->pluck('catalog_id')->unique()->count() > 1) {
+                return ['catalog_id' => null, 'matched_by' => self::MATCH_NONE, 'candidate' => null];
+            }
+
+            $hit = $hits->first();
+
             return [
-                'catalog_id' => $exact['catalog_id'],
-                'matched_by' => $exact['kind'],
-                'candidate'  => $exact['name'],
+                'catalog_id' => $hit['catalog_id'],
+                'matched_by' => $hit['kind'],
+                'candidate'  => $hit['name'],
             ];
         }
 
@@ -149,7 +174,7 @@ class PartCatalogMatcher
         $rows = collect();
 
         ComponentCatalog::active()
-            ->get(['id', 'name', 'name_ar', 'slug', 'aliases'])
+            ->get(['id', 'name', 'name_ar', 'slug', 'identity_aliases'])
             ->each(function (ComponentCatalog $c) use ($rows) {
                 $add = function (?string $text, string $kind) use ($rows, $c) {
                     $n = $this->normalize($text);
@@ -158,11 +183,16 @@ class PartCatalogMatcher
                     }
                 };
 
-                // Names and slugs only. Aliases are excluded from linking entirely — see the class
-                // docblock: they carry symptom wording, which names a complaint, not a part.
+                // Names, slug, and the curated OTHER NAMES for this part. The search `aliases` list is
+                // excluded from linking entirely — see the class docblock: it carries symptom wording,
+                // which names a complaint, not a part.
                 $add($c->name, self::MATCH_EXACT);
                 $add($c->name_ar, self::MATCH_EXACT);
                 $add($c->slug, self::MATCH_EXACT);
+
+                foreach ($c->identity_aliases ?? [] as $alias) {
+                    $add($alias, self::MATCH_EXACT);
+                }
 
                 // The core: the name with any parenthetical removed. "Brake Pads (set)" → "brake pads".
                 $core = preg_replace('/\([^)]*\)/u', ' ', (string) $c->name) ?? '';

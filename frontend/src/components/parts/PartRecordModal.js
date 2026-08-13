@@ -30,6 +30,10 @@ export default function PartRecordModal({ open, request, onClose }) {
     api.get('/part-purchases/duplicate-check', {
       params: {
         vehicle_id: request.vehicle?.id || request.vehicle_id,
+        // The part's identity, so this record includes the times it was bought under another name.
+        // Without it the list narrows to purchases spelled exactly like this one — which is what made
+        // a car with three alternators look like a car with one.
+        component_catalog_id: request.component_catalog_id || undefined,
         part_name: request.part_name,
         part_number: request.part_number || undefined,
       },

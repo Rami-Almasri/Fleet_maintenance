@@ -20,12 +20,20 @@ use Illuminate\Support\Facades\DB;
  * All thresholds/keywords live in config/parts_intelligence.php so the rules are tunable without a code
  * change. The engine is deliberately source-agnostic: a part is the same part whether it came from the
  * garage or an external supplier.
+ *
+ * WHAT COUNTS AS "THE SAME PART" IS NOT DECIDED HERE. It is decided by {@see PartIdentityService},
+ * which every read below goes through. That separation matters: this class owns the WINDOWS and the
+ * PRIORITIES ("a major part twice in 90 days is High"), and it used to also own identity by comparing
+ * the typed string — which made "Alternator" and "دينامو" different parts, and "Shock Absorber — KYB"
+ * and "Shock Absorber — Monroe" different parts, so the windows and priorities were being applied to
+ * almost nothing. One place answers "is this the same part", so the buy-time warning, the vehicle's
+ * part record and the fleet-wide sweep can never disagree about it.
  */
 class PartIntelligenceService
 {
     private array $cfg;
 
-    public function __construct()
+    public function __construct(private PartIdentityService $identity)
     {
         $this->cfg = config('parts_intelligence');
     }
@@ -63,17 +71,10 @@ class PartIntelligenceService
         return PartRequest::CLASS_STANDARD;
     }
 
-    /** Normalise a part identity for matching: prefer the SKU, else the collapsed lower-cased name. */
-    public function identityKey(?string $partNumber, ?string $partName): ?string
-    {
-        $pn = $partNumber ? strtolower(preg_replace('/\s+/', '', $partNumber)) : '';
-        if ($pn !== '') {
-            return 'pn:' . $pn;
-        }
-        $name = $partName ? strtolower(preg_replace('/\s+/', ' ', trim($partName))) : '';
-
-        return $name !== '' ? 'nm:' . $name : null;
-    }
+    // The old identityKey() is gone. It answered "what is this part" with 'pn:<sku>' or 'nm:<typed
+    // name>', which is exactly the reasoning this feature had to stop: two such keys differ whenever
+    // the wording or the SKU differs, and the parts do not. PartIdentityService is now the only answer,
+    // so there is no second one left for a caller to reach for by accident.
 
     // ───────────────────────────── duplicate purchase ─────────────────────────────
 
@@ -87,6 +88,9 @@ class PartIntelligenceService
      * every window is not a duplicate (edge case 2).
      *
      * @param int|null $excludePurchaseId skip this purchase id (when re-checking an already-inserted row)
+     * @param int|null $componentCatalogId the catalog part the buyer PICKED, when they picked one. This
+     *                 is what lets the check see the same part under a different name — pass it whenever
+     *                 it is known, or the check falls back to resolving the wording and may see less.
      */
     public function detectDuplicate(
         int $vehicleId,
@@ -97,23 +101,27 @@ class PartIntelligenceService
         ?int $excludePurchaseId = null,
         bool $lock = false,
         ?string $faultCategoryKey = null,
-        ?string $faultSymptom = null
+        ?string $faultSymptom = null,
+        ?int $componentCatalogId = null
     ): array {
         $partClass = $partClass ?: $this->classify($partName, $partNumber, $categoryKey);
-        $identity  = $this->identityKey($partNumber, $partName);
+        $identity  = $this->identity->identityFor($componentCatalogId, $partName, $partNumber);
 
         $base = ['duplicate' => false, 'priority' => null, 'previous' => null, 'days_between' => null,
-                 'window_days' => null, 'part_class' => $partClass, 'same_fault' => false];
+                 'window_days' => null, 'part_class' => $partClass, 'same_fault' => false,
+                 'identity' => $identity, 'matched_via' => PartIdentityService::VIA_NONE];
 
-        if ($identity === null) {
-            return $base; // nothing to match on
+        // Nothing to match on: no catalog row, no wording, no SKU. An anonymous part has no history
+        // we are entitled to claim.
+        if (! $identity['catalog_id'] && ! $identity['name_keys'] && ! $identity['sku']) {
+            return $base;
         }
 
         // STRONGEST signal first: same PART bought for the same FAULT (category/symptom) on this vehicle,
         // within the recurrence window. That's not just a repeat buy — it's a failed repair coming back, so
         // it is ALWAYS High priority regardless of the part's class/value.
         if ($faultCategoryKey || $faultSymptom) {
-            $sameFault = $this->priorSameFaultPurchase($vehicleId, $partNumber, $partName, $faultCategoryKey, $faultSymptom, $excludePurchaseId, $lock);
+            $sameFault = $this->priorSameFaultPurchase($vehicleId, $identity, $faultCategoryKey, $faultSymptom, $excludePurchaseId, $lock);
             if ($sameFault) {
                 $prevAt = $sameFault->purchased_at ?: $sameFault->created_at;
                 $days   = $prevAt ? (int) $prevAt->copy()->startOfDay()->diffInDays(Carbon::now()->startOfDay()) : null;
@@ -126,11 +134,13 @@ class PartIntelligenceService
                     'window_days'  => (int) $this->cfg['recurrence']['window_days'],
                     'part_class'   => $partClass,
                     'same_fault'   => true,
+                    'identity'     => $identity,
+                    'matched_via'  => $this->identity->matchedVia($sameFault, $identity),
                 ];
             }
         }
 
-        $previous = $this->priorPurchaseQuery($vehicleId, $partNumber, $partName, $excludePurchaseId, $lock)->first();
+        $previous = $this->priorPurchaseQuery($vehicleId, $identity, $excludePurchaseId, $lock)->first();
         if (! $previous) {
             return $base; // no prior history → clean (edge cases 2 & 7 both land here for old/sparse data)
         }
@@ -140,7 +150,13 @@ class PartIntelligenceService
 
         $priority = $this->duplicatePriority($partClass, $days);
         if ($priority === null) {
-            return $base + ['previous' => $previous, 'days_between' => $days]; // outside windows / consumable
+            // Outside every window, or a consumable. NOT a duplicate — but the prior buy is still
+            // reported, because "no alert" and "no history" are different answers.
+            return array_merge($base, [
+                'previous'     => $previous,
+                'days_between' => $days,
+                'matched_via'  => $this->identity->matchedVia($previous, $identity),
+            ]);
         }
 
         return [
@@ -151,6 +167,11 @@ class PartIntelligenceService
             'window_days'  => $this->windowForClass($partClass),
             'part_class'   => $partClass,
             'same_fault'   => false,
+            'identity'     => $identity,
+            // WHY this counted as the same part — the catalog row, a known other name, or the SKU. The
+            // warning shows it, because a buyer told "you already bought this" about a purchase spelled
+            // differently is owed the reason, not asked to take it on faith.
+            'matched_via'  => $this->identity->matchedVia($previous, $identity),
         ];
     }
 
@@ -160,12 +181,12 @@ class PartIntelligenceService
      * such repeat — this is the Vehicle + Part + Fault signal (a part bought twice for the same problem).
      */
     private function priorSameFaultPurchase(
-        int $vehicleId, ?string $partNumber, ?string $partName,
+        int $vehicleId, array $identity,
         ?string $faultCategoryKey, ?string $faultSymptom, ?int $excludeId, bool $lock
     ): ?PartPurchase {
         $since = Carbon::now()->subDays((int) $this->cfg['recurrence']['window_days']);
 
-        return $this->priorPurchaseQuery($vehicleId, $partNumber, $partName, $excludeId, $lock)
+        return $this->priorPurchaseQuery($vehicleId, $identity, $excludeId, $lock)
             ->where(fn ($q) => $q->where('purchased_at', '>=', $since)->orWhere('created_at', '>=', $since))
             ->whereHas('task', function ($q) use ($faultCategoryKey, $faultSymptom) {
                 $q->affectingReliability();
@@ -214,35 +235,25 @@ class PartIntelligenceService
         };
     }
 
-    /** Prior purchases of the same part identity on the same vehicle, newest first (optionally locked). */
-    private function priorPurchaseQuery(int $vehicleId, ?string $partNumber, ?string $partName, ?int $excludeId, bool $lock)
+    /**
+     * Prior purchases of the same part on the same vehicle, newest first (optionally locked).
+     *
+     * "The same part" is PartIdentityService's ruling, not a string comparison — so this finds the
+     * alternator bought as "دينامو" and the shock absorber bought as "Shock Absorber — Monroe". The
+     * vehicle filter is applied before the identity group, and the identity group is nested, so a
+     * multi-rung OR can never leak past it into the rest of the fleet.
+     */
+    private function priorPurchaseQuery(int $vehicleId, array $identity, ?int $excludeId, bool $lock)
     {
         $q = PartPurchase::query()
             ->where('vehicle_id', $vehicleId)
             ->when($excludeId, fn ($q) => $q->where('id', '!=', $excludeId));
 
-        $this->applyIdentity($q, $partNumber, $partName);
+        $this->identity->apply($q, $identity);
 
         $q->orderByDesc('purchased_at')->orderByDesc('id');
 
         return $lock ? $q->lockForUpdate() : $q;
-    }
-
-    /**
-     * The part-identity match, shared by every read: the SKU when we have one (the stable identity),
-     * otherwise the collapsed lower-cased name. Kept in one place so the duplicate verdict and the full
-     * history can never disagree about what counts as "the same part".
-     */
-    private function applyIdentity($q, ?string $partNumber, ?string $partName)
-    {
-        $pn = $partNumber ? preg_replace('/\s+/', '', $partNumber) : '';
-        if ($pn !== '') {
-            return $q->whereRaw("REPLACE(LOWER(part_number),' ','') = ?", [strtolower($pn)]);
-        }
-
-        $name = $partName ? strtolower(preg_replace('/\s+/', ' ', trim($partName))) : '';
-
-        return $q->whereRaw('LOWER(TRIM(part_name)) = ?', [$name]);
     }
 
     /** Human-readable snapshot of the prior purchase for the alert / investigation context. */
@@ -253,6 +264,18 @@ class PartIntelligenceService
         return [
             'part_class'   => $verdict['part_class'] ?? null,
             'priority'     => $verdict['priority'] ?? null,
+            // How the earlier purchase was recognised as this same part: 'catalog' (both picked from
+            // the list), 'name' (a known other name for it) or 'part_number'. The UI leads with this
+            // whenever it is not 'catalog', because that is exactly the case where the two records do
+            // NOT look alike and the user would otherwise think the warning is wrong.
+            'matched_via'  => $verdict['matched_via'] ?? null,
+            'part'         => [
+                'catalog_id'  => $verdict['identity']['catalog_id'] ?? null,
+                'name'        => $verdict['identity']['catalog_name'] ?? null,
+                // The other spellings this warning is watching, so "we checked 'dynamo' too" is
+                // visible rather than magic.
+                'other_names' => $verdict['identity']['other_names'] ?? [],
+            ],
             // Vehicle + Part + Fault repeat — the same part bought again for the SAME problem (a failed fix),
             // which is graver than merely buying the same part. The UI headlines this differently.
             'same_fault'   => $verdict['same_fault'] ?? false,
@@ -292,11 +315,14 @@ class PartIntelligenceService
         ?string $partNumber,
         ?string $categoryKey = null,
         ?int $excludePurchaseId = null,
-        ?string $partClass = null
+        ?string $partClass = null,
+        ?int $componentCatalogId = null
     ): array {
         $empty = ['records' => [], 'summary' => null, 'fleet' => null, 'truncated' => false];
 
-        if ($this->identityKey($partNumber, $partName) === null) {
+        $identity = $this->identity->identityFor($componentCatalogId, $partName, $partNumber);
+
+        if (! $identity['catalog_id'] && ! $identity['name_keys'] && ! $identity['sku']) {
             return $empty; // nothing to match on
         }
 
@@ -304,21 +330,8 @@ class PartIntelligenceService
         $window    = $this->windowForClass($partClass);
         $limit     = (int) ($this->cfg['history']['max_records'] ?? 50);
 
-        $q         = $this->priorPurchaseQuery($vehicleId, $partNumber, $partName, $excludePurchaseId, false);
-        $total     = (clone $q)->count();
-        $matchedBy = trim((string) $partNumber) !== '' ? 'part_number' : 'part_name';
-
-        // A SKU that matches nothing is NOT evidence the part is new. Part numbers are hand-typed, differ
-        // between suppliers for the same component, and are sometimes placeholders ("1111"). Matching on
-        // the SKU alone would then report "never bought" for a car that has had the part twice — a false
-        // clean bill, which is the one answer this feature must never give. So fall back to the name, and
-        // report which identity actually answered so the UI can say so.
-        if ($total === 0 && $matchedBy === 'part_number' && trim((string) $partName) !== '') {
-            $q         = $this->priorPurchaseQuery($vehicleId, null, $partName, $excludePurchaseId, false);
-            $total     = (clone $q)->count();
-            $matchedBy = 'part_name';
-            $partNumber = null;   // the fleet roll-up below must use the SAME identity that found these
-        }
+        $q     = $this->priorPurchaseQuery($vehicleId, $identity, $excludePurchaseId, false);
+        $total = (clone $q)->count();
 
         if ($total === 0) {
             return $empty;
@@ -329,8 +342,12 @@ class PartIntelligenceService
             'task:id,symptom,category_key,root_cause,status,resolved_at',
         ])->limit($limit)->get();
 
+        // Which rung of the identity ladder each row rests on. It is no longer a choice between the SKU
+        // and the name — every rung is asked at once, so a placeholder part number can no longer
+        // produce a false "never bought" for a car that has had the part twice. The per-row answer is
+        // what lets the list show WHY a differently-spelled purchase is on it.
         $today   = Carbon::now()->startOfDay();
-        $records = $rows->map(function (PartPurchase $p) use ($today, $window) {
+        $records = $rows->map(function (PartPurchase $p) use ($today, $window, $identity) {
             $at   = $p->purchased_at ?: $p->created_at;
             $days = $at ? (int) $at->copy()->startOfDay()->diffInDays($today) : null;
             $qty  = (float) ($p->quantity ?: 1);
@@ -345,6 +362,9 @@ class PartIntelligenceService
                 'part_name'       => $p->part_name,
                 'part_number'     => $p->part_number,
                 'part_class'      => $p->part_class,
+                // 'catalog' | 'name' | 'part_number' — why this row counts as the same part. A row
+                // reading 'name' is one whose wording differs from what is being bought today.
+                'matched_via'     => $this->identity->matchedVia($p, $identity),
                 'quantity'        => $qty,
                 'unit_price'      => $p->purchase_price === null ? null : (float) $p->purchase_price,
                 'total_price'     => $p->purchase_price === null ? null : round((float) $p->purchase_price * $qty, 2),
@@ -372,8 +392,23 @@ class PartIntelligenceService
 
         return [
             'records'   => $records,
-            'summary'   => $this->historySummary($records, $total, $partClass, $window) + ['matched_by' => $matchedBy],
-            'fleet'     => $this->fleetPartStats($vehicleId, $partNumber, $partName, $excludePurchaseId),
+            'summary'   => $this->historySummary($records, $total, $partClass, $window) + [
+                // How the NEWEST row was recognised — the headline claim the list rests on.
+                'matched_by' => $records[0]['matched_via'] ?? PartIdentityService::VIA_NONE,
+                // How the part being bought was identified in the first place: 'catalog' when a human
+                // picked it from the list, 'name' when its wording resolved to a catalog row, 'none'
+                // when it is unidentified free text and can therefore only ever find itself.
+                'identified_via' => $identity['resolved_via'],
+                'part_name'      => $identity['catalog_name'],
+                'other_names'    => $identity['other_names'],
+                // How many of the rows shown were written under DIFFERENT wording than today's. This
+                // is the number that says the feature is doing something the old check could not.
+                'other_wording'  => count(array_filter(
+                    $records,
+                    fn ($r) => ! $this->identity->sameWording($r['part_name'], $identity['part_name'])
+                )),
+            ],
+            'fleet'     => $this->fleetPartStats($vehicleId, $identity, $excludePurchaseId),
             'truncated' => $total > count($records),
         ];
     }
@@ -415,12 +450,12 @@ class PartIntelligenceService
      * The same part across the REST of the fleet — how often it is bought and what it normally costs, so
      * the buyer can sanity-check today's price. Null when no other vehicle has ever had it.
      */
-    private function fleetPartStats(int $vehicleId, ?string $partNumber, ?string $partName, ?int $excludeId): ?array
+    private function fleetPartStats(int $vehicleId, array $identity, ?int $excludeId): ?array
     {
         $q = PartPurchase::query()
             ->where('vehicle_id', '!=', $vehicleId)
             ->when($excludeId, fn ($q) => $q->where('id', '!=', $excludeId));
-        $this->applyIdentity($q, $partNumber, $partName);
+        $this->identity->apply($q, $identity);
 
         $base = (string) $this->cfg['base_currency'];
         $row  = (clone $q)->selectRaw('COUNT(*) as c, COUNT(DISTINCT vehicle_id) as v, MAX(purchased_at) as last_at')->first();
@@ -462,12 +497,22 @@ class PartIntelligenceService
      * whether the alert engine fired at the time — a repeat that slipped through unflagged is exactly the
      * row this list exists to surface.
      *
-     * ⚠️ Identity is the part NAME, not the SKU. Matching on part_number looks stricter but is wrong here:
-     * SKUs are hand-typed, differ per supplier for the same component, and are sometimes placeholders — on
-     * this database 3,550 of 3,552 purchases carry a distinct part_number, so a SKU-keyed sweep reports a
-     * clean fleet while the same tyre goes on the same car twice in a fortnight. Each pair still reports
-     * `matched_by`: 'part_number' when the two SKUs agree as well (the stronger evidence), else 'part_name'.
-     * This mirrors the same fallback partHistory() already makes.
+     * ⚠️ Identity is the CATALOG PART, falling back to the normalised wording — never the SKU. Matching on
+     * part_number looks stricter but is wrong here: SKUs are hand-typed, differ per supplier for the same
+     * component, and are sometimes placeholders — on this database 3,550 of 3,552 purchases carry a
+     * distinct part_number, so a SKU-keyed sweep reports a clean fleet while the same tyre goes on the
+     * same car twice in a fortnight.
+     *
+     * The partition therefore keys on component_catalog_id when the row has one, and on `part_name_key`
+     * otherwise. That second key is the row's wording with the BRAND CUT OFF — which is what makes this
+     * sweep work at all on real data: 3,542 of those rows are written "Shock Absorber — KYB",
+     * "Shock Absorber — Monroe", and partitioning by the raw name put every brand in its own bucket, so
+     * no two buys were ever "the same part" and the card was permanently, invisibly empty.
+     *
+     * COALESCE order matters: catalog id first, so a car that received the part twice under two different
+     * spellings still lands in ONE partition once both rows are linked. Each pair reports `matched_by`
+     * ('catalog' | 'part_name'), and `same_wording` — false when the two buys were written differently,
+     * which is the case a reader would otherwise dispute.
      *
      * @param int  $windowDays        max days between the two buys for the pair to count (the "again" window)
      * @param int  $lookbackDays      how far back the SECOND buy may be (how much history the card shows)
@@ -501,7 +546,11 @@ class PartIntelligenceService
                 FROM part_purchases p
                 " . ($vehicleId ? 'WHERE p.vehicle_id = ' . (int) $vehicleId : '') . "
                 WINDOW w AS (
-                    PARTITION BY p.vehicle_id, LOWER(TRIM(p.part_name))
+                    PARTITION BY p.vehicle_id, COALESCE(
+                        CONCAT('cat:', p.component_catalog_id),
+                        CONCAT('nm:', p.part_name_key),
+                        CONCAT('raw:', LOWER(TRIM(p.part_name)))
+                    )
                     ORDER BY COALESCE(p.purchased_at, p.created_at), p.id
                 )
             ) z
@@ -522,6 +571,7 @@ class PartIntelligenceService
         $by  = PartPurchase::whereIn('id', $ids)
             ->with([
                 'vehicle:id,plate_no,make,model',
+                'catalogPart:id,name',
                 'sourceVendor:id,name',
                 'task:id,symptom,category_key,root_cause',
                 // The approval ruling itself — who signed this buy off, and when.
@@ -555,9 +605,19 @@ class PartIntelligenceService
                 'part_name'    => $cur->part_name,
                 'part_number'  => $cur->part_number,
                 'part_class'   => $partClass,
-                // Which identity actually matched, so a reader can weigh the evidence: two agreeing SKUs is
-                // a stronger claim of "the same part" than two matching names.
-                'matched_by'   => $this->sameSku($cur, $prev) ? 'part_number' : 'part_name',
+                // The catalog part, when both buys were identified as one — the strongest claim of "the
+                // same part", because a human asserted it on each. Named so the page can show it.
+                'catalog_part' => $cur->component_catalog_id && $cur->component_catalog_id === $prev->component_catalog_id
+                    ? ['id' => $cur->component_catalog_id, 'name' => $cur->catalogPart?->name]
+                    : null,
+                // Which identity actually matched, so a reader can weigh the evidence.
+                'matched_by'   => $cur->component_catalog_id && $cur->component_catalog_id === $prev->component_catalog_id
+                    ? PartIdentityService::VIA_CATALOG
+                    : 'part_name',
+                // Whether the two buys were even SPELLED the same. False is the interesting case: the old
+                // check could only ever find pairs where this was true, so a page that does not say so
+                // reads as if nothing changed.
+                'same_wording' => $this->identity->sameWording($cur->part_name, $prev->part_name),
                 'days_between' => $days,
                 // The same verdict the buy-time alert would have reached, recomputed here — so this list and
                 // the modal warning can never grade the same repeat differently. Null = no alert was owed.
@@ -634,15 +694,6 @@ class PartIntelligenceService
         ];
     }
 
-    /** True when both rows carry a part_number and the two collapse to the same string. */
-    private function sameSku(PartPurchase $a, PartPurchase $b): bool
-    {
-        $norm = fn (?string $s) => $s === null ? '' : strtolower(preg_replace('/\s+/', '', $s));
-        $x = $norm($a->part_number);
-
-        return $x !== '' && $x === $norm($b->part_number);
-    }
-
     /** True when both buys hang off the same fault — same category_key, else the same normalised symptom. */
     private function sameFault(PartPurchase $a, PartPurchase $b): bool
     {
@@ -674,6 +725,10 @@ class PartIntelligenceService
             'high'          => count(array_filter($rows, fn ($r) => $r['priority'] === PartInvestigation::PRIORITY_HIGH)),
             'medium'        => count(array_filter($rows, fn ($r) => $r['priority'] === PartInvestigation::PRIORITY_MEDIUM)),
             'same_fault'    => count(array_filter($rows, fn ($r) => $r['same_fault'])),
+            // Repeats the OLD string-comparison check could not have found, because the two buys were
+            // written differently ("Alternator" / "دينامو", "Shock Absorber — KYB" / "— Monroe"). Counted
+            // separately so the value of identity-based matching is visible rather than asserted.
+            'other_wording' => count(array_filter($rows, fn ($r) => ! $r['same_wording'])),
             // Repeat buys that never passed an approval step — the accountability gap, counted separately
             // from repeats that WERE approved (where the question is who signed it, not whether anyone did).
             'no_approval'   => count(array_filter($rows, fn ($r) => $r['current']['approval']['state'] !== 'approved')),

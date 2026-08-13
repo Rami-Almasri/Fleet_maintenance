@@ -97,6 +97,11 @@ class PartRequestController extends Controller
                 'maintenance_id'      => ['required', 'exists:maintenances,id'],
                 'maintenance_task_id' => ['nullable', 'exists:maintenance_tasks,id'],
                 'part_name'           => ['required', 'string', 'max:255'],
+                // WHICH part, when the requester picked it from the catalog. Optional so a part the
+                // catalog does not carry yet can still be requested as free text — but a request that
+                // sends it gets the repeat-buy warning across every other name for that part, and one
+                // that does not can only ever be matched by its own spelling.
+                'component_catalog_id' => ['nullable', 'integer', 'exists:component_catalog,id'],
                 'part_number'         => ['nullable', 'string', 'max:255'],
                 'category_key'        => ['nullable', 'string', 'max:60'],
                 'repair_location'     => ['nullable', Rule::in(PartRequest::LOCATIONS)],

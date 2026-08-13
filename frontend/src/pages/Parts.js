@@ -124,6 +124,9 @@ function PurchaseModal({ open, request, onClose, onDone, vendors }) {
     api.get('/part-purchases/duplicate-check', {
       params: {
         vehicle_id: request.vehicle?.id,
+        // The identity the requester established. Without it this asks only "has anyone typed these
+        // words before"; with it, "has this car had this part before" — whatever either was called.
+        component_catalog_id: request.component_catalog_id || undefined,
         part_name: request.part_name,
         part_number: request.part_number || undefined,
       },
@@ -905,7 +908,12 @@ export default function Parts() {
     let dup = null;
     try {
       dup = payload(await api.get('/part-purchases/duplicate-check', {
-        params: { vehicle_id: req.vehicle?.id, part_name: req.part_name, part_number: req.part_number || undefined },
+        params: {
+          vehicle_id: req.vehicle?.id,
+          component_catalog_id: req.component_catalog_id || undefined,
+          part_name: req.part_name,
+          part_number: req.part_number || undefined,
+        },
       }));
     } catch {
       // Advisory only — a failed lookup never blocks an approval. But it is SAID, because an approver

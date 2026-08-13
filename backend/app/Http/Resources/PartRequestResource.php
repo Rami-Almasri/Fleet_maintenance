@@ -28,6 +28,10 @@ class PartRequestResource extends JsonResource
             'maintenance_task_id' => $this->maintenance_task_id,
             'fault_symptom'       => $this->whenLoaded('task', fn () => $this->task?->symptom),
             'part_name'           => $this->part_name,
+            // WHICH part, not just what it was called — the client passes this back to the
+            // duplicate-check endpoint so the repeat-buy question survives a change of wording.
+            'component_catalog_id' => $this->component_catalog_id,
+            'catalog_matched_by'   => $this->catalog_matched_by,
             'part_number'         => $this->part_number,
             'category_key'        => $this->category_key,
             'part_class'          => $this->part_class,

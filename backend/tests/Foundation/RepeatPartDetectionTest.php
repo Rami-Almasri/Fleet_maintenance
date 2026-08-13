@@ -9,10 +9,13 @@ use App\Services\PartIntelligenceService;
 /**
  * Repeat detection: the same part, on the same car, twice.
  *
- * Identity is the part NAME, not the SKU. That looks like the weaker choice and is not: 3,550 of
- * 3,552 purchases in this fleet carry a distinct hand-typed part_number, so a SKU-keyed sweep finds
- * zero repeats fleet-wide and reports a clean fleet while the same compressor goes on the same car
- * inside a month.
+ * WHAT "THE SAME PART" MEANS is PartIdentityService's ruling, and these tests exist to hold it to both
+ * halves of its job. It must catch the part bought again under another name — a trade name, the Arabic
+ * word, a different brand, a different hand-typed SKU — because a warning that only fires when two
+ * people type the same characters is a coincidence detector, not a control. And it must REFUSE to
+ * claim identity from a symptom or from wording that fits two parts, because a false "you already
+ * bought this" accuses an innocent purchase and an innocent approver, and is the failure that destroys
+ * trust in the warning fastest.
  */
 class RepeatPartDetectionTest extends FoundationTestCase
 {
@@ -82,36 +85,96 @@ class RepeatPartDetectionTest extends FoundationTestCase
     }
 
     /**
-     * TWO IDENTITY RULES EXIST, AND THEY DISAGREE. Pinned here because the disagreement is real and
-     * currently invisible to anyone reading either path alone.
+     * A FRESH SKU FOR THE SAME PART NO LONGER HIDES THE REPEAT — the gap this suite used to pin open.
      *
-     *   detectDuplicate (this method, the buy-time modal) keys on the SKU whenever one is supplied,
-     *   falling back to the name only when it is blank.
-     *
-     *   repeatPurchases (the fleet-wide sweep behind the dashboard card) keys on the NAME, because
-     *   3,550 of 3,552 purchases carry a distinct hand-typed part_number and a SKU-keyed sweep
-     *   therefore finds nothing at all.
-     *
-     * The consequence: a buyer who types a fresh SKU for the same compressor is NOT warned at the
-     * till, and the repeat surfaces only later on the sweep. That is a gap, not a feature — recorded
-     * in the architecture review rather than silently changed here, because widening the buy-time
-     * check would fire on every legitimate re-buy of a consumable-ish part and needs its own
-     * windowing decision.
+     * The buy-time check keyed on the SKU whenever one was supplied, so typing a different hand-typed
+     * part number for the same compressor produced a clean bill at the till while the fleet-wide sweep
+     * (which keys on the part, not the SKU) reported the repeat days later. The two paths now share
+     * one ruling — PartIdentityService — so they cannot grade the same buy differently.
      */
-    public function test_buy_time_identity_is_sku_first_and_misses_a_renamed_sku(): void
+    public function test_a_different_sku_for_the_same_part_is_still_a_repeat(): void
     {
         $v = $this->makeVehicle();
         $this->purchase($v, 'AC Compressor', 15, 'SKU-AAA-111');
 
-        // Same part, different hand-typed SKU → buy-time check does NOT flag it.
-        $this->assertFalse(
-            $this->intel->detectDuplicate($v->id, 'AC Compressor', 'SKU-BBB-222', 'ac')['duplicate'],
-            'documents the known gap: SKU-first identity hides a repeat of the same part'
-        );
+        $verdict = $this->intel->detectDuplicate($v->id, 'AC Compressor', 'SKU-BBB-222', 'ac');
 
-        // With no SKU supplied the same call falls back to the name and DOES flag it.
-        $this->assertTrue(
-            $this->intel->detectDuplicate($v->id, 'AC Compressor', null, 'ac')['duplicate']
+        $this->assertTrue($verdict['duplicate'], 'the SKU changed; the part did not');
+        $this->assertSame(15, $verdict['days_between']);
+    }
+
+    /**
+     * THE POINT OF THE WHOLE FEATURE: the same part bought again under a DIFFERENT NAME.
+     *
+     * 'dynamo' is a curated identity alias of Alternator, so the two records are one part however each
+     * was typed. Before identity-based matching this returned a clean bill — the warning only ever
+     * fired when two people happened to type the same characters.
+     */
+    public function test_the_same_part_under_another_name_is_a_repeat(): void
+    {
+        $v = $this->makeVehicle();
+        $this->purchase($v, 'dynamo', 10);
+
+        $verdict = $this->intel->detectDuplicate($v->id, 'Alternator', null, 'electrical');
+
+        $this->assertTrue($verdict['duplicate'], "'dynamo' and 'Alternator' are the same part");
+        $this->assertSame('catalog', $verdict['matched_via'], 'both rows resolve to the catalog row');
+    }
+
+    /** The Arabic workshop word is the same part as the English name. */
+    public function test_the_arabic_name_is_the_same_part(): void
+    {
+        $v = $this->makeVehicle();
+        $this->purchase($v, 'دينمو', 7);
+
+        $this->assertTrue($this->intel->detectDuplicate($v->id, 'Alternator', null, 'electrical')['duplicate']);
+    }
+
+    /**
+     * A BRAND IS NOT A PART. The fleet's own records are written "part — brand", so a check that
+     * treats the suffix as part of the name finds almost no repeats: 3,542 of 3,552 purchase rows
+     * carry that shape, and on this database the fleet-wide sweep went from 97 pairs to 547 when the
+     * suffix stopped counting.
+     */
+    public function test_the_same_part_from_another_brand_is_a_repeat(): void
+    {
+        $v = $this->makeVehicle();
+        $this->purchase($v, 'Shock Absorber — KYB', 12);
+
+        $verdict = $this->intel->detectDuplicate($v->id, 'Shock Absorber — Monroe', null, 'suspension');
+
+        $this->assertTrue($verdict['duplicate'], 'a KYB shock and a Monroe shock are the same part');
+    }
+
+    /**
+     * A SYMPTOM IS NOT AN IDENTITY. 'battery not charging' lives in the SEARCH alias list precisely
+     * because it does not name a part — it is as true of the battery and the wiring as of the
+     * alternator. Matching on it would tell a buyer a repair failed when nobody ever bought this part.
+     */
+    public function test_a_symptom_alias_never_establishes_identity(): void
+    {
+        $v = $this->makeVehicle();
+        $this->purchase($v, 'battery not charging', 5);
+
+        $this->assertFalse(
+            $this->intel->detectDuplicate($v->id, 'Alternator', null, 'electrical')['duplicate'],
+            'a complaint recorded as a part name identifies no part'
+        );
+    }
+
+    /**
+     * AN AMBIGUOUS NAME DECIDES NOTHING. 'fan motor' is said of the radiator fan AND the A/C blower, so
+     * it is search-only wording. Even if it reached the identity list by mistake, the runtime refuses
+     * any surface it finds under two catalog rows rather than picking one.
+     */
+    public function test_wording_shared_by_two_parts_is_refused(): void
+    {
+        $v = $this->makeVehicle();
+        $this->purchase($v, 'fan motor', 5);
+
+        $this->assertFalse(
+            $this->intel->detectDuplicate($v->id, 'Radiator Fan', null, 'engine')['duplicate'],
+            "'fan motor' cannot say which of the two fans was bought"
         );
     }
 

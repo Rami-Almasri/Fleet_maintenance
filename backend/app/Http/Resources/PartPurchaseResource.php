@@ -15,6 +15,8 @@ class PartPurchaseResource extends JsonResource
             'maintenance_id'      => $this->maintenance_id,
             'maintenance_task_id' => $this->maintenance_task_id,
             'part_name'           => $this->part_name,
+            // WHICH part was bought, as opposed to what it was called. See PartIdentityService.
+            'component_catalog_id' => $this->component_catalog_id,
             'part_number'         => $this->part_number,
             'category_key'        => $this->category_key,
             'part_class'          => $this->part_class,

@@ -3529,7 +3529,8 @@ const en = {
     colActions: 'Actions',
 
     noArabic: 'No Arabic name',
-    nAliases: '{n} names',
+    nAliases: '{n} search words',
+    nOtherNames: '{n} other names',
     onNCars: 'On {n} cars',
     unused: 'Not used yet',
     nMonths: '{n} months',
@@ -3550,10 +3551,15 @@ const en = {
     blockedTitle: 'This part cannot be deleted',
     blockedIntro: 'It is still referenced by records that would lose their meaning without it:',
     blockedHint: 'Retiring hides the part from every picker while these records keep working. Deletion stays available only for a part nothing has ever used.',
+    // MUST carry a key for every reference the API can report — PartsCatalogController::referenceCounts().
+    // These are looked up dynamically (`partsCatalog.ref.${key}`), so a missing one is not caught by the
+    // i18n check: it silently renders the raw key on screen.
     ref: {
       fitted_components: 'fitted components',
       warranties: 'warranties',
       required_parts: 'required-part lines',
+      part_requests: 'part requests',
+      purchases: 'recorded purchases',
     },
 
     permissionDenied: 'You do not have permission to change the parts catalog.',
@@ -3569,9 +3575,13 @@ const en = {
     fieldCategory: 'Category',
     selectCategory: 'Choose a category',
     fieldTracking: 'Tracked as',
-    fieldAliases: 'Other names & how people describe it',
-    aliasPlaceholder: 'dynamo, battery not charging, ما يشحن…',
-    aliasHint: 'Press Enter after each one. Add the other names people use AND the problem they describe — anyone searching either will find this part.',
+    fieldIdentityAliases: 'Other names for this exact part',
+    identityAliasPlaceholder: 'dynamo, generator, دينامو…',
+    identityAliasHint: 'Press Enter after each one. These count: anything listed here IS this part, so buying it under one name warns about the last time it was bought under another. Only add real names for the same part — not a problem description, and not a name that could mean a different part.',
+
+    fieldAliases: 'How people describe the problem (search only)',
+    aliasPlaceholder: 'battery not charging, ما يشحن…',
+    aliasHint: 'Press Enter after each one. These only help someone FIND the part in a search box. They are never used to decide two records are the same part — a symptom fits several parts, so matching on it would accuse the wrong purchase.',
     warrantySection: 'Default warranty from the supplier',
     fieldWarrantyMonths: 'Months',
     fieldWarrantyKm: 'Kilometres',
@@ -8178,7 +8188,8 @@ const ar = {
     colActions: 'إجراءات',
 
     noArabic: 'لا يوجد اسم عربي',
-    nAliases: '{n} أسماء',
+    nAliases: '{n} كلمات بحث',
+    nOtherNames: '{n} أسماء أخرى',
     onNCars: 'على {n} سيارة',
     unused: 'غير مستخدمة بعد',
     nMonths: '{n} شهر',
@@ -8202,6 +8213,8 @@ const ar = {
       fitted_components: 'قطع مركّبة',
       warranties: 'ضمانات',
       required_parts: 'سطور قطع مطلوبة',
+      part_requests: 'طلبات قطع',
+      purchases: 'عمليات شراء مسجّلة',
     },
 
     permissionDenied: 'ليست لديك صلاحية تعديل كتالوج قطع الغيار.',
@@ -8217,9 +8230,13 @@ const ar = {
     fieldCategory: 'الفئة',
     selectCategory: 'اختر الفئة',
     fieldTracking: 'طريقة التتبع',
-    fieldAliases: 'أسماء أخرى وطريقة وصف المشكلة',
-    aliasPlaceholder: 'دينامو، ما يشحن، battery not charging…',
-    aliasHint: 'اضغط Enter بعد كل اسم. أضف الأسماء الأخرى المستخدمة وكذلك وصف المشكلة — أي بحث بأيٍّ منها سيصل إلى هذه القطعة.',
+    fieldIdentityAliases: 'أسماء أخرى لنفس القطعة',
+    identityAliasPlaceholder: 'دينامو، generator، dynamo…',
+    identityAliasHint: 'اضغط Enter بعد كل اسم. هذه الأسماء لها أثر: كل ما تكتبه هنا يُعتبر نفس القطعة، فإذا شُتريت باسم ونُبِّهك النظام أنها شُتريت سابقًا باسم آخر. أضف فقط أسماء حقيقية لنفس القطعة — لا وصفًا للمشكلة، ولا اسمًا قد يعني قطعة أخرى.',
+
+    fieldAliases: 'كيف يصف الناس المشكلة (للبحث فقط)',
+    aliasPlaceholder: 'ما يشحن، battery not charging…',
+    aliasHint: 'اضغط Enter بعد كل كلمة. هذه تساعد فقط في العثور على القطعة في البحث، ولا تُستخدم أبدًا لتحديد أن سجلَّين لنفس القطعة — فوصف المشكلة ينطبق على عدة قطع، ومطابقته تعني اتهام مشترياتٍ بريئة.',
     warrantySection: 'الضمان الافتراضي من المورّد',
     fieldWarrantyMonths: 'بالأشهر',
     fieldWarrantyKm: 'بالكيلومترات',

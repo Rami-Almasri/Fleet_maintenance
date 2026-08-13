@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\HasPartIdentity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -15,6 +16,10 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  */
 class PartPurchase extends Model
 {
+    /** Fills component_catalog_id / part_name_key on every save — a row without them is invisible
+     *  to the repeat-buy check, so the invariant lives at the write rather than in each caller. */
+    use HasPartIdentity;
+
     public const SOURCE_GARAGE   = 'garage';
     public const SOURCE_SUPPLIER = 'supplier';
     public const PURCHASE_SOURCES = [self::SOURCE_GARAGE, self::SOURCE_SUPPLIER];
@@ -30,6 +35,11 @@ class PartPurchase extends Model
         'rfq_line_id', 'supplier_quote_id', 'po_number',
         'vehicle_id', 'maintenance_id', 'maintenance_task_id',
         'part_name', 'part_number', 'category_key', 'part_class',
+        // WHICH part this is, as opposed to what it was called. See PartIdentityService: the catalog
+        // id is the identity a human asserted by picking from the list; part_name_key is this row's
+        // own wording, normalised, so free text can still be recognised. Both are written by
+        // PartWorkflowService — never set part_name without them.
+        'component_catalog_id', 'catalog_matched_by', 'part_name_key',
         'purchase_source', 'source_vendor_id', 'source_name',
         'repair_location',
         'purchase_price', 'currency', 'quantity',
@@ -61,6 +71,12 @@ class PartPurchase extends Model
     public function request(): BelongsTo
     {
         return $this->belongsTo(PartRequest::class, 'part_request_id');
+    }
+
+    /** The part TYPE that was bought, when it is known. Null on history written before the picker. */
+    public function catalogPart(): BelongsTo
+    {
+        return $this->belongsTo(ComponentCatalog::class, 'component_catalog_id');
     }
 
     /** Phase 2: the awarded RFQ line this PO was issued against (null for direct buys). */
