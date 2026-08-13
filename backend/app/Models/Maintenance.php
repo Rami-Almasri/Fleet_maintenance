@@ -630,6 +630,62 @@ class Maintenance extends Model
         self::SOURCE_CUSTOMER,
     ];
 
+    /**
+     * HOW the requester stated their case, and the three are MUTUALLY EXCLUSIVE.
+     *
+     * A person sending a car in answers "why?" exactly one way: they name the fault they hit, they pick
+     * an operational reason, or they write it out. Allowing two at once produces a request that says
+     * "brake noise" in one field and "due for service" in another, and nobody downstream can tell which
+     * one the car is actually going in for. The service enforces the exclusivity; this is the contract.
+     */
+    public const REPORT_MODE_FAULT  = 'fault';   // named one or more fault types from the catalog
+    public const REPORT_MODE_REASON = 'reason';  // picked a REQUEST_REASON_CODE
+    public const REPORT_MODE_NOTE   = 'note';    // wrote it in their own words
+    public const REPORT_MODES = [self::REPORT_MODE_FAULT, self::REPORT_MODE_REASON, self::REPORT_MODE_NOTE];
+
+    /**
+     * WHY a car is being sent in when the requester cannot name a fault — the fixed reason list behind
+     * `request_reason_code`. The CODE is the stored fact and the only thing counted; the English here is
+     * presentation, may be reworded or translated freely, and is never what gets written to the column
+     * (see [[reason-code-contract]]).
+     *
+     * Two lists because the two doors ask different questions. The INSPECTION list is "I can't say what's
+     * wrong, but somebody should look" — every entry ends in a test drive. The DISPATCH list is "there is
+     * nothing to diagnose, this car has somewhere to be" — every entry is already a decision, which is
+     * exactly why that door skips the test drive and opens at Needs Dispatch.
+     *
+     * Deliberately ABSENT from both: anything a customer said. A customer issue is a Complaint (see
+     * [[complaint-entity]]) and has its own front door; letting it in here would split one customer's
+     * story across two entities.
+     */
+    public const REQUEST_REASONS_INSPECTION = [
+        'warning_light'      => 'A warning light is on',
+        'feels_wrong'        => "It didn't feel right — I can't say what",
+        'back_from_rental'   => 'Just back from a long rental',
+        'long_idle'          => 'Sat parked for a long time',
+        'before_handover'    => 'Going out to a customer — check it first',
+        'recheck_last_repair'=> 'Check the last repair held',
+        'other'              => 'Something else',
+    ];
+
+    public const REQUEST_REASONS_DISPATCH = [
+        'known_fault'        => 'A fault we already know — no test needed',
+        'scheduled_service'  => 'Booked service work',
+        'parts_arrived'      => 'The parts are in — going in to have them fitted',
+        'garage_callback'    => 'The garage asked for the car back',
+        'visible_damage'     => 'Visibly broken — nothing to test-drive',
+        'other'              => 'Something else',
+    ];
+
+    /** Every valid reason code, whichever door it came through. */
+    public const REQUEST_REASON_CODES = self::REQUEST_REASONS_INSPECTION + self::REQUEST_REASONS_DISPATCH;
+
+    /** Human label for a stored reason code — presentation only, never the stored fact. */
+    public static function requestReasonLabel(?string $code): ?string
+    {
+        return $code ? (self::REQUEST_REASON_CODES[$code] ?? $code) : null;
+    }
+
     /** Human labels for the origin — the "Source:" line on the board, cards and drawers. */
     public const REQUEST_ORIGIN_LABELS = [
         self::SOURCE_DRIVER_OBSERVATION => 'Driver Observation',
@@ -923,6 +979,9 @@ class Maintenance extends Model
         // WHERE the request came from — see REQUEST_ORIGINS. Separate axis from trigger_reason.
         'request_origin',
         'customer_complaint',
+        // The requester's statement kept as data rather than only as a sentence — HOW they said it, the
+        // fault types they named, and the reason code they picked. Exclusive by contract; see REPORT_MODES.
+        'request_detail_mode', 'reported_faults', 'request_reason_code',
         'suggested_findings',
         'trigger_detail',
         'test_drive_report',
@@ -1008,6 +1067,7 @@ class Maintenance extends Model
         'findings'             => 'array',
         'suggested_findings'   => 'array',
         'trigger_detail'       => 'array', // snapshot of WHY the system raised a periodic request (see systemRequestInspection)
+        'reported_faults'      => 'array', // the requester's named fault types — a CLAIM, never a diagnosis
         'review_auto_context'  => 'array', // the contract facts behind a SYSTEM withdrawal (see REVIEW_SYSTEM_WITHDRAWAL_REASONS)
         'follow_ups'           => 'array',
         'test_odometer'        => 'integer',

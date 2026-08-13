@@ -34,6 +34,7 @@ import {
   CommandPanel, KpiTile, LiveActivityFeed, JourneyMap, OpsClock, severityTone,
 } from '../components/ops';
 import TicketActionModal from '../components/workflow/TicketActionModal';
+import SendCarInModal from '../components/workflow/SendCarInModal';
 import BreakdownIntakeModal from '../components/workflow/BreakdownIntakeModal';
 import ComplaintTriageModal from '../components/workflow/ComplaintTriageModal';
 import { resolveAction, stageAge, ago, custodyBlocked, custodyHolderName, assignmentBlocked, assignedDriverName, ORIGIN_LABEL } from '../components/workflow/meta';
@@ -710,7 +711,9 @@ export default function MyMaintenanceQueue() {
   const isInspector = !!roles.inspector;
   const isDispatcher = !!roles.dispatcher;
   const isDriver = !!roles.driver;
-  const canRequest = can('maintenance.logistics');
+  // Either door of SendCarInModal qualifies: a driver asks for a look; an inspector or supervisor can
+  // also send a car straight to a garage. The modal shows only the doors the caller may actually use.
+  const canRequest = can('maintenance.logistics') || can('maintenance.initiate') || can('maintenance.manage');
 
   // Default the active tab to the user's first available role; keep it valid as roles load.
   useEffect(() => {
@@ -996,7 +999,12 @@ export default function MyMaintenanceQueue() {
         <ComplaintTriageModal ticket={modal.ticket} vehicles={vehicles} onClose={() => setModal(null)} onDone={onDone} />
       )}
 
-      {modal && !['breakdown', 'triage'].includes(modal.action) && (
+      {/* Send a car in — its own two-door form (ask for a look / straight to the garage), so it is
+          excluded from the generic action modal below. */}
+      {modal?.action === 'request' && (
+        <SendCarInModal vehicles={vehicles} onClose={() => setModal(null)} onDone={onDone} />
+      )}
+      {modal && !['breakdown', 'triage', 'request'].includes(modal.action) && (
         <TicketActionModal
           action={modal.action}
           ticket={modal.ticket || null}

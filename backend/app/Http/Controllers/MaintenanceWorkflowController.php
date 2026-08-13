@@ -279,6 +279,89 @@ class MaintenanceWorkflowController extends Controller
         );
     }
 
+    /**
+     * Everything the Send-a-car-in form needs that does NOT depend on which car is picked, in one call:
+     * the fault vocabulary it may offer, the two reason lists, and who the filer is.
+     *
+     * WHO IS FILING IS NOT A FIELD. It is read from the authenticated user and returned here purely so
+     * the form can SHOW it — there is no picker, and the server stamps `requested_by` from the token
+     * regardless of anything the client sends. A request whose author can be typed in is a request whose
+     * author cannot be trusted.
+     *
+     * The fault menu is the live FaultCatalog (kind = fault), grouped by category with the labels from
+     * config/maintenance_findings — SELECTABLE vocabulary only, per [[findings-vocabulary-contract]].
+     * Services and inspections are deliberately absent: a person reporting a problem is naming a failure,
+     * and "Oil Change" is not something that went wrong.
+     */
+    public function requestOptions(Request $request)
+    {
+        return $this->run(function () use ($request) {
+            $labels = collect(config('maintenance_findings.categories', []))
+                ->keyBy('key')
+                ->map(fn ($c) => ['label' => $c['label'] ?? null, 'label_ar' => $c['label_ar'] ?? null]);
+
+            $groups = \App\Models\FaultCatalog::active()->ordered()
+                ->get(['id', 'slug', 'name', 'name_ar', 'category_key', 'default_severity', 'on_site'])
+                ->groupBy('category_key')
+                ->map(fn ($rows, $key) => [
+                    'key'      => $key,
+                    'label'    => $labels[$key]['label'] ?? Str::title(str_replace('_', ' ', (string) $key)),
+                    'label_ar' => $labels[$key]['label_ar'] ?? null,
+                    'faults'   => $rows->map(fn ($f) => [
+                        'id'               => $f->id,
+                        'slug'             => $f->slug,
+                        'name'             => $f->name,
+                        'name_ar'          => $f->name_ar,
+                        'category_key'     => $f->category_key,
+                        'default_severity' => $f->default_severity,
+                        'on_site'          => (bool) $f->on_site,
+                    ])->values(),
+                ])
+                ->values();
+
+            $user = $request->user();
+
+            return ResponseHelper::SuccessResponse([
+                'fault_groups' => $groups,
+                // CODE => label. The code is the stored fact; the label is presentation and the client is
+                // free to render its own translation instead (see [[reason-code-contract]]).
+                'reasons'      => [
+                    'inspection' => Maintenance::REQUEST_REASONS_INSPECTION,
+                    'dispatch'   => Maintenance::REQUEST_REASONS_DISPATCH,
+                ],
+                // Read-only identity for the "Filed by" line — never an input.
+                'filed_by'     => ['id' => $user?->id, 'name' => $user?->name],
+                // WHICH DOORS THIS PERSON MAY ACTUALLY USE. The routes enforce both; these flags only
+                // stop a door being offered to somebody whose submit would come back 403. They mirror
+                // POST /request (logistics), POST /request-inspection (manage) and POST /direct-dispatch
+                // (initiate|manage) — change one there, change it here.
+                'can_request'  => (bool) ($user?->can('maintenance.logistics') || $user?->can('maintenance.manage')),
+                'can_dispatch' => (bool) ($user?->can('maintenance.initiate') || $user?->can('maintenance.manage')),
+            ], 'Request options retrieved', 200);
+        });
+    }
+
+    /**
+     * "Is it this again?" — the faults THIS car has already been in the shop for, so the person filling
+     * in the form is offered their own car's history before a generic catalog.
+     *
+     * Every row is a FACT off the record (what, when, which ticket, which garage, was it fixed) plus one
+     * derived flag: `within_recurrence_window` says the fault was last FIXED inside the configured
+     * window. It does not say the fault has returned — nobody knows that yet, and only the workshop's
+     * confirmation ever establishes it (see RecurringFaultService). Picking one stamps
+     * `repeat_of_ticket_id` on the request: the requester's claim, recorded as theirs.
+     */
+    public function vehicleRecentFaults(Request $request, Vehicle $vehicle)
+    {
+        return $this->run(function () use ($vehicle) {
+            return ResponseHelper::SuccessResponse(
+                ['faults' => $this->workflow->recentFaultsFor($vehicle)],
+                'Recent faults retrieved',
+                200
+            );
+        });
+    }
+
     /** All workflow tickets, newest first. Filter with ?status= and ?vehicle_id=. */
     public function index(Request $request)
     {
@@ -1164,13 +1247,25 @@ class MaintenanceWorkflowController extends Controller
                 'trigger_reason' => ['required', Rule::in(Maintenance::TRIGGER_REASONS)],
                 'notes'          => ['nullable', 'string', 'max:2000'],
                 'test_kind'      => ['nullable', Rule::in(Maintenance::TEST_KINDS)],
+                // The structured statement is OPTIONAL on this door: the Routine / Scheduled intake tabs
+                // already say why by being the tab they are, and demanding a fault name for a car nobody
+                // has driven would only invite an invented one. Sent, it is judged like every other door's.
+                'reported_faults'                       => ['nullable', 'array', 'max:6'],
+                'reported_faults.*.fault_catalog_id'    => ['nullable', 'integer'],
+                'reported_faults.*.slug'                => ['nullable', 'string', 'max:64'],
+                'reported_faults.*.text'                => ['nullable', 'string', 'max:255'],
+                'reported_faults.*.category_key'        => ['nullable', 'string', 'max:64'],
+                'reported_faults.*.repeat_of_ticket_id' => ['nullable', 'integer'],
+                'request_reason_code'                   => ['nullable', 'string', Rule::in(array_keys(Maintenance::REQUEST_REASONS_INSPECTION))],
             ]);
 
             $ticket = $this->workflow->requestInspectionByController([
-                'vehicle_id'         => $data['vehicle_id'],
-                'trigger_reason'     => $data['trigger_reason'],
-                'customer_complaint' => $data['notes'] ?? null,
-                'test_kind'          => $data['test_kind'] ?? null,
+                'vehicle_id'          => $data['vehicle_id'],
+                'trigger_reason'      => $data['trigger_reason'],
+                'customer_complaint'  => $data['notes'] ?? null,
+                'test_kind'           => $data['test_kind'] ?? null,
+                'reported_faults'     => $data['reported_faults'] ?? null,
+                'request_reason_code' => $data['request_reason_code'] ?? null,
             ], $request->user());
 
             return ResponseHelper::SuccessResponse(
@@ -1359,6 +1454,18 @@ class MaintenanceWorkflowController extends Controller
                 'media'              => ['nullable', 'file', 'mimetypes:video/mp4,video/quicktime,video/x-msvideo,video/webm,video/3gpp,image/jpeg,image/png,image/webp,image/heic,image/heif', 'max:262144'],
                 // maintenance_type is intentionally absent: the Driver has no diagnostic authority.
                 // The Inspector sets the classification when filing the report (submitReport).
+
+                // THE STATEMENT — how they said why. Shape only is checked here; the exclusivity rule and
+                // the "where did this fault name come from?" proof live in the service, so every door
+                // (and every future caller) is judged by the same one implementation.
+                'reported_faults'                       => ['nullable', 'array', 'max:6'],
+                'reported_faults.*.fault_catalog_id'    => ['nullable', 'integer'],
+                'reported_faults.*.slug'                => ['nullable', 'string', 'max:64'],
+                'reported_faults.*.text'                => ['nullable', 'string', 'max:255'],
+                'reported_faults.*.category_key'        => ['nullable', 'string', 'max:64'],
+                'reported_faults.*.repeat_of_ticket_id' => ['nullable', 'integer'],
+                'request_reason_code'                   => ['nullable', 'string', Rule::in(array_keys(Maintenance::REQUEST_REASONS_INSPECTION))],
+                // requested_by is NOT accepted: the filer comes from the token, never from the payload.
             ]);
 
             $ticket = $this->workflow->requestInspection($data, $request->user());
@@ -1370,6 +1477,45 @@ class MaintenanceWorkflowController extends Controller
             }
 
             return ResponseHelper::SuccessResponse(MaintenanceWorkflowResource::make($ticket), 'Inspection requested — awaiting Controller review', 201);
+        });
+    }
+
+    /**
+     * THE SECOND DOOR — a car that needs a garage, not a diagnosis.
+     *
+     * Booked service, parts arrived, the garage asked for it back, a fault we already know: there is
+     * nothing for an inspector to find out, so the ticket skips the review gate AND the test drive and is
+     * born in the Supervisors' dispatch queue (`inspection_pending` — "Needs Dispatch"). The named faults
+     * become real routable faults immediately, because a supervisor cannot dispatch an empty ticket.
+     *
+     * That is a car committed to a workshop with nobody having diagnosed it, so the route is gated to
+     * `maintenance.initiate|maintenance.manage` — the people who already hold diagnostic or dispatch
+     * authority. A Driver (maintenance.logistics alone) files an inspection REQUEST and someone decides.
+     * Not a breakdown: the car is driveable, is not grounded, and is not forced to critical — reporting a
+     * dead car is still storeBreakdown().
+     */
+    public function storeDirectDispatch(Request $request)
+    {
+        return $this->run(function () use ($request) {
+            $data = $request->validate([
+                'vehicle_id'                            => ['required', 'integer', Rule::exists('vehicles', 'id')],
+                'reported_faults'                       => ['nullable', 'array', 'max:6'],
+                'reported_faults.*.fault_catalog_id'    => ['nullable', 'integer'],
+                'reported_faults.*.slug'                => ['nullable', 'string', 'max:64'],
+                'reported_faults.*.text'                => ['nullable', 'string', 'max:255'],
+                'reported_faults.*.category_key'        => ['nullable', 'string', 'max:64'],
+                'reported_faults.*.repeat_of_ticket_id' => ['nullable', 'integer'],
+                'request_reason_code'                   => ['nullable', 'string', Rule::in(array_keys(Maintenance::REQUEST_REASONS_DISPATCH))],
+                'customer_complaint'                    => ['nullable', 'string', 'max:2000'],
+            ]);
+
+            $ticket = $this->workflow->openDirectDispatch($data, $request->user());
+
+            return ResponseHelper::SuccessResponse(
+                MaintenanceWorkflowResource::make($ticket),
+                'Sent in — waiting for a supervisor to pick the garage',
+                201
+            );
         });
     }
 

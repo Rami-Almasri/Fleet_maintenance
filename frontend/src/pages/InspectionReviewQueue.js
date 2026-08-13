@@ -27,7 +27,7 @@ import { Input, Textarea } from '../components/ui/Field';
 import { useI18n } from '../i18n/I18nContext';
 import { EmptyState } from '../components/ui/Misc';
 import { Skeleton } from '../components/ui/Skeleton';
-import TicketActionModal from '../components/workflow/TicketActionModal';
+import SendCarInModal from '../components/workflow/SendCarInModal';
 import ComplaintIntakeModal from '../components/workflow/ComplaintIntakeModal';
 import SuggestedChecks from '../components/workflow/SuggestedChecks';
 import { num, fmtDate, fmtClock } from '../lib/format';
@@ -2247,11 +2247,11 @@ export default function InspectionReviewQueue() {
       {modal?.action === 'remind' && (
         <RemindModal ticket={modal.ticket} onClose={() => setModal(null)} onDone={onDone} />
       )}
-      {/* Request Inspection — the driver "flag a car" form: vehicle + What happened? (test drive /
-          customer / routine) + notes + optional photo/video. Born in pending_review, so it lands right
-          back in this queue for a Controller to approve before it reaches Abu Maroof. */}
+      {/* Send a car in — the two-door front form. "Ask for a look" is born in pending_review, so it
+          lands right back in this queue for a Controller to approve before it reaches Abu Maroof;
+          "Straight to the garage" skips both and opens at Needs Dispatch. */}
       {modal?.action === 'request' && (
-        <TicketActionModal action="request" vehicles={vehicles} onClose={() => setModal(null)} onDone={onDone} />
+        <SendCarInModal vehicles={vehicles} onClose={() => setModal(null)} onDone={onDone} />
       )}
       {/* Complaint Intake — logs a customer complaint straight into Abu Maroof's triage lane. */}
       {modal?.action === 'complaint' && (

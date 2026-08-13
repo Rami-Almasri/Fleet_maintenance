@@ -188,6 +188,14 @@ class MaintenanceWorkflowResource extends JsonResource
             // Null on rows created before the column existed and never backfilled.
             'request_origin'        => $t->request_origin,
             'request_origin_label'  => $t->requestOriginLabel(),
+            // THE REQUESTER'S STATEMENT as data, beside the sentence it was rendered into. `reported_faults`
+            // is what the person who sent the car in CLAIMS is wrong — a brief for the inspector, never a
+            // diagnosis (except on the direct-dispatch door, where they are promoted to real faults at
+            // birth). Null on every row filed before this existed, which reads as "we only had the note".
+            'request_detail_mode'   => $t->request_detail_mode,
+            'reported_faults'       => $t->reported_faults,
+            'request_reason_code'   => $t->request_reason_code,
+            'request_reason_label'  => Maintenance::requestReasonLabel($t->request_reason_code),
             // The Driver Observation this ticket was escalated from, so the card can link back to the
             // original note instead of only echoing its text into customer_complaint.
             'driver_observation_id' => $t->relationLoaded('driverObservation') ? $t->driverObservation?->id : null,

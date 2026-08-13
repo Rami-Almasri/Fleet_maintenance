@@ -533,6 +533,13 @@ Route::middleware('auth:sanctum')->prefix('maintenance-tickets')->controller(Mai
     // Read by the driver's Request Inspection form to show the note before submitting, so `logistics` —
     // the permission that may file a request — is enough to read it.
     Route::get('/vehicle/{vehicle}/inspection-request', 'vehicleInspectionRequest')->middleware('permission:maintenance.view|maintenance.logistics');
+    // Everything the "send a car in" form needs that doesn't depend on the car: the fault vocabulary,
+    // the two reason lists, and who the filer is (read from the token — it is shown, never chosen).
+    // STATIC — must precede /{ticket}.
+    Route::get('/request-options', 'requestOptions')->middleware('permission:maintenance.view|maintenance.logistics');
+    // "Is it this again?" — the faults THIS car has already been in for, so the form can offer its own
+    // history before a generic catalog. Same readership as the in-flight check above.
+    Route::get('/vehicle/{vehicle}/recent-faults', 'vehicleRecentFaults')->middleware('permission:maintenance.view|maintenance.logistics');
     // Awaiting-Invoice tracker: signed-off-but-uninvoiced tickets (STATIC — must precede /{ticket}).
     Route::get('/pending-invoices', 'pendingInvoices')->middleware('permission:maintenance.view');
     // Invoice Matching Desk: cars back from the shop, each with how much of its work is on a bill and
@@ -595,6 +602,12 @@ Route::middleware('auth:sanctum')->prefix('maintenance-tickets')->controller(Mai
     Route::post('/breakdown', 'storeBreakdown')->middleware('permission:maintenance.initiate|maintenance.manage');
     // Stage 0 — a Driver (Logistics) requests an inspection → lands in the Controllers' review queue.
     Route::post('/request', 'requestInspection')->middleware('permission:maintenance.logistics');
+    // THE SECOND DOOR — a car that needs a garage, not a diagnosis (booked service, parts arrived, the
+    // garage asked for it back, a fault we already know). Skips the review gate AND the test drive: born
+    // in the Supervisors' dispatch queue (inspection_pending — "Needs Dispatch"), with the named faults
+    // already promoted so there is something to dispatch. Gated to diagnostic/dispatch authority — this
+    // commits a car to a workshop with nobody having diagnosed it, which a Driver may not do.
+    Route::post('/direct-dispatch', 'storeDirectDispatch')->middleware('permission:maintenance.initiate|maintenance.manage');
     // Inspection Request Review Gate actions — Controllers (Lin & Marwa, maintenance.manage) approve
     // (→ sent to the Inspector, exactly as before) or reject (→ terminated, nothing sent).
     Route::post('/{ticket}/review/approve', 'approveReview')->middleware('permission:maintenance.manage');

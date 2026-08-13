@@ -44,7 +44,6 @@ import OdometerContinuityHint from './OdometerContinuityHint';
 import SignaturePad from './SignaturePad';
 import { isPaused, ORIGIN_LABEL } from './meta';
 import { useAuth } from '../../auth/AuthContext';
-import { usePermissions } from '../../hooks/usePermissions';
 
 // Enterprise Handover Workflow — CONTRACT with backend/config/maintenance_handover.php. Small, fixed
 // enums, so hardcoded client-side rather than fetched.
@@ -134,29 +133,15 @@ const UNVERIFIABLE_FALLBACK = {
 // in the Complaint entity (Complaints Center, source driver_relayed) or a Driver Observation, never a
 // hand-picked complaint-tagged inspection request. (Backend contract stays App\Models\Maintenance::TRIGGER_REASONS.)
 const INSPECTION_TRIGGER_REASONS = ['test_drive', 'periodic'];
-// The driver's "What happened?" choices. `test_drive` is a real trigger reason; OBSERVATION_CHOICE is a
-// UI-ONLY second path — it is never sent as a trigger_reason. Picking it switches the form into Driver
-// Observation mode (POST /driver-observations), so a passing remark from someone who merely tried the car
-// is captured as an internal note instead of inflating the inspection queue. See [[driver-observation-entity]].
+// `periodic` ("It's due for routine service") is deliberately ABSENT from the driver-voice forms for
+// every role: routine upkeep is mileage/time-based and the system now raises it itself from the Service
+// Reminders — nobody hand-files it. The planner-facing `open` form (UC-1) still offers it above.
 //
-// `periodic` ("It's due for routine service") is deliberately ABSENT for every role: routine upkeep is
-// mileage/time-based and the system now raises it itself from the Service Reminders — nobody hand-files
-// it from the driver-voice form. A person here reports what they experienced (test drive) or logs an
-// observation. The planner-facing `open` form (UC-1) still offers it via INSPECTION_TRIGGER_REASONS.
-const OBSERVATION_CHOICE = 'observation';
-// UI-ONLY third path, offered ONLY to the Controllers (Lin & Marwa, maintenance.manage) and admins.
-// Everything above is written in the driver's voice — "this happened to me while I was in the car".
-// A Controller sitting in the office has no such story: she judges from the record that a car is due a
-// look. Picking this leaves the driver endpoint entirely and posts the Controller's own Stage-0 request
-// (POST /maintenance-tickets/request-inspection → requestInspectionByController), which stamps
-// request_origin = controller and skips the review gate — she IS the review authority, so a request she
-// files would only be a request she then approves. Sent as trigger_reason = test_drive: a proactive
-// inspector-led check, which is exactly what she is asking for. See [[request-origin-vs-trigger-reason]].
-const OFFICE_CHOICE = 'office_call';
-const DRIVER_REQUEST_CHOICES = ['test_drive', OBSERVATION_CHOICE];
-// The office choice is appended last: the two driver-voice options belong together, and the eligibility
-// note ("only log a car you've actually been in") applies to them, not to this one.
-const requestChoices = (canManage) => (canManage ? [...DRIVER_REQUEST_CHOICES, OFFICE_CHOICE] : DRIVER_REQUEST_CHOICES);
+// MOVED OUT: the Stage-0 "Request Inspection" form used to live in this modal — the driver-voice choices
+// (test drive / observation / office call), the one-request-per-car in-flight check and the whole
+// vehicle+reason+notes block. It is now SendCarInModal, which asks the two things this modal could not:
+// which DOOR the car goes through (ask for a look, or straight to the garage with no test drive), and
+// WHY as data — a named fault, a reason code, or a note, never two at once.
 // Breakdown is the SOLE classification an operator ever picks. The backend still knows all six
 // (App\Models\Maintenance::MAINTENANCE_TYPES) so historic rows keep their value and the API stays
 // compatible, but the administrative types (Routine, Insurance / Non-Insurance Incident,
@@ -641,11 +626,6 @@ function HandoverFields({
 export default function TicketActionModal({ action, ticket, vehicles = [], garages = [], findingsCatalog = [], keywordMeta = {}, faultCausesCatalog = {}, locationCatalog = { groups: [], policy: {}, maxQuantity: 40 }, assignableDrivers = [], allowedTypes = null, onClose, onDone }) {
   const { t, tf, lang } = useI18n();
   const { user: currentUser } = useAuth();
-  // Gates the office-voice "I think it needs a test now" choice below. maintenance.manage IS the
-  // Controller authority (Lin & Marwa); super-admin passes through can() unconditionally. Advisory
-  // only — the endpoint it posts to carries the same middleware server-side.
-  const { can } = usePermissions();
-  const canManage = can('maintenance.manage');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [stale, setStale] = useState(false); // the ticket moved on under us (concurrent edit) → offer a refresh, not a red error
@@ -730,31 +710,12 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   // ---- form state (one bag; only the relevant keys are read per action) ----
   const [vehicleId, setVehicleId] = useState('');
   const [reason, setReason] = useState('test_drive');
-  // Driver Observation mode (the third "What happened?" choice) — the form writes a note instead of a
-  // ticket, and only raises an inspection request when the driver explicitly ticks the box.
-  const [observationRaise, setObservationRaise] = useState(false);
-  const isObservation = action === 'request' && reason === OBSERVATION_CHOICE;
-  // The Controller's own request (office judgement, not a driver's experience). `canManage` is re-checked
-  // here so the mode can never survive a user who isn't allowed to file it, even if `reason` were stale.
-  const isOfficeRequest = action === 'request' && reason === OFFICE_CHOICE && canManage;
-  // "Already being looked at" — a car can be perfectly AVAILABLE and still have a live inspection
-  // request on it (a request sitting in the review queue never marks the car under maintenance), so the
-  // picker, which only hides cars in MAINTENANCE, still offers it. Asking the server the moment a car is
-  // picked lets the form say so up front, instead of letting the driver write it all out and be refused
-  // on submit. Best-effort: a failed fetch just leaves the note off — the server guard is the real fence.
-  const [inFlight, setInFlight] = useState(null);
-  useEffect(() => {
-    if (action !== 'request' || !vehicleId) { setInFlight(null); return undefined; }
-    let alive = true;
-    api.get(`/maintenance-tickets/vehicle/${vehicleId}/inspection-request`)
-      .then((r) => { if (alive) setInFlight(r.data?.data || null); })
-      .catch(() => { if (alive) setInFlight(null); });
-    return () => { alive = false; };
-  }, [action, vehicleId]);
   // The maintenance classification. On the inspector's decision ('decide') a test ALWAYS yields a
   // type — routine is the common case, so it's preselected; the inspector confirms or changes it.
   const [maintType, setMaintType] = useState(() => ticket?.maintenance_type || '');
-  const [complaint, setComplaint] = useState('');
+  // NOTE: the `complaint` field is gone with the request form. The `open` (UC-1) path used to send one
+  // alongside trigger_reason = customer_reported, but that reason is no longer offered anywhere in this
+  // modal (INSPECTION_TRIGGER_REASONS is test_drive | periodic) — a customer issue is a Complaint now.
   const [symptoms, setSymptoms] = useState([]); // selected finding tags (library picks + custom)
   // Symptom → Root-Cause diagnosis: { [symptomText]: { root_cause, root_cause_id } }. Shared by the
   // 'decide' (inspector symptoms) and 'finding' (garage tags) steps — only one action is live at a time.
@@ -1115,19 +1076,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   function resolve() {
     const base = `/maintenance-tickets`;
     switch (action) {
-      case 'request':
-        // Third choice = Driver Observation: a different entity entirely, so it leaves the ticket API.
-        // submit() handles the (optional) follow-up inspection call; `reason` is deliberately not sent.
-        if (isObservation) {
-          return { url: '/driver-observations', body: { vehicle_id: Number(vehicleId), note: complaint.trim() } };
-        }
-        // Controller's own call: a different endpoint (maintenance.manage), born past the review gate in
-        // the Inspector's queue and stamped request_origin = controller. `reason` is NOT sent — office_call
-        // is a UI key, never a trigger_reason; what she is asking for is a proactive test drive.
-        if (isOfficeRequest) {
-          return { url: `${base}/request-inspection`, body: { vehicle_id: Number(vehicleId), trigger_reason: 'test_drive', notes: complaint.trim() || null } };
-        }
-        return { url: `${base}/request`, body: { vehicle_id: Number(vehicleId), trigger_reason: reason, customer_complaint: complaint || null } };
+      // 'request' is NOT handled here — it is SendCarInModal's, endpoint and all.
       case 'start':
         // Inspector's odometer at test-drive start (the chain anchor) — posted multipart with the photo.
         return { url: `${base}/${ticket.id}/start`, body: { test_odometer: Number(odometer) } };
@@ -1137,7 +1086,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
         // No maintenance_type here — the inspection isn't done yet. Classification is set later in
         // the Submit Report ('decide') step, once the inspector has actually diagnosed the car.
         // test_odometer (+ photo) is captured up front and posted multipart (see submit()).
-        return { url: base, body: { vehicle_id: Number(vehicleId), trigger_reason: reason, customer_complaint: reason === 'customer_reported' ? complaint : null, test_odometer: Number(odometer) } };
+        return { url: base, body: { vehicle_id: Number(vehicleId), trigger_reason: reason, test_odometer: Number(odometer) } };
       case 'typechange':
         return { url: `${base}/${ticket.id}/type`, body: { maintenance_type: maintType }, method: 'patch' };
       case 'decide':
@@ -1301,10 +1250,6 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   function invalid() {
     // An out-of-range odometer would overflow the DB column — block every step that captures one.
     if (odoOutOfRange) return true;
-    // An observation IS its note, so the text is mandatory there; a plain inspection request only needs a car.
-    // A car with a request already in flight can't be flagged again (the server refuses it too) — but an
-    // observation is a note, not a request, so that path stays open.
-    if (action === 'request') return !vehicleId || (isObservation ? !complaint.trim() : !!inFlight);
     // Re-inspection: on FAIL, re-routing to a different garage needs a written reason (same-garage fail
     // is unaffected). On PASS the car is physically back, so the final QC odometer is mandatory — plus the
     // shared >10 km ack/note gate. No odometer is asked on the FAIL branch (the car goes back out).
@@ -1539,7 +1484,6 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
           if (action === 'open') {
             fd.append('vehicle_id', String(Number(vehicleId)));
             fd.append('trigger_reason', reason);
-            if (reason === 'customer_reported' && complaint) fd.append('customer_complaint', complaint);
           }
         }
         // Odometer note — the mandatory explanation for a >10 km gap from the previous reading. Applies
@@ -1554,20 +1498,6 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
         resp = await api.post(r.url, fd);
       } else {
         resp = await api.post(r.url, r.body);
-      }
-
-      // Driver Observation: the note is saved. Only when the driver asked for it does a second call spawn
-      // the inspection request that enters the review queue — otherwise this stays a pure internal note.
-      if (isObservation) {
-        const created = resp?.data?.data;
-        // …and never when a request is already in flight for this car: the escalation reuses the same
-        // one-request-per-car path, so it would only bounce. The note itself is saved either way.
-        const raise = observationRaise && !inFlight;
-        if (raise && created?.id) {
-          await api.post(`/driver-observations/${created.id}/request-inspection`);
-        }
-        onDone?.(t(raise ? 'workflow.success.observationInspection' : 'workflow.success.observation'));
-        return;
       }
 
       // Resume may come back with blocked_by_incident: true — the handover was saved and the request
@@ -1613,8 +1543,6 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   function successMessage() {
     const who = ticket ? (ticket.plate || `#${ticket.id}`) : 'Ticket';
     switch (action) {
-      // The Controller's request skips the review queue, so it says where the car actually went.
-      case 'request': return t(isOfficeRequest ? 'workflow.success.requestOffice' : 'workflow.success.request', { who });
       case 'start': return t('workflow.success.start', { who });
       case 'followup': return t('workflow.success.followup', { who });
       case 'open': return t('workflow.success.open');
@@ -1681,11 +1609,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   ].filter(Boolean);
 
   // Submit-button label: the branching steps spell out their decision; the rest use the action's submit verb.
-  const submitLabel = isObservation
-    ? t('workflow.field.observationSubmit')
-    : isOfficeRequest
-    ? t('workflow.field.officeRequestSubmit')
-    : action === 'reinspect'
+  const submitLabel = action === 'reinspect'
     ? (reFail ? t('workflow.reinspect.failBack') : t('workflow.reinspect.passClose'))
     : action === 'decide'
       ? (requiresMaintenance ? t('workflow.decision.requiresOpen') : t('workflow.decision.noClose'))
@@ -2974,129 +2898,6 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
               <option value="high">{t('common.high')}</option>
             </Select>
             <p className="text-xs text-slate-400">{t('workflow.hint.garageIdentified', { tag: t('workflow.hint.garageIdentifiedTag') })}</p>
-          </>
-        )}
-
-        {/* STAGE 0 — Driver requests an inspection (self-contained: vehicle + reason + notes) */}
-        {action === 'request' && (
-          <>
-            <div className="rounded-lg bg-violet-50/70 px-3 py-2 text-xs text-violet-700 ring-1 ring-inset ring-violet-600/10">
-              {t('workflow.hint.requestBanner')}
-            </div>
-            <div>
-              <span className="mb-1 block text-sm font-medium text-slate-700">{t('workflow.field.vehicle')}<Req /></span>
-              {/* A car already in maintenance is being handled — hide it from the picker so a driver
-                  can't open a duplicate diagnostic entry for it. Rented cars stay selectable. An
-                  observation opens nothing, so every car stays notable in that mode. */}
-              <VehicleStatusSelect
-                value={vehicleId}
-                onChange={setVehicleId}
-                vehicles={isObservation ? vehicles : vehicles.filter((v) => !(v.under_maintenance || v.operational_status === 'maintenance'))}
-                placeholder={t('workflow.ph.searchVehicle')}
-              />
-              {!isObservation && <p className="mt-1 text-xs text-slate-400">{t('workflow.hint.requestHideMaintenance')}</p>}
-              {/* The car is available, but an inspection is already in flight on it — say what stage it's
-                  at, who raised it and what they reported, so the driver can see their point is already
-                  made. Not a black box: the request itself is one click away. */}
-              {inFlight && (
-                <div className="mt-2 rounded-xl bg-amber-50 px-3 py-2.5 text-xs leading-relaxed text-amber-900 ring-1 ring-inset ring-amber-500/30">
-                  <p className="font-semibold">{t('workflow.hint.inFlightTitle')}</p>
-                  <p className="mt-0.5">
-                    {t(inFlight.state === 'inspection_diagnostic'
-                      ? 'workflow.hint.inFlightDriving'
-                      : inFlight.state === 'inspection_requested'
-                        ? 'workflow.hint.inFlightApproved'
-                        : 'workflow.hint.inFlightPending')}
-                  </p>
-                  <p className="mt-1 text-amber-800/80">
-                    {inFlight.is_system
-                      ? t('workflow.hint.inFlightBySystem', { when: fmtWhen(inFlight.requested_at, t, lang) })
-                      : t('workflow.hint.inFlightBy', { who: inFlight.requested_by || '—', when: fmtWhen(inFlight.requested_at, t, lang) })}
-                  </p>
-                  {inFlight.note && <p className="mt-1 text-amber-800/80">{t('workflow.hint.inFlightNote', { note: inFlight.note })}</p>}
-                  <p className="mt-1.5">{t(isObservation ? 'workflow.hint.inFlightObservation' : 'workflow.hint.inFlightBlocked')}</p>
-                  <a href={inFlight.url} className="mt-1 inline-block font-semibold underline hover:no-underline">{t('workflow.hint.inFlightLink')}</a>
-                </div>
-              )}
-            </div>
-            <div>
-              <span className="mb-1.5 block text-sm font-medium text-slate-700">{t('workflow.reason.driverLabel')}</span>
-              <div className="grid gap-2">
-                {requestChoices(canManage).map((rv) => {
-                  const active = reason === rv;
-                  return (
-                    <button
-                      key={rv}
-                      type="button"
-                      onClick={() => setReason(rv)}
-                      className={`flex items-start gap-3 rounded-xl border px-3 py-2.5 text-start transition ${active ? 'border-indigo-500 bg-indigo-50 ring-1 ring-indigo-500' : 'border-slate-200 bg-white hover:border-slate-300'}`}
-                    >
-                      <span className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${active ? 'border-indigo-600' : 'border-slate-300'}`}>
-                        {active && <span className="h-2 w-2 rounded-full bg-indigo-600" />}
-                      </span>
-                      <span className="min-w-0">
-                        {/* office_call lives outside the driver-voice block — it is the office's own
-                            judgement, not something that happened to whoever is filling this in. */}
-                        <span className="block text-sm font-semibold text-slate-800">{t(rv === OFFICE_CHOICE ? 'workflow.reason.office.label' : `workflow.reason.driver.${rv}.label`)}</span>
-                        <span className="block text-xs text-slate-500">{t(rv === OFFICE_CHOICE ? 'workflow.reason.office.sub' : `workflow.reason.driver.${rv}.sub`)}</span>
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-              {/* Who may file this at all — advisory, not a hard gate: the Controller reviews every
-                  request before it reaches the workshop. It speaks to the driver-voice choices only:
-                  the office choice is explicitly for a car nobody here has been in, so showing
-                  "only log a car you've actually been in" alongside it would contradict itself. */}
-              {!isOfficeRequest && (
-                <p className="mt-2 rounded-lg bg-amber-50/70 px-3 py-2 text-[11px] leading-relaxed text-amber-800 ring-1 ring-inset ring-amber-500/20">
-                  {t('workflow.hint.requestEligibility')}
-                </p>
-              )}
-              {/* …and what the office choice actually does: no review queue, straight to the inspector. */}
-              {isOfficeRequest && (
-                <p className="mt-2 rounded-lg bg-indigo-50/70 px-3 py-2 text-[11px] leading-relaxed text-indigo-800 ring-1 ring-inset ring-indigo-600/15">
-                  {t('workflow.hint.officeRequest')}
-                </p>
-              )}
-              {/* A customer issue is NOT an inspection request — route it to the right entity. */}
-              <p className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-[11px] leading-relaxed text-slate-500 ring-1 ring-inset ring-slate-100">
-                {t('A customer reported a problem? Log it in the Complaints Center. Just noticed something on return? Use Driver Observations.')}{' '}
-                <a href="/complaints" className="font-semibold text-indigo-600 hover:underline">{t('Open the Complaints Center')}</a>
-                {' · '}
-                <a href="/driver-observations" className="font-semibold text-indigo-600 hover:underline">{t('Open Driver Observations')}</a>
-              </p>
-            </div>
-
-            {/* Observation mode — say plainly that this writes a note, not a ticket. */}
-            {isObservation && (
-              <div className="rounded-lg bg-sky-50/70 px-3 py-2 text-xs leading-relaxed text-sky-800 ring-1 ring-inset ring-sky-600/10">
-                {t('workflow.hint.observationBanner')}
-              </div>
-            )}
-
-            {isObservation ? (
-              <>
-                <Textarea
-                  label={t('workflow.field.observationNote')}
-                  required
-                  rows={4}
-                  maxLength={2000}
-                  value={complaint}
-                  onChange={(e) => setComplaint(e.target.value)}
-                  placeholder={t('workflow.ph.observationNote')}
-                />
-                <label className="flex items-start gap-2 rounded-lg bg-slate-50 px-3 py-2.5 text-sm text-slate-600 ring-1 ring-inset ring-slate-100">
-                  <input type="checkbox" checked={observationRaise} onChange={(e) => setObservationRaise(e.target.checked)} className="mt-0.5" />
-                  <span>{t('workflow.hint.observationRaise')}</span>
-                </label>
-              </>
-            ) : (
-              <Textarea label={t('workflow.field.notesForInspector')} value={complaint} onChange={(e) => setComplaint(e.target.value)} placeholder={t('workflow.ph.customerPullLeft')} />
-            )}
-
-            {/* No attachment here by design — the driver describes it in the note and the inspector
-                photographs the car on the test drive, which is the evidence that actually counts. */}
           </>
         )}
 

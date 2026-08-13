@@ -2723,7 +2723,9 @@ const en = {
       title: 'Maintenance Cycle',
       subtitle: "A diagnostic test drive becomes a ticket only when the inspector marks it 'Requires maintenance'. Then Supervisor (picks garage, all drivers notified) → Driver (pickup) → Garage → Driver (return) → Re-inspection. The board updates itself.",
       live: 'Live · auto-refresh',
-      requestInspection: 'Request inspection',
+      // Opens SendCarInModal, which is two doors now (ask for a look / straight to the garage), so the
+      // button can no longer promise an inspection specifically.
+      requestInspection: 'Send a car in',
       newComplaint: 'New complaint',
       reportBreakdown: 'Report breakdown',
       noTicketsHere: 'No tickets here',
@@ -2958,6 +2960,114 @@ const en = {
     confirm: {
       reinspectFail: 'Send {who} back to the supervisor and flag its garage for {count} unfixed fault(s)? This re-queues the car for another garage trip.',
       reinspectPass: 'Pass the re-inspection and return {who} to the available fleet?',
+    },
+    // ── Send a car in (SendCarInModal) ─────────────────────────────────────────────────────────
+    // Two doors, one question ("why?"), three exclusive ways of answering it. The wording deliberately
+    // avoids engine vocabulary — no "trigger", no "origin", no "statement" — and says what will
+    // physically happen to the car instead. See [[operational-language-over-engine-vocabulary]].
+    sendIn: {
+      title:    'Send this car in',
+      subtitle: 'Say what it needs — the right queue opens itself',
+      filedBy:  'Filed by {who}',
+
+      door: {
+        inspection: {
+          label: 'Ask for a look',
+          sub:   'Something is wrong and nobody knows what yet — the inspector test-drives it and decides.',
+          lands: 'Goes to the inspector',
+        },
+        dispatch: {
+          label: 'Straight to the garage',
+          sub:   'Nothing to diagnose — it just needs a workshop. No test drive.',
+          lands: 'Goes to Needs Dispatch',
+        },
+      },
+
+      why: {
+        label:     'Why is it going in?',
+        exclusive: 'Pick one way to say it',
+      },
+
+      mode: {
+        fault:  'Name the fault',
+        reason: 'Pick a reason',
+        note:   'Write a note',
+      },
+
+      history: {
+        title: 'Is it this again?',
+        blurb: 'What this car has already been in for. Tap one if that’s what you’re seeing — the workshop is told you think it’s the same thing, and checks.',
+        fixed:    'Fixed {when}',
+        notFixed: 'Reported {when} — not marked fixed',
+        times:    'seen {n}×',
+        mightNotHaveHeld: 'Fixed recently — worth checking whether it held.',
+        none:  'This car has no repair history yet — pick from the list below.',
+      },
+
+      ago: {
+        today:     'today',
+        yesterday: 'yesterday',
+        days:      '{n} days ago',
+        weeks:     '{n} weeks ago',
+        months:    '{n} months ago',
+      },
+
+      fault: {
+        search:            'Search faults…',
+        noMatch:           'Nothing matches that.',
+        count:             '{n} of 6',
+        repeatTitle:       'Reported as the same fault as ticket #{id}',
+        detailLabel:       'Anything to add? (optional)',
+        detailPlaceholder: 'When it happens, what it sounds like, how bad…',
+      },
+
+      reason: {
+        // Per-code wording. These mirror Maintenance::REQUEST_REASON_CODES; the code is the stored
+        // fact and this is only how it reads, so rewording here rewrites nothing.
+        inspection: {
+          warning_light:       'A warning light is on',
+          feels_wrong:         'It didn’t feel right — I can’t say what',
+          back_from_rental:    'Just back from a long rental',
+          long_idle:           'Sat parked for a long time',
+          before_handover:     'Going out to a customer — check it first',
+          recheck_last_repair: 'Check the last repair held',
+          other:               'Something else',
+        },
+        dispatch: {
+          known_fault:       'A fault we already know — no test needed',
+          scheduled_service: 'Booked service work',
+          parts_arrived:     'The parts are in — going in to have them fitted',
+          garage_callback:   'The garage asked for the car back',
+          visible_damage:    'Visibly broken — nothing to test-drive',
+          other:             'Something else',
+        },
+        otherLabel:       'What is it?',
+        otherPlaceholder: 'Say why this car needs to go in…',
+      },
+
+      note: {
+        label:       'What’s going on?',
+        placeholder: 'Describe it in your own words…',
+      },
+
+      // What the button will actually do, said before it is pressed.
+      outcome: {
+        request:     'This goes to the office to be reviewed. Once they approve it, the inspector test-drives the car and decides what happens next.',
+        office:      'This is your own call, so it doesn’t wait for review — it goes straight to the inspector and he’s notified now.',
+        observation: 'This is recorded as a note on the car. Nothing is booked and no ticket opens unless you tick the box above.',
+        dispatch:    'This skips the test drive. A ticket opens right away at Needs Dispatch and the supervisors are asked to pick a garage — the car counts as in maintenance from now.',
+      },
+
+      submit: {
+        request:     'Send request',
+        dispatch:    'Send to the garage',
+        observation: 'Save note',
+      },
+
+      success: {
+        request:  'Sent — the office will review it and the inspector takes it from there.',
+        dispatch: 'Sent in — waiting for a supervisor to pick the garage.',
+      },
     },
     success: {
       request: '{who}: inspection requested — the inspector has been notified.',
@@ -7414,7 +7524,7 @@ const ar = {
       closedOn: 'أُغلقت في {date}',
       subtitle: 'يتحوّل فحص تجربة القيادة إلى تذكرة فقط عندما يحدّده المفتش "تحتاج صيانة". ثم المشرف (يختار الكراج، ويُشعَر جميع السائقين) ← السائق (الاستلام) ← الكراج ← السائق (الإعادة) ← إعادة الفحص. تتحدّث اللوحة تلقائيًا.',
       live: 'مباشر · تحديث تلقائي',
-      requestInspection: 'طلب فحص',
+      requestInspection: 'أدخِل سيارة',
       newComplaint: 'شكوى جديدة',
       reportBreakdown: 'الإبلاغ عن عطل',
       noTicketsHere: 'لا تذاكر هنا',
@@ -7633,6 +7743,108 @@ const ar = {
     confirm: {
       reinspectFail: 'إرجاع {who} إلى المشرف وتسجيل فشل الكراج في {count} عطل غير مُصلَّح؟ سيعيد ذلك إدراج السيارة لرحلة كراج أخرى.',
       reinspectPass: 'اجتياز إعادة الفحص وإرجاع {who} إلى أسطول السيارات المتاحة؟',
+    },
+    // «أدخِل السيارة» — بابان، وسؤال واحد («لماذا؟») وثلاث طرق للإجابة، لا تُجمع اثنتان منها.
+    sendIn: {
+      title:    'أدخِل هذه السيارة',
+      subtitle: 'قل ما الذي تحتاجه — والطابور الصحيح يفتح من تلقائه',
+      filedBy:  'مُقدَّم من {who}',
+
+      door: {
+        inspection: {
+          label: 'اطلب فحصًا',
+          sub:   'هناك خطب ما ولا أحد يعرف ما هو بعد — يجرّبها المفتش ويقرّر.',
+          lands: 'تذهب إلى المفتش',
+        },
+        dispatch: {
+          label: 'مباشرةً إلى الكراج',
+          sub:   'لا شيء لتشخيصه — تحتاج ورشة فقط. بلا تجربة قيادة.',
+          lands: 'تذهب إلى «بانتظار الإرسال»',
+        },
+      },
+
+      why: {
+        label:     'لماذا ستدخل؟',
+        exclusive: 'اختر طريقة واحدة للقول',
+      },
+
+      mode: {
+        fault:  'سمِّ العطل',
+        reason: 'اختر سببًا',
+        note:   'اكتب ملاحظة',
+      },
+
+      history: {
+        title: 'هل هو نفسه مجددًا؟',
+        blurb: 'ما سبق أن دخلت هذه السيارة بسببه. اضغط على واحد إن كان هو ما تراه — تُبلَّغ الورشة أنك تظنه العطل نفسه، فتتحقّق.',
+        fixed:    'أُصلح {when}',
+        notFixed: 'أُبلغ عنه {when} — ولم يُعلَّم كمُصلَح',
+        times:    'ظهر {n}×',
+        mightNotHaveHeld: 'أُصلح مؤخرًا — يستحق التحقّق من ثباته.',
+        none:  'لا سجل إصلاحات لهذه السيارة بعد — اختر من القائمة أدناه.',
+      },
+
+      ago: {
+        today:     'اليوم',
+        yesterday: 'أمس',
+        days:      'قبل {n} يومًا',
+        weeks:     'قبل {n} أسابيع',
+        months:    'قبل {n} أشهر',
+      },
+
+      fault: {
+        search:            'ابحث في الأعطال…',
+        noMatch:           'لا شيء يطابق ذلك.',
+        count:             '{n} من 6',
+        repeatTitle:       'أُبلغ عنه كالعطل نفسه في التذكرة رقم {id}',
+        detailLabel:       'هل تريد إضافة شيء؟ (اختياري)',
+        detailPlaceholder: 'متى يحدث، كيف يبدو صوته، وما مدى سوئه…',
+      },
+
+      reason: {
+        inspection: {
+          warning_light:       'ضوء تحذير مضاء',
+          feels_wrong:         'لم تكن على ما يرام — ولا أستطيع تحديد السبب',
+          back_from_rental:    'عادت للتو من تأجير طويل',
+          long_idle:           'بقيت متوقفة مدة طويلة',
+          before_handover:     'ستخرج إلى زبون — افحصها أولًا',
+          recheck_last_repair: 'تحقّق من ثبات آخر إصلاح',
+          other:               'شيء آخر',
+        },
+        dispatch: {
+          known_fault:       'عطل نعرفه سلفًا — لا حاجة للتجربة',
+          scheduled_service: 'عمل صيانة محجوز',
+          parts_arrived:     'وصلت القطع — تدخل لتركيبها',
+          garage_callback:   'الكراج طلب إعادة السيارة',
+          visible_damage:    'عطل ظاهر للعيان — لا شيء لتجربته',
+          other:             'شيء آخر',
+        },
+        otherLabel:       'ما هو؟',
+        otherPlaceholder: 'قل لماذا تحتاج هذه السيارة للدخول…',
+      },
+
+      note: {
+        label:       'ما الذي يجري؟',
+        placeholder: 'صِفه بكلماتك…',
+      },
+
+      outcome: {
+        request:     'يذهب هذا إلى المكتب للمراجعة. وبعد الموافقة، يجرّب المفتش السيارة ويقرّر ما التالي.',
+        office:      'هذا قرارك أنت، فلا ينتظر مراجعة — يذهب مباشرةً إلى المفتش وقد تم إشعاره الآن.',
+        observation: 'يُسجَّل هذا كملاحظة على السيارة. لا يُحجز شيء ولا تُفتح تذكرة ما لم تُفعِّل الخيار أعلاه.',
+        dispatch:    'يتخطّى هذا تجربة القيادة. تُفتح تذكرة فورًا عند «بانتظار الإرسال» ويُطلب من المشرفين اختيار كراج — وتُحتسب السيارة في الصيانة من الآن.',
+      },
+
+      submit: {
+        request:     'إرسال الطلب',
+        dispatch:    'أرسِل إلى الكراج',
+        observation: 'حفظ الملاحظة',
+      },
+
+      success: {
+        request:  'أُرسل — سيراجعه المكتب ثم يتولّاه المفتش.',
+        dispatch: 'أُرسلت — بانتظار اختيار المشرف للكراج.',
+      },
     },
     success: {
       request: '{who}: تم طلب الفحص — تم إشعار المفتش.',

@@ -785,6 +785,265 @@ class MaintenanceWorkflowService
     }
 
     /**
+     * THE REQUESTER'S STATEMENT — turn "why is this car going in?" into data, once, for every door.
+     *
+     * A request used to carry a sentence. A sentence cannot be counted, cannot be matched against the
+     * fault this car was in the shop for last month, and cannot tell a named fault from a shrug. So the
+     * person answers exactly ONE way (see Maintenance::REPORT_MODES) and we keep what they picked:
+     *
+     *   fault  — they named fault types. Each row must prove where it came from: a live FaultCatalog row
+     *            (the selectable vocabulary — see [[findings-vocabulary-contract]]) or a
+     *            `repeat_of_ticket_id` pointing at THIS car's own closed ticket, which is the requester
+     *            saying "it's the same thing as last time". Nothing else is accepted: a hand-typed fault
+     *            name is not vocabulary, it is a note, and there is a mode for that.
+     *   reason — a CODE from the door's own list. `other` is the one code that records nothing by itself,
+     *            so it (and only it) additionally requires the note that spells it out.
+     *   note   — their own words.
+     *
+     * EXCLUSIVITY IS ENFORCED, not tidied up: sending faults AND a reason is refused rather than silently
+     * resolved, because picking which of the two answers to keep is picking what the car goes in for, and
+     * that is not a decision this method is entitled to make.
+     *
+     * Returns the columns to stamp plus `sentence` — the same statement rendered back into prose for
+     * `customer_complaint`, so the inspector's screen, the board card, the audit log and the notification
+     * body all keep reading the one field they always read.
+     *
+     * @param array  $data  raw request payload
+     * @param string $door  'inspection' | 'dispatch' — which reason list is legal here
+     * @return array{mode:string, faults:?array, reason_code:?string, sentence:?string}
+     */
+    private function requestStatement(array $data, string $door): array
+    {
+        $rawFaults = array_values(array_filter((array) ($data['reported_faults'] ?? []), 'is_array'));
+        $reasonRaw = $this->clean($data['request_reason_code'] ?? null);
+        $noteRaw   = $this->clean($data['customer_complaint'] ?? null);
+
+        // What they actually sent decides the mode; the explicit field is only honoured when it agrees
+        // with the payload, so a stale radio button can never mislabel a real answer.
+        $given = array_keys(array_filter([
+            Maintenance::REPORT_MODE_FAULT  => (bool) $rawFaults,
+            Maintenance::REPORT_MODE_REASON => (bool) $reasonRaw,
+        ]));
+
+        if (count($given) > 1) {
+            throw new WorkflowTransitionException(
+                'Say it one way: name the fault, or pick a reason — not both.',
+                ['field' => 'request_detail_mode']
+            );
+        }
+
+        $mode = $given[0] ?? Maintenance::REPORT_MODE_NOTE;
+
+        // ── reason ────────────────────────────────────────────────────────────────────────────────
+        if ($mode === Maintenance::REPORT_MODE_REASON) {
+            $list = $door === 'dispatch'
+                ? Maintenance::REQUEST_REASONS_DISPATCH
+                : Maintenance::REQUEST_REASONS_INSPECTION;
+
+            if (! array_key_exists($reasonRaw, $list)) {
+                throw new WorkflowTransitionException('Pick a reason from the list.', ['field' => 'request_reason_code']);
+            }
+            // 'other' stores a code that means "not one of these" — on its own it records nothing at all.
+            if ($reasonRaw === 'other' && $noteRaw === null) {
+                throw new WorkflowTransitionException('Say what the reason is.', ['field' => 'customer_complaint']);
+            }
+
+            return [
+                'mode'        => $mode,
+                'faults'      => null,
+                'reason_code' => $reasonRaw,
+                'sentence'    => $reasonRaw === 'other' ? $noteRaw : $list[$reasonRaw],
+            ];
+        }
+
+        // ── fault ─────────────────────────────────────────────────────────────────────────────────
+        if ($mode === Maintenance::REPORT_MODE_FAULT) {
+            $faults = $this->normalizeReportedFaults($rawFaults, (int) ($data['vehicle_id'] ?? 0));
+
+            return [
+                'mode'        => $mode,
+                'faults'      => $faults,
+                'reason_code' => null,
+                // "Reported: Brake noise (same fault as #812), Overheating" — plus their own words when
+                // they added any. A note ALONGSIDE named faults is detail about those faults, not a
+                // second answer, so it rides along rather than competing.
+                'sentence'    => trim(
+                    'Reported: ' . implode(', ', array_map(
+                        fn ($f) => $f['text'] . ($f['repeat_of_ticket_id'] ? ' (reported as the same fault as #' . $f['repeat_of_ticket_id'] . ')' : ''),
+                        $faults
+                    )) . ($noteRaw ? ' — ' . $noteRaw : '')
+                ),
+            ];
+        }
+
+        // ── note ──────────────────────────────────────────────────────────────────────────────────
+        if ($noteRaw === null) {
+            throw new WorkflowTransitionException(
+                'Say why this car needs to go in — name the fault, pick a reason, or write it out.',
+                ['field' => 'customer_complaint']
+            );
+        }
+
+        return ['mode' => $mode, 'faults' => null, 'reason_code' => null, 'sentence' => $noteRaw];
+    }
+
+    /**
+     * Validate the picked fault rows against the two things that may legitimise one: the live fault
+     * vocabulary, or this car's own repair history. Returns clean, storable rows; throws when a row can
+     * prove neither, because an unprovable fault name is exactly the free text the note mode exists for.
+     *
+     * Capped at six. A request naming a dozen faults is not a report, it is a shrug with a long list —
+     * and the inspector's whole job is to find out which of them is real.
+     *
+     * @param  array<int,array> $rows
+     * @return array<int,array{text:string, slug:?string, fault_catalog_id:?int, category_key:?string, severity:?string, repeat_of_ticket_id:?int}>
+     */
+    private function normalizeReportedFaults(array $rows, int $vehicleId): array
+    {
+        if (count($rows) > 6) {
+            throw new WorkflowTransitionException('Name up to six faults — the inspector finds the rest.', [
+                'field' => 'reported_faults',
+            ]);
+        }
+
+        $catalogById   = \App\Models\FaultCatalog::active()->get()->keyBy('id');
+        $catalogBySlug = $catalogById->keyBy('slug');
+
+        // Tickets this car has actually had — the only ones a "same fault as last time" claim may point at.
+        // Scoped to the vehicle so a request can never reference another car's repair.
+        $ownTicketIds = $vehicleId
+            ? Maintenance::where('vehicle_id', $vehicleId)->pluck('id')->all()
+            : [];
+
+        $out  = [];
+        $seen = [];
+
+        foreach ($rows as $row) {
+            $catalog = null;
+            if (! empty($row['fault_catalog_id'])) {
+                $catalog = $catalogById->get((int) $row['fault_catalog_id']);
+            } elseif (! empty($row['slug'])) {
+                $catalog = $catalogBySlug->get((string) $row['slug']);
+            }
+
+            $repeatOf = isset($row['repeat_of_ticket_id']) ? (int) $row['repeat_of_ticket_id'] : 0;
+            if ($repeatOf && ! in_array($repeatOf, $ownTicketIds, true)) {
+                $repeatOf = 0;   // not this car's history — the claim is dropped, the fault itself survives
+            }
+
+            $text = $catalog?->name ?: $this->clean($row['text'] ?? null);
+
+            // A row with no catalog row AND no history behind it is untraceable vocabulary — refuse it
+            // rather than quietly inventing a fault type nothing else in the system knows.
+            if ($text === null || (! $catalog && ! $repeatOf)) {
+                throw new WorkflowTransitionException(
+                    'Pick the fault from the list, or from what this car was in for before.',
+                    ['field' => 'reported_faults']
+                );
+            }
+
+            $key = mb_strtolower($text);
+            if (isset($seen[$key])) {
+                continue;   // the same fault named twice is still one fault
+            }
+            $seen[$key] = true;
+
+            $out[] = [
+                'text'                => $text,
+                'slug'                => $catalog?->slug,
+                'fault_catalog_id'    => $catalog?->id,
+                'category_key'        => $catalog?->category_key ?: $this->clean($row['category_key'] ?? null),
+                // A PREFILL hint carried for the inspector's convenience — never the grade. The grade is
+                // set at the Decide step by the only person entitled to set it.
+                'severity'            => $catalog?->default_severity,
+                'repeat_of_ticket_id' => $repeatOf ?: null,
+            ];
+        }
+
+        if (! $out) {
+            throw new WorkflowTransitionException('Name at least one fault.', ['field' => 'reported_faults']);
+        }
+
+        return $out;
+    }
+
+    /**
+     * "Is it this again?" — the faults THIS car has already been in the shop for, newest first, so the
+     * person filling in a request is offered their own car's history instead of a blank catalog.
+     *
+     * Why it earns its place: the single most likely reason a car is going back in is the thing it went
+     * in for last time not holding. Making that one tap (and stamping `repeat_of_ticket_id`) turns a
+     * guess the workshop has to re-derive into a stated claim it can check.
+     *
+     * FAULTS ONLY (kind = fault). A planned service repeating is not a recurrence — it is a schedule
+     * working — and offering "Oil change" here as something that might need re-fixing would be the same
+     * mistake the Chronic Fault Watchdog already corrected (see faultHistory).
+     *
+     * Every field is a FACT read off the record. `days_since` is Derived (subtraction). Nothing here is a
+     * judgement: `within_recurrence_window` states the fault was last fixed inside the configured window
+     * — it does NOT claim the fault came back. Only the workshop confirms that (RecurringFaultService).
+     *
+     * @return array<int,array>
+     */
+    public function recentFaultsFor(Vehicle $vehicle, int $limit = 8): array
+    {
+        $windowDays = (int) config('parts_intelligence.recurrence.window_days', 90);
+
+        $tasks = \App\Models\MaintenanceTask::query()
+            ->where('vehicle_id', $vehicle->id)
+            ->where('kind', \App\Models\MaintenanceTask::KIND_FAULT)
+            // A fault the workshop ruled never existed, or that was dropped, is not part of this car's
+            // repair history and must not be offered back as "it might be this again".
+            ->whereNull('marked_incorrect_at')
+            ->whereNotIn('status', \App\Models\MaintenanceTask::NON_REPAIR_TERMINAL)
+            ->with(['maintenance:id,vehicle_id,workflow_status,wf_closed_at,garage,vendor_id', 'maintenance.vendor:id,name'])
+            ->orderByDesc('identified_at')
+            ->orderByDesc('id')
+            ->limit(120)
+            ->get();
+
+        $now      = Carbon::now();
+        $grouped  = [];
+
+        foreach ($tasks as $task) {
+            $key = mb_strtolower(trim((string) $task->symptom));
+            if ($key === '') {
+                continue;
+            }
+
+            // First hit wins the headline — the list is newest-first, so that is the latest occurrence.
+            if (! isset($grouped[$key])) {
+                $at    = $task->resolved_at ?: $task->maintenance?->wf_closed_at ?: $task->identified_at;
+                $fixed = $task->status === \App\Models\MaintenanceTask::STATUS_COMPLETED;
+                $days  = $at ? (int) $at->diffInDays($now) : null;
+
+                $grouped[$key] = [
+                    'text'                     => $task->symptom,
+                    'fault_catalog_id'         => $task->fault_catalog_id,
+                    'category_key'             => $task->category_key,
+                    'ticket_id'                => $task->maintenance_id,
+                    // Is that ticket still open? Then this fault is not history, it is current — the
+                    // form uses this to say so rather than offering it as something to report again.
+                    'still_open'               => $task->maintenance
+                        && ! in_array($task->maintenance->workflow_status, Maintenance::WF_TERMINAL, true),
+                    'status'                   => $task->status,
+                    'fixed'                    => $fixed,
+                    'at'                       => $at?->toIso8601String(),
+                    'days_since'               => $days,
+                    'garage'                   => $task->maintenance?->vendor?->name ?: $task->maintenance?->garage,
+                    'occurrences'              => 0,
+                    // FACT: it was fixed inside the window. NOT a claim that it has come back.
+                    'within_recurrence_window' => $fixed && $days !== null && $days <= $windowDays,
+                ];
+            }
+
+            $grouped[$key]['occurrences']++;
+        }
+
+        return array_slice(array_values($grouped), 0, $limit);
+    }
+
+    /**
      * Stage 0. A Driver (Logistics) raises a "Request Inspection" on a car they suspect needs a look —
      * the new entry point the role-based design calls for. It is born in `pending_review`: no
      * ticket, no diagnostic, no contract, the car is NOT marked in maintenance (event_status 'IN').
@@ -838,7 +1097,11 @@ class MaintenanceWorkflowService
             $origin = Maintenance::SOURCE_DRIVER_REQUEST;
         }
 
-        return DB::transaction(function () use ($vehicleId, $reason, $origin, $data, $driver) {
+        // WHAT they are reporting, kept as data — one of: named faults, a reason code, or their own
+        // words. The rendered sentence still lands in customer_complaint, so nothing downstream changes.
+        $statement = $this->requestStatement($data + ['vehicle_id' => $vehicleId], 'inspection');
+
+        return DB::transaction(function () use ($vehicleId, $reason, $origin, $statement, $driver) {
             $ticket = new Maintenance();
             $ticket->origin          = Maintenance::ORIGIN_MANUAL;
             $ticket->vehicle_id      = $vehicleId;
@@ -848,8 +1111,16 @@ class MaintenanceWorkflowService
             $ticket->visit_context   = $reason === Maintenance::TRIGGER_PERIODIC
                 ? Maintenance::CONTEXT_ROUTINE
                 : 'standard';
-            // The Driver's notes ride along as the customer_complaint so the inspector sees them.
-            $ticket->customer_complaint = $this->clean($data['customer_complaint'] ?? null);
+            // The Driver's statement, rendered, rides along as the customer_complaint so the inspector
+            // sees it exactly where he always has.
+            $ticket->customer_complaint  = $statement['sentence'];
+            // …and kept as data beside it. `reported_faults` is what the requester CLAIMS is wrong; it is
+            // deliberately NOT promoted into findings/tasks here. A Driver flagging a car has no
+            // diagnostic authority — the Inspector decides what this car's faults are at the Decide step,
+            // and these rows are the brief he starts from, not his conclusion.
+            $ticket->request_detail_mode = $statement['mode'];
+            $ticket->reported_faults     = $statement['faults'];
+            $ticket->request_reason_code = $statement['reason_code'];
 
             // maintenance_type is intentionally NOT set here — the Driver flagging a car for inspection
             // has no diagnostic authority. The Inspector sets the classification when filing the report.
@@ -867,7 +1138,16 @@ class MaintenanceWorkflowService
                 'description' => 'Inspection requested — ' . $this->reasonLabel($reason)
                                 . ($ticket->customer_complaint ? ': “' . $ticket->customer_complaint . '”' : '')
                                 . ' (by ' . $driver->name . ')',
-                'meta'        => ['trigger_reason' => $reason, 'request_origin' => $origin, 'requested_by' => $driver->name],
+                // The statement goes into the trail as DATA too — codes and fault rows, not only the
+                // sentence — so "what do drivers actually report?" is answerable from the audit log.
+                'meta'        => [
+                    'trigger_reason'      => $reason,
+                    'request_origin'      => $origin,
+                    'requested_by'        => $driver->name,
+                    'request_detail_mode' => $statement['mode'],
+                    'request_reason_code' => $statement['reason_code'],
+                    'reported_faults'     => $statement['faults'],
+                ],
             ]);
 
             // Hand off to the Controllers (Lin & Marwa) for review — NOT the Inspector yet. Abu Maroof
@@ -944,8 +1224,22 @@ class MaintenanceWorkflowService
             if (isset($data['test_kind']) && in_array($data['test_kind'], Maintenance::TEST_KINDS, true)) {
                 $ticket->test_kind = $data['test_kind'];
             }
-            // The manager's optional notes ride along as the customer_complaint so the Inspector sees them.
-            $ticket->customer_complaint = $this->clean($data['customer_complaint'] ?? null);
+            // The manager's statement, rendered, rides along as the customer_complaint so the Inspector
+            // sees it where he always has — plus the structured fact beside it when she gave one.
+            //
+            // OPTIONAL here, unlike the driver door. A Controller opening the Routine or Scheduled intake
+            // tab has already said why by choosing the tab ("this car is due its oil check"); demanding a
+            // fault name on top would be asking her to invent a symptom for a car nobody has driven.
+            $statement = ($data['reported_faults'] ?? null) || ($data['request_reason_code'] ?? null)
+                ? $this->requestStatement($data + ['vehicle_id' => $vehicleId], 'inspection')
+                : null;
+
+            $ticket->customer_complaint = $statement
+                ? $statement['sentence']
+                : $this->clean($data['customer_complaint'] ?? null);
+            $ticket->request_detail_mode = $statement['mode'] ?? ($ticket->customer_complaint ? Maintenance::REPORT_MODE_NOTE : null);
+            $ticket->reported_faults     = $statement['faults'] ?? null;
+            $ticket->request_reason_code = $statement['reason_code'] ?? null;
 
             // maintenance_type is intentionally NOT set — the manager requesting the inspection has no
             // diagnostic authority. The Inspector classifies the car when filing the report.
@@ -986,6 +1280,159 @@ class MaintenanceWorkflowService
                 'icon'     => 'wrench',
                 'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no, 'requested_by' => $manager->name],
             ], $manager->id);
+
+            return $ticket->load($this->eager());
+        });
+    }
+
+    /**
+     * THE SECOND DOOR — a car that does not need testing, only fixing.
+     *
+     * The Request Inspection form asks the workshop a question: "something is wrong, please find out
+     * what." Sometimes there is no question. The parts arrived and the car goes in to have them fitted;
+     * the garage asked for it back; it is a booked service; the fault is already known and named. Sending
+     * those through a test drive costs a day and answers nothing, so the ticket is born straight in the
+     * SUPERVISORS' dispatch queue (`inspection_pending` — "Needs Dispatch" on the board), exactly where a
+     * breakdown and an Inspector's-Pad pick-up already land. Same stage, same queue, same next step: a
+     * supervisor picks the garage.
+     *
+     * What makes this its own method rather than a flag on requestInspection():
+     *   - it skips the review gate AND the diagnostic — two stages, so it is a different journey, not a
+     *     shortcut through the same one;
+     *   - it is a COMMITMENT, not a suspicion. The car is going to a garage, so cascade() will read it as
+     *     under maintenance, and it opens its maintenance contract at birth like every committed ticket;
+     *   - the named faults ARE promoted into real routable faults here — unlike an inspection request,
+     *     where they stay a claim. There is no inspector coming to convert them, and a supervisor cannot
+     *     dispatch a ticket with nothing on it. Which is exactly why this door is gated to people with
+     *     diagnostic/dispatch authority (`maintenance.initiate|maintenance.manage`) and not to drivers.
+     *
+     * NOT a breakdown: the car is driveable and is NOT grounded, NOT forced to 🔴 critical, and NOT
+     * classified. Reporting a dead car is still openBreakdown() — a different fact with different
+     * consequences (see [[breakdown-intake-feature]]).
+     *
+     * @param array{vehicle_id:int, reported_faults?:array, request_reason_code?:?string, customer_complaint?:?string} $data
+     */
+    public function openDirectDispatch(array $data, User $actor): Maintenance
+    {
+        $vehicleId = (int) ($data['vehicle_id'] ?? 0);
+        $vehicle   = $vehicleId ? Vehicle::find($vehicleId) : null;
+        if (! $vehicle) {
+            throw new WorkflowTransitionException('A valid vehicle is required to send a car to the garage.', [
+                'field' => 'vehicle_id',
+            ]);
+        }
+
+        // Only an active-fleet car may enter the workflow — otherwise the ticket would be hidden by the
+        // board's active-fleet filter the moment it's created.
+        $this->assertActiveFleet($vehicle);
+
+        // A car already in the pipeline must not be sent in twice: the second ticket would compete with
+        // the first for the same physical car and split its story. The same guard the inspection door
+        // uses, for the same reason — but widened, because here we must also refuse a car that is
+        // already a committed ticket, not merely a pending request.
+        if ($open = Maintenance::openWorkflow()->where('vehicle_id', $vehicleId)->orderByDesc('id')->first()) {
+            throw new WorkflowTransitionException(
+                'This car is already in the maintenance pipeline — it cannot be sent in twice.',
+                ['field' => 'vehicle_id', 'ticket_id' => $open->id, 'state' => $open->workflow_status]
+            );
+        }
+
+        // Same three ways of saying why, judged against the DISPATCH reason list — the one whose entries
+        // are decisions ("parts are in") rather than suspicions ("it felt wrong").
+        $statement = $this->requestStatement($data + ['vehicle_id' => $vehicleId], 'dispatch');
+
+        return DB::transaction(function () use ($vehicle, $vehicleId, $statement, $actor) {
+            $ticket = new Maintenance();
+            $ticket->origin          = Maintenance::ORIGIN_MANUAL;
+            $ticket->vehicle_id      = $vehicleId;
+            // Born in the Supervisors' dispatch queue — no review gate, no test drive.
+            $ticket->workflow_status = Maintenance::WF_INSPECTION_PENDING;
+            // A booked service is a PLANNED visit and must be tagged as one, or the foresight engine
+            // reads a scheduled oil change as the car failing. Everything else here is a real problem.
+            $isPlanned = $statement['reason_code'] === 'scheduled_service';
+            $ticket->trigger_reason = $isPlanned ? Maintenance::TRIGGER_PERIODIC : Maintenance::TRIGGER_TEST_DRIVE;
+            $ticket->visit_context  = $isPlanned ? Maintenance::CONTEXT_ROUTINE : 'standard';
+            // WHERE it came from: whoever holds this door is the workshop side of the house — the same
+            // source a breakdown intake carries, and never a driver (the route forbids it).
+            $ticket->request_origin = Maintenance::SOURCE_WORKSHOP;
+
+            $ticket->customer_complaint  = $statement['sentence'];
+            $ticket->request_detail_mode = $statement['mode'];
+            $ticket->reported_faults     = $statement['faults'];
+            $ticket->request_reason_code = $statement['reason_code'];
+
+            // Parked ('IN'): the car isn't at the garage yet, so it must not read as an open garage event.
+            $ticket->event_status = 'IN';
+            $ticket->requested_by = $actor->id;
+            $ticket->requested_at = Carbon::now();
+            $ticket->responsible  = $actor->name;
+
+            // The named faults become the ticket's findings so the supervisor has something to dispatch.
+            // Sourced as `inspector` because that is the finding-source contract's word for "found by us,
+            // before the garage saw it" (Maintenance::FINDING_SOURCES has exactly two values), and this
+            // door is held only by people with that authority. Severity is the catalog's PREFILL hint,
+            // never a grade — the grade is still set by the person entitled to set it.
+            if ($statement['faults']) {
+                // `kind` + `catalog_id` / `catalog_slug` are the keys EventClassificationService reads to
+                // classify a finding authoritatively (classification_source = catalog) rather than by
+                // guessing at its wording. A repeat-claim row carries no catalog id, so it falls through
+                // to the resolver exactly as a legacy symptom always has.
+                $ticket->findings = array_map(fn ($f) => [
+                    'text'         => $f['text'],
+                    'category_key' => $f['category_key'],
+                    'kind'         => \App\Models\MaintenanceTask::KIND_FAULT,
+                    'catalog_id'   => $f['fault_catalog_id'],
+                    'catalog_slug' => $f['slug'],
+                    'severity'     => $f['severity'],
+                    'source'       => Maintenance::FINDING_INSPECTOR,
+                    'at'           => Carbon::now()->toIso8601String(),
+                ], $statement['faults']);
+            }
+
+            $ticket->save();
+
+            // Promote the findings into routable faults — a ticket at Needs Dispatch with no faults on it
+            // is a ticket a supervisor cannot act on. No-op when they picked a reason or wrote a note.
+            if ($ticket->findings) {
+                app(MaintenanceTaskService::class)->syncFromFindings($ticket, $actor);
+            }
+
+            // A committed visit gets its contract at birth, like every other committed ticket.
+            $this->openMaintenanceContract($ticket, $actor);
+
+            $this->cascade($ticket->vehicle_id);
+
+            $this->log->record($ticket, VehicleLogEvent::EVENT_REPORT_FILED, $actor, [
+                'description' => 'Sent straight to the garage — no test drive'
+                                . ($ticket->customer_complaint ? ': “' . $ticket->customer_complaint . '”' : '')
+                                . ' (by ' . $actor->name . ')',
+                'meta'        => [
+                    'trigger_reason'      => $ticket->trigger_reason,
+                    'request_origin'      => Maintenance::SOURCE_WORKSHOP,
+                    'requested_by'        => $actor->name,
+                    'request_detail_mode' => $statement['mode'],
+                    'request_reason_code' => $statement['reason_code'],
+                    'reported_faults'     => $statement['faults'],
+                    'source'              => 'direct_dispatch',
+                ],
+            ]);
+
+            // Hand off to the Supervisors (Waleed/Abdullah): this car needs a garage. Warning, not
+            // critical — unlike a breakdown, nothing here says the car has stopped working.
+            $vehicle = $ticket->loadMissing('vehicle')->vehicle;
+            $note    = $ticket->customer_complaint ? ' — “' . $ticket->customer_complaint . '”' : '';
+            $this->notifier->notifyByPermission(self::NOTIFY_DISPATCHER, [
+                'type'     => 'maint_direct_dispatch',
+                'category' => 'maintenance',
+                'severity' => 'warning',
+                'title'    => 'Needs a garage · ' . $this->label($vehicle),
+                'body'     => trim($actor->name . ' sent ' . $this->label($vehicle)
+                                . ' straight in — no test drive needed' . $note . '. Pick a garage.'),
+                'url'      => $this->link($ticket),
+                'key'      => 'maint_wf:' . $ticket->id . ':inspection_pending',
+                'icon'     => 'wrench',
+                'meta'     => ['ticket_id' => $ticket->id, 'plate' => $vehicle?->plate_no, 'direct_dispatch' => true],
+            ], $actor->id);
 
             return $ticket->load($this->eager());
         });

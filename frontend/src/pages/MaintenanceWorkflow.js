@@ -9,6 +9,7 @@ import { useToast } from '../components/ui/Toast';
 import Icon from '../components/ui/Icon';
 import { Tooltip } from '../components/ui/Tooltip';
 import TicketActionModal from '../components/workflow/TicketActionModal';
+import SendCarInModal from '../components/workflow/SendCarInModal';
 import TicketDetailDrawer from '../components/workflow/TicketDetailDrawer';
 import TicketCommandView from '../components/workflow/TicketCommandView';
 import TaskRoutingModal from '../components/workflow/TaskRoutingModal';
@@ -633,7 +634,11 @@ export default function MaintenanceWorkflow() {
         {modal?.action === 'triage' && (
           <ComplaintTriageModal ticket={modal.ticket} vehicles={vehicles} onClose={() => setModal(null)} onDone={onDone} />
         )}
-        {modal && !['logistics', 'route', 'complaint', 'breakdown', 'triage', 'test'].includes(modal.action) && (
+        {/* Send a car in — its own two-door form, so it is excluded from the generic modal below. */}
+        {modal?.action === 'request' && (
+          <SendCarInModal vehicles={vehicles} onClose={() => setModal(null)} onDone={onDone} />
+        )}
+        {modal && !['logistics', 'route', 'complaint', 'breakdown', 'triage', 'test', 'request'].includes(modal.action) && (
           <TicketActionModal action={modal.action} ticket={modal.ticket || null} vehicles={vehicles} garages={garages} findingsCatalog={findingsCatalog} keywordMeta={keywordMeta} faultCausesCatalog={faultCausesCatalog} locationCatalog={locationCatalog} assignableDrivers={drivers} allowedTypes={maintTypes} onClose={() => setModal(null)} onDone={onDone} />
         )}
       </>
@@ -695,7 +700,9 @@ export default function MaintenanceWorkflow() {
               <button className={view === 'list' ? 'on' : ''} onClick={() => setView('list')}>{t('workflow.board.viewList')}</button>
             </div>
             {canManage && <button className="opx-btn" onClick={() => setModal({ action: 'complaint' })}>📣 {t('workflow.board.newComplaint')}</button>}
-            {canLogistics && <button className="opx-btn primary" onClick={() => setModal({ action: 'request' })}><Icon.Plus className="h-4 w-4" /> {t('workflow.board.requestInspection')}</button>}
+            {/* Either door qualifies: a driver asks for a look, an inspector or supervisor can also send
+                a car straight to a garage. SendCarInModal shows only the doors the caller may use. */}
+            {(canLogistics || can('maintenance.initiate') || can('maintenance.manage')) && <button className="opx-btn primary" onClick={() => setModal({ action: 'request' })}><Icon.Plus className="h-4 w-4" /> {t('workflow.board.requestInspection')}</button>}
           </div>
         </div>
 
@@ -801,7 +808,11 @@ export default function MaintenanceWorkflow() {
       {modal?.action === 'triage' && (
         <ComplaintTriageModal ticket={modal.ticket} vehicles={vehicles} onClose={() => setModal(null)} onDone={onDone} />
       )}
-      {modal && !['logistics', 'route', 'complaint', 'breakdown', 'triage', 'test'].includes(modal.action) && (
+      {/* Send a car in — its own two-door form, so it is excluded from the generic modal below. */}
+      {modal?.action === 'request' && (
+        <SendCarInModal vehicles={vehicles} onClose={() => setModal(null)} onDone={onDone} />
+      )}
+      {modal && !['logistics', 'route', 'complaint', 'breakdown', 'triage', 'test', 'request'].includes(modal.action) && (
         <TicketActionModal
           action={modal.action}
           ticket={modal.ticket || null}
