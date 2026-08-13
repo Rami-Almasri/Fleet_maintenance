@@ -4406,6 +4406,21 @@ class MaintenanceWorkflowService
                 ->where('status', \App\Models\MaintenanceTask::STATUS_TRANSFERRED)
                 ->update(['status' => \App\Models\MaintenanceTask::STATUS_PENDING]);
 
+            // Stamp the ARRIVAL on every open stint at this garage. `repair_started_at` on the ticket is
+            // the same moment, but it is one column re-stamped at each check-in — so the previous
+            // garage's arrival is overwritten the instant this one confirms. Recording it per stint is
+            // what makes "how long was it AT that garage" (as opposed to in its custody, drive included)
+            // and "how long did the move take" answerable per garage rather than only for the last one.
+            // Only ever fills a null: an arrival is a fact about one moment and is never re-written.
+            \App\Models\MaintenanceTaskAssignment::whereIn(
+                'maintenance_task_id',
+                $ticket->tasks()->select('id')
+            )
+                ->where('vendor_id', $ticket->vendor_id)
+                ->whereNull('released_at')
+                ->whereNull('arrived_at')
+                ->update(['arrived_at' => Carbon::now()]);
+
             // Fault LIST (not a prose sentence) for the single "In Workshop" event logged below — the
             // timeline card shows a "Show Faults (N)" toggle instead of spelling every fault into the
             // description, so a 6-fault ticket doesn't turn into a paragraph. Prefer the open faults on the

@@ -30,7 +30,7 @@ class MaintenanceInvoiceController extends Controller
     public function index(Maintenance $ticket)
     {
         return $this->run(function () use ($ticket) {
-            $ticket->load(['invoices.vendor:id,name', 'invoices.tasks:id,maintenance_invoice_id,symptom,status', 'invoices.lineItems']);
+            $ticket->load(['invoices.vendor:id,name', 'invoices.tasks:id,maintenance_invoice_id,symptom,status,kind', 'invoices.lineItems']);
 
             return ResponseHelper::SuccessResponse(
                 MaintenanceInvoiceResource::collection($ticket->invoices),

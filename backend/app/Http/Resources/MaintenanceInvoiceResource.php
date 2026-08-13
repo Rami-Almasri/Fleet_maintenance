@@ -47,8 +47,17 @@ class MaintenanceInvoiceResource extends JsonResource
 
             // The faults this invoice covers + their line breakdown (eager-loaded on the ticket surface).
             'task_ids'              => $inv->relationLoaded('tasks') ? $inv->tasks->pluck('id')->all() : null,
+            // The covered WORK. `kind` travels with each row because a ticket carries faults, planned
+            // services, damage and checks — an oil change on a bill must not read as a fault anywhere.
+            // (The key stays `faults` for compatibility with the clients already reading it.)
             'faults'                => $inv->relationLoaded('tasks')
-                ? $inv->tasks->map(fn ($t) => ['id' => $t->id, 'symptom' => $t->symptom, 'status' => $t->status])->values()
+                ? $inv->tasks->map(fn ($t) => [
+                    'id'        => $t->id,
+                    'symptom'   => $t->symptom,
+                    'status'    => $t->status,
+                    'kind'      => $t->kind,
+                    'kind_meta' => $t->kindMeta(),
+                ])->values()
                 : null,
             'line_items'            => $inv->relationLoaded('lineItems')
                 ? MaintenanceLineItemResource::collection($inv->lineItems)

@@ -97,7 +97,8 @@ class MaintenanceWorkflowController extends Controller
     private const EAGER = ['vendor', 'transferToVendor:id,name', 'vehicle:id,plate_no,make,model,operational_status,odometer', 'inspector:id,name', 'requester:id,name', 'assignedDriver:id,name', 'delegatedBy:id,name', 'recommendationReviewer:id,name', 'watchers:id,name', 'linkedContract:id,contract_no', 'lineItems',
         // Multi-garage routing: the ticket's faults, each with its garage-stint timeline + current garage.
         // lastFailedVendor drives the "Unresolved at Garage X" blame badge on a re-inspection failure.
-        'tasks.assignments.vendor:id,name', 'tasks.currentVendor:id,name', 'tasks.lastFailedVendor:id,name', 'tasks.media', 'tasks.markedIncorrectBy:id,name',
+        'tasks.assignments.vendor:id,name', 'tasks.assignments.assignedBy:id,name', 'tasks.assignments.releasedBy:id,name',
+        'tasks.currentVendor:id,name', 'tasks.lastFailedVendor:id,name', 'tasks.media', 'tasks.markedIncorrectBy:id,name',
         // Event Type layer — the catalog row each fault/service/inspection was typed from, so the resource
         // can ship `catalog` (and resolve a service's reminder type) without an N+1 per task.
         // `category_key` + `location_mode` ride along because the resource answers "does this fault type
@@ -114,7 +115,7 @@ class MaintenanceWorkflowController extends Controller
         // Garage Invoice Portal: the one submission awaiting audit — drives the "Awaiting Audit" flag.
         'pendingGarageInvoice',
         // One Ticket → Many Invoices: each garage bill with its garage, covered faults + line breakdown.
-        'invoices.vendor:id,name', 'invoices.tasks:id,maintenance_invoice_id,symptom,status', 'invoices.lineItems',
+        'invoices.vendor:id,name', 'invoices.tasks:id,maintenance_invoice_id,symptom,status,kind', 'invoices.lineItems',
         // Enterprise Handover Workflow — the open discrepancy incident (if any), the latest pause/resume
         // custody handovers, and every generated comparison report on the ticket's history.
         'activeIncident.acknowledgedBy:id,name', 'lastPauseHandover', 'lastResumeHandover', 'handoverComparisons',
@@ -2716,6 +2717,28 @@ class MaintenanceWorkflowController extends Controller
                 MaintenanceWorkflowResource::make($ticket),
                 'On-site service completed — pending final QA re-inspection',
                 200
+            );
+        });
+    }
+
+    /**
+     * Invoice Matching Desk (/invoice-matching) — the queue side of "the car is back, key the bill against
+     * the work". One row per ticket whose car has come back from the shop, each carrying both halves of the
+     * match: how many repaired faults are on a bill, and whether the bills agree with their own receipts.
+     * The work/paper detail for a picked ticket is the ordinary ticket show payload — see
+     * InvoiceMatchingService for how each state is derived.
+     */
+    public function invoiceMatchingQueue(Request $request, \App\Services\InvoiceMatchingService $desk)
+    {
+        return $this->run(function () use ($request, $desk) {
+            $data = $request->validate([
+                'days' => ['nullable', 'integer', 'min:1', 'max:730'],
+            ]);
+
+            return ResponseHelper::SuccessResponse(
+                $desk->queue((int) ($data['days'] ?? \App\Services\InvoiceMatchingService::DEFAULT_WINDOW_DAYS)),
+                'Invoice matching queue retrieved',
+                200,
             );
         });
     }

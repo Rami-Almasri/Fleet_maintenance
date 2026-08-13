@@ -191,10 +191,19 @@ class MaintenanceTaskResource extends JsonResource
                 'vendor_id'   => $a->vendor_id,
                 'garage'      => $a->vendor?->name,
                 'assigned_at' => optional($a->assigned_at)->toIso8601String(),
+                // When the CAR reached this garage. Null on every stint written before the column existed
+                // (and on one that hasn't arrived yet) — a reader must then say it is measuring from
+                // dispatch, never present custody time as garage time.
+                'arrived_at'  => optional($a->arrived_at)->toIso8601String(),
                 'released_at' => optional($a->released_at)->toIso8601String(),
                 'is_open'     => $a->released_at === null,
                 'outcome'     => $a->outcome,
                 'reason'      => $a->reason,
+                // WHO sent it there and who released it — a transfer is a decision, and the timeline that
+                // shows the move should name the person who made it. Serialised only when the two
+                // belongsTo relations were eager-loaded, so a light listing never N+1s.
+                'assigned_by_name' => $a->relationLoaded('assignedBy') ? $a->assignedBy?->name : null,
+                'released_by_name' => $a->relationLoaded('releasedBy') ? $a->releasedBy?->name : null,
                 // Per-attempt manual labor (mechanic's actual hours) — carried by the stint that ends
                 // the attempt; immutable history, never overwritten by a later attempt.
                 'labor_hours' => $a->labor_hours !== null ? (float) $a->labor_hours : null,

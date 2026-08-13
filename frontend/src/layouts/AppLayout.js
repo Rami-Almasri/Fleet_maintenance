@@ -123,6 +123,7 @@ const NAV_SECTIONS = [
     title: 'Maintenance Control',
     items: [
       { name: 'Completed Repairs', to: '/completed-repairs', icon: 'M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'The ledger of every car whose repair is done and signed off — who requested it, who drove it, where it was fixed, what was found and repaired, and what it cost. Expand any row for the full custody chain, the resolved faults and the odometer readings.' },
+      { name: 'Invoice Matching', to: '/invoice-matching', icon: 'M6 2h9l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1zM14 2v6h6M9 13h3M9 17h6M13 12l2 2 4-4', desc: 'The car is back from the garage — key each garage\'s bill next to the work that was actually done to the car, and see at a glance whether they agree. A car worked in two garages comes back with two bills, and each one covers only the faults its garage fixed. Every fault shows whether it is on a bill yet; hovering a bill lights up the faults it covers; and any bill whose printed receipt disagrees with its keyed lines is flagged until someone explains the gap.' },
       { name: 'Maintenance History', to: '/maintenance-history', icon: 'M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0z', desc: 'Every car that saw the workshop over the chosen window — how often it went in (visits) and how long it spent there (total days in the shop), sortable and searchable. Open a car\'s visit list to see each individual trip: date, garage, what was done and the cost.' },
     ],
   },

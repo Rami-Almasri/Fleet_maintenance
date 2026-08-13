@@ -68,6 +68,7 @@ import Users from './pages/Users';
 import NotFound from './pages/NotFound';
 import GarageInvoicePortal from './pages/GarageInvoicePortal';
 import CompletedRepairs from './pages/CompletedRepairs';
+import InvoiceMatching from './pages/InvoiceMatching';
 import MileageDiscrepancies from './pages/oversight/MileageDiscrepancies';
 import GarageInvoiceQueue from './pages/oversight/GarageInvoiceQueue';
 import SeverityReview from './pages/oversight/SeverityReview';
@@ -256,6 +257,8 @@ export default function App() {
                   <Route path="/maintenance-progress" element={<MaintenanceCheckpoints />} />
                   {/* Fixed & Completed Repairs ledger — every closed ticket with its full story */}
                   <Route path="/completed-repairs" element={<CompletedRepairs />} />
+                  {/* Invoice Matching — the car is back: key each garage's bill beside the work it covers */}
+                  <Route path="/invoice-matching" element={<InvoiceMatching />} />
                   {/* /maintenance-foresight is retired — its "keeps breaking down" evidence now
                       lives on each car's own profile (Overview → Repeat faults). Old links land
                       on the fleet list rather than a dead route. */}

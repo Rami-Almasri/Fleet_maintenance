@@ -81,6 +81,7 @@ export const MODULES = [
       { name: 'Complaints', route: '/complaints', permission: 'maintenance.view', icon: Icon.Flag, desc: 'Every customer complaint and its follow-up timeline, in one management view.' },
       { name: 'Driver Observations', route: '/driver-observations', permission: 'maintenance.view', icon: Icon.Search, desc: 'Internal handover notes from drivers — escalate to an inspection only when needed.' },
       { name: 'Completed Repairs', route: '/completed-repairs', permission: 'maintenance.view', icon: Icon.Check, desc: 'The signed-off ledger — who, where, what was found and fixed, and what it cost.' },
+      { name: 'Invoice Matching', route: '/invoice-matching', permission: 'maintenance.view', icon: Icon.Invoice, desc: 'The car is back — key each garage’s bill beside the work it covers, and see whether they agree.' },
       { name: 'Oil Mileage Follow-up', route: '/oil-projection', permission: 'reminders.view', icon: Icon.Clock, desc: 'Cars out on rental heading for their oil limit — call the customer, enter the mileage they report, and the next check recalculates from it.' },
       { name: 'Parts', route: '/parts', permission: 'parts.view', icon: Icon.Coins, desc: 'Request, approve, buy and install parts — with duplicate-spend and recurrence detection.' },
       { name: 'Procurement', route: '/procurement', permission: 'maintenance.view', icon: Icon.Cash, desc: 'What we owe suppliers and garages aged by how long it has been outstanding, who we buy from and how well they perform, and every payment that has left the account.' },

@@ -535,6 +535,9 @@ Route::middleware('auth:sanctum')->prefix('maintenance-tickets')->controller(Mai
     Route::get('/vehicle/{vehicle}/inspection-request', 'vehicleInspectionRequest')->middleware('permission:maintenance.view|maintenance.logistics');
     // Awaiting-Invoice tracker: signed-off-but-uninvoiced tickets (STATIC — must precede /{ticket}).
     Route::get('/pending-invoices', 'pendingInvoices')->middleware('permission:maintenance.view');
+    // Invoice Matching Desk: cars back from the shop, each with how much of its work is on a bill and
+    // whether the bills agree with their receipts (STATIC — must precede /{ticket}).
+    Route::get('/invoice-matching', 'invoiceMatchingQueue')->middleware('permission:maintenance.view');
     // Inspection Request Review Gate — Controllers' (Lin & Marwa) queue. STATIC — must precede /{ticket}.
     Route::get('/pending-review', 'reviewQueue')->middleware('permission:maintenance.manage');
     // The rules behind system-raised requests — powers the queue's "when & why the system asks for a

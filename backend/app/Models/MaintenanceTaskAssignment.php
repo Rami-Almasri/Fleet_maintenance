@@ -41,7 +41,10 @@ class MaintenanceTaskAssignment extends Model
         // work_started_at — when work actually began on THIS fault in this attempt (stamped by the
         // per-fault confirmation verdict, else an explicit in_progress). assigned_at is dispatch, which
         // is shared by every fault on the ticket, so it can never measure one fault on its own.
-        'assigned_at', 'work_started_at', 'released_at', 'outcome', 'reason',
+        // arrived_at — when the CAR physically reached this garage (stamped at the arrival check-in).
+        // Distinct from assigned_at, which is the moment the fault was pointed here: on a transfer the
+        // car is still across town at that point, so the gap between the two IS the move.
+        'assigned_at', 'arrived_at', 'work_started_at', 'released_at', 'outcome', 'reason',
         'assigned_by', 'released_by',
         // Manual "actual mechanic time" for the attempt this stint ends — a human FACT, write-once
         // (filled only while null; edits go through FaultRepairTimeService::overwriteAttemptLabor with
@@ -51,6 +54,7 @@ class MaintenanceTaskAssignment extends Model
 
     protected $casts = [
         'assigned_at'       => 'datetime',
+        'arrived_at'        => 'datetime',
         'work_started_at'   => 'datetime',
         'released_at'       => 'datetime',
         'labor_hours'       => 'decimal:2',

@@ -7,7 +7,7 @@
 // its receipt-validation mode, adds a fault multi-select (which faults this invoice covers) and a receipt
 // photo. Every write posts to the backend and then asks the drawer to reload so the numbers stay in sync.
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import api from '../../api/client';
 import { useI18n } from '../../i18n/I18nContext';
 import Button from '../ui/Button';
@@ -26,6 +26,21 @@ import LineItemsEditor, {
 
 const money = (n) => `AED ${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+// A ticket carries WORK of four kinds, and an oil change is not a fault. The invoice surface groups the
+// work it covers by kind rather than calling all of it "faults" — same vocabulary the rest of the app
+// reads off MaintenanceTask::KIND_META (task.kind / task.kind_meta).
+const KIND_ORDER = ['fault', 'service', 'inspection', 'damage'];
+const KIND_LABEL_KEY = {
+  fault: 'workflow.invoices.kindFault',
+  service: 'workflow.invoices.kindService',
+  inspection: 'workflow.invoices.kindInspection',
+  damage: 'workflow.invoices.kindDamage',
+};
+const kindOf = (task) => (KIND_ORDER.includes(task?.kind) ? task.kind : 'fault');
+
+// The garage that did a given piece of work — the fault's own current garage, else the ticket's.
+const workGarageId = (task, ticket) => task.current_vendor_id || ticket?.vendor_id || null;
+
 // Map a stored line-item (API shape) back to the editor's row shape.
 const toEditorRow = (li) => ({
   kind: li.kind === 'labor' ? 'labor' : 'part',
@@ -43,14 +58,18 @@ const toEditorRow = (li) => ({
 });
 
 // ── Read-only invoice card ────────────────────────────────────────────────────────────────────────
-function InvoiceCard({ invoice, canManage, onEdit, onDelete, onReconcile, busy }) {
+function InvoiceCard({ invoice, canManage, onEdit, onDelete, onReconcile, busy, active = false, onHover }) {
   const { t } = useI18n();
   const reconciled = invoice.reconciliation_status === 'reconciled';
   const variance = invoice.variance;
   const hasVar = variance != null && Math.abs(variance) > 0.01;
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm">
+    <div
+      onMouseEnter={onHover ? () => onHover(invoice) : undefined}
+      onMouseLeave={onHover ? () => onHover(null) : undefined}
+      className={`rounded-xl border bg-white p-3.5 shadow-sm transition ${active ? 'border-indigo-400 ring-2 ring-indigo-200' : 'border-slate-200'}`}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -69,12 +88,16 @@ function InvoiceCard({ invoice, canManage, onEdit, onDelete, onReconcile, busy }
               {reconciled ? t('workflow.invoices.reconciled') : t('workflow.invoices.pending')}
             </Badge>
           </div>
-          {/* Faults this invoice covers */}
+          {/* The work this invoice covers — each chip carries its OWN kind, so a service never reads
+              as a fault. `faults` is the API's (historical) key for the covered work items. */}
           {invoice.faults?.length > 0 && (
             <div className="mt-1.5 flex flex-wrap gap-1">
               {invoice.faults.map((f) => (
                 <span key={f.id} className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700 ring-1 ring-inset ring-indigo-600/10">
-                  <Icon.Wrench className="h-2.5 w-2.5" />{f.symptom}
+                  {f.kind_meta?.emoji
+                    ? <span className="text-[9px]">{f.kind_meta.emoji}</span>
+                    : <Icon.Wrench className="h-2.5 w-2.5" />}
+                  {f.symptom}
                 </span>
               ))}
             </div>
@@ -128,15 +151,35 @@ function InvoiceCard({ invoice, canManage, onEdit, onDelete, onReconcile, busy }
 }
 
 // ── Create / edit modal ───────────────────────────────────────────────────────────────────────────
-function InvoiceEditor({ ticket, invoice, garages, findingsCatalog, onClose, onSaved }) {
+function InvoiceEditor({ ticket, invoice, garages, findingsCatalog, presetTaskIds = null, onClose, onSaved }) {
   const { t } = useI18n();
   const editing = !!invoice;
-  const faults = ticket.tasks || [];
+  const faults = useMemo(() => ticket.tasks || [], [ticket]);
 
-  const [vendorId, setVendorId] = useState(invoice?.vendor_id ? String(invoice.vendor_id) : (ticket.vendor_id ? String(ticket.vendor_id) : ''));
+  // Which garage this bill is FROM, decided before the first paint so the work list is already scoped:
+  // the invoice's own garage when editing; the garage that did the pre-ticked work when the desk opened
+  // this form for one garage; the ticket's garage otherwise. Getting this right on render 1 matters —
+  // the work list filters on it, and a wrong first value would drop the pre-ticked work.
+  const [vendorId, setVendorId] = useState(() => {
+    if (invoice?.vendor_id) return String(invoice.vendor_id);
+    const preset = (presetTaskIds || []).map(String);
+    if (preset.length) {
+      const ids = [...new Set(
+        (ticket.tasks || [])
+          .filter((f) => preset.includes(String(f.id)))
+          .map((f) => workGarageId(f, ticket))
+          .filter(Boolean)
+          .map(String),
+      )];
+      if (ids.length === 1) return ids[0];
+    }
+    return ticket.vendor_id ? String(ticket.vendor_id) : '';
+  });
   const [isInternal, setIsInternal] = useState(!!invoice?.is_internal);
   const [invoiceNo, setInvoiceNo] = useState(invoice?.invoice_no || '');
-  const [taskIds, setTaskIds] = useState(() => new Set((invoice?.task_ids || []).map(String)));
+  // A new invoice can be opened with a set of faults already ticked — the matching desk does this when
+  // the user says "bill the faults nothing covers yet".
+  const [taskIds, setTaskIds] = useState(() => new Set((invoice?.task_ids || presetTaskIds || []).map(String)));
   const [lineItems, setLineItems] = useState(() => (invoice?.line_items || []).map(toEditorRow));
   const [receiptTotal, setReceiptTotal] = useState(invoice?.receipt_total != null ? String(invoice.receipt_total) : '');
   const [variance, setVariance] = useState(invoice?.variance_explanation || '');
@@ -145,7 +188,26 @@ function InvoiceEditor({ ticket, invoice, garages, findingsCatalog, onClose, onS
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
 
-  const garageOptions = useMemo(() => garages.map((g) => ({ id: String(g.id), label: g.name, sub: g.phone || g.type })), [garages]);
+  // A bill can only come from a garage that actually worked THIS car — the ticket's own garage plus any
+  // garage a fault was moved to. Offering the whole vendor list invited a bill against a workshop that
+  // never touched the car, which nothing downstream could catch.
+  const ticketGarageIds = useMemo(() => {
+    const ids = new Set();
+    if (ticket.vendor_id) ids.add(String(ticket.vendor_id));
+    (ticket.tasks || []).forEach((f) => {
+      if (f.current_vendor_id) ids.add(String(f.current_vendor_id));
+    });
+    // Keep a garage already named on this invoice selectable, so an old bill stays editable.
+    if (invoice?.vendor_id) ids.add(String(invoice.vendor_id));
+    return ids;
+  }, [ticket, invoice]);
+
+  const garageOptions = useMemo(
+    () => garages
+      .filter((g) => ticketGarageIds.has(String(g.id)))
+      .map((g) => ({ id: String(g.id), label: g.name, sub: g.phone || g.type })),
+    [garages, ticketGarageIds],
+  );
 
   const toggleFault = (id) => {
     const next = new Set(taskIds);
@@ -153,6 +215,29 @@ function InvoiceEditor({ ticket, invoice, garages, findingsCatalog, onClose, onS
     if (next.has(k)) next.delete(k); else next.add(k);
     setTaskIds(next);
   };
+
+  // A GARAGE'S BILL LISTS ONLY THAT GARAGE'S WORK. Once the garage is named, the other garages' work
+  // leaves this form entirely — it is billed on their own invoices, and showing it here only invites
+  // someone to tick it. (An in-house bill has no garage to scope by, so it still sees everything.)
+  const visibleFaults = useMemo(() => (
+    (isInternal || !vendorId)
+      ? faults
+      : faults.filter((f) => String(workGarageId(f, ticket) ?? '') === String(vendorId))
+  ), [faults, isInternal, vendorId, ticket]);
+
+  // Never hide work silently: say how much belongs to the other garages.
+  const elsewhereCount = faults.length - visibleFaults.length;
+
+  // Switching the garage drops any ticked work that is no longer this garage's, so the payload can
+  // never carry another garage's items just because they were ticked before the switch.
+  useEffect(() => {
+    if (isInternal || !vendorId) return;
+    const allowed = new Set(visibleFaults.map((f) => String(f.id)));
+    setTaskIds((current) => {
+      const next = new Set([...current].filter((id) => allowed.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [vendorId, isInternal, visibleFaults]);
 
   // Which faults are billed on ANOTHER invoice already — surfaced so the user knows selecting them here
   // moves them off that invoice (fault → one invoice).
@@ -165,6 +250,29 @@ function InvoiceEditor({ ticket, invoice, garages, findingsCatalog, onClose, onS
     return map;
   }, [ticket.invoices, invoice]);
 
+  // ONE GARAGE PER BILL. Each garage hands us its own invoice for the work IT did, so a bill whose
+  // ticked work spans two garages is not a real document — it is two. Named here rather than left to the
+  // user's memory, because the whole point of the fault→invoice link is that cost lands on the garage
+  // that earned it.
+  const tickedWork = faults.filter((f) => taskIds.has(String(f.id)));
+  const garagesOnTicked = useMemo(() => {
+    const map = new Map();
+    tickedWork.forEach((f) => {
+      const id = workGarageId(f, ticket);
+      if (id) map.set(String(id), f.current_garage || ticket.garage || `#${id}`);
+    });
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [taskIds, faults, ticket]);
+  const mixedGarages = !isInternal && garagesOnTicked.size > 1;
+
+  // Ticking work from a single garage names the garage for you — the invoice belongs to whoever did it.
+  useEffect(() => {
+    if (isInternal || garagesOnTicked.size !== 1) return;
+    const only = [...garagesOnTicked.keys()][0];
+    setVendorId((current) => (current === only ? current : only));
+  }, [garagesOnTicked, isInternal]);
+
   const rows = serializeLineItems(lineItems);
   const blocked =
     saving
@@ -172,6 +280,7 @@ function InvoiceEditor({ ticket, invoice, garages, findingsCatalog, onClose, onS
     || lineItemsHaveZeroCost(lineItems)
     // A receipt is optional on an invoice, but once entered a mismatch needs an explanation.
     || (receiptTotal !== '' && invoiceVarianceBlocked({ rows, receiptTotal, variance }))
+    || mixedGarages
     || (rows.length === 0 && taskIds.size === 0); // nothing to record
 
   const save = async () => {
@@ -239,36 +348,71 @@ function InvoiceEditor({ ticket, invoice, garages, findingsCatalog, onClose, onS
               <div className="flex h-[42px] items-center rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 text-sm text-slate-400">
                 {t('workflow.invoices.internal')}
               </div>
+            ) : garageOptions.length === 0 ? (
+              <div className="flex min-h-[42px] items-center rounded-lg border border-dashed border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                {t('workflow.invoices.noGarageOnTicket')}
+              </div>
             ) : (
               <SearchSelect value={vendorId} onChange={setVendorId} options={garageOptions} placeholder={t('workflow.ph.pickGarage')} />
+            )}
+            {!isInternal && garageOptions.length > 0 && (
+              <p className="mt-1 text-[11px] text-slate-400">{t('workflow.invoices.garageFromWork')}</p>
             )}
           </div>
           <Input label={t('workflow.invoices.invoiceNo')} value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)} placeholder={t('e.g. INV-2043')} />
         </div>
 
-        {/* Fault multi-select — which faults this invoice covers */}
+        {/* Work multi-select — WHAT this invoice covers, grouped by its own kind. A ticket holds faults,
+            planned services, damage and checks; an oil change is a service and is never listed as a fault. */}
         <div>
-          <p className="mb-1.5 text-sm font-medium text-slate-700">{t('workflow.invoices.faultsCovered')}</p>
-          {faults.length === 0 ? (
+          <p className="mb-1.5 text-sm font-medium text-slate-700">{t('workflow.invoices.workCovered')}</p>
+          {visibleFaults.length === 0 ? (
             <p className="text-xs text-slate-400">{t('workflow.invoices.noFaults')}</p>
           ) : (
-            <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-              {faults.map((f) => {
-                const owner = faultOwner[String(f.id)];
-                const checked = taskIds.has(String(f.id));
-                return (
-                  <label key={f.id} className={`flex cursor-pointer items-start gap-2 rounded-lg border px-2.5 py-2 text-sm ${checked ? 'border-indigo-300 bg-indigo-50/60' : 'border-slate-200 bg-white hover:bg-slate-50'}`}>
-                    <input type="checkbox" checked={checked} onChange={() => toggleFault(f.id)} className="mt-0.5 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
-                    <span className="min-w-0">
-                      <span className="block text-slate-700">{f.symptom}</span>
-                      {owner && !checked && (
-                        <span className="text-[11px] text-amber-600">{t('workflow.invoices.onOtherInvoice', { no: owner.invoice_no || `#${owner.id}` })}</span>
-                      )}
-                    </span>
-                  </label>
-                );
-              })}
+            <div className="space-y-3">
+              {KIND_ORDER.filter((k) => visibleFaults.some((f) => kindOf(f) === k)).map((kind) => (
+                <div key={kind}>
+                  <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                    {t(KIND_LABEL_KEY[kind])}
+                  </p>
+                  <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                    {visibleFaults.filter((f) => kindOf(f) === kind).map((f) => {
+                      const owner = faultOwner[String(f.id)];
+                      const checked = taskIds.has(String(f.id));
+                      return (
+                        <label key={f.id} className={`flex cursor-pointer items-start gap-2 rounded-lg border px-2.5 py-2 text-sm ${checked ? 'border-indigo-300 bg-indigo-50/60' : 'border-slate-200 bg-white hover:bg-slate-50'}`}>
+                          <input type="checkbox" checked={checked} onChange={() => toggleFault(f.id)} className="mt-0.5 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
+                          <span className="min-w-0">
+                            <span className="block text-slate-700">
+                              {f.kind_meta?.emoji && <span className="me-1 text-[11px]">{f.kind_meta.emoji}</span>}
+                              {f.symptom}
+                            </span>
+                            {/* Only worth printing while the list still spans garages — once the bill is
+                                scoped to one, every row would repeat the same name. */}
+                            {f.current_garage && (isInternal || !vendorId) && (
+                              <span className="block text-[11px] text-slate-400">{f.current_garage}</span>
+                            )}
+                            {owner && !checked && (
+                              <span className="text-[11px] text-amber-600">{t('workflow.invoices.onOtherInvoice', { no: owner.invoice_no || `#${owner.id}` })}</span>
+                            )}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
+          )}
+          {elsewhereCount > 0 && (
+            <p className="mt-2 text-[11px] text-slate-400">
+              {t('workflow.invoices.workElsewhere', { n: elsewhereCount })}
+            </p>
+          )}
+          {mixedGarages && (
+            <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-800 ring-1 ring-inset ring-amber-600/20">
+              {t('workflow.invoices.garageMixed', { garages: [...garagesOnTicked.values()].join(' · ') })}
+            </p>
           )}
         </div>
 
@@ -302,12 +446,26 @@ function InvoiceEditor({ ticket, invoice, garages, findingsCatalog, onClose, onS
 }
 
 // ── Panel ───────────────────────────────────────────────────────────────────────────────────────────
-export default function InvoicesPanel({ ticket, garages = [], findingsCatalog = [], canManage = false, onChanged }) {
+// `activeInvoiceId` / `onHoverInvoice` are optional and let a host page cross-link this list with its own
+// view of the work (the Invoice Matching desk highlights the faults a hovered bill covers). `addRequest`
+// ({ nonce, taskIds }) opens the create modal from outside with those faults pre-ticked; a new nonce is
+// what triggers it, so the same set can be asked for twice.
+export default function InvoicesPanel({
+  ticket, garages = [], findingsCatalog = [], canManage = false, onChanged,
+  activeInvoiceId = null, onHoverInvoice, addRequest = null,
+}) {
   const { t } = useI18n();
-  const [editor, setEditor] = useState(null); // null | { invoice? }
+  const [editor, setEditor] = useState(null); // null | { invoice?, presetTaskIds? }
   const [toDelete, setToDelete] = useState(null);
   const [busy, setBusy] = useState(null);
   const [error, setError] = useState(null);
+
+  const addNonce = addRequest?.nonce;
+  useEffect(() => {
+    if (!addNonce || !canManage) return;
+    setEditor({ presetTaskIds: addRequest?.taskIds || [] });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [addNonce]);
 
   const invoices = ticket?.invoices || [];
   const total = invoices.reduce((a, inv) => a + Number(inv.amount || 0), 0);
@@ -378,6 +536,8 @@ export default function InvoicesPanel({ ticket, garages = [], findingsCatalog = 
               invoice={inv}
               canManage={canManage}
               busy={busy}
+              active={activeInvoiceId === inv.id}
+              onHover={onHoverInvoice}
               onEdit={(i) => setEditor({ invoice: i })}
               onDelete={(i) => setToDelete(i)}
               onReconcile={reconcile}
@@ -390,6 +550,7 @@ export default function InvoicesPanel({ ticket, garages = [], findingsCatalog = 
         <InvoiceEditor
           ticket={ticket}
           invoice={editor.invoice}
+          presetTaskIds={editor.presetTaskIds}
           garages={garages}
           findingsCatalog={findingsCatalog}
           onClose={() => setEditor(null)}

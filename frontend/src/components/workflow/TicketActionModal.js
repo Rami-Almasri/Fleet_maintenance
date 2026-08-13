@@ -391,11 +391,34 @@ const SEVERITY_STYLE = {
 };
 // `locked` — when the classification forces the grade (a Breakdown is always 🔴 critical), the picker
 // is rendered read-only: the forced level keeps its colour, the others dim, and none respond to clicks.
-function FaultSeverityPicker({ value, onChange, t, locked = false }) {
+/**
+ * What the system would grade this fault, and WHY — a lookup, never a guess.
+ *
+ * Every keyword in the admin-curated risk library carries a grade in exactly the same vocabulary as
+ * fault severity (critical / moderate / routine), so the suggestion is that stored grade, not a model's
+ * opinion: the most serious grade among the findings the inspector actually ticked, named together with
+ * the keyword it came from so the reader can check it instead of trusting it.
+ *
+ * It never writes the field. Severity is the inspector's call and stays mandatory — this only saves them
+ * re-deriving what the library already knows, and makes disagreeing with it a deliberate act.
+ */
+export function severitySuggestion(symptoms = [], keywordMeta = {}) {
+  let best = null;
+  symptoms.forEach((s) => {
+    const key = typeof s === 'string' ? s : s?.text;
+    const meta = key ? keywordMeta[key] : null;
+    if (!meta?.risk) return;
+    if (!best || (meta.rank || 0) > (best.rank || 0)) best = { ...meta, keyword: key };
+  });
+  return best;
+}
+
+function FaultSeverityPicker({ value, onChange, t, locked = false, suggestion = null }) {
   return (
     <div className="grid grid-cols-3 gap-2">
       {FAULT_SEVERITY_OPTS.map((p) => {
         const active = value === p.value;
+        const isSuggested = !locked && suggestion?.risk === p.value;
         return (
           <button
             key={p.value}
@@ -403,13 +426,48 @@ function FaultSeverityPicker({ value, onChange, t, locked = false }) {
             disabled={locked}
             aria-disabled={locked}
             onClick={() => onChange(active ? '' : p.value)}
-            className={`flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2.5 text-sm font-semibold transition ${active ? SEVERITY_STYLE[p.value] : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'} ${locked ? `cursor-not-allowed${active ? '' : ' opacity-40'}` : ''}`}
+            className={`relative flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2.5 text-sm font-semibold transition ${active ? SEVERITY_STYLE[p.value] : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'} ${!active && isSuggested ? ' border-indigo-300 ring-1 ring-indigo-200' : ''} ${locked ? `cursor-not-allowed${active ? '' : ' opacity-40'}` : ''}`}
           >
             <span className="text-base leading-none" aria-hidden>{p.emoji}</span>
             {t(`workflow.faultSeverity.${p.value}`)}
+            {isSuggested && !active && (
+              <span className="absolute -top-2 rounded-full bg-indigo-600 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white">
+                {t('workflow.faultSeverity.suggested')}
+              </span>
+            )}
           </button>
         );
       })}
+    </div>
+  );
+}
+
+// The suggestion line under the picker: what the library says, which keyword said it, and a one-tap way
+// to accept it. Once the inspector has graded it differently, the line says so plainly rather than
+// disappearing — a disagreement with the library is worth seeing.
+function SeveritySuggestionNote({ suggestion, value, onApply, t }) {
+  if (!suggestion) return null;
+  const agreed = value === suggestion.risk;
+  const label = t(`workflow.faultSeverity.${suggestion.risk}`);
+
+  return (
+    <div className={`mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg px-2.5 py-1.5 text-xs ring-1 ring-inset ${agreed
+      ? 'bg-emerald-50 text-emerald-800 ring-emerald-600/15'
+      : 'bg-indigo-50 text-indigo-800 ring-indigo-600/15'}`}
+    >
+      <span>
+        {t('workflow.faultSeverity.suggestionLine', {
+          emoji: suggestion.emoji || '',
+          severity: label,
+          keyword: suggestion.ar && document?.documentElement?.dir === 'rtl' ? suggestion.ar : suggestion.keyword,
+        })}
+      </span>
+      {!agreed && !value && (
+        <button type="button" onClick={() => onApply(suggestion.risk)} className="font-semibold underline underline-offset-2">
+          {t('workflow.faultSeverity.useSuggestion')}
+        </button>
+      )}
+      {!agreed && value && <span className="font-semibold">{t('workflow.faultSeverity.overridden')}</span>}
     </div>
   );
 }
@@ -785,6 +843,9 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   useEffect(() => {
     if (severityLocked && faultSeverity !== 'critical') setFaultSeverity('critical');
   }, [severityLocked, faultSeverity]);
+  // The grade the risk library already holds for the findings that were ticked — offered to the
+  // inspector, never written for them (see severitySuggestion).
+  const severityHint = useMemo(() => severitySuggestion(symptoms, keywordMeta), [symptoms, keywordMeta]);
   // A Breakdown must be repaired in-shop (it grounds the car) — force + lock the location so it can never
   // be filed on-site (the backend rejects the contradiction too).
   const locationLocked = action === 'decide' && maintType === 'breakdown';
@@ -1584,11 +1645,11 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   }
 
   // ── The test-drive report, walked one step at a time ──────────────────────────────────────────
-  // Five steps, of which routing (5) only exists when the car is actually going in for work. Each
-  // step reports whether it's answered AND what the answer was, so the four collapsed rows read as a
-  // running summary of the report instead of hiding it. `openStep` is clamped to a step that still
-  // exists — picking "No maintenance needed" on step 4 deletes step 5 out from under the cursor.
-  const decideSteps = requiresMaintenance ? [1, 2, 3, 4, 5] : [1, 2, 3, 4];
+  // Four steps. The last one is the decision AND its routing: they are one question ("does this car
+  // need the workshop, and if so on what terms"), and splitting them made the routing half vanish and
+  // reappear as the inspector toggled the answer above it. Each step reports whether it's answered AND
+  // what the answer was, so the collapsed rows read as a running summary of the report.
+  const decideSteps = [1, 2, 3, 4];
   const lastDecideStep = decideSteps[decideSteps.length - 1];
   const causesComplete = rootCausesComplete(symptoms, faultCausesCatalog, causes);
   // The client half of the location gate — the same rule the API enforces, applied here so the
@@ -1612,7 +1673,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   const decideBlockers = action !== 'decide' ? [] : [
     odoGateBlocked && { step: 1, label: t('workflow.decideStep.needOdometerCheck') },
     requiresMaintenance && !causesComplete && { step: 3, label: t('workflow.decideStep.needCauses') },
-    requiresMaintenance && !faultSeverity && { step: 5, label: t('workflow.decideStep.needSeverity') },
+    requiresMaintenance && !faultSeverity && { step: 4, label: t('workflow.decideStep.needSeverity') },
     // The two halves of this report may not contradict each other: findings ARE the reason a car needs
     // a ticket, so a report that lists them cannot also say "no maintenance needed". Points at step 2,
     // because untick-the-findings is the fix when the inspector really means the car is clear.
@@ -1757,7 +1818,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
         )}
 
         {/* STAGE 2 — test-drive report + the repair decision.
-            Laid out as four numbered steps (mileage → findings → diagnosis → decision) so a long form
+            Laid out as four numbered steps (mileage → findings → diagnosis → decision + routing) so a long form
             reads as a sequence the inspector works down, not one undifferentiated scroll. */}
         {action === 'decide' && (
           <>
@@ -1887,13 +1948,19 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
               )}
             </Step>
 
-            {/* STEP 4 — the decision. It comes FIRST inside this step (it's the branch); the classification
-                only appears once the answer is "requires maintenance". */}
+            {/* STEP 4 — the decision AND the terms it is made on. The branch comes FIRST inside the step;
+                the classification and the routing block below only appear once the answer is "requires
+                maintenance". Kept as one step because the routing questions are not a separate decision —
+                they are the same one, spelled out. */}
             <Step
               {...stepProps(
                 4,
-                requiresMaintenance ? t('workflow.decision.requires') : t('workflow.decision.noNeed'),
-                true,
+                !requiresMaintenance
+                  ? t('workflow.decision.noNeed')
+                  : faultSeverity
+                  ? `${t('workflow.decision.requires')} · ${t(`workflow.faultSeverity.${faultSeverity}`)}`
+                  : t('workflow.decision.requires'),
+                requiresMaintenance ? !!faultSeverity : true,
               )}
               title={t('workflow.decideStep.decisionTitle')}
               hint={t('workflow.decideStep.decisionHint')}
@@ -1949,28 +2016,28 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                   <MaintenanceTypeCards types={visibleTypes} value={maintType} onChange={setMaintType} t={t} />
                 </div>
               )}
-            </Step>
 
-            {/* STEP 5 — routing: how urgent, where it's repaired, and whether the car may still be rented.
-                All three only exist once the car is actually going into maintenance. */}
-            {requiresMaintenance && (
-              <Step
-                {...stepProps(
-                  5,
-                  faultSeverity ? t(`workflow.faultSeverity.${faultSeverity}`) : t('workflow.decideStep.notAnswered'),
-                  !!faultSeverity,
-                )}
-                title={t('workflow.decideStep.routingTitle')}
-                hint={t('workflow.decideStep.routingHint')}
-              >
+              {/* ROUTING — how urgent, where it's repaired, and whether the car may still be rented.
+                  All three only exist once the car is actually going into maintenance, so the whole
+                  block is folded away behind "No maintenance needed". */}
+              {requiresMaintenance && (
+                <div className="space-y-3 border-t border-slate-100 pt-3">
+                  <div>
+                    <span className="block text-sm font-semibold text-slate-700">{t('workflow.decideStep.routingTitle')}</span>
+                    <span className="mt-0.5 block text-xs text-slate-400">{t('workflow.decideStep.routingHint')}</span>
+                  </div>
             {/* Fault Severity — the inspector's MANDATORY diagnostic grade, gating "Requires maintenance".
                 It becomes the headline urgency the supervisor reads first on the dispatch board. */}
               <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
                 <span className="mb-1.5 block text-sm font-semibold text-slate-700">{t('workflow.faultSeverity.label')}<Req /></span>
-                <FaultSeverityPicker value={faultSeverity} onChange={setFaultSeverity} t={t} locked={severityLocked} />
+                <FaultSeverityPicker value={faultSeverity} onChange={setFaultSeverity} t={t} locked={severityLocked} suggestion={severityHint} />
                 <p className="mt-1.5 text-xs text-slate-400">
                   {severityLocked ? t('workflow.faultSeverity.breakdownLocked') : t('workflow.faultSeverity.hint')}
                 </p>
+                {/* What the risk library grades the findings that were ticked — shown, never applied. */}
+                {!severityLocked && (
+                  <SeveritySuggestionNote suggestion={severityHint} value={faultSeverity} onApply={setFaultSeverity} t={t} />
+                )}
               </div>
 
             {/* Repair Location — where does this repair happen? On-Site (mobile — car stays available) or
@@ -2044,8 +2111,9 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                     : (deferrableForRental ? t('workflow.rentalEligibility.deferrableHint') : t('workflow.rentalEligibility.mandatoryHint'))}
                 </p>
               </div>
-              </Step>
-            )}
+                </div>
+              )}
+            </Step>
 
             {/* Why the submit button is still grey, in words, with a tap straight to the step that fixes it.
                 Collapsing the steps is what makes this necessary: a missing severity grade is now two rows
