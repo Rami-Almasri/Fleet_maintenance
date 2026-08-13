@@ -11,6 +11,7 @@ use App\Http\Controllers\CustomerController;
 use App\Http\Controllers\DriverController;
 use App\Http\Controllers\FaultCauseController;
 use App\Http\Controllers\FindingKeywordController;
+use App\Http\Controllers\VehicleLocationController;
 use App\Http\Controllers\FleetController;
 use App\Http\Controllers\GarageInvoiceController;
 use App\Http\Controllers\MaintenanceInvoiceController;
@@ -890,6 +891,37 @@ Route::middleware('auth:sanctum')->prefix('finding-keywords')->controller(Findin
     Route::post('/{findingKeyword}/terms', 'storeTerm')->middleware('permission:maintenance.manage');
     Route::post('/{findingKeyword}/terms/{term}', 'updateTerm')->middleware('permission:maintenance.manage');
     Route::delete('/{findingKeyword}/terms/{term}', 'destroyTerm')->middleware('permission:maintenance.manage');
+});
+
+// WHERE ON THE CAR — curation of the location vocabulary the fault picker offers, the sections it is
+// grouped into, and the per-type policy that decides whether a fault must name a place at all. Reads
+// at maintenance.view (anyone filing a fault may read the vocabulary they file into); every write is
+// catalog curation and sits at maintenance.manage, like the keyword library above.
+//
+// Ordering matters: the literal segments (`groups`, `reorder`, `policy`, `settings`) are declared
+// BEFORE `/{vehicleLocation}` so none of them is swallowed as a model binding.
+Route::middleware('auth:sanctum')->prefix('vehicle-locations')->controller(VehicleLocationController::class)->group(function () {
+    Route::get('/', 'index')->middleware('permission:maintenance.view');   // places + sections + policy + rails
+
+    // Sections (the collapsible headings in the picker).
+    Route::post('/groups', 'storeGroup')->middleware('permission:maintenance.manage');
+    Route::post('/groups/reorder', 'reorderGroups')->middleware('permission:maintenance.manage');
+    Route::post('/groups/{group}', 'updateGroup')->middleware('permission:maintenance.manage');
+    Route::delete('/groups/{group}', 'destroyGroup')->middleware('permission:maintenance.manage');
+
+    // "Does this fault type even HAVE a where?" — required | optional | none, per fault/damage type.
+    Route::post('/policy', 'updatePolicy')->middleware('permission:maintenance.manage');
+    Route::post('/policy/reset', 'resetPolicy')->middleware('permission:maintenance.manage');
+
+    // The quantity rail (max "how many" on one fault row).
+    Route::post('/settings', 'updateSettings')->middleware('permission:maintenance.manage');
+
+    // Places.
+    Route::post('/reorder', 'reorder')->middleware('permission:maintenance.manage');
+    Route::post('/', 'store')->middleware('permission:maintenance.manage');
+    Route::post('/{vehicleLocation}', 'update')->middleware('permission:maintenance.manage');           // POST, like Vendor
+    Route::post('/{vehicleLocation}/toggle', 'toggle')->middleware('permission:maintenance.manage');    // retire / restore
+    Route::delete('/{vehicleLocation}', 'destroy')->middleware('permission:maintenance.manage');        // unused places only
 });
 
 // Booking Readiness — the pickup-prep board. Lists upcoming bookings (type-R reservations) inside the

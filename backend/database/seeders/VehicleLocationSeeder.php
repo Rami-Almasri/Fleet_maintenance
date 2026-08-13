@@ -5,6 +5,7 @@ namespace Database\Seeders;
 use App\Models\DamageCatalog;
 use App\Models\FaultCatalog;
 use App\Models\VehicleLocation;
+use App\Models\VehicleLocationGroup;
 use App\Services\FaultLocationService;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Schema;
@@ -24,10 +25,44 @@ use Illuminate\Support\Facades\Schema;
  */
 class VehicleLocationSeeder extends Seeder
 {
+    /** Whether this database can even record an in-app edit (pre-migration deploys cannot). */
+    private bool $editedInApp = false;
+
     public function run(): void
     {
+        $this->editedInApp = Schema::hasTable('vehicle_locations')
+            && Schema::hasColumn('vehicle_locations', 'edited_in_app');
+
+        // Sections first — a place's `group_key` is meaningless until the section it names exists.
+        // firstOrCreate, not updateOrCreate: a section's label, order and active flag are all editable
+        // from the admin page, and re-asserting the config wording on every deploy would silently undo
+        // a rename nobody asked to have undone.
+        if (Schema::hasTable('vehicle_location_groups')) {
+            foreach ((array) config('vehicle_locations.groups', []) as $group) {
+                if (empty($group['key'])) {
+                    continue;
+                }
+
+                VehicleLocationGroup::firstOrCreate(
+                    ['key' => $group['key']],
+                    [
+                        'label'      => $group['label'] ?? $group['key'],
+                        'label_ar'   => $group['label_ar'] ?? null,
+                        'sort_order' => $group['sort_order'] ?? 0,
+                    ]
+                );
+            }
+        }
+
         foreach ((array) config('vehicle_locations.locations', []) as $entry) {
             if (empty($entry['slug'])) {
+                continue;
+            }
+
+            // A place a curator has edited in the app is left exactly as they left it — the same
+            // read-config/write-DB trade `component_catalog.edited_in_app` makes. Without this, the
+            // next deploy would quietly revert every rename, re-grouping and alias someone added.
+            if ($this->editedInApp && VehicleLocation::query()->where('slug', $entry['slug'])->value('edited_in_app')) {
                 continue;
             }
 

@@ -271,7 +271,7 @@ class MaintenanceWorkflowController extends Controller
                 'locations'         => $locations->groupedCatalog(),
                 // Keyed by keyword string → 'required' | 'optional' | 'none'
                 'location_policy'   => $locations->policyByKeyword((array) config('maintenance_findings.categories', [])),
-                'max_quantity'      => (int) config('vehicle_locations.max_quantity', 40),
+                'max_quantity'      => $locations->maxQuantity(),
             ],
             'Findings catalog retrieved successfully',
             200

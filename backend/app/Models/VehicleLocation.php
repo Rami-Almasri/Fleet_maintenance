@@ -39,18 +39,28 @@ class VehicleLocation extends Model
     protected $fillable = [
         'slug', 'name', 'name_ar', 'group_key', 'precision',
         'inspection_zone', 'area_key', 'aliases', 'is_active', 'sort_order',
+        // Set by the admin page, never by the seeder: this row was curated by a person and the next
+        // deploy must leave it alone. See the add_edited_in_app_to_vehicle_locations migration.
+        'edited_in_app',
     ];
 
     protected $casts = [
-        'aliases'    => 'array',
-        'is_active'  => 'boolean',
-        'sort_order' => 'integer',
+        'aliases'       => 'array',
+        'is_active'     => 'boolean',
+        'edited_in_app' => 'boolean',
+        'sort_order'    => 'integer',
     ];
 
     /** Every event recorded at this place — the "what happens here" query the child table exists for. */
     public function taskLinks(): HasMany
     {
         return $this->hasMany(MaintenanceTaskLocation::class, 'vehicle_location_id');
+    }
+
+    /** The picker section this place sits in. Joined on the stable string key, not an id. */
+    public function group(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    {
+        return $this->belongsTo(VehicleLocationGroup::class, 'group_key', 'key');
     }
 
     public function scopeActive(Builder $query): Builder

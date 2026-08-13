@@ -2,11 +2,13 @@
 
 namespace App\Services;
 
+use App\Models\AppSetting;
 use App\Models\DamageCatalog;
 use App\Models\FaultCatalog;
 use App\Models\MaintenanceTask;
 use App\Models\MaintenanceTaskLocation;
 use App\Models\VehicleLocation;
+use App\Models\VehicleLocationGroup;
 use App\Support\FaultPhrase;
 use Illuminate\Support\Facades\DB;
 
@@ -43,8 +45,14 @@ class FaultLocationService
     public const MODE_NONE     = 'none';
     public const MODES = [self::MODE_REQUIRED, self::MODE_OPTIONAL, self::MODE_NONE];
 
+    /** app_settings key holding the admin-set cap on `maintenance_tasks.quantity`. */
+    public const SETTING_MAX_QUANTITY = 'vehicle_locations.max_quantity';
+
     /** slug => VehicleLocation, memoised per request (the catalog is ~50 rows and read constantly). */
     private ?array $bySlug = null;
+
+    /** Ordered picker sections, memoised per request. See groups(). */
+    private ?array $groups = null;
 
     /** Normalised type name|slug => {slug, category_key, location_mode}. See typeIndex(). */
     private ?array $typeIndex = null;
@@ -86,6 +94,73 @@ class FaultLocationService
         return $this->bySlug = $rows;
     }
 
+    /**
+     * The picker's SECTIONS, in display order — DB first, config as the fallback.
+     *
+     * Same read-config/write-DB split as the places themselves: `vehicle_location_groups` is the live
+     * answer (renamed, reordered and retired from the admin page), and config('vehicle_locations.groups')
+     * covers an environment where that table has not been created or seeded yet, so a half-migrated
+     * deploy renders the authored sections rather than an empty picker.
+     *
+     * @return array<int, array{key:string, label:string, label_ar:?string}>
+     */
+    public function groups(): array
+    {
+        if ($this->groups !== null) {
+            return $this->groups;
+        }
+
+        $rows = [];
+        try {
+            foreach (VehicleLocationGroup::query()->active()->ordered()->get() as $group) {
+                $rows[] = ['key' => $group->key, 'label' => $group->label, 'label_ar' => $group->label_ar];
+            }
+        } catch (\Throwable $e) {
+            $rows = []; // table missing (pre-migration) — the config fallback below covers it
+        }
+
+        if (! $rows) {
+            foreach ((array) config('vehicle_locations.groups', []) as $group) {
+                if (empty($group['key'])) {
+                    continue;
+                }
+                $rows[] = [
+                    'key'      => $group['key'],
+                    'label'    => $group['label'] ?? $group['key'],
+                    'label_ar' => $group['label_ar'] ?? null,
+                ];
+            }
+        }
+
+        return $this->groups = $rows;
+    }
+
+    /**
+     * Upper bound on `maintenance_tasks.quantity` — the admin-set value when there is one, else the
+     * authored default. A sanity rail, not a business rule; see the config note.
+     */
+    public function maxQuantity(): int
+    {
+        $configured = (int) config('vehicle_locations.max_quantity', 40);
+        $stored     = AppSetting::get(self::SETTING_MAX_QUANTITY);
+
+        $max = is_numeric($stored) ? (int) $stored : $configured;
+
+        return max(1, $max ?: 40);
+    }
+
+    /**
+     * Forget the memoised vocabulary. Only the curation endpoints need this: a write and the read that
+     * re-renders the picker happen in ONE request there, and a stale memo would show the admin the
+     * catalog as it was before their own edit.
+     */
+    public function flush(): void
+    {
+        $this->bySlug   = null;
+        $this->groups   = null;
+        $this->typeIndex = null;
+    }
+
     /** One place by slug, or null when the vocabulary does not know it. */
     public function find(?string $slug): ?VehicleLocation
     {
@@ -115,7 +190,7 @@ class FaultLocationService
         }
 
         $out = [];
-        foreach ((array) config('vehicle_locations.groups', []) as $group) {
+        foreach ($this->groups() as $group) {
             $key = $group['key'] ?? null;
             if (! $key || empty($byGroup[$key])) {
                 continue;
@@ -129,7 +204,7 @@ class FaultLocationService
             unset($byGroup[$key]);
         }
 
-        // Anything in a group the config no longer declares still shows up rather than vanishing —
+        // Anything in a group the vocabulary no longer declares still shows up rather than vanishing —
         // a retired group would otherwise hide places that historical faults still point at.
         foreach ($byGroup as $key => $locations) {
             $out[] = ['key' => $key, 'label' => ucfirst(str_replace('_', ' ', (string) $key)), 'label_ar' => null, 'locations' => $locations];
@@ -367,13 +442,12 @@ class FaultLocationService
         return $out;
     }
 
-    /** Clamp a quantity into the sane range (≥ 1, ≤ config max). Non-numeric input reads as 1. */
+    /** Clamp a quantity into the sane range (≥ 1, ≤ the curated max). Non-numeric input reads as 1. */
     public function normalizeQuantity($value): int
     {
-        $max = (int) config('vehicle_locations.max_quantity', 40);
-        $n   = is_numeric($value) ? (int) $value : 1;
+        $n = is_numeric($value) ? (int) $value : 1;
 
-        return max(1, min($max ?: 40, $n));
+        return max(1, min($this->maxQuantity(), $n));
     }
 
     // ── Persistence ───────────────────────────────────────────────────────────────────────────────

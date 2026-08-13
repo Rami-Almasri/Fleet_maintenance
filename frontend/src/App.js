@@ -43,6 +43,7 @@ import GarageProfile from './pages/intelligence/GarageProfile';
 import GarageCompare from './pages/intelligence/GarageCompare';
 import Executive from './pages/intelligence/Executive';
 import FindingKeywords from './pages/FindingKeywords';
+import VehicleLocations from './pages/VehicleLocations';
 import Parts from './pages/Parts';
 import PartsCatalog from './pages/PartsCatalog';
 import Warranties from './pages/Warranties';
@@ -264,6 +265,7 @@ export default function App() {
                   <Route path="/intelligence/garages/compare" element={<GarageCompare />} />
                   <Route path="/intelligence/garages/:id" element={<GarageProfile />} />
                   <Route path="/finding-keywords" element={<FindingKeywords />} />
+                  <Route path="/vehicle-locations" element={<VehicleLocations />} />
                   {/* Maintenance Analytics is marked "Coming Soon" in the module registry —
                       redirect the old URL so the unfinished page isn't reachable directly. */}
                   <Route path="/maintenance-analytics" element={<Navigate to="/apps/fleet-intelligence" replace />} />

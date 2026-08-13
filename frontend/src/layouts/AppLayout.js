@@ -130,6 +130,7 @@ const NAV_SECTIONS = [
     title: 'Maintenance Intelligence',
     items: [
       { name: 'Keyword Risk', to: '/finding-keywords', icon: 'M20.59 13.41 13.42 20.6a2 2 0 0 1-2.83 0l-7-7A2 2 0 0 1 3 12V5a2 2 0 0 1 2-2h7a2 2 0 0 1 1.42.59l7.17 7.17a2 2 0 0 1 0 2.83zM7.5 7.5h.01', desc: 'The fault-keyword library the inspection picker offers, each graded by risk (🔴 critical / 🟡 moderate / 🟢 routine). Add, edit or retire keywords and set how serious each fault type is.' },
+      { name: 'Vehicle Locations', to: '/vehicle-locations', icon: 'M12 2a7 7 0 0 0-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 0 0-7-7zM12 11.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z', desc: 'Everywhere on a car a fault can be — the places the inspector picks from ("Front Bumper", "Rims", "Engine Bay"), the sections they are grouped into, and which fault types MUST say where they are before the report can be filed. Add, rename, reorder or retire a place, and preview the real picker before anyone else sees the change.' },
       { name: 'Recurring Fault Reviews', to: '/recurring-fault-reviews', icon: 'M3 2v6h6M3 8a9 9 0 1 0 2.6-4.36L3 8', desc: 'Cars that came back with the SAME confirmed fault after a completed repair. Each case shows the previous ticket, garage, parts used, days and distance since the repair, and how many times it recurred — so management can decide whether the earlier repair failed, it is a new failure, workshop responsibility, customer misuse, or needs investigation.' },
       { name: 'Concept Bridge Review', to: '/concept-bridge-review', icon: 'M9 12h6m-3-3v6M5 8V6a2 2 0 0 1 2-2h2M5 16v2a2 2 0 0 0 2 2h2m6-16h2a2 2 0 0 1 2 2v2m-4 12h2a2 2 0 0 0 2-2v-2', desc: 'Teach the system to read workshop language. You are shown one real line from a maintenance note and asked what it means — BEFORE the computer\'s answer is revealed, so your judgement stays independent. Roughly 90 lines, mostly button clicks. The result is the benchmark that decides whether we may translate 26,839 historical tickets into automotive concepts, or need to fix the matching first.' },
     ],
@@ -230,6 +231,7 @@ const NAV_PERMISSIONS = {
   '/driver-observations': 'maintenance.view',
   '/maintenance-history': 'dashboard.view',
   '/finding-keywords': 'maintenance.view',
+  '/vehicle-locations': 'maintenance.view',
   '/parts': 'parts.view',
   '/parts-catalog': 'parts.view',
   '/warranties': 'parts.view',

@@ -122,6 +122,7 @@ export const MODULES = [
     sections: [
       { name: 'Fleet Analytics', route: '/fleet-utilization', permission: 'insights.view', icon: Icon.Gauge, desc: 'Per-car split of owned time into rented, in-maintenance and idle days.' },
       { name: 'Keyword Risk', route: '/finding-keywords', permission: 'maintenance.view', icon: Icon.Flag, desc: 'The fault-keyword library, each graded critical, moderate or routine.' },
+      { name: 'Vehicle Locations', route: '/vehicle-locations', permission: 'maintenance.view', icon: Icon.Car, desc: 'Everywhere a fault can be, and which fault types must say where they are.' },
       { name: 'Recurring Faults', route: '/recurring-fault-reviews', permission: 'maintenance.recurring.view', icon: Icon.Refresh, desc: 'Cars back with the same confirmed fault after a repair — for a management ruling.' },
       { name: 'Maintenance Analytics', route: null, permission: 'maintenance.view', icon: Icon.Chart, status: 'soon', desc: 'Deeper trends across repairs, cost and turnaround — coming soon.' },
       { name: 'Health Scores', route: null, permission: 'insights.view', icon: Icon.Scale, status: 'soon', desc: 'A single per-car condition score rolled up from every signal — coming soon.' },
