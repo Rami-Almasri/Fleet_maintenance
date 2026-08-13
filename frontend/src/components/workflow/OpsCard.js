@@ -1,6 +1,7 @@
 import Icon from '../ui/Icon';
 import Badge from '../ui/Badge';
-import { tone, ROLE, days, shortDate } from './opsMeta';
+import { tone, ROLE } from './opsMeta';
+import { useI18n } from '../../i18n/I18nContext';
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // The Operations card — one car in maintenance, answering the six questions a Maintenance or
@@ -18,8 +19,24 @@ import { tone, ROLE, days, shortDate } from './opsMeta';
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
 export default function OpsCard({ tk, onOpen }) {
+  const { t, lang } = useI18n();
   const o = tk.ops;
   if (!o) return null;
+
+  // Same shapes opsMeta's `days` / `shortDate` produce, but spoken in the active
+  // language (and always Gregorian + Latin digits under Arabic).
+  const days = (n) => (n === null || n === undefined ? null : (n === 0 ? t('today') : t('{n}d', { n })));
+  const shortDate = (iso) => {
+    if (!iso) return null;
+    try {
+      return new Date(iso).toLocaleDateString(
+        lang === 'ar' ? 'ar-AE-u-ca-gregory-nu-latn' : undefined,
+        { day: 'numeric', month: 'short' },
+      );
+    } catch {
+      return iso;
+    }
+  };
 
   const state = o.state || {};
   const st = tone(state.tone);
@@ -59,15 +76,15 @@ export default function OpsCard({ tk, onOpen }) {
         {/* ── 1. The primary maintenance reason — the headline of the card ────── */}
         <div className="rounded-xl bg-slate-50 px-3 py-2.5 ring-1 ring-inset ring-slate-200/70">
           <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-            <Icon.Wrench className="h-3 w-3" /> Maintenance reason
+            <Icon.Wrench className="h-3 w-3" /> {t('Maintenance reason')}
           </div>
           <div className="mt-1 flex items-baseline gap-1.5">
             <span className="min-w-0 flex-1 font-display text-[15px] font-bold leading-snug text-slate-900">
-              {o.reason?.primary || 'Not recorded'}
+              {o.reason?.primary || t('Not recorded')}
             </span>
             {o.reason?.extra > 0 && (
               <span className="shrink-0 text-xs font-semibold text-slate-400">
-                +{o.reason.extra} more
+                {t('+{n} more', { n: o.reason.extra })}
               </span>
             )}
           </div>
@@ -91,7 +108,7 @@ export default function OpsCard({ tk, onOpen }) {
           // reported on for a week has no BLOCKER, but it is not "fine" — there the alert strip speaks
           // and this stays silent rather than contradicting it.
           <div className="flex items-center gap-1.5 rounded-xl bg-emerald-50 px-3 py-2 text-[11px] font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">
-            <Icon.Check className="h-3.5 w-3.5" /> Nothing blocking — work in progress
+            <Icon.Check className="h-3.5 w-3.5" /> {t('Nothing blocking — work in progress')}
           </div>
         ) : null}
 
@@ -99,7 +116,7 @@ export default function OpsCard({ tk, onOpen }) {
         {o.parts?.length > 0 && (
           <div className="rounded-xl bg-violet-50/70 px-3 py-2 ring-1 ring-inset ring-violet-100">
             <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-violet-500">
-              <Icon.Coins className="h-3 w-3" /> Parts outstanding · {o.parts.length}
+              <Icon.Coins className="h-3 w-3" /> {t('Parts outstanding · {n}', { n: o.parts.length })}
             </div>
             <ul className="mt-1 space-y-0.5">
               {o.parts.slice(0, 4).map((p) => (
@@ -116,7 +133,7 @@ export default function OpsCard({ tk, onOpen }) {
                 </li>
               ))}
               {o.parts.length > 4 && (
-                <li className="text-[11px] font-medium text-violet-500">+{o.parts.length - 4} more</li>
+                <li className="text-[11px] font-medium text-violet-500">{t('+{n} more', { n: o.parts.length - 4 })}</li>
               )}
             </ul>
           </div>
@@ -133,27 +150,29 @@ export default function OpsCard({ tk, onOpen }) {
               <span className="font-semibold text-slate-700">{cp.label}</span>
               <span className="text-slate-400">
                 {' · '}
-                {cp.days_since === 0 ? 'updated today' : `updated ${cp.days_since}d ago`}
+                {cp.days_since === 0 ? t('updated today') : t('updated {n}d ago', { n: cp.days_since })}
                 {cp.by ? ` · ${cp.by}` : ''}
               </span>
               {cp.summary && <div className="mt-0.5 line-clamp-2 text-slate-500">{cp.summary}</div>}
             </div>
           ) : (
-            <span className="font-medium italic text-slate-400">No checkpoint filed yet</span>
+            <span className="font-medium italic text-slate-400">{t('No checkpoint filed yet')}</span>
           )}
         </div>
 
         {/* ── 6. Time & ETA ──────────────────────────────────────────────────── */}
         <div className="grid grid-cols-3 gap-2">
-          <Metric label="In maintenance" value={days(timing.days_in_maintenance) ?? '—'} />
+          <Metric label={t('In maintenance')} value={days(timing.days_in_maintenance) ?? '—'} />
           <Metric
-            label={timing.eta_is_estimated ? 'ETA (est.)' : 'ETA'}
+            label={timing.eta_is_estimated ? t('ETA (est.)') : t('ETA')}
             value={shortDate(timing.eta) ?? '—'}
             tone={timing.days_over > 0 ? 'text-red-600' : undefined}
-            sub={timing.days_over > 0 ? `${timing.days_over}d over` : (timing.days_left > 0 ? `${timing.days_left}d left` : null)}
+            sub={timing.days_over > 0
+              ? t('{n}d over', { n: timing.days_over })
+              : (timing.days_left > 0 ? t('{n}d left', { n: timing.days_left }) : null)}
           />
           <Metric
-            label="Last update"
+            label={t('Last update')}
             value={days(timing.days_since_update) ?? '—'}
             tone={(timing.days_since_checkpoint ?? 0) >= 3 ? 'text-amber-600' : undefined}
           />
@@ -163,15 +182,19 @@ export default function OpsCard({ tk, onOpen }) {
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
           <span className="inline-flex items-center gap-1">
             <Icon.Wrench className="h-3 w-3 text-slate-400" />
-            <span className="font-semibold text-slate-700">{resp.garage || 'No garage'}</span>
-            {resp.transfer_to && <span className="text-slate-400">→ {resp.transfer_to}</span>}
+            <span className="font-semibold text-slate-700">{resp.garage || t('No garage')}</span>
+            {resp.transfer_to && (
+              <span className="text-slate-400">
+                <span className="inline-block rtl:-scale-x-100">→</span> {resp.transfer_to}
+              </span>
+            )}
           </span>
           <span className="inline-flex items-center gap-1">
             <Icon.Users className="h-3 w-3 text-slate-400" />
-            {role.label}:{' '}
+            {t(role.label)}:{' '}
             {resp.owner_name
               ? <span className="font-semibold text-slate-700">{resp.owner_name}</span>
-              : <span className="italic text-slate-400">{role.waiting}</span>}
+              : <span className="italic text-slate-400">{t(role.waiting)}</span>}
           </span>
           {resp.followers?.length > 0 && (
             <span className="inline-flex items-center gap-1">
@@ -212,10 +235,18 @@ function Metric({ label, value, sub, tone: toneCls }) {
 /**
  * The repair spine: seven fixed steps, each done / active / todo. Rendered as connected pills so the eye
  * lands on the ACTIVE one — "we're at Waiting for Parts" — without reading a word.
+ *
+ * `onDark` swaps the muted greys for their dark-surface equivalents. Without it the spine inverts on a
+ * dark deck: `bg-slate-200` for a not-yet-reached step reads BRIGHTER than the emerald done bars, so the
+ * work still to do looks like the work already finished.
  */
-export function ProgressSpine({ steps = [], compact = false }) {
+export function ProgressSpine({ steps = [], compact = false, onDark = false }) {
   if (!steps.length) return null;
   const active = steps.find((s) => s.state === 'active');
+  const todoBar = onDark ? 'bg-white/15' : 'bg-slate-200';
+  const activeText = onDark ? 'text-indigo-300' : 'text-indigo-600';
+  const todoText = onDark ? 'text-slate-600' : 'text-slate-300';
+  // A done step reads the same on both surfaces — slate-400 sits mid-way, legible either way.
 
   return (
     <div>
@@ -226,13 +257,13 @@ export function ProgressSpine({ steps = [], compact = false }) {
               className={`h-1.5 w-full rounded-full ${
                 s.state === 'done' ? 'bg-emerald-400'
                   : s.state === 'active' ? 'bg-indigo-500'
-                  : 'bg-slate-200'
+                  : todoBar
               }`}
             />
             {!compact && (
               <span
                 className={`w-full truncate text-center text-[8px] font-semibold uppercase tracking-tight ${
-                  s.state === 'active' ? 'text-indigo-600' : s.state === 'done' ? 'text-slate-400' : 'text-slate-300'
+                  s.state === 'active' ? activeText : s.state === 'done' ? 'text-slate-400' : todoText
                 }`}
               >
                 {s.label}
@@ -242,7 +273,7 @@ export function ProgressSpine({ steps = [], compact = false }) {
         ))}
       </div>
       {compact && active && (
-        <div className="mt-1 text-[10px] font-semibold text-indigo-600">{active.label}</div>
+        <div className={`mt-1 text-[10px] font-semibold ${activeText}`}>{active.label}</div>
       )}
     </div>
   );

@@ -4,6 +4,7 @@ import { useToast } from '../../components/ui/Toast';
 import Modal from '../../components/ui/Modal';
 import Button from '../../components/ui/Button';
 import { Input, Select, Textarea } from '../../components/ui/Field';
+import { useI18n } from '../../i18n/I18nContext';
 
 const CUSTOM = '__custom__';
 
@@ -15,6 +16,7 @@ const CUSTOM = '__custom__';
  */
 export default function DispatchModal({ open, vehicle, onClose, onDispatched }) {
   const toast = useToast();
+  const { t } = useI18n();
   const [presets, setPresets] = useState([]);
 
   const [destChoice, setDestChoice] = useState('');
@@ -34,9 +36,9 @@ export default function DispatchModal({ open, vehicle, onClose, onDispatched }) 
         if (!active) return;
         setPresets(data.data?.destinations || []);
       })
-      .catch(() => active && toast.error('Could not load the destination list'));
+      .catch(() => active && toast.error(t('Could not load the destination list')));
     return () => { active = false; };
-  }, [open, toast]);
+  }, [open, toast, t]);
 
   if (!vehicle) return null;
 
@@ -44,7 +46,7 @@ export default function DispatchModal({ open, vehicle, onClose, onDispatched }) 
 
   const submit = async () => {
     const errs = {};
-    if (!destination) errs.destination = 'Pick or type where the car is going';
+    if (!destination) errs.destination = t('Pick or type where the car is going');
     setErrors(errs);
     if (Object.keys(errs).length) return;
 
@@ -57,11 +59,11 @@ export default function DispatchModal({ open, vehicle, onClose, onDispatched }) 
         assigned_to_id: null, // Always pooled — no direct assignment.
         notes: notes.trim() || null,
       });
-      toast.success(`Dispatched to ${destination}`);
+      toast.success(t('Dispatched to {destination}', { destination }));
       onDispatched?.();
       onClose();
     } catch (err) {
-      toast.error(err.response?.data?.message || err.response?.data?.msg || 'Could not dispatch the vehicle');
+      toast.error(err.response?.data?.message || err.response?.data?.msg || t('Could not dispatch the vehicle'));
     } finally {
       setSaving(false);
     }
@@ -73,49 +75,49 @@ export default function DispatchModal({ open, vehicle, onClose, onDispatched }) 
     <Modal
       open={open}
       onClose={() => !saving && onClose()}
-      title="Dispatch Vehicle"
-      subtitle={`${vehicle.plate_no || carLabel} — assign a move`}
+      title={t('Dispatch Vehicle')}
+      subtitle={t('{car} — assign a move', { car: vehicle.plate_no || carLabel })}
       size="md"
       footer={
         <>
-          <Button variant="secondary" onClick={onClose} disabled={saving}>Cancel</Button>
-          <Button onClick={submit} loading={saving}>Dispatch</Button>
+          <Button variant="secondary" onClick={onClose} disabled={saving}>{t('Cancel')}</Button>
+          <Button onClick={submit} loading={saving}>{t('Dispatch')}</Button>
         </>
       }
     >
       <div className="space-y-4">
         <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600 ring-1 ring-inset ring-slate-200">
-          Moving <span className="font-medium text-slate-800">{carLabel}</span>
+          <span className="font-medium text-slate-800">{t('Moving {car}', { car: carLabel })}</span>
           {vehicle.plate_no && <span className="text-slate-400"> · {vehicle.plate_no}</span>}
         </div>
 
         <Select
-          label="Destination"
+          label={t('Destination')}
           required
           value={destChoice}
           error={errors.destination}
           onChange={(e) => setDestChoice(e.target.value)}
         >
-          <option value="">Select a destination…</option>
+          <option value="">{t('Select a destination…')}</option>
           {presets.map((d) => <option key={d} value={d}>{d}</option>)}
-          <option value={CUSTOM}>Other (type it)…</option>
+          <option value={CUSTOM}>{t('Other (type it)…')}</option>
         </Select>
 
         {destChoice === CUSTOM && (
           <Input
-            label="Custom destination"
+            label={t('Custom destination')}
             required
             autoFocus
-            placeholder="e.g. Sharjah branch"
+            placeholder={t('e.g. Sharjah branch')}
             value={customDest}
             onChange={(e) => setCustomDest(e.target.value)}
           />
         )}
 
         <div className="rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2.5 text-sm">
-          <span className="font-medium text-slate-800">Unassigned · Available Pool</span>
+          <span className="font-medium text-slate-800">{t('Unassigned · Available Pool')}</span>
           <span className="block text-xs text-slate-500">
-            Every available driver is notified and the first to tap Claim takes it.
+            {t('Every available driver is notified and the first to tap Claim takes it.')}
           </span>
         </div>
 
@@ -127,17 +129,17 @@ export default function DispatchModal({ open, vehicle, onClose, onDispatched }) 
             onChange={(e) => setRoundTrip(e.target.checked)}
           />
           <span className="text-sm">
-            <span className="font-medium text-slate-800">Round trip</span>
+            <span className="font-medium text-slate-800">{t('Round trip')}</span>
             <span className="block text-xs text-slate-500">
-              The car is brought back to base after (e.g. to the garage and home). Leave off for a one-way move.
+              {t('The car is brought back to base after (e.g. to the garage and home). Leave off for a one-way move.')}
             </span>
           </span>
         </label>
 
         <Textarea
-          label="Notes (optional)"
+          label={t('Notes (optional)')}
           rows={2}
-          placeholder="Anything the driver should know…"
+          placeholder={t('Anything the driver should know…')}
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
         />

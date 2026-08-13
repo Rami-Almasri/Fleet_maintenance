@@ -1,4 +1,5 @@
 import { useSearchParams } from 'react-router-dom';
+import { useI18n } from '../i18n/I18nContext';
 import { PageHeader } from '../components/ui/Misc';
 import FuelMileage from './FuelMileage';
 import MileageReconciliation from './MileageReconciliation';
@@ -29,30 +30,31 @@ const TABS = [
 ];
 
 export default function MileageCenter() {
+  const { t } = useI18n();
   const [params, setParams] = useSearchParams();
   const requested = params.get('tab');
-  const active = TABS.find((t) => t.key === requested) || TABS[0];
+  const active = TABS.find((tab) => tab.key === requested) || TABS[0];
   const setTab = (key) => setParams(key === 'fuel' ? {} : { tab: key }, { replace: true });
 
   return (
     <div className="py-8">
       <div className={`mx-auto ${active.width} px-4 sm:px-6 lg:px-8`}>
-        <PageHeader title="Fuel &amp; Mileage" subtitle={active.subtitle} />
+        <PageHeader title={t('Fuel & Mileage')} subtitle={t(active.subtitle)} />
 
         {/* Tab strip */}
         <div className="mt-4 flex flex-wrap gap-1 border-b border-slate-200">
-          {TABS.map((t) => (
+          {TABS.map((tab) => (
             <button
-              key={t.key}
+              key={tab.key}
               type="button"
-              onClick={() => setTab(t.key)}
+              onClick={() => setTab(tab.key)}
               className={`-mb-px rounded-t-lg border-b-2 px-4 py-2 text-sm font-medium transition ${
-                active.key === t.key
+                active.key === tab.key
                   ? 'border-indigo-600 text-indigo-600'
                   : 'border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700'
               }`}
             >
-              {t.label}
+              {t(tab.label)}
             </button>
           ))}
         </div>

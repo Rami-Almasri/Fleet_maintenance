@@ -14,6 +14,7 @@ import BarChart from '../ui/BarChart';
 import PieChart from '../ui/PieChart';
 import Segmented from '../ui/Segmented';
 import { aedCompact, num } from '../../lib/format';
+import { useI18n } from '../../i18n/I18nContext';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const WINDOW = 12;
@@ -22,6 +23,7 @@ const WINDOW = 12;
 const HUES = ['indigo', 'teal', 'purple', 'orange', 'cyan'];
 
 export default function CompletedRepairsAnalytics({ tickets = [], showFinancials = false }) {
+  const { t } = useI18n();
   const [view, setView] = useState('count');
   // Money view only exists when the financial layer is on.
   const active = showFinancials ? view : 'count';
@@ -34,7 +36,7 @@ export default function CompletedRepairsAnalytics({ tickets = [], showFinancials
     for (let i = WINDOW - 1; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       index[`${d.getFullYear()}-${d.getMonth()}`] = buckets.length;
-      buckets.push({ label: MONTHS[d.getMonth()], repairs: 0, spend: 0 });
+      buckets.push({ label: t(MONTHS[d.getMonth()]), repairs: 0, spend: 0 });
     }
     tickets.forEach((tk) => {
       const iso = tk.handoffs?.closed?.at;
@@ -47,11 +49,11 @@ export default function CompletedRepairsAnalytics({ tickets = [], showFinancials
       buckets[b].spend += Number(tk.cost || 0);
     });
     return buckets;
-  }, [tickets]);
+  }, [tickets, t]);
 
   const series = active === 'spend'
-    ? { key: 'spend', color: 'emerald', valueLabel: 'Repair spend', format: aedCompact, subtitle: 'Signed-off repair spend per month, last 12 months' }
-    : { key: 'repairs', color: 'indigo', valueLabel: 'Repairs closed', format: (n) => num(Math.round(n)), subtitle: 'Repairs signed off per month, last 12 months' };
+    ? { key: 'spend', color: 'emerald', valueLabel: t('Repair spend'), format: aedCompact, subtitle: t('Signed-off repair spend per month, last 12 months') }
+    : { key: 'repairs', color: 'indigo', valueLabel: t('Repairs closed'), format: (n) => num(Math.round(n)), subtitle: t('Repairs signed off per month, last 12 months') };
 
   const chartData = useMemo(
     () => trend.map((b) => ({ label: b.label, value: b[series.key], repairs: b.repairs, spend: b.spend })),
@@ -64,20 +66,20 @@ export default function CompletedRepairsAnalytics({ tickets = [], showFinancials
   const mix = useMemo(() => {
     const totals = {};
     tickets.forEach((tk) => {
-      const name = tk.garage || 'On-site';
+      const name = tk.garage || t('On-site');
       totals[name] = (totals[name] || 0) + 1;
     });
     const sorted = Object.entries(totals).sort((a, b) => b[1] - a[1]);
     const head = sorted.slice(0, HUES.length).map(([label, value], i) => ({ label, value, color: HUES[i] }));
     const rest = sorted.slice(HUES.length).reduce((a, [, v]) => a + v, 0);
-    return rest > 0 ? [...head, { label: `Other (${sorted.length - HUES.length})`, value: rest, color: 'slate' }] : head;
-  }, [tickets]);
+    return rest > 0 ? [...head, { label: t('Other ({n})', { n: sorted.length - HUES.length }), value: rest, color: 'slate' }] : head;
+  }, [tickets, t]);
 
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
       <SectionCard
         className="lg:col-span-2"
-        title="Repair throughput"
+        title={t('Repair throughput')}
         subtitle={series.subtitle}
         actions={
           showFinancials && (
@@ -85,8 +87,8 @@ export default function CompletedRepairsAnalytics({ tickets = [], showFinancials
               value={active}
               onChange={setView}
               options={[
-                { key: 'count', label: 'Repairs' },
-                { key: 'spend', label: 'Spend' },
+                { key: 'count', label: t('Repairs') },
+                { key: 'spend', label: t('Spend') },
               ]}
             />
           )
@@ -100,29 +102,28 @@ export default function CompletedRepairsAnalytics({ tickets = [], showFinancials
             height={250}
             valueLabel={series.valueLabel}
             format={series.format}
-            tooltip={(d) =>
-              showFinancials
-                ? `${num(d.repairs)} repair${d.repairs === 1 ? '' : 's'} · ${aedCompact(d.spend)}`
-                : `${num(d.repairs)} repair${d.repairs === 1 ? '' : 's'}`
-            }
+            tooltip={(d) => {
+              const jobs = d.repairs === 1 ? t('1 repair') : t('{n} repairs', { n: num(d.repairs) });
+              return showFinancials ? `${jobs} · ${aedCompact(d.spend)}` : jobs;
+            }}
           />
         ) : (
           <div className="flex h-[250px] items-center justify-center text-sm text-slate-400">
-            No repairs signed off in the last 12 months.
+            {t('No repairs signed off in the last 12 months.')}
           </div>
         )}
       </SectionCard>
 
       <SectionCard
-        title="Who did the work"
-        subtitle="Completed jobs by garage"
+        title={t('Who did the work')}
+        subtitle={t('Completed jobs by garage')}
         bodyClass="flex items-center justify-center p-5"
       >
         {mix.length ? (
           <PieChart segments={mix} size={150} />
         ) : (
           <div className="flex h-[150px] items-center justify-center text-sm text-slate-400">
-            No completed repairs yet.
+            {t('No completed repairs yet.')}
           </div>
         )}
       </SectionCard>

@@ -7,8 +7,28 @@ import Button from '../ui/Button';
 import Badge from '../ui/Badge';
 import Icon from '../ui/Icon';
 import { Skeleton } from '../ui/Skeleton';
-import { num, fmtDate, fmtAgo } from '../../lib/format';
+import { num, fmtDate } from '../../lib/format';
 import { usePermissions } from '../../hooks/usePermissions';
+import { useI18n } from '../../i18n/I18nContext';
+
+// Relative age of a checkpoint ("just now" / "3h ago"), worded in the active language.
+// Mirrors lib/format's fmtAgo, which returns English-only text.
+function fmtAgoT(value, t) {
+  if (!value) return null;
+  const d = new Date(value);
+  if (isNaN(d)) return null;
+  const secs = Math.round((Date.now() - d.getTime()) / 1000);
+  if (secs < 45) return t('just now');
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return t('{n}m ago', { n: mins });
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return t('{n}h ago', { n: hours });
+  const days = Math.floor(hours / 24);
+  if (days < 30) return t('{n}d ago', { n: days });
+  const months = Math.floor(days / 30);
+  if (months < 12) return t('{n}mo ago', { n: months });
+  return t('{n}y ago', { n: Math.floor(months / 12) });
+}
 
 /** A labelled stat block, mirroring the Maintenance Context drawer. */
 function Stat({ label, value, tone = 'text-slate-900', sub }) {
@@ -29,6 +49,7 @@ function Stat({ label, value, tone = 'text-slate-900', sub }) {
 export default function MaintenanceOperationsDrawer({ vehicleId, onClose }) {
   const navigate = useNavigate();
   const { can } = usePermissions();
+  const { t } = useI18n();
   const fetcher = useCallback(async () => {
     if (!vehicleId) return null;
     const { data } = await api.get(`/maintenance-operations/vehicle/${vehicleId}`);
@@ -46,24 +67,24 @@ export default function MaintenanceOperationsDrawer({ vehicleId, onClose }) {
     <Drawer
       open={!!vehicleId}
       onClose={onClose}
-      eyebrow="Maintenance operations"
-      title={v ? v.plate_no || `#${data?.vehicle_id}` : 'Loading…'}
+      eyebrow={t('Maintenance operations')}
+      title={v ? v.plate_no || `#${data?.vehicle_id}` : t('Loading…')}
       subtitle={v ? [v.car, v.year].filter(Boolean).join(' · ') : (loading ? '' : '—')}
       width="half"
       footer={
         data && card && (
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="primary" size="sm" onClick={() => { navigate(`/car-status/${data.vehicle_id}`); onClose?.(); }}>
-              Open vehicle profile
+              {t('Open vehicle profile')}
             </Button>
             {card.ticket_id && (
               <Button variant="secondary" size="sm" onClick={() => { navigate(`/maintenance-workflow/${card.ticket_id}`); onClose?.(); }}>
-                Maintenance details
+                {t('Maintenance details')}
               </Button>
             )}
             {can('maintenance.checkpoint.create') && (
               <Button variant="ghost" size="sm" onClick={() => { navigate('/maintenance-progress'); onClose?.(); }}>
-                Add update
+                {t('Add update')}
               </Button>
             )}
           </div>
@@ -77,7 +98,7 @@ export default function MaintenanceOperationsDrawer({ vehicleId, onClose }) {
         </div>
       ) : !card ? (
         <div className="rounded-lg bg-slate-50 px-4 py-6 text-center text-sm text-slate-500 ring-1 ring-inset ring-slate-200">
-          This vehicle has no active maintenance ticket.
+          {t('This vehicle has no active maintenance ticket.')}
         </div>
       ) : (
         <div className="space-y-6">
@@ -88,30 +109,30 @@ export default function MaintenanceOperationsDrawer({ vehicleId, onClose }) {
               <Badge tone={m.stage_tone || 'slate'} dot>{m.stage_label}</Badge>
               <Badge tone="slate">{m.type}</Badge>
               {m.severity_label && <Badge tone={m.severity_tone || 'slate'}>{m.severity_emoji} {m.severity_label}</Badge>}
-              {m.is_overdue && <Badge tone="red">Overdue {m.days_overdue}d</Badge>}
+              {m.is_overdue && <Badge tone="red">{t('Overdue {n}d', { n: m.days_overdue })}</Badge>}
             </div>
             {m.reason && (
-              <p className="mt-2 text-sm"><span className="text-slate-400">Current issue:</span> <span className="font-medium text-slate-700">{m.reason}</span></p>
+              <p className="mt-2 text-sm"><span className="text-slate-400">{t('Current issue:')}</span> <span className="font-medium text-slate-700">{m.reason}</span></p>
             )}
             <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-              <Stat label="Days in shop" value={m.days_in_workshop != null ? num(m.days_in_workshop) : '—'} sub="days" />
-              <Stat label="ETA" value={m.eta ? fmtDate(m.eta) : '—'} tone={m.is_overdue ? 'text-red-600' : 'text-slate-900'} sub={m.eta_estimated ? 'estimated' : null} />
-              <Stat label="Open faults" value={`${num(m.active_faults)} / ${num(m.fault_total)}`} />
-              <Stat label="Workshop" value={m.workshop || '—'} sub={m.workshop_kind === 'on_site' ? 'on-site' : 'in-shop'} />
+              <Stat label={t('Days in shop')} value={m.days_in_workshop != null ? num(m.days_in_workshop) : '—'} sub={t('days')} />
+              <Stat label={t('ETA')} value={m.eta ? fmtDate(m.eta) : '—'} tone={m.is_overdue ? 'text-red-600' : 'text-slate-900'} sub={m.eta_estimated ? t('estimated') : null} />
+              <Stat label={t('Open faults')} value={`${num(m.active_faults)} / ${num(m.fault_total)}`} />
+              <Stat label={t('Workshop')} value={m.workshop || '—'} sub={m.workshop_kind === 'on_site' ? t('on-site') : t('in-shop')} />
             </div>
 
             {/* ETA history — original vs current promise, and how many times it slipped */}
             <div className="mt-3 grid grid-cols-3 gap-2 rounded-lg bg-white p-3 text-center ring-1 ring-slate-200">
               <div>
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Original ETA</div>
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{t('Original ETA')}</div>
                 <div className="text-sm font-semibold text-slate-800">{m.eta_original ? fmtDate(m.eta_original) : '—'}</div>
               </div>
               <div>
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Current ETA</div>
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{t('Current ETA')}</div>
                 <div className={`text-sm font-semibold ${m.is_overdue ? 'text-red-600' : 'text-slate-800'}`}>{m.eta ? fmtDate(m.eta) : '—'}</div>
               </div>
               <div>
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">ETA changed</div>
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{t('ETA changed')}</div>
                 <div className={`text-sm font-semibold ${m.eta_changes > 0 ? 'text-amber-600' : 'text-slate-800'}`}>{m.eta_changes}×</div>
               </div>
             </div>
@@ -120,25 +141,25 @@ export default function MaintenanceOperationsDrawer({ vehicleId, onClose }) {
           {/* Operational status & responsibility */}
           {card.indicators?.length > 0 || card.operational ? (
             <section>
-              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">Status &amp; responsibility</h3>
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">{t('Status & responsibility')}</h3>
               {card.indicators?.length > 0 && (
                 <div className="mb-2 flex flex-wrap gap-1.5">
                   {card.indicators.map((k) => (
                     <span key={k} className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${INDICATOR_CLS[k] || 'bg-slate-100 text-slate-600'}`}>
-                      {INDICATOR_LABEL[k] || k}
+                      {INDICATOR_LABEL[k] ? t(INDICATOR_LABEL[k]) : k}
                     </span>
                   ))}
                 </div>
               )}
               <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-                <Field label="Responsible" value={card.operational?.fleet_manager} />
-                <Field label="Inspector" value={card.operational?.inspector} />
-                <Field label="Driver" value={card.operational?.driver} />
-                <Field label="Workshop contact" value={card.operational?.workshop_contact} />
+                <Field label={t('Responsible')} value={card.operational?.fleet_manager} />
+                <Field label={t('Inspector')} value={card.operational?.inspector} />
+                <Field label={t('Driver')} value={card.operational?.driver} />
+                <Field label={t('Workshop contact')} value={card.operational?.workshop_contact} />
               </dl>
               {card.operational?.missing_parts?.length > 0 && (
                 <div className="mt-2 text-sm">
-                  <span className="text-[11px] uppercase tracking-wide text-slate-400">Waiting on parts</span>
+                  <span className="text-[11px] uppercase tracking-wide text-slate-400">{t('Waiting on parts')}</span>
                   <div className="mt-0.5 flex flex-wrap gap-1.5">
                     {card.operational.missing_parts.map((p, i) => (
                       <span key={i} className="rounded-md bg-violet-50 px-1.5 py-0.5 text-xs font-medium text-violet-700 ring-1 ring-inset ring-violet-100">{p}</span>
@@ -151,21 +172,21 @@ export default function MaintenanceOperationsDrawer({ vehicleId, onClose }) {
 
           {/* Affected rental */}
           <section>
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">Affected rental &amp; assignment</h3>
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">{t('Affected rental & assignment')}</h3>
             <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-              <Field label="Branch" value={card.affected.branch} />
-              <Field label="Current customer" value={card.affected.customer || (card.affected.on_rent ? '—' : 'Not on rent')} />
-              <Field label="Contract" value={card.affected.contract_no} />
-              <Field label="Contract start" value={card.affected.contract_start ? fmtDate(card.affected.contract_start) : '—'} />
-              <Field label="Contract end" value={card.affected.contract_end ? fmtDate(card.affected.contract_end) : '—'} />
+              <Field label={t('Branch')} value={card.affected.branch} />
+              <Field label={t('Current customer')} value={card.affected.customer || (card.affected.on_rent ? '—' : t('Not on rent'))} />
+              <Field label={t('Contract')} value={card.affected.contract_no} />
+              <Field label={t('Contract start')} value={card.affected.contract_start ? fmtDate(card.affected.contract_start) : '—'} />
+              <Field label={t('Contract end')} value={card.affected.contract_end ? fmtDate(card.affected.contract_end) : '—'} />
             </dl>
           </section>
 
           {/* Faults */}
           <section>
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">Faults ({card.faults.length})</h3>
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">{t('Faults ({n})', { n: card.faults.length })}</h3>
             {card.faults.length === 0 ? (
-              <p className="text-sm text-slate-400">No faults recorded.</p>
+              <p className="text-sm text-slate-400">{t('No faults recorded.')}</p>
             ) : (
               <ul className="space-y-2">
                 {card.faults.map((f) => (
@@ -176,12 +197,12 @@ export default function MaintenanceOperationsDrawer({ vehicleId, onClose }) {
                           {f.severity_emoji} <span className="truncate">{f.title}</span>
                         </div>
                         <div className="mt-0.5 text-xs text-slate-400">
-                          {f.category || 'Uncategorised'} · {f.reported_by}{f.reported_at ? ` · ${fmtDate(f.reported_at)}` : ''}
+                          {f.category || t('Uncategorised')} · {f.reported_by}{f.reported_at ? ` · ${fmtDate(f.reported_at)}` : ''}
                         </div>
                       </div>
                       <div className="flex shrink-0 flex-col items-end gap-1">
-                        <Badge tone={f.open ? (f.severity_tone || 'slate') : 'gray'}>{f.open ? f.status : 'closed'}</Badge>
-                        {f.blocking && <span className="text-[10px] font-semibold uppercase text-red-600">Blocks release</span>}
+                        <Badge tone={f.open ? (f.severity_tone || 'slate') : 'gray'}>{f.open ? f.status : t('closed')}</Badge>
+                        {f.blocking && <span className="text-[10px] font-semibold uppercase text-red-600">{t('Blocks release')}</span>}
                       </div>
                     </div>
                     {(f.diagnostic || f.resolution) && (
@@ -197,26 +218,29 @@ export default function MaintenanceOperationsDrawer({ vehicleId, onClose }) {
 
           {/* Progress checkpoints */}
           <section>
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">Progress updates ({cps.length})</h3>
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">{t('Progress updates ({n})', { n: cps.length })}</h3>
             {cps.length === 0 ? (
-              <p className="text-sm text-slate-400">No progress updates filed yet.</p>
+              <p className="text-sm text-slate-400">{t('No progress updates filed yet.')}</p>
             ) : (
               <ol className="relative space-y-3 border-s border-slate-200 ps-4">
                 {cps.map((c) => (
                   <li key={c.id} className="relative">
                     <span className="absolute -start-[21px] top-1 h-2.5 w-2.5 rounded-full bg-indigo-400 ring-2 ring-white" />
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm font-medium text-slate-700">{c.status ? c.status.replace(/_/g, ' ') : 'Update'}</span>
-                      <span className="text-[11px] text-slate-400">{c.created_at ? fmtAgo(c.created_at) : ''}</span>
+                      <span className="text-sm font-medium text-slate-700">{c.status ? c.status.replace(/_/g, ' ') : t('Update')}</span>
+                      <span className="text-[11px] text-slate-400">{c.created_at ? fmtAgoT(c.created_at, t) : ''}</span>
                     </div>
                     {c.summary && <p className="mt-0.5 text-sm text-slate-600">{c.summary}</p>}
                     {c.eta_changed && (
                       <p className="mt-1 text-xs text-amber-700">
-                        ETA moved {c.previous_eta ? fmtDate(c.previous_eta) : '—'} → <span className="font-semibold">{c.next_eta ? fmtDate(c.next_eta) : '—'}</span>
+                        {t('ETA moved {from} → {to}', {
+                          from: c.previous_eta ? fmtDate(c.previous_eta) : '—',
+                          to: c.next_eta ? fmtDate(c.next_eta) : '—',
+                        })}
                         {c.delay_reason ? ` · ${c.delay_reason}` : ''}
                       </p>
                     )}
-                    <div className="mt-0.5 text-[11px] text-slate-400">{c.submitted_by || 'Unknown'}</div>
+                    <div className="mt-0.5 text-[11px] text-slate-400">{c.submitted_by || t('Unknown')}</div>
                     {c.media?.length > 0 && (
                       <div className="mt-1.5 flex flex-wrap gap-1.5">
                         {c.media.map((md) => md.kind === 'image' ? (
@@ -236,9 +260,9 @@ export default function MaintenanceOperationsDrawer({ vehicleId, onClose }) {
 
           {/* Workflow trail */}
           <section>
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">Workflow trail</h3>
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">{t('Workflow trail')}</h3>
             {events.length === 0 ? (
-              <p className="text-sm text-slate-400">No workflow events recorded.</p>
+              <p className="text-sm text-slate-400">{t('No workflow events recorded.')}</p>
             ) : (
               <ul className="divide-y divide-slate-100 rounded-lg bg-white ring-1 ring-slate-200">
                 {events.map((e) => (
@@ -281,6 +305,7 @@ const HOLDER = {
 };
 
 function DrawerLocation({ loc }) {
+  const { t } = useI18n();
   const h = HOLDER[loc.holder_type] || HOLDER.system;
   const HIcon = h.Icon;
   return (
@@ -289,11 +314,11 @@ function DrawerLocation({ loc }) {
         <HIcon className="h-5 w-5" />
       </span>
       <div className="min-w-0 flex-1">
-        <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Current holder · location</div>
+        <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{t('Current holder · location')}</div>
         <div className={`truncate text-base font-bold leading-tight ${h.fg}`}>{loc.label}</div>
         {loc.detail && <div className="truncate text-xs text-slate-500">{loc.detail}</div>}
       </div>
-      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${h.chip}`}>{h.badge}</span>
+      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${h.chip}`}>{t(h.badge)}</span>
     </div>
   );
 }

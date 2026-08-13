@@ -7,10 +7,12 @@ import { memo } from 'react';
 import { Link } from 'react-router-dom';
 import { Skeleton } from '../ui/Skeleton';
 import { fmtAgo } from '../../lib/format';
+import { useI18n } from '../../i18n/I18nContext';
 
 const MAX_ROWS = 6;
 
 function RecentActivity({ items = [], loading = false }) {
+  const { t } = useI18n();
   const rows = (items || []).slice(0, MAX_ROWS);
 
   return (
@@ -22,7 +24,7 @@ function RecentActivity({ items = [], loading = false }) {
           ))}
         </div>
       ) : rows.length === 0 ? (
-        <p className="px-3 py-8 text-center text-sm text-slate-400">No recent activity yet.</p>
+        <p className="px-3 py-8 text-center text-sm text-slate-400">{t('No recent activity yet.')}</p>
       ) : (
         rows.map((n) => (
           <Link

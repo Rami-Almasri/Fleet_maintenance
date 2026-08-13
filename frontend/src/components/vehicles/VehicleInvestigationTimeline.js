@@ -12,6 +12,7 @@ import {
   applyFilters, sortEvents, groupEvents, computeKpis, SORTS, GROUPS,
   normalizeLegacyTimeline,
 } from '../../lib/vehicleTimeline';
+import { useI18n } from '../../i18n/I18nContext';
 
 // The Vehicle Timeline — an INVESTIGATION tool, not a scrolling feed. It reads the car's unified Activity
 // Audit Trail (GET /Vehicle/{id}/activity) and layers search, combinable filters, a live KPI summary,
@@ -36,11 +37,14 @@ const TONE_STYLE = {
 };
 const styleFor = (tone) => TONE_STYLE[tone] || TONE_STYLE.slate;
 
+// `short` is the bare noun shown on the chip and on the active-filter pill — both sit under a "has"
+// heading already. It is stated outright rather than derived by stripping a "Has " prefix with a
+// regex, which would not survive translation.
 const FLAG_OPTIONS = [
-  { key: 'photos',          label: 'Has photos',          Icon: Icon.Camera },
-  { key: 'attachments',     label: 'Has attachments',     Icon: Icon.Download },
-  { key: 'notes',           label: 'Has notes',           Icon: Icon.Info },
-  { key: 'recommendations', label: 'Has recommendations', Icon: Icon.Flag },
+  { key: 'photos',          short: 'Photos',          Icon: Icon.Camera },
+  { key: 'attachments',     short: 'Attachments',     Icon: Icon.Download },
+  { key: 'notes',           short: 'Notes',           Icon: Icon.Info },
+  { key: 'recommendations', short: 'Recommendations', Icon: Icon.Flag },
 ];
 
 // Matches the server's own hard cap on GET /Vehicle/{id}/activity — hitting it means the trail is
@@ -73,11 +77,12 @@ function Chip({ on, tone = 'slate', onClick, children, count }) {
 
 // A removable summary of one active filter — shown in the toolbar so a collapsed panel never hides state.
 function ActivePill({ label, value, onClear }) {
+  const { t } = useI18n();
   return (
     <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 py-1 ps-2.5 pe-1.5 text-xs font-medium text-indigo-700 ring-1 ring-inset ring-indigo-100">
       <span className="text-indigo-400">{label}</span>
       <span className="font-semibold">{value}</span>
-      <button type="button" onClick={onClear} aria-label={`Clear ${label} filter`} className="text-indigo-300 transition hover:text-indigo-600">
+      <button type="button" onClick={onClear} aria-label={t('Clear {label} filter', { label })} className="text-indigo-300 transition hover:text-indigo-600">
         <Icon.XCircle className="h-3.5 w-3.5" />
       </button>
     </span>
@@ -119,13 +124,14 @@ function InlineSelect({ label, value, onChange, children }) {
 // One quiet row instead of a wall of tiles: empty measures are dropped, so the rail only ever states
 // what this car actually has. Recomputes against the filtered set.
 function StatRail({ kpis }) {
+  const { t } = useI18n();
   if (!kpis.length) return null;
   return (
     <div className="flex flex-wrap items-center gap-x-7 gap-y-3 rounded-2xl border border-slate-200/70 bg-white px-4 py-3 shadow-soft">
       {kpis.map((k) => (
         <div key={k.key} className="flex items-baseline gap-2">
           <span className="text-lg font-semibold tabular-nums text-slate-900">{k.text ? k.value : num(k.value)}</span>
-          <span className="text-[11px] font-medium uppercase tracking-wide text-slate-400">{k.label}</span>
+          <span className="text-[11px] font-medium uppercase tracking-wide text-slate-400">{t(k.label)}</span>
         </div>
       ))}
     </div>
@@ -136,11 +142,12 @@ function StatRail({ kpis }) {
 // A sheet workshop row carries its untouched source record (`raw`); those rows are clickable and open
 // the full workshop-event drawer. Everything else renders as a static card.
 function EventRow({ e, onOpen, highlighted, showDate }) {
+  const { t } = useI18n();
   const kind = eventKind(e);
   const tm = typeMeta(kind);
   const st = styleFor(tm.tone);
   const Glyph = tm.Icon || Icon.Activity;
-  const headline = stageLabel(e) || e.action || 'Activity';
+  const headline = stageLabel(e) || e.action || t('Activity');
   const subAction = e.action && e.action !== headline ? e.action : null;
   const sev = e.severity ? severityMeta(e.severity) : null;
   const roleLabel = e.actor_role && e.actor_role !== 'system'
@@ -167,16 +174,16 @@ function EventRow({ e, onOpen, highlighted, showDate }) {
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
             <span className="text-sm font-semibold text-slate-800">{headline}</span>
-            <Badge tone={tm.tone}>{tm.label}</Badge>
-            {sev && <Badge tone={sev.tone} dot>{sev.label}</Badge>}
+            <Badge tone={tm.tone}>{t(tm.label)}</Badge>
+            {sev && <Badge tone={sev.tone} dot>{t(sev.label)}</Badge>}
             {/* `flagged` means damage on an inspection row, but "still unresolved" on a complaint or a
                 driver note — same signal, different word, so it must not be labelled "Damage" there. */}
             {e.flagged && (
               kind === 'complaint' || kind === 'observation'
-                ? <Badge tone="amber" dot>Open</Badge>
-                : <Badge tone="red">Damage</Badge>
+                ? <Badge tone="amber" dot>{t('Open')}</Badge>
+                : <Badge tone="red">{t('Damage')}</Badge>
             )}
-            {highlighted && <Badge tone="red" dot>Worst-case downtime — investigate</Badge>}
+            {highlighted && <Badge tone="red" dot>{t('Worst-case downtime — investigate')}</Badge>}
           </div>
           {/* The day divider carries the date in a chronological view, so the row only needs the clock;
               under severity/mileage sorts there is no divider, so it states the full date instead. */}
@@ -184,7 +191,7 @@ function EventRow({ e, onOpen, highlighted, showDate }) {
             className="shrink-0 whitespace-nowrap text-end text-[11px] font-medium tabular-nums text-slate-400"
             title={e.occurred_at ? `${fmtDate(e.occurred_at)} · ${fmtClock(e.occurred_at)} · ${fmtAgo(e.occurred_at)}` : ''}
           >
-            {!e.occurred_at ? 'No date' : showDate ? fmtDate(e.occurred_at) : fmtClock(e.occurred_at) || fmtAgo(e.occurred_at)}
+            {!e.occurred_at ? t('No date') : showDate ? fmtDate(e.occurred_at) : fmtClock(e.occurred_at) || fmtAgo(e.occurred_at)}
           </span>
         </div>
 
@@ -210,14 +217,14 @@ function EventRow({ e, onOpen, highlighted, showDate }) {
           )}
           <span className="inline-flex items-center gap-1.5">
             <Icon.Users className="h-3.5 w-3.5 text-slate-400" />
-            <span className={e.actor_name === 'System' || !e.actor_name ? 'italic text-slate-400' : 'font-medium text-slate-600'}>{e.actor_name || 'System'}</span>
+            <span className={e.actor_name === 'System' || !e.actor_name ? 'italic text-slate-400' : 'font-medium text-slate-600'}>{e.actor_name || t('System')}</span>
             {roleLabel && <span className="text-[11px] text-slate-400">· {roleLabel}</span>}
           </span>
           {/* Links only on static cards — an <a>/<Link> inside the clickable <button> variant is invalid
               HTML and would swallow the row's own click. Openable rows expose these in the drawer. */}
           {!openable && e.photo_url && (
             <a href={e.photo_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-semibold text-indigo-600 hover:text-indigo-700">
-              <Icon.Camera className="h-3.5 w-3.5" /> Photo
+              <Icon.Camera className="h-3.5 w-3.5" /> {t('Photo')}
             </a>
           )}
           {!openable && e.contract_id && (
@@ -226,11 +233,13 @@ function EventRow({ e, onOpen, highlighted, showDate }) {
           {/* Jump to the ticket behind a workflow event — carried over from the retired Maintenance Log. */}
           {!openable && e.maintenance_id && (
             <Link to={`/maintenance-workflow/${e.maintenance_id}`} className="inline-flex items-center gap-1 font-semibold text-amber-700 hover:text-amber-800">
-              <Icon.Wrench className="h-3.5 w-3.5" /> Ticket
+              <Icon.Wrench className="h-3.5 w-3.5" /> {t('Ticket')}
             </Link>
           )}
           {openable && (
-            <span className="font-medium text-indigo-500 opacity-0 transition group-hover:opacity-100">Open full record →</span>
+            <span className="font-medium text-indigo-500 opacity-0 transition group-hover:opacity-100">
+              {t('Open full record')} <span aria-hidden className="inline-block rtl:-scale-x-100">→</span>
+            </span>
           )}
         </div>
       </Card>
@@ -253,6 +262,7 @@ function DayDivider({ label }) {
 }
 
 function EventList({ events, onOpen, highlightEventId, chronological }) {
+  const { t } = useI18n();
   let lastDay = null;
   return (
     <div className="relative">
@@ -264,7 +274,7 @@ function EventList({ events, onOpen, highlightEventId, chronological }) {
           if (chronological) lastDay = day;
           return (
             <Fragment key={e.id}>
-              {newDay && <DayDivider label={day ? fmtDate(e.occurred_at) : 'Undated'} />}
+              {newDay && <DayDivider label={day ? fmtDate(e.occurred_at) : t('Undated')} />}
               <EventRow
                 e={e}
                 onOpen={onOpen}
@@ -303,6 +313,7 @@ function ListSkeleton() {
 // ── Main component ────────────────────────────────────────────────────────────────────────
 export default function VehicleInvestigationTimeline({ vehicleId, legacyTimeline, onOpenEvent, highlightEventId }) {
   const [searchParams, setSearchParams] = useSearchParams();
+  const { t } = useI18n();
 
   // The API caps a car's activity trail (server max = FEED_LIMIT, newest first). A car that hits the cap
   // has OLDER events the feed silently dropped — we surface that rather than let the list imply "all".
@@ -389,15 +400,15 @@ export default function VehicleInvestigationTimeline({ vehicleId, legacyTimeline
 
   // Everything the advanced panel owns, summarised as removable pills so a collapsed panel hides no state.
   const refinements = [
-    garage && { key: 'garage', label: 'Garage', value: garage, clear: () => patch({ garage: '' }) },
-    inspector && { key: 'insp', label: 'Inspector', value: inspector, clear: () => patch({ insp: '' }) },
-    driver && { key: 'driver', label: 'Driver', value: driver, clear: () => patch({ driver: '' }) },
-    stage && { key: 'stage', label: 'Stage', value: stage, clear: () => patch({ stage: '' }) },
-    status !== 'all' && { key: 'status', label: 'Status', value: status === 'open' ? 'Open only' : 'Closed only', clear: () => patch({ status: '' }) },
-    from && { key: 'from', label: 'From', value: from, clear: () => patch({ from: '' }) },
-    to && { key: 'to', label: 'To', value: to, clear: () => patch({ to: '' }) },
-    ...[...severities].map((s) => ({ key: `sev-${s}`, label: 'Severity', value: severityMeta(s).label, clear: () => toggle('sev', s) })),
-    ...[...flags].map((f) => ({ key: `flag-${f}`, label: 'Has', value: (FLAG_OPTIONS.find((o) => o.key === f)?.label || f).replace(/^Has /, ''), clear: () => toggle('flags', f) })),
+    garage && { key: 'garage', label: t('Garage'), value: garage, clear: () => patch({ garage: '' }) },
+    inspector && { key: 'insp', label: t('Inspector'), value: inspector, clear: () => patch({ insp: '' }) },
+    driver && { key: 'driver', label: t('Driver'), value: driver, clear: () => patch({ driver: '' }) },
+    stage && { key: 'stage', label: t('Stage'), value: stage, clear: () => patch({ stage: '' }) },
+    status !== 'all' && { key: 'status', label: t('Status'), value: status === 'open' ? t('Open only') : t('Closed only'), clear: () => patch({ status: '' }) },
+    from && { key: 'from', label: t('From'), value: from, clear: () => patch({ from: '' }) },
+    to && { key: 'to', label: t('To'), value: to, clear: () => patch({ to: '' }) },
+    ...[...severities].map((s) => ({ key: `sev-${s}`, label: t('Severity'), value: t(severityMeta(s).label), clear: () => toggle('sev', s) })),
+    ...[...flags].map((f) => ({ key: `flag-${f}`, label: t('Has'), value: t(FLAG_OPTIONS.find((o) => o.key === f)?.short || f), clear: () => toggle('flags', f) })),
   ].filter(Boolean);
 
   const anyFilter = Boolean(search || types.size || refinements.length);
@@ -419,9 +430,7 @@ export default function VehicleInvestigationTimeline({ vehicleId, legacyTimeline
         <div className="flex items-start gap-2 rounded-lg bg-amber-50 px-4 py-2.5 text-xs text-amber-800 ring-1 ring-inset ring-amber-600/20">
           <Icon.Alert className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
           <span>
-            <span className="font-semibold">Trail truncated.</span> This car has more workflow activity than the
-            feed returns — only the newest {num(FEED_LIMIT)} events are loaded. Older workshop history from the
-            maintenance sheet is still shown in full below.
+            {t('Trail truncated. This car has more workflow activity than the feed returns — only the newest {n} events are loaded. Older workshop history from the maintenance sheet is still shown in full below.', { n: num(FEED_LIMIT) })}
           </span>
         </div>
       )}
@@ -437,19 +446,19 @@ export default function VehicleInvestigationTimeline({ vehicleId, legacyTimeline
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search faults, garages, people, stages, notes…"
+              placeholder={t('Search faults, garages, people, stages, notes…')}
               className="w-full bg-transparent text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none"
             />
             {search && (
-              <button type="button" onClick={() => setSearch('')} aria-label="Clear search" className="text-slate-400 hover:text-slate-600"><Icon.XCircle className="h-4 w-4" /></button>
+              <button type="button" onClick={() => setSearch('')} aria-label={t('Clear search')} className="text-slate-400 hover:text-slate-600"><Icon.XCircle className="h-4 w-4" /></button>
             )}
           </div>
 
-          <InlineSelect label="Sort" value={sort} onChange={(v) => patch({ sort: v })}>
-            {Object.entries(SORTS).map(([k, m]) => <option key={k} value={k}>{m.label}</option>)}
+          <InlineSelect label={t('Sort')} value={sort} onChange={(v) => patch({ sort: v })}>
+            {Object.entries(SORTS).map(([k, m]) => <option key={k} value={k}>{t(m.label)}</option>)}
           </InlineSelect>
-          <InlineSelect label="Group" value={group} onChange={(v) => patch({ group: v })}>
-            {Object.entries(GROUPS).map(([k, m]) => <option key={k} value={k}>{m.label}</option>)}
+          <InlineSelect label={t('Group')} value={group} onChange={(v) => patch({ group: v })}>
+            {Object.entries(GROUPS).map(([k, m]) => <option key={k} value={k}>{t(m.label)}</option>)}
           </InlineSelect>
 
           <button
@@ -462,7 +471,7 @@ export default function VehicleInvestigationTimeline({ vehicleId, legacyTimeline
                 : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
             }`}
           >
-            <Icon.Filter className="h-3.5 w-3.5" /> Filters
+            <Icon.Filter className="h-3.5 w-3.5" /> {t('Filters')}
             {refineCount > 0 && <span className="rounded-full bg-indigo-600 px-1.5 text-[10px] font-bold tabular-nums text-white">{refineCount}</span>}
             <Icon.ChevronDown className={`h-3.5 w-3.5 transition-transform ${showFilters ? 'rotate-180' : ''}`} />
           </button>
@@ -471,13 +480,13 @@ export default function VehicleInvestigationTimeline({ vehicleId, legacyTimeline
         {/* Event type — the primary lens, always visible. "All" clears it. */}
         {availTypes.length > 0 && (
           <div className="flex flex-wrap items-center gap-1.5">
-            <Chip on={types.size === 0} tone="indigo" count={allEvents.length} onClick={() => setTypes(new Set())}>All</Chip>
+            <Chip on={types.size === 0} tone="indigo" count={allEvents.length} onClick={() => setTypes(new Set())}>{t('All')}</Chip>
             <span aria-hidden className="mx-0.5 h-4 w-px bg-slate-200" />
             {availTypes.map((k) => {
               const TIcon = TYPE_META[k].Icon;
               return (
                 <Chip key={k} on={types.has(k)} tone={TYPE_META[k].tone} count={kindCounts[k]} onClick={() => toggle('type', k)}>
-                  {TIcon && <TIcon className="h-3.5 w-3.5" />}{TYPE_META[k].label}
+                  {TIcon && <TIcon className="h-3.5 w-3.5" />}{t(TYPE_META[k].label)}
                 </Chip>
               );
             })}
@@ -488,12 +497,12 @@ export default function VehicleInvestigationTimeline({ vehicleId, legacyTimeline
         {(refineCount > 0 || search) && (
           <div className="flex flex-wrap items-center gap-1.5 border-t border-slate-100 pt-2.5">
             {search && (
-              <ActivePill label="Search" value={`“${search}”`} onClear={() => setSearch('')} />
+              <ActivePill label={t('Search')} value={`“${search}”`} onClear={() => setSearch('')} />
             )}
             {refinements.map((r) => <ActivePill key={r.key} label={r.label} value={r.value} onClear={r.clear} />)}
             {anyFilter && (
               <button type="button" onClick={resetAll} className="ms-1 text-xs font-semibold text-slate-400 underline-offset-2 hover:text-slate-600 hover:underline">
-                Clear all
+                {t('Clear all')}
               </button>
             )}
           </div>
@@ -505,11 +514,11 @@ export default function VehicleInvestigationTimeline({ vehicleId, legacyTimeline
         {/* Severity chips */}
         {facets.severities.length > 0 && (
           <div>
-            <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Severity</div>
+            <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">{t('Severity')}</div>
             <div className="flex flex-wrap gap-2">
               {facets.severities.map((s) => (
                 <Chip key={s.value} on={severities.has(s.value)} tone={severityMeta(s.value).tone} count={s.count} onClick={() => toggle('sev', s.value)}>
-                  {s.label}
+                  {t(s.label)}
                 </Chip>
               ))}
             </div>
@@ -519,61 +528,61 @@ export default function VehicleInvestigationTimeline({ vehicleId, legacyTimeline
         {/* Dropdown facets + date range */}
         <div className="flex flex-wrap gap-3">
           {facets.garages.length > 0 && (
-            <Field label="Garage">
+            <Field label={t('Garage')}>
               <Select value={garage} onChange={(v) => patch({ garage: v })}>
-                <option value="">All garages</option>
+                <option value="">{t('All garages')}</option>
                 {facets.garages.map((g) => <option key={g.value} value={g.value}>{g.label} ({g.count})</option>)}
               </Select>
             </Field>
           )}
           {facets.inspectors.length > 0 && (
-            <Field label="Inspector">
+            <Field label={t('Inspector')}>
               <Select value={inspector} onChange={(v) => patch({ insp: v })}>
-                <option value="">All inspectors</option>
+                <option value="">{t('All inspectors')}</option>
                 {facets.inspectors.map((g) => <option key={g.value} value={g.value}>{g.label} ({g.count})</option>)}
               </Select>
             </Field>
           )}
           {facets.drivers.length > 0 && (
-            <Field label="Driver">
+            <Field label={t('Driver')}>
               <Select value={driver} onChange={(v) => patch({ driver: v })}>
-                <option value="">All drivers</option>
+                <option value="">{t('All drivers')}</option>
                 {facets.drivers.map((g) => <option key={g.value} value={g.value}>{g.label} ({g.count})</option>)}
               </Select>
             </Field>
           )}
           {facets.stages.length > 0 && (
-            <Field label="Workflow stage">
+            <Field label={t('Workflow stage')}>
               <Select value={stage} onChange={(v) => patch({ stage: v })}>
-                <option value="">All stages</option>
+                <option value="">{t('All stages')}</option>
                 {facets.stages.map((g) => <option key={g.value} value={g.value}>{g.label} ({g.count})</option>)}
               </Select>
             </Field>
           )}
-          <Field label="Status">
+          <Field label={t('Status')}>
             <Select value={status} onChange={(v) => patch({ status: v })}>
-              <option value="all">Open &amp; closed</option>
-              <option value="open">Open only</option>
-              <option value="closed">Closed only</option>
+              <option value="all">{t('Open & closed')}</option>
+              <option value="open">{t('Open only')}</option>
+              <option value="closed">{t('Closed only')}</option>
             </Select>
           </Field>
-          <Field label="From date">
+          <Field label={t('From date')}>
             <input type="date" value={from} onChange={(e) => patch({ from: e.target.value })} className={selectCls} />
           </Field>
-          <Field label="To date">
+          <Field label={t('To date')}>
             <input type="date" value={to} onChange={(e) => patch({ to: e.target.value })} className={selectCls} />
           </Field>
         </div>
 
         {/* Boolean flags */}
         <div>
-          <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Only events that have</div>
+          <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">{t('Only events that have')}</div>
           <div className="flex flex-wrap gap-2">
             {FLAG_OPTIONS.map((f) => {
               const FIcon = f.Icon;
               return (
                 <Chip key={f.key} on={flags.has(f.key)} tone="indigo" onClick={() => toggle('flags', f.key)}>
-                  <FIcon className="h-3.5 w-3.5" />{f.label.replace(/^Has /, '')}
+                  <FIcon className="h-3.5 w-3.5" />{t(f.short)}
                 </Chip>
               );
             })}
@@ -590,12 +599,17 @@ export default function VehicleInvestigationTimeline({ vehicleId, legacyTimeline
       <div className="flex items-center justify-between gap-3 px-1">
         <span className="text-xs font-medium text-slate-500">
           {anyFilter
-            ? <>Showing <span className="font-semibold text-slate-700">{num(filtered.length)}</span> of {num(allEvents.length)} events</>
-            : <><span className="font-semibold text-slate-700">{num(allEvents.length)}</span> events</>}
-          {grouped && <span className="text-slate-400"> · {grouped.length} {GROUPS[group].label.toLowerCase()} groups</span>}
+            ? t('Showing {shown} of {total} events', { shown: num(filtered.length), total: num(allEvents.length) })
+            : t('{total} events', { total: num(allEvents.length) })}
+          {grouped && (
+            <span className="text-slate-400">
+              {' '}
+              {t('· {n} groups by {kind}', { n: grouped.length, kind: t(GROUPS[group].label) })}
+            </span>
+          )}
         </span>
         {loading && allEvents.length > 0 && (
-          <Icon.Refresh className="h-3.5 w-3.5 animate-spin text-slate-300" aria-label="Refreshing" />
+          <Icon.Refresh className="h-3.5 w-3.5 animate-spin text-slate-300" aria-label={t('Refreshing')} />
         )}
       </div>
 
@@ -605,16 +619,16 @@ export default function VehicleInvestigationTimeline({ vehicleId, legacyTimeline
         <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/40 px-6 py-14 text-center">
           <Icon.Search className="mx-auto h-6 w-6 text-slate-300" />
           <p className="mt-3 text-sm font-semibold text-slate-600">
-            {allEvents.length ? 'No events match these filters' : 'No activity recorded for this car yet'}
+            {allEvents.length ? t('No events match these filters') : t('No activity recorded for this car yet')}
           </p>
           <p className="mt-1 text-xs text-slate-400">
             {allEvents.length
-              ? `${num(allEvents.length)} events are hidden by the current filters.`
-              : 'Events appear here as the car moves through inspections, garages and tickets.'}
+              ? t('{n} events are hidden by the current filters.', { n: num(allEvents.length) })
+              : t('Events appear here as the car moves through inspections, garages and tickets.')}
           </p>
           {allEvents.length > 0 && anyFilter && (
             <button type="button" onClick={resetAll} className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white shadow-soft transition hover:bg-indigo-700">
-              <Icon.XCircle className="h-3.5 w-3.5" /> Clear all filters
+              <Icon.XCircle className="h-3.5 w-3.5" /> {t('Clear all filters')}
             </button>
           )}
         </div>

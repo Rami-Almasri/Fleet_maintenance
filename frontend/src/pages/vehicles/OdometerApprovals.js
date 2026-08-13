@@ -15,6 +15,7 @@ import Tabs from '../../components/ui/Tabs';
 import MetricCard, { MetricGrid } from '../../components/ui/MetricCard';
 import OdometerApprovalsAnalytics from '../../components/analytics/OdometerApprovalsAnalytics';
 import { num, fmtAgo, fmtDate } from '../../lib/format';
+import { useI18n } from '../../i18n/I18nContext';
 
 // Odometer Modification Approval — the review board for significant manual odometer edits
 // (> OdometerChangeRequest::SIGNIFICANT_DELTA_KM km, either direction). Each pending row shows the
@@ -22,6 +23,7 @@ import { num, fmtAgo, fmtDate } from '../../lib/format';
 // an admin approves (writes the reading onto the car) or rejects (leaves it untouched).
 export default function OdometerApprovals() {
   const toast = useToast();
+  const { t } = useI18n();
   const { can } = usePermissions();
   const allowed = can('vehicles.approve_odometer');
 
@@ -49,7 +51,7 @@ export default function OdometerApprovals() {
     return (
       <div className="py-16">
         <div className="mx-auto max-w-2xl px-4 text-center">
-          <EmptyState title="Restricted" message="You don't have permission to review odometer changes." />
+          <EmptyState title={t('Restricted')} message={t("You don't have permission to review odometer changes.")} />
         </div>
       </div>
     );
@@ -70,11 +72,11 @@ export default function OdometerApprovals() {
     setSaving(true);
     try {
       await api.post(`/OdometerChangeRequests/${reviewing.request.id}/${reviewing.action}`, { note: reviewNote || undefined });
-      toast.success(reviewing.action === 'approve' ? 'Odometer change approved' : 'Odometer change rejected');
+      toast.success(reviewing.action === 'approve' ? t('Odometer change approved') : t('Odometer change rejected'));
       setReviewing(null);
       reload();
     } catch (e) {
-      toast.error(e.response?.data?.message || 'Could not save the review');
+      toast.error(e.response?.data?.message || t('Could not save the review'));
     } finally {
       setSaving(false);
     }
@@ -88,26 +90,38 @@ export default function OdometerApprovals() {
   );
 
   const pendingColumns = [
-    { key: 'vehicle', header: 'Vehicle / Plate', render: vehicleCell },
+    { key: 'vehicle', header: t('Vehicle / Plate'), render: vehicleCell },
     {
-      key: 'requester', header: 'Requester',
+      key: 'requester', header: t('Requester'),
       render: (r) => (
         <div>
           <div className="text-slate-700">{r.requested_by || '—'}</div>
-          <div className="text-xs text-slate-400">{r.workflow_stage_label}</div>
+          {/* A stage capture reads differently from a manual edit: the reading is ALREADY on the car and
+              the ticket, and this row is the after-the-fact audit of it. Say which ticket + which stage,
+              so the reviewer can go and look at the job rather than guess. */}
+          {r.already_applied ? (
+            <div className="text-xs text-amber-700">
+              {t('Recorded on ticket #{id} · {stage}', { id: r.maintenance_id, stage: r.stage_label })}
+            </div>
+          ) : (
+            <div className="text-xs text-slate-400">{r.workflow_stage_label}</div>
+          )}
         </div>
       ),
     },
     {
-      key: 'before', header: 'Before', align: 'right', cellClass: 'tabular-nums',
+      key: 'before', header: t('Before'), align: 'right', cellClass: 'tabular-nums',
       render: (r) => r.previous_odometer != null ? `${num(r.previous_odometer)} km` : '—',
     },
     {
-      key: 'after', header: 'After', align: 'right', cellClass: 'tabular-nums font-semibold text-slate-900',
+      key: 'after', header: t('After'), align: 'right', cellClass: 'tabular-nums font-semibold text-slate-900',
       render: (r) => `${num(r.requested_odometer)} km`,
     },
     {
-      key: 'change', header: 'Change', align: 'right', tooltip: `Held for review because it's more than ${threshold} km from the previous reading, either direction.`,
+      key: 'change',
+      header: t('Change'),
+      align: 'right',
+      tooltip: t("Held for review because it's more than {km} km from the previous reading, either direction.", { km: threshold }),
       render: (r) => (
         <Badge tone={r.delta < 0 ? 'red' : 'amber'}>
           {r.delta > 0 ? '+' : ''}{num(r.delta)} km
@@ -115,29 +129,29 @@ export default function OdometerApprovals() {
       ),
     },
     {
-      key: 'note', header: 'Reason / Note', cellClass: 'max-w-xs whitespace-pre-wrap text-slate-600',
+      key: 'note', header: t('Reason / Note'), cellClass: 'max-w-xs whitespace-pre-wrap text-slate-600',
       render: (r) => r.note || <span className="text-slate-300">—</span>,
     },
     {
-      key: 'timestamp', header: 'Timestamp',
+      key: 'timestamp', header: t('Timestamp'),
       render: (r) => <span title={fmtDate(r.created_at)}>{fmtAgo(r.created_at)}</span>,
     },
     {
-      key: 'actions', header: 'Actions', align: 'right', headerClass: 'sr-only',
+      key: 'actions', header: t('Actions'), align: 'right', headerClass: 'sr-only',
       render: (r) => (
         <div className="flex justify-end gap-2">
-          <Button size="sm" variant="danger" onClick={() => openReview(r, 'reject')}>Reject</Button>
-          <Button size="sm" variant="success" onClick={() => openReview(r, 'approve')}>Approve</Button>
+          <Button size="sm" variant="danger" onClick={() => openReview(r, 'reject')}>{t('Reject')}</Button>
+          <Button size="sm" variant="success" onClick={() => openReview(r, 'approve')}>{t('Approve')}</Button>
         </div>
       ),
     },
   ];
 
   const historyColumns = [
-    { key: 'vehicle', header: 'Vehicle / Plate', render: vehicleCell },
-    { key: 'requester', header: 'Requester', render: (r) => r.requested_by || '—' },
+    { key: 'vehicle', header: t('Vehicle / Plate'), render: vehicleCell },
+    { key: 'requester', header: t('Requester'), render: (r) => r.requested_by || '—' },
     {
-      key: 'change', header: 'Change', align: 'right',
+      key: 'change', header: t('Change'), align: 'right',
       render: (r) => (
         <>
           <span className="text-slate-500 tabular-nums">{r.previous_odometer != null ? num(r.previous_odometer) : '—'} → {num(r.requested_odometer)} km</span>{' '}
@@ -145,13 +159,13 @@ export default function OdometerApprovals() {
         </>
       ),
     },
-    { key: 'note', header: 'Reason / Note', cellClass: 'max-w-xs whitespace-pre-wrap text-slate-600', render: (r) => r.note || '—' },
+    { key: 'note', header: t('Reason / Note'), cellClass: 'max-w-xs whitespace-pre-wrap text-slate-600', render: (r) => r.note || '—' },
     {
-      key: 'status', header: 'Decision',
-      render: (r) => <Badge tone={r.status === 'approved' ? 'emerald' : 'red'}>{r.status}</Badge>,
+      key: 'status', header: t('Decision'),
+      render: (r) => <Badge tone={r.status === 'approved' ? 'emerald' : 'red'}>{r.status === 'approved' ? t('Approved') : t('Rejected')}</Badge>,
     },
     {
-      key: 'reviewed', header: 'Reviewed',
+      key: 'reviewed', header: t('Reviewed'),
       render: (r) => (
         <div>
           <div className="text-slate-700">{r.reviewed_by || '—'}</div>
@@ -165,10 +179,12 @@ export default function OdometerApprovals() {
     <div className="py-8">
       <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
         <PageHeader
-          title="Odometer Change Approvals"
-          subtitle={`Manual odometer edits over ${threshold} km are held here for review before they apply to the car.`}
+          title={t('Odometer Change Approvals')}
+          subtitle={t('Manual odometer edits over {km} km are held here for review before they apply to the car.', { km: threshold })}
         >
-          <Link to="/vehicles" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">Vehicles →</Link>
+          <Link to="/vehicles" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">
+            {t('Vehicles')} <span className="inline-block rtl:-scale-x-100">→</span>
+          </Link>
         </PageHeader>
 
         {/* Analytics — the queue plus its recent history, before the tabbed detail. */}
@@ -177,10 +193,10 @@ export default function OdometerApprovals() {
         <Tabs
           active={tab}
           onChange={setTab}
-          ariaLabel="Odometer views"
+          ariaLabel={t('Odometer views')}
           tabs={[
-            { key: 'approvals', label: 'Approvals', badge: pending.length || null },
-            { key: 'stages', label: 'Stage Odometers', badge: stages.length || null },
+            { key: 'approvals', label: t('Approvals'), badge: pending.length || null },
+            { key: 'stages', label: t('Stage Odometers'), badge: stages.length || null },
           ]}
         />
 
@@ -191,27 +207,27 @@ export default function OdometerApprovals() {
             )}
 
             <MetricGrid cols={2}>
-              <MetricCard label="Awaiting approval" value={pending.length} tone="amber" hint="Requests needing a decision" />
-              <MetricCard label="Significance threshold" value={`±${num(threshold)} km`} tone="slate" hint="Edits beyond this are held for review" />
+              <MetricCard label={t('Awaiting approval')} value={pending.length} tone="amber" hint={t('Requests needing a decision')} />
+              <MetricCard label={t('Significance threshold')} value={`±${num(threshold)} km`} tone="slate" hint={t('Edits beyond this are held for review')} />
             </MetricGrid>
 
-            <SectionCard title="Pending requests" subtitle="Oldest first — review and decide.">
+            <SectionCard title={t('Pending requests')} subtitle={t('Oldest first — review and decide.')}>
               <DataTable
                 columns={pendingColumns}
                 rows={pending}
                 rowKey={(r) => r.id}
                 loading={loading}
                 highlightRow={(r) => Math.abs(r.delta) > threshold * 5}
-                empty="No pending odometer changes."
+                empty={t('No pending odometer changes.')}
               />
             </SectionCard>
 
             <SectionCard
-              title="Recently reviewed"
-              subtitle="Audit trail of past approve/reject decisions."
+              title={t('Recently reviewed')}
+              subtitle={t('Audit trail of past approve/reject decisions.')}
               actions={
                 <Button size="sm" variant="secondary" onClick={() => setShowHistory((v) => !v)}>
-                  {showHistory ? 'Hide' : 'Show'} ({recent.length})
+                  {showHistory ? t('Hide') : t('Show')} ({recent.length})
                 </Button>
               }
             >
@@ -221,7 +237,7 @@ export default function OdometerApprovals() {
                   rows={recent}
                   rowKey={(r) => r.id}
                   loading={loading}
-                  empty="No reviewed odometer changes yet."
+                  empty={t('No reviewed odometer changes yet.')}
                 />
               )}
             </SectionCard>
@@ -235,17 +251,20 @@ export default function OdometerApprovals() {
             )}
 
             <SectionCard
-              title="Odometer by stage"
-              subtitle="Each car's odometer as it was captured at every workflow stage — inspection test drive, breakdown report, pickup intake, dispatch to garage, at garage, garage return and re-inspection. A red step ran backwards versus the stage before it."
+              title={t('Odometer by stage')}
+              subtitle={t("Each car's odometer as it was captured at every workflow stage — inspection test drive, breakdown report, pickup intake, dispatch to garage, at garage, garage return and re-inspection. A red step ran backwards versus the stage before it.")}
             >
               {stagesLoading ? (
                 <div className="p-6"><Skeleton className="h-24 w-full" /></div>
               ) : stages.length === 0 ? (
-                <EmptyState title="No stage readings yet" message="Once tickets capture odometer readings through the maintenance workflow, each car's per-stage trail appears here." />
+                <EmptyState
+                  title={t('No stage readings yet')}
+                  message={t("Once tickets capture odometer readings through the maintenance workflow, each car's per-stage trail appears here.")}
+                />
               ) : (
                 <div className="divide-y divide-slate-100">
-                  {stages.map((t) => (
-                    <StageTrail key={t.id} ticket={t} />
+                  {stages.map((tk) => (
+                    <StageTrail key={tk.id} ticket={tk} />
                   ))}
                 </div>
               )}
@@ -257,17 +276,19 @@ export default function OdometerApprovals() {
       <Modal
         open={!!reviewing}
         onClose={() => !saving && setReviewing(null)}
-        title={reviewing?.action === 'approve' ? 'Approve odometer change' : 'Reject odometer change'}
+        title={reviewing?.action === 'approve' ? t('Approve odometer change') : t('Reject odometer change')}
         subtitle={reviewing ? `${reviewing.request.plate_no || '#' + reviewing.request.vehicle_id}: ${reviewing.request.previous_odometer ?? '—'} → ${reviewing.request.requested_odometer} km` : ''}
         footer={
           <>
-            <Button variant="secondary" onClick={() => setReviewing(null)} disabled={saving}>Cancel</Button>
+            <Button variant="secondary" onClick={() => setReviewing(null)} disabled={saving}>{t('Cancel')}</Button>
             <Button
               variant={reviewing?.action === 'reject' ? 'danger' : 'success'}
               onClick={submitReview}
               loading={saving}
             >
-              {reviewing?.action === 'approve' ? 'Approve & Apply' : 'Reject'}
+              {reviewing?.action === 'approve'
+                ? (reviewing?.request.awaiting_apply ? t('Approve & Apply') : t('Confirm reading'))
+                : t('Reject')}
             </Button>
           </>
         }
@@ -275,13 +296,33 @@ export default function OdometerApprovals() {
         {reviewing && (
           <div className="space-y-3">
             <p className="text-sm text-slate-600">
-              Requester's reason: <span className="italic text-slate-800">"{reviewing.request.note}"</span>
+              {t('Requester’s reason: “{note}”', { note: reviewing.request.note })}
             </p>
+            {/* Spell out what the button actually does — there are three cases, not two. A manual edit is
+                still waiting to be applied. A stage capture that ran FORWARD is already live on the car,
+                so rejecting it is what winds the odometer back. A stage capture that ran BACKWARD was
+                accepted but never reached the car (the heal only moves forward), so there approving is
+                the act that corrects the mileage down — which is the opposite of the sentence above it.
+                `awaiting_apply` is the flag that tells the last two apart. */}
+            {reviewing.request.already_applied && !reviewing.request.awaiting_apply && (
+              <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                {reviewing.action === 'approve'
+                  ? t('This reading was already recorded when the driver captured it. Confirming just closes the review — nothing on the car changes.')
+                  : t('This reading was already recorded when the driver captured it. Rejecting winds the car back to {km} km.', { km: reviewing.request.previous_odometer })}
+              </p>
+            )}
+            {reviewing.request.already_applied && reviewing.request.awaiting_apply && (
+              <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                {reviewing.action === 'approve'
+                  ? t('The dial read LOWER than our records, so the car was left on {km} km. Approving sets it to the reading below.', { km: reviewing.request.previous_odometer })
+                  : t('The car is still on {km} km — this reading was never applied. Rejecting simply closes the review and nothing changes.', { km: reviewing.request.previous_odometer })}
+              </p>
+            )}
             <Textarea
-              label={reviewing.action === 'approve' ? 'Approval note (optional)' : 'Reason for rejection (optional)'}
+              label={reviewing.action === 'approve' ? t('Approval note (optional)') : t('Reason for rejection (optional)')}
               value={reviewNote}
               onChange={(e) => setReviewNote(e.target.value)}
-              placeholder={reviewing.action === 'approve' ? 'Any context for the record…' : 'Why is this being rejected? (the requester can be notified)'}
+              placeholder={reviewing.action === 'approve' ? t('Any context for the record…') : t('Why is this being rejected? (the requester can be notified)')}
             />
           </div>
         )}
@@ -294,6 +335,7 @@ export default function OdometerApprovals() {
 // followed by a horizontal chain of the stages that actually captured a reading, each showing the km
 // and its change versus the previous stage. A backward step (delta < 0) is impossible, so it's flagged red.
 function StageTrail({ ticket }) {
+  const { t } = useI18n();
   const stages = ticket.stages || [];
 
   const deltaTone = (d) => {
@@ -315,7 +357,7 @@ function StageTrail({ ticket }) {
         </div>
         {ticket.current_odometer != null && (
           <span className="text-xs text-slate-400">
-            Current: <span className="tabular-nums font-medium text-slate-600">{num(ticket.current_odometer)} km</span>
+            {t('Current:')} <span className="tabular-nums font-medium text-slate-600">{num(ticket.current_odometer)} km</span>
           </span>
         )}
       </div>
@@ -326,7 +368,7 @@ function StageTrail({ ticket }) {
             {s.captured ? (
               <div className="min-w-[7.5rem] rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
                 <div className="text-[11px] font-medium uppercase tracking-wide text-slate-400">{s.label}</div>
-                <div className="tabular-nums text-base font-semibold text-slate-900">{num(s.reading)}<span className="ms-1 text-xs font-normal text-slate-400">km</span></div>
+                <div className="tabular-nums text-base font-semibold text-slate-900">{num(s.reading)}<span className="ms-1 text-xs font-normal text-slate-400">{t('km')}</span></div>
                 {s.delta != null && (
                   <div className={`text-xs tabular-nums ${deltaTone(s.delta)}`}>
                     {s.delta > 0 ? '+' : ''}{num(s.delta)} km
@@ -338,10 +380,10 @@ function StageTrail({ ticket }) {
               <div className="min-w-[7.5rem] rounded-lg border border-dashed border-slate-200 bg-white px-3 py-2">
                 <div className="text-[11px] font-medium uppercase tracking-wide text-slate-300">{s.label}</div>
                 <div className="text-base font-semibold text-slate-300">—</div>
-                <div className="text-xs text-slate-300">not captured</div>
+                <div className="text-xs text-slate-300">{t('not captured')}</div>
               </div>
             )}
-            {i < stages.length - 1 && <div className="flex items-center text-slate-300">→</div>}
+            {i < stages.length - 1 && <div className="flex items-center text-slate-300 rtl:-scale-x-100">→</div>}
           </div>
         ))}
       </div>

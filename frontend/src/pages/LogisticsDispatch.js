@@ -16,16 +16,17 @@ import { evaluateContinuity, needsNote, STAGE } from '../lib/odometerContinuity'
 import OdometerContinuityHint, { odoGateBlocked } from '../components/workflow/OdometerContinuityHint';
 import LogisticsAnalytics from '../components/analytics/LogisticsAnalytics';
 
-// Relative "x ago" for a timestamp (kept tiny — no date lib).
-function ago(iso) {
+// Relative "x ago" for a timestamp (kept tiny — no date lib). `t` is threaded in from the calling
+// component, because a plain module-level helper cannot call the hook itself.
+function ago(iso, t) {
   if (!iso) return '';
   const secs = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
-  if (secs < 90) return 'just now';
+  if (secs < 90) return t('just now');
   const mins = Math.round(secs / 60);
-  if (mins < 60) return `${mins}m ago`;
+  if (mins < 60) return t('{n}m ago', { n: mins });
   const hrs = Math.round(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.round(hrs / 24)}d ago`;
+  if (hrs < 24) return t('{n}h ago', { n: hrs });
+  return t('{n}d ago', { n: Math.round(hrs / 24) });
 }
 
 // Phase → badge tone, so the lifecycle reads at a glance everywhere it's shown.
@@ -109,8 +110,8 @@ function OdometerModal({ open, task, action, busy, onClose, onSubmit }) {
 
   const submit = () => {
     const e = {};
-    if (!reading || Number(reading) < 1) e.reading = 'Enter the odometer reading';
-    if (!photo) e.photo = 'A photo of the odometer is required';
+    if (!reading || Number(reading) < 1) e.reading = t('Enter the odometer reading');
+    if (!photo) e.photo = t('A photo of the odometer is required');
     setErr(e);
     if (Object.keys(e).length) return;
     if (gateBlocked) return; // acknowledge + explain a >10 km gap before it can submit
@@ -121,24 +122,24 @@ function OdometerModal({ open, task, action, busy, onClose, onSubmit }) {
     <Modal
       open={open}
       onClose={() => !busy && onClose()}
-      title={`${isAfter ? 'Post-trip' : 'Pre-trip'} odometer`}
-      subtitle={`${task.plate || ''} — ${isAfter ? 'after the trip' : 'before setting off'}`}
+      title={isAfter ? t('Post-trip odometer') : t('Pre-trip odometer')}
+      subtitle={`${task.plate || ''} — ${isAfter ? t('after the trip') : t('before setting off')}`}
       size="sm"
       footer={
         <>
-          <Button variant="secondary" onClick={onClose} disabled={!!busy}>Cancel</Button>
-          <Button onClick={submit} loading={!!busy} disabled={gateBlocked}>Confirm</Button>
+          <Button variant="secondary" onClick={onClose} disabled={!!busy}>{t('Cancel')}</Button>
+          <Button onClick={submit} loading={!!busy} disabled={gateBlocked}>{t('Confirm')}</Button>
         </>
       }
     >
       <div className="space-y-4">
         <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 ring-1 ring-inset ring-amber-600/20">
-          This is a garage trip — the odometer reading and a photo of it are required for the audit trail.
+          {t('This is a garage trip — the odometer reading and a photo of it are required for the audit trail.')}
         </p>
         <Input
-          label="Odometer (km)" type="number" min="1" required
+          label={t('Odometer (km)')} type="number" min="1" required
           value={reading} error={err.reading}
-          onChange={(e) => { setReading(e.target.value); setConfirmed(false); setNote(''); }} placeholder="e.g. 45200"
+          onChange={(e) => { setReading(e.target.value); setConfirmed(false); setNote(''); }} placeholder={t('e.g. 45200')}
         />
         <OdometerContinuityHint
           previous={prevOdometer}
@@ -151,7 +152,7 @@ function OdometerModal({ open, task, action, busy, onClose, onSubmit }) {
           t={t}
         />
         <div>
-          <span className="mb-1 block text-sm font-medium text-slate-700">Odometer photo<span className="ms-0.5 text-red-500">*</span></span>
+          <span className="mb-1 block text-sm font-medium text-slate-700">{t('Odometer photo')}<span className="ms-0.5 text-red-500">*</span></span>
           <input
             type="file" accept="image/*" capture="environment"
             onChange={(e) => setPhoto(e.target.files?.[0] || null)}
@@ -167,20 +168,21 @@ function OdometerModal({ open, task, action, busy, onClose, onSubmit }) {
 
 // Inline supervisor control: reassign the move to a different driver at any point in the cycle.
 function ReassignControl({ task, assignees, busy, onReassign }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [pick, setPick] = useState('');
 
   if (!open) {
-    return <Button variant="ghost" size="sm" onClick={() => setOpen(true)}>Reassign</Button>;
+    return <Button variant="ghost" size="sm" onClick={() => setOpen(true)}>{t('Reassign')}</Button>;
   }
   return (
     <div className="flex items-center gap-2">
       <Select value={pick} onChange={(e) => setPick(e.target.value)} className="!py-1 text-sm">
-        <option value="">Pick a driver…</option>
+        <option value="">{t('Pick a driver…')}</option>
         {assignees.filter((p) => p.id !== task.assigned_to_id).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
       </Select>
-      <Button size="sm" loading={busy === 'reassign'} disabled={!pick} onClick={() => onReassign(task, pick).then(() => setOpen(false))}>Apply</Button>
-      <Button variant="ghost" size="sm" onClick={() => setOpen(false)}>Cancel</Button>
+      <Button size="sm" loading={busy === 'reassign'} disabled={!pick} onClick={() => onReassign(task, pick).then(() => setOpen(false))}>{t('Apply')}</Button>
+      <Button variant="ghost" size="sm" onClick={() => setOpen(false)}>{t('Cancel')}</Button>
     </div>
   );
 }
@@ -189,28 +191,30 @@ function ReassignControl({ task, assignees, busy, onReassign }) {
 // logistics.view (e.g. supervisors) sees it read-only for operational awareness — visibility isn't
 // gated, only the action is.
 function PoolCard({ task, busy, canClaim, onClaim }) {
+  const { t } = useI18n();
   return (
     <div className="rounded-xl border border-blue-200 bg-blue-50/40 p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <CarLine task={task} />
           <p className="mt-1 text-sm text-slate-700">
-            <span className="text-slate-400">to</span> <span className="font-medium text-slate-900">{task.destination}</span>
-            {task.round_trip && <span className="text-slate-400"> · round trip</span>}
+            <span className="font-medium text-slate-900">{t('to {destination}', { destination: task.destination })}</span>
+            {task.round_trip && <span className="text-slate-400"> · {t('round trip')}</span>}
             {task.maintenance_id && <span className="text-slate-400"> · 🔧 #{task.maintenance_id}</span>}
           </p>
           <p className="mt-1 text-xs text-slate-400">
-            Decided by {task.decided_by || 'a coordinator'}{task.dispatched_at && ` · ${ago(task.dispatched_at)}`}
+            {t('Decided by {name}', { name: task.decided_by || t('a coordinator') })}
+            {task.dispatched_at ? ` · ${ago(task.dispatched_at, t)}` : ''}
           </p>
           {task.notes && <p className="mt-2 rounded-lg bg-white/70 px-2 py-1 text-xs text-slate-500">{task.notes}</p>}
         </div>
-        <Badge tone="blue">Up for grabs</Badge>
+        <Badge tone="blue">{t('Up for grabs')}</Badge>
       </div>
       <div className="mt-3 flex items-center justify-end border-t border-blue-100 pt-3">
         {canClaim ? (
-          <Button size="sm" loading={busy === 'claim'} onClick={() => onClaim(task)}>Claim Task</Button>
+          <Button size="sm" loading={busy === 'claim'} onClick={() => onClaim(task)}>{t('Claim Task')}</Button>
         ) : (
-          <span className="text-xs text-slate-400">Awaiting a driver to claim</span>
+          <span className="text-xs text-slate-400">{t('Awaiting a driver to claim')}</span>
         )}
       </div>
     </div>
@@ -219,6 +223,7 @@ function PoolCard({ task, busy, canClaim, onClaim }) {
 
 // A move the signed-in driver owns — the execution buttons live here.
 function MyTaskCard({ task, busy, onAction, onStatus }) {
+  const { t } = useI18n();
   const actions = task.next_actions || [];
   const anyBusy = !!busy; // an action (pickup/deliver/return/status) is in flight on THIS task
   return (
@@ -227,12 +232,18 @@ function MyTaskCard({ task, busy, onAction, onStatus }) {
         <div className="min-w-0">
           <CarLine task={task} />
           <p className="mt-1 text-sm text-slate-700">
-            <span className="text-slate-400">to</span> <span className="font-medium text-slate-900">{task.destination}</span>
-            {task.round_trip && <span className="text-slate-400"> · round trip</span>}
+            <span className="font-medium text-slate-900">{t('to {destination}', { destination: task.destination })}</span>
+            {task.round_trip && <span className="text-slate-400"> · {t('round trip')}</span>}
             {task.maintenance_id && <span className="text-slate-400"> · 🔧 #{task.maintenance_id}</span>}
           </p>
           <p className="mt-1 text-xs text-slate-400">
-            Decided by {task.decided_by || '—'}{task.status_changed_at && ` · ${task.status_label || task.status || 'updated'} since ${ago(task.status_changed_at)}`}
+            {t('Decided by {name}', { name: task.decided_by || '—' })}
+            {task.status_changed_at
+              ? ` · ${t('{status} since {when}', {
+                status: task.status_label || task.status || t('updated'),
+                when: ago(task.status_changed_at, t),
+              })}`
+              : ''}
           </p>
           {task.notes && <p className="mt-2 rounded-lg bg-white/70 px-2 py-1 text-xs text-slate-500">{task.notes}</p>}
         </div>
@@ -255,7 +266,7 @@ function MyTaskCard({ task, busy, onAction, onStatus }) {
       </div>
 
       <div className="mt-3 flex flex-wrap justify-end gap-2 border-t border-violet-100 pt-3">
-        {actions.length === 0 && <span className="self-center text-xs text-slate-400">Waiting — nothing to do right now.</span>}
+        {actions.length === 0 && <span className="self-center text-xs text-slate-400">{t('Waiting — nothing to do right now.')}</span>}
         {actions.map((a) => (
           <Button
             key={a.action}
@@ -276,6 +287,7 @@ function MyTaskCard({ task, busy, onAction, onStatus }) {
 // Oversight row — the coordinator's "Decided by / Current Status / Assigned to" board, with the
 // supervisor controls (reassign at any point, ping, cancel).
 function BoardCard({ task, canDispatch, assignees, busy, onPing, onCancel, onReassign }) {
+  const { t } = useI18n();
   const rl = task.returned_location;
   // Only treat the GPS stamp as renderable when both coordinates are present — a
   // partial/empty fix ({} or null lat) must never crash the board on .toFixed().
@@ -286,18 +298,18 @@ function BoardCard({ task, canDispatch, assignees, busy, onPing, onCancel, onRea
         <div className="min-w-0">
           <CarLine task={task} />
           <p className="mt-1 text-sm text-slate-700">
-            <span className="text-slate-400">to</span> <span className="font-medium text-slate-900">{task.destination}</span>
-            {task.round_trip && <span className="text-slate-400"> · round trip</span>}
+            <span className="font-medium text-slate-900">{t('to {destination}', { destination: task.destination })}</span>
+            {task.round_trip && <span className="text-slate-400"> · {t('round trip')}</span>}
           </p>
           <dl className="mt-2 space-y-0.5 text-xs text-slate-500">
-            <div><span className="text-slate-400">Decided by</span> <span className="font-medium text-slate-700">{task.decided_by || '—'}</span></div>
-            <div><span className="text-slate-400">Assigned to</span> <span className="font-medium text-slate-700">{task.assigned_to_name || 'Unclaimed'}</span></div>
+            <div><span className="text-slate-400">{t('Decided by')}</span> <span className="font-medium text-slate-700">{task.decided_by || '—'}</span></div>
+            <div><span className="text-slate-400">{t('Assigned to')}</span> <span className="font-medium text-slate-700">{task.assigned_to_name || t('Unclaimed')}</span></div>
             {task.last_status && (
-              <div><span className="text-slate-400">Last reply</span> <span className="text-slate-600">“{task.last_status}” · {ago(task.last_status_at)}</span></div>
+              <div><span className="text-slate-400">{t('Last reply')}</span> <span className="text-slate-600">“{task.last_status}” · {ago(task.last_status_at, t)}</span></div>
             )}
             {loc && (
               <div>
-                <span className="text-slate-400">Returned at</span>{' '}
+                <span className="text-slate-400">{t('Returned at')}</span>{' '}
                 <a className="text-indigo-600 hover:underline" target="_blank" rel="noreferrer"
                    href={`https://maps.google.com/?q=${loc.lat},${loc.lng}`}>
                   {loc.lat.toFixed(5)}, {loc.lng.toFixed(5)}
@@ -309,7 +321,7 @@ function BoardCard({ task, canDispatch, assignees, busy, onPing, onCancel, onRea
         </div>
         <div className="flex flex-col items-end gap-1">
           <Badge tone={PHASE_TONE[task.status] || 'slate'}>{task.status_label || task.status || '—'}</Badge>
-          {task.awaiting_reply && <span className="text-[11px] text-amber-600">awaiting reply…</span>}
+          {task.awaiting_reply && <span className="text-[11px] text-amber-600">{t('awaiting reply…')}</span>}
         </div>
       </div>
 
@@ -317,10 +329,10 @@ function BoardCard({ task, canDispatch, assignees, busy, onPing, onCancel, onRea
         <div className="mt-3 flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 pt-3">
           <ReassignControl task={task} assignees={assignees} busy={busy} onReassign={onReassign} />
           {task.assigned_to_id && (
-            <Button variant="ghost" size="sm" loading={busy === 'ping'} onClick={() => onPing(task)}>Ping location</Button>
+            <Button variant="ghost" size="sm" loading={busy === 'ping'} onClick={() => onPing(task)}>{t('Ping location')}</Button>
           )}
           <Button variant="ghost" size="sm" className="text-red-600 hover:bg-red-50" loading={busy === 'cancel'} onClick={() => onCancel(task)}>
-            Cancel
+            {t('Cancel')}
           </Button>
         </div>
       )}
@@ -335,6 +347,7 @@ const initialsOf = (name) =>
 // One driver in the availability roster: avatar + name + Available/Busy chip, and (when busy) what
 // they're on right now — the move/maintenance phase, the car, how long, and their last status reply.
 function DriverChip({ d }) {
+  const { t } = useI18n();
   const busy = d.status === 'busy';
   const a = d.activity;
   return (
@@ -345,7 +358,7 @@ function DriverChip({ d }) {
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-2">
           <span className="truncate text-sm font-semibold text-slate-800">{d.name}</span>
-          <Badge tone={busy ? 'amber' : 'emerald'}>{busy ? 'Busy' : 'Available'}</Badge>
+          <Badge tone={busy ? 'amber' : 'emerald'}>{busy ? t('Busy') : t('Available')}</Badge>
         </div>
         {busy && a ? (
           <p className="mt-1 flex flex-wrap items-center gap-x-1.5 text-xs text-slate-500">
@@ -354,11 +367,11 @@ function DriverChip({ d }) {
               : <Icon.Truck className="h-3 w-3 shrink-0 text-slate-400" />}
             <span className="font-medium text-slate-600">{a.label}</span>
             {a.vehicle && <span className="font-mono text-slate-500">· {a.vehicle}</span>}
-            {a.since && <span className="text-slate-400">· {ago(a.since)}</span>}
+            {a.since && <span className="text-slate-400">· {ago(a.since, t)}</span>}
             {a.last_status && <span className="text-slate-400">· “{a.last_status}”</span>}
           </p>
         ) : (
-          <p className="mt-1 text-xs font-medium text-emerald-600">Ready for the next move</p>
+          <p className="mt-1 text-xs font-medium text-emerald-600">{t('Ready for the next move')}</p>
         )}
       </div>
     </div>
@@ -374,6 +387,7 @@ function DriverChip({ d }) {
  */
 export default function LogisticsDispatch() {
   const toast = useToast();
+  const { t } = useI18n();
   const { can } = usePermissions();
   const canDispatch = can('logistics.dispatch'); // coordinator: raise / cancel / ping / reassign
   const canClaim = can('logistics.claim');       // field driver: claim + execute
@@ -413,7 +427,9 @@ export default function LogisticsDispatch() {
     // Cancelling a live move is destructive and easy to mis-tap (it sits next to Ping/Reassign): it
     // voids the trip and strands the linked maintenance ticket. Confirm before firing.
     if (action === 'cancel' && !window.confirm(
-      `Cancel this move${task.destination ? ` to ${task.destination}` : ''}? The car is released from this trip and its driver is left with no task.`
+      task.destination
+        ? t('Cancel this move to {destination}? The car is released from this trip and its driver is left with no task.', { destination: task.destination })
+        : t('Cancel this move? The car is released from this trip and its driver is left with no task.')
     )) return;
     if (['pickup', 'deliver', 'return'].includes(action) && needsOdometer(task, action)) {
       setOdoModal({ task, action });
@@ -423,22 +439,22 @@ export default function LogisticsDispatch() {
     try {
       let body;
       if (action === 'return') {
-        toast.info?.('Getting your location…');
+        toast.info?.(t('Getting your location…'));
         body = (await getGeo()) || {};
       }
       await api.post(`/logistics/${task.id}/${action}`, body);
       const done = {
-        claim: 'Claimed — it\'s yours',
-        pickup: 'Marked picked up',
-        deliver: 'Marked delivered',
-        return: 'Marked returned / arrived',
-        cancel: 'Move cancelled',
-        ping: 'Location request sent',
+        claim: t('Claimed — it\'s yours'),
+        pickup: t('Marked picked up'),
+        deliver: t('Marked delivered'),
+        return: t('Marked returned / arrived'),
+        cancel: t('Move cancelled'),
+        ping: t('Location request sent'),
       };
-      toast.success(done[action] || 'Updated');
+      toast.success(done[action] || t('Updated'));
       reload();
     } catch (err) {
-      fail(err, 'Action failed');
+      fail(err, t('Action failed'));
     } finally {
       setBusyId(null);
     }
@@ -459,11 +475,11 @@ export default function LogisticsDispatch() {
         if (geo) { fd.append('lat', geo.lat); fd.append('lng', geo.lng); fd.append('accuracy', geo.accuracy); }
       }
       await api.post(`/logistics/${task.id}/${action}`, fd);
-      toast.success(action === 'return' ? 'Marked returned / arrived' : action === 'deliver' ? 'Marked delivered' : 'Marked picked up');
+      toast.success(action === 'return' ? t('Marked returned / arrived') : action === 'deliver' ? t('Marked delivered') : t('Marked picked up'));
       setOdoModal(null);
       reload();
     } catch (err) {
-      fail(err, 'Action failed');
+      fail(err, t('Action failed'));
     } finally {
       setBusyId(null);
     }
@@ -473,10 +489,10 @@ export default function LogisticsDispatch() {
     setBusyId(`${task.id}:reassign`);
     try {
       await api.post(`/logistics/${task.id}/reassign`, { assigned_to_id: Number(assignedToId) });
-      toast.success('Driver reassigned');
+      toast.success(t('Driver reassigned'));
       reload();
     } catch (err) {
-      fail(err, 'Could not reassign');
+      fail(err, t('Could not reassign'));
     } finally {
       setBusyId(null);
     }
@@ -487,10 +503,10 @@ export default function LogisticsDispatch() {
     setBusyId(`${task.id}:status`);
     try {
       await api.post(`/logistics/${task.id}/status`, { status });
-      toast.success(`Status: ${status}`);
+      toast.success(t('Status: {status}', { status }));
       reload();
     } catch (err) {
-      fail(err, 'Could not post status');
+      fail(err, t('Could not post status'));
     } finally {
       setBusyId(null);
     }
@@ -508,24 +524,28 @@ export default function LogisticsDispatch() {
       <div className="mx-auto max-w-6xl space-y-4 px-4 sm:px-6 lg:px-8">
         <div className="flex flex-wrap items-end justify-between gap-4" style={{ marginBottom: 4 }}>
           <div>
-            <div className="opx-hint" style={{ letterSpacing: '.16em', textTransform: 'uppercase', marginBottom: 6 }}>Movement Control · Live</div>
-            <h1 className="font-display" style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-.02em', color: 'var(--ink)', margin: 0 }}>Driver Dispatch</h1>
+            <div className="opx-hint" style={{ letterSpacing: '.16em', textTransform: 'uppercase', marginBottom: 6 }}>{t('Movement Control · Live')}</div>
+            <h1 className="font-display" style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-.02em', color: 'var(--ink)', margin: 0 }}>{t('Driver Dispatch')}</h1>
             <p style={{ marginTop: 6, fontSize: 13.5, color: 'var(--ink-3)' }}>
-              {loading ? 'Loading…' : `${mine.length} in your queue · ${pool.length} up for grabs · ${all.length} in transit fleet-wide`}
+              {loading
+                ? t('Loading…')
+                : t('{mine} in your queue · {pool} up for grabs · {all} in transit fleet-wide', {
+                  mine: mine.length, pool: pool.length, all: all.length,
+                })}
             </p>
           </div>
-          {canDispatch && <button className="opx-btn primary" onClick={() => setCreateOpen(true)}>+ New Move</button>}
+          {canDispatch && <button className="opx-btn primary" onClick={() => setCreateOpen(true)}>{t('+ New Move')}</button>}
         </div>
 
         <div className="opx-grid opx-c12" style={{ marginBottom: 4 }}>
           <div className="opx-span-4">
-            <StatGaugeTile label="My Queue" value={loading ? '—' : mine.length} hint="Moves you've claimed" tone={mine.length ? 'reserved' : 'avail'} icon="check" percent={all.length ? (mine.length / all.length) * 100 : (mine.length ? 100 : 6)} />
+            <StatGaugeTile label={t('My Queue')} value={loading ? '—' : mine.length} hint={t("Moves you've claimed")} tone={mine.length ? 'reserved' : 'avail'} icon="check" percent={all.length ? (mine.length / all.length) * 100 : (mine.length ? 100 : 6)} />
           </div>
           <div className="opx-span-4">
-            <StatGaugeTile label="Up for Grabs" value={loading ? '—' : pool.length} hint="Pooled moves awaiting a driver" tone={pool.length ? 'cyan' : 'avail'} icon="calendar" percent={all.length ? (pool.length / all.length) * 100 : (pool.length ? 100 : 6)} />
+            <StatGaugeTile label={t('Up for Grabs')} value={loading ? '—' : pool.length} hint={t('Pooled moves awaiting a driver')} tone={pool.length ? 'cyan' : 'avail'} icon="calendar" percent={all.length ? (pool.length / all.length) * 100 : (pool.length ? 100 : 6)} />
           </div>
           <div className="opx-span-4">
-            <StatGaugeTile label="In Transit · Fleet" value={loading ? '—' : all.length} hint="Every car currently on a move" tone="rented" icon="car" percent={all.length ? 100 : 6} />
+            <StatGaugeTile label={t('In Transit · Fleet')} value={loading ? '—' : all.length} hint={t('Every car currently on a move')} tone="rented" icon="car" percent={all.length ? 100 : 6} />
           </div>
         </div>
 
@@ -538,15 +558,19 @@ export default function LogisticsDispatch() {
 
         {/* Driver availability — who's free and what everyone else is doing right now. */}
         <CommandPanel
-          title="Drivers"
+          title={t('Drivers')}
           dotColor="#34d399"
-          label="roster"
-          meta={loading ? 'loading' : `${roster.summary?.available ?? 0} available · ${roster.summary?.busy ?? 0} busy · ${roster.summary?.total ?? 0} total`}
+          label={t('roster')}
+          meta={loading ? t('loading') : t('{available} available · {busy} busy · {total} total', {
+            available: roster.summary?.available ?? 0,
+            busy: roster.summary?.busy ?? 0,
+            total: roster.summary?.total ?? 0,
+          })}
         >
           {loading ? (
-            <p className="opx-empty">Loading drivers…</p>
+            <p className="opx-empty">{t('Loading drivers…')}</p>
           ) : roster.drivers.length === 0 ? (
-            <p className="opx-empty">No drivers found.</p>
+            <p className="opx-empty">{t('No drivers found.')}</p>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {roster.drivers.map((d) => <DriverChip key={d.id} d={d} />)}
@@ -556,13 +580,13 @@ export default function LogisticsDispatch() {
 
         {/* Pooled moves up for grabs — drivers can claim; supervisors see it read-only for awareness. */}
         <CommandPanel
-          title={canClaim ? 'Available to Claim' : 'Up for Grabs'}
+          title={canClaim ? t('Available to Claim') : t('Up for Grabs')}
           dotColor="#22d3ee"
-          label="pool"
-          meta={canClaim ? 'first driver wins' : 'read-only — only drivers can claim'}
+          label={t('pool')}
+          meta={canClaim ? t('first driver wins') : t('read-only — only drivers can claim')}
         >
           {!loading && pool.length === 0 ? (
-            <p className="opx-empty">Nothing waiting to be claimed.</p>
+            <p className="opx-empty">{t('Nothing waiting to be claimed.')}</p>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2">
               {pool.map((t) => (
@@ -573,9 +597,9 @@ export default function LogisticsDispatch() {
         </CommandPanel>
 
         {/* My active tasks — the driver's execution lane. */}
-        <CommandPanel title="My Queue" dotColor="#a78bfa" label="execution" meta="step each car along as you go">
+        <CommandPanel title={t('My Queue')} dotColor="#a78bfa" label={t('execution')} meta={t('step each car along as you go')}>
           {!loading && mine.length === 0 ? (
-            <p className="opx-empty">Nothing assigned to you right now.</p>
+            <p className="opx-empty">{t('Nothing assigned to you right now.')}</p>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2">
               {mine.map((t) => (
@@ -592,9 +616,9 @@ export default function LogisticsDispatch() {
         </CommandPanel>
 
         {/* Oversight board — Decided by / Current Status / Assigned to, plus supervisor controls. */}
-        <CommandPanel title="Dispatch Board · Fleet" dotColor="#60a5fa" label="where is it?" meta="every car on the move">
+        <CommandPanel title={t('Dispatch Board · Fleet')} dotColor="#60a5fa" label={t('where is it?')} meta={t('every car on the move')}>
           {!loading && board.length === 0 ? (
-            <p className="opx-empty">No other cars in transit.</p>
+            <p className="opx-empty">{t('No other cars in transit.')}</p>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2">
               {board.map((t) => (

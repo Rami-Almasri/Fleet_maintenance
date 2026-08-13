@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { useI18n } from '../../i18n/I18nContext';
 
 // A right-side slide-over panel ("drawer"). Covers ~half the screen on desktop and goes
 // full-width on small screens, so the surface behind it (e.g. the workflow board) stays
@@ -16,6 +17,7 @@ const WIDTHS = {
 };
 
 export default function Drawer({ open, onClose, title, subtitle, eyebrow, width = 'half', children, footer }) {
+  const { t } = useI18n();
   useEffect(() => {
     if (!open) return undefined;
     const onKey = (e) => e.key === 'Escape' && onClose?.();
@@ -51,7 +53,7 @@ export default function Drawer({ open, onClose, title, subtitle, eyebrow, width 
           <button
             onClick={onClose}
             className="-me-1 shrink-0 rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
-            aria-label="Close"
+            aria-label={t('Close')}
           >
             <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />

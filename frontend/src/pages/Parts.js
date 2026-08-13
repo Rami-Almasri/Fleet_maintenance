@@ -54,6 +54,8 @@ const ALL_STATUSES = [...TILE_STATUSES, 'rejected', 'cancelled'];
 const CLASS_TONE = { consumable: 'gray', standard: 'blue', major: 'amber' };
 const CLASS_LABEL = { consumable: 'Consumable', standard: 'Standard', major: 'Major' };
 const SOURCE_TONE = { customer: 'violet', garage: 'amber' };
+// Who raised the request. The English here is the translation key; an unknown value falls back to the raw enum.
+const REQUEST_SOURCE_LABEL = { customer: 'Customer', garage: 'Garage' };
 
 // Where a prior part was bought, for the duplicate warning's "Bought from …" line.
 const sourceLabel = (src) => (src === 'garage' ? 'Garage' : src === 'supplier' ? 'Parts supplier' : null);
@@ -165,14 +167,14 @@ function PurchaseModal({ open, request, onClose, onDone, vendors }) {
         body.duplicate_reason_note = form.duplicate_reason_note.trim() || null;
       }
       const res = payload(await api.post(`/part-requests/${request.id}/purchase`, body));
-      if (res?.duplicate) toast.error('Purchase recorded — flagged for admin review');
-      else toast.success('Purchase recorded');
+      if (res?.duplicate) toast.error(t('Purchase recorded — flagged for admin review'));
+      else toast.success(t('Purchase recorded'));
       onDone();
       onClose();
     } catch (err) {
       const r = err.response?.data;
-      if (r?.errors) { setErrors(r.errors); toast.error('Please fix the highlighted fields'); }
-      else toast.error(r?.message || r?.msg || 'Could not record the purchase');
+      if (r?.errors) { setErrors(r.errors); toast.error(t('Please fix the highlighted fields')); }
+      else toast.error(r?.message || r?.msg || t('Could not record the purchase'));
     } finally {
       setSaving(false);
     }
@@ -201,23 +203,23 @@ function PurchaseModal({ open, request, onClose, onDone, vendors }) {
         {isDuplicate && (
           <div className={`rounded-xl px-4 py-3 text-sm ring-1 ring-inset ${dup.priority === 'high' ? 'bg-red-50 text-red-800 ring-red-600/25' : 'bg-amber-50 text-amber-800 ring-amber-600/25'}`}>
             <p className="font-semibold">
-              ⚠ Attention: this vehicle already received {prev?.part_name || 'this part'} {num(dup.days_between)} day(s) ago.
+              {t('parts.approve.alert', { part: prev?.part_name || t('parts.approve.thisPart'), days: num(dup.days_between) })}
             </p>
             <ul className="mt-1.5 space-y-0.5 text-xs">
               {/* Prior-purchase price shown even while SHOW_FINANCIALS hides other money — it is the recorded
                   spend the duplicate warning is about (accountability context), not a computed roll-up. */}
               {prev?.purchase_price != null && (
-                <li>Previous cost {aed(prev.purchase_price)} {prev.currency && prev.currency !== 'AED' ? `(${prev.currency})` : ''}.</li>
+                <li>{t('parts.approve.prevCost', { amount: aed(prev.purchase_price), currency: prev.currency && prev.currency !== 'AED' ? `(${prev.currency})` : '' })}</li>
               )}
-              {prev?.purchased_by && <li>Previous purchase by {prev.purchased_by}.</li>}
+              {prev?.purchased_by && <li>{t('parts.approve.prevBuyer', { who: prev.purchased_by })}</li>}
               {prev?.source && (
-                <li>Bought from {prev.source_name ? <span className="font-medium">{prev.source_name}</span> : sourceLabel(prev.source)}{prev.source_name && sourceLabel(prev.source) ? ` (${sourceLabel(prev.source)})` : ''}.</li>
+                <li>{t('parts.approve.prevSource')} {prev.source_name ? <span className="font-medium">{prev.source_name}</span> : tf(`parts.sourceLabel.${prev.source}`, sourceLabel(prev.source))}{prev.source_name && sourceLabel(prev.source) ? ` (${tf(`parts.sourceLabel.${prev.source}`, sourceLabel(prev.source))})` : ''}.</li>
               )}
-              {dup.part_class && <li>Part class: <span className="font-medium capitalize">{dup.part_class}</span> · window {num(dup.window_days)} day(s).</li>}
+              {dup.part_class && <li>{t('parts.approve.partClass')} <span className="font-medium capitalize">{tf(`parts.class.${dup.part_class}`, dup.part_class)}</span> · {t('parts.approve.window', { days: num(dup.window_days) })}</li>}
             </ul>
             <div className="mt-3">
               <Select
-                label="Why buy it again?"
+                label={t('Why buy it again?')}
                 required
                 value={form.duplicate_reason_code}
                 error={errors.duplicate_reason_code?.[0]}
@@ -229,7 +231,7 @@ function PurchaseModal({ open, request, onClose, onDone, vendors }) {
               <Textarea
                 className="mt-2"
                 rows={2}
-                placeholder="Add a note (optional)"
+                placeholder={t('Add a note (optional)')}
                 value={form.duplicate_reason_note}
                 onChange={(e) => set('duplicate_reason_note', e.target.value)}
               />
@@ -428,28 +430,28 @@ function InstallModal({ open, request, onClose, onDone }) {
   const assetErrors = () => {
     const e = {};
     if (!form.component_catalog_id) {
-      e['component.component_catalog_id'] = ['Pick a component type — without it the part cannot join the vehicle’s configuration.'];
+      e['component.component_catalog_id'] = [t('Pick a component type — without it the part cannot join the vehicle’s configuration.')];
       return e;
     }
     if (selectedType?.requires_serial && !form.serial_no.trim()) {
-      e['component.serial_no'] = [`${selectedType.name} is serialized — enter its serial number.`];
+      e['component.serial_no'] = [t('{part} is serialized — enter its serial number.', { part: selectedType.name })];
     }
     // Replacing a live part of the same type: the old one needs a reason AND a destination, or the
     // backend refuses the whole component write.
     if (replacing && !(form.removal_reason && form.disposition)) {
-      if (!form.removal_reason) e['predecessor.removal_reason'] = [`This car already has a ${selectedType.name} fitted — say why it came off.`];
-      if (!form.disposition) e['predecessor.disposition'] = ['Say where the old part went.'];
+      if (!form.removal_reason) e['predecessor.removal_reason'] = [t('This car already has a {part} fitted — say why it came off.', { part: selectedType.name })];
+      if (!form.disposition) e['predecessor.disposition'] = [t('Say where the old part went.')];
     }
     return e;
   };
 
   const submit = async () => {
-    if (!purchase) { toast.error('No purchase found to install'); return; }
+    if (!purchase) { toast.error(t('No purchase found to install')); return; }
 
     const blocking = assetErrors();
     if (Object.keys(blocking).length) {
       setErrors(blocking);
-      toast.error('Please fix the highlighted fields');
+      toast.error(t('Please fix the highlighted fields'));
       return;
     }
 
@@ -474,13 +476,13 @@ function InstallModal({ open, request, onClose, onDone }) {
           ? { removal_reason: form.removal_reason, disposition: form.disposition }
           : null,
       });
-      toast.success('Part marked installed');
+      toast.success(t('Part marked installed'));
       onDone();
       onClose();
     } catch (err) {
       const r = err.response?.data;
-      if (r?.errors) { setErrors(r.errors); toast.error('Please fix the highlighted fields'); }
-      else toast.error(r?.message || r?.msg || 'Could not record the installation');
+      if (r?.errors) { setErrors(r.errors); toast.error(t('Please fix the highlighted fields')); }
+      else toast.error(r?.message || r?.msg || t('Could not record the installation'));
     } finally {
       setSaving(false);
     }
@@ -503,8 +505,10 @@ function InstallModal({ open, request, onClose, onDone }) {
       <div className="space-y-4">
         {/* Fitting the part is the confirmation itself — the button below is the whole action. */}
         <p className="text-sm text-slate-600">
-          Record <span className="font-medium text-slate-800">{request?.part_name}</span> as fitted to{' '}
-          <span className="font-medium text-slate-800">{request?.vehicle?.plate || `#${request?.vehicle?.id}`}</span>?
+          {t('Record {part} as fitted to {vehicle}?', {
+            part: request?.part_name,
+            vehicle: request?.vehicle?.plate || `#${request?.vehicle?.id}`,
+          })}
         </p>
 
         {/* ── Vehicle configuration ─────────────────────────────────────────────────────────────
@@ -885,7 +889,7 @@ export default function Parts() {
       toast.success(okMsg);
       reload({ silent: true });
     } catch (err) {
-      toast.error(err.response?.data?.message || err.response?.data?.msg || 'Action failed');
+      toast.error(err.response?.data?.message || err.response?.data?.msg || t('Action failed'));
     } finally {
       setBusy(null);
     }
@@ -907,15 +911,15 @@ export default function Parts() {
       // Advisory only — a failed lookup never blocks an approval. But it is SAID, because an approver
       // who sees no record must know whether that means "none exists" or "we could not find out".
       dup = null;
-      toast.error('Could not load the purchase record — approving without it');
+      toast.error(t('Could not load the purchase record — approving without it'));
     }
     if (dup?.duplicate || dup?.history?.records?.length) { setApproveFor({ request: req, dup }); setBusy(null); return; }
     try {
       await api.post(`/part-requests/${req.id}/approve`, {});
-      toast.success('Request approved');
+      toast.success(t('parts.approve.done'));
       reload({ silent: true });
     } catch (err) {
-      toast.error(err.response?.data?.message || err.response?.data?.msg || 'Action failed');
+      toast.error(err.response?.data?.message || err.response?.data?.msg || t('Action failed'));
     } finally {
       setBusy(null);
     }
@@ -927,10 +931,10 @@ export default function Parts() {
     setBusy(`${req.id}:delivered`);
     try {
       await api.post(`/part-purchases/${po.id}/delivered`, {});
-      toast.success('Part marked delivered');
+      toast.success(t('Part marked delivered'));
       reload({ silent: true });
     } catch (err) {
-      toast.error(err.response?.data?.message || err.response?.data?.msg || 'Could not mark delivered');
+      toast.error(err.response?.data?.message || err.response?.data?.msg || t('Could not mark delivered'));
     } finally {
       setBusy(null);
     }
@@ -1087,18 +1091,22 @@ export default function Parts() {
                       <td className="border-b border-slate-100 px-5 py-3.5">
                         <div className="flex items-center gap-2">
                           <span className="font-medium text-slate-900">{r.part_name}</span>
-                          {r.part_class && <Badge tone={CLASS_TONE[r.part_class] || 'gray'}>{CLASS_LABEL[r.part_class] || r.part_class}</Badge>}
+                          {r.part_class && <Badge tone={CLASS_TONE[r.part_class] || 'gray'}>{tf(`parts.class.${r.part_class}`, CLASS_LABEL[r.part_class] || r.part_class)}</Badge>}
                         </div>
                         <div className="text-xs text-slate-400">
                           {r.part_number ? `#${r.part_number}` : ''}{r.quantity > 1 ? `${r.part_number ? ' · ' : ''}×${r.quantity}` : ''}
-                          {SHOW_FINANCIALS && r.estimated_price != null ? ` · est. ${aed(r.estimated_price)}` : ''}
+                          {SHOW_FINANCIALS && r.estimated_price != null ? ` · ${t('est. {amount}', { amount: aed(r.estimated_price) })}` : ''}
                         </div>
                       </td>
                       <td className="border-b border-slate-100 px-5 py-3.5">
-                        <Badge tone={SOURCE_TONE[r.source] || 'gray'}>{r.source}</Badge>
+                        <Badge tone={SOURCE_TONE[r.source] || 'gray'}>{REQUEST_SOURCE_LABEL[r.source] ? t(REQUEST_SOURCE_LABEL[r.source]) : r.source}</Badge>
                         {r.source === 'customer' && r.customer?.name && <div className="mt-0.5 text-xs text-slate-400">{r.customer.name}</div>}
                       </td>
-                      <td className="border-b border-slate-100 px-5 py-3.5 text-slate-600 capitalize">{r.repair_location === 'onsite' ? 'On-site' : (r.repair_location || '—')}</td>
+                      <td className="border-b border-slate-100 px-5 py-3.5 text-slate-600 capitalize">
+                        {r.repair_location === 'onsite'
+                          ? t('parts.purchase.onSite')
+                          : (r.repair_location ? tf(`parts.source.${r.repair_location}`, r.repair_location) : '—')}
+                      </td>
                       <td className="border-b border-slate-100 px-5 py-3.5"><StatusBadge status={r.status} /></td>
                       <td className="border-b border-slate-100 px-5 py-3.5 text-slate-600">
                         <div>{r.requested_by || '—'}</div>

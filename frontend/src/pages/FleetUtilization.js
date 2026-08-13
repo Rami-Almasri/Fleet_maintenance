@@ -2,12 +2,14 @@ import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api/client';
 import useFetch from '../hooks/useFetch';
+import { useI18n } from '../i18n/I18nContext';
 import { Card, Spinner } from '../components/ui/Misc';
 import DataTable, { SectionCard } from '../components/ui/Table';
 import FleetUtilizationAnalytics from '../components/analytics/FleetUtilizationAnalytics';
 import Icon from '../components/ui/Icon';
 import { aed2, num, fmtDate } from '../lib/format';
 
+// English stays beside the key here; the visible text is resolved with t(o.label) at render.
 const PERIODS = [
   { key: 'last_month', label: 'Last month' },
   { key: 'this_month', label: 'This month' },
@@ -29,6 +31,7 @@ const SORTS = [
 // (not owned days) so the bar always fills exactly — rare rent/maintenance overlap can otherwise
 // push the three past 100% of owned. The numeric columns keep the true owned-based percentages.
 function SplitBar({ rented, maintenance, idle }) {
+  const { t } = useI18n();
   const total = rented + maintenance + idle || 1;
   // Static bars (no grow animation) — each segment sits at its final share and
   // its exact day count is available on hover, so the Idle column can be dropped.
@@ -37,20 +40,20 @@ function SplitBar({ rented, maintenance, idle }) {
       <div
         className={cls}
         style={{ width: `${((v / total) * 100).toFixed(1)}%` }}
-        title={`${label}: ${num(v)} days`}
+        title={t('{label}: {n} days', { label, n: num(v) })}
       />
     ) : null;
   return (
     <div className="flex h-2.5 w-full min-w-[7rem] overflow-hidden rounded-full bg-slate-100 ring-1 ring-inset ring-slate-200">
-      {seg(rented, 'bg-emerald-500', 'Rented')}
-      {seg(maintenance, 'bg-red-500', 'In maintenance')}
-      {seg(idle, 'bg-slate-300', 'Idle')}
+      {seg(rented, 'bg-emerald-500', t('Rented'))}
+      {seg(maintenance, 'bg-red-500', t('In maintenance'))}
+      {seg(idle, 'bg-slate-300', t('Idle'))}
     </div>
   );
 }
 
 const pct = (v) => (v == null ? '—' : `${v}%`);
-const days = (v) => (v == null ? '—' : `${num(v)}d`);
+const days = (v, t) => (v == null ? '—' : t('{n}d', { n: num(v) }));
 
 // Local "today" as YYYY-MM-DD (timezone-correct, unlike toISOString which is UTC).
 const todayISO = () => {
@@ -72,6 +75,7 @@ const TM_STATE = {
 // One date → the rich "what was it doing then" card. Two dates → a rented/workshop/available
 // day breakdown for the whole range.
 function TimeMachine({ cars }) {
+  const { t } = useI18n();
   const [carId, setCarId] = useState('');
   const [from, setFrom] = useState(todayISO());
   const [to, setTo] = useState('');               // blank = single-day lookup
@@ -82,7 +86,7 @@ function TimeMachine({ cars }) {
   const isRange = !!to && to !== from;
 
   const run = async () => {
-    if (!carId || !from) { setErr('Pick a car and a day first.'); return; }
+    if (!carId || !from) { setErr(t('Pick a car and a day first.')); return; }
     setLoading(true);
     setErr(null);
     try {
@@ -90,7 +94,7 @@ function TimeMachine({ cars }) {
       const { data } = await api.get(`/Vehicle/${carId}/status-on`, { params });
       setResult(data.data);
     } catch (e) {
-      setErr(e?.response?.data?.message || 'Could not look that up.');
+      setErr(e?.response?.data?.message || t('Could not look that up.'));
       setResult(null);
     } finally {
       setLoading(false);
@@ -99,19 +103,19 @@ function TimeMachine({ cars }) {
 
   return (
     <SectionCard
-      title="Time machine"
-      subtitle="Pick a car and a day to see what it was doing then — or add a “to” date to count how many days it was rented, in the workshop, or available."
+      title={t('Time machine')}
+      subtitle={t('Pick a car and a day to see what it was doing then — or add a “to” date to count how many days it was rented, in the workshop, or available.')}
       bodyClass="p-5"
     >
       <div className="flex flex-wrap items-end gap-3">
         <label className="flex flex-col gap-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-          Car
+          {t('Car')}
           <select
             value={carId}
             onChange={(e) => setCarId(e.target.value)}
             className="w-60 rounded-lg border-slate-200 bg-white py-2 ps-3 pe-8 text-sm font-medium text-slate-700 ring-1 ring-inset ring-slate-200 focus:ring-indigo-400"
           >
-            <option value="">Select a car…</option>
+            <option value="">{t('Select a car…')}</option>
             {cars.map((c) => (
               <option key={c.vehicle_id} value={c.vehicle_id}>
                 {c.plate || c.code || `#${c.vehicle_id}`}{c.car ? ` — ${c.car}` : ''}
@@ -120,7 +124,7 @@ function TimeMachine({ cars }) {
           </select>
         </label>
         <label className="flex flex-col gap-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-          From
+          {t('From')}
           <input
             type="date"
             value={from}
@@ -130,7 +134,7 @@ function TimeMachine({ cars }) {
           />
         </label>
         <label className="flex flex-col gap-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-          To <span className="text-slate-300">· optional</span>
+          {t('To')} <span className="text-slate-300">{t('· optional')}</span>
           <input
             type="date"
             value={to}
@@ -146,7 +150,7 @@ function TimeMachine({ cars }) {
           className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-soft transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {loading ? <Spinner className="h-4 w-4" /> : <Icon.Clock className="h-4 w-4" />}
-          {isRange ? 'How was it used?' : 'What was it doing?'}
+          {isRange ? t('How was it used?') : t('What was it doing?')}
         </button>
       </div>
 
@@ -173,8 +177,9 @@ function RangeStat({ tone, label, value, sub }) {
 }
 
 function RangeResult({ r }) {
+  const { t } = useI18n();
   const total = r.total_days || 0;
-  const share = (d) => (total ? `${Math.round((d / total) * 100)}% of range` : '—');
+  const share = (d) => (total ? t('{p}% of range', { p: Math.round((d / total) * 100) }) : '—');
   return (
     <div className="mt-4 animate-fade-in-up overflow-hidden rounded-2xl border border-slate-200/70 shadow-soft">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 bg-slate-50/70 px-5 py-3">
@@ -185,20 +190,20 @@ function RangeResult({ r }) {
           </p>
           {/* Show the window actually counted — start at counted_from when the requested range was
               clipped to when the car joined the fleet, so the dates match the {total} day count. */}
-          <p className="text-xs text-slate-400">{fmtDate(r.counted_from || r.from)} → {fmtDate(r.to)} · {num(total)} days</p>
+          <p className="text-xs text-slate-400">{fmtDate(r.counted_from || r.from)} → {fmtDate(r.to)} · {t('{n} days', { n: num(total) })}</p>
         </div>
         {r.utilization_pct != null && (
           <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">
-            {r.utilization_pct}% utilized
+            {t('{p}% utilized', { p: r.utilization_pct })}
           </span>
         )}
       </div>
 
       <div className="p-5">
         <div className="grid grid-cols-3 gap-3">
-          <RangeStat tone="emerald" label="Rented" value={r.rented_days} sub={share(r.rented_days)} />
-          <RangeStat tone="red" label="In workshop" value={r.maintenance_days} sub={share(r.maintenance_days)} />
-          <RangeStat tone="amber" label="Available" value={r.idle_days} sub={share(r.idle_days)} />
+          <RangeStat tone="emerald" label={t('Rented')} value={r.rented_days} sub={share(r.rented_days)} />
+          <RangeStat tone="red" label={t('In workshop')} value={r.maintenance_days} sub={share(r.maintenance_days)} />
+          <RangeStat tone="amber" label={t('Available')} value={r.idle_days} sub={share(r.idle_days)} />
         </div>
 
         <div className="mt-4">
@@ -207,19 +212,22 @@ function RangeResult({ r }) {
 
         {r.counted_from && r.counted_from !== r.from && (
           <p className="mt-2 text-[11px] text-slate-400">
-            You picked {fmtDate(r.from)}, but this car only joined the fleet on {fmtDate(r.counted_from)} — so counting starts there.
+            {t('You picked {picked}, but this car only joined the fleet on {joined} — so counting starts there.', {
+              picked: fmtDate(r.from),
+              joined: fmtDate(r.counted_from),
+            })}
           </p>
         )}
 
         {r.rentals?.length > 0 && (
           <div className="mt-4">
-            <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Rentals in this range</p>
+            <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">{t('Rentals in this range')}</p>
             <ul className="space-y-1">
               {r.rentals.map((c) => (
                 <li key={c.id} className="flex flex-wrap items-center gap-x-2 text-sm">
                   <Link to={`/contracts/${c.id}`} className="font-semibold text-indigo-600 hover:text-indigo-700">#{c.no}</Link>
                   {c.customer && <span className="text-slate-600">{c.customer}</span>}
-                  <span className="text-xs text-slate-400">{fmtDate(c.out_date)} → {c.open ? 'still out' : fmtDate(c.in_date)}</span>
+                  <span className="text-xs text-slate-400">{fmtDate(c.out_date)} → {c.open ? t('still out') : fmtDate(c.in_date)}</span>
                 </li>
               ))}
             </ul>
@@ -228,12 +236,12 @@ function RangeResult({ r }) {
 
         {r.maintenance?.length > 0 && (
           <div className="mt-3">
-            <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Workshop visits in this range</p>
+            <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">{t('Workshop visits in this range')}</p>
             <ul className="space-y-1">
               {r.maintenance.map((m, i) => (
                 <li key={i} className="flex flex-wrap items-center gap-x-2 text-sm text-slate-600">
                   <span className="font-medium text-slate-700">#{m.no}</span>
-                  <span className="text-xs text-slate-400">{fmtDate(m.out_date)} → {m.open ? 'still in' : fmtDate(m.in_date)}</span>
+                  <span className="text-xs text-slate-400">{fmtDate(m.out_date)} → {m.open ? t('still in') : fmtDate(m.in_date)}</span>
                 </li>
               ))}
             </ul>
@@ -245,6 +253,7 @@ function RangeResult({ r }) {
 }
 
 function TimeMachineResult({ r }) {
+  const { t } = useI18n();
   const st = TM_STATE[r.state] || TM_STATE.idle;
   return (
     <div className="mt-4 animate-fade-in-up overflow-hidden rounded-2xl border border-slate-200/70 shadow-soft">
@@ -259,18 +268,18 @@ function TimeMachineResult({ r }) {
         <span className="ms-auto shrink-0 text-end text-xs text-slate-400">
           <span className="block font-semibold text-slate-700">{r.plate || r.code || `#${r.vehicle_id}`}</span>
           {r.car && <span className="block">{[r.car, r.year].filter(Boolean).join(' · ')}</span>}
-          <span className="block">on {fmtDate(r.date)}</span>
+          <span className="block">{t('on {date}', { date: fmtDate(r.date) })}</span>
         </span>
       </div>
 
       {r.contract && (
         <div className="border-t border-slate-100 bg-white px-5 py-3 text-sm">
           <Link to={`/contracts/${r.contract.id}`} className="font-semibold text-indigo-600 hover:text-indigo-700">
-            Contract #{r.contract.no}
+            {t('Contract #{no}', { no: r.contract.no })}
           </Link>
           {r.contract.customer && <span className="text-slate-600"> · {r.contract.customer}</span>}
           <span className="block text-xs text-slate-400">
-            {fmtDate(r.contract.out_date)} → {r.contract.open ? 'still out' : fmtDate(r.contract.in_date)}
+            {fmtDate(r.contract.out_date)} → {r.contract.open ? t('still out') : fmtDate(r.contract.in_date)}
           </span>
         </div>
       )}
@@ -278,7 +287,7 @@ function TimeMachineResult({ r }) {
       {r.maintenance && (
         <div className="border-t border-slate-100 bg-white px-5 py-3 text-sm">
           <Link to={`/vehicles/${r.vehicle_id}?focus=maintenance`} className="font-semibold capitalize text-indigo-600 hover:text-indigo-700">
-            {r.maintenance.issue || 'Workshop visit'}
+            {r.maintenance.issue || t('Workshop visit')}
           </Link>
           {r.maintenance.garage && <span className="text-slate-600"> · {r.maintenance.garage}</span>}
           <span className="block text-xs text-slate-400">
@@ -293,9 +302,23 @@ function TimeMachineResult({ r }) {
 
 // The operational fleet: cars that can actually be rented or sent for maintenance.
 const DEFAULT_STATUSES = ['rented', 'ready', 'out_of_order', 'returned'];
-const statusLabel = (s) => s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+// The status VALUES are API enums; only their display text is translated. Anything the backend
+// adds later still falls back to the prettified enum rather than disappearing.
+const STATUS_TEXT = {
+  rented: 'Rented',
+  ready: 'Ready',
+  out_of_order: 'Out of order',
+  returned: 'Returned',
+  maintenance: 'In maintenance',
+  sold: 'Sold',
+  reserved: 'Reserved',
+  idle: 'Idle',
+};
+const statusLabel = (s, t) =>
+  (STATUS_TEXT[s] ? t(STATUS_TEXT[s]) : s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()));
 
 export default function FleetUtilization() {
+  const { t } = useI18n();
   const [period, setPeriod] = useState('last_12m');
   const [range, setRange] = useState({ from: '', to: '' });   // custom date window (overrides period)
   const [showCustom, setShowCustom] = useState(false);
@@ -364,11 +387,10 @@ export default function FleetUtilization() {
           <div className="min-w-0">
             <div className="flex items-center gap-2.5">
               <span className="h-7 w-1 rounded-full bg-indigo-500" />
-              <h1 className="text-2xl font-bold tracking-tight text-slate-900">Fleet Utilization</h1>
+              <h1 className="text-2xl font-bold tracking-tight text-slate-900">{t('Fleet Utilization')}</h1>
             </div>
             <p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-500 sm:ps-4">
-              How every car's time splits between earning on rent, in the workshop, and sitting idle —
-              measured from each car's first rental, so new cars aren't branded as downtime.
+              {t("How every car's time splits between earning on rent, in the workshop, and sitting idle — measured from each car's first rental, so new cars aren't branded as downtime.")}
             </p>
           </div>
         </div>
@@ -385,7 +407,7 @@ export default function FleetUtilization() {
                     period === p.key && !custom ? 'bg-slate-900 text-white ring-slate-900' : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'
                   }`}
                 >
-                  {p.label}
+                  {t(p.label)}
                 </button>
               ))}
               {/* Custom date window — toggles the From/To panel below. */}
@@ -397,7 +419,7 @@ export default function FleetUtilization() {
                 }`}
               >
                 <Icon.Calendar className="h-4 w-4" />
-                {custom ? `${range.from || '…'} → ${range.to || '…'}` : 'Custom dates'}
+                {custom ? `${range.from || '…'} → ${range.to || '…'}` : t('Custom dates')}
               </button>
             </div>
             <div className="ms-auto flex flex-wrap items-center gap-2">
@@ -407,7 +429,7 @@ export default function FleetUtilization() {
                 className="rounded-lg border-slate-200 bg-white py-1.5 ps-3 pe-8 text-sm text-slate-700 ring-1 ring-inset ring-slate-200 focus:ring-indigo-400"
               >
                 {SORTS.map((o) => (
-                  <option key={o.key} value={o.key}>{o.label}</option>
+                  <option key={o.key} value={o.key}>{t(o.label)}</option>
                 ))}
               </select>
               <div className="relative">
@@ -415,7 +437,7 @@ export default function FleetUtilization() {
                 <input
                   value={q}
                   onChange={(e) => setQ(e.target.value)}
-                  placeholder="Search plate / model…"
+                  placeholder={t('Search plate / model…')}
                   className="w-44 rounded-lg border-slate-200 bg-white py-1.5 ps-8 pe-3 text-sm text-slate-700 ring-1 ring-inset ring-slate-200 focus:ring-indigo-400"
                 />
               </div>
@@ -427,10 +449,10 @@ export default function FleetUtilization() {
           {(showCustom || custom) && (
             <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3 animate-fade-in-up">
               <span className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                <Icon.Calendar className="h-4 w-4 text-indigo-500" /> Date range
+                <Icon.Calendar className="h-4 w-4 text-indigo-500" /> {t('Date range')}
               </span>
               <label className="inline-flex items-center gap-1.5 text-sm text-slate-500">
-                From
+                {t('From')}
                 <input
                   type="date"
                   value={range.from}
@@ -439,9 +461,9 @@ export default function FleetUtilization() {
                   className="rounded-lg border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-700 ring-1 ring-inset ring-slate-200 focus:ring-indigo-400"
                 />
               </label>
-              <span className="text-slate-300">→</span>
+              <span className="text-slate-300 rtl:-scale-x-100">→</span>
               <label className="inline-flex items-center gap-1.5 text-sm text-slate-500">
-                To
+                {t('To')}
                 <input
                   type="date"
                   value={range.to}
@@ -452,10 +474,10 @@ export default function FleetUtilization() {
               </label>
               {custom ? (
                 <button onClick={clearRange} className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-slate-500 ring-1 ring-inset ring-slate-200 transition hover:bg-slate-50 hover:text-slate-700">
-                  Clear
+                  {t('Clear')}
                 </button>
               ) : (
-                <span className="text-xs text-slate-400">Leave one side blank for an open-ended range.</span>
+                <span className="text-xs text-slate-400">{t('Leave one side blank for an open-ended range.')}</span>
               )}
             </div>
           )}
@@ -463,7 +485,7 @@ export default function FleetUtilization() {
           {/* Status checkboxes — tick which vehicle statuses to include (default = operational fleet) */}
           {statusOptions.length > 0 && (
             <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Show statuses</span>
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">{t('Show statuses')}</span>
               {statusOptions.map((o) => {
                 const on = statuses.includes(o.status);
                 return (
@@ -479,23 +501,23 @@ export default function FleetUtilization() {
                         <svg className="h-2.5 w-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 13l4 4L19 7" /></svg>
                       )}
                     </span>
-                    {statusLabel(o.status)}
+                    {statusLabel(o.status, t)}
                     <span className={on ? 'text-indigo-400' : 'text-slate-400'}>{o.count}</span>
                   </button>
                 );
               })}
               <span className="ms-auto flex items-center gap-2 text-xs">
-                <button onClick={() => setStatuses(DEFAULT_STATUSES)} className="font-medium text-indigo-600 hover:text-indigo-700">Operational</button>
+                <button onClick={() => setStatuses(DEFAULT_STATUSES)} className="font-medium text-indigo-600 hover:text-indigo-700">{t('Operational')}</button>
                 <span className="text-slate-300">·</span>
-                <button onClick={() => setStatuses(statusOptions.map((o) => o.status))} className="font-medium text-slate-500 hover:text-slate-700">All</button>
+                <button onClick={() => setStatuses(statusOptions.map((o) => o.status))} className="font-medium text-slate-500 hover:text-slate-700">{t('All')}</button>
               </span>
             </div>
           )}
           <p className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-400">
-            <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-500" /> Rented</span>
-            <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-red-500" /> In maintenance</span>
-            <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-slate-300" /> Idle</span>
-            <span className="ms-auto italic">Maintenance = true off-road shop days — workshop days with no active rental, from the OfficeManager maintenance contracts. Rental is King: a day a car is both on rent and in the shop counts as <span className="font-semibold text-emerald-600 not-italic">rental time</span>, never shop time. The three always add up to days in service.</span>
+            <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-500" /> {t('Rented')}</span>
+            <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-red-500" /> {t('In maintenance')}</span>
+            <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-slate-300" /> {t('Idle')}</span>
+            <span className="ms-auto italic">{t('Maintenance = true off-road shop days — workshop days with no active rental, from the OfficeManager maintenance contracts. Rental is King: a day a car is both on rent and in the shop counts as rental time, never shop time. The three always add up to days in service.')}</span>
           </p>
         </Card>
 
@@ -508,63 +530,67 @@ export default function FleetUtilization() {
         ) : (
           <SectionCard
             className="animate-fade-in-up"
-            title="Per-car breakdown"
-            actions={!loading && <span className="text-xs text-slate-400">{num(rows.length)} cars</span>}
+            title={t('Per-car breakdown')}
+            actions={!loading && <span className="text-xs text-slate-400">{t('{n} cars', { n: num(rows.length) })}</span>}
           >
             <DataTable
               className="stagger-rows"
               rows={rows}
               rowKey={(c) => c.vehicle_id}
               loading={loading}
-              empty="No vehicles match this filter."
+              empty={t('No vehicles match this filter.')}
               highlightRow={(c) => c.downtime_pct >= 15 || (c.utilization_pct != null && c.utilization_pct < 20)}
               columns={[
                 {
                   key: 'car',
-                  header: 'Car',
+                  header: t('Car'),
                   render: (c) => (
                     <>
                       <Link to={`/vehicles/${c.vehicle_id}`} className="font-semibold text-indigo-600 hover:text-indigo-700">
                         {c.plate || c.code || `#${c.vehicle_id}`}
                       </Link>
                       {c.pending_service && (
-                        <span className="ms-2 inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700 ring-1 ring-inset ring-amber-200" title="Purchased but not yet rented — no performance metrics until its first rental contract.">
-                          Pending service
+                        <span className="ms-2 inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700 ring-1 ring-inset ring-amber-200" title={t('Purchased but not yet rented — no performance metrics until its first rental contract.')}>
+                          {t('Pending service')}
                         </span>
                       )}
                       {c.car && <span className="block text-xs text-slate-400">{[c.car, c.year].filter(Boolean).join(' · ')}</span>}
                       {/* In-service days folded in here (its own column was removed to declutter). */}
                       <span
                         className="block text-[11px] text-slate-400"
-                        title={`In service ${days(c.days_in_service)}${c.owned_since ? ` · owned ${days(c.days_owned)} (since ${c.owned_since})` : ''}${c.in_service_date ? ` · first rental ${c.in_service_date}` : ''}`}
+                        title={[
+                          t('In service {d}', { d: days(c.days_in_service, t) }),
+                          c.owned_since ? t('owned {d} (since {date})', { d: days(c.days_owned, t), date: c.owned_since }) : null,
+                          c.in_service_date ? t('first rental {date}', { date: c.in_service_date }) : null,
+                        ].filter(Boolean).join(' · ')}
                       >
-                        {days(c.days_in_service)} in service
+                        {t('{d} in service', { d: days(c.days_in_service, t) })}
                       </span>
                     </>
                   ),
                 },
                 {
                   key: 'rented',
-                  header: 'Rented',
+                  header: t('Rented'),
                   align: 'right',
-                  tooltip: 'Days on a paid rental, and the resulting Utilization % (rented ÷ in-service days).',
+                  tooltip: t('Days on a paid rental, and the resulting Utilization % (rented ÷ in-service days).'),
                   cellClass: 'tabular-nums',
                   render: (c) => (
                     <>
-                      <span className="font-medium text-emerald-600">{days(c.days_rented)}</span>
+                      <span className="font-medium text-emerald-600">{days(c.days_rented, t)}</span>
                       <span className="block text-[11px] text-slate-400">{pct(c.utilization_pct)}</span>
                     </>
                   ),
                 },
                 {
                   key: 'maintenance',
-                  header: 'Maintenance',
+                  header: t('Maintenance'),
                   align: 'right',
-                  tooltip: 'Workshop days with no active rental (true downtime), plus visit count and any onboarding visits excluded from this window.',
+                  tooltip: t('Workshop days with no active rental (true downtime), plus visit count and any onboarding visits excluded from this window.'),
                   cellClass: 'tabular-nums',
                   render: (c) => (
                     <>
-                      <span className={`font-medium ${c.downtime_pct >= 15 ? 'text-red-600' : 'text-slate-700'}`}>{days(c.days_maintenance)}</span>
+                      <span className={`font-medium ${c.downtime_pct >= 15 ? 'text-red-600' : 'text-slate-700'}`}>{days(c.days_maintenance, t)}</span>
                       <span className="block text-[11px] text-slate-400">
                         {pct(c.downtime_pct)}
                         {c.maintenance_visits > 0 ? (
@@ -572,18 +598,18 @@ export default function FleetUtilization() {
                             {' · '}
                             <Link
                               to={`/vehicles/${c.vehicle_id}?focus=maintenance`}
-                              title="See this car's workshop visits"
+                              title={t("See this car's workshop visits")}
                               className="font-medium text-indigo-600 underline decoration-dotted underline-offset-2 hover:text-indigo-700"
                             >
-                              {num(c.maintenance_visits)} visits
+                              {t('{n} visits', { n: num(c.maintenance_visits) })}
                             </Link>
                           </>
                         ) : (
-                          ` · ${num(c.maintenance_visits)} visits`
+                          ` · ${t('{n} visits', { n: num(c.maintenance_visits) })}`
                         )}
                         {c.onboarding_visits > 0 && (
-                          <span className="text-slate-400" title={`${num(c.onboarding_visits)} workshop visit(s) happened during onboarding, before the first rental — excluded here but shown in the car's lifetime total on its profile (${num((c.maintenance_visits || 0) + c.onboarding_visits)} lifetime).`}>
-                            {' '}(+{num(c.onboarding_visits)} onboarding)
+                          <span className="text-slate-400" title={t("{n} workshop visit(s) happened during onboarding, before the first rental — excluded here but shown in the car's lifetime total on its profile ({lifetime} lifetime).", { n: num(c.onboarding_visits), lifetime: num((c.maintenance_visits || 0) + c.onboarding_visits) })}>
+                            {' '}{t('(+{n} onboarding)', { n: num(c.onboarding_visits) })}
                           </span>
                         )}
                       </span>
@@ -592,16 +618,16 @@ export default function FleetUtilization() {
                 },
                 {
                   key: 'split',
-                  header: 'Split',
+                  header: t('Split'),
                   headerClass: 'w-40',
-                  tooltip: 'Rented / in-maintenance / idle split of in-service days. Hover a segment for its exact day count (including idle days).',
+                  tooltip: t('Rented / in-maintenance / idle split of in-service days. Hover a segment for its exact day count (including idle days).'),
                   render: (c) => <SplitBar rented={c.days_rented} maintenance={c.days_maintenance} idle={c.days_idle || 0} />,
                 },
                 {
                   key: 'rent_lost',
-                  header: 'Rent lost',
+                  header: t('Rent lost'),
                   align: 'right',
-                  tooltip: 'Estimated rent foregone to downtime: downtime days × the car\'s daily rate.',
+                  tooltip: t("Estimated rent foregone to downtime: downtime days × the car's daily rate."),
                   cellClass: 'tabular-nums text-slate-600',
                   render: (c) => (c.revenue_lost_downtime != null ? aed2(c.revenue_lost_downtime) : '—'),
                 },

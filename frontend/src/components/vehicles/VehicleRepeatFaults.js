@@ -6,6 +6,7 @@ import { Skeleton } from '../ui/Skeleton';
 import { InfoTip } from '../ui/Tooltip';
 import Icon from '../ui/Icon';
 import { aed2, fmtDate, num } from '../../lib/format';
+import { useI18n } from '../../i18n/I18nContext';
 
 /**
  * "This car keeps breaking down" — one car's REPEAT-FAULT chains.
@@ -44,20 +45,19 @@ const toneFor = (episodes) => {
  * The fault-family grade from the Maintenance Reasons catalog. Only `critical` is worth a chip — the
  * catalog's other grades (routine / minor / special) say nothing the recurrence count doesn't already.
  */
-const CRITICAL_TIP =
-  'Graded Critical in the Maintenance Reasons catalog — the systems that make a car unsafe or undrivable: '
-  + 'engine, braking, steering, suspension, transmission, cooling/overheating, electrical, ignition, fuel, '
-  + 'exhaust, battery, airbags, ABS and seatbelts. The grade is the fault family’s, not this car’s.';
+const criticalTip = (t) => t('Graded Critical in the Maintenance Reasons catalog — the systems that make a car unsafe or undrivable: engine, braking, steering, suspension, transmission, cooling/overheating, electrical, ignition, fuel, exhaust, battery, airbags, ABS and seatbelts. The grade is the fault family’s, not this car’s.');
 
 /** Why the chain broke here — said the way an operator would say it. */
-const BOUNDARY_TEXT = {
-  gap: 'Came back after the shop had closed it off.',
-  contract_change: 'Went out again on a new maintenance contract.',
-  contract_opened: 'A maintenance contract was opened for it.',
-  contract_closed: 'The maintenance contract had already closed.',
+const boundaryText = (t, boundary) => {
+  if (boundary === 'gap') return t('Came back after the shop had closed it off.');
+  if (boundary === 'contract_change') return t('Went out again on a new maintenance contract.');
+  if (boundary === 'contract_opened') return t('A maintenance contract was opened for it.');
+  if (boundary === 'contract_closed') return t('The maintenance contract had already closed.');
+  return '';
 };
 
-const plural = (n, word) => `${num(n)} ${word}${Number(n) === 1 ? '' : 's'}`;
+/** A day count in words. Arabic has six plural forms, so the ENGLISH branches and each form is a key. */
+const dayCount = (t, n) => (Number(n) === 1 ? t('1 day') : t('{n} days', { n: num(n) }));
 
 /** One figure in the header strip. */
 function Stat({ value, label, tip, tone = 'text-slate-900' }) {
@@ -79,14 +79,15 @@ function Stat({ value, label, tip, tone = 'text-slate-900' }) {
  * guess whether a customer had it (see the note at the top of this file).
  */
 function Episode({ node, index, total, tone, showFinancials }) {
+  const { t } = useI18n();
   const inMaintenance = node.kind === 'contract';
   const isFirst = index === 0;
   const isLast = index === total - 1;
 
-  const caption = isFirst ? 'First time' : isLast ? 'Latest' : `Return ${index}`;
+  const caption = isFirst ? t('First time') : isLast ? t('Latest') : t('Return {n}', { n: index });
   const meta = [
-    node.visits > 1 ? `${node.visits} visits` : null,
-    node.shop_days ? `${node.shop_days}d in shop` : null,
+    node.visits > 1 ? t('{n} visits', { n: node.visits }) : null,
+    node.shop_days ? t('{n}d in shop', { n: node.shop_days }) : null,
     showFinancials && node.cost > 0 ? aed2(node.cost) : null,
   ].filter(Boolean);
 
@@ -94,8 +95,8 @@ function Episode({ node, index, total, tone, showFinancials }) {
     `${fmtDate(node.first)}${node.last !== node.first ? ` → ${fmtDate(node.last)}` : ''}`,
     node.garages?.length ? node.garages.join(' · ') : null,
     inMaintenance
-      ? `Maintenance contract #${node.contract_no} was open on this date.`
-      : 'No maintenance contract covers this date. Where the car was is not established, so no status is shown.',
+      ? t('Maintenance contract #{no} was open on this date.', { no: node.contract_no })
+      : t('No maintenance contract covers this date. Where the car was is not established, so no status is shown.'),
   ].filter(Boolean).join('\n');
 
   // The ×N repeat badge rides on the status line when there is one, else on the date line.
@@ -164,7 +165,7 @@ function Episode({ node, index, total, tone, showFinancials }) {
               <Link
                 key={id}
                 to={`/maintenance-workflow/${id}`}
-                title="Open the maintenance ticket"
+                title={t('Open the maintenance ticket')}
                 className="inline-flex items-center gap-0.5 rounded bg-violet-50 px-1.5 py-px text-[10px] font-bold text-violet-700 ring-1 ring-inset ring-violet-200 transition hover:bg-violet-100"
               >
                 <Icon.Wrench className="h-2.5 w-2.5" />T-{id}
@@ -179,12 +180,13 @@ function Episode({ node, index, total, tone, showFinancials }) {
 
 /** The rail between two episodes: how long the car actually held after that repair. */
 function Held({ node }) {
+  const { t } = useI18n();
   const days = node.gap_days;
   // A return inside a month is the damning case — the repair barely held.
   const short = days != null && days <= 30;
 
   return (
-    <div className="w-[86px] shrink-0" title={BOUNDARY_TEXT[node.boundary] || ''}>
+    <div className="w-[86px] shrink-0" title={boundaryText(t, node.boundary)}>
       <div className="flex h-4 items-center">
         <span className="h-[3px] flex-1 rounded-full bg-slate-200" />
         <span
@@ -197,7 +199,7 @@ function Held({ node }) {
         <span className="h-[3px] flex-1 rounded-full bg-slate-200" />
       </div>
       <p className={`mt-1.5 text-center text-[9px] font-black uppercase tracking-[0.1em] ${short ? 'text-red-400' : 'text-slate-300'}`}>
-        held
+        {t('held')}
       </p>
     </div>
   );
@@ -205,16 +207,17 @@ function Held({ node }) {
 
 /** One repeat fault: the headline, its timeline, the measured facts, and the slow-garage caveat. */
 function Fault({ fault, showFinancials }) {
+  const { t } = useI18n();
   const tone = toneFor(fault.episodes);
 
   const facts = [
     fault.shortest_gap_days != null
-      ? { label: 'Shortest hold', value: plural(fault.shortest_gap_days, 'day'), alert: fault.shortest_gap_days <= 30 }
+      ? { label: t('Shortest hold'), value: dayCount(t, fault.shortest_gap_days), alert: fault.shortest_gap_days <= 30 }
       : null,
-    fault.shop_days > 0 ? { label: 'Total shop time', value: plural(fault.shop_days, 'day') } : null,
-    showFinancials && fault.total_cost > 0 ? { label: 'Spent', value: aed2(fault.total_cost) } : null,
+    fault.shop_days > 0 ? { label: t('Total shop time'), value: dayCount(t, fault.shop_days) } : null,
+    showFinancials && fault.total_cost > 0 ? { label: t('Spent'), value: aed2(fault.total_cost) } : null,
     fault.garages?.length
-      ? { label: fault.garages.length === 1 ? 'Garage' : 'Garages', value: fault.garages.length === 1 ? fault.garages[0] : num(fault.garages.length), title: fault.garages.join(' · ') }
+      ? { label: fault.garages.length === 1 ? t('Garage') : t('Garages'), value: fault.garages.length === 1 ? fault.garages[0] : num(fault.garages.length), title: fault.garages.join(' · ') }
       : null,
   ].filter(Boolean);
 
@@ -231,16 +234,19 @@ function Fault({ fault, showFinancials }) {
 
         {fault.level === 'critical' && (
           <span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-red-700 ring-1 ring-inset ring-red-200">
-            Critical system
-            <InfoTip content={CRITICAL_TIP} />
+            {t('Critical system')}
+            <InfoTip content={criticalTip(t)} />
           </span>
         )}
         {fault.hint && <span className="text-xs font-medium text-slate-400">{fault.hint}</span>}
 
         <span className="ms-auto whitespace-nowrap text-xs text-slate-400">
-          Last <span className="font-semibold text-slate-600">{fmtDate(fault.last_seen)}</span>
-          <span className="text-slate-300"> · </span>
-          {fault.days_since_last === 0 ? 'today' : `${plural(fault.days_since_last, 'day')} ago`}
+          {t('Last {date} · {ago}', {
+            date: fmtDate(fault.last_seen),
+            ago: fault.days_since_last === 0
+              ? t('today')
+              : t('{duration} ago', { duration: dayCount(t, fault.days_since_last) }),
+          })}
         </span>
       </div>
 
@@ -248,7 +254,7 @@ function Fault({ fault, showFinancials }) {
           and a ticket's "Puncture / slow leak" together is visible, never a silent merge. */}
       {fault.variants?.length > 0 && (
         <p className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[11px] text-slate-400">
-          <span className="font-semibold text-slate-400">Recorded as</span>
+          <span className="font-semibold text-slate-400">{t('Recorded as')}</span>
           {fault.variants.map((v) => (
             <span key={v} className="rounded bg-slate-100 px-1.5 py-px font-medium text-slate-500">{v}</span>
           ))}
@@ -284,9 +290,11 @@ function Fault({ fault, showFinancials }) {
         <p className={`mt-3 flex items-start gap-2 rounded-xl px-3 py-2 text-xs leading-relaxed text-slate-600 ring-1 ring-inset ${tone.soft} ${tone.ring}`}>
           <Icon.Info className="mt-px h-4 w-4 shrink-0 text-slate-400" />
           <span>
-            <span className="font-bold text-slate-800">{fault.stalling.garage || 'One garage'}</span> had this car{' '}
-            {fault.stalling.visits}× for this in {plural(fault.stalling.span_days, 'day')} — that stretch reads as a slow
-            workshop, not the car failing again.
+            {t('{garage} had this car {visits}× for this in {span} — that stretch reads as a slow workshop, not the car failing again.', {
+              garage: fault.stalling.garage || t('One garage'),
+              visits: fault.stalling.visits,
+              span: dayCount(t, fault.stalling.span_days),
+            })}
           </span>
         </p>
       )}
@@ -306,16 +314,17 @@ function Shell({ children, header }) {
   );
 }
 
-const QUIET_HEADER = (
+const quietHeader = (t) => (
   <div className="flex items-center gap-3 border-b border-slate-100 px-5 py-4">
     <div className="min-w-0">
-      <h3 className="truncate text-base font-semibold text-slate-900">Repeat faults</h3>
-      <p className="mt-0.5 truncate text-xs text-slate-400">Same problem, back again after it was repaired</p>
+      <h3 className="truncate text-base font-semibold text-slate-900">{t('Repeat faults')}</h3>
+      <p className="mt-0.5 truncate text-xs text-slate-400">{t('Same problem, back again after it was repaired')}</p>
     </div>
   </div>
 );
 
 export default function VehicleRepeatFaults({ vehicleId, showFinancials = false }) {
+  const { t } = useI18n();
   const fetcher = useCallback(async () => (await api.get(`/Vehicle/${vehicleId}/repeat-faults`)).data.data, [vehicleId]);
   const { data, loading, error } = useFetch(fetcher, [vehicleId]);
 
@@ -329,24 +338,24 @@ export default function VehicleRepeatFaults({ vehicleId, showFinancials = false 
   const hidden = faults.length - VISIBLE;
 
   if (loading) {
-    return <Shell header={QUIET_HEADER}><div className="space-y-3 p-5"><Skeleton className="h-6 w-56" /><Skeleton className="h-20 w-full" /></div></Shell>;
+    return <Shell header={quietHeader(t)}><div className="space-y-3 p-5"><Skeleton className="h-6 w-56" /><Skeleton className="h-20 w-full" /></div></Shell>;
   }
 
   if (error) {
-    return <Shell header={QUIET_HEADER}><p className="px-5 py-4 text-sm text-red-600">{error}</p></Shell>;
+    return <Shell header={quietHeader(t)}><p className="px-5 py-4 text-sm text-red-600">{error}</p></Shell>;
   }
 
   // The good-news case deserves to be stated plainly — silence would read as "not computed".
   if (faults.length === 0) {
     return (
-      <Shell header={QUIET_HEADER}>
+      <Shell header={quietHeader(t)}>
         <div className="flex items-center gap-3 px-5 py-5">
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 ring-1 ring-inset ring-emerald-100">
             <Icon.Check className="h-5 w-5 text-emerald-600" />
           </span>
           <p className="text-sm leading-relaxed text-slate-600">
-            <span className="font-bold text-slate-900">Nothing came back.</span> No fault on this car has returned after
-            it was repaired — every workshop visit was for something new.
+            <span className="font-bold text-slate-900">{t('Nothing came back.')}</span>{' '}
+            {t('No fault on this car has returned after it was repaired — every workshop visit was for something new.')}
           </p>
         </div>
       </Shell>
@@ -363,15 +372,15 @@ export default function VehicleRepeatFaults({ vehicleId, showFinancials = false 
             <span className="absolute -end-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-slate-900" />
           </span>
           <div className="min-w-0">
-            <h3 className="truncate text-base font-bold tracking-tight text-white">Keeps breaking down</h3>
+            <h3 className="truncate text-base font-bold tracking-tight text-white">{t('Keeps breaking down')}</h3>
             <p className="mt-0.5 truncate text-xs text-slate-400">
-              The same faults return after each fix — every step below is a real record
+              {t('The same faults return after each fix — every step below is a real record')}
             </p>
           </div>
           <span className="ms-auto inline-flex shrink-0 items-baseline gap-1.5 rounded-full bg-white/10 px-3 py-1.5 ring-1 ring-inset ring-white/15">
             <span className="text-lg font-black leading-none tabular-nums text-white">{num(summary.returns)}</span>
             <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-300">
-              {Number(summary.returns) === 1 ? 'return' : 'returns'}
+              {Number(summary.returns) === 1 ? t('return') : t('returns')}
             </span>
           </span>
         </div>
@@ -381,27 +390,27 @@ export default function VehicleRepeatFaults({ vehicleId, showFinancials = false 
       <div className="grid grid-cols-2 divide-x divide-slate-100 border-b border-slate-100 bg-slate-50/70 sm:grid-cols-4">
         <Stat
           value={num(summary.repeat_faults)}
-          label="Repeat faults"
+          label={t('Repeat faults')}
           tone="text-red-600"
-          tip="Distinct faults this car has come back for after they were repaired."
+          tip={t('Distinct faults this car has come back for after they were repaired.')}
         />
         <Stat
           value={num(summary.returns)}
-          label="Times it came back"
-          tip="Every repair episode after the first one, added up across all repeat faults."
+          label={t('Times it came back')}
+          tip={t('Every repair episode after the first one, added up across all repeat faults.')}
         />
         <Stat
           value={num(summary.shop_days)}
-          label="Days in the shop"
-          tip="Total days this car spent in a garage for the repeat faults below."
+          label={t('Days in the shop')}
+          tip={t('Total days this car spent in a garage for the repeat faults below.')}
         />
         {showFinancials ? (
-          <Stat value={aed2(summary.total_cost)} label="Spent on them" tip="Recorded workshop cost across every visit for these faults." />
+          <Stat value={aed2(summary.total_cost)} label={t('Spent on them')} tip={t('Recorded workshop cost across every visit for these faults.')} />
         ) : (
           <Stat
             value={num(summary.stalling || 0)}
-            label="Slow-garage cases"
-            tip="Repeat faults where one garage held the car 3+ times inside 10 days — a workshop problem, not the car."
+            label={t('Slow-garage cases')}
+            tip={t('Repeat faults where one garage held the car 3+ times inside 10 days — a workshop problem, not the car.')}
           />
         )}
       </div>
@@ -419,7 +428,9 @@ export default function VehicleRepeatFaults({ vehicleId, showFinancials = false 
           aria-expanded={expanded}
           className="flex w-full items-center justify-center gap-1.5 border-t border-slate-100 px-5 py-3 text-xs font-bold text-indigo-600 transition hover:bg-indigo-50/60"
         >
-          {expanded ? 'Show fewer' : `Show ${hidden} more repeat fault${hidden === 1 ? '' : 's'}`}
+          {expanded
+            ? t('Show fewer')
+            : (hidden === 1 ? t('Show 1 more repeat fault') : t('Show {n} more repeat faults', { n: hidden }))}
           <Icon.ChevronDown className={`h-4 w-4 transition-transform ${expanded ? 'rotate-180' : ''}`} />
         </button>
       )}
@@ -428,17 +439,16 @@ export default function VehicleRepeatFaults({ vehicleId, showFinancials = false 
       <div className="border-t border-slate-100 bg-slate-50/70 px-5 py-3">
         <div className="mb-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] font-semibold text-slate-500">
           <span className="inline-flex items-center gap-1.5">
-            <span className="h-2 w-2 rounded-full bg-slate-400" /> Workshop log (N-Maintenance sheet)
+            <span className="h-2 w-2 rounded-full bg-slate-400" /> {t('Workshop log (N-Maintenance sheet)')}
           </span>
           <span className="inline-flex items-center gap-1.5">
-            <span className="h-2 w-2 rounded-full bg-violet-500" /> Maintenance tickets
+            <span className="h-2 w-2 rounded-full bg-violet-500" /> {t('Maintenance tickets')}
             <span className="rounded bg-violet-50 px-1 text-[10px] font-bold text-violet-700 ring-1 ring-inset ring-violet-200">T-</span>
           </span>
         </div>
         <p className="text-[11px] leading-relaxed text-slate-400">
-          <span className="font-bold text-slate-500">Where this comes from:</span> {data?.origin} Events inside one
-          maintenance contract count as a single repair, so garage-to-garage shuffling never inflates the count. Routine
-          planned service, cosmetic work and faults the workshop ruled incorrect are excluded.
+          <span className="font-bold text-slate-500">{t('Where this comes from:')}</span> {data?.origin}{' '}
+          {t('Events inside one maintenance contract count as a single repair, so garage-to-garage shuffling never inflates the count. Routine planned service, cosmetic work and faults the workshop ruled incorrect are excluded.')}
         </p>
       </div>
     </Shell>

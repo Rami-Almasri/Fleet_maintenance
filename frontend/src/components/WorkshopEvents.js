@@ -9,8 +9,10 @@ import { Card, Spinner } from './ui/Misc';
 import { Input, Select, Textarea } from './ui/Field';
 import SearchSelect from './ui/SearchSelect';
 import { aed2, fmtDate } from '../lib/format';
+import { useI18n } from '../i18n/I18nContext';
 
 // Workshop stages (event_status). 'IN' = the car came back; everything else is in-progress.
+// The value is the API enum; the same word is used as the translation key for display.
 const STAGES = ['OUT', 'Follow up', 'Change', 'Delay', 'Test', 'Under Test', 'IN'];
 const STAGE_TONE = {
   OUT: 'blue', IN: 'green', 'Follow up': 'amber', Change: 'violet',
@@ -45,6 +47,7 @@ const VISIT_CONTEXTS = [
  * keyword drives each event's priority; picking the "IN" stage records the return.
  */
 export default function WorkshopEvents({ vehicleId, contractId, defaultDate, expectedReturn }) {
+  const { t } = useI18n();
   const { can } = usePermissions();
   const toast = useToast();
   const canManage = can('maintenance.manage');
@@ -77,11 +80,11 @@ export default function WorkshopEvents({ vehicleId, contractId, defaultDate, exp
       setReasons(rRes.data.data || []);
       setVendors(vRes.data.data || []);
     } catch (e) {
-      toast.error('Failed to load workshop events');
+      toast.error(t('Failed to load workshop events'));
     } finally {
       setLoading(false);
     }
-  }, [vehicleId, contractId, toast]);
+  }, [vehicleId, contractId, toast, t]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -125,12 +128,12 @@ export default function WorkshopEvents({ vehicleId, contractId, defaultDate, exp
     setOpen(true);
   };
 
-  const addTag = (t) => {
-    const v = (t || '').trim();
+  const addTag = (text) => {
+    const v = (text || '').trim();
     if (!v) return;
     setTags((x) => (x.some((y) => y.toLowerCase() === v.toLowerCase()) ? x : [...x, v]));
   };
-  const removeTag = (t) => setTags((x) => x.filter((y) => y !== t));
+  const removeTag = (text) => setTags((x) => x.filter((y) => y !== text));
 
   const submit = async () => {
     setSaving(true);
@@ -154,17 +157,17 @@ export default function WorkshopEvents({ vehicleId, contractId, defaultDate, exp
       };
       if (editing) {
         await api.post(`/Maintenance/events/${editing.id}`, payload);
-        toast.success('Workshop event updated');
+        toast.success(t('Workshop event updated'));
       } else {
         await api.post('/Maintenance/events', payload);
-        toast.success('Workshop event added');
+        toast.success(t('Workshop event added'));
       }
       setOpen(false);
       load();
     } catch (e) {
       const r = e.response?.data;
-      if (r?.errors) { setErrors(r.errors); toast.error('Please fix the highlighted fields'); }
-      else toast.error(r?.message || r?.msg || 'Could not save the event');
+      if (r?.errors) { setErrors(r.errors); toast.error(t('Please fix the highlighted fields')); }
+      else toast.error(r?.message || r?.msg || t('Could not save the event'));
     } finally {
       setSaving(false);
     }
@@ -174,25 +177,25 @@ export default function WorkshopEvents({ vehicleId, contractId, defaultDate, exp
     // Hand-entered events are truly deleted; sheet-synced ones are tombstoned (hidden +
     // skipped on future syncs) and can be restored, so the warning differs.
     const msg = ev.editable
-      ? 'Delete this workshop event? This cannot be undone.'
-      : 'Remove this synced sheet event? It will be hidden and kept out of future syncs — you can restore it later.';
+      ? t('Delete this workshop event? This cannot be undone.')
+      : t('Remove this synced sheet event? It will be hidden and kept out of future syncs — you can restore it later.');
     if (!window.confirm(msg)) return;
     try {
       await api.delete(`/Maintenance/events/${ev.id}`);
-      toast.success(ev.editable ? 'Workshop event deleted' : 'Event removed — restore it anytime');
+      toast.success(ev.editable ? t('Workshop event deleted') : t('Event removed — restore it anytime'));
       load();
     } catch (e) {
-      toast.error(e.response?.data?.message || 'Could not remove the event');
+      toast.error(e.response?.data?.message || t('Could not remove the event'));
     }
   };
 
   const restore = async (ev) => {
     try {
       await api.post(`/Maintenance/events/tombstones/${ev.tombstone_id}/restore`);
-      toast.success('Event restored');
+      toast.success(t('Event restored'));
       load();
     } catch (e) {
-      toast.error(e.response?.data?.message || 'Could not restore the event');
+      toast.error(e.response?.data?.message || t('Could not restore the event'));
     }
   };
 
@@ -202,19 +205,19 @@ export default function WorkshopEvents({ vehicleId, contractId, defaultDate, exp
     <Card className="p-6">
       <div className="mb-4 flex items-center justify-between">
         <div>
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Workshop Events</h3>
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">{t('Workshop Events')}</h3>
           <p className="mt-0.5 text-xs text-slate-400">
             {contractId
-              ? 'What happened on this visit — the problem and the fix, newest first.'
-              : 'The garage log for this car — newest first. The issue keyword sets the priority.'}
+              ? t('What happened on this visit — the problem and the fix, newest first.')
+              : t('The garage log for this car — newest first. The issue keyword sets the priority.')}
           </p>
         </div>
-        {canManage && <Button variant="secondary" onClick={openNew}>+ Add event</Button>}
+        {canManage && <Button variant="secondary" onClick={openNew}>{t('+ Add event')}</Button>}
       </div>
 
       {events.length === 0 ? (
         <p className="py-6 text-center text-sm text-slate-400">
-          No workshop events yet.{canManage ? ' Click “+ Add event” to log the first one.' : ''}
+          {t('No workshop events yet.')}{canManage ? ` ${t('Click “+ Add event” to log the first one.')}` : ''}
         </p>
       ) : (
         <ol className="relative space-y-3 border-s-2 border-slate-100 ps-5">
@@ -225,34 +228,34 @@ export default function WorkshopEvents({ vehicleId, contractId, defaultDate, exp
                 <span className={`absolute -start-[27px] top-1.5 h-3 w-3 rounded-full ring-4 ring-white ${ev.tombstoned ? 'bg-slate-300' : (ev.stage === 'IN' ? 'bg-emerald-500' : 'bg-indigo-400')}`} />
                 <div className={`rounded-xl border p-4 shadow-soft ${ev.tombstoned ? 'border-dashed border-slate-200 bg-slate-50/70' : 'border-slate-100 bg-white'}`}>
                   <div className={`flex flex-wrap items-center gap-2 ${ev.tombstoned ? 'opacity-60' : ''}`}>
-                    <Badge tone={STAGE_TONE[ev.stage] || 'slate'}>{ev.stage || '—'}</Badge>
-                    {lvl && <Badge tone={lvl.tone}>{lvl.emoji} {lvl.label}</Badge>}
-                    {ev.visit_context === 'routine' && <Badge tone="green" title="Planned upkeep — excluded from foresight Act-now/Chronic">Routine</Badge>}
-                    {ev.visit_context === 'accident_rental' && <Badge tone="amber" title="Accident repair logged during a live rental">Accident · rental</Badge>}
+                    <Badge tone={STAGE_TONE[ev.stage] || 'slate'}>{ev.stage ? t(ev.stage) : '—'}</Badge>
+                    {lvl && <Badge tone={lvl.tone}>{lvl.emoji} {t(lvl.label)}</Badge>}
+                    {ev.visit_context === 'routine' && <Badge tone="green" title={t('Planned upkeep — excluded from foresight Act-now/Chronic')}>{t('Routine')}</Badge>}
+                    {ev.visit_context === 'accident_rental' && <Badge tone="amber" title={t('Accident repair logged during a live rental')}>{t('Accident · rental')}</Badge>}
                     {/* No SLA / "Overdue" badge here: this is a historical garage log (a car
                         often goes back for another visit). Live overdue lives on the board. */}
                     {ev.tombstoned
-                      ? <Badge tone="red" title="Removed — hidden from the board and kept out of future syncs">🗑 Removed</Badge>
-                      : !ev.editable && <Badge tone="gray" title="Synced from the Google Sheet — read-only here">📄 Sheet</Badge>}
+                      ? <Badge tone="red" title={t('Removed — hidden from the board and kept out of future syncs')}>🗑 {t('Removed')}</Badge>
+                      : !ev.editable && <Badge tone="gray" title={t('Synced from the Google Sheet — read-only here')}>📄 {t('Sheet')}</Badge>}
                     <span className="ms-auto text-xs text-slate-400">{ev.out_date ? fmtDate(ev.out_date) : '—'}</span>
                   </div>
 
                   <div className={ev.tombstoned ? 'opacity-60' : ''}>
                     {ev.issues?.length > 0 && (
                       <div className="mt-2 flex flex-wrap gap-1.5">
-                        {ev.issues.map((t) => (
-                          <span key={t} className="rounded-full bg-slate-50 px-2.5 py-0.5 text-xs font-medium text-slate-600 ring-1 ring-inset ring-slate-200">{t}</span>
+                        {ev.issues.map((iss) => (
+                          <span key={iss} className="rounded-full bg-slate-50 px-2.5 py-0.5 text-xs font-medium text-slate-600 ring-1 ring-inset ring-slate-200">{iss}</span>
                         ))}
                       </div>
                     )}
 
                     <div className="mt-2 grid grid-cols-2 gap-x-6 gap-y-1 text-sm sm:grid-cols-4">
-                      {ev.garage && <Info label="Garage" value={ev.garage} />}
-                      {ev.expected_return_date && <Info label="Expected" value={fmtDate(ev.expected_return_date)} />}
-                      {ev.actual_in_date && <Info label="Returned" value={fmtDate(ev.actual_in_date)} />}
-                      {ev.cost != null && <Info label="Cost" value={aed2(ev.cost)} />}
-                      {ev.responsible && <Info label="Responsible" value={ev.responsible} />}
-                      {ev.maintenance_type && <Info label="Type" value={ev.maintenance_type} />}
+                      {ev.garage && <Info label={t('Garage')} value={ev.garage} />}
+                      {ev.expected_return_date && <Info label={t('Expected')} value={fmtDate(ev.expected_return_date)} />}
+                      {ev.actual_in_date && <Info label={t('Returned')} value={fmtDate(ev.actual_in_date)} />}
+                      {ev.cost != null && <Info label={t('Cost')} value={aed2(ev.cost)} />}
+                      {ev.responsible && <Info label={t('Responsible')} value={ev.responsible} />}
+                      {ev.maintenance_type && <Info label={t('Type')} value={ev.maintenance_type} />}
                     </div>
 
                     {ev.notes && <p className="mt-2 whitespace-pre-line text-sm text-slate-600">{ev.notes}</p>}
@@ -260,19 +263,19 @@ export default function WorkshopEvents({ vehicleId, contractId, defaultDate, exp
 
                   {canManage && (ev.tombstoned ? (
                     <div className="mt-3 flex items-center gap-2">
-                      <button onClick={() => restore(ev)} className="text-xs font-medium text-emerald-600 hover:text-emerald-700">↺ Restore</button>
-                      <span className="text-xs text-slate-400">— removed from the board &amp; future syncs</span>
+                      <button onClick={() => restore(ev)} className="text-xs font-medium text-emerald-600 hover:text-emerald-700">↺ {t('Restore')}</button>
+                      <span className="text-xs text-slate-400">{t('— removed from the board & future syncs')}</span>
                     </div>
                   ) : (
                     <div className="mt-3 flex gap-2">
                       {ev.editable && (
                         <>
-                          <button onClick={() => openEdit(ev)} className="text-xs font-medium text-indigo-600 hover:text-indigo-700">Edit</button>
+                          <button onClick={() => openEdit(ev)} className="text-xs font-medium text-indigo-600 hover:text-indigo-700">{t('Edit')}</button>
                           <span className="text-slate-200">·</span>
                         </>
                       )}
                       <button onClick={() => remove(ev)} className="text-xs font-medium text-red-500 hover:text-red-600">
-                        {ev.editable ? 'Delete' : 'Remove'}
+                        {ev.editable ? t('Delete') : t('Remove')}
                       </button>
                     </div>
                   ))}
@@ -286,24 +289,24 @@ export default function WorkshopEvents({ vehicleId, contractId, defaultDate, exp
       <Modal
         open={open}
         onClose={() => setOpen(false)}
-        title={editing ? 'Edit workshop event' : 'Add workshop event'}
-        subtitle="The issue keyword sets the priority · choosing “IN” records the return"
+        title={editing ? t('Edit workshop event') : t('Add workshop event')}
+        subtitle={t('The issue keyword sets the priority · choosing “{stage}” records the return', { stage: t('IN') })}
         size="lg"
         footer={(
           <>
-            <Button variant="secondary" onClick={() => setOpen(false)} disabled={saving}>Cancel</Button>
-            <Button onClick={submit} loading={saving}>{editing ? 'Save changes' : 'Add event'}</Button>
+            <Button variant="secondary" onClick={() => setOpen(false)} disabled={saving}>{t('Cancel')}</Button>
+            <Button onClick={submit} loading={saving}>{editing ? t('Save changes') : t('Add event')}</Button>
           </>
         )}
       >
         <div className="space-y-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Select label="Stage" value={form.event_status} onChange={set('event_status')} error={err('event_status')}>
-              {STAGES.map((s) => <option key={s} value={s}>{s}</option>)}
+            <Select label={t('Stage')} value={form.event_status} onChange={set('event_status')} error={err('event_status')}>
+              {STAGES.map((s) => <option key={s} value={s}>{t(s)}</option>)}
             </Select>
             <label className="block">
-              <span className="mb-1 block text-sm font-medium text-slate-700">Garage / Vendor</span>
-              <SearchSelect value={form.vendor_id} onChange={(v) => setVal('vendor_id', v)} options={vendorOptions} placeholder="Search garage / vendor…" />
+              <span className="mb-1 block text-sm font-medium text-slate-700">{t('Garage / Vendor')}</span>
+              <SearchSelect value={form.vendor_id} onChange={(v) => setVal('vendor_id', v)} options={vendorOptions} placeholder={t('Search garage / vendor…')} />
               {err('vendor_id') && <span className="mt-1 block text-xs text-red-600">{err('vendor_id')}</span>}
             </label>
           </div>
@@ -311,21 +314,25 @@ export default function WorkshopEvents({ vehicleId, contractId, defaultDate, exp
           {/* Issue keywords — each sets the priority via the reason vocabulary */}
           <div>
             <div className="mb-1.5 flex items-center justify-between">
-              <span className="text-sm font-medium text-slate-700">Issue keywords</span>
-              {predicted && <Badge tone={LEVEL[predicted].tone}>Priority: {LEVEL[predicted].emoji} {LEVEL[predicted].label}</Badge>}
+              <span className="text-sm font-medium text-slate-700">{t('Issue keywords')}</span>
+              {predicted && (
+                <Badge tone={LEVEL[predicted].tone}>
+                  {LEVEL[predicted].emoji} {t('Priority: {level}', { level: t(LEVEL[predicted].label) })}
+                </Badge>
+              )}
             </div>
             <div className="flex flex-wrap gap-2">
-              {tags.map((t) => {
-                const lvl = levelOf(t);
+              {tags.map((tag) => {
+                const lvl = levelOf(tag);
                 return (
-                  <span key={t} className="inline-flex items-center gap-1 rounded-full bg-slate-50 px-3 py-1 text-sm font-medium text-slate-700 ring-1 ring-inset ring-slate-200">
+                  <span key={tag} className="inline-flex items-center gap-1 rounded-full bg-slate-50 px-3 py-1 text-sm font-medium text-slate-700 ring-1 ring-inset ring-slate-200">
                     {lvl && <span aria-hidden>{LEVEL[lvl].emoji}</span>}
-                    {t}
-                    <button type="button" onClick={() => removeTag(t)} className="opacity-50 hover:opacity-100">×</button>
+                    {tag}
+                    <button type="button" onClick={() => removeTag(tag)} aria-label={t('Remove keyword')} className="opacity-50 hover:opacity-100">×</button>
                   </span>
                 );
               })}
-              {tags.length === 0 && <span className="text-sm text-slate-400">Pick one or more below — the most severe sets the priority.</span>}
+              {tags.length === 0 && <span className="text-sm text-slate-400">{t('Pick one or more below — the most severe sets the priority.')}</span>}
             </div>
             {reasons.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1.5">
@@ -336,7 +343,7 @@ export default function WorkshopEvents({ vehicleId, contractId, defaultDate, exp
                       type="button"
                       key={r.reason}
                       onClick={() => addTag(r.reason)}
-                      title={LEVEL[r.level]?.label || ''}
+                      title={LEVEL[r.level] ? t(LEVEL[r.level].label) : ''}
                       className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600 ring-1 ring-inset ring-slate-200 transition hover:bg-slate-200"
                     >
                       + {r.reason}
@@ -347,9 +354,9 @@ export default function WorkshopEvents({ vehicleId, contractId, defaultDate, exp
           </div>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <Input label="Out date" type="date" value={form.out_date} onChange={set('out_date')} error={err('out_date')} />
-            <Input label="Expected return" type="date" value={form.expected_return_date} onChange={set('expected_return_date')} error={err('expected_return_date')} />
-            <Input label="Follow-up date" type="date" value={form.follow_date} onChange={set('follow_date')} error={err('follow_date')} />
+            <Input label={t('Out date')} type="date" value={form.out_date} onChange={set('out_date')} error={err('out_date')} />
+            <Input label={t('Expected return')} type="date" value={form.expected_return_date} onChange={set('expected_return_date')} error={err('expected_return_date')} />
+            <Input label={t('Follow-up date')} type="date" value={form.follow_date} onChange={set('follow_date')} error={err('follow_date')} />
           </div>
 
           {/* Closing the event ('IN') is guarded: cost, vendor and the returned date are mandatory
@@ -357,10 +364,10 @@ export default function WorkshopEvents({ vehicleId, contractId, defaultDate, exp
           {form.event_status === 'IN' && (
             <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
               <p className="mb-3 text-xs font-medium text-emerald-700">
-                Closing this event — Cost, Garage/Vendor and the Returned date are required to keep profit tracking accurate.
+                {t('Closing this event — Cost, Garage/Vendor and the Returned date are required to keep profit tracking accurate.')}
               </p>
               <Input
-                label="Returned date (Actual In) *"
+                label={t('Returned date (Actual In) *')}
                 type="date"
                 value={form.actual_in_date}
                 onChange={set('actual_in_date')}
@@ -370,24 +377,24 @@ export default function WorkshopEvents({ vehicleId, contractId, defaultDate, exp
           )}
 
           <div>
-            <Select label="Visit context" value={form.visit_context} onChange={set('visit_context')} error={err('visit_context')}>
-              {VISIT_CONTEXTS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+            <Select label={t('Visit context')} value={form.visit_context} onChange={set('visit_context')} error={err('visit_context')}>
+              {VISIT_CONTEXTS.map((c) => <option key={c.value} value={c.value}>{t(c.label)}</option>)}
             </Select>
             {form.visit_context === 'routine' && (
-              <p className="mt-1 text-xs text-emerald-600">Planned upkeep — kept off the “Act now”/“Chronic” foresight lists.</p>
+              <p className="mt-1 text-xs text-emerald-600">{t('Planned upkeep — kept off the “Act now”/“Chronic” foresight lists.')}</p>
             )}
             {form.visit_context === 'accident_rental' && (
-              <p className="mt-1 text-xs text-amber-600">Logged on the car; the rental keeps running (billing isn’t interrupted).</p>
+              <p className="mt-1 text-xs text-amber-600">{t('Logged on the car; the rental keeps running (billing isn’t interrupted).')}</p>
             )}
           </div>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <Input label="Cost (AED)" type="number" step="0.01" value={form.cost} onChange={set('cost')} error={err('cost')} />
-            <Input label="Responsible" value={form.responsible} onChange={set('responsible')} error={err('responsible')} />
-            <Input label="Type" value={form.maintenance_type} onChange={set('maintenance_type')} placeholder="e.g. Breakdown" error={err('maintenance_type')} />
+            <Input label={t('Cost (AED)')} type="number" step="0.01" value={form.cost} onChange={set('cost')} error={err('cost')} />
+            <Input label={t('Responsible')} value={form.responsible} onChange={set('responsible')} error={err('responsible')} />
+            <Input label={t('Type')} value={form.maintenance_type} onChange={set('maintenance_type')} placeholder={t('e.g. Breakdown')} error={err('maintenance_type')} />
           </div>
 
-          <Textarea label="Notes" rows={3} value={form.maintenance_notes} onChange={set('maintenance_notes')} error={err('maintenance_notes')} />
+          <Textarea label={t('Notes')} rows={3} value={form.maintenance_notes} onChange={set('maintenance_notes')} error={err('maintenance_notes')} />
         </div>
       </Modal>
     </Card>

@@ -1,4 +1,5 @@
 import { useRef, useState, useCallback, useEffect } from 'react';
+import { useI18n } from '../../i18n/I18nContext';
 
 // Before/After comparison slider — drag the handle to wipe between the pre-rental
 // photo and the post-return photo of the same zone, so condition changes (a fresh
@@ -10,10 +11,14 @@ import { useRef, useState, useCallback, useEffect } from 'react';
 export default function BeforeAfterSlider({
   beforeSrc,
   afterSrc,
-  beforeLabel = 'Pre-rental',
-  afterLabel = 'Post-return',
+  beforeLabel,
+  afterLabel,
   className = '',
 }) {
+  const { t } = useI18n();
+  // Defaults live here rather than in the signature so they can pass through the translator.
+  const beforeText = beforeLabel ?? t('Pre-rental');
+  const afterText = afterLabel ?? t('Post-return');
   const containerRef = useRef(null);
   const [pos, setPos] = useState(50); // 0–100, the divider's horizontal position
   const [dragging, setDragging] = useState(false);
@@ -60,14 +65,14 @@ export default function BeforeAfterSlider({
       {/* base layer: the "after" image, fully shown */}
       <img
         src={afterSrc}
-        alt={afterLabel}
+        alt={afterText}
         draggable={false}
         className="pointer-events-none absolute inset-0 h-full w-full object-cover"
       />
       {/* top layer: the "before" image, clipped to the left of the divider */}
       <img
         src={beforeSrc}
-        alt={beforeLabel}
+        alt={beforeText}
         draggable={false}
         style={{ clipPath: `inset(0 ${100 - pos}% 0 0)` }}
         className="pointer-events-none absolute inset-0 h-full w-full object-cover"
@@ -79,14 +84,14 @@ export default function BeforeAfterSlider({
           pos > 12 ? 'bg-black/55 text-white' : 'bg-black/20 text-white/50'
         }`}
       >
-        {beforeLabel}
+        {beforeText}
       </span>
       <span
         className={`pointer-events-none absolute right-3 top-3 rounded-full px-2.5 py-1 text-[11px] font-semibold backdrop-blur transition ${
           pos < 88 ? 'bg-black/55 text-white' : 'bg-black/20 text-white/50'
         }`}
       >
-        {afterLabel}
+        {afterText}
       </span>
 
       {/* the divider + grab handle */}
@@ -97,7 +102,7 @@ export default function BeforeAfterSlider({
         <button
           type="button"
           role="slider"
-          aria-label="Comparison position"
+          aria-label={t('Comparison position')}
           aria-valuemin={0}
           aria-valuemax={100}
           aria-valuenow={Math.round(pos)}

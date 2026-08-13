@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import api from '../../api/client';
 import Button from '../../components/ui/Button';
 import { useToast } from '../../components/ui/Toast';
+import { useI18n } from '../../i18n/I18nContext';
 
 // The 8-point Rental Readiness Checklist — the interactive gate shown right before a rental/booking
 // is confirmed. It reads the live per-point verdict from the backend (VehicleReadinessService::
@@ -23,6 +24,7 @@ const MANUAL_ACTIONS = {
 };
 
 export default function RentalReadinessGate({ vehicleId, vehicleLabel, onBack, onProceed, saving }) {
+  const { t } = useI18n();
   const toast = useToast();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -34,11 +36,11 @@ export default function RentalReadinessGate({ vehicleId, vehicleLabel, onBack, o
       const res = await api.get(`/readiness/vehicle/${vehicleId}/rental-checklist`);
       setData(res.data?.data || null);
     } catch (e) {
-      toast.error(e.response?.data?.message || 'Could not load the readiness checklist');
+      toast.error(e.response?.data?.message || t('Could not load the readiness checklist'));
     } finally {
       setLoading(false);
     }
-  }, [vehicleId, toast]);
+  }, [vehicleId, toast, t]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -49,7 +51,7 @@ export default function RentalReadinessGate({ vehicleId, vehicleLabel, onBack, o
       const res = await api.post(`/readiness/vehicle/${vehicleId}/checklist-field`, { field, value });
       setData(res.data?.data || null);
     } catch (e) {
-      toast.error(e.response?.data?.message || 'Could not update the checklist');
+      toast.error(e.response?.data?.message || t('Could not update the checklist'));
     } finally {
       setBusyField(null);
     }
@@ -57,25 +59,27 @@ export default function RentalReadinessGate({ vehicleId, vehicleLabel, onBack, o
 
   const blockers = data?.blockers?.length || 0;
   const points = data?.points || [];
+  const carName = vehicleLabel || t('vehicle #{id}', { id: vehicleId });
+  const intro = points.length
+    ? t('{n} mandatory checks for {vehicle} before handover.', { n: points.length, vehicle: carName })
+    : t('Mandatory checks for {vehicle} before handover.', { vehicle: carName });
 
   return (
     <div className="fixed inset-0 z-40 overflow-y-auto bg-slate-900/40 backdrop-blur-sm">
       <div className="mx-auto my-8 max-w-3xl px-4">
-        <div role="dialog" aria-modal="true" aria-label="Rental Readiness Checklist" className="rounded-2xl bg-white shadow-xl ring-1 ring-slate-200">
+        <div role="dialog" aria-modal="true" aria-label={t('Rental Readiness Checklist')} className="rounded-2xl bg-white shadow-xl ring-1 ring-slate-200">
           {/* Header */}
           <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-6 py-5">
             <div>
-              <h2 className="text-lg font-bold tracking-tight text-slate-900">Rental Readiness Checklist</h2>
-              <p className="mt-0.5 text-sm text-slate-500">
-                {points.length ? `${points.length} mandatory checks` : 'Mandatory checks'} for {vehicleLabel || `vehicle #${vehicleId}`} before handover.
-              </p>
+              <h2 className="text-lg font-bold tracking-tight text-slate-900">{t('Rental Readiness Checklist')}</h2>
+              <p className="mt-0.5 text-sm text-slate-500">{intro}</p>
             </div>
             <span
               className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ring-1 ${
                 blockers ? 'bg-red-50 text-red-700 ring-red-200' : 'bg-emerald-50 text-emerald-700 ring-emerald-200'
               }`}
             >
-              {loading ? 'Checking…' : data?.summary || ''}
+              {loading ? t('Checking…') : data?.summary || ''}
             </span>
           </div>
 
@@ -101,7 +105,7 @@ export default function RentalReadinessGate({ vehicleId, vehicleLabel, onBack, o
                         <div className="flex items-center gap-2">
                           <span className="text-xs font-semibold text-slate-400">{i + 1}.</span>
                           <span className="text-sm font-semibold text-slate-800">{p.label}</span>
-                          <span className={`text-[11px] font-semibold uppercase tracking-wide ${st.text}`}>{st.label}</span>
+                          <span className={`text-[11px] font-semibold uppercase tracking-wide ${st.text}`}>{t(st.label)}</span>
                         </div>
                         <p className="mt-0.5 text-xs text-slate-500">{p.detail}</p>
                       </div>
@@ -118,7 +122,7 @@ export default function RentalReadinessGate({ vehicleId, vehicleLabel, onBack, o
                                   loading={busyField === p.field}
                                   size="sm"
                                 >
-                                  {a.label}
+                                  {t(a.label)}
                                 </Button>
                               ))
                             : p.fix_url && (
@@ -128,7 +132,8 @@ export default function RentalReadinessGate({ vehicleId, vehicleLabel, onBack, o
                                   rel="noreferrer"
                                   className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:border-slate-400 hover:text-slate-800"
                                 >
-                                  Open fix ↗
+                                  {t('Open fix')}
+                                  <span aria-hidden className="inline-block rtl:-scale-x-100">↗</span>
                                 </a>
                               )}
                         </div>
@@ -143,19 +148,19 @@ export default function RentalReadinessGate({ vehicleId, vehicleLabel, onBack, o
           {/* Footer */}
           <div className="flex items-center justify-between gap-3 border-t border-slate-100 px-6 py-4">
             <Button type="button" variant="ghost" onClick={onBack} disabled={saving}>
-              ← Back to contract
+              <span aria-hidden className="inline-block rtl:-scale-x-100">←</span> {t('Back to contract')}
             </Button>
             <div className="flex items-center gap-3">
               {!loading && (
-                <Button variant="secondary" onClick={load} disabled={saving || busyField}>Re-check</Button>
+                <Button variant="secondary" onClick={load} disabled={saving || busyField}>{t('Re-check')}</Button>
               )}
               <Button
                 onClick={onProceed}
                 loading={saving}
                 disabled={loading || blockers > 0 || Boolean(busyField)}
-                title={blockers > 0 ? 'Resolve the blocking checks first' : undefined}
+                title={blockers > 0 ? t('Resolve the blocking checks first') : undefined}
               >
-                {blockers > 0 ? `${blockers} to resolve` : 'Confirm rental'}
+                {blockers > 0 ? t('{n} to resolve', { n: blockers }) : t('Confirm rental')}
               </Button>
             </div>
           </div>

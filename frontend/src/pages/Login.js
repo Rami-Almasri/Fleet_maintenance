@@ -8,6 +8,9 @@ import LanguageToggle from '../components/LanguageToggle';
 // Feature chips under the sign-in form. Keys resolve against `login.chips.*`.
 const CHIPS = ['vehicles', 'maintenance', 'contracts', 'dataHealth'];
 
+// The product name. A brand is never translated — it reads "Faster" in every language.
+const BRAND = 'Faster';
+
 export default function Login() {
   const { login } = useAuth();
   const { t } = useI18n();
@@ -185,12 +188,12 @@ export default function Login() {
                 >
                   <img
                     src="/brand-logo.webp"
-                    alt="Faster"
+                    alt={BRAND}
                     className="h-full w-full object-contain drop-shadow-[0_0_14px_rgba(250,204,21,0.55)]"
                   />
                 </div>
                 <h1 className="mt-5 font-display text-3xl font-bold tracking-tight">
-                  {t('login.welcome')} <span className="text-[#facc15]">Faster</span>
+                  {t('login.welcome')} <span className="text-[#facc15]">{BRAND}</span>
                 </h1>
                 <p className="mt-2 text-sm text-white/60">
                   {t('login.subtitle')}

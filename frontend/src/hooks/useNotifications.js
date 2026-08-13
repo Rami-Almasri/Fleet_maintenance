@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import api from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { useToast } from '../components/ui/Toast';
+import { useI18n } from '../i18n/I18nContext';
 
 const NotificationsContext = createContext(null);
 
@@ -15,6 +16,7 @@ const toastTone = (sev) => (sev === 'critical' ? 'error' : sev === 'success' ? '
 export function NotificationsProvider({ children }) {
   const { isAuthenticated } = useAuth();
   const toast = useToast();
+  const { t } = useI18n();
 
   const [unreadCount, setUnreadCount] = useState(0);
   const [latest, setLatest] = useState([]);   // most recent few (for the dropdown)
@@ -43,7 +45,7 @@ export function NotificationsProvider({ children }) {
         const fresh = items.filter((n) => !n.read && !seenIds.current.has(n.id));
         if (fresh.length) {
           const head = fresh[0];
-          const more = fresh.length > 1 ? ` (+${fresh.length - 1} more)` : '';
+          const more = fresh.length > 1 ? ` ${t('(+{n} more)', { n: fresh.length - 1 })}` : '';
           toast[toastTone(head.severity)](`${head.title}${more}`);
         }
       }
@@ -54,7 +56,7 @@ export function NotificationsProvider({ children }) {
     } finally {
       pollingRef.current = false;
     }
-  }, [toast]);
+  }, [toast, t]);
 
   // Drive the poll loop only while authenticated + tab visible.
   useEffect(() => {
@@ -138,9 +140,9 @@ export function NotificationsProvider({ children }) {
       await api.post('/notifications/demo');
       await poll();
     } catch (_) {
-      toast.error('Could not send demo notification');
+      toast.error(t('Could not send demo notification'));
     }
-  }, [poll, toast]);
+  }, [poll, toast, t]);
 
   // Memoize so consumers only re-render when the data they read actually changes,
   // not on every unrelated parent render. (Actions are stable useCallbacks.)

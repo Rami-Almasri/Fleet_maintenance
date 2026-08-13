@@ -30,7 +30,7 @@ import { Skeleton } from '../components/ui/Skeleton';
 import TicketActionModal from '../components/workflow/TicketActionModal';
 import ComplaintIntakeModal from '../components/workflow/ComplaintIntakeModal';
 import SuggestedChecks from '../components/workflow/SuggestedChecks';
-import { num } from '../lib/format';
+import { num, fmtDate, fmtClock } from '../lib/format';
 // The oil change is recorded identically wherever it is recorded from — one dialog, one write path.
 import { OilChangeDialog } from './reminders/OilProjection';
 
@@ -80,10 +80,13 @@ const STATUS_META = {
 };
 
 function StatusPill({ status }) {
-  const meta = STATUS_META[status] || { label: String(status).replace(/_/g, ' '), cls: 'bg-slate-100 text-slate-600 ring-slate-200' };
+  const { t } = useI18n();
+  const meta = STATUS_META[status];
+  const label = meta ? t(meta.label) : String(status).replace(/_/g, ' ');
+  const cls = meta ? meta.cls : 'bg-slate-100 text-slate-600 ring-slate-200';
   return (
-    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ring-1 ring-inset ${meta.cls}`}>
-      {meta.label}
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ring-1 ring-inset ${cls}`}>
+      {label}
     </span>
   );
 }
@@ -91,24 +94,25 @@ function StatusPill({ status }) {
 // Rule severity → the colour of the dot next to each system-detected rule.
 const SEV_DOT = { critical: 'bg-red-500', moderate: 'bg-amber-500', routine: 'bg-emerald-500' };
 
-function ago(iso) {
+// Returns WORDS, so the translator comes in as a parameter — this is a module-level helper, not a hook.
+function ago(iso, t) {
   if (!iso) return '';
   const secs = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
-  if (secs < 90) return 'just now';
+  if (secs < 90) return t('just now');
   const mins = Math.round(secs / 60);
-  if (mins < 60) return `${mins}m ago`;
+  if (mins < 60) return t('{n}m ago', { n: mins });
   const hrs = Math.round(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.round(hrs / 24)}d ago`;
+  if (hrs < 24) return t('{n}h ago', { n: hrs });
+  return t('{n}d ago', { n: Math.round(hrs / 24) });
 }
 
-const km = (n) => (n === null || n === undefined ? null : `${Number(n).toLocaleString()} km`);
+const km = (n) => (n === null || n === undefined ? null : `${num(n)} km`);
 
 function dueDate(iso) {
   if (!iso) return null;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return null;
-  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  return fmtDate(iso);
 }
 
 // The "why the system flagged this" panel — only rendered for a system-generated request that carries a
@@ -124,7 +128,7 @@ function dueDate(iso) {
 // both, and printing the same three "findings" on every car. Per-car checks now come from
 // <SuggestedChecks>, and the standing checklist is rendered there as the agenda it is.
 function SystemDetail({ detail, suggested }) {
-  const { tf } = useI18n();
+  const { t, tf } = useI18n();
   const rules = Array.isArray(detail?.rules) ? detail.rules : [];
   const svc = detail?.service || null;
 
@@ -141,7 +145,7 @@ function SystemDetail({ detail, suggested }) {
   return (
     <div className="mt-3 rounded-lg border border-indigo-100 bg-indigo-50/50 px-3 py-2.5">
       <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-indigo-700">
-        <span aria-hidden>🤖</span> Why the system flagged this
+        <span aria-hidden>🤖</span> {t('Why the system flagged this')}
       </div>
 
       {rules.length > 0 && (
@@ -214,20 +218,23 @@ const SEVERITY_WORD = {
   critical: { label: 'Urgent',          cls: 'bg-rose-100 text-rose-800' },
 };
 
-function severityChip(severity) {
+function severityChip(severity, t) {
   const first = String(severity || '').split('/')[0].trim();
-  return SEVERITY_WORD[first] || { label: severity || '—', cls: 'bg-slate-100 text-slate-700' };
+  const known = SEVERITY_WORD[first];
+  if (known) return { label: t(known.label), cls: known.cls };
+  return { label: severity || '—', cls: 'bg-slate-100 text-slate-700' };
 }
 
 // One rule = one card. Big threshold on the right so the limits ("15 days", "30 months") are scannable
 // without reading a word; the plain sentence carries the meaning, the note carries the nuance.
 function RuleCard({ rule }) {
+  const { t } = useI18n();
   const skin = RULE_SKIN[rule.key] || RULE_SKIN_FALLBACK;
-  const sev = severityChip(rule.severity);
+  const sev = severityChip(rule.severity, t);
 
   return (
-    <div className={`relative overflow-hidden rounded-xl bg-white p-3.5 pl-4 shadow-sm ring-1 ring-inset ${skin.ring}`}>
-      <span className={`absolute inset-y-0 left-0 w-1 ${skin.bar}`} aria-hidden />
+    <div className={`relative overflow-hidden rounded-xl bg-white p-3.5 ps-4 shadow-sm ring-1 ring-inset ${skin.ring}`}>
+      <span className={`absolute inset-y-0 start-0 w-1 ${skin.bar}`} aria-hidden />
       <div className="flex items-start gap-3">
         <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-lg ${skin.tint}`} aria-hidden>
           {skin.icon}
@@ -244,7 +251,7 @@ function RuleCard({ rule }) {
           {rule.agenda && (
             <p className="mt-2 flex items-center gap-1.5 border-t border-slate-100 pt-2 text-[11px] text-slate-500">
               <span aria-hidden>👉</span>
-              <span>The inspector is asked to check: <span className="font-semibold text-slate-700">{rule.agenda}</span></span>
+              <span>{t('The inspector is asked to check: {items}', { items: rule.agenda })}</span>
             </p>
           )}
         </div>
@@ -285,7 +292,7 @@ function SectionTitle({ children, hint }) {
 }
 
 function SystemRulesPanel() {
-  const { tf } = useI18n();
+  const { t, tf } = useI18n();
   const [open, setOpen] = useState(false);
   const [book, setBook] = useState(null);
   const [state, setState] = useState('idle'); // idle | loading | error
@@ -327,17 +334,17 @@ function SystemRulesPanel() {
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="flex w-full items-center gap-3 bg-gradient-to-r from-indigo-600 to-indigo-500 px-4 py-3.5 text-left transition-opacity hover:opacity-95"
+        className="flex w-full items-center gap-3 bg-gradient-to-r from-indigo-600 to-indigo-500 px-4 py-3.5 text-start transition-opacity hover:opacity-95"
       >
         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/15 text-lg" aria-hidden>🤖</span>
         <span className="min-w-0 flex-1">
-          <span className="block text-sm font-bold text-white">Why does the system ask for a test?</span>
+          <span className="block text-sm font-bold text-white">{t('Why does the system ask for a test?')}</span>
           <span className="block text-xs text-indigo-100">
-            Some requests below were raised by the system, not by a person. This explains when, and why.
+            {t('Some requests below were raised by the system, not by a person. This explains when, and why.')}
           </span>
         </span>
         <span className="shrink-0 rounded-full bg-white/15 px-2.5 py-1 text-xs font-semibold text-white">
-          {open ? 'Hide' : 'Read this'}
+          {open ? t('Hide') : t('Read this')}
         </span>
       </button>
 
@@ -365,13 +372,13 @@ function SystemRulesPanel() {
                 </p>
                 <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white">
                   <Icon.Clock className="h-3.5 w-3.5" />
-                  Checked every day at {book.schedule?.runs_at || '—'}
+                  {t('Checked every day at {time}', { time: book.schedule?.runs_at || '—' })}
                 </span>
               </div>
 
               {book.enabled === false && (
                 <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700 ring-1 ring-inset ring-rose-200">
-                  ⚠ The automatic check is currently switched off — no new system requests are being raised.
+                  ⚠ {t('The automatic check is currently switched off — no new system requests are being raised.')}
                 </p>
               )}
 
@@ -435,7 +442,7 @@ function SystemRulesPanel() {
                 <div className="flex items-start gap-3 rounded-xl bg-indigo-50 p-3.5 ring-1 ring-inset ring-indigo-100">
                   <span className="text-lg" aria-hidden>🙋</span>
                   <p className="text-[13px] leading-relaxed text-indigo-950">
-                    <span className="font-bold">Your part: </span>{book.outcome}
+                    <span className="font-bold">{t('Your part:')} </span>{book.outcome}
                   </p>
                 </div>
               )}
@@ -445,8 +452,8 @@ function SystemRulesPanel() {
                 <summary className="cursor-pointer text-xs font-semibold text-slate-600">{tf('reviewQueue.rulebook.technical', 'Technical details')}</summary>
                 <div className="mt-2 space-y-1.5 text-[11px] text-slate-500">
                   <p>
-                    Job: <code className="rounded bg-slate-900/90 px-1.5 py-0.5 font-mono text-slate-100">{book.schedule?.command}</code>
-                    {' '}— {book.schedule?.frequency} at {book.schedule?.runs_at}. {book.schedule?.description}
+                    {t('Job:')} <code className="rounded bg-slate-900/90 px-1.5 py-0.5 font-mono text-slate-100">{book.schedule?.command}</code>
+                    {' '}— {t('{frequency} at {time}', { frequency: book.schedule?.frequency, time: book.schedule?.runs_at })}. {book.schedule?.description}
                   </p>
                   {book.limits && (
                     <p className="font-mono">
@@ -477,7 +484,7 @@ function fmtDateTime(iso) {
   if (!iso) return '';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return `${fmtDate(iso)} ${fmtClock(iso)}`;
 }
 
 // Fault severity → priority chip. Only meaningful once the inspector has graded the fault; a fresh
@@ -529,7 +536,7 @@ function MetaTile({ icon, label, value, sub, muted }) {
 // car is away per the garage log, or — the rule the other two are only snapshots of — the car went and
 // CAME BACK, which restarted the count the request was quoting.
 function WithdrawnNote({ ctx, at }) {
-  const { tf } = useI18n();
+  const { t, tf } = useI18n();
   const opened = dueDate(ctx?.opened_at);
   // Two facts can withdraw a request: an OfficeManager maintenance contract, or — while workshop trips
   // are still recorded on the sheet rather than as OM contracts — a garage-log event (sheet-imported or
@@ -561,14 +568,14 @@ function WithdrawnNote({ ctx, at }) {
         </span>
         <div className="min-w-0 flex-1">
           <p className="text-[11px] font-bold uppercase tracking-wide text-violet-500">
-            Withdrawn by the system
+            {t('Withdrawn by the system')}
           </p>
           <p className="mt-0.5 text-sm font-semibold leading-snug text-slate-800">
             {fromClock
               ? tf('review.withdrawn.clock.title', 'This car went to the workshop and came back after the request was raised.')
               : fromLog
-                ? 'This car is already in the workshop — the garage log shows it went out and has not come back.'
-                : 'This car is already in maintenance — OfficeManager opened a maintenance contract for it.'}
+                ? t('This car is already in the workshop — the garage log shows it went out and has not come back.')
+                : t('This car is already in maintenance — OfficeManager opened a maintenance contract for it.')}
           </p>
           <p className="mt-1 text-xs leading-relaxed text-slate-600">
             {fromClock
@@ -578,9 +585,9 @@ function WithdrawnNote({ ctx, at }) {
                   { when: returned ? ` (${returned})` : '' },
                 )
               : fromLog
-                ? 'The trip was recorded on the maintenance log after this request was raised, so nobody needs to decide it any more.'
-                : 'The request was raised before that contract existed, so nobody needs to decide it any more.'}
-            {' '}Nothing was sent to Abu Maroof.
+                ? t('The trip was recorded on the maintenance log after this request was raised, so nobody needs to decide it any more.')
+                : t('The request was raised before that contract existed, so nobody needs to decide it any more.')}
+            {' '}{t('Nothing was sent to Abu Maroof.')}
           </p>
 
           {/* The evidence, not the claim. */}
@@ -662,7 +669,7 @@ function WithdrawnNote({ ctx, at }) {
               <span className="inline-flex items-center gap-1.5">
                 <Icon.Clock className="h-3.5 w-3.5 text-violet-400" />
                 <span className="text-slate-400">{tf('reviewQueue.withdrawn', 'Withdrawn')}</span>
-                <span className="font-semibold text-slate-700">{ago(at)}</span>
+                <span className="font-semibold text-slate-700">{ago(at, t)}</span>
               </span>
             )}
           </div>
@@ -706,12 +713,12 @@ const OIL_STAGE_LABEL = {
 };
 
 function OilFollowUpNote({ ctx, onRecordOilChange }) {
-  const { tf } = useI18n();
+  const { t, tf } = useI18n();
   if (!ctx) return null;
   const live = ctx.live;
   const snap = ctx.at_decision;
   const over = live?.over_allowance_km;
-  const decisionLabel = ctx.decision === 'recall' ? 'Recall now' : 'Do it on return';
+  const decisionLabel = ctx.decision === 'recall' ? t('Recall now') : t('Do it on return');
   const cleared = over != null && over <= 0;
   const action = OIL_ACTION_META[ctx.current_action];
   const recall = ctx.recall;
@@ -724,34 +731,44 @@ function OilFollowUpNote({ ctx, onRecordOilChange }) {
               must not claim to have come from the oil board, or the reason above it reads as a lie. */}
           {ctx.recall?.request_adopted
             ? tf('review.oil.addedTo', 'Oil change added to this test request · Source: Oil Projection')
-            : 'Oil Service Follow-up · Source: Oil Projection'}
+            : t('Oil Service Follow-up · Source: Oil Projection')}
         </p>
         {/* The CURRENT action, stated — nobody infers it from raw numbers. */}
         {action && (
           <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold tracking-wide ring-1 ring-inset ${action.cls}`}>
-            {action.label}
+            {t(action.label)}
           </span>
         )}
       </div>
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-700">
-        <span>Decision: <strong>{decisionLabel}</strong>{ctx.decided_by ? ` by ${ctx.decided_by}` : ''}</span>
-        {ctx.contract_no && <span>Contract: <strong>{ctx.contract_no}</strong></span>}
+        <span>
+          {ctx.decided_by
+            ? t('Decision: {decision} by {who}', { decision: decisionLabel, who: ctx.decided_by })
+            : t('Decision: {decision}', { decision: decisionLabel })}
+        </span>
+        {ctx.contract_no && <span>{t('Contract: {no}', { no: ctx.contract_no })}</span>}
         {ctx.settled && <span className="font-semibold text-emerald-700">{tf('reviewQueue.settledReturned', 'Settled — car returned')}</span>}
       </div>
       {live && (
         <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-700">
-          <span>Latest reading: <strong>{num(live.anchor_odometer)} km</strong>{live.anchor_source === 'reading' ? ' (customer)' : ' (handover)'}</span>
-          <span>Est. return: <strong>{num(live.expected_return)} km</strong></span>
-          <span>Allowed max: <strong>{num(live.allowed_max)} km</strong></span>
+          <span>
+            {t('Latest reading: {km} km ({source})', {
+              km: num(live.anchor_odometer),
+              source: live.anchor_source === 'reading' ? t('customer') : t('handover'),
+            })}
+          </span>
+          <span>{t('Est. return: {km} km', { km: num(live.expected_return) })}</span>
+          <span>{t('Allowed max: {km} km', { km: num(live.allowed_max) })}</span>
           {over != null && (cleared
-            ? <span className="font-semibold text-emerald-700">Now inside the allowance ({num(Math.abs(over))} km spare)</span>
-            : <span className="font-semibold text-rose-700">{num(over)} km over the allowance</span>)}
+            ? <span className="font-semibold text-emerald-700">{t('Now inside the allowance ({km} km spare)', { km: num(Math.abs(over)) })}</span>
+            : <span className="font-semibold text-rose-700">{t('{km} km over the allowance', { km: num(over) })}</span>)}
         </div>
       )}
       {snap && live && snap.over_allowance != null && over != null && snap.over_allowance !== Math.max(0, over) && (
         <p className="mt-1.5 border-t border-amber-200/70 pt-1.5 text-[11px] text-slate-500">
-          At decision time the projection said {num(snap.over_allowance)} km over — a newer reading has
-          updated the figures above.
+          {t('At decision time the projection said {km} km over — a newer reading has updated the figures above.', {
+            km: num(snap.over_allowance),
+          })}
         </p>
       )}
 
@@ -759,7 +776,7 @@ function OilFollowUpNote({ ctx, onRecordOilChange }) {
       {recall && (
         <div className="mt-2 border-t border-amber-200/70 pt-2">
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-700">
-            <span>Stage: <strong>{OIL_STAGE_LABEL[recall.stage] || recall.stage}</strong></span>
+            <span>{t('Stage: {stage}', { stage: OIL_STAGE_LABEL[recall.stage] ? t(OIL_STAGE_LABEL[recall.stage]) : recall.stage })}</span>
             {/* Where it is going, and therefore who owns the change when it lands. */}
             <span>
               {tf('review.oil.where', 'Oil change at')}:{' '}
@@ -770,15 +787,15 @@ function OilFollowUpNote({ ctx, onRecordOilChange }) {
               </strong>
             </span>
             <span>
-              Sales:{' '}
+              {t('Sales:')}{' '}
               {recall.sales?.confirmed
                 ? <strong className="text-emerald-700">{tf('review.oil.sales.confirmed', 'Confirmed')}{recall.sales.confirmed_by ? ` · ${recall.sales.confirmed_by}` : ''}</strong>
                 : <strong className="text-amber-700">{tf('review.oil.sales.waiting', 'Waiting')}</strong>}
             </span>
             <span>
-              Driver:{' '}
+              {t('Driver:')}{' '}
               <strong>
-                {!recall.collection ? 'Not arranged'
+                {!recall.collection ? t('Not arranged')
                   : recall.collection.driver ? `${recall.collection.driver} · ${recall.collection.phase}`
                   : recall.collection.phase}
               </strong>
@@ -790,7 +807,7 @@ function OilFollowUpNote({ ctx, onRecordOilChange }) {
           {recall.required_actions && (
             <div className="mt-1.5 flex flex-wrap items-center gap-3 text-xs">
               <span className={recall.required_actions.test?.required ? 'font-semibold text-slate-800' : 'text-slate-400'}>
-                {recall.required_actions.test?.required ? '☑' : '☐'} Inspection / Test
+                {recall.required_actions.test?.required ? '☑' : '☐'} {t('Inspection / Test')}
               </span>
               {/* The requirement never disappears — it is why the customer was interrupted. What
                   changes is whether it has been MET, and the reading that proves it. */}
@@ -800,7 +817,7 @@ function OilFollowUpNote({ ctx, onRecordOilChange }) {
                 </span>
               ) : (
                 <span className="rounded-md bg-rose-100 px-2 py-0.5 font-bold text-rose-700 ring-1 ring-inset ring-rose-200">
-                  🔒 Oil Change — REQUIRED
+                  🔒 {t('Oil Change — REQUIRED')}
                 </span>
               )}
               {/* The car is ours and the oil is still owed: this is the moment, and this is where
@@ -833,15 +850,16 @@ function OilFollowUpNote({ ctx, onRecordOilChange }) {
 }
 
 function RequestCard({ tk, onApprove, onReject, onAcknowledge, onRemind, onCancelReminder, onRecordOilChange, ackBusy, remindBusy, highlight }) {
-  const { tf } = useI18n();
+  const { t, tf } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const reasonTone = REASON_TONE[tk.trigger_reason] || 'slate';
-  const reasonLabel = REASON_LABEL[tk.trigger_reason] || tk.trigger_reason;
+  const reasonLabel = REASON_LABEL[tk.trigger_reason] ? t(REASON_LABEL[tk.trigger_reason]) : tk.trigger_reason;
   const requested = tk.handoffs?.requested;
   // WHERE the request came from. The stored origin is authoritative; the "no human requester" guess is
   // only the fallback for rows written before the column existed.
   const origin = tk.request_origin || null;
-  const originLabel = tk.request_origin_label || ORIGIN_LABEL[origin] || origin;
+  const originLabel = tk.request_origin_label
+    || (ORIGIN_LABEL[origin] ? t(ORIGIN_LABEL[origin]) : origin);
   // System-generated = raised by the scheduler, not merely missing a requester (an escalated Driver
   // Observation has no requester either, and is emphatically NOT a system request).
   const isSystem = origin ? origin === 'system_schedule' : !requested?.user_id;
@@ -907,7 +925,7 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, onRemind, onCance
                   that this card is settled before they read anything else on it. */}
               {isWithdrawn && (
                 <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-violet-700 ring-1 ring-inset ring-violet-200">
-                  <Icon.Check className="h-3 w-3" /> Withdrawn
+                  <Icon.Check className="h-3 w-3" /> {t('Withdrawn')}
                 </span>
               )}
               {/* Reason (WHY) and Source (WHERE FROM) are two independent facts — both are shown, and
@@ -920,17 +938,17 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, onRemind, onCance
               )}
               {sev && (
                 <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ring-1 ring-inset ${sev.cls}`}>
-                  <span aria-hidden>{sev.emoji}</span> {sev.label}
+                  <span aria-hidden>{sev.emoji}</span> {t(sev.label)}
                 </span>
               )}
             </div>
           </div>
-          <p className="truncate text-sm font-semibold text-slate-600">{tk.car || 'Vehicle'}</p>
+          <p className="truncate text-sm font-semibold text-slate-600">{tk.car || t('Vehicle')}</p>
           <div className="mt-1.5 flex flex-wrap items-center gap-2">
             {tk.operational_status && <StatusPill status={tk.operational_status} />}
             {tk.vehicle_odometer != null && (
               <span className="inline-flex items-center gap-1 font-mono text-[11px] text-slate-500">
-                <Icon.Gauge className="h-3.5 w-3.5 text-slate-400" />{Number(tk.vehicle_odometer).toLocaleString()} km
+                <Icon.Gauge className="h-3.5 w-3.5 text-slate-400" />{num(tk.vehicle_odometer)} km
               </span>
             )}
             {identityBits.length > 0 && (
@@ -949,23 +967,26 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, onRemind, onCance
           <div className="rounded-lg bg-slate-50 px-3 py-2 ring-1 ring-inset ring-slate-100">
             <p className="mb-0.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
               <Icon.Flag className="h-3 w-3" />
-              {isSystem ? 'Flagged reason' : fromObservation ? 'What the driver observed' : 'What the driver reported'}
+              {isSystem
+                ? t('Flagged reason')
+                : fromObservation ? t('What the driver observed') : t('What the driver reported')}
             </p>
             <p className={`text-xs italic text-slate-600 ${isLong && !expanded ? 'line-clamp-2' : ''}`}>“{complaint}”</p>
             {isLong && (
               <button type="button" onClick={() => setExpanded((v) => !v)} className="mt-0.5 text-[11px] font-semibold text-indigo-600 hover:text-indigo-700">
-                {expanded ? 'Show less' : 'Show more'}
+                {expanded ? t('Show less') : t('Show more')}
               </button>
             )}
             {/* Data Origin — this text did not start life as an inspection request; say where it came
                 from and link back to the record that owns it (see [[traceability-visibility-requirement]]). */}
             {fromObservation && (
               <p className="mt-1.5 border-t border-slate-200/70 pt-1.5 text-[11px] text-slate-400">
-                Escalated from a{' '}
+                {t('Escalated from')}{' '}
                 <Link to="/driver-observations" className="font-semibold text-indigo-600 hover:text-indigo-700">
-                  Driver Observation
+                  {t('a Driver Observation')}
                 </Link>
-                {tk.driver_observation_id ? ` #${tk.driver_observation_id}` : ''} — logged as a note first, then raised for inspection.
+                {tk.driver_observation_id ? ` #${tk.driver_observation_id}` : ''}
+                {' '}{t('— logged as a note first, then raised for inspection.')}
               </p>
             )}
           </div>
@@ -983,7 +1004,7 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, onRemind, onCance
         {Array.isArray(tk.media) && tk.media.length > 0 && (
           <div>
             <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-              <Icon.Camera className="h-3 w-3" /> Attachments
+              <Icon.Camera className="h-3 w-3" /> {t('Attachments')}
               <span className="rounded-full bg-slate-100 px-1.5 text-[10px] font-bold text-slate-500">{tk.media.length}</span>
             </p>
             <div className="flex flex-wrap gap-2">
@@ -993,11 +1014,11 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, onRemind, onCance
                   href={m.url}
                   target="_blank"
                   rel="noreferrer"
-                  title={m.note || m.original_name || (m.kind === 'image' ? 'Photo' : 'Video')}
+                  title={m.note || m.original_name || (m.kind === 'image' ? t('Photo') : t('Video'))}
                   className="relative block h-16 w-16 shrink-0 overflow-hidden rounded-lg ring-1 ring-slate-200 transition hover:ring-2 hover:ring-indigo-400"
                 >
                   {m.kind === 'image' && m.url ? (
-                    <img src={m.url} alt={m.original_name || 'Driver photo'} className="h-full w-full object-cover" />
+                    <img src={m.url} alt={m.original_name || t('Driver photo')} className="h-full w-full object-cover" />
                   ) : (
                     <span className="flex h-full w-full items-center justify-center bg-slate-800 text-white">
                       <Icon.Video className="h-5 w-5" />
@@ -1025,8 +1046,8 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, onRemind, onCance
           <MetaTile
             icon={<Icon.Users className="h-3 w-3" />}
             label={tf('reviewQueue.requestedBy', 'Requested by')}
-            value={isSystem ? 'System' : (requested?.name || 'Driver')}
-            sub={requested?.at ? ago(requested.at) : null}
+            value={isSystem ? t('System') : (requested?.name || t('Driver'))}
+            sub={requested?.at ? ago(requested.at, t) : null}
           />
           <MetaTile
             icon={<Icon.Clock className="h-3 w-3" />}
@@ -1036,22 +1057,22 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, onRemind, onCance
           <MetaTile
             icon={<Icon.Wrench className="h-3 w-3" />}
             label={tf('reviewQueue.lastMaintenance', 'Last maintenance')}
-            value={!lm ? 'No record' : (lmOnboard ? 'None yet' : (dueDate(lm.at) || '—'))}
+            value={!lm ? t('No record') : (lmOnboard ? t('None yet') : (dueDate(lm.at) || '—'))}
             sub={!lm
               ? null
               : (lmOnboard
-                ? (lm.days_ago != null ? `${lm.days_ago}d since onboarding` : 'since onboarding')
-                : `${lm.days_ago != null ? `${lm.days_ago}d ago` : ''}${lm.reason === 'test' ? ' · inspection' : ''}`.trim())}
+                ? (lm.days_ago != null ? t('{n}d since onboarding', { n: lm.days_ago }) : t('since onboarding'))
+                : `${lm.days_ago != null ? t('{n}d ago', { n: lm.days_ago }) : ''}${lm.reason === 'test' ? ` · ${t('inspection')}` : ''}`.trim())}
             muted={!lm || lmOnboard}
           />
           <MetaTile
             icon={<Icon.Gauge className="h-3 w-3" />}
             label={tf('reviewQueue.sinceOil', 'Since oil service')}
             value={tk.last_service
-              ? (kmSince != null ? `${Number(kmSince).toLocaleString()} km` : `${Number(tk.last_service.odometer).toLocaleString()} km`)
-              : 'No record'}
+              ? (kmSince != null ? `${num(kmSince)} km` : `${num(tk.last_service.odometer)} km`)
+              : t('No record')}
             sub={tk.last_service
-              ? (kmSince != null ? `since ${Number(tk.last_service.odometer).toLocaleString()} km` : 'at last service')
+              ? (kmSince != null ? t('since {km} km', { km: num(tk.last_service.odometer) }) : t('at last service'))
               : null}
             muted={!tk.last_service}
           />
@@ -1059,15 +1080,14 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, onRemind, onCance
 
         {isLegacy && (
           <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 ring-1 ring-inset ring-amber-200">
-            Raised before this review queue existed — already in Abu Maroof's queue and actionable there.
-            Acknowledge to close the sign-off gap; nothing else changes.
+            {t('Raised before this review queue existed — already in Abu Maroof’s queue and actionable there. Acknowledge to close the sign-off gap; nothing else changes.')}
           </p>
         )}
 
         {!isLegacy && !isWithdrawn && awaitingReturn && (
           <p className="flex items-center gap-1.5 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 ring-1 ring-inset ring-amber-200">
             <Icon.Clock className="h-3.5 w-3.5 shrink-0" />
-            Waiting for return — the car is with a customer. Review it once it&apos;s back and available to inspect.
+            {t('Waiting for return — the car is with a customer. Review it once it’s back and available to inspect.')}
           </p>
         )}
 
@@ -1080,7 +1100,9 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, onRemind, onCance
             <Icon.Check className="h-3.5 w-3.5 shrink-0" />
             {tf('review.oil.approveNow',
               'Being recalled — {stage}. You can approve it now: it waits in Abu Maroof’s queue until the car arrives, and the oil change is required either way.',
-              { stage: OIL_STAGE_LABEL[tk.oil_context.recall.stage] || 'in progress' })}
+              { stage: OIL_STAGE_LABEL[tk.oil_context.recall.stage]
+                ? t(OIL_STAGE_LABEL[tk.oil_context.recall.stage])
+                : t('in progress') })}
           </p>
         )}
 
@@ -1089,8 +1111,7 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, onRemind, onCance
         {!isLegacy && !isWithdrawn && tk.operational_status === 'rented' && tk.oil_context?.in_our_custody && (
           <p className="flex items-center gap-1.5 rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-800 ring-1 ring-inset ring-emerald-200">
             <Icon.Check className="h-3.5 w-3.5 shrink-0" />
-            The car has been collected from the customer and is with us — you can send it in now. The
-            rental only closes on OfficeManager's side, so the car still reads as rented.
+            {t('The car has been collected from the customer and is with us — you can send it in now. The rental only closes on OfficeManager’s side, so the car still reads as rented.')}
           </p>
         )}
 
@@ -1123,17 +1144,17 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, onRemind, onCance
           // so that is the only button — an Approve/Reject pair here would be offering a choice that no
           // longer exists.
           <>
-            <span className="mr-auto text-[11px] text-slate-400">{tf('reviewQueue.noAction', 'No action needed')}</span>
+            <span className="me-auto text-[11px] text-slate-400">{tf('reviewQueue.noAction', 'No action needed')}</span>
             <Link
               to={`/vehicles/${tk.vehicle_id}`}
               className="inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold text-slate-600 transition-colors hover:bg-slate-100"
             >
-              <Icon.Car className="h-4 w-4" /> Open the car
+              <Icon.Car className="h-4 w-4" /> {t('Open the car')}
             </Link>
           </>
         ) : isLegacy ? (
           <Button variant="secondary" loading={ackBusy} onClick={() => onAcknowledge(tk)}>
-            <Icon.Check className="h-4 w-4" /> Acknowledge
+            <Icon.Check className="h-4 w-4" /> {t('Acknowledge')}
           </Button>
         ) : (
           <>
@@ -1147,10 +1168,10 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, onRemind, onCance
                 : tf('review.remind.button', 'Remind me')}
             </Button>
             <Button variant="danger" disabled={awaitingReturn} onClick={() => onReject(tk)}>
-              <Icon.XCircle className="h-4 w-4" /> Reject
+              <Icon.XCircle className="h-4 w-4" /> {t('Reject')}
             </Button>
             <Button variant="success" disabled={awaitingReturn} onClick={() => onApprove(tk)}>
-              <Icon.Check className="h-4 w-4" /> Approve &amp; send
+              <Icon.Check className="h-4 w-4" /> {t('Approve & send')}
             </Button>
           </>
         )}
@@ -1160,7 +1181,7 @@ function RequestCard({ tk, onApprove, onReject, onAcknowledge, onRemind, onCance
 }
 
 function ApproveModal({ ticket, onClose, onDone }) {
-  const { tf } = useI18n();
+  const { t, tf } = useI18n();
   const toast = useToast();
   const [busy, setBusy] = useState(false);
 
@@ -1171,9 +1192,9 @@ function ApproveModal({ ticket, onClose, onDone }) {
       // from, and that text travels with the ticket to the inspector. A second free-text box here
       // only invited a restatement of it. (The API still accepts `notes` for legacy/other callers.)
       await api.post(`/maintenance-tickets/${ticket.id}/review/approve`, {});
-      onDone('Approved — sent to Abu Maroof');
+      onDone(t('Approved — sent to Abu Maroof'));
     } catch (e) {
-      toast.error(e.response?.data?.message || 'Could not approve this request');
+      toast.error(e.response?.data?.message || t('Could not approve this request'));
     } finally {
       setBusy(false);
     }
@@ -1184,18 +1205,19 @@ function ApproveModal({ ticket, onClose, onDone }) {
       open
       onClose={onClose}
       title={tf('reviewQueue.approve', 'Approve inspection request')}
-      subtitle={`${ticket.plate || `#${ticket.id}`} · will be sent to Abu Maroof`}
+      subtitle={`${ticket.plate || `#${ticket.id}`} · ${t('will be sent to Abu Maroof')}`}
       footer={(
         <>
           <Button variant="secondary" onClick={onClose} disabled={busy}>{tf('reviewQueue.cancel', 'Cancel')}</Button>
-          <Button variant="success" onClick={submit} loading={busy}>Approve &amp; send</Button>
+          <Button variant="success" onClick={submit} loading={busy}>{t('Approve & send')}</Button>
         </>
       )}
     >
       {/* Confirm what actually travels to the inspector, rather than asking for it again. */}
       <p className="text-sm text-slate-600">
-        Abu Maroof will receive this request with everything already on the card
-        {ticket.customer_complaint ? ' — including the note below.' : '.'}
+        {ticket.customer_complaint
+          ? t('Abu Maroof will receive this request with everything already on the card — including the note below.')
+          : t('Abu Maroof will receive this request with everything already on the card.')}
       </p>
       {ticket.customer_complaint && (
         <p className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-sm italic text-slate-600 ring-1 ring-inset ring-slate-100">
@@ -1244,8 +1266,8 @@ function whenLabel(iso) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
   const sameDay = d.toDateString() === new Date().toDateString();
-  const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-  return sameDay ? time : `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${time}`;
+  const time = fmtClock(iso);
+  return sameDay ? time : `${fmtDate(iso)} ${time}`;
 }
 
 // The time half of both modals — preset chips plus a custom picker. Owns nothing: the parent holds the
@@ -1319,7 +1341,7 @@ const FALLBACK_REASONS = [
 
 function RejectModal({ ticket, onClose, onDone }) {
   const toast = useToast();
-  const { tf } = useI18n();
+  const { t, tf } = useI18n();
   const [reasons, setReasons] = useState(FALLBACK_REASONS);
   const [code, setCode] = useState('');
   const [note, setNote] = useState('');
@@ -1420,7 +1442,7 @@ function RejectModal({ ticket, onClose, onDone }) {
                 checked={code === r.code}
                 onChange={() => setCode(r.code)}
               />
-              <span>{r.label}</span>
+              <span>{t(r.label)}</span>
             </label>
           ))}
         </div>
@@ -1839,7 +1861,7 @@ function Countdown({ r }) {
 }
 
 function FleetCountdownPanel() {
-  const { tf } = useI18n();
+  const { t, tf } = useI18n();
   // Whole-fleet walk (~150 cars, ~4s) — fetched once when the tab is opened, not polled. Nothing here
   // changes minute to minute: the clock ticks in days and the scan runs once a morning.
   const fetcher = useCallback(async () => (await api.get('/maintenance-tickets/test-countdown')).data.data, []);
@@ -1870,7 +1892,9 @@ function FleetCountdownPanel() {
       key: 'operational_status',
       header: tf('review.board.status', 'Status'),
       render: (r) => {
-        const l = OPERATIONAL_LABEL[r.operational_status] || r.operational_status || '—';
+        const l = OPERATIONAL_LABEL[r.operational_status]
+          ? t(OPERATIONAL_LABEL[r.operational_status])
+          : (r.operational_status || '—');
         const parked = r.bucket === 'parked';
         return (
           <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset ${
@@ -1917,10 +1941,10 @@ function FleetCountdownPanel() {
             <span className="mt-0.5 block text-slate-400">
               {tf('review.board.countingFrom', 'Counting from')}{' '}
               {r.anchor.source === 'workflow' && r.anchor.source_id
-                ? <Link to={`/maintenance-workflow/${r.anchor.source_id}`} className="text-violet-600 underline-offset-2 hover:underline">{ANCHOR_SOURCE_LABEL.workflow} #{r.anchor.source_id}</Link>
+                ? <Link to={`/maintenance-workflow/${r.anchor.source_id}`} className="text-violet-600 underline-offset-2 hover:underline">{t(ANCHOR_SOURCE_LABEL.workflow)} #{r.anchor.source_id}</Link>
                 : r.anchor.source === 'om_contract' && r.anchor.source_id
-                  ? <Link to={`/contracts/${r.anchor.source_id}`} className="text-violet-600 underline-offset-2 hover:underline">{ANCHOR_SOURCE_LABEL.om_contract} #{r.anchor.source_id}</Link>
-                  : (ANCHOR_SOURCE_LABEL[r.anchor.source] || r.anchor.source)}
+                  ? <Link to={`/contracts/${r.anchor.source_id}`} className="text-violet-600 underline-offset-2 hover:underline">{t(ANCHOR_SOURCE_LABEL.om_contract)} #{r.anchor.source_id}</Link>
+                  : (ANCHOR_SOURCE_LABEL[r.anchor.source] ? t(ANCHOR_SOURCE_LABEL[r.anchor.source]) : r.anchor.source)}
             </span>
           )}
           {r.bucket === 'parked' && r.on_release && (
@@ -1965,7 +1989,7 @@ function FleetCountdownPanel() {
             }`}
           >
             <span className={`h-1.5 w-1.5 rounded-full ${l.dot}`} />
-            {l.label} <span className="tabular-nums opacity-60">{buckets[l.key]}</span>
+            {t(l.label)} <span className="tabular-nums opacity-60">{buckets[l.key]}</span>
           </button>
         ))}
       </div>
@@ -1987,7 +2011,7 @@ function FleetCountdownPanel() {
 
 export default function InspectionReviewQueue() {
   const toast = useToast();
-  const { tf } = useI18n();
+  const { t, tf } = useI18n();
   const { can } = usePermissions();
   const canManage = can('maintenance.manage');
   const [modal, setModal] = useState(null); // { action: 'approve'|'reject'|'remind'|'request'|'complaint', ticket }
@@ -2043,11 +2067,11 @@ export default function InspectionReviewQueue() {
       highlightTimer.current = setTimeout(() => setHighlightId(null), 3500);
     } else {
       // No longer pending — already approved/rejected by someone else, or auto-resolved.
-      toast.info('That request is no longer awaiting review — it may have already been actioned.');
+      toast.info(t('That request is no longer awaiting review — it may have already been actioned.'));
     }
     // Drop the query param so a manual refresh doesn't re-highlight.
     setSearchParams({}, { replace: true });
-  }, [targetTicket, loading, tickets, toast, setSearchParams]);
+  }, [targetTicket, loading, tickets, toast, setSearchParams, t]);
 
   useEffect(() => () => clearTimeout(highlightTimer.current), []);
 
@@ -2092,10 +2116,10 @@ export default function InspectionReviewQueue() {
     setAckBusyId(tk.id);
     try {
       await api.post(`/maintenance-tickets/${tk.id}/review/acknowledge-legacy`);
-      toast.success('Acknowledged');
+      toast.success(t('Acknowledged'));
       reload({ silent: true });
     } catch (e) {
-      toast.error(e.response?.data?.message || 'Could not acknowledge this request');
+      toast.error(e.response?.data?.message || t('Could not acknowledge this request'));
     } finally {
       setAckBusyId(null);
     }
@@ -2107,14 +2131,18 @@ export default function InspectionReviewQueue() {
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <div className="opx-hint" style={{ letterSpacing: '.16em', textTransform: 'uppercase', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 10 }}>
-              Controller Approval Gate
-              {!loading && <span style={{ color: 'var(--cyan)', fontWeight: 700 }}>· {awaiting.length} awaiting</span>}
+              {t('Controller Approval Gate')}
+              {!loading && (
+                <span style={{ color: 'var(--cyan)', fontWeight: 700 }}>
+                  · {t('{n} awaiting', { n: awaiting.length })}
+                </span>
+              )}
             </div>
             <h1 className="font-display" style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-.02em', color: 'var(--ink)', margin: 0 }}>{tf('reviewQueue.title', 'Inspection Review Queue')}</h1>
             <p style={{ marginTop: 6, fontSize: 13.5, color: 'var(--ink-3)' }}>{tf('reviewQueue.subtitle', 'Requests awaiting Controller approval before they reach Abu Maroof.')}</p>
           </div>
           <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap' }}>
-            {canManage && <button className="opx-btn primary" onClick={() => setModal({ action: 'request' })}>+ Request Inspection</button>}
+            {canManage && <button className="opx-btn primary" onClick={() => setModal({ action: 'request' })}>+ {t('Request Inspection')}</button>}
             {canManage && <button className="opx-btn" onClick={() => setModal({ action: 'complaint' })}>{tf('reviewQueue.newComplaint', '📣 New complaint')}</button>}
           </div>
         </div>
@@ -2137,7 +2165,7 @@ export default function InspectionReviewQueue() {
               always render, so the workshop and planning views are reachable on a quiet day with an
               empty queue; each of the last two loads its own data when opened. */}
           <Tabs
-            ariaLabel="Inspection review sections"
+            ariaLabel={t('Inspection review sections')}
             active={activeTab}
             onChange={setTab}
             tabs={[

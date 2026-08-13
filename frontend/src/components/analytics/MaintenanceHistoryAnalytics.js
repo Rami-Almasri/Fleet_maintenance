@@ -14,6 +14,7 @@ import RankedBar from '../ui/RankedBar';
 import BarChart from '../ui/BarChart';
 import Segmented from '../ui/Segmented';
 import { num } from '../../lib/format';
+import { useI18n } from '../../i18n/I18nContext';
 
 const VIEWS = {
   days: {
@@ -45,6 +46,7 @@ const BANDS = [
 ];
 
 export default function MaintenanceHistoryAnalytics({ items = [] }) {
+  const { t } = useI18n();
   const [view, setView] = useState('days');
   const v = VIEWS[view];
 
@@ -82,13 +84,13 @@ export default function MaintenanceHistoryAnalytics({ items = [] }) {
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
       <SectionCard
-        title="Worst offenders"
-        subtitle={v.subtitle}
+        title={t('Worst offenders')}
+        subtitle={t(v.subtitle)}
         actions={
           <Segmented
             value={view}
             onChange={setView}
-            options={Object.entries(VIEWS).map(([key, o]) => ({ key, label: o.label }))}
+            options={Object.entries(VIEWS).map(([key, o]) => ({ key, label: t(o.label) }))}
           />
         }
         bodyClass="p-5"
@@ -98,21 +100,23 @@ export default function MaintenanceHistoryAnalytics({ items = [] }) {
           showRank
           color={v.color}
           format={v.format}
-          valueLabel={v.valueLabel}
+          valueLabel={t(v.valueLabel)}
           labelWidth={120}
           valueWidth={64}
           tooltip={(r) =>
-            `${num(r.visits)} visit${r.visits === 1 ? '' : 's'}` +
-            (r.days != null ? ` · ${num(r.days)} days in shop` : '') +
-            (r.inShop ? ' · in the shop now' : '')
+            (r.visits === 1
+              ? t('{n} visit', { n: num(r.visits) })
+              : t('{n} visits', { n: num(r.visits) })) +
+            (r.days != null ? ` · ${t('{n} days in shop', { n: num(r.days) })}` : '') +
+            (r.inShop ? ` · ${t('in the shop now')}` : '')
           }
-          empty="No workshop activity in this window."
+          empty={t('No workshop activity in this window.')}
         />
       </SectionCard>
 
       <SectionCard
-        title="How often cars go back"
-        subtitle="Cars grouped by number of workshop visits"
+        title={t('How often cars go back')}
+        subtitle={t('Cars grouped by number of workshop visits')}
         bodyClass="px-3 pb-3 pt-2"
       >
         {hasSpread ? (
@@ -122,19 +126,23 @@ export default function MaintenanceHistoryAnalytics({ items = [] }) {
               color="violet"
               height={230}
               yTicks={3}
-              valueLabel="Cars"
+              valueLabel={t('Cars')}
               format={(n) => num(Math.round(n))}
-              tooltip={(d) => `${d.label} visit${d.label === '1' ? '' : 's'} in this window`}
+              tooltip={(d) =>
+                d.label === '1'
+                  ? t('{n} visit in this window', { n: d.label })
+                  : t('{n} visits in this window', { n: d.label })
+              }
             />
             <p className="px-3 pb-1 text-xs leading-relaxed text-slate-500">
-              <span className="font-semibold text-violet-600">{num(repeat)}</span> of{' '}
-              {num(items.length)} car{items.length === 1 ? '' : 's'} went back three or more times —
-              those are the ones worth investigating.
+              {items.length === 1
+                ? t('{n} of {total} car went back three or more times — those are the ones worth investigating.', { n: num(repeat), total: num(items.length) })
+                : t('{n} of {total} cars went back three or more times — those are the ones worth investigating.', { n: num(repeat), total: num(items.length) })}
             </p>
           </>
         ) : (
           <div className="flex h-[230px] items-center justify-center text-sm text-slate-400">
-            No workshop visits in this window.
+            {t('No workshop visits in this window.')}
           </div>
         )}
       </SectionCard>

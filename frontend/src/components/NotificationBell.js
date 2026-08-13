@@ -2,11 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useNotifications } from '../hooks/useNotifications';
 import { actionTarget } from '../lib/notifications';
+import { useI18n } from '../i18n/I18nContext';
 import NotificationRow from './NotificationRow';
 import Button from './ui/Button';
 
 export default function NotificationBell() {
   const navigate = useNavigate();
+  const { t } = useI18n();
   const { unreadCount, latest, markRead, markAllRead, dismiss, sendDemo } = useNotifications();
   const [open, setOpen] = useState(false);
   const [ringing, setRinging] = useState(false);
@@ -17,9 +19,9 @@ export default function NotificationBell() {
   useEffect(() => {
     if (unreadCount > prevUnread.current) {
       setRinging(true);
-      const t = setTimeout(() => setRinging(false), 900);
+      const timer = setTimeout(() => setRinging(false), 900);
       prevUnread.current = unreadCount;
-      return () => clearTimeout(t);
+      return () => clearTimeout(timer);
     }
     prevUnread.current = unreadCount;
   }, [unreadCount]);
@@ -51,8 +53,8 @@ export default function NotificationBell() {
       <button
         onClick={() => setOpen((v) => !v)}
         className={`relative rounded-xl p-2 text-slate-500 transition-colors duration-150 hover:bg-slate-100 hover:text-slate-700 ${open ? 'bg-slate-100 text-slate-700' : ''}`}
-        title="Notifications"
-        aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ''}`}
+        title={t('Notifications')}
+        aria-label={unreadCount ? t('Notifications, {n} unread', { n: unreadCount }) : t('Notifications')}
         aria-haspopup="true"
         aria-expanded={open}
       >
@@ -81,14 +83,14 @@ export default function NotificationBell() {
             {/* header */}
             <div className="flex items-center justify-between gap-2 border-b border-slate-100 bg-slate-50 px-4 py-3">
               <div className="flex items-center gap-2">
-                <h3 className="text-sm font-semibold text-slate-800">Notifications</h3>
+                <h3 className="text-sm font-semibold text-slate-800">{t('Notifications')}</h3>
                 {unreadCount > 0 && (
-                  <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-bold tabular-nums text-indigo-700">{unreadCount} new</span>
+                  <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-bold tabular-nums text-indigo-700">{t('{n} new', { n: unreadCount })}</span>
                 )}
               </div>
               {unreadCount > 0 && (
                 <Button variant="ghost" size="sm" onClick={markAllRead} className="text-indigo-600 hover:bg-indigo-50 hover:text-indigo-700">
-                  Mark all read
+                  {t('Mark all read')}
                 </Button>
               )}
             </div>
@@ -102,10 +104,10 @@ export default function NotificationBell() {
                       <path d="M15 17h5l-1.4-1.4A2 2 0 0 1 18 14.2V11a6 6 0 0 0-4-5.7V5a2 2 0 1 0-4 0v.3A6 6 0 0 0 6 11v3.2a2 2 0 0 1-.6 1.4L4 17h5" />
                     </svg>
                   </div>
-                  <p className="mt-3 text-sm font-semibold text-slate-700">You're all caught up</p>
-                  <p className="mt-0.5 text-xs text-slate-400">New fleet alerts will appear here in real time.</p>
+                  <p className="mt-3 text-sm font-semibold text-slate-700">{t("You're all caught up")}</p>
+                  <p className="mt-0.5 text-xs text-slate-400">{t('New fleet alerts will appear here in real time.')}</p>
                   <Button variant="secondary" size="sm" onClick={sendDemo} className="mt-4">
-                    Send a test alert
+                    {t('Send a test alert')}
                   </Button>
                 </div>
               ) : (
@@ -118,7 +120,7 @@ export default function NotificationBell() {
             {/* footer */}
             <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50/60 px-4 py-2.5">
               <Button variant="ghost" size="sm" onClick={sendDemo} className="font-medium text-slate-400 hover:text-slate-600">
-                Send test
+                {t('Send test')}
               </Button>
               <Button
                 variant="ghost"
@@ -126,7 +128,7 @@ export default function NotificationBell() {
                 onClick={() => { setOpen(false); navigate('/notifications'); }}
                 className="text-indigo-600 hover:bg-indigo-50 hover:text-indigo-700"
               >
-                View all →
+                {t('View all')} <span className="inline-block rtl:-scale-x-100">→</span>
               </Button>
             </div>
           </div>

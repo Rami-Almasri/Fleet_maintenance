@@ -17,6 +17,7 @@ import RankedBar from '../ui/RankedBar';
 import PieChart from '../ui/PieChart';
 import { fmtDuration, stageSeconds } from '../workflow/meta';
 import { num } from '../../lib/format';
+import { useI18n } from '../../i18n/I18nContext';
 
 // Role → the chart palette key matching its chip colour on the cards below.
 const ROLE_COLOR = {
@@ -40,6 +41,8 @@ const ROLE_LABEL = {
 const WORKSHOP_LANE = 'under_repair';
 
 export default function CarStatusAnalytics({ lanes = [] }) {
+  const { t } = useI18n();
+
   // The funnel profile — kept in the lanes' own order, because that order is the
   // repair journey. Sorting it by size would destroy the meaning.
   const byStage = useMemo(
@@ -82,9 +85,9 @@ export default function CarStatusAnalytics({ lanes = [] }) {
       totals[l.role] = (totals[l.role] || 0) + l.tickets.length;
     });
     return Object.entries(totals)
-      .map(([role, value]) => ({ label: ROLE_LABEL[role] || role, value, color: ROLE_COLOR[role] || 'slate' }))
+      .map(([role, value]) => ({ label: t(ROLE_LABEL[role] || role), value, color: ROLE_COLOR[role] || 'slate' }))
       .sort((a, b) => b.value - a.value);
-  }, [lanes]);
+  }, [lanes, t]);
 
   const total = byStage.reduce((n, s) => n + s.value, 0);
   if (!total) return null;
@@ -92,48 +95,48 @@ export default function CarStatusAnalytics({ lanes = [] }) {
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
       <SectionCard
-        title="Pipeline by stage"
-        subtitle="Cars at each step, in journey order"
+        title={t('Pipeline by stage')}
+        subtitle={t('Cars at each step, in journey order')}
         bodyClass="p-5"
       >
         <RankedBar
           items={byStage}
           format={(n) => num(Math.round(n))}
-          valueLabel="Cars"
+          valueLabel={t('Cars')}
           labelWidth={128}
           valueWidth={44}
-          tooltip={(r) => `Owned by ${r.role}`}
-          empty="No cars in the pipeline."
+          tooltip={(r) => t('Owned by {role}', { role: t(r.role) })}
+          empty={t('No cars in the pipeline.')}
         />
       </SectionCard>
 
       <SectionCard
-        title="Longest in the workshop"
-        subtitle="Cars that have stalled at the garage"
+        title={t('Longest in the workshop')}
+        subtitle={t('Cars that have stalled at the garage')}
         bodyClass="p-5"
       >
         <RankedBar
           items={stalled}
           showRank
           format={fmtDuration}
-          valueLabel="At garage"
+          valueLabel={t('At garage')}
           labelWidth={116}
           valueWidth={68}
           tooltip={(r) => [r.car, r.sub].filter(Boolean).join(' · ')}
-          empty="No cars are in the workshop right now."
+          empty={t('No cars are in the workshop right now.')}
         />
       </SectionCard>
 
       <SectionCard
-        title="Who's holding the work"
-        subtitle="Open cars by responsible role"
+        title={t("Who's holding the work")}
+        subtitle={t('Open cars by responsible role')}
         bodyClass="flex items-center justify-center p-5"
       >
         {byRole.length ? (
           <PieChart segments={byRole} size={150} />
         ) : (
           <div className="flex h-[150px] items-center justify-center text-sm text-slate-400">
-            Nobody has work assigned.
+            {t('Nobody has work assigned.')}
           </div>
         )}
       </SectionCard>

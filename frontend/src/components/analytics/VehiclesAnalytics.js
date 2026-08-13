@@ -19,19 +19,21 @@ import AnalyticsCard from './AnalyticsCard';
 import RankedBar from '../ui/RankedBar';
 import BarChart from '../ui/BarChart';
 import { num } from '../../lib/format';
+import { useI18n } from '../../i18n/I18nContext';
 
 export default function VehiclesAnalytics({ vehicles = [] }) {
+  const { t } = useI18n();
   const byMake = useMemo(() => {
     const totals = {};
     vehicles.forEach((v) => {
-      const k = v.make || 'Unspecified';
+      const k = v.make || t('Unspecified');
       totals[k] = (totals[k] || 0) + 1;
     });
     return Object.entries(totals)
       .map(([label, value]) => ({ key: label, label, value }))
       .sort((a, b) => b.value - a.value)
       .slice(0, 10);
-  }, [vehicles]);
+  }, [vehicles, t]);
 
   // Model-year spread. Only cars with a plausible year — a missing or garbage year
   // would otherwise invent a phantom bar at the left edge.
@@ -59,26 +61,26 @@ export default function VehiclesAnalytics({ vehicles = [] }) {
       <AnalyticsCard
         variant="opx"
         dotColor="#2563eb"
-        title="Fleet composition"
-        subtitle="In-service cars per make (ready or rented)"
+        title={t('Fleet composition')}
+        subtitle={t('In-service cars per make (ready or rented)')}
       >
         <RankedBar
           items={byMake}
           color="blue"
           format={(n) => num(Math.round(n))}
-          valueLabel="Cars"
+          valueLabel={t('Cars')}
           labelWidth={120}
           valueWidth={44}
-          tooltip={(r) => `${Math.round((r.value / vehicles.length) * 100)}% of the in-service fleet`}
-          empty="No vehicles to chart."
+          tooltip={(r) => t('{pct}% of the in-service fleet', { pct: Math.round((r.value / vehicles.length) * 100) })}
+          empty={t('No vehicles to chart.')}
         />
       </AnalyticsCard>
 
       <AnalyticsCard
         variant="opx"
         dotColor="#22d3ee"
-        title="Age profile"
-        subtitle="In-service cars by model year"
+        title={t('Age profile')}
+        subtitle={t('In-service cars by model year')}
       >
         {ages ? (
           <BarChart
@@ -86,13 +88,13 @@ export default function VehiclesAnalytics({ vehicles = [] }) {
             color="cyan"
             height={210}
             yTicks={3}
-            valueLabel="Cars"
+            valueLabel={t('Cars')}
             format={(n) => num(Math.round(n))}
-            tooltip={(d) => `Model year ${d.year}`}
+            tooltip={(d) => t('Model year {year}', { year: d.year })}
           />
         ) : (
           <div className="flex h-[210px] items-center justify-center text-sm text-slate-400">
-            No model years on file.
+            {t('No model years on file.')}
           </div>
         )}
       </AnalyticsCard>

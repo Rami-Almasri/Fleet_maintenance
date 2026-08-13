@@ -12,10 +12,15 @@ import { SectionCard } from '../ui/Table';
 import RankedBar from '../ui/RankedBar';
 import CompositionDonut from '../ui/CompositionDonut';
 import { num } from '../../lib/format';
+import { useI18n } from '../../i18n/I18nContext';
 
-const dayFmt = (n) => `${num(Math.round(n || 0))}d`;
+// "12d" — the unit letter is a word, so it goes through the translator.
+const makeDayFmt = (t) => (n) => t('{n}d', { n: num(Math.round(n || 0)) });
 
 export default function FleetUtilizationAnalytics({ rows = [] }) {
+  const { t } = useI18n();
+  const dayFmt = makeDayFmt(t);
+
   // Fleet-wide day split. Summed from the rows rather than taken from `summary`
   // so it tracks the status/search filters the user has applied.
   const split = useMemo(() => {
@@ -50,46 +55,42 @@ export default function FleetUtilizationAnalytics({ rows = [] }) {
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
       <SectionCard
-        title="Where the fleet's time goes"
-        subtitle="In-service days across the cars in this filter"
+        title={t("Where the fleet's time goes")}
+        subtitle={t('In-service days across the cars in this filter')}
         bodyClass="p-5"
       >
         {totalDays > 0 ? (
           <>
             <CompositionDonut
               segments={[
-                { label: 'Rented', value: split.rented, color: 'emerald' },
-                { label: 'In maintenance', value: split.maintenance, color: 'red' },
-                { label: 'Idle', value: split.idle, color: 'slate' },
+                { label: t('Rented'), value: split.rented, color: 'emerald' },
+                { label: t('In maintenance'), value: split.maintenance, color: 'red' },
+                { label: t('Idle'), value: split.idle, color: 'slate' },
               ]}
               total={totalDays}
-              centerLabel="In-service days"
+              centerLabel={t('In-service days')}
               format={dayFmt}
               size={150}
               stroke={20}
             />
             <p className="mt-4 border-t border-slate-100 pt-3 text-xs leading-relaxed text-slate-500">
-              <span className="font-semibold text-emerald-600">
-                {Math.round((split.rented / totalDays) * 100)}%
-              </span>{' '}
-              of fleet capacity earned. The other{' '}
-              <span className="font-semibold text-slate-700">
-                {num(Math.round(split.maintenance + split.idle))} days
-              </span>{' '}
-              sat in the workshop or idle.
+              {t('{pct}% of fleet capacity earned. The other {days} days sat in the workshop or idle.', {
+                pct: Math.round((split.rented / totalDays) * 100),
+                days: num(Math.round(split.maintenance + split.idle)),
+              })}
             </p>
           </>
         ) : (
           <div className="flex h-[176px] items-center justify-center text-sm text-slate-400">
-            No in-service days in this window.
+            {t('No in-service days in this window.')}
           </div>
         )}
       </SectionCard>
 
       <SectionCard
         className="lg:col-span-2"
-        title="Downtime leaderboard"
-        subtitle="Cars losing the most days to the workshop"
+        title={t('Downtime leaderboard')}
+        subtitle={t('Cars losing the most days to the workshop')}
         bodyClass="p-5"
       >
         <RankedBar
@@ -97,13 +98,18 @@ export default function FleetUtilizationAnalytics({ rows = [] }) {
           showRank
           color="red"
           format={dayFmt}
-          valueLabel="Workshop days"
-          tooltip={(r) =>
-            `${num(r.visits)} workshop visit${r.visits === 1 ? '' : 's'}` +
-            (r.util != null ? ` · ${r.util}% utilized` : '') +
-            (r.down != null ? ` · ${r.down}% downtime` : '')
-          }
-          empty="No cars with this metric in the current filter."
+          valueLabel={t('Workshop days')}
+          tooltip={(r) => {
+            const parts = [
+              r.visits === 1
+                ? t('1 workshop visit')
+                : t('{n} workshop visits', { n: num(r.visits) }),
+            ];
+            if (r.util != null) parts.push(t('{n}% utilized', { n: r.util }));
+            if (r.down != null) parts.push(t('{n}% downtime', { n: r.down }));
+            return parts.join(' · ');
+          }}
+          empty={t('No cars with this metric in the current filter.')}
         />
       </SectionCard>
     </div>

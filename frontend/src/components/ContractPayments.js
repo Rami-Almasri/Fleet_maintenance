@@ -8,8 +8,10 @@ import DataTable, { SectionCard } from './ui/Table';
 import MetricCard, { MetricGrid } from './ui/MetricCard';
 import Icon from './ui/Icon';
 import { Input, Select, Textarea } from './ui/Field';
+import { useI18n } from '../i18n/I18nContext';
 import { aed2, fmtDate } from '../lib/format';
 
+// `value` is the API enum; `label` is an English phrase key resolved through t() at render time.
 export const PAYMENT_METHODS = [
   { value: 'cash', label: 'Cash' },
   { value: 'card', label: 'Card' },
@@ -18,7 +20,10 @@ export const PAYMENT_METHODS = [
   { value: 'online', label: 'Online' },
   { value: 'other', label: 'Other' },
 ];
-const methodLabel = (v) => PAYMENT_METHODS.find((m) => m.value === v)?.label || v || '—';
+const methodLabel = (v, t) => {
+  const found = PAYMENT_METHODS.find((m) => m.value === v);
+  return found ? t(found.label) : (v || '—');
+};
 
 const EMPTY = { amount: '', paid_on: '', method: 'cash', invoice_id: '', reference: '', notes: '' };
 
@@ -29,6 +34,7 @@ const EMPTY = { amount: '', paid_on: '', method: 'cash', invoice_id: '', referen
  */
 export default function ContractPayments({ contract, onChanged }) {
   const { can } = usePermissions();
+  const { t } = useI18n();
   const toast = useToast();
   const canManage = can('billing.manage');
   const payments = contract.payments || [];
@@ -82,30 +88,30 @@ export default function ContractPayments({ contract, onChanged }) {
       };
       if (editing) {
         await api.post(`/Payment/${editing.id}`, payload);
-        toast.success('Payment updated');
+        toast.success(t('Payment updated'));
       } else {
         await api.post('/Payment', payload);
-        toast.success('Payment recorded');
+        toast.success(t('Payment recorded'));
       }
       setOpen(false);
       onChanged?.();
     } catch (e) {
       const r = e.response?.data;
-      if (r?.errors) { setErrors(r.errors); toast.error('Please fix the highlighted fields'); }
-      else toast.error(r?.message || r?.msg || 'Could not save the payment');
+      if (r?.errors) { setErrors(r.errors); toast.error(t('Please fix the highlighted fields')); }
+      else toast.error(r?.message || r?.msg || t('Could not save the payment'));
     } finally {
       setSaving(false);
     }
   };
 
   const remove = async (p) => {
-    if (!window.confirm(`Delete payment ${p.payment_ref} (${aed2(p.amount)})? This cannot be undone.`)) return;
+    if (!window.confirm(t('Delete payment {ref} ({amount})? This cannot be undone.', { ref: p.payment_ref, amount: aed2(p.amount) }))) return;
     try {
       await api.delete(`/Payment/${p.id}`);
-      toast.success('Payment deleted');
+      toast.success(t('Payment deleted'));
       onChanged?.();
     } catch (e) {
-      toast.error(e.response?.data?.message || 'Could not delete the payment');
+      toast.error(e.response?.data?.message || t('Could not delete the payment'));
     }
   };
 
@@ -113,32 +119,32 @@ export default function ContractPayments({ contract, onChanged }) {
   // actions column is only rendered for managers (preserves the permission gate).
   const columns = [
     {
-      key: 'receipt', header: 'Receipt', cellClass: 'font-medium text-slate-900',
+      key: 'receipt', header: t('Receipt'), cellClass: 'font-medium text-slate-900',
       render: (p) => (
         <>
           {p.payment_ref || '—'}
-          {p.reference && <p className="mt-0.5 text-xs font-normal text-slate-400">Ref: {p.reference}</p>}
+          {p.reference && <p className="mt-0.5 text-xs font-normal text-slate-400">{t('Ref: {reference}', { reference: p.reference })}</p>}
           {p.notes && <p className="mt-0.5 text-xs font-normal text-slate-400">{p.notes}</p>}
         </>
       ),
     },
-    { key: 'date', header: 'Date', cellClass: 'text-slate-500', render: (p) => fmtDate(p.paid_on) },
-    { key: 'method', header: 'Method', cellClass: 'capitalize text-slate-600', render: (p) => methodLabel(p.method) },
+    { key: 'date', header: t('Date'), cellClass: 'text-slate-500', render: (p) => fmtDate(p.paid_on) },
+    { key: 'method', header: t('Method'), cellClass: 'capitalize text-slate-600', render: (p) => methodLabel(p.method, t) },
     {
-      key: 'invoice', header: 'For invoice', cellClass: 'text-slate-500', tooltip: 'Invoice this receipt is tied to, or contract-level if none.',
+      key: 'invoice', header: t('For invoice'), cellClass: 'text-slate-500', tooltip: t('Invoice this receipt is tied to, or contract-level if none.'),
       render: (p) => p.invoice_ref || <span className="text-slate-300">—</span>,
     },
     {
-      key: 'amount', header: 'Amount', align: 'right', cellClass: 'tabular-nums font-medium text-emerald-600',
+      key: 'amount', header: t('Amount'), align: 'right', cellClass: 'tabular-nums font-medium text-emerald-600',
       render: (p) => aed2(p.amount),
     },
     ...(canManage ? [{
-      key: 'actions', header: 'Actions', align: 'right',
+      key: 'actions', header: t('Actions'), align: 'right',
       render: (p) => (
         <span className="inline-flex gap-2">
-          <button onClick={() => openEdit(p)} className="text-xs font-medium text-indigo-600 hover:text-indigo-700">Edit</button>
+          <button onClick={() => openEdit(p)} className="text-xs font-medium text-indigo-600 hover:text-indigo-700">{t('Edit')}</button>
           <span className="text-slate-200">·</span>
-          <button onClick={() => remove(p)} className="text-xs font-medium text-red-500 hover:text-red-600">Delete</button>
+          <button onClick={() => remove(p)} className="text-xs font-medium text-red-500 hover:text-red-600">{t('Delete')}</button>
         </span>
       ),
     }] : []),
@@ -150,31 +156,33 @@ export default function ContractPayments({ contract, onChanged }) {
       {payments.length > 0 && (
         <MetricGrid cols={3}>
           <MetricCard
-            label="Total paid"
+            label={t('Total paid')}
             value={aed2(total)}
             tone="emerald"
             icon={<Icon.Cash className="h-5 w-5" />}
-            hint={`${payments.length} receipt${payments.length === 1 ? '' : 's'}`}
-            tooltip="Sum of all payments / receipts recorded against this contract."
+            hint={payments.length === 1 ? t('1 receipt') : t('{n} receipts', { n: payments.length })}
+            tooltip={t('Sum of all payments / receipts recorded against this contract.')}
           />
         </MetricGrid>
       )}
 
       <SectionCard
-        title="Payments / Receipts"
-        subtitle="What has been collected against this contract — newest first."
-        actions={canManage ? <Button variant="secondary" size="sm" onClick={openNew}><Icon.Plus className="h-4 w-4" /> Add payment</Button> : null}
+        title={t('Payments / Receipts')}
+        subtitle={t('What has been collected against this contract — newest first.')}
+        actions={canManage ? <Button variant="secondary" size="sm" onClick={openNew}><Icon.Plus className="h-4 w-4" /> {t('Add payment')}</Button> : null}
       >
         {payments.length === 0 ? (
           <div className="px-5 py-10 text-center text-sm text-slate-400">
-            No payments recorded yet{canManage ? ' — use “Add payment” above.' : '.'}
+            {canManage
+              ? t('No payments recorded yet — use “Add payment” above.')
+              : t('No payments recorded yet.')}
           </div>
         ) : (
           <DataTable
             columns={columns}
             rows={payments}
             rowKey={(p) => p.id}
-            empty="No payments recorded yet."
+            empty={t('No payments recorded yet.')}
           />
         )}
       </SectionCard>
@@ -182,34 +190,34 @@ export default function ContractPayments({ contract, onChanged }) {
       <Modal
         open={open}
         onClose={() => setOpen(false)}
-        title={editing ? `Edit payment ${editing.payment_ref || ''}` : 'Record payment'}
-        subtitle="Anchored to this contract — optionally tied to one of its invoices"
+        title={editing ? t('Edit payment {ref}', { ref: editing.payment_ref || '' }) : t('Record payment')}
+        subtitle={t('Anchored to this contract — optionally tied to one of its invoices')}
         size="lg"
         footer={(
           <>
-            <Button variant="secondary" onClick={() => setOpen(false)} disabled={saving}>Cancel</Button>
-            <Button onClick={submit} loading={saving}>{editing ? 'Save changes' : 'Record payment'}</Button>
+            <Button variant="secondary" onClick={() => setOpen(false)} disabled={saving}>{t('Cancel')}</Button>
+            <Button onClick={submit} loading={saving}>{editing ? t('Save changes') : t('Record payment')}</Button>
           </>
         )}
       >
         <div className="space-y-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <Input label="Amount (AED)" type="number" step="0.01" min="0.01" value={form.amount} onChange={set('amount')} error={err('amount')} required />
-            <Input label="Paid on" type="date" value={form.paid_on} onChange={set('paid_on')} error={err('paid_on')} />
-            <Select label="Method" value={form.method} onChange={set('method')} error={err('method')}>
-              {PAYMENT_METHODS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+            <Input label={t('Amount (AED)')} type="number" step="0.01" min="0.01" value={form.amount} onChange={set('amount')} error={err('amount')} required />
+            <Input label={t('Paid on')} type="date" value={form.paid_on} onChange={set('paid_on')} error={err('paid_on')} />
+            <Select label={t('Method')} value={form.method} onChange={set('method')} error={err('method')}>
+              {PAYMENT_METHODS.map((m) => <option key={m.value} value={m.value}>{t(m.label)}</option>)}
             </Select>
           </div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Select label="Against invoice (optional)" value={form.invoice_id} onChange={set('invoice_id')} error={err('invoice_id')}>
-              <option value="">— None (contract-level) —</option>
+            <Select label={t('Against invoice (optional)')} value={form.invoice_id} onChange={set('invoice_id')} error={err('invoice_id')}>
+              <option value="">{t('— None (contract-level) —')}</option>
               {invoices.map((inv) => (
                 <option key={inv.id} value={inv.id}>{inv.number} · {aed2(inv.total_after_vat)}</option>
               ))}
             </Select>
-            <Input label="Reference (txn / cheque no)" value={form.reference} onChange={set('reference')} error={err('reference')} />
+            <Input label={t('Reference (txn / cheque no)')} value={form.reference} onChange={set('reference')} error={err('reference')} />
           </div>
-          <Textarea label="Notes" rows={2} value={form.notes} onChange={set('notes')} error={err('notes')} />
+          <Textarea label={t('Notes')} rows={2} value={form.notes} onChange={set('notes')} error={err('notes')} />
         </div>
       </Modal>
     </div>

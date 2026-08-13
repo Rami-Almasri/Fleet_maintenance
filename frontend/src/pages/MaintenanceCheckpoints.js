@@ -79,7 +79,7 @@ function EtaCell({ r }) {
             ? <span className="tabular-nums text-slate-700">{t('checkpointsPage.daysLeft', { n: r.days_left })}</span>
             : <span className="text-slate-400">{t('checkpointsPage.noEta')}</span>}
       {r.expected_on && (
-        <p className="text-[11px] text-slate-400">{fmtDate(r.expected_on)}{r.is_estimated ? ' (est.)' : ''}</p>
+        <p className="text-[11px] text-slate-400">{fmtDate(r.expected_on)}{r.is_estimated ? ` ${t('(est.)')}` : ''}</p>
       )}
     </div>
   );
@@ -151,7 +151,7 @@ function LastCheckpointCell({ r }) {
       {workshop && <p className="mt-0.5 text-[11px] font-medium text-slate-500">{t('checkpointsPage.workshop')} {workshop}</p>}
       {c.summary && <p className="mt-0.5 truncate text-[11px] text-slate-500" title={c.summary}>“{c.summary}”</p>}
       <p className="mt-1 text-[11px] text-slate-400">
-        {c.by ? `Updated by ${c.by}` : 'Updated'}{r.last_checkpoint_at ? ` · ${fmtDate(r.last_checkpoint_at)}` : ''}
+        {c.by ? t('Updated by {who}', { who: c.by }) : t('Updated')}{r.last_checkpoint_at ? ` · ${fmtDate(r.last_checkpoint_at)}` : ''}
       </p>
     </div>
   );
@@ -199,8 +199,8 @@ export default function MaintenanceCheckpoints() {
     const row = items.find((r) => (ticketId && String(r.ticket_id) === String(ticketId))
       || (vehicleId && String(r.vehicle_id) === String(vehicleId)));
     deepLinkHandled.current = true;
-    if (row) setActive({ ticketId: row.ticket_id, label: row.plate || `Ticket #${row.ticket_id}`, sub: row.garage });
-  }, [loading, items, searchParams]);
+    if (row) setActive({ ticketId: row.ticket_id, label: row.plate || t('Ticket #{n}', { n: row.ticket_id }), sub: row.garage });
+  }, [loading, items, searchParams, t]);
 
   // Open the checkpoint form for a row. Contract-sourced rows have no ticket until now — lazily link one
   // (via ensure-ticket) before opening the modal, so the write path is identical for both sources.
@@ -208,16 +208,16 @@ export default function MaintenanceCheckpoints() {
   const openCheckpoint = async (r) => {
     const key = `${r.source}-${r.ticket_id ?? r.contract_id}`;
     if (r.ticket_id) {
-      setActive({ ticketId: r.ticket_id, label: r.plate || `Ticket #${r.ticket_id}`, sub: r.garage });
+      setActive({ ticketId: r.ticket_id, label: r.plate || t('Ticket #{n}', { n: r.ticket_id }), sub: r.garage });
       return;
     }
     setOpening(key);
     try {
       const ticketId = await resolveCheckpointTicket(r);
-      if (ticketId) setActive({ ticketId, label: r.plate || `Ticket #${ticketId}`, sub: r.garage });
-      else toast.error('Could not open a checkpoint for this car.');
+      if (ticketId) setActive({ ticketId, label: r.plate || t('Ticket #{n}', { n: ticketId }), sub: r.garage });
+      else toast.error(t('Could not open a checkpoint for this car.'));
     } catch (e) {
-      toast.error('Could not open a checkpoint for this car.');
+      toast.error(t('Could not open a checkpoint for this car.'));
     } finally {
       setOpening(null);
     }
@@ -253,14 +253,14 @@ export default function MaintenanceCheckpoints() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <Link to="/apps/maintenance" className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-400 hover:text-slate-600">
-              <Icon.ArrowRight className="h-3 w-3 rotate-180" /> Maintenance
+              <Icon.ArrowRight className="h-3 w-3 rotate-180 rtl:-scale-x-100" /> {t('Maintenance')}
             </Link>
             <h1 className="flex items-center gap-2 font-display text-2xl font-bold tracking-tight text-slate-900">
-              Maintenance Progress
-              <InfoTip content="The daily operational queue for the maintenance supervisors. Each car in the workshop shows its ETA, a progress status derived automatically from the promised date (On Schedule / Overdue / Ready for Pickup), and what the workshop last reported. File an update to record the latest ETA, the reason it moved, a note, and photo/video evidence. Reminders arrive automatically before a car goes overdue." />
+              {t('Maintenance Progress')}
+              <InfoTip content={t('The daily operational queue for the maintenance supervisors. Each car in the workshop shows its ETA, a progress status derived automatically from the promised date (On Schedule / Overdue / Ready for Pickup), and what the workshop last reported. File an update to record the latest ETA, the reason it moved, a note, and photo/video evidence. Reminders arrive automatically before a car goes overdue.')} />
             </h1>
             <p className="mt-1 max-w-3xl text-sm text-slate-500">
-              Every car in the workshop · file checkpoints, track ETAs, and see why a job is delayed.
+              {t('Every car in the workshop · file checkpoints, track ETAs, and see why a job is delayed.')}
             </p>
           </div>
           <button
@@ -268,7 +268,7 @@ export default function MaintenanceCheckpoints() {
             onClick={() => load()}
             className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
           >
-            <Icon.Refresh className="h-4 w-4" /> Refresh
+            <Icon.Refresh className="h-4 w-4" /> {t('Refresh')}
           </button>
         </div>
 
@@ -282,14 +282,14 @@ export default function MaintenanceCheckpoints() {
                 onClick={() => setFStatus((prev) => (prev === c.key ? 'all' : c.key))}
                 className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ring-1 transition ${c.cls} ${fStatus === c.key ? 'ring-2 ring-offset-1' : 'opacity-90 hover:opacity-100'}`}
               >
-                {c.label}
+                {t(c.label)}
                 <span className="tabular-nums">{summary[c.key] ?? 0}</span>
               </button>
             ))}
             <span className="ms-1 text-xs text-slate-400">
-              {summary.total ?? 0} in workshop
+              {t('{n} in workshop', { n: summary.total ?? 0 })}
               {(summary.contract != null || summary.workshop != null)
-                && ` · ${summary.contract ?? 0} contract · ${summary.workshop ?? 0} workshop`}
+                && ` · ${t('{n} contract', { n: summary.contract ?? 0 })} · ${t('{n} workshop', { n: summary.workshop ?? 0 })}`}
             </span>
           </div>
         )}
@@ -314,11 +314,11 @@ export default function MaintenanceCheckpoints() {
             className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 outline-none focus:border-indigo-500"
           >
             <option value="all">{t('checkpointsPage.allStatuses')}</option>
-            {SUMMARY_CHIPS.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+            {SUMMARY_CHIPS.map((c) => <option key={c.key} value={c.key}>{t(c.label)}</option>)}
           </select>
           {activeFilters && (
             <button type="button" onClick={() => { setQ(''); setFStatus('all'); }} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-500 hover:bg-slate-50">
-              Clear
+              {t('Clear')}
             </button>
           )}
         </div>
@@ -331,7 +331,7 @@ export default function MaintenanceCheckpoints() {
             </div>
           ) : rows.length === 0 ? (
             <p className="py-16 text-center text-sm text-slate-400">
-              {items.length === 0 ? 'No cars are in the workshop right now.' : 'No cars match the current filters.'}
+              {items.length === 0 ? t('No cars are in the workshop right now.') : t('No cars match the current filters.')}
             </p>
           ) : (
             <div className="overflow-x-auto">
@@ -357,14 +357,14 @@ export default function MaintenanceCheckpoints() {
                         <div className="flex items-center gap-2">
                           {r.vehicle_id
                             ? <Link to={`/vehicles/${r.vehicle_id}?tab=checkpoints`} className="font-semibold text-slate-800 hover:text-indigo-600">{r.plate || `#${r.vehicle_id}`}</Link>
-                            : <span className="font-semibold text-slate-800">Ticket #{r.ticket_id}</span>}
+                            : <span className="font-semibold text-slate-800">{t('Ticket #{n}', { n: r.ticket_id })}</span>}
                           <SourceBadge source={r.source} />
                         </div>
                         {r.car && <p className="text-[11px] text-slate-400">{r.car}</p>}
                       </td>
                       <td className="px-4 py-3"><ProblemCell row={r} /></td>
                       <td className="px-4 py-3 text-slate-600">{r.garage || <span className="text-slate-300">—</span>}</td>
-                      <td className="px-4 py-3 text-slate-600">{WF_STAGE_LABEL[r.workflow_status] || r.workflow_status || '—'}</td>
+                      <td className="px-4 py-3 text-slate-600">{WF_STAGE_LABEL[r.workflow_status] ? t(WF_STAGE_LABEL[r.workflow_status]) : (r.workflow_status || '—')}</td>
                       <td className="px-4 py-3"><EtaCell r={r} /></td>
                       <td className="px-4 py-3"><StatusChip status={r.status} /></td>
                       <td className="px-4 py-3"><LastCheckpointCell r={r} /></td>
@@ -379,7 +379,7 @@ export default function MaintenanceCheckpoints() {
                           onClick={() => openCheckpoint(r)}
                           className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-60"
                         >
-                          <Icon.Flag className="h-3.5 w-3.5" /> Checkpoint
+                          <Icon.Flag className="h-3.5 w-3.5" /> {t('Checkpoint')}
                         </button>
                       </td>
                     </tr>
@@ -403,7 +403,7 @@ export default function MaintenanceCheckpoints() {
         <CheckpointModal
           open={!!active}
           ticketId={active.ticketId}
-          title={`Checkpoint · ${active.label}`}
+          title={`${t('Checkpoint')} · ${active.label}`}
           subtitle={active.sub || undefined}
           onClose={closeModal}
           onDone={(msg) => { if (msg) toast.success(msg); load({ silent: true }); }}

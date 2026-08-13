@@ -29,6 +29,8 @@ import Icon from '../ui/Icon';
 import { Input, Textarea, Select } from '../ui/Field';
 import FindingsList from './FindingsList';
 import FindingsPicker from './FindingsPicker';
+import FaultDetailPicker from './FaultDetailPicker';
+import { buildDetails, findingsMissingLocation, withDetails } from '../../lib/faultLocations';
 import RequiredPartsEditor, { cleanRequiredParts } from './RequiredPartsEditor';
 import DispatchPlan from './DispatchPlan';
 import DecisionCards from './DecisionCards';
@@ -182,7 +184,7 @@ const baseTone = (action) => (['ready', 'serviced'].includes(action) ? 'success'
 
 // Compact "who/when" timestamp for the follow-up log: relative for recent notes, an absolute
 // date+time once they age past a day. `t` localizes the relative phrasing.
-function fmtWhen(iso, t) {
+function fmtWhen(iso, t, lang) {
   if (!iso) return '';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
@@ -190,7 +192,9 @@ function fmtWhen(iso, t) {
   if (diff < 60) return t('time.justNow');
   if (diff < 3600) return t('time.minutesAgo', { n: Math.round(diff / 60) });
   if (diff < 86400) return t('time.hoursAgo', { n: Math.round(diff / 3600) });
-  return `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}, ${d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`;
+  // Gregorian calendar + Latin digits under Arabic — a Hijri/Arabic-Indic stamp would be wrong here.
+  const loc = lang === 'ar' ? 'ar-AE-u-ca-gregory-nu-latn' : undefined;
+  return `${d.toLocaleDateString(loc, { month: 'short', day: 'numeric' })}, ${d.toLocaleTimeString(loc, { hour: '2-digit', minute: '2-digit' })}`;
 }
 
 // Up-to-two-letter avatar initials for the note's author.
@@ -199,7 +203,7 @@ const initialsOf = (name) =>
 
 // One follow-up "bubble": author avatar + name, a compact timestamp, and the note body. The most
 // recent note (just saved) gets a green confirmation highlight so the writer sees it landed.
-function FollowUpBubble({ note, fresh, t }) {
+function FollowUpBubble({ note, fresh, t, lang }) {
   return (
     <li className={`rounded-xl border p-3 shadow-sm transition ${fresh ? 'border-emerald-300 bg-emerald-50/60 ring-1 ring-emerald-200' : 'border-slate-200 bg-white'}`}>
       <div className="flex items-center justify-between gap-2">
@@ -209,7 +213,7 @@ function FollowUpBubble({ note, fresh, t }) {
         </span>
         <span className="shrink-0 text-[11px] text-slate-400">
           {fresh && <span className="me-1.5 font-semibold text-emerald-600">{t('time.saved')}</span>}
-          {fmtWhen(note.at, t)}
+          {fmtWhen(note.at, t, lang)}
         </span>
       </div>
       <p className="mt-1.5 whitespace-pre-wrap break-words text-sm leading-relaxed text-slate-700">{note.text}</p>
@@ -219,17 +223,17 @@ function FollowUpBubble({ note, fresh, t }) {
 
 // A span of seconds → a compact "3d 4h" / "15m" badge (top two non-zero units; sub-minute → "<1m").
 // null whenever the span isn't measurable yet, so a stage that hasn't completed reads as nothing.
-function fmtDuration(secs) {
+function fmtDuration(secs, t) {
   if (secs == null || !Number.isFinite(secs) || secs < 0) return null;
   const s = Math.floor(secs);
   const d = Math.floor(s / 86400);
   const h = Math.floor((s % 86400) / 3600);
   const m = Math.floor((s % 3600) / 60);
   const parts = [];
-  if (d) parts.push(`${d}d`);
-  if (h) parts.push(`${h}h`);
-  if (m) parts.push(`${m}m`);
-  if (!parts.length) return '<1m';
+  if (d) parts.push(t('{n}d', { n: d }));
+  if (h) parts.push(t('{n}h', { n: h }));
+  if (m) parts.push(t('{n}m', { n: m }));
+  if (!parts.length) return t('<1m');
   return parts.slice(0, 2).join(' ');
 }
 
@@ -240,7 +244,7 @@ const elapsedSecs = (iso) => (iso ? Math.max(0, (Date.now() - new Date(iso).getT
 // One stage chip: the step name + a Duration badge. A completed stage shows its measured span; the
 // step currently in progress shows the running clock (amber); an unreached step is skipped entirely.
 function StageChip({ label, icon: Ico, secs, running, t }) {
-  const text = fmtDuration(secs);
+  const text = fmtDuration(secs, t);
   if (text == null) return null;
   return (
     <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs">
@@ -274,7 +278,7 @@ function StageTimeline({ ticket, t }) {
   // Total downtime: test_started → returned, or live to now while the car is still out.
   const totalRunning = !tm.returned_at;
   const totalSecs = dur.total_downtime ?? elapsedSecs(tm.test_started_at);
-  const totalText = fmtDuration(totalSecs);
+  const totalText = fmtDuration(totalSecs, t);
 
   return (
     <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3">
@@ -576,8 +580,8 @@ function HandoverFields({
   );
 }
 
-export default function TicketActionModal({ action, ticket, vehicles = [], garages = [], findingsCatalog = [], keywordMeta = {}, faultCausesCatalog = {}, assignableDrivers = [], allowedTypes = null, onClose, onDone }) {
-  const { t, tf } = useI18n();
+export default function TicketActionModal({ action, ticket, vehicles = [], garages = [], findingsCatalog = [], keywordMeta = {}, faultCausesCatalog = {}, locationCatalog = { groups: [], policy: {}, maxQuantity: 40 }, assignableDrivers = [], allowedTypes = null, onClose, onDone }) {
+  const { t, tf, lang } = useI18n();
   const { user: currentUser } = useAuth();
   // Gates the office-voice "I think it needs a test now" choice below. maintenance.manage IS the
   // Controller authority (Lin & Marwa); super-admin passes through can() unconditionally. Advisory
@@ -697,6 +701,12 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   // Symptom → Root-Cause diagnosis: { [symptomText]: { root_cause, root_cause_id } }. Shared by the
   // 'decide' (inspector symptoms) and 'finding' (garage tags) steps — only one action is live at a time.
   const [causes, setCauses] = useState({});
+  // WHAT IS WRONG, HOW MANY, AND WHERE — the structured detail per fault:
+  //   { [symptomText]: { quantity: number, locations: string[] } }
+  // Shared by the two intake steps the same way `causes` is, since only one action is live at a
+  // time. Empty for every fault the inspector does not localise, which is the normal case for a
+  // type whose policy says it has nowhere to point at.
+  const [details, setDetails] = useState({});
   const [driverId, setDriverId] = useState('');          // delegate: chosen logistics driver
   const [recommended, setRecommended] = useState('');
   // "Requires Parts" — the inspector's TECHNICAL list of what the repair will need. Recorded with the
@@ -824,9 +834,18 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
     [garages],
   );
 
+  // Drivers first, then the supervisors — who are now assignable too, for the days no driver is free.
+  // The role rides in the sub-line so the supervisor can see he is booking a colleague off his own bench
+  // rather than picking a driver by mistake. The list already arrives sorted; we only label it.
   const driverOptions = useMemo(
-    () => assignableDrivers.map((d) => ({ id: d.id, label: d.name, sub: d.email })),
-    [assignableDrivers],
+    () => assignableDrivers.map((d) => ({
+      id: d.id,
+      label: d.name,
+      sub: d.role === 'supervisor'
+        ? [t('workflow.assign.supervisor'), d.email].filter(Boolean).join(' · ')
+        : d.email,
+    })),
+    [assignableDrivers, t],
   );
 
   // ── Odometer Continuity — the "Previous Odometer" the driver should expect + the live verdict ──
@@ -939,7 +958,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   // delta still reads "Garage test drive"), we keep it STRICT — the driver captures this reading by hand,
   // so a big/typo gap (e.g. 849991 vs 84999) must force the confirm + note, never be silently waived.
   const ignoreOdoTolerance = stageIgnoresTolerance(contStage) && action !== 'collectFromGarage';
-  const odoNeedsConfirm = needsConfirm(continuity?.status, ignoreOdoTolerance);
+  const odoNeedsConfirm = needsConfirm(continuity?.status, ignoreOdoTolerance, continuity?.stage);
   // A reading more than 10 km off the previous one (either direction) demands a written note — UNLESS this
   // is a garage transfer, where a big forward gap is the whole point of the trip. This also forces the
   // acknowledgment checkbox (see OdometerContinuityHint), so the ack requirement is the union.
@@ -1061,7 +1080,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
       case 'typechange':
         return { url: `${base}/${ticket.id}/type`, body: { maintenance_type: maintType }, method: 'patch' };
       case 'decide':
-        return { url: `${base}/${ticket.id}/report`, body: { requires_maintenance: requiresMaintenance, symptoms, causes: buildCauses(symptoms), fault_severity: requiresMaintenance ? (faultSeverity || null) : null, recommended_action: recommended || null, notes: notes || null, maintenance_type: maintType || null, repair_location: requiresMaintenance ? repairLocation : null, report_odometer: odometer ? Number(odometer) : null, odometer_note: odoNote.trim() || null, odometer_confirmed: odoAckRequired ? odoConfirmed : null, required_parts: requiresMaintenance && requiresParts ? cleanRequiredParts(requiredParts) : null } };
+        return { url: `${base}/${ticket.id}/report`, body: { requires_maintenance: requiresMaintenance, symptoms, causes: buildCauses(symptoms), details: buildDetails(symptoms, details, locationCatalog.policy), fault_severity: requiresMaintenance ? (faultSeverity || null) : null, recommended_action: recommended || null, notes: notes || null, maintenance_type: maintType || null, repair_location: requiresMaintenance ? repairLocation : null, report_odometer: odometer ? Number(odometer) : null, odometer_note: odoNote.trim() || null, odometer_confirmed: odoAckRequired ? odoConfirmed : null, required_parts: requiresMaintenance && requiresParts ? cleanRequiredParts(requiredParts) : null } };
       case 'delegate':
         // No task is sent — the backend derives pick-up vs drop-off from where the car physically is.
         return { url: `${base}/${ticket.id}/delegate`, body: { driver_id: Number(driverId) } };
@@ -1179,7 +1198,13 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
         // repair severity (minor auto-closes, major routes to the final QA re-inspection).
         return { url: `${base}/${ticket.id}/arrive-at-park`, body: { notes: notes || null } };
       case 'finding': {
-        const list = findingTags.map((text) => ({ text, severity: findingSeverity || null, root_cause: causes[text]?.root_cause || null, root_cause_id: causes[text]?.root_cause_id ?? null }));
+        // Each finding carries its own count + places (withDetails leaves a fault that has neither
+        // exactly as it was, so a mechanic who skips the detail step files what he always did).
+        const list = withDetails(
+          findingTags.map((text) => ({ text, severity: findingSeverity || null, root_cause: causes[text]?.root_cause || null, root_cause_id: causes[text]?.root_cause_id ?? null })),
+          details,
+          locationCatalog.policy,
+        );
         return { url: `${base}/${ticket.id}/findings`, body: { findings: list } };
       }
       case 'reinspect': {
@@ -1246,7 +1271,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
     // is no longer gated here — it can be set later. The end-of-test-drive odometer is OPTIONAL here
     // (the inspector may record it), but if entered it must clear the same continuity/>10 km note gate
     // as every other capture (odoGateBlocked is false when blank).
-    if (action === 'decide') return (requiresMaintenance && (!faultSeverity || !rootCausesComplete(symptoms, faultCausesCatalog, causes))) || clearanceWithFindings || odoGateBlocked;
+    if (action === 'decide') return (requiresMaintenance && (!faultSeverity || !rootCausesComplete(symptoms, faultCausesCatalog, causes) || missingLocations.length > 0)) || clearanceWithFindings || odoGateBlocked;
     if (action === 'followup') return !followNote.trim();
     if (action === 'dispatch') return !odometer || Number(odometer) < 1 || !photo || compressing || odoGateBlocked;
     // Recovery (towing): the odometer + its photo AND the recovery unit name are all mandatory (the
@@ -1269,7 +1294,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
         || invoiceVarianceBlocked({ rows, receiptTotal, variance: varianceExplanation });
     }
     // Garage findings: at least one tag, and every tag with preset causes must carry a diagnosed cause.
-    if (action === 'finding') return findingTags.length === 0 || !rootCausesComplete(findingTags, faultCausesCatalog, causes);
+    if (action === 'finding') return findingTags.length === 0 || !rootCausesComplete(findingTags, faultCausesCatalog, causes) || missingFindingLocations.length > 0;
     if (action === 'delegate') return !driverId;
     if (action === 'assign') return !vendorId; // garage required; driver is optional (may go to the pool)
     // Supervisor Video-Review: a re-fix needs a reason; approval is blocked only when we KNOW there's no
@@ -1419,6 +1444,11 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
           // so send '1'/'0' (mirrors odometer_confirmed below).
           fd.append('requires_maintenance', requiresMaintenance ? '1' : '0');
           symptoms.forEach((s) => fd.append('symptoms[]', s));
+          buildDetails(symptoms, details, locationCatalog.policy).forEach((d, i) => {
+            fd.append(`details[${i}][symptom]`, d.symptom);
+            fd.append(`details[${i}][quantity]`, String(d.quantity));
+            d.locations.forEach((slug, j) => fd.append(`details[${i}][locations][${j}]`, slug));
+          });
           buildCauses(symptoms).forEach((c, i) => {
             fd.append(`causes[${i}][symptom]`, c.symptom);
             if (c.root_cause) fd.append(`causes[${i}][root_cause]`, c.root_cause);
@@ -1561,6 +1591,10 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
   const decideSteps = requiresMaintenance ? [1, 2, 3, 4, 5] : [1, 2, 3, 4];
   const lastDecideStep = decideSteps[decideSteps.length - 1];
   const causesComplete = rootCausesComplete(symptoms, faultCausesCatalog, causes);
+  // The client half of the location gate — the same rule the API enforces, applied here so the
+  // inspector is stopped on the screen where he can still fix it rather than by a rejected submit.
+  const missingLocations = findingsMissingLocation(symptoms, locationCatalog.policy, details);
+  const missingFindingLocations = findingsMissingLocation(findingTags, locationCatalog.policy, details);
   const openStep = decideSteps.includes(activeStep) ? activeStep : lastDecideStep;
   const stepProps = (n, summary, done) => ({
     n,
@@ -1704,7 +1738,8 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
               </div>
               {/* A customer complaint is not opened here — it lives in the Complaints Center. */}
               <p className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-[11px] leading-relaxed text-slate-500 ring-1 ring-inset ring-slate-100">
-                Customer complaint? Log it in the <a href="/complaints" className="font-semibold text-indigo-600 hover:underline">Complaints Center</a> instead.
+                {t('Customer complaint? Log it in the Complaints Center instead.')}{' '}
+                <a href="/complaints" className="font-semibold text-indigo-600 hover:underline">{t('Open the Complaints Center')}</a>
               </p>
             </div>
 
@@ -1776,7 +1811,30 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                   </ul>
                 </div>
               )}
-              <FindingsPicker catalog={findingsCatalog} keywordMeta={keywordMeta} value={symptoms} onChange={setSymptoms} locked={lockedFindings} required={requiredFindings} requiredNote={"Required by the oil follow-up — the recall exists because this car needs an oil change."} suggested={dataSuggested} statusConditions={diagConditions} ticketId={ticket?.id ?? null} vehicleId={ticket?.vehicle_id ?? vehicleId ?? null} aiContext="test_findings" />
+              <FindingsPicker catalog={findingsCatalog} keywordMeta={keywordMeta} value={symptoms} onChange={setSymptoms} locked={lockedFindings} required={requiredFindings} requiredNote={t('Required by the oil follow-up — the recall exists because this car needs an oil change.')} suggested={dataSuggested} statusConditions={diagConditions} ticketId={ticket?.id ?? null} vehicleId={ticket?.vehicle_id ?? vehicleId ?? null} aiContext="test_findings" />
+              {/* WHAT IS WRONG, HOW MANY, AND WHERE. Sits inside the findings step rather than as a step of
+                  its own: it is the same question continued — you said Scratch, now say how many and where on
+                  the car. Renders only the faults that HAVE a place (the policy comes from the catalog, so a
+                  new fault type is covered automatically and one with nowhere to point at is skipped). */}
+              {symptoms.length > 0 && (
+                <div className="border-t border-slate-100 pt-3">
+                  <span className="mb-1.5 block text-sm font-medium text-slate-700">{t('faultDetail.title')}</span>
+                  <FaultDetailPicker
+                    symptoms={symptoms}
+                    groups={locationCatalog.groups}
+                    policy={locationCatalog.policy}
+                    maxQuantity={locationCatalog.maxQuantity}
+                    value={details}
+                    onChange={setDetails}
+                  />
+                  {missingLocations.length > 0 && (
+                    <p className="mt-2 flex items-start gap-1.5 rounded-lg bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-800 ring-1 ring-inset ring-amber-300">
+                      <Icon.Alert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+                      {t('faultDetail.blocking', { list: missingLocations.join(', ') })}
+                    </p>
+                  )}
+                </div>
+              )}
             </Step>
 
             {/* STEP 3 — diagnosis: probable cause per symptom, the chronic-fault + prior-repair intelligence
@@ -1794,7 +1852,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
             >
               {symptoms.length > 0 ? (
                 <div>
-                  <span className="mb-1.5 block text-sm font-medium text-slate-700">Probable root cause<Req /></span>
+                  <span className="mb-1.5 block text-sm font-medium text-slate-700">{t('Probable root cause')}<Req /></span>
                   <RootCausePicker symptoms={symptoms} catalog={faultCausesCatalog} value={causes} onChange={setCauses} />
                 </div>
               ) : (
@@ -2809,12 +2867,35 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
           <>
             <div>
               <span className="mb-1.5 block text-sm font-medium text-slate-700">{t('workflow.field.newGarageIssues')}</span>
-              <FindingsPicker catalog={findingsCatalog} keywordMeta={keywordMeta} value={findingTags} onChange={setFindingTags} locked={lockedFindings} required={requiredFindings} requiredNote={"Required by the oil follow-up — the recall exists because this car needs an oil change."} statusConditions={diagConditions} ticketId={ticket?.id ?? null} vehicleId={ticket?.vehicle_id ?? vehicleId ?? null} aiContext="garage_findings" />
+              <FindingsPicker catalog={findingsCatalog} keywordMeta={keywordMeta} value={findingTags} onChange={setFindingTags} locked={lockedFindings} required={requiredFindings} requiredNote={t('Required by the oil follow-up — the recall exists because this car needs an oil change.')} statusConditions={diagConditions} ticketId={ticket?.id ?? null} vehicleId={ticket?.vehicle_id ?? vehicleId ?? null} aiContext="garage_findings" />
+                {/* WHAT IS WRONG, HOW MANY, AND WHERE. Sits inside the findings step rather than as a step of
+                    its own: it is the same question continued — you said Scratch, now say how many and where on
+                    the car. Renders only the faults that HAVE a place (the policy comes from the catalog, so a
+                    new fault type is covered automatically and one with nowhere to point at is skipped). */}
+                {findingTags.length > 0 && (
+                  <div className="border-t border-slate-100 pt-3">
+                    <span className="mb-1.5 block text-sm font-medium text-slate-700">{t('faultDetail.title')}</span>
+                    <FaultDetailPicker
+                      symptoms={findingTags}
+                      groups={locationCatalog.groups}
+                      policy={locationCatalog.policy}
+                      maxQuantity={locationCatalog.maxQuantity}
+                      value={details}
+                      onChange={setDetails}
+                    />
+                    {missingFindingLocations.length > 0 && (
+                      <p className="mt-2 flex items-start gap-1.5 rounded-lg bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-800 ring-1 ring-inset ring-amber-300">
+                        <Icon.Alert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+                        {t('faultDetail.blocking', { list: missingFindingLocations.join(', ') })}
+                      </p>
+                    )}
+                  </div>
+                )}
             </div>
             {/* Symptom → Root-Cause — diagnose each garage-found issue (mandatory where a cause-list exists) */}
             {findingTags.length > 0 && (
               <div>
-                <span className="mb-1.5 block text-sm font-medium text-slate-700">Probable root cause<Req /></span>
+                <span className="mb-1.5 block text-sm font-medium text-slate-700">{t('Probable root cause')}<Req /></span>
                 <RootCausePicker symptoms={findingTags} catalog={faultCausesCatalog} value={causes} onChange={setCauses} />
               </div>
             )}
@@ -2861,8 +2942,8 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                   </p>
                   <p className="mt-1 text-amber-800/80">
                     {inFlight.is_system
-                      ? t('workflow.hint.inFlightBySystem', { when: fmtWhen(inFlight.requested_at, t) })
-                      : t('workflow.hint.inFlightBy', { who: inFlight.requested_by || '—', when: fmtWhen(inFlight.requested_at, t) })}
+                      ? t('workflow.hint.inFlightBySystem', { when: fmtWhen(inFlight.requested_at, t, lang) })
+                      : t('workflow.hint.inFlightBy', { who: inFlight.requested_by || '—', when: fmtWhen(inFlight.requested_at, t, lang) })}
                   </p>
                   {inFlight.note && <p className="mt-1 text-amber-800/80">{t('workflow.hint.inFlightNote', { note: inFlight.note })}</p>}
                   <p className="mt-1.5">{t(isObservation ? 'workflow.hint.inFlightObservation' : 'workflow.hint.inFlightBlocked')}</p>
@@ -2912,7 +2993,10 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
               )}
               {/* A customer issue is NOT an inspection request — route it to the right entity. */}
               <p className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-[11px] leading-relaxed text-slate-500 ring-1 ring-inset ring-slate-100">
-                A customer reported a problem? Log it in the <a href="/complaints" className="font-semibold text-indigo-600 hover:underline">Complaints Center</a>. Just noticed something on return? Use <a href="/driver-observations" className="font-semibold text-indigo-600 hover:underline">Driver Observations</a>.
+                {t('A customer reported a problem? Log it in the Complaints Center. Just noticed something on return? Use Driver Observations.')}{' '}
+                <a href="/complaints" className="font-semibold text-indigo-600 hover:underline">{t('Open the Complaints Center')}</a>
+                {' · '}
+                <a href="/driver-observations" className="font-semibold text-indigo-600 hover:underline">{t('Open Driver Observations')}</a>
               </p>
             </div>
 
@@ -3033,7 +3117,7 @@ export default function TicketActionModal({ action, ticket, vehicles = [], garag
                   {[...followLog]
                     .sort((a, b) => new Date(b.at || 0).getTime() - new Date(a.at || 0).getTime())
                     .map((f, i) => (
-                      <FollowUpBubble key={f.at ? `${f.at}-${i}` : i} note={f} fresh={!!savedAt && f.at === savedAt} t={t} />
+                      <FollowUpBubble key={f.at ? `${f.at}-${i}` : i} note={f} fresh={!!savedAt && f.at === savedAt} t={t} lang={lang} />
                     ))}
                 </ul>
               </div>

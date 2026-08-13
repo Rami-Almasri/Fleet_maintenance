@@ -94,7 +94,16 @@ const DIAG_TONE = {
   green: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
   gray:  'bg-slate-100 text-slate-500 ring-slate-200',
 };
-const DIAG_STATUS_WORD = { overdue: 'Overdue', due: 'Due', ok: 'OK', no_data: '—' };
+// The English here is the catalog KEY; 'no_data' is a dash, which is language-neutral.
+// `ok` resolves through labels.js rather than the phrase catalog: the bare English
+// "OK" there means "understood" (حسنًا), which is the wrong word for a vehicle that
+// is in good condition.
+const DIAG_STATUS_WORD = { overdue: 'Overdue', due: 'Due' };
+const diagStatusWord = (status, t, tf) => {
+  if (status === 'ok') return tf('condition.ok', 'OK');
+  if (DIAG_STATUS_WORD[status]) return t(DIAG_STATUS_WORD[status]);
+  return status === 'no_data' ? '—' : status;
+};
 
 // The four reading modes of a ticket. Anything self-fetching only mounts (and only calls its
 // endpoint) once its tab is opened, so the drawer costs less to open than the old single scroll.
@@ -105,17 +114,24 @@ const TABS = [
   { key: 'history',  en: 'History',       Glyph: Icon.Activity },
 ];
 
+// Arabic must stay on the Gregorian calendar with Latin digits — a bare toLocaleDateString() would
+// render Hijri + Arabic-Indic numerals and break the tabular columns.
+const dateLocale = (lang) => (lang === 'ar' ? 'ar-AE-u-ca-gregory-nu-latn' : undefined);
+const numLocale = (lang) => (lang === 'ar' ? 'ar-AE-u-nu-latn' : undefined);
+// A plain grouped number ("12,480") that stays in Latin digits under Arabic.
+const nfmt = (n, lang) => Number(n).toLocaleString(numLocale(lang));
+
 // A short, locale-formatted day ("13 Jun 2026") from a 'YYYY-MM-DD' string.
-const fmtDay = (d) => {
+const fmtDay = (d, lang) => {
   if (!d) return '—';
   try {
-    return new Date(d).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
+    return new Date(d).toLocaleDateString(dateLocale(lang), { day: '2-digit', month: 'short', year: 'numeric' });
   } catch {
     return d;
   }
 };
 
-const fmtAED = (n) => `AED ${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const fmtAED = (n, lang) => `AED ${Number(n || 0).toLocaleString(numLocale(lang), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 // ── Small presentational helpers ──────────────────────────────────────────────
 
@@ -210,7 +226,7 @@ function JourneyRail({ tk, tone, t }) {
 }
 
 export default function TicketDetailDrawer({ ticketId, summary, can, userId, onAct, onClose, reloadKey = 0, garages = [], findingsCatalog = [] }) {
-  const { t, tf, tp } = useI18n();
+  const { t, tf, tp, lang } = useI18n();
   const [tk, setTk] = useState(summary || null);
   const [tab, setTab] = useState('overview');
   const [photos, setPhotos] = useState([]);
@@ -325,14 +341,18 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
   // "Mark Ready" is gated: blocked until every fault on the ticket is fixed (or cancelled).
   const openFaults = tk?.tasks_progress?.open ?? 0;
   const readyBlocked = act?.action === 'ready' && openFaults > 0;
-  const readyHint = `Fix all ${openFaults} open fault${openFaults > 1 ? 's' : ''} first`;
+  // The English is branched here rather than pluralized inline: Arabic has six plural categories, so
+  // a `> 1 ? 's' : ''` suffix cannot survive translation as a single phrase.
+  const readyHint = openFaults === 1
+    ? t('Fix the 1 open fault first')
+    : t('Fix all {n} open faults first', { n: openFaults });
   // Custody gate: a return/arrival leg may only be completed by the same driver who took the car.
   // custodyBlocked() is scoped to the gated states, so no per-action guard is needed here.
-  const custodyLocked = custodyBlocked(tk, userId);
-  const custodyHolder = custodyHolderName(tk, userId);
+  const custodyLocked = custodyBlocked(tk, userId, can);
+  const custodyHolder = custodyHolderName(tk, userId, can);
   const custodyHint = act?.action === 'arriveAtPark'
-    ? `Only ${custodyHolder || 'the driver who collected the car from the garage'} can complete the arrival at our park`
-    : `Only ${custodyHolder || 'the driver who picked up the car'} can check it in`;
+    ? t('Only {who} can complete the arrival at our park', { who: custodyHolder || t('the driver who collected the car from the garage') })
+    : t('Only {who} can check it in', { who: custodyHolder || t('the driver who picked up the car') });
   // Follow-up is MANAGEMENT authority (Waleed/Abdullah) — they chase the garage, not the driver. Only
   // shown while the car is In Workshop (under_repair), i.e. actually at the garage being worked on.
   const canFollowUp = tk && tk.workflow_status === 'under_repair' && can('maintenance.delegate');
@@ -381,7 +401,7 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
     if (money?.blockers > 0) {
       // The amount is appended outside the sentence: the sentence has six Arabic plural forms and the
       // figure has none, so keeping them separate stops the translator having to repeat the number.
-      const suffix = SHOW_FINANCIALS && money.amount > 0 ? ` · ${fmtAED(money.amount)}` : '';
+      const suffix = SHOW_FINANCIALS && money.amount > 0 ? ` · ${fmtAED(money.amount, lang)}` : '';
       out.push({ tone: 'amber', text: tp('workflow.detail.deck.moneyBlocked', money.blockers) + suffix, tab: 'money' });
     }
     if (tk.workflow_status === 'reinspection_failed') {
@@ -392,7 +412,7 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
       });
     }
     return out;
-  }, [tk, allowed, custodyLocked, custodyHint, readyBlocked, readyHint, money, tf, tp]);
+  }, [tk, allowed, custodyLocked, custodyHint, readyBlocked, readyHint, money, tf, tp, lang]);
 
   const footer = tk && (
     <div className="flex flex-wrap items-center justify-end gap-2">
@@ -407,7 +427,7 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
       )}
       {can('parts.request') && canOrderParts(tk) && (
         <Button size="sm" variant="secondary" onClick={() => { setTab('money'); setPartsOpenSignal((n) => n + 1); }}>
-          <Icon.Wrench className="h-3.5 w-3.5" /> Request Part
+          <Icon.Wrench className="h-3.5 w-3.5" /> {t('Request Part')}
         </Button>
       )}
       {canRoute && (
@@ -545,13 +565,13 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
                 />
                 <Stat
                   label={tf('workflow.detail.deck.odometer', 'Odometer')}
-                  value={mileage?.current != null ? `${Number(mileage.current).toLocaleString()}` : '—'}
+                  value={mileage?.current != null ? nfmt(mileage.current, lang) : '—'}
                   hint={t('workflow.stage.kmShort')}
                 />
                 {SHOW_FINANCIALS && (
                   <Stat
                     label={tf('workflow.detail.deck.cost', 'Repair cost')}
-                    value={tk.cost != null ? fmtAED(tk.cost) : '—'}
+                    value={tk.cost != null ? fmtAED(tk.cost, lang) : '—'}
                     tone={money?.blockers > 0 ? 'text-amber-300' : 'text-white'}
                     hint={money?.blockers > 0 ? tf('workflow.detail.deck.costHint', '{n} unbilled', { n: money.blockers }) : null}
                   />
@@ -569,7 +589,7 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
                       <>
                         <Icon.Alert className="h-3.5 w-3.5 shrink-0" />
                         <span className="min-w-0 flex-1">{a.text}</span>
-                        {a.tab && <Icon.ArrowRight className="h-3.5 w-3.5 shrink-0 opacity-70" />}
+                        {a.tab && <Icon.ArrowRight className="h-3.5 w-3.5 shrink-0 opacity-70 rtl:-scale-x-100" />}
                       </>
                     );
                     return a.tab ? (
@@ -596,7 +616,7 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
                   to={`/maintenance-workflow/${ticketId}`}
                   className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-300 transition hover:text-indigo-200"
                 >
-                  <Icon.ArrowRight className="h-3.5 w-3.5" /> Open full view
+                  <Icon.ArrowRight className="h-3.5 w-3.5 rtl:-scale-x-100" /> {t('Open full view')}
                 </Link>
                 <Link
                   to={`/vehicles/${tk.vehicle_id}`}
@@ -718,29 +738,32 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
                     last checked (with a link to that visit), and the live oil / battery / tyre status against the
                     chosen limits. Lazily fetched; shown once it resolves. */}
                 {diag && (
-                  <Section title="Diagnostic Context" icon={<Icon.Gauge className="h-3.5 w-3.5 text-slate-400" />}>
+                  <Section title={t('Diagnostic Context')} icon={<Icon.Gauge className="h-3.5 w-3.5 text-slate-400" />}>
                     <div className="space-y-3">
                       <dl className="grid grid-cols-2 gap-x-4 gap-y-3">
                         {diag.idle?.eligible && diag.idle.days != null && (
                           <Fact
-                            label="Idle since last use"
-                            value={`${diag.idle.days} day${diag.idle.days === 1 ? '' : 's'}${diag.idle.idle_since ? ` · since ${fmtDay(diag.idle.idle_since)}` : ''}${diag.idle.exceeded ? ` (limit ${diag.idle.limit})` : ''}`}
+                            label={t('Idle since last use')}
+                            value={[
+                              diag.idle.days === 1 ? t('1 day') : t('{n} days', { n: diag.idle.days }),
+                              diag.idle.idle_since ? t('since {date}', { date: fmtDay(diag.idle.idle_since, lang) }) : null,
+                            ].filter(Boolean).join(' · ') + (diag.idle.exceeded ? ` ${t('(limit {n})', { n: diag.idle.limit })}` : '')}
                           />
                         )}
                         <div className="flex flex-col gap-0.5">
-                          <dt className="text-[11px] font-medium uppercase tracking-wide text-slate-400">Last check</dt>
+                          <dt className="text-[11px] font-medium uppercase tracking-wide text-slate-400">{t('Last check')}</dt>
                           <dd className="text-sm text-slate-800">
                             {diag.last_check ? (
                               <>
-                                {fmtDay(diag.last_check.date)}
-                                {diag.last_check.days_ago != null && <span className="text-slate-400"> · {diag.last_check.days_ago}d ago</span>}
+                                {fmtDay(diag.last_check.date, lang)}
+                                {diag.last_check.days_ago != null && <span className="text-slate-400"> · {t('{n}d ago', { n: diag.last_check.days_ago })}</span>}
                                 {diag.last_check.link && (
-                                  <Link to={diag.last_check.link} className="ms-2 text-xs font-semibold text-indigo-600 hover:underline">View</Link>
+                                  <Link to={diag.last_check.link} className="ms-2 text-xs font-semibold text-indigo-600 hover:underline">{t('View')}</Link>
                                 )}
                                 <div className="text-[11px] text-slate-400">{diag.last_check.label}</div>
                               </>
                             ) : (
-                              <span className="text-slate-400">No prior check on file</span>
+                              <span className="text-slate-400">{t('No prior check on file')}</span>
                             )}
                           </dd>
                         </div>
@@ -754,14 +777,14 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
                                 <p className="text-sm font-semibold text-slate-800">{c.label}</p>
                                 <p className="text-xs text-slate-500">
                                   {c.summary}
-                                  {c.current_km != null && <span className="text-slate-400"> · now {Number(c.current_km).toLocaleString()} km</span>}
-                                  {c.last_service_km != null && <span className="text-slate-400"> · serviced at {Number(c.last_service_km).toLocaleString()} km</span>}
-                                  {c.last_service_at && <span className="text-slate-400"> · on {fmtDay(c.last_service_at)}</span>}
-                                  {c.last_changed && <span className="text-slate-400"> · changed {fmtDay(c.last_changed)}</span>}
+                                  {c.current_km != null && <span className="text-slate-400"> · {t('now {km} km', { km: nfmt(c.current_km, lang) })}</span>}
+                                  {c.last_service_km != null && <span className="text-slate-400"> · {t('serviced at {km} km', { km: nfmt(c.last_service_km, lang) })}</span>}
+                                  {c.last_service_at && <span className="text-slate-400"> · {t('on {date}', { date: fmtDay(c.last_service_at, lang) })}</span>}
+                                  {c.last_changed && <span className="text-slate-400"> · {t('changed {date}', { date: fmtDay(c.last_changed, lang) })}</span>}
                                 </p>
                               </div>
                               <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold ring-1 ring-inset ${DIAG_TONE[c.tone] || DIAG_TONE.gray}`}>
-                                {DIAG_STATUS_WORD[c.status] || c.status}
+                                {diagStatusWord(c.status, t, tf)}
                               </span>
                             </div>
                           ))}
@@ -789,7 +812,7 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
                       : { box: 'bg-emerald-50 ring-emerald-200', text: 'text-emerald-700', dot: '#10b981', label: t('workflow.detail.healthHealthy') };
                   let projected = null;
                   if (f.projected_date) {
-                    try { projected = new Date(f.projected_date).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }); } catch { projected = f.projected_date; }
+                    try { projected = new Date(f.projected_date).toLocaleDateString(dateLocale(lang), { day: '2-digit', month: 'short', year: 'numeric' }); } catch { projected = f.projected_date; }
                   }
                   return (
                     <Section title={t('workflow.detail.forecast')} icon={<Icon.Activity className="h-3.5 w-3.5 text-slate-400" />}>
@@ -800,15 +823,15 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
                             {ftone.label}
                           </span>
                           {f.usage_rate != null ? (
-                            <span className="text-[11px] font-medium text-slate-500">{t('workflow.detail.forecastUsage', { rate: Number(f.usage_rate).toLocaleString() })}</span>
+                            <span className="text-[11px] font-medium text-slate-500">{t('workflow.detail.forecastUsage', { rate: nfmt(f.usage_rate, lang) })}</span>
                           ) : (
                             <span className="text-[11px] text-slate-400">{t('workflow.detail.forecastNoRate')}</span>
                           )}
                         </div>
                         <p className={`mt-1.5 font-display text-lg font-bold ${ftone.text}`}>
                           {f.status === 'overdue'
-                            ? t('workflow.detail.forecastOverdueBy', { km: Number(Math.abs(f.overdue_km ?? f.remaining_km ?? 0)).toLocaleString() })
-                            : t('workflow.detail.forecastDueIn', { km: Number(Math.max(0, f.remaining_km ?? 0)).toLocaleString() })}
+                            ? t('workflow.detail.forecastOverdueBy', { km: nfmt(Math.abs(f.overdue_km ?? f.remaining_km ?? 0), lang) })
+                            : t('workflow.detail.forecastDueIn', { km: nfmt(Math.max(0, f.remaining_km ?? 0), lang) })}
                         </p>
                         {projected && (
                           <p className="mt-0.5 flex items-center gap-1.5 text-xs text-slate-500">
@@ -829,7 +852,7 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
                 {/* Financial Story LEADS the tab on purpose. It opens with what is still owed before the
                     ticket can close (the only part anyone must act on), then the narrative from diagnosis
                     to closure. The panels below explain the figures; this says what to do about them. */}
-                <Section title="Financial Story" icon={<Icon.Invoice className="h-3.5 w-3.5 text-slate-400" />}>
+                <Section title={t('Financial Story')} icon={<Icon.Invoice className="h-3.5 w-3.5 text-slate-400" />}>
                   <FinancialStory ticketId={ticketId} reloadKey={reloadKey} />
                 </Section>
 
@@ -858,7 +881,7 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
                     the part came from → its invoice → what fitting it cost → the total. Self-fetching,
                     read-only, and renders nothing until the ticket has money or required parts. */}
                 {tk.tasks?.length > 0 && (
-                  <Section title="Repair Cost Breakdown" icon={<Icon.Coins className="h-3.5 w-3.5 text-slate-400" />}>
+                  <Section title={t('Repair Cost Breakdown')} icon={<Icon.Coins className="h-3.5 w-3.5 text-slate-400" />}>
                     <CostJourney ticketId={ticketId} reloadKey={reloadKey} />
                   </Section>
                 )}
@@ -868,7 +891,7 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
                     what has been ordered, received, fitted and paid. Folded by default — it is the longest
                     panel in the drawer and is read on purpose, not in passing. */}
                 <Section
-                  title="Procurement Lifecycle"
+                  title={t('Procurement Lifecycle')}
                   icon={<Icon.Route className="h-3.5 w-3.5 text-slate-400" />}
                   defaultOpen={false}
                 >
@@ -922,7 +945,7 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
                             <span className="text-[11px] text-slate-400">{fmtDateTime(c.generated_at)}</span>
                           </div>
                           <dl className="mt-2.5 grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
-                            <Fact label={t('workflow.detail.handoverMileageDelta')} value={c.mileage_delta != null ? `${c.mileage_delta > 0 ? '+' : ''}${Number(c.mileage_delta).toLocaleString()} km` : null} />
+                            <Fact label={t('workflow.detail.handoverMileageDelta')} value={c.mileage_delta != null ? `${c.mileage_delta > 0 ? '+' : ''}${nfmt(c.mileage_delta, lang)} km` : null} />
                             <Fact label={t('workflow.detail.handoverFuelDelta')} value={c.fuel_delta} />
                             <Fact label={t('workflow.detail.handoverNewDamages')} value={c.new_damages?.length ? c.new_damages.map((d) => d.location || d).join(', ') : null} />
                             <Fact label={t('workflow.detail.handoverMissingAccessories')} value={c.missing_accessories?.length ? c.missing_accessories.join(', ') : null} />
@@ -1029,7 +1052,7 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
                         // timeline reads as pickup → transit → arrival instead of a bare timestamp.
                         const labelKey = key === 'dispatched' && h.is_recovery ? 'dispatched_recovery' : key;
                         const subline = [
-                          h.odometer != null ? `${Number(h.odometer).toLocaleString()} km` : null,
+                          h.odometer != null ? `${nfmt(h.odometer, lang)} km` : null,
                           key === 'dispatched' ? h.destination : (key === 'repair_started' ? h.garage : null),
                         ].filter(Boolean).join(' · ');
                         return (
@@ -1088,20 +1111,20 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
                     <div className="flex-1 rounded-lg bg-indigo-50 px-3 py-2.5 text-center">
                       <p className="text-[11px] uppercase tracking-wide text-indigo-400">{t('workflow.detail.currentMileage')}</p>
                       <p className="font-mono text-lg font-bold text-indigo-700">
-                        {mileage?.current != null ? `${Number(mileage.current).toLocaleString()} ${t('workflow.stage.kmShort')}` : '—'}
+                        {mileage?.current != null ? `${nfmt(mileage.current, lang)} ${t('workflow.stage.kmShort')}` : '—'}
                       </p>
                     </div>
                     {mileage?.baseline != null && (
                       <div className="flex-1 rounded-lg bg-slate-50 px-3 py-2.5 text-center">
                         <p className="text-[11px] uppercase tracking-wide text-slate-400">{t('workflow.detail.baselineMileage')}</p>
-                        <p className="font-mono text-sm font-bold text-slate-700">{Number(mileage.baseline).toLocaleString()}</p>
+                        <p className="font-mono text-sm font-bold text-slate-700">{nfmt(mileage.baseline, lang)}</p>
                       </div>
                     )}
                   </div>
 
                   {mileage?.distance != null && (
                     <p className="mt-2 text-[11px] text-slate-400">
-                      {t('workflow.detail.mileageSummary', { km: Number(mileage.distance).toLocaleString(), n: mileage.total })}
+                      {t('workflow.detail.mileageSummary', { km: nfmt(mileage.distance, lang), n: mileage.total })}
                     </p>
                   )}
 
@@ -1117,7 +1140,7 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
                           className="group relative h-16 w-16 overflow-hidden rounded-lg ring-1 ring-slate-200"
                           title={`${p.phase === 'post' ? t('workflow.detail.back') : t('workflow.detail.out')} · ${fmtDateTime(p.captured_at) || ''}`}
                         >
-                          <img src={p.url} alt="odometer" className="h-full w-full object-cover transition group-hover:scale-105" />
+                          <img src={p.url} alt={t('odometer')} className="h-full w-full object-cover transition group-hover:scale-105" />
                           <span className="absolute bottom-0 inset-x-0 bg-slate-900/60 px-1 py-0.5 text-center text-[9px] font-semibold uppercase text-white">
                             {p.phase === 'post' ? t('workflow.detail.back') : t('workflow.detail.out')}
                           </span>
@@ -1175,11 +1198,11 @@ export default function TicketDetailDrawer({ ticketId, summary, can, userId, onA
                                   </div>
                                   <div className="mt-0.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                                     <span className="text-sm text-slate-600">
-                                      {t('workflow.detail.mileageReadKm', { km: Number(e.value).toLocaleString() })}
+                                      {t('workflow.detail.mileageReadKm', { km: nfmt(e.value, lang) })}
                                     </span>
                                     {e.delta != null && e.delta !== 0 && (
                                       <span className={`font-mono text-[11px] font-semibold ${e.delta > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                                        {e.delta > 0 ? '+' : ''}{Number(e.delta).toLocaleString()} {t('workflow.stage.kmShort')}
+                                        {e.delta > 0 ? '+' : ''}{nfmt(e.delta, lang)} {t('workflow.stage.kmShort')}
                                       </span>
                                     )}
                                     {e.by && <span className="text-[11px] text-slate-500">{t('workflow.detail.mileageBy', { who: e.by })}</span>}
@@ -1240,6 +1263,7 @@ function hasReport(r) {
 
 // Per-symptom fix status, matched to the fault-tasks by symptom text — so the Inspector report shows a
 // "✓ Fixed" (or In progress / Cancelled) badge the moment the ticket is opened, not just in Manage faults.
+// `label` is the catalog KEY; it is resolved through t() where the badge is rendered.
 const REPORT_STATUS_BADGE = {
   completed:   { label: '✓ Fixed',     cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
   in_progress: { label: 'In progress', cls: 'bg-blue-50 text-blue-700 ring-blue-200' },
@@ -1248,6 +1272,7 @@ const REPORT_STATUS_BADGE = {
 const normSymptom = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
 
 function TestDriveReport({ report, tasks = [] }) {
+  const { t } = useI18n();
   if (typeof report === 'string') return <p className="mt-1 text-sm text-slate-700">{report}</p>;
   const taskBySymptom = {};
   tasks.forEach((tk) => { if (tk?.symptom) taskBySymptom[normSymptom(tk.symptom)] = tk; });
@@ -1268,7 +1293,7 @@ function TestDriveReport({ report, tasks = [] }) {
                 {s}
                 {badge && (
                   <span className={`ms-0.5 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold ring-1 ring-inset ${badge.cls}`}>
-                    {badge.label}
+                    {t(badge.label)}
                   </span>
                 )}
               </span>

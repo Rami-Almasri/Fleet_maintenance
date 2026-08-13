@@ -16,6 +16,7 @@ import Modal from '../ui/Modal';
 import Button from '../ui/Button';
 import { Textarea } from '../ui/Field';
 import { useToast } from '../ui/Toast';
+import { useI18n } from '../../i18n/I18nContext';
 import {
   useRepairCaptureVocab,
   getVerificationOptions, submitVerification,
@@ -30,6 +31,7 @@ const TONES = {
 
 export default function RepairVerifyModal({ open, taskId, onClose, onSaved }) {
   const toast = useToast();
+  const { t } = useI18n();
   const { verificationResults, verificationMethods, outcomeMeta } = useRepairCaptureVocab();
 
   const [loading, setLoading] = useState(false);
@@ -62,11 +64,11 @@ export default function RepairVerifyModal({ open, taskId, onClose, onSaved }) {
           setNote(d.verified.note || '');
         }
       })
-      .catch(() => !cancelled && toast.error('Could not load the verification form.'))
+      .catch(() => !cancelled && toast.error(t('Could not load the verification form.')))
       .finally(() => !cancelled && setLoading(false));
 
     return () => { cancelled = true; };
-  }, [open, taskId, toast]);
+  }, [open, taskId, toast, t]);
 
   const blocked = data && data.can_verify === false;
   const claim = data?.workshop_claim;
@@ -77,14 +79,14 @@ export default function RepairVerifyModal({ open, taskId, onClose, onSaved }) {
     setErrors({});
     try {
       await submitVerification(taskId, { result, method, note: note.trim() || null });
-      toast.success('Verification recorded');
+      toast.success(t('Verification recorded'));
       onSaved?.();
       onClose?.();
     } catch (e) {
       const bag = e?.response?.data?.errors || {};
       setErrors(bag);
       toast.error(
-        Object.values(bag).flat()[0] || e?.response?.data?.message || 'Could not save the verification.',
+        Object.values(bag).flat()[0] || e?.response?.data?.message || t('Could not save the verification.'),
       );
     } finally {
       setSaving(false);
@@ -95,23 +97,23 @@ export default function RepairVerifyModal({ open, taskId, onClose, onSaved }) {
     <Modal
       open={open}
       onClose={onClose}
-      title="Verify repair"
+      title={t('Verify repair')}
       subtitle={data?.fault?.symptom}
       size="lg"
       footer={
         <div className="flex gap-2">
-          <Button variant="secondary" onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button variant="secondary" onClick={onClose} disabled={saving}>{t('Cancel')}</Button>
           <Button
             onClick={handleSubmit}
             disabled={saving || blocked || !result || !method}
             loading={saving}
           >
-            Record verification
+            {t('Record verification')}
           </Button>
         </div>
       }
     >
-      {loading && <p className="py-8 text-center text-sm text-slate-500">Loading…</p>}
+      {loading && <p className="py-8 text-center text-sm text-slate-500">{t('Loading…')}</p>}
 
       {!loading && data && (
         <div className="space-y-5">
@@ -126,20 +128,20 @@ export default function RepairVerifyModal({ open, taskId, onClose, onSaved }) {
           {/* What the workshop claimed. Shown first so the inspector checks a stated claim rather
               than forming an impression from scratch — and so a disagreement is a deliberate act. */}
           <section className="space-y-2">
-            <h3 className="text-sm font-semibold text-slate-800">What the workshop reported</h3>
+            <h3 className="text-sm font-semibold text-slate-800">{t('What the workshop reported')}</h3>
             <div className="rounded-lg bg-slate-50 p-3 ring-1 ring-slate-200">
               {claim?.no_fault_found ? (
-                <p className="text-sm text-slate-700">No fault found — nothing was repaired.</p>
+                <p className="text-sm text-slate-700">{t('No fault found — nothing was repaired.')}</p>
               ) : (
                 <>
                   <div className="flex items-center gap-2">
-                    <span className="text-xs text-slate-500">Their verdict</span>
+                    <span className="text-xs text-slate-500">{t('Their verdict')}</span>
                     {claimMeta ? (
                       <span className={`rounded-full px-2 py-0.5 text-xs font-medium ring-1 ${TONES[claimMeta.tone] || TONES.slate}`}>
                         {claimMeta.label}
                       </span>
                     ) : (
-                      <span className="text-xs italic text-slate-400">not recorded</span>
+                      <span className="text-xs italic text-slate-400">{t('not recorded')}</span>
                     )}
                   </div>
                   {claim?.actions?.length > 0 && (
@@ -163,7 +165,7 @@ export default function RepairVerifyModal({ open, taskId, onClose, onSaved }) {
           {!blocked && (
             <>
               <section className="space-y-2">
-                <h3 className="text-sm font-semibold text-slate-800">What did you find?</h3>
+                <h3 className="text-sm font-semibold text-slate-800">{t('What did you find?')}</h3>
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   {verificationResults.map((r) => (
                     <button
@@ -189,12 +191,12 @@ export default function RepairVerifyModal({ open, taskId, onClose, onSaved }) {
                   disagreement is the most valuable record this workflow produces. */}
               {result && result !== 'verified' && claim?.claimed_outcome === 'complete' && (
                 <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600 ring-1 ring-slate-200">
-                  This differs from the workshop’s report. That’s fine — record what you actually found.
+                  {t('This differs from the workshop’s report. That’s fine — record what you actually found.')}
                 </p>
               )}
 
               <section className="space-y-2">
-                <h3 className="text-sm font-semibold text-slate-800">How did you check?</h3>
+                <h3 className="text-sm font-semibold text-slate-800">{t('How did you check?')}</h3>
                 <div className="flex flex-wrap gap-1.5">
                   {verificationMethods.map((m) => (
                     <button
@@ -215,11 +217,11 @@ export default function RepairVerifyModal({ open, taskId, onClose, onSaved }) {
               </section>
 
               <Textarea
-                label="Notes (optional)"
+                label={t('Notes (optional)')}
                 rows={2}
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
-                placeholder="What you observed"
+                placeholder={t('What you observed')}
               />
             </>
           )}

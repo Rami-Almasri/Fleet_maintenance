@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import Badge from '../ui/Badge';
 import Icon from '../ui/Icon';
 import { num, fmtDate, fmtClock, fmtAgo } from '../../lib/format';
+import { useI18n } from '../../i18n/I18nContext';
 
 // One vocabulary for the whole Activity Audit Trail — the six action categories the backend tags
 // every event with. Each maps to a label (filter chip + badge), a tone (shared palette) and a glyph
@@ -55,11 +56,13 @@ const metaFor = (category) => CATEGORY_META[category] || { label: category, tone
 // The plain-language milestone label the backend tags a row with ('Check-out', 'Garage Arrival',
 // 'Ready for Rent'…). Falls back to the precise action for un-staged rows. `primary` marks the
 // base↔garage movements the Story feed anchors on.
-const stageOf = (e) => e?.stage || e?.action || 'Activity';
+// `t` is threaded in because this is a module-level helper that can return a word.
+const stageOf = (e, t) => e?.stage || e?.action || t('Activity');
 const isPrimaryMove = (e) => Boolean(e?.primary) || e?.stage === 'Check-out' || e?.stage === 'Check-in';
 
 // ── Shared meta strip (odometer · garage · actor · photo · contract) ──────────────
 function EventMeta({ e }) {
+  const { t } = useI18n();
   const from = e.details?.from;
   const to = e.details?.to;
   const showTransition = (from || to) && !/→/.test(e.description || '');
@@ -83,11 +86,13 @@ function EventMeta({ e }) {
       )}
       <span className="inline-flex items-center gap-1.5">
         <Icon.Users className="h-3.5 w-3.5 text-slate-400" />
-        <span className={e.actor_name === 'System' ? 'italic text-slate-400' : 'font-medium text-slate-600'}>{e.actor_name || 'System'}</span>
+        <span className={e.actor_name === 'System' ? 'italic text-slate-400' : 'font-medium text-slate-600'}>
+          {e.actor_name === 'System' || !e.actor_name ? t('System') : e.actor_name}
+        </span>
       </span>
       {e.photo_url && (
         <a href={e.photo_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-semibold text-indigo-600 hover:text-indigo-700">
-          <Icon.Search className="h-3.5 w-3.5" /> Photo
+          <Icon.Search className="h-3.5 w-3.5" /> {t('Photo')}
         </a>
       )}
       {e.contract_id && (
@@ -103,6 +108,7 @@ function EventMeta({ e }) {
 // fine category still shows as a secondary chip. The headline is the plain-language STAGE; the precise
 // action drops to a muted sub-label when the two differ.
 export function ActivityItem({ e, showVehicle = false, colorByTier = false }) {
+  const { t } = useI18n();
   const meta = metaFor(e.category);
   const tier = tierOf(e);
   const tm = TIER_META[tier];
@@ -111,7 +117,7 @@ export function ActivityItem({ e, showVehicle = false, colorByTier = false }) {
     : (e.tone && TONE_STYLE[e.tone] ? e.tone : meta.tone);
   const st = TONE_STYLE[tone] || TONE_STYLE.slate;
   const Glyph = (colorByTier ? tm.Icon : meta.Icon) || Icon.Activity;
-  const headline = stageOf(e);
+  const headline = stageOf(e, t);
   const subAction = e.stage && e.action && e.stage !== e.action ? e.action : null;
 
   return (
@@ -125,18 +131,18 @@ export function ActivityItem({ e, showVehicle = false, colorByTier = false }) {
           <div className="flex flex-wrap items-center gap-2">
             {colorByTier ? (
               <>
-                <Badge tone={tm.tone}>{tm.label}</Badge>
-                <span className="text-[11px] font-medium uppercase tracking-wide text-slate-400">{meta.label}</span>
+                <Badge tone={tm.tone}>{t(tm.label)}</Badge>
+                <span className="text-[11px] font-medium uppercase tracking-wide text-slate-400">{t(meta.label)}</span>
               </>
             ) : (
-              <Badge tone={tone}>{meta.label}</Badge>
+              <Badge tone={tone}>{t(meta.label)}</Badge>
             )}
             <span className="text-sm font-semibold text-slate-800">{headline}</span>
-            {isPrimaryMove(e) && <Badge tone="violet">Movement</Badge>}
-            {e.flagged && <Badge tone="red">Damage</Badge>}
+            {isPrimaryMove(e) && <Badge tone="violet">{t('Movement')}</Badge>}
+            {e.flagged && <Badge tone="red">{t('Damage')}</Badge>}
           </div>
           <span className="whitespace-nowrap text-xs font-medium text-slate-400" title={e.occurred_at ? `${fmtDate(e.occurred_at)} · ${fmtClock(e.occurred_at)}` : ''}>
-            {e.occurred_at ? fmtAgo(e.occurred_at) : 'No date'}
+            {e.occurred_at ? fmtAgo(e.occurred_at) : t('No date')}
           </span>
         </div>
 
@@ -169,17 +175,17 @@ export function groupSessions(events = [], gapMs = SESSION_GAP_MS) {
   const openByVehicle = new Map();
   for (const e of events) {
     const vid = e.vehicle_id;
-    const t = e.occurred_at ? Date.parse(e.occurred_at) : NaN;
-    if (!vid || Number.isNaN(t)) {
+    const ts = e.occurred_at ? Date.parse(e.occurred_at) : NaN;
+    if (!vid || Number.isNaN(ts)) {
       items.push({ type: 'event', key: e.id, e });
       continue;
     }
     const open = openByVehicle.get(vid);
-    if (open && Number.isFinite(open.oldestT) && (open.oldestT - t) <= gapMs) {
+    if (open && Number.isFinite(open.oldestT) && (open.oldestT - ts) <= gapMs) {
       open.events.push(e);      // newest-first, so this is older than the last one
-      open.oldestT = t;
+      open.oldestT = ts;
     } else {
-      const session = { type: 'session', key: `s-${e.id}`, vehicleId: vid, events: [e], newestT: t, oldestT: t };
+      const session = { type: 'session', key: `s-${e.id}`, vehicleId: vid, events: [e], newestT: ts, oldestT: ts };
       openByVehicle.set(vid, session);
       items.push(session);
     }
@@ -195,37 +201,38 @@ export function groupSessions(events = [], gapMs = SESSION_GAP_MS) {
 const TIER_PRIORITY = ['technical', 'operational', 'administrative'];
 function dominantTier(evs) {
   const counts = {};
-  for (const e of evs) { const t = tierOf(e); counts[t] = (counts[t] || 0) + 1; }
-  return TIER_PRIORITY.reduce((best, t) => ((counts[t] || 0) > (counts[best] || 0) ? t : best), TIER_PRIORITY[0]);
+  for (const e of evs) { const tier = tierOf(e); counts[tier] = (counts[tier] || 0) + 1; }
+  return TIER_PRIORITY.reduce((best, tier) => ((counts[tier] || 0) > (counts[best] || 0) ? tier : best), TIER_PRIORITY[0]);
 }
 
 // The one-line story: the milestone stages in order (oldest→newest), consecutive duplicates dropped,
 // elided in the middle if long. "Check-out → Garage Arrival → Repair Complete → Check-in".
-function stageJourney(chron) {
+function stageJourney(chron, t) {
   const stages = [];
   for (const e of chron) {
-    const s = stageOf(e);
+    const s = stageOf(e, t);
     if (s && s !== stages[stages.length - 1]) stages.push(s);
   }
   if (stages.length <= 5) return stages.join('  →  ');
   return `${stages.slice(0, 2).join('  →  ')}  →  …  →  ${stages.slice(-2).join('  →  ')}`;
 }
 
-function sessionTitle(evs) {
+function sessionTitle(evs, t) {
   const hasTech = evs.some((e) => tierOf(e) === 'technical');
   const hasMove = evs.some((e) => e.category === 'movement');
-  if (hasTech) return 'Maintenance Session';
-  if (hasMove) return 'Vehicle Movement';
-  return 'Activity Session';
+  if (hasTech) return t('Maintenance Session');
+  if (hasMove) return t('Vehicle Movement');
+  return t('Activity Session');
 }
 
 // A compact sub-event row inside a session — movements stand out (bold + violet dot); technical and
 // administrative logs sit as quieter secondary lines "inside" the movement they belong to.
 function SubEvent({ e }) {
+  const { t } = useI18n();
   const tier = tierOf(e);
   const st = TONE_STYLE[TIER_META[tier].tone] || TONE_STYLE.slate;
   const primary = isPrimaryMove(e);
-  const headline = stageOf(e);
+  const headline = stageOf(e, t);
   const subAction = e.stage && e.action && e.stage !== e.action ? e.action : null;
   return (
     <li className="relative flex gap-3">
@@ -235,7 +242,7 @@ function SubEvent({ e }) {
           <span className="flex items-center gap-1.5">
             {primary && <Icon.Truck className={`h-3.5 w-3.5 ${st.text}`} />}
             <span className={primary ? 'text-sm font-semibold text-slate-800' : 'text-sm font-medium text-slate-600'}>{headline}</span>
-            {e.flagged && <Badge tone="red">Damage</Badge>}
+            {e.flagged && <Badge tone="red">{t('Damage')}</Badge>}
           </span>
           <time className="whitespace-nowrap text-[11px] font-medium text-slate-400" title={e.occurred_at ? `${fmtDate(e.occurred_at)} · ${fmtClock(e.occurred_at)}` : ''}>
             {e.occurred_at ? fmtClock(e.occurred_at) : '—'}
@@ -252,6 +259,7 @@ function SubEvent({ e }) {
 // The roll-up card: one car's burst of activity as a single story — headline stage-journey, dominant
 // tier spine, expandable list of the sub-events (movements first-class, technical logs nested inside).
 function ActivitySession({ session, showVehicle = false }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const evs = session.events;                 // newest-first
   const chron = [...evs].slice().reverse();   // oldest-first for the narrative
@@ -260,8 +268,8 @@ function ActivitySession({ session, showVehicle = false }) {
   const tm = TIER_META[tier];
   const st = TONE_STYLE[tm.tone] || TONE_STYLE.slate;
   const Glyph = tm.Icon || Icon.Activity;
-  const title = sessionTitle(evs);
-  const journey = stageJourney(chron);
+  const title = sessionTitle(evs, t);
+  const journey = stageJourney(chron, t);
   const flagged = evs.some((e) => e.flagged);
   const spanLabel = session.newestT && session.oldestT && session.newestT !== session.oldestT
     ? `${fmtClock(new Date(session.oldestT).toISOString())} – ${fmtClock(new Date(session.newestT).toISOString())}`
@@ -284,13 +292,15 @@ function ActivitySession({ session, showVehicle = false }) {
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex flex-wrap items-center gap-2">
-                <Badge tone={tm.tone}>{tm.label}</Badge>
+                <Badge tone={tm.tone}>{t(tm.label)}</Badge>
                 <span className="text-sm font-semibold text-slate-800">{title}</span>
-                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">{num(evs.length)} steps</span>
-                {flagged && <Badge tone="red">Damage</Badge>}
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">
+                  {evs.length === 1 ? t('1 step') : t('{n} steps', { n: num(evs.length) })}
+                </span>
+                {flagged && <Badge tone="red">{t('Damage')}</Badge>}
               </div>
               <span className="whitespace-nowrap text-xs font-medium text-slate-400" title={spanLabel || (anchor.occurred_at ? `${fmtDate(anchor.occurred_at)} · ${fmtClock(anchor.occurred_at)}` : '')}>
-                {anchor.occurred_at ? fmtAgo(anchor.occurred_at) : 'No date'}
+                {anchor.occurred_at ? fmtAgo(anchor.occurred_at) : t('No date')}
               </span>
             </div>
 
@@ -305,7 +315,7 @@ function ActivitySession({ session, showVehicle = false }) {
             {spanLabel && <p className="mt-1 text-[11px] font-medium text-slate-400">{spanLabel}</p>}
 
             <span className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-indigo-600">
-              {open ? 'Hide steps' : 'Show steps'}
+              {open ? t('Hide steps') : t('Show steps')}
               <Icon.ChevronDown className={`h-3.5 w-3.5 transition-transform ${open ? 'rotate-180' : ''}`} />
             </span>
           </div>
@@ -335,12 +345,14 @@ export default function ActivityTimeline({
   colorByTier = false,
   group = false,
   gapHours = 8,
-  emptyMessage = 'No activity recorded yet.',
+  emptyMessage = null,
 }) {
+  const { t } = useI18n();
+
   if (!events.length) {
     return (
       <p className="rounded-2xl border border-dashed border-slate-200 py-12 text-center text-sm text-slate-400">
-        {emptyMessage}
+        {emptyMessage || t('No activity recorded yet.')}
       </p>
     );
   }

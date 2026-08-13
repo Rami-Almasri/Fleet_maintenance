@@ -15,6 +15,7 @@
 
 import { useMemo, useState } from 'react';
 import Icon from '../ui/Icon';
+import { useI18n } from '../../i18n/I18nContext';
 
 // Mirror App\Models\FaultCause::normalizeKey — lowercase + collapse whitespace, so the symptom the
 // user picked resolves to the same catalog bucket the backend seeded it under.
@@ -52,6 +53,7 @@ function CauseChip({ label, active, onClick, title }) {
 }
 
 function SymptomRow({ symptom, causes, choice, onPick, onCustom, onClear }) {
+  const { t } = useI18n();
   const [custom, setCustom] = useState('');
   const hasPreset = causes.length > 0;
   // A custom cause = a chosen root_cause with no id (not from the preset list).
@@ -71,7 +73,7 @@ function SymptomRow({ symptom, causes, choice, onPick, onCustom, onClear }) {
         {symptom}
         {hasPreset && !choice?.root_cause && (
           <span className="ms-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700">
-            Pick a cause
+            {t('Pick a cause')}
           </span>
         )}
       </p>
@@ -89,7 +91,7 @@ function SymptomRow({ symptom, causes, choice, onPick, onCustom, onClear }) {
           ))}
         </div>
       ) : (
-        <p className="mb-2 text-[11px] text-slate-400">No preset causes for this symptom — add one below.</p>
+        <p className="mb-2 text-[11px] text-slate-400">{t('No preset causes for this symptom — add one below.')}</p>
       )}
 
       {/* Custom cause — sent with no id, flagged for admin review on the server. */}
@@ -98,9 +100,9 @@ function SymptomRow({ symptom, causes, choice, onPick, onCustom, onClear }) {
           <div className="flex flex-wrap items-center gap-2">
             <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700 ring-1 ring-amber-200">
               {choice.root_cause}
-              <button type="button" onClick={onClear} className="text-amber-500 hover:text-amber-700" aria-label="Remove custom cause">×</button>
+              <button type="button" onClick={onClear} className="text-amber-500 hover:text-amber-700" aria-label={t('Remove custom cause')}>×</button>
             </span>
-            <span className="text-[11px] text-amber-600">Custom — will be sent for review</span>
+            <span className="text-[11px] text-amber-600">{t('Custom — will be sent for review')}</span>
           </div>
         ) : (
           <div className="flex gap-2">
@@ -108,7 +110,7 @@ function SymptomRow({ symptom, causes, choice, onPick, onCustom, onClear }) {
               value={custom}
               onChange={(e) => setCustom(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addCustom(); } }}
-              placeholder="Other cause (not listed)…"
+              placeholder={t('Other cause (not listed)…')}
               className="flex-1 rounded-xl border border-slate-300 px-3 py-1.5 text-sm text-slate-700 placeholder:text-slate-400 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
             />
             <button
@@ -117,7 +119,7 @@ function SymptomRow({ symptom, causes, choice, onPick, onCustom, onClear }) {
               disabled={!custom.trim()}
               className="inline-flex items-center gap-1 rounded-xl border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-40"
             >
-              <Icon.Plus className="h-4 w-4" /> Add
+              <Icon.Plus className="h-4 w-4" /> {t('Add')}
             </button>
           </div>
         )}
@@ -127,13 +129,14 @@ function SymptomRow({ symptom, causes, choice, onPick, onCustom, onClear }) {
 }
 
 export default function RootCausePicker({ symptoms = [], catalog = {}, value = {}, onChange }) {
+  const { t } = useI18n();
   // Only symptoms actually selected get a row; order follows the symptom selection.
   const rows = useMemo(() => symptoms.filter(Boolean), [symptoms]);
 
   if (rows.length === 0) {
     return (
       <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-400 ring-1 ring-inset ring-slate-200/70">
-        Pick a symptom above and its probable root causes will appear here for diagnosis.
+        {t('Pick a symptom above and its probable root causes will appear here for diagnosis.')}
       </p>
     );
   }

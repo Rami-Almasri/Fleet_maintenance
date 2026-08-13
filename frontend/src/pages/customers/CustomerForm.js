@@ -1,4 +1,5 @@
 import { Input, Select, Textarea } from '../../components/ui/Field';
+import { useI18n } from '../../i18n/I18nContext';
 
 function Section({ title, children }) {
   return (
@@ -10,45 +11,46 @@ function Section({ title, children }) {
 }
 
 export default function CustomerForm({ values, onChange, errors = {} }) {
+  const { t } = useI18n();
   const set = (field) => (e) => onChange(field, e.target.value);
   const err = (f) => (errors[f] ? errors[f][0] : '');
 
   return (
     <div className="space-y-6">
-      <Section title="Identity">
-        <Input label="Name (EN)" value={values.name_en || ''} onChange={set('name_en')} error={err('name_en')} placeholder="John Smith" />
-        <Input label="Name (AR)" value={values.name_ar || ''} onChange={set('name_ar')} error={err('name_ar')} dir="rtl" />
-        <Input label="Customer No." value={values.customer_no || ''} onChange={set('customer_no')} error={err('customer_no')} />
-        <Input label="Nationality" value={values.nationality || ''} onChange={set('nationality')} error={err('nationality')} />
-        <Select label="Sex" value={values.sex || ''} onChange={set('sex')} error={err('sex')}>
+      <Section title={t('Identity')}>
+        <Input label={t('Name (EN)')} value={values.name_en || ''} onChange={set('name_en')} error={err('name_en')} placeholder="John Smith" />
+        <Input label={t('Name (AR)')} value={values.name_ar || ''} onChange={set('name_ar')} error={err('name_ar')} dir="rtl" />
+        <Input label={t('Customer No.')} value={values.customer_no || ''} onChange={set('customer_no')} error={err('customer_no')} />
+        <Input label={t('Nationality')} value={values.nationality || ''} onChange={set('nationality')} error={err('nationality')} />
+        <Select label={t('Sex')} value={values.sex || ''} onChange={set('sex')} error={err('sex')}>
           <option value="">—</option>
-          <option value="male">male</option>
-          <option value="female">female</option>
+          <option value="male">{t('male')}</option>
+          <option value="female">{t('female')}</option>
         </Select>
-        <Input label="Date of Birth" type="date" value={values.date_of_birth || ''} onChange={set('date_of_birth')} error={err('date_of_birth')} />
+        <Input label={t('Date of Birth')} type="date" value={values.date_of_birth || ''} onChange={set('date_of_birth')} error={err('date_of_birth')} />
       </Section>
 
-      <Section title="Contact">
-        <Input label="Mobile 1" value={values.mobile1 || ''} onChange={set('mobile1')} error={err('mobile1')} />
-        <Input label="Mobile 2" value={values.mobile2 || ''} onChange={set('mobile2')} error={err('mobile2')} />
+      <Section title={t('Contact')}>
+        <Input label={t('Mobile 1')} value={values.mobile1 || ''} onChange={set('mobile1')} error={err('mobile1')} />
+        <Input label={t('Mobile 2')} value={values.mobile2 || ''} onChange={set('mobile2')} error={err('mobile2')} />
         <Input label="WhatsApp" value={values.whatsapp || ''} onChange={set('whatsapp')} error={err('whatsapp')} />
-        <Input label="Email" type="email" value={values.email || ''} onChange={set('email')} error={err('email')} />
-        <Input label="City" value={values.city || ''} onChange={set('city')} error={err('city')} />
-        <Input label="P.O. Box" value={values.po_box || ''} onChange={set('po_box')} error={err('po_box')} />
-        <Textarea label="Address" className="sm:col-span-2" value={values.address || ''} onChange={set('address')} error={err('address')} rows={2} />
+        <Input label={t('Email')} type="email" value={values.email || ''} onChange={set('email')} error={err('email')} />
+        <Input label={t('City')} value={values.city || ''} onChange={set('city')} error={err('city')} />
+        <Input label={t('P.O. Box')} value={values.po_box || ''} onChange={set('po_box')} error={err('po_box')} />
+        <Textarea label={t('Address')} className="sm:col-span-2" value={values.address || ''} onChange={set('address')} error={err('address')} rows={2} />
       </Section>
 
-      <Section title="Documents">
-        <Input label="Passport No." value={values.passport_no || ''} onChange={set('passport_no')} error={err('passport_no')} />
-        <Input label="Passport Expiry" type="date" value={values.passport_expiry || ''} onChange={set('passport_expiry')} error={err('passport_expiry')} />
-        <Input label="Licence No." value={values.license_no || ''} onChange={set('license_no')} error={err('license_no')} />
-        <Input label="Licence Expiry" type="date" value={values.license_expiry || ''} onChange={set('license_expiry')} error={err('license_expiry')} />
-        <Input label="Emirates ID No." value={values.id_no || ''} onChange={set('id_no')} error={err('id_no')} />
-        <Input label="Emirates ID Expiry" type="date" value={values.id_expiry || ''} onChange={set('id_expiry')} error={err('id_expiry')} />
-        <Input label="Residency No." value={values.residency_no || ''} onChange={set('residency_no')} error={err('residency_no')} />
-        <Input label="Residency Expiry" type="date" value={values.residency_expiry || ''} onChange={set('residency_expiry')} error={err('residency_expiry')} />
-        <Input label="Traffic File No." value={values.traffic_file_no || ''} onChange={set('traffic_file_no')} error={err('traffic_file_no')} />
-        <Input label="VAT Number" value={values.vat_number || ''} onChange={set('vat_number')} error={err('vat_number')} />
+      <Section title={t('Documents')}>
+        <Input label={t('Passport No.')} value={values.passport_no || ''} onChange={set('passport_no')} error={err('passport_no')} />
+        <Input label={t('Passport Expiry')} type="date" value={values.passport_expiry || ''} onChange={set('passport_expiry')} error={err('passport_expiry')} />
+        <Input label={t('Licence No.')} value={values.license_no || ''} onChange={set('license_no')} error={err('license_no')} />
+        <Input label={t('Licence Expiry')} type="date" value={values.license_expiry || ''} onChange={set('license_expiry')} error={err('license_expiry')} />
+        <Input label={t('Emirates ID No.')} value={values.id_no || ''} onChange={set('id_no')} error={err('id_no')} />
+        <Input label={t('Emirates ID Expiry')} type="date" value={values.id_expiry || ''} onChange={set('id_expiry')} error={err('id_expiry')} />
+        <Input label={t('Residency No.')} value={values.residency_no || ''} onChange={set('residency_no')} error={err('residency_no')} />
+        <Input label={t('Residency Expiry')} type="date" value={values.residency_expiry || ''} onChange={set('residency_expiry')} error={err('residency_expiry')} />
+        <Input label={t('Traffic File No.')} value={values.traffic_file_no || ''} onChange={set('traffic_file_no')} error={err('traffic_file_no')} />
+        <Input label={t('VAT Number')} value={values.vat_number || ''} onChange={set('vat_number')} error={err('vat_number')} />
       </Section>
     </div>
   );

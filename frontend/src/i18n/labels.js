@@ -112,6 +112,13 @@ const en = {
     english: 'English',
     arabic: 'العربية',
   },
+  // "OK" as a CONDITION verdict (a vehicle diagnostic is healthy), which is a
+  // different word in Arabic from the "OK" that confirms a dialog — that one is
+  // حسنًا and lives in the phrase catalog. Same English, two meanings, so this one
+  // needs its own key.
+  condition: {
+    ok: 'OK',
+  },
   time: {
     justNow: 'just now',
     minutesAgo: '{n}m ago',
@@ -2091,11 +2098,100 @@ const en = {
     },
     // Odometer Continuity Rules — the "Previous Odometer" reference, the live verdict on the typed
     // reading, and the soft confirm for the abnormal (non-blocking) cases.
+    // The Assign-collection picker. Supervisors appear alongside the driver pool (they do fetch cars
+    // themselves when nobody is free), tagged so they're not mistaken for one.
+    assign: {
+      supervisor: 'Supervisor',
+    },
+    // THE VISIT JOURNEY on the maintenance contract — every fault of one workshop visit, who found it,
+    // which garage fixed it and how long it took. Plain operational language throughout: the reader is a
+    // supervisor asking what happened to a car, not an engineer reading a state machine.
+    journey: {
+      title: 'What happened on this visit',
+      subtitle: 'Every fault found, where it was fixed, and how long it took',
+      ticket: 'Ticket #{id}',
+      stillOpen: 'Still open',
+      tookTotal: 'took {d} in total',
+      noFaults: 'No faults were logged on this visit.',
+      stagesTitle: 'Where the car went',
+      odometerTitle: 'Odometer readings',
+      showEvents: 'Show the full trail ({n})',
+      hideEvents: 'Hide the full trail',
+      eventsTruncated: 'Showing the first {n} of {total} entries.',
+      totals: {
+        faults: 'Faults',
+        foundByInspector: 'Inspector found',
+        beforeItLeft: 'before the car left',
+        foundByGarage: 'Garage found',
+        onTheLift: 'once it was on the lift',
+        repaired: 'Repaired',
+        closedUnrepaired: '{n} closed without a repair',
+      },
+      source: {
+        inspector: 'Found by the inspector',
+        garage: 'Found by the garage',
+        unknown: 'Source not recorded',
+      },
+      faultStatus: {
+        completed: 'Fixed',
+        in_progress: 'Being worked on',
+        pending: 'Not started',
+        transferred: 'Moving garage',
+        cancelled: 'Not a real fault',
+        not_found: 'Not found',
+      },
+      outcome: {
+        resolved: 'fixed here',
+        transferred_out: 'moved on',
+        unable: 'could not do it',
+        cancelled: 'cancelled',
+        failed_reinspection: 'came back broken',
+      },
+      fault: {
+        unnamed: 'Unnamed fault',
+        unknownGarage: 'Garage not recorded',
+        foundBy: 'Found by',
+        fixedAt: 'Fixed at',
+        worked: 'Time worked',
+        atGarage: 'Time at the garage',
+        // The honest caveat: nobody logged a start for THIS fault, so all we can say is how long the car
+        // sat at the garage — which covers every other fault on the same ticket too.
+        custodyOnly: 'no per-fault start was logged',
+        attempts: 'Attempts',
+        laborHours: '· {n} h logged',
+        travelled: 'This fault moved between garages',
+        cameBack: 'Came back {n}×',
+        note: 'Note',
+      },
+      stage: {
+        after: 'after {d}',
+        requested: 'Inspection requested',
+        reviewed: 'Request approved',
+        inspected: 'Test drive started',
+        dispatched: 'Picked up for the garage',
+        repair_started: 'Arrived at the garage',
+        ready: 'Garage finished',
+        collected: 'Collected from the garage',
+        park_arrived: 'Back at our parking',
+        closed: 'Signed back into service',
+      },
+      odo: {
+        test_drive: 'Test drive',
+        report: 'End of test drive',
+        dispatch: 'Pickup',
+        receive: 'Garage arrival',
+        transfer: 'Garage transfer',
+        return: 'Garage departure',
+        park: 'Back at parking',
+        reinspect: 'Final sign-off',
+      },
+    },
     odo: {
       previous: 'Previous odometer',
       confirm: "I've checked — this reading is correct",
       noteLabel: 'This is over {km} km off the previous reading — explain why',
       noteLabelDeviation: 'This is {km} km above the previous stage — add a note (required) so a supervisor can audit it',
+      noteLabelOptional: 'Anything you noticed about the dial? (optional — it helps the supervisor)',
       notePh: 'e.g. long road test, fuel run, or corrected a mis-read dial',
       status: {
         verified: 'Verified',
@@ -2104,7 +2200,9 @@ const en = {
         check: 'Double-check',
         must_increase: 'Must be higher',
         authorized_deviation: 'Note required',
-        exact_required: 'Must match',
+        exact_required: 'Can’t go backwards',
+        exact_required_review: 'Lower than our record',
+        implausible: 'Check the dial',
       },
       hint: {
         verified: 'Reading lines up with the last recorded mileage.',
@@ -2114,7 +2212,10 @@ const en = {
         must_increase: 'This reading is lower than the last recorded mileage — an odometer can’t run backwards. Enter the actual dial reading.',
         must_increase_return: 'Arrival odometer must be greater than the garage departure reading — the vehicle travelled from the garage to our parking. Enter the actual dial reading.',
         authorized_deviation: 'An increase over the previous stage is allowed — write a short note explaining why, and it’s logged for the supervisor.',
-        exact_required: 'This reading is more than 5 km off the previous stage — at this point the car shouldn’t have moved. Re-check the dial (or record the move on the correct stage).',
+        exact_required: 'This reading is below the previous stage — an odometer can’t run backwards. Re-check the dial.',
+        exact_required_review: 'The dial reads lower than the mileage we have on file — so our figure is probably the stale one. Enter what you actually see; it’s recorded now and a supervisor settles it on Odometer Approvals.',
+        implausible: 'That’s far more than a car can travel between two readings — almost certainly a slipped digit. Please re-type the reading.',
+        sentForApproval: 'The car shouldn’t have moved at this point, so this reading goes to Odometer Approvals for a supervisor to confirm. Your reading is still recorded now.',
       },
     },
     // Structured Parts + Labor breakdown (the maintenance-action itemisation).
@@ -2745,7 +2846,7 @@ const en = {
       panelTitle: 'Faults & current garage',
       panelSubtitle: 'Every fault is handled at the car’s current garage. Transfer the car to move the remaining work.',
       noTasks: 'No faults recorded on this ticket yet.',
-      // Per-fault repair time — the manual labor entry at Mark Fixed + the derived elapsed/labor chips.
+      // Per-fault repair time — the manual labor entry on the Mark ready screen + the derived elapsed/labor chips.
       laborLabel: 'Actual labor time (hours) — optional',
       laborPlaceholder: 'e.g. 2.5 — mechanic time for this attempt only',
       laborHint: 'Time the mechanic actually worked on this fault — not the total days at the garage (tracked automatically).',
@@ -2753,7 +2854,7 @@ const en = {
       workTip: 'This fault’s own repair time across {n} attempt(s) — measured from when the workshop confirmed it until it was fixed. The car was at the garage {custody} in total (shared by every fault on this ticket).',
       custodyOnlyTip: 'No workshop confirmation was recorded for this fault, so its own clock never started. This is how long the CAR was at the garage — shared by every fault on the ticket, not this fault’s own repair time. Confirm faults in the workshop to measure them individually.',
       laborChip: '{n}h labor',
-      laborChipTip: 'Actual mechanic labor entered at Mark Fixed — summed across attempts',
+      laborChipTip: 'Actual mechanic labor entered on the Mark ready screen — summed across attempts',
       unassigned: 'Not dispatched',
       currentGarage: 'Current garage',
       noGarage: 'Not dispatched to a garage yet — assign one from the board first.',
@@ -2814,6 +2915,7 @@ const en = {
       transferReason: 'Reason for transfer (optional)',
       transferReasonRequired: 'Reason for transfer — required (all faults are already fixed)',
       allFixedTransferWarning: 'Every fault on this ticket is already fixed. A note is required to move the car, and this transfer will be logged for review in Oversight.',
+      allFixedNoTransfer: 'All faults fixed — nothing to transfer',
       confirmTransfer: 'Transfer car',
       transportMethodQuestion: 'How will the vehicle be transferred?',
       transportRecovery: 'Recovery Truck',
@@ -2991,6 +3093,9 @@ const en = {
           other: '{n} financial items still open — this ticket cannot close',
         },
         reinspectFailed: 'Re-inspection failed — the car went back to the garage',
+        // The imperative "go to the screen that clears this". NOT the phrase 'Open', which is Arabic
+        // 'مفتوحة' — the adjective for something that IS open, not an instruction to open it.
+        openBlocker: 'Open',
       },
       tab: {
         overview: 'Overview',
@@ -3073,6 +3178,7 @@ const en = {
       awaiting_dispatch_decision: { title: 'Awaiting Dispatch',          hint: 'Pick the garage — all drivers are notified for pickup' },
       repair_review:              { title: 'Review the Video',           hint: 'Garage finished — review the video, then approve or request a re-fix' },
       reinspection_failed:        { title: 'Came Back Broken',           hint: 'Failed re-inspection — re-dispatch to the same or a different garage' },
+      assigned_to_me:             { title: 'Assigned to Me',            hint: 'Cars someone named you to collect or bring back — yours by name, not by role' },
       active_dispatches:          { title: 'Active Trips / Dispatches',  hint: 'Cars assigned to you to take to a garage, and cars in transit' },
       waiting_followup:           { title: 'Cars Waiting for Follow-up', hint: 'At the garage — log updates until they’re ready' },
       return_to_base:             { title: 'Return to Base',             hint: 'Signed off at the garage — collect it, then bring it back (both need a photo)' },
@@ -3538,6 +3644,22 @@ const en = {
     // Reworded from the old `noMatches`: it used to end the road at "add it as a custom issue", which
     // is what put real faults outside the vocabulary. The ontology now gets the same text first.
     noLiteralMatch: 'No issue is named “{query}”.',
+  },
+  // WHERE ON THE CAR — the structured detail step (quantity + locations) under the findings picker.
+  // Generic on purpose: every string names "the fault", never a specific type.
+  faultDetail: {
+    title: 'How many, and where on the car?',
+    quantity: 'How many',
+    preview: 'Will be recorded as',
+    remove: 'Remove {label}',
+    requiredHint: 'This fault type needs a location.',
+    missing: 'Say where on the car — this fault cannot be filed without a location.',
+    blocking: 'Still missing a location: {list}.',
+    searchPlaceholder: 'Search locations — e.g. bumper, door, rim…',
+    noMatch: 'No location is named “{query}”.',
+    skipped: 'No location needed for: {list}.',
+    emptyNoFindings: 'Pick a fault above and you can say how many there are and where they are.',
+    emptyNoLocatable: 'None of the selected faults has a place on the car to point at.',
   },
   findingsAi: {
     thinking: 'Looking for the fault…',
@@ -4136,6 +4258,9 @@ const ar = {
     language: 'اللغة',
     english: 'English',
     arabic: 'العربية',
+  },
+  condition: {
+    ok: 'سليم',
   },
   time: {
     justNow: 'الآن',
@@ -6513,11 +6638,93 @@ const ar = {
     },
     // قواعد استمرارية العدّاد — القراءة السابقة المرجعية، والحكم الفوري على القراءة المُدخلة،
     // وتأكيد مرن للحالات غير الاعتيادية (دون منع).
+    assign: {
+      supervisor: 'مشرف',
+    },
+    journey: {
+      title: 'ما جرى في هذه الزيارة',
+      subtitle: 'كل عطل تم اكتشافه، وأين أُصلح، وكم استغرق',
+      ticket: 'التذكرة رقم {id}',
+      stillOpen: 'ما تزال مفتوحة',
+      tookTotal: 'استغرقت {d} إجمالًا',
+      noFaults: 'لم يُسجَّل أي عطل في هذه الزيارة.',
+      stagesTitle: 'أين ذهبت السيارة',
+      odometerTitle: 'قراءات العدّاد',
+      showEvents: 'اعرض السجل الكامل ({n})',
+      hideEvents: 'أخفِ السجل الكامل',
+      eventsTruncated: 'يُعرض أول {n} من أصل {total} سجلًا.',
+      totals: {
+        faults: 'الأعطال',
+        foundByInspector: 'اكتشفها المفتش',
+        beforeItLeft: 'قبل مغادرة السيارة',
+        foundByGarage: 'اكتشفها الكراج',
+        onTheLift: 'بعد رفعها على الرافعة',
+        repaired: 'تم إصلاحها',
+        closedUnrepaired: '{n} أُغلقت دون إصلاح',
+      },
+      source: {
+        inspector: 'اكتشفه المفتش',
+        garage: 'اكتشفه الكراج',
+        unknown: 'المصدر غير مُسجّل',
+      },
+      faultStatus: {
+        completed: 'أُصلح',
+        in_progress: 'قيد العمل',
+        pending: 'لم يبدأ',
+        transferred: 'قيد النقل لكراج آخر',
+        cancelled: 'ليس عطلًا حقيقيًا',
+        not_found: 'لم يُعثر عليه',
+      },
+      outcome: {
+        resolved: 'أُصلح هنا',
+        transferred_out: 'نُقل',
+        unable: 'تعذّر إصلاحه',
+        cancelled: 'أُلغي',
+        failed_reinspection: 'عاد معطلًا',
+      },
+      fault: {
+        unnamed: 'عطل بلا اسم',
+        unknownGarage: 'الكراج غير مُسجّل',
+        foundBy: 'اكتشفه',
+        fixedAt: 'أُصلح في',
+        worked: 'وقت العمل',
+        atGarage: 'الوقت في الكراج',
+        custodyOnly: 'لم يُسجَّل وقت بدء خاص بهذا العطل',
+        attempts: 'المحاولات',
+        laborHours: '· {n} ساعة مُسجّلة',
+        travelled: 'انتقل هذا العطل بين الكراجات',
+        cameBack: 'عاد {n}×',
+        note: 'ملاحظة',
+      },
+      stage: {
+        after: 'بعد {d}',
+        requested: 'طُلب الفحص',
+        reviewed: 'اعتُمد الطلب',
+        inspected: 'بدأت تجربة القيادة',
+        dispatched: 'استُلمت للتوجه إلى الكراج',
+        repair_started: 'وصلت إلى الكراج',
+        ready: 'أنهى الكراج العمل',
+        collected: 'استُلمت من الكراج',
+        park_arrived: 'عادت إلى الباركينغ',
+        closed: 'أُعيدت إلى الخدمة',
+      },
+      odo: {
+        test_drive: 'تجربة القيادة',
+        report: 'نهاية تجربة القيادة',
+        dispatch: 'الاستلام',
+        receive: 'الوصول للكراج',
+        transfer: 'النقل بين الكراجات',
+        return: 'المغادرة من الكراج',
+        park: 'العودة للباركينغ',
+        reinspect: 'الاعتماد النهائي',
+      },
+    },
     odo: {
       previous: 'العدّاد السابق',
       confirm: 'لقد تحقّقت — هذه القراءة صحيحة',
       noteLabel: 'الفرق يتجاوز {km} كم عن القراءة السابقة — وضّح السبب',
       noteLabelDeviation: 'هذه القراءة أعلى بـ {km} كم عن المرحلة السابقة — أضِف ملاحظة (إلزامية) ليتمكّن المشرف من مراجعتها',
+      noteLabelOptional: 'هل لاحظت شيئًا على العدّاد؟ (اختياري — يساعد المشرف)',
       notePh: 'مثلًا: تجربة قيادة طويلة، تعبئة وقود، أو تصحيح قراءة خاطئة',
       status: {
         verified: 'مُتحقَّق',
@@ -6526,7 +6733,9 @@ const ar = {
         check: 'تحقّق مجددًا',
         must_increase: 'يجب أن تكون أعلى',
         authorized_deviation: 'ملاحظة مطلوبة',
-        exact_required: 'يجب أن تُطابق',
+        exact_required: 'لا يمكن أن تتراجع',
+        exact_required_review: 'أقل من المُسجّل لدينا',
+        implausible: 'تحقّق من العدّاد',
       },
       hint: {
         verified: 'القراءة متوافقة مع آخر مسافة مُسجّلة.',
@@ -6536,7 +6745,10 @@ const ar = {
         must_increase: 'هذه القراءة أقل من آخر مسافة مُسجّلة — العدّاد لا يعود للخلف. أدخل قراءة العدّاد الفعلية.',
         must_increase_return: 'قراءة الوصول يجب أن تكون أكبر من قراءة الخروج من الكراج — السيارة قطعت مسافة من الكراج إلى الباركينغ. أدخل قراءة العدّاد الفعلية.',
         authorized_deviation: 'يُسمح بزيادة عن المرحلة السابقة — اكتب ملاحظة قصيرة توضّح السبب، وسيتم تسجيلها للمشرف.',
-        exact_required: 'هذه القراءة تبعد أكثر من 5 كم عن المرحلة السابقة — في هذه المرحلة يُفترض ألّا تكون السيارة قد تحرّكت. أعد التحقّق من العدّاد (أو سجّل التحرّك في المرحلة الصحيحة).',
+        exact_required: 'هذه القراءة أقل من المرحلة السابقة — عدّاد المسافة لا يمكن أن يعود للخلف. أعد التحقّق من العدّاد.',
+        exact_required_review: 'العدّاد يُظهر رقمًا أقل من المسافة المُسجّلة لدينا — أي أن رقمنا هو الأرجح القديم. أدخل ما تراه فعليًا؛ سيُسجَّل الآن ويبتّ فيه المشرف في «اعتمادات العدّاد».',
+        implausible: 'هذه المسافة أكبر بكثير مما يمكن أن تقطعه سيارة بين قراءتين — على الأرجح خطأ في رقم. يرجى إعادة إدخال القراءة.',
+        sentForApproval: 'يُفترض ألّا تكون السيارة قد تحرّكت في هذه المرحلة، لذلك تُرسل هذه القراءة إلى «اعتمادات العدّاد» ليؤكّدها المشرف. قراءتك مُسجّلة الآن على أي حال.',
       },
     },
     invoices: {
@@ -7138,10 +7350,11 @@ const ar = {
       route: 'إدارة الأعطال',
       transferReasonRequired: 'سبب التحويل — مطلوب (كل الأعطال مُصلَحة بالفعل)',
       allFixedTransferWarning: 'كل الأعطال في هذه التذكرة مُصلَحة بالفعل. يلزم إدخال ملاحظة لنقل السيارة، وسيُسجَّل هذا التحويل للمراجعة في «الرقابة».',
+      allFixedNoTransfer: 'كل الأعطال مُصلَحة — لا يوجد ما يُحوَّل',
       panelTitle: 'الأعطال والكراج الحالي',
       panelSubtitle: 'تُعالَج كل الأعطال في الكراج الحالي للسيارة. حوِّل السيارة لنقل العمل المتبقّي.',
       noTasks: 'لا توجد أعطال مسجّلة على هذه التذكرة بعد.',
-      // وقت الإصلاح لكل عطل — إدخال ساعات العمل اليدوي عند «تم الإصلاح» + شارات الوقت المشتق.
+      // وقت الإصلاح لكل عطل — إدخال ساعات العمل اليدوي في شاشة «تعليم كجاهزة» + شارات الوقت المشتق.
       laborLabel: 'وقت العمل الفعلي (بالساعات) — اختياري',
       laborPlaceholder: 'مثال: 2.5 — وقت الميكانيكي لهذه المحاولة فقط',
       laborHint: 'الوقت الذي عمل فيه الميكانيكي فعليًا على هذا العطل — وليس إجمالي الأيام في الكراج (يُحتسب تلقائيًا).',
@@ -7149,7 +7362,7 @@ const ar = {
       workTip: 'وقت إصلاح هذا العطل وحده عبر {n} محاولة — يُقاس من لحظة تأكيد الورشة له حتى إصلاحه. بقيت السيارة في الكراج {custody} إجمالًا (وهي مدة مشتركة بين كل أعطال التذكرة).',
       custodyOnlyTip: 'لم يُسجَّل تأكيد من الورشة لهذا العطل، لذا لم تبدأ ساعته الخاصة. هذه مدة بقاء السيارة في الكراج — مشتركة بين كل أعطال التذكرة وليست وقت إصلاح هذا العطل. أكّد الأعطال في الورشة لقياس كل عطل على حدة.',
       laborChip: '{n} س عمل',
-      laborChipTip: 'ساعات عمل الميكانيكي الفعلية المُدخلة عند «تم الإصلاح» — مجموع كل المحاولات',
+      laborChipTip: 'ساعات عمل الميكانيكي الفعلية المُدخلة في شاشة «تعليم كجاهزة» — مجموع كل المحاولات',
       unassigned: 'لم تُرسَل',
       currentGarage: 'الكراج الحالي',
       noGarage: 'لم تُرسَل السيارة إلى كراج بعد — أسنِد كراجاً من اللوحة أولاً.',
@@ -7380,6 +7593,7 @@ const ar = {
           other: '{n} بند مالي ما زال مفتوحًا — لا يمكن إغلاق هذه التذكرة',
         },
         reinspectFailed: 'فشلت إعادة الفحص — عادت السيارة إلى الكراج',
+        openBlocker: 'افتح',
       },
       tab: {
         overview: 'نظرة عامة',
@@ -7460,6 +7674,7 @@ const ar = {
       awaiting_dispatch_decision: { title: 'بانتظار الإرسال',          hint: 'اختر الكراج — يُشعَر جميع السائقين للاستلام' },
       repair_review:              { title: 'راجِع الفيديو',            hint: 'انتهى الكراج — راجع الفيديو ثم اعتمد أو اطلب إعادة إصلاح' },
       reinspection_failed:        { title: 'عادت معطلة',              hint: 'رسبت في إعادة الفحص — أعِد إرسالها لنفس الكراج أو لكراج آخر' },
+      assigned_to_me:             { title: 'مُسندة إليّ',              hint: 'سيارات أسندك إليها أحدهم لاستلامها أو إعادتها — باسمك أنت، لا بحسب دورك' },
       active_dispatches:          { title: 'الرحلات / الإرسالات النشطة', hint: 'سيارات مُسندة إليك لنقلها إلى الكراج وسيارات قيد النقل' },
       waiting_followup:           { title: 'سيارات بانتظار المتابعة',  hint: 'في الكراج — سجّل التحديثات حتى تجهز' },
       return_to_base:             { title: 'العودة إلى المقر',         hint: 'اعتُمدت في الكراج — استلمها ثم أعِدها (كلتاهما تحتاج صورة)' },
@@ -7910,6 +8125,20 @@ const ar = {
     expandAll: 'فتح الكل',
     collapseAll: 'طي الكل',
     noLiteralMatch: 'لا يوجد عطل بهذا الاسم «{query}».',
+  },
+  faultDetail: {
+    title: 'كم العدد، وأين في السيارة؟',
+    quantity: 'العدد',
+    preview: 'سيُسجَّل كـ',
+    remove: 'إزالة {label}',
+    requiredHint: 'هذا النوع من الأعطال يحتاج تحديد الموقع.',
+    missing: 'حدّد الموقع في السيارة — لا يمكن تسجيل هذا العطل بدون موقع.',
+    blocking: 'ما زال الموقع ناقصًا لـ: {list}.',
+    searchPlaceholder: 'ابحث عن موقع — مثل: صدام، باب، جنط…',
+    noMatch: 'لا يوجد موقع بهذا الاسم «{query}».',
+    skipped: 'لا يلزم تحديد موقع لـ: {list}.',
+    emptyNoFindings: 'اختر عطلًا بالأعلى لتحديد العدد والموقع.',
+    emptyNoLocatable: 'لا يوجد بين الأعطال المحدَّدة ما له موقع محدَّد في السيارة.',
   },
   findingsAi: {
     thinking: 'جارٍ البحث عن العطل…',

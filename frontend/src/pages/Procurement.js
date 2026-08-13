@@ -20,6 +20,7 @@ import Modal from '../components/ui/Modal';
 import Segmented from '../components/ui/Segmented';
 import { Card, PageHeader, TableSkeleton, EmptyState } from '../components/ui/Misc';
 import { Input, Select, Textarea } from '../components/ui/Field';
+import { useI18n } from '../i18n/I18nContext';
 import { aed } from '../lib/format';
 import { SHOW_FINANCIALS } from '../config/features';
 
@@ -61,6 +62,7 @@ function Stat({ label, value, sub, tone = 'slate' }) {
 
 // ── Record a payment ──────────────────────────────────────────────────────────────────────────────
 function PaymentModal({ open, payables, onClose, onDone }) {
+  const { t } = useI18n();
   const toast = useToast();
   const [form, setForm] = useState({});
   const [picked, setPicked] = useState({});   // documentKey → amount
@@ -108,27 +110,27 @@ function PaymentModal({ open, payables, onClose, onDone }) {
           return { document_type, document_id: Number(document_id), amount: Number(v) };
         }),
       });
-      toast.success('Payment recorded');
+      toast.success(t('Payment recorded'));
       onDone?.();
       onClose?.();
     } catch (e) {
-      toast.error(e?.response?.data?.message || 'Could not record the payment.');
+      toast.error(e?.response?.data?.message || t('Could not record the payment.'));
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Record a payment" size="lg">
+    <Modal open={open} onClose={onClose} title={t('Record a payment')} size="lg">
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-3">
-          <Input label="Paid to" value={form.payee_name || ''} onChange={set('payee_name')} placeholder="ABC Auto Parts" />
-          <Select label="Method" value={form.method || ''} onChange={set('method')}>
-            {METHODS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          <Input label={t('Paid to')} value={form.payee_name || ''} onChange={set('payee_name')} placeholder={t('ABC Auto Parts')} />
+          <Select label={t('Method')} value={form.method || ''} onChange={set('method')}>
+            {METHODS.map(([v, l]) => <option key={v} value={v}>{t(l)}</option>)}
           </Select>
-          <Input label="Reference" value={form.reference || ''} onChange={set('reference')} placeholder="TRF-9931" />
+          <Input label={t('Reference')} value={form.reference || ''} onChange={set('reference')} placeholder="TRF-9931" />
           <Input
-            label="Amount"
+            label={t('Amount')}
             type="number" min="0" step="0.01"
             value={form.amount || ''}
             onChange={set('amount')}
@@ -138,11 +140,11 @@ function PaymentModal({ open, payables, onClose, onDone }) {
 
         <div>
           <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
-            Bills this payment settles
+            {t('Bills this payment settles')}
           </p>
           <div className="max-h-56 overflow-y-auto rounded-lg border border-slate-200">
             {payables.length === 0 && (
-              <p className="px-3 py-4 text-center text-sm text-slate-400">Nothing is outstanding.</p>
+              <p className="px-3 py-4 text-center text-sm text-slate-400">{t('Nothing is outstanding.')}</p>
             )}
             {payables.map((inv) => {
               const k = keyOf(inv);
@@ -154,7 +156,9 @@ function PaymentModal({ open, payables, onClose, onDone }) {
                       {inv.payee} · {inv.invoice_no || `#${inv.document_id}`}
                     </span>
                     <span className="block text-[11px] text-slate-500">
-                      {inv.date} · {inv.age_days} days old · owes {aed(inv.outstanding)}
+                      {Number(inv.age_days) === 1
+                        ? t('{date} · 1 day old · owes {amount}', { date: inv.date, amount: aed(inv.outstanding) })
+                        : t('{date} · {days} days old · owes {amount}', { date: inv.date, days: inv.age_days, amount: aed(inv.outstanding) })}
                     </span>
                   </span>
                   {k in picked && (
@@ -173,30 +177,29 @@ function PaymentModal({ open, payables, onClose, onDone }) {
 
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
           <div className="flex justify-between py-0.5">
-            <span className="text-slate-600">Allocated to bills</span>
+            <span className="text-slate-600">{t('Allocated to bills')}</span>
             <span className="tabular-nums">{aed(allocatedTotal)}</span>
           </div>
           <div className="flex justify-between border-t border-slate-200 pt-1 font-semibold">
-            <span>Payment amount</span><span className="tabular-nums">{aed(amount)}</span>
+            <span>{t('Payment amount')}</span><span className="tabular-nums">{aed(amount)}</span>
           </div>
           {amount > allocatedTotal + 0.01 && (
             <p className="mt-1 text-[11px] text-slate-500">
-              {aed(amount - allocatedTotal)} will sit as unallocated credit with this payee — you can point it
-              at a bill later.
+              {t('{amount} will sit as unallocated credit with this payee — you can point it at a bill later.', { amount: aed(amount - allocatedTotal) })}
             </p>
           )}
           {overAllocated && (
             <p className="mt-1 text-[12px] font-medium text-red-600">
-              The bills selected come to more than the payment.
+              {t('The bills selected come to more than the payment.')}
             </p>
           )}
         </div>
 
-        <Textarea label="Notes" rows={2} value={form.notes || ''} onChange={set('notes')} />
+        <Textarea label={t('Notes')} rows={2} value={form.notes || ''} onChange={set('notes')} />
 
         <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button loading={saving} disabled={overAllocated || amount <= 0} onClick={submit}>Record payment</Button>
+          <Button variant="ghost" onClick={onClose}>{t('Cancel')}</Button>
+          <Button loading={saving} disabled={overAllocated || amount <= 0} onClick={submit}>{t('Record payment')}</Button>
         </div>
       </div>
     </Modal>
@@ -205,6 +208,7 @@ function PaymentModal({ open, payables, onClose, onDone }) {
 
 // ── The page ──────────────────────────────────────────────────────────────────────────────────────
 export default function Procurement() {
+  const { t } = useI18n();
   const { can } = usePermissions();
   const canPay = can('maintenance.manage');
 
@@ -236,33 +240,33 @@ export default function Procurement() {
 
   useEffect(() => { load(); }, [load]);
 
-  const t = overview?.traceability;
+  const trace = overview?.traceability;
 
   return (
     <div className="py-8">
       <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
         <PageHeader
-          title="Procurement"
-          subtitle="What we owe, what we have paid, and who we buy from — every figure grouped by the document that proves it."
-          actions={canPay && <Button onClick={() => setPaying(true)}>Record a payment</Button>}
+          title={t('Procurement')}
+          subtitle={t('What we owe, what we have paid, and who we buy from — every figure grouped by the document that proves it.')}
+          actions={canPay && <Button onClick={() => setPaying(true)}>{t('Record a payment')}</Button>}
         />
 
         {SHOW_FINANCIALS && overview && (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <Stat label="Committed" value={aed(overview.committed)} sub="Approved bills, both kinds" />
-            <Stat label="Paid" value={aed(overview.paid)} tone="emerald" />
+            <Stat label={t('Committed')} value={aed(overview.committed)} sub={t('Approved bills, both kinds')} />
+            <Stat label={t('Paid')} value={aed(overview.paid)} tone="emerald" />
             <Stat
-              label="Outstanding"
+              label={t('Outstanding')}
               value={aed(overview.outstanding)}
               tone={overview.outstanding > 0 ? 'red' : 'slate'}
-              sub={overview.unallocated_payments > 0 ? `${aed(overview.unallocated_payments)} paid on account` : null}
+              sub={overview.unallocated_payments > 0 ? t('{amount} paid on account', { amount: aed(overview.unallocated_payments) }) : null}
             />
             {/* The honesty figure travels WITH the money, never on a separate screen. */}
             <Stat
-              label="Provable spend"
-              value={`${t?.coverage_pct ?? 0}%`}
-              tone={(t?.coverage_pct ?? 0) >= 90 ? 'emerald' : 'amber'}
-              sub={t ? `${aed(t.legacy_cost)} legacy · ${aed(t.unverified_cost)} unverified` : null}
+              label={t('Provable spend')}
+              value={`${trace?.coverage_pct ?? 0}%`}
+              tone={(trace?.coverage_pct ?? 0) >= 90 ? 'emerald' : 'amber'}
+              sub={trace ? t('{legacy} legacy · {unverified} unverified', { legacy: aed(trace.legacy_cost), unverified: aed(trace.unverified_cost) }) : null}
             />
           </div>
         )}
@@ -271,9 +275,9 @@ export default function Procurement() {
           value={tab}
           onChange={setTab}
           options={[
-            { key: 'payables', label: 'Payables' },
-            { key: 'suppliers', label: 'Suppliers' },
-            { key: 'payments', label: 'Payments' },
+            { key: 'payables', label: t('Payables') },
+            { key: 'suppliers', label: t('Suppliers') },
+            { key: 'payments', label: t('Payments') },
           ]}
         />
 
@@ -286,27 +290,29 @@ export default function Procurement() {
                 problem. Ageing against agreed terms is what stops people chasing the patient supplier. */}
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2">
-                <p className="text-[10px] font-medium uppercase tracking-wide text-red-600">Overdue</p>
+                <p className="text-[10px] font-medium uppercase tracking-wide text-red-600">{t('Overdue')}</p>
                 <p className="text-lg font-semibold tabular-nums text-red-800">
                   {SHOW_FINANCIALS ? aed(payables.overdue_total) : '—'}
                 </p>
                 <p className="text-[11px] text-red-600">
-                  {payables.overdue_count} bill{payables.overdue_count === 1 ? '' : 's'} past their agreed terms
+                  {payables.overdue_count === 1
+                    ? t('1 bill past its agreed terms')
+                    : t('{n} bills past their agreed terms', { n: payables.overdue_count })}
                 </p>
               </div>
               <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-                <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Not yet due</p>
+                <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">{t('Not yet due')}</p>
                 <p className="text-lg font-semibold tabular-nums text-slate-700">
                   {SHOW_FINANCIALS ? aed(payables.not_yet_due_total) : '—'}
                 </p>
-                <p className="text-[11px] text-slate-500">Owed, but still inside terms</p>
+                <p className="text-[11px] text-slate-500">{t('Owed, but still inside terms')}</p>
               </div>
             </div>
 
             <div className="grid gap-3 sm:grid-cols-4">
               {Object.entries(payables.buckets).map(([bucket, amount]) => (
                 <div key={bucket} className={`rounded-lg px-3 py-2 ring-1 ring-inset ${BUCKET_TONE[bucket] || BUCKET_TONE['0-30']}`}>
-                  <p className="text-[10px] font-medium uppercase tracking-wide">{BUCKET_LABEL[bucket] || bucket}</p>
+                  <p className="text-[10px] font-medium uppercase tracking-wide">{BUCKET_LABEL[bucket] ? t(BUCKET_LABEL[bucket]) : bucket}</p>
                   <p className="text-lg font-semibold tabular-nums">{SHOW_FINANCIALS ? aed(amount) : '—'}</p>
                 </div>
               ))}
@@ -317,11 +323,11 @@ export default function Procurement() {
                 <table className="min-w-full border-separate border-spacing-0 text-sm">
                   <thead className="bg-slate-50/90">
                     <tr className="text-start text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      <th className="border-b border-slate-200 px-5 py-3 text-start">Payee</th>
-                      <th className="border-b border-slate-200 px-5 py-3 text-start">Invoice</th>
-                      <th className="border-b border-slate-200 px-5 py-3 text-start">Age</th>
-                      <th className="border-b border-slate-200 px-5 py-3 text-end">Total</th>
-                      <th className="border-b border-slate-200 px-5 py-3 text-end">Outstanding</th>
+                      <th className="border-b border-slate-200 px-5 py-3 text-start">{t('Payee')}</th>
+                      <th className="border-b border-slate-200 px-5 py-3 text-start">{t('Invoice')}</th>
+                      <th className="border-b border-slate-200 px-5 py-3 text-start">{t('Age')}</th>
+                      <th className="border-b border-slate-200 px-5 py-3 text-end">{t('Total')}</th>
+                      <th className="border-b border-slate-200 px-5 py-3 text-end">{t('Outstanding')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -330,7 +336,7 @@ export default function Procurement() {
                         <td className="border-b border-slate-100 px-5 py-3">
                           <div className="font-medium text-slate-900">{i.payee}</div>
                           <div className="text-xs text-slate-400">
-                            {i.document_type === 'supplier_invoice' ? 'Supplier' : 'Garage'}
+                            {i.document_type === 'supplier_invoice' ? t('Supplier') : t('Garage')}
                           </div>
                         </td>
                         <td className="border-b border-slate-100 px-5 py-3 text-slate-700">
@@ -340,16 +346,18 @@ export default function Procurement() {
                         <td className="border-b border-slate-100 px-5 py-3">
                           {i.overdue ? (
                             <span className={`rounded px-1.5 py-0.5 text-[11px] ring-1 ring-inset ${BUCKET_TONE[i.bucket]}`}>
-                              {i.days_overdue}d late
+                              {t('{n}d late', { n: i.days_overdue })}
                             </span>
                           ) : (
                             <span className="text-[11px] text-slate-400">
-                              {i.days_overdue != null ? `due in ${Math.abs(i.days_overdue)}d` : '—'}
+                              {i.days_overdue != null ? t('due in {n}d', { n: Math.abs(i.days_overdue) }) : '—'}
                             </span>
                           )}
                           {i.due_date && (
                             <div className="text-[10px] text-slate-400">
-                              due {i.due_date}{i.terms_days != null ? ` · net ${i.terms_days}` : ''}
+                              {i.terms_days != null
+                                ? t('due {date} · net {n}', { date: i.due_date, n: i.terms_days })
+                                : t('due {date}', { date: i.due_date })}
                             </div>
                           )}
                         </td>
@@ -364,7 +372,7 @@ export default function Procurement() {
                   </tbody>
                 </table>
                 {payables.invoices.length === 0 && (
-                  <EmptyState title="Nothing outstanding" message="Every approved bill has been settled." />
+                  <EmptyState title={t('Nothing outstanding')} message={t('Every approved bill has been settled.')} />
                 )}
               </div>
             </Card>
@@ -378,11 +386,11 @@ export default function Procurement() {
               <table className="min-w-full border-separate border-spacing-0 text-sm">
                 <thead className="bg-slate-50/90">
                   <tr className="text-start text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    <th className="border-b border-slate-200 px-5 py-3 text-start">Supplier</th>
-                    <th className="border-b border-slate-200 px-5 py-3 text-end">Net spend</th>
-                    <th className="border-b border-slate-200 px-5 py-3 text-end">Documented</th>
-                    <th className="border-b border-slate-200 px-5 py-3 text-end">Avg delivery</th>
-                    <th className="border-b border-slate-200 px-5 py-3 text-end">Returns</th>
+                    <th className="border-b border-slate-200 px-5 py-3 text-start">{t('Supplier')}</th>
+                    <th className="border-b border-slate-200 px-5 py-3 text-end">{t('Net spend')}</th>
+                    <th className="border-b border-slate-200 px-5 py-3 text-end">{t('Documented')}</th>
+                    <th className="border-b border-slate-200 px-5 py-3 text-end">{t('Avg delivery')}</th>
+                    <th className="border-b border-slate-200 px-5 py-3 text-end">{t('Returns')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -390,7 +398,9 @@ export default function Procurement() {
                     <tr key={s.supplier} className="bg-white even:bg-slate-50/40">
                       <td className="border-b border-slate-100 px-5 py-3">
                         <div className="font-medium text-slate-900">{s.supplier}</div>
-                        <div className="text-xs text-slate-400">{s.purchases} purchases</div>
+                        <div className="text-xs text-slate-400">
+                          {s.purchases === 1 ? t('1 purchase') : t('{n} purchases', { n: s.purchases })}
+                        </div>
                       </td>
                       <td className="border-b border-slate-100 px-5 py-3 text-end tabular-nums text-slate-900">
                         {SHOW_FINANCIALS ? aed(s.net_spend) : '—'}
@@ -400,13 +410,13 @@ export default function Procurement() {
                           {s.documentation_pct}%
                         </Badge>
                         {SHOW_FINANCIALS && s.undocumented > 0 && (
-                          <div className="text-[11px] text-amber-700">{aed(s.undocumented)} unproven</div>
+                          <div className="text-[11px] text-amber-700">{t('{amount} unproven', { amount: aed(s.undocumented) })}</div>
                         )}
                       </td>
                       <td className="border-b border-slate-100 px-5 py-3 text-end tabular-nums text-slate-600">
                         {/* Never show an unmeasured lead time as a good one. */}
                         {s.avg_lead_days == null
-                          ? <span className="text-slate-300" title="No delivery dates recorded">not measured</span>
+                          ? <span className="text-slate-300" title={t('No delivery dates recorded')}>{t('not measured')}</span>
                           : `${s.avg_lead_days}d`}
                       </td>
                       <td className="border-b border-slate-100 px-5 py-3 text-end">
@@ -419,7 +429,7 @@ export default function Procurement() {
                 </tbody>
               </table>
               {suppliers.length === 0 && (
-                <EmptyState title="No supplier purchases yet" message="Buy a part from a supplier and it will appear here." />
+                <EmptyState title={t('No supplier purchases yet')} message={t('Buy a part from a supplier and it will appear here.')} />
               )}
             </div>
           </Card>
@@ -432,11 +442,11 @@ export default function Procurement() {
               <table className="min-w-full border-separate border-spacing-0 text-sm">
                 <thead className="bg-slate-50/90">
                   <tr className="text-start text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    <th className="border-b border-slate-200 px-5 py-3 text-start">Date</th>
-                    <th className="border-b border-slate-200 px-5 py-3 text-start">Payee</th>
-                    <th className="border-b border-slate-200 px-5 py-3 text-start">Method</th>
-                    <th className="border-b border-slate-200 px-5 py-3 text-end">Amount</th>
-                    <th className="border-b border-slate-200 px-5 py-3 text-end">Unallocated</th>
+                    <th className="border-b border-slate-200 px-5 py-3 text-start">{t('Date')}</th>
+                    <th className="border-b border-slate-200 px-5 py-3 text-start">{t('Payee')}</th>
+                    <th className="border-b border-slate-200 px-5 py-3 text-start">{t('Method')}</th>
+                    <th className="border-b border-slate-200 px-5 py-3 text-end">{t('Amount')}</th>
+                    <th className="border-b border-slate-200 px-5 py-3 text-end">{t('Unallocated')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -464,7 +474,7 @@ export default function Procurement() {
                 </tbody>
               </table>
               {payments.payments.length === 0 && (
-                <EmptyState title="No payments recorded" message="Record a payment and it will appear here." />
+                <EmptyState title={t('No payments recorded')} message={t('Record a payment and it will appear here.')} />
               )}
             </div>
           </Card>

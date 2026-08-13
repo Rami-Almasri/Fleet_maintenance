@@ -55,6 +55,10 @@ class DatabaseSeeder extends Seeder
         $this->call(InspectionTypeSeeder::class);
         $this->call(DamageCatalogSeeder::class);
 
+        // Location layer — the shared "where on the car" vocabulary, plus the location_mode policy it
+        // stamps onto the fault/damage catalogs. Runs AFTER them: stampPolicy() reads their rows.
+        $this->call(VehicleLocationSeeder::class);
+
         // A bootstrap super-admin so there's always one account that can do
         // everything (and promote others). Credentials come from the environment,
         // NOT a hardcoded default, and re-seeding NEVER resets the password of an

@@ -12,6 +12,7 @@ import { aed, fmtDate } from '../../lib/format';
 import { fmtDateTime } from './meta';
 import { ProgressSpine } from './OpsCard';
 import { tone, ROLE, shortDate } from './opsMeta';
+import { useI18n } from '../../i18n/I18nContext';
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // The complete OPERATIONAL SUMMARY for one car in maintenance — what opens when a manager clicks a
@@ -34,6 +35,7 @@ import { tone, ROLE, shortDate } from './opsMeta';
 
 export default function VehicleOpsDrawer({ ticketId, onClose }) {
   const navigate = useNavigate();
+  const { t } = useI18n();
 
   const fetcher = useCallback(async () => {
     if (!ticketId) return null;
@@ -56,23 +58,23 @@ export default function VehicleOpsDrawer({ ticketId, onClose }) {
     <Drawer
       open={!!ticketId}
       onClose={onClose}
-      eyebrow="Operations summary"
-      title={tk ? (tk.plate || `Ticket #${ticketId}`) : 'Loading…'}
+      eyebrow={t('Operations summary')}
+      title={tk ? (tk.plate || t('Ticket #{id}', { id: ticketId })) : t('Loading…')}
       subtitle={tk ? [tk.car, tk.status_label].filter(Boolean).join(' · ') : ''}
       width="lg"
       footer={
         tk && (
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="primary" size="sm" onClick={() => { navigate(`/maintenance-workflow/${tk.id}`); onClose?.(); }}>
-              Open ticket
+              {t('Open ticket')}
             </Button>
             {tk.vehicle_id && (
               <Button variant="secondary" size="sm" onClick={() => { navigate(`/car-status/${tk.vehicle_id}`); onClose?.(); }}>
-                Vehicle details
+                {t('Vehicle details')}
               </Button>
             )}
             <span className="ms-auto text-[11px] text-slate-400">
-              Ticket #{tk.id} · opened {fmtDate(tk.created_at)}
+              {t('Ticket #{id} · opened {date}', { id: tk.id, date: fmtDate(tk.created_at) })}
             </span>
           </div>
         )
@@ -87,101 +89,125 @@ export default function VehicleOpsDrawer({ ticketId, onClose }) {
       )}
 
       {error && !loading && (
-        <div className="p-5 text-sm text-red-600">Couldn’t load this vehicle’s operations summary.</div>
+        <div className="p-5 text-sm text-red-600">{t('Couldn’t load this vehicle’s operations summary.')}</div>
       )}
 
       {tk && !loading && (
         <div className="space-y-4 p-5">
-          {/* ── Headline: why it's here + what's happening + what's blocking ──── */}
-          <div className="rounded-2xl bg-white p-4 shadow-soft ring-1 ring-slate-200">
-            <div className="flex flex-wrap items-start justify-between gap-2">
-              <div className="min-w-0">
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-                  Primary maintenance reason
+          {/* ── The deck: why it's here + what's happening + what's blocking ────
+              Dark, and washed with the ticket's own state colour, so the same car
+              wears the same face here as it does in the ticket drawer. It is the
+              fixed reference point above a scroll of white cards, and it should
+              never be mistaken for one of them. */}
+          <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-slate-900 via-slate-900 to-indigo-950 px-4 py-4 shadow-lg ring-1 ring-slate-900/40">
+            <div
+              aria-hidden
+              className="pointer-events-none absolute -end-16 -top-20 h-56 w-56 rounded-full opacity-25 blur-3xl"
+              style={{ background: tone(o?.state?.tone).bar }}
+            />
+
+            <div className="relative">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                    {t('Primary maintenance reason')}
+                  </div>
+                  <div className="mt-0.5 font-display text-xl font-bold leading-tight text-white">
+                    {o?.reason?.primary || t('Not recorded')}
+                  </div>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                    {tk.fault_severity_label && (
+                      <Badge tone={tk.fault_severity_tone || 'slate'} dot>{tk.fault_severity_label}</Badge>
+                    )}
+                    {o?.reason?.extra > 0 && (
+                      <span className="text-xs font-medium text-slate-300">
+                        {o.reason.extra === 1
+                          ? t('+1 more open issue')
+                          : t('+{n} more open issues', { n: o.reason.extra })}
+                      </span>
+                    )}
+                    {o?.reason?.source && (
+                      <span className="text-[10px] uppercase tracking-wide text-slate-500">
+                        {t('Source: {source}', {
+                          source: o.reason.source === 'fault' ? t('inspector fault') : o.reason.source,
+                        })}
+                      </span>
+                    )}
+                  </div>
                 </div>
-                <div className="mt-0.5 font-display text-xl font-bold leading-tight text-slate-900">
-                  {o?.reason?.primary || 'Not recorded'}
-                </div>
-                <div className="mt-1 flex flex-wrap items-center gap-2">
-                  {tk.fault_severity_label && (
-                    <Badge tone={tk.fault_severity_tone || 'slate'} dot>{tk.fault_severity_label}</Badge>
-                  )}
-                  {o?.reason?.extra > 0 && (
-                    <span className="text-xs font-medium text-slate-500">+{o.reason.extra} more open issues</span>
-                  )}
-                  {o?.reason?.source && (
-                    <span className="text-[10px] uppercase tracking-wide text-slate-400">
-                      Source: {o.reason.source === 'fault' ? 'inspector fault' : o.reason.source}
-                    </span>
-                  )}
-                </div>
-              </div>
-              {o?.state && (
-                <span className={`shrink-0 rounded-full px-3 py-1 text-xs font-bold ring-1 ring-inset ${tone(o.state.tone).chip}`}>
-                  {o.state.label}
-                </span>
-              )}
-            </div>
-
-            {o?.progress?.length > 0 && (
-              <div className="mt-4">
-                <ProgressSpine steps={o.progress} />
-              </div>
-            )}
-
-            {o?.blocker && (
-              <div className={`mt-3 rounded-xl px-3 py-2 ring-1 ring-inset ${tone(o.blocker.tone).chip}`}>
-                <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide">
-                  <Icon.Alert className="h-4 w-4" /> {o.blocker.label}
-                </div>
-                {o.blocker.detail && <div className="mt-0.5 text-xs opacity-80">{o.blocker.detail}</div>}
-              </div>
-            )}
-
-            {/* Clock + responsibility, the two facts a manager quotes on a call. */}
-            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-              <Stat label="In maintenance" value={fmtDays(o?.timing?.days_in_maintenance)} />
-              <Stat
-                label={o?.timing?.eta_is_estimated ? 'ETA (estimated)' : 'ETA'}
-                value={shortDate(o?.timing?.eta) || '—'}
-                sub={o?.timing?.days_over > 0 ? `${o.timing.days_over}d overdue` : null}
-                tone={o?.timing?.days_over > 0 ? 'text-red-600' : undefined}
-              />
-              <Stat label="Since last update" value={fmtDays(o?.timing?.days_since_update)} />
-              <Stat label="Garage" value={o?.responsibility?.garage || '—'} />
-            </div>
-
-            <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-500">
-              <span>
-                <span className="font-semibold text-slate-700">
-                  {(ROLE[o?.responsibility?.owner_role] || ROLE.none).label}:
-                </span>{' '}
-                {o?.responsibility?.owner_name || 'unassigned'}
-              </span>
-              {o?.responsibility?.followers?.length > 0 && (
-                <span>
-                  <span className="font-semibold text-slate-700">Follow-up:</span>{' '}
-                  {o.responsibility.followers.join(', ')}
-                </span>
-              )}
-              {o?.responsibility?.transfer_to && (
-                <span className="text-amber-600">Transferring → {o.responsibility.transfer_to}</span>
-              )}
-            </div>
-
-            {o?.alerts?.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                {o.alerts.map((a) => (
-                  <span key={a.key} className={`rounded-md px-2 py-0.5 text-[10px] font-bold ring-1 ring-inset ${tone(a.tone).chip}`}>
-                    {a.label}
+                {o?.state && (
+                  <span className={`shrink-0 rounded-full px-3 py-1 text-xs font-bold ring-1 ring-inset ${tone(o.state.tone).chip}`}>
+                    {o.state.label}
                   </span>
-                ))}
+                )}
               </div>
-            )}
+
+              {o?.progress?.length > 0 && (
+                <div className="mt-4 rounded-xl bg-white/[0.04] px-3 py-3 ring-1 ring-inset ring-white/10">
+                  <ProgressSpine steps={o.progress} onDark />
+                </div>
+              )}
+
+              {o?.blocker && (
+                <div className={`mt-3 rounded-xl px-3 py-2 ring-1 ring-inset ${tone(o.blocker.tone).chip}`}>
+                  <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide">
+                    <Icon.Alert className="h-4 w-4" /> {o.blocker.label}
+                  </div>
+                  {o.blocker.detail && <div className="mt-0.5 text-xs opacity-80">{o.blocker.detail}</div>}
+                </div>
+              )}
+
+              {/* Clock + responsibility, the two facts a manager quotes on a call. */}
+              <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <DeckStat label={t('In maintenance')} value={fmtDays(o?.timing?.days_in_maintenance, t)} />
+                <DeckStat
+                  label={o?.timing?.eta_is_estimated ? t('ETA (estimated)') : t('ETA')}
+                  value={shortDate(o?.timing?.eta) || '—'}
+                  sub={o?.timing?.days_over > 0 ? t('{n}d overdue', { n: o.timing.days_over }) : null}
+                  tone={o?.timing?.days_over > 0 ? 'text-red-300' : undefined}
+                />
+                <DeckStat label={t('Since last update')} value={fmtDays(o?.timing?.days_since_update, t)} />
+                <DeckStat label={t('Garage')} value={o?.responsibility?.garage || '—'} />
+              </div>
+
+              <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-400">
+                <span>
+                  <span className="font-semibold text-slate-200">
+                    {(ROLE[o?.responsibility?.owner_role] || ROLE.none).label}:
+                  </span>{' '}
+                  {o?.responsibility?.owner_name || t('unassigned')}
+                </span>
+                {o?.responsibility?.followers?.length > 0 && (
+                  <span>
+                    <span className="font-semibold text-slate-200">{t('Follow-up:')}</span>{' '}
+                    {o.responsibility.followers.join(', ')}
+                  </span>
+                )}
+                {o?.responsibility?.transfer_to && (
+                  <span className="text-amber-300">
+                    {t('Transferring → {name}', { name: o.responsibility.transfer_to })}
+                  </span>
+                )}
+              </div>
+
+              {o?.alerts?.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {o.alerts.map((a) => (
+                    <span key={a.key} className={`rounded-md px-2 py-0.5 text-[10px] font-bold ring-1 ring-inset ${tone(a.tone).chip}`}>
+                      {a.label}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
 
           {/* ── Every reported issue ───────────────────────────────────────────── */}
-          <SectionCard title="Reported issues" subtitle={`${tk.tasks?.length || 0} on this ticket`} bodyClass="p-0">
+          <SectionCard
+            title={t('Reported issues')}
+            subtitle={t('{n} on this ticket', { n: tk.tasks?.length || 0 })}
+            bodyClass="p-0"
+          >
             {tk.tasks?.length ? (
               <ul className="divide-y divide-slate-100">
                 {tk.tasks.map((f) => (
@@ -191,8 +217,8 @@ export default function VehicleOpsDrawer({ ticketId, onClose }) {
                         <div className="text-sm font-semibold text-slate-900">{f.symptom}</div>
                         <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-slate-500">
                           {f.current_garage && <span>{f.current_garage}</span>}
-                          {f.root_cause && <span>Root cause: {f.root_cause}</span>}
-                          {f.repair_gate === 'pending' && <span className="font-semibold text-red-600">Repair frozen — awaiting approval</span>}
+                          {f.root_cause && <span>{t('Root cause: {cause}', { cause: f.root_cause })}</span>}
+                          {f.repair_gate === 'pending' && <span className="font-semibold text-red-600">{t('Repair frozen — awaiting approval')}</span>}
                         </div>
                         {(f.notes || f.resolution_note) && (
                           <div className="mt-1 text-[11px] leading-snug text-slate-500">
@@ -222,19 +248,19 @@ export default function VehicleOpsDrawer({ ticketId, onClose }) {
                 ))}
               </ul>
             ) : (
-              <Empty>No faults recorded on this ticket.</Empty>
+              <Empty>{t('No faults recorded on this ticket.')}</Empty>
             )}
           </SectionCard>
 
           {/* ── Parts: requested vs fitted ─────────────────────────────────────── */}
-          <SectionCard title="Parts" subtitle="Requested and fitted across every fault" bodyClass="p-0">
+          <SectionCard title={t('Parts')} subtitle={t('Requested and fitted across every fault')} bodyClass="p-0">
             <PartsPanel tasks={tk.tasks || []} />
           </SectionCard>
 
           {/* ── Checkpoint history = the ETA history ───────────────────────────── */}
           <SectionCard
-            title="Checkpoint history"
-            subtitle="Every progress update, and the ETA it moved"
+            title={t('Checkpoint history')}
+            subtitle={t('Every progress update, and the ETA it moved')}
             bodyClass="p-0"
           >
             {checkpoints.length ? (
@@ -244,13 +270,15 @@ export default function VehicleOpsDrawer({ ticketId, onClose }) {
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <div className="text-sm font-semibold capitalize text-slate-900">
-                          {String(c.status || 'Progress update').replace(/_/g, ' ')}
+                          {c.status ? String(c.status).replace(/_/g, ' ') : t('Progress update')}
                         </div>
                         {c.summary && <div className="mt-0.5 text-[11px] leading-snug text-slate-600">{c.summary}</div>}
                         {c.delay_reason && (
                           <div className="mt-0.5 text-[11px] capitalize text-amber-600">
-                            Delay: {String(c.delay_reason).replace(/_/g, ' ')}
-                            {c.delay_reason_other ? ` — ${c.delay_reason_other}` : ''}
+                            {t('Delay: {reason}', {
+                              reason: String(c.delay_reason).replace(/_/g, ' ')
+                                + (c.delay_reason_other ? ` — ${c.delay_reason_other}` : ''),
+                            })}
                           </div>
                         )}
                       </div>
@@ -260,32 +288,32 @@ export default function VehicleOpsDrawer({ ticketId, onClose }) {
                       </div>
                     </div>
                     <div className="mt-1 text-[11px] text-slate-500">
-                      ETA{' '}
-                      {c.previous_expected_date ? (
-                        <>
-                          <span className="line-through">{fmtDate(c.previous_expected_date)}</span>
-                          {' → '}
-                        </>
-                      ) : (
-                        'set to '
-                      )}
-                      <span className="font-semibold text-slate-700">{fmtDate(c.next_expected_date)}</span>
+                      {c.previous_expected_date
+                        ? t('ETA {from} → {to}', {
+                            from: fmtDate(c.previous_expected_date),
+                            to: fmtDate(c.next_expected_date),
+                          })
+                        : t('ETA set to {to}', { to: fmtDate(c.next_expected_date) })}
                     </div>
                   </li>
                 ))}
               </ol>
             ) : (
-              <Empty>No progress checkpoints have been filed for this repair yet.</Empty>
+              <Empty>{t('No progress checkpoints have been filed for this repair yet.')}</Empty>
             )}
           </SectionCard>
 
           {/* ── The workflow timeline + the follow-up log ──────────────────────── */}
-          <SectionCard title="Timeline" subtitle="How the ticket moved, and who moved it" bodyClass="p-0">
+          <SectionCard title={t('Timeline')} subtitle={t('How the ticket moved, and who moved it')} bodyClass="p-0">
             <Timeline tk={tk} />
           </SectionCard>
 
           {/* ── Photos & videos ────────────────────────────────────────────────── */}
-          <SectionCard title="Photos & videos" subtitle={`${mediaItems.length} attached`} bodyClass="p-4">
+          <SectionCard
+            title={t('Photos & videos')}
+            subtitle={t('{n} attached', { n: mediaItems.length })}
+            bodyClass="p-4"
+          >
             {mediaItems.length ? (
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                 {mediaItems.map((m) => (
@@ -302,23 +330,23 @@ export default function VehicleOpsDrawer({ ticketId, onClose }) {
                 ))}
               </div>
             ) : (
-              <div className="py-2 text-xs text-slate-400">Nothing attached to this ticket.</div>
+              <div className="py-2 text-xs text-slate-400">{t('Nothing attached to this ticket.')}</div>
             )}
           </SectionCard>
 
           {/* ── Cost position ──────────────────────────────────────────────────── */}
-          <SectionCard title="Cost so far" subtitle="What this repair has been billed" bodyClass="p-4">
+          <SectionCard title={t('Cost so far')} subtitle={t('What this repair has been billed')} bodyClass="p-4">
             <div className="grid grid-cols-3 gap-2">
-              <Stat label="Parts" value={tk.parts_total != null ? aed(tk.parts_total) : '—'} />
-              <Stat label="Labour" value={tk.labor_total != null ? aed(tk.labor_total) : '—'} />
-              <Stat label="Total" value={tk.cost != null ? aed(tk.cost) : (tk.cost_pending ? 'Pending invoice' : '—')} />
+              <Stat label={t('Parts')} value={tk.parts_total != null ? aed(tk.parts_total) : '—'} />
+              <Stat label={t('Labour')} value={tk.labor_total != null ? aed(tk.labor_total) : '—'} />
+              <Stat label={t('Total')} value={tk.cost != null ? aed(tk.cost) : (tk.cost_pending ? t('Pending invoice') : '—')} />
             </div>
             {tk.invoices?.length > 0 && (
               <ul className="mt-3 divide-y divide-slate-100 rounded-lg ring-1 ring-slate-200">
                 {tk.invoices.map((inv) => (
                   <li key={inv.id} className="flex items-center justify-between gap-2 px-3 py-2 text-[11px]">
                     <span className="truncate text-slate-600">
-                      {inv.vendor_name || (inv.is_internal ? 'In-house' : `Invoice #${inv.id}`)}
+                      {inv.vendor_name || (inv.is_internal ? t('In-house') : t('Invoice #{id}', { id: inv.id }))}
                       {inv.invoice_no ? ` · ${inv.invoice_no}` : ''}
                     </span>
                     <span className="shrink-0 font-semibold tabular-nums text-slate-800">{aed(inv.amount ?? 0)}</span>
@@ -345,16 +373,35 @@ function Stat({ label, value, sub, tone: toneCls }) {
   );
 }
 
+// The same tile on the dark deck. Kept separate from Stat rather than given a `dark` flag because the
+// two live on opposite surfaces and only ever share a shape — a shared prop would just be a colour
+// switch read at every call site.
+function DeckStat({ label, value, sub, tone: toneCls }) {
+  return (
+    <div className="min-w-0 rounded-lg bg-white/[0.06] px-2.5 py-2 ring-1 ring-inset ring-white/10">
+      <div className="truncate text-[10px] font-semibold uppercase tracking-wide text-slate-400">{label}</div>
+      <div className={`truncate text-sm font-bold ${toneCls || 'text-white'}`}>{value ?? '—'}</div>
+      {sub && <div className={`truncate text-[10px] ${toneCls || 'text-slate-400'}`}>{sub}</div>}
+    </div>
+  );
+}
+
 function Empty({ children }) {
   return <div className="px-4 py-5 text-center text-xs text-slate-400">{children}</div>;
 }
 
-const fmtDays = (n) => (n === null || n === undefined ? '—' : n === 0 ? 'Today' : `${n} days`);
+// Module-level helper, so the translator is threaded in from the calling component.
+const fmtDays = (n, t) => {
+  if (n === null || n === undefined) return '—';
+  if (n === 0) return t('Today');
+  return n === 1 ? t('1 day') : t('{n} days', { n });
+};
 
 /** Requested vs fitted, flattened across every fault — the "what's on order / what went in" answer. */
 function PartsPanel({ tasks }) {
+  const { t } = useI18n();
   const parts = tasks.flatMap((f) => (f.parts || []).map((p) => ({ ...p, fault: f.symptom })));
-  if (!parts.length) return <Empty>No parts have been raised for this repair.</Empty>;
+  if (!parts.length) return <Empty>{t('No parts have been raised for this repair.')}</Empty>;
 
   const fitted = parts.filter((p) => ['installed', 'completed'].includes(p.status));
   const open = parts.filter((p) => !['installed', 'completed', 'rejected', 'cancelled'].includes(p.status));
@@ -373,10 +420,10 @@ function PartsPanel({ tasks }) {
 
   return (
     <div>
-      <GroupHeader>Outstanding · {open.length}</GroupHeader>
-      {open.length ? <ul className="divide-y divide-slate-100">{open.map((p) => <Row key={p.id} p={p} />)}</ul> : <Empty>Nothing outstanding.</Empty>}
-      <GroupHeader>Fitted · {fitted.length}</GroupHeader>
-      {fitted.length ? <ul className="divide-y divide-slate-100">{fitted.map((p) => <Row key={p.id} p={p} />)}</ul> : <Empty>Nothing fitted yet.</Empty>}
+      <GroupHeader>{t('Outstanding · {n}', { n: open.length })}</GroupHeader>
+      {open.length ? <ul className="divide-y divide-slate-100">{open.map((p) => <Row key={p.id} p={p} />)}</ul> : <Empty>{t('Nothing outstanding.')}</Empty>}
+      <GroupHeader>{t('Fitted · {n}', { n: fitted.length })}</GroupHeader>
+      {fitted.length ? <ul className="divide-y divide-slate-100">{fitted.map((p) => <Row key={p.id} p={p} />)}</ul> : <Empty>{t('Nothing fitted yet.')}</Empty>}
     </div>
   );
 }
@@ -406,13 +453,15 @@ const HANDOFF_LABEL = {
 };
 
 function Timeline({ tk }) {
+  const { t } = useI18n();
+  // The table keeps the English source text; it is resolved through the catalog at render time.
   const steps = Object.entries(HANDOFF_LABEL)
-    .map(([key, label]) => ({ key, label, stamp: tk.handoffs?.[key] }))
+    .map(([key, label]) => ({ key, label: t(label), stamp: tk.handoffs?.[key] }))
     .filter((s) => s.stamp);
 
   const followUps = (tk.follow_ups || []).slice().reverse();
 
-  if (!steps.length && !followUps.length) return <Empty>Nothing has been recorded yet.</Empty>;
+  if (!steps.length && !followUps.length) return <Empty>{t('Nothing has been recorded yet.')}</Empty>;
 
   return (
     <div>
@@ -432,7 +481,7 @@ function Timeline({ tk }) {
 
       {followUps.length > 0 && (
         <>
-          <GroupHeader>Follow-up log · {followUps.length}</GroupHeader>
+          <GroupHeader>{t('Follow-up log · {n}', { n: followUps.length })}</GroupHeader>
           <ul className="divide-y divide-slate-100">
             {followUps.map((f, i) => (
               <li key={`${f.at || i}-${i}`} className="px-4 py-2.5">

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import api from '../../api/client';
 import { Spinner } from '../../components/ui/Misc';
+import { useI18n } from '../../i18n/I18nContext';
 
 // An upfront, read-only preview of the Rental Readiness Checklist for the car the operator just
 // picked — so "does this car pass its condition checks?" is answered the moment the vehicle is
@@ -15,6 +16,7 @@ const STYLE = {
 };
 
 export default function RentalReadinessInline({ vehicleId }) {
+  const { t } = useI18n();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -37,7 +39,7 @@ export default function RentalReadinessInline({ vehicleId }) {
   if (loading) {
     return (
       <div className="flex items-center gap-2 rounded-2xl border border-slate-200/60 bg-white px-5 py-4 text-sm text-slate-500 shadow-soft">
-        <Spinner className="h-4 w-4" /> Checking rental readiness…
+        <Spinner className="h-4 w-4" /> {t('Checking rental readiness…')}
       </div>
     );
   }
@@ -54,9 +56,13 @@ export default function RentalReadinessInline({ vehicleId }) {
   // Overall tone: green when nothing blocks, red when a check fails.
   const head = ready
     ? { border: 'border-emerald-200', bg: 'bg-emerald-50', text: 'text-emerald-800', glyph: '✓',
-        title: warnings ? `Ready to rent — ${passed}/${total} passed, ${warnings} advisory` : `Ready to rent — all ${total} checks passed` }
+        title: warnings
+          ? t('Ready to rent — {passed}/{total} passed, {warnings} advisory', { passed, total, warnings })
+          : t('Ready to rent — all {total} checks passed', { total }) }
     : { border: 'border-red-200', bg: 'bg-red-50', text: 'text-red-800', glyph: '⛔',
-        title: `Not ready — ${blockers} blocking issue${blockers === 1 ? '' : 's'} to resolve before renting` };
+        title: blockers === 1
+          ? t('Not ready — 1 blocking issue to resolve before renting')
+          : t('Not ready — {blockers} blocking issues to resolve before renting', { blockers }) };
 
   return (
     <div className={`overflow-hidden rounded-2xl border ${head.border} bg-white shadow-soft`}>
@@ -65,7 +71,7 @@ export default function RentalReadinessInline({ vehicleId }) {
         <span className={`text-lg ${head.text}`}>{head.glyph}</span>
         <div className="min-w-0 flex-1">
           <p className={`text-sm font-bold ${head.text}`}>{head.title}</p>
-          <p className="text-[11px] text-slate-500">Live condition checks — resolvable blockers are enforced again when you confirm the rental.</p>
+          <p className="text-[11px] text-slate-500">{t('Live condition checks — resolvable blockers are enforced again when you confirm the rental.')}</p>
         </div>
         <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-bold tabular-nums ${ready ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
           {passed}/{total}

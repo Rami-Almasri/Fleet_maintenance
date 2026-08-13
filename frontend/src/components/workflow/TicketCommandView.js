@@ -66,7 +66,9 @@ const STATUS_STEP = {
   diagnostic_cleared: 5,
 };
 const isTerminal = (s) => s === 'closed' || s === 'diagnostic_cleared';
-const fmtAED = (n) => `AED ${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+// Latin digits + Gregorian conventions stay put under Arabic — these sit in tabular-nums columns.
+const numLocale = (lang) => (lang === 'ar' ? 'ar-AE-u-nu-latn' : undefined);
+const fmtAED = (n, lang) => `AED ${Number(n || 0).toLocaleString(numLocale(lang), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 // A live HH:MM:SS (with leading days) clock that ticks every second until `end`
 // freezes it. Used for the headline "downtime so far" counter.
@@ -137,7 +139,7 @@ function JourneyTimeline({ tk, tone, t }) {
                     {ago(h.at, t)}
                   </p>
                 ) : active ? (
-                  <p className="mt-0.5 text-[10px] font-medium" style={{ color: tone }}>In progress</p>
+                  <p className="mt-0.5 text-[10px] font-medium" style={{ color: tone }}>{t('In progress')}</p>
                 ) : null}
               </div>
 
@@ -236,12 +238,13 @@ function TestDriveReport({ report }) {
 
 // Count-up wrapper for odometer figures.
 function CountUp({ value }) {
+  const { lang } = useI18n();
   const v = useCountUp(Number(value) || 0);
-  return <>{Math.round(v).toLocaleString()}</>;
+  return <>{Math.round(v).toLocaleString(numLocale(lang))}</>;
 }
 
 export default function TicketCommandView({ ticketId, can, userId, onAct, reloadKey = 0, hideBack = false }) {
-  const { t } = useI18n();
+  const { t, tp, lang } = useI18n();
   const toast = useToast();
   const [tk, setTk] = useState(null);
   const [photos, setPhotos] = useState([]);
@@ -259,6 +262,9 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
   // widget + vehicle profile, surfaced here so a checkpoint appears on the ticket's own command page.
   const [cp, setCp] = useState(null); // { monitor, responsibles, checkpoints, can_submit, can_manage, faults }
   const [cpOpen, setCpOpen] = useState(false);
+  // What still stops this ticket closing, money-wise. The page used to be silent about it: a ticket with
+  // three unbilled parts looked finished here and only confessed inside the drawer's Financial Story.
+  const [blockers, setBlockers] = useState([]);
 
   const loadCheckpoints = useCallback(() => {
     if (!ticketId) return;
@@ -348,6 +354,16 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
     const id = setInterval(load, 12000);
     return () => clearInterval(id);
   }, [load]);
+
+  // The closure blockers, on the same track as everything else here: best-effort, never blanking the page.
+  useEffect(() => {
+    if (!ticketId) return undefined;
+    let alive = true;
+    api.get(`/maintenance-tickets/${ticketId}/financial-story`)
+      .then((r) => { if (alive) setBlockers((r.data?.data ?? r.data)?.blockers || []); })
+      .catch(() => { if (alive) setBlockers([]); });
+    return () => { alive = false; };
+  }, [ticketId, reloadKey]);
 
   // The garages that worked on this ticket — so a car that passed through several gets one link per garage.
   useEffect(() => {
@@ -441,14 +457,16 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
   // "Mark Ready" is gated: the car can't be marked ready until every fault is fixed (or cancelled).
   const openFaults = tk.tasks_progress?.open ?? 0;
   const readyBlocked = act?.action === 'ready' && openFaults > 0;
-  const readyHint = `Fix all ${openFaults} open fault${openFaults > 1 ? 's' : ''} first`;
+  const readyHint = openFaults === 1
+    ? t('Fix the 1 open fault first')
+    : t('Fix all {n} open faults first', { n: openFaults });
   // Custody gate: a return/arrival leg may only be completed by the same driver who took the car.
   // custodyBlocked() is scoped to the gated states, so no per-action guard is needed here.
-  const custodyLocked = custodyBlocked(tk, userId);
-  const custodyHolder = custodyHolderName(tk, userId);
+  const custodyLocked = custodyBlocked(tk, userId, can);
+  const custodyHolder = custodyHolderName(tk, userId, can);
   const custodyHint = act?.action === 'arriveAtPark'
-    ? `Only ${custodyHolder || 'the driver who collected the car from the garage'} can complete the arrival at our park`
-    : `Only ${custodyHolder || 'the driver who picked up the car'} can check it in`;
+    ? t('Only {who} can complete the arrival at our park', { who: custodyHolder || t('the driver who collected the car from the garage') })
+    : t('Only {who} can check it in', { who: custodyHolder || t('the driver who picked up the car') });
   // Follow-up is a supervisor (Waleed/Abdullah) monitoring action — an additive log they can file while
   // the car is out for repair, independent of the stage's primary garage-dispatch action. Same gate as
   // the detail drawer + the backend route (maintenance.delegate over the out-for-repair states).
@@ -469,10 +487,11 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
   const cpEtaTone = cpMon?.overdue ? 'bg-red-50 text-red-700 ring-red-200'
     : cpMon?.needs_update ? 'bg-amber-50 text-amber-700 ring-amber-200'
     : 'bg-slate-50 text-slate-600 ring-slate-200';
-  const cpEtaText = !cpMon?.expected_on ? 'No ETA set'
-    : cpMon.overdue ? `${cpMon.days_over} day(s) overdue`
-    : cpMon.eta_status === 'due_today' ? 'Due today'
-    : `${cpMon.days_left} day(s) left`;
+  const cpEtaText = !cpMon?.expected_on ? t('No ETA set')
+    : cpMon.overdue
+      ? (cpMon.days_over === 1 ? t('1 day overdue') : t('{n} days overdue', { n: cpMon.days_over }))
+    : cpMon.eta_status === 'due_today' ? t('Due today')
+    : (cpMon.days_left === 1 ? t('1 day left') : t('{n} days left', { n: cpMon.days_left }));
 
   const timing = tk.stage_timing?.durations || {};
   const odoDelta = tk.dispatch_odometer != null && tk.return_odometer != null ? tk.return_odometer - tk.dispatch_odometer : null;
@@ -480,6 +499,7 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
   const downtimeEnd = terminal ? tk.handoffs?.closed?.at || tk.handoffs?.ready?.at : null;
   const driverName = tk.dispatched_by_name || tk.assigned_driver_name;
   const delegated = tk.delegation?.status === 'driver_assigned' && tk.delegation.driver_name;
+  const blockerTotal = blockers.reduce((s, b) => s + Number(b.amount || 0), 0);
 
   return (
     <div className="py-8">
@@ -561,7 +581,7 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
               <div className="flex items-center gap-5">
                 <div className="text-end">
                   <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                    {terminal ? t('workflow.detail.totalDowntime') : 'Downtime · live'}
+                    {terminal ? t('workflow.detail.totalDowntime') : t('Downtime · live')}
                   </p>
                   <LiveDuration start={downtimeStart} end={downtimeEnd} className="font-display text-3xl font-bold text-white" />
                   <p className="mt-0.5 text-[11px] text-slate-400">
@@ -595,6 +615,37 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
           </div>
         </div>
 
+        {/* Closure blockers — directly under the deck, because a ticket that cannot close is the most
+            important thing on this page and it used to be invisible here. Each line names the amount and
+            links to the screen that clears it, the same wording the drawer's Financial Story uses. */}
+        {blockers.length > 0 && (
+          <div className="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3">
+            <div className="flex items-center gap-2">
+              <Icon.Alert className="h-4 w-4 shrink-0 text-amber-700" />
+              <p className="text-sm font-bold text-amber-900">
+                {tp('workflow.detail.deck.moneyBlocked', blockers.length)}
+                {SHOW_FINANCIALS && blockerTotal > 0 && <span className="ms-1 tabular-nums">· {fmtAED(blockerTotal, lang)}</span>}
+              </p>
+            </div>
+            <ul className="mt-2 grid gap-2 sm:grid-cols-2">
+              {blockers.map((b, i) => (
+                <li key={`${b.code}-${i}`} className="rounded-lg bg-white/70 px-2.5 py-2">
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="text-[12px] text-amber-900">{b.message}</p>
+                    {SHOW_FINANCIALS && b.amount > 0 && (
+                      <span className="shrink-0 text-[12px] font-semibold tabular-nums text-amber-900">{fmtAED(b.amount, lang)}</span>
+                    )}
+                  </div>
+                  <p className="mt-0.5 text-[11px] font-medium text-amber-700">
+                    {b.action}
+                    {b.route && <Link to={b.route} className="ms-1 text-sky-700 underline hover:text-sky-800">{t('workflow.detail.deck.openBlocker')}</Link>}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         {/* delegation ribbon */}
         {delegated && (
           <div className="flex items-center gap-2 rounded-2xl border border-indigo-200 bg-indigo-50/70 px-4 py-3 text-sm font-medium text-indigo-700">
@@ -624,7 +675,7 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
                 <Fact icon={<Icon.Users className="h-4 w-4" />} label={t('workflow.detail.driver')} value={driverName} />
                 <Fact icon={<Icon.Invoice className="h-4 w-4" />} label={t('workflow.detail.contract')} value={tk.linked_contract_no} mono />
                 {SHOW_FINANCIALS && tk.cost != null && (
-                  <Fact icon={<Icon.Coins className="h-4 w-4" />} label={t('workflow.detail.cost')} value={`AED ${Number(tk.cost).toLocaleString()}`} />
+                  <Fact icon={<Icon.Coins className="h-4 w-4" />} label={t('workflow.detail.cost')} value={`AED ${Number(tk.cost).toLocaleString(numLocale(lang))}`} />
                 )}
               </dl>
               {/* The issue text is stored in customer_complaint for EVERY origin (a real complaint, a
@@ -682,7 +733,7 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
                 so a checkpoint stored anywhere shows up on this ticket's command page. */}
             {showCheckpoints && (
               <Panel
-                title="Maintenance Progress"
+                title={t('Maintenance Progress')}
                 icon={<Icon.Clock className="h-4 w-4" />}
                 accent="#6366f1"
                 action={(cp.can_submit || cp.can_manage) ? (
@@ -691,7 +742,7 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
                     onClick={() => setCpOpen(true)}
                     className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-700"
                   >
-                    <Icon.Spark className="h-3.5 w-3.5" /> {cp.can_submit ? 'File update' : 'Manage'}
+                    <Icon.Spark className="h-3.5 w-3.5" /> {cp.can_submit ? t('File update') : t('Manage')}
                   </button>
                 ) : null}
               >
@@ -699,10 +750,12 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
                   <span className="font-semibold">{cpEtaText}</span>
                   {cpMon?.expected_on && (
                     <span className="text-xs opacity-80">
-                      Expected {fmtDate(cpMon.expected_on)}{cpMon.is_estimated ? ' (estimated)' : ''}
+                      {cpMon.is_estimated
+                        ? t('Expected {date} (estimated)', { date: fmtDate(cpMon.expected_on) })
+                        : t('Expected {date}', { date: fmtDate(cpMon.expected_on) })}
                     </span>
                   )}
-                  {cpMon?.needs_update && <span className="text-xs font-medium">· Checkpoint required</span>}
+                  {cpMon?.needs_update && <span className="text-xs font-medium">· {t('Checkpoint required')}</span>}
                 </div>
                 <CheckpointTimeline checkpoints={cp.checkpoints || []} />
               </Panel>
@@ -734,7 +787,7 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
                     // timeline reads as pickup → transit → arrival instead of a bare timestamp.
                     const labelKey = r.step.handoffKey === 'dispatched' && r.h.is_recovery ? 'dispatched_recovery' : r.step.handoffKey;
                     const subline = [
-                      r.h.odometer != null ? `${Number(r.h.odometer).toLocaleString()} km` : null,
+                      r.h.odometer != null ? `${Number(r.h.odometer).toLocaleString(numLocale(lang))} km` : null,
                       r.step.handoffKey === 'dispatched' ? r.h.destination : (r.step.handoffKey === 'repair_started' ? r.h.garage : null),
                     ].filter(Boolean).join(' · ');
                     return (
@@ -746,7 +799,7 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
                               <p className="text-sm font-semibold text-slate-800">{t(`workflow.detail.handoff.${labelKey}`)}</p>
                               {r.dwell != null && (
                                 <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums ${r.running ? 'bg-amber-50 text-amber-600' : 'bg-slate-100 text-slate-500'}`}>
-                                  {fmtDuration(r.dwell)}{r.running ? ' so far' : ''}
+                                  {r.running ? t('{d} so far', { d: fmtDuration(r.dwell) }) : fmtDuration(r.dwell)}
                                 </span>
                               )}
                             </div>
@@ -795,7 +848,7 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
           <div className="space-y-6">
             {/* Take action */}
             {(allowed || canFollowUp || canRoute || (can('parts.request') && canOrderParts(tk))) && (
-              <Panel title="Take action" icon={<Icon.Spark className="h-4 w-4" />} accent={tone}>
+              <Panel title={t('Take action')} icon={<Icon.Spark className="h-4 w-4" />} accent={tone}>
                 <div className="flex flex-col gap-2">
                   {allowed && custodyLocked && (
                     <span className="text-center text-[11px] font-medium text-amber-600">{custodyHint}</span>
@@ -826,7 +879,7 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
                       while the car is being inspected or in the workshop. Mirrors the drawer + Parts-card gate. */}
                   {can('parts.request') && canOrderParts(tk) && (
                     <Button variant="secondary" onClick={() => setPartsOpenSignal((n) => n + 1)} className="w-full justify-center">
-                      <Icon.Wrench className="h-4 w-4" /> Request Part
+                      <Icon.Wrench className="h-4 w-4" /> {t('Request Part')}
                     </Button>
                   )}
                 </div>
@@ -844,15 +897,15 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
                   <div className="space-y-3">
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-slate-500">{t('workflow.garageInvoice.itemized')}</span>
-                      <span className="font-semibold tabular-nums text-slate-800">{fmtAED(s.itemized_total)}</span>
+                      <span className="font-semibold tabular-nums text-slate-800">{fmtAED(s.itemized_total, lang)}</span>
                     </div>
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-slate-500">{t('workflow.garageInvoice.receipt')}</span>
-                      <span className="font-semibold tabular-nums text-slate-800">{fmtAED(s.receipt_total)}</span>
+                      <span className="font-semibold tabular-nums text-slate-800">{fmtAED(s.receipt_total, lang)}</span>
                     </div>
                     {hasVar && (
                       <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 ring-1 ring-inset ring-amber-600/10">
-                        <span className="font-semibold">{t('workflow.garageInvoice.variance')}: {fmtAED(s.variance)}</span>
+                        <span className="font-semibold">{t('workflow.garageInvoice.variance')}: {fmtAED(s.variance, lang)}</span>
                         {s.variance_explanation && <p className="mt-0.5">{s.variance_explanation}</p>}
                       </div>
                     )}
@@ -948,7 +1001,7 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
                 <div className="mt-3 flex items-center justify-between rounded-xl bg-navy-900 px-4 py-3 text-white">
                   <span className="inline-flex items-center gap-2 text-xs font-medium text-slate-300">
                     <Icon.Activity className="h-4 w-4" style={{ color: tone }} />
-                    {terminal ? t('workflow.detail.totalDowntime') : 'Down so far'}
+                    {terminal ? t('workflow.detail.totalDowntime') : t('Down so far')}
                   </span>
                   <LiveDuration start={downtimeStart} end={downtimeEnd} className="text-lg font-bold" />
                 </div>
@@ -961,7 +1014,7 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
                 <div className="grid grid-cols-3 gap-2">
                   <StatTile label={t('workflow.detail.out')} value={tk.dispatch_odometer != null ? <CountUp value={tk.dispatch_odometer} /> : '—'} />
                   <StatTile label={t('workflow.detail.back')} value={tk.return_odometer != null ? <CountUp value={tk.return_odometer} /> : '—'} />
-                  <StatTile label="Δ km" value={odoDelta != null ? <>+<CountUp value={odoDelta} /></> : '—'} tone="emerald" />
+                  <StatTile label={t('Δ km')} value={odoDelta != null ? <>+<CountUp value={odoDelta} /></> : '—'} tone="emerald" />
                 </div>
                 {photos.length > 0 && (
                   <div className="mt-3 flex flex-wrap gap-2">
@@ -974,7 +1027,7 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
                         className="group relative h-16 w-16 overflow-hidden rounded-lg ring-1 ring-slate-200"
                         title={`${p.phase === 'post' ? t('workflow.detail.back') : t('workflow.detail.out')} · ${fmtDateTime(p.captured_at) || ''}`}
                       >
-                        <img src={p.url} alt="odometer" className="h-full w-full object-cover transition group-hover:scale-110" />
+                        <img src={p.url} alt={t('Odometer reading')} className="h-full w-full object-cover transition group-hover:scale-110" />
                         <span className="absolute inset-x-0 bottom-0 bg-slate-900/60 px-1 py-0.5 text-center text-[9px] font-semibold uppercase text-white">
                           {p.phase === 'post' ? t('workflow.detail.back') : t('workflow.detail.out')}
                         </span>
@@ -1002,7 +1055,7 @@ export default function TicketCommandView({ ticketId, can, userId, onAct, reload
       <CheckpointModal
         open={cpOpen}
         ticketId={ticketId}
-        title="Maintenance Checkpoint"
+        title={t('Maintenance Checkpoint')}
         subtitle={tk.plate || tk.car || `#${tk.id}`}
         onClose={() => setCpOpen(false)}
         onDone={(msg) => { if (msg) toast.success(msg); load(); }}

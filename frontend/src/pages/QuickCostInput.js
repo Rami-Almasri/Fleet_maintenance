@@ -9,6 +9,7 @@ import MetricCard, { MetricGrid } from '../components/ui/MetricCard';
 import { Skeleton } from '../components/ui/Skeleton';
 import Icon from '../components/ui/Icon';
 import { aed2, fmtDate, num } from '../lib/format';
+import { useI18n } from '../i18n/I18nContext';
 
 /**
  * Quick Cost Input — closes the understated-spend gap behind Negative Yield. Lists recent
@@ -16,6 +17,7 @@ import { aed2, fmtDate, num } from '../lib/format';
  * re-computes that vehicle's Real-Net-Profit yield (flagging it if it just turned negative).
  */
 export default function QuickCostInput() {
+  const { t } = useI18n();
   const toast = useToast();
   const [repairs, setRepairs] = useState([]);
   const [windowMonths, setWindowMonths] = useState(12);
@@ -31,11 +33,11 @@ export default function QuickCostInput() {
       setRepairs(data.data.repairs || []);
       setWindowMonths(data.data.window_months || 12);
     } catch (e) {
-      toast.error('Could not load uncosted repairs');
+      toast.error(t('Could not load uncosted repairs'));
     } finally {
       setLoading(false);
     }
-  }, [toast]);
+  }, [toast, t]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -43,7 +45,7 @@ export default function QuickCostInput() {
     const raw = amounts[r.id];
     const cost = Number(raw);
     if (raw == null || raw === '' || Number.isNaN(cost) || cost < 0) {
-      toast.error('Enter a valid repair amount');
+      toast.error(t('Enter a valid repair amount'));
       return;
     }
     setSaving((s) => ({ ...s, [r.id]: true }));
@@ -53,12 +55,12 @@ export default function QuickCostInput() {
       setRepairs((list) => list.filter((x) => x.id !== r.id));   // drop the costed repair
       setDone((d) => d + 1);
       if (res.became_negative) {
-        toast.error(`📉 ${r.plate || 'Vehicle'} is now NEGATIVE YIELD — earns less than it costs to keep`);
+        toast.error(t('📉 {plate} is now NEGATIVE YIELD — it earns less than it costs to keep', { plate: r.plate || t('Vehicle') }));
       } else {
-        toast.success(`Saved ${aed2(cost)} · ${r.plate || 'vehicle'} repair spend updated`);
+        toast.success(t('Saved {amount} · repair spend updated for {plate}', { amount: aed2(cost), plate: r.plate || t('the vehicle') }));
       }
     } catch (e) {
-      toast.error(e.response?.data?.message || 'Could not save the cost');
+      toast.error(e.response?.data?.message || t('Could not save the cost'));
     } finally {
       setSaving((s) => ({ ...s, [r.id]: false }));
     }
@@ -68,26 +70,26 @@ export default function QuickCostInput() {
     <div className="py-8">
       <div className="mx-auto max-w-5xl space-y-6 px-4 sm:px-6 lg:px-8">
         <PageHeader
-          title="Quick Cost Input"
-          subtitle={`Recent repairs (last ${windowMonths} months) with no cost recorded. Enter the amount to fix each vehicle's repair spend and re-check its Negative-Yield flag.`}
+          title={t('Quick Cost Input')}
+          subtitle={t("Recent repairs (last {months} months) with no cost recorded. Enter the amount to fix each vehicle's repair spend and re-check its Negative-Yield flag.", { months: windowMonths })}
         />
 
         <MetricGrid cols={2}>
           <MetricCard
-            label="Awaiting Cost"
+            label={t('Awaiting Cost')}
             value={num(repairs.length)}
             tone="amber"
             icon={<Icon.Wrench className="h-5 w-5" />}
-            hint={`Recent repairs (last ${windowMonths} months) with no cost recorded`}
-            tooltip="Repairs found in the workshop log that carry no cost — these understate spend and hide Negative-Yield vehicles."
+            hint={t('Recent repairs (last {months} months) with no cost recorded', { months: windowMonths })}
+            tooltip={t('Repairs found in the workshop log that carry no cost — these understate spend and hide Negative-Yield vehicles.')}
           />
           <MetricCard
-            label="Costed This Session"
+            label={t('Costed This Session')}
             value={num(done)}
             tone={done > 0 ? 'emerald' : 'slate'}
             icon={<Icon.Check className="h-5 w-5" />}
-            hint={done > 0 ? 'Repair spend & Negative-Yield flags updated' : 'Enter an amount on any repair below'}
-            tooltip="Repairs you have costed since opening this page. Each save instantly re-computes that vehicle's Real-Net-Profit yield."
+            hint={done > 0 ? t('Repair spend & Negative-Yield flags updated') : t('Enter an amount on any repair below')}
+            tooltip={t("Repairs you have costed since opening this page. Each save instantly re-computes that vehicle's Real-Net-Profit yield.")}
           />
         </MetricGrid>
 
@@ -108,8 +110,8 @@ export default function QuickCostInput() {
         ) : repairs.length === 0 ? (
           <Card className="p-2">
             <EmptyState
-              title={done > 0 ? 'All caught up — nice work!' : 'No uncosted repairs'}
-              message={done > 0 ? 'Every recent repair now has a cost. Repair spend and Negative-Yield flags are up to date.' : 'Every recent repair already has a cost recorded.'}
+              title={done > 0 ? t('All caught up — nice work!') : t('No uncosted repairs')}
+              message={done > 0 ? t('Every recent repair now has a cost. Repair spend and Negative-Yield flags are up to date.') : t('Every recent repair already has a cost recorded.')}
             />
           </Card>
         ) : (
@@ -123,14 +125,14 @@ export default function QuickCostInput() {
                         {r.plate || r.code || `#${r.vehicle_id}`}
                       </Link>
                       {r.car && <span className="text-sm text-slate-500">{r.car}</span>}
-                      {r.events > 1 && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500">{r.events} events</span>}
+                      {r.events > 1 && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500">{t('{n} events', { n: r.events })}</span>}
                     </div>
                     <p className="mt-1 text-xs text-slate-500">
                       {r.problem && <span className="font-medium text-slate-700">{r.problem}</span>}
                       {r.problem && (r.garage || r.out_date) && <span> · </span>}
                       {r.garage && <span>{r.garage}</span>}
                       {r.garage && r.out_date && <span> · </span>}
-                      {r.out_date && <span>{fmtDate(r.out_date)}{r.in_date && r.in_date !== r.out_date && <> → {fmtDate(r.in_date)}</>}</span>}
+                      {r.out_date && <span>{fmtDate(r.out_date)}{r.in_date && r.in_date !== r.out_date && <> <span aria-hidden className="inline-block rtl:-scale-x-100">→</span> {fmtDate(r.in_date)}</>}</span>}
                     </p>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
@@ -149,7 +151,7 @@ export default function QuickCostInput() {
                       />
                     </div>
                     <Button onClick={() => save(r)} disabled={saving[r.id]}>
-                      {saving[r.id] ? 'Saving…' : 'Save'}
+                      {saving[r.id] ? t('Saving…') : t('Save')}
                     </Button>
                   </div>
                 </div>

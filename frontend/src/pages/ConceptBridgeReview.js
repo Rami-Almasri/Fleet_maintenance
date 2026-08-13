@@ -234,7 +234,7 @@ export default function ConceptBridgeReview() {
           <button type="button" onClick={() => setRevealed(true)}
             className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700">
             {t('conceptBridge.reveal')}
-            <kbd className="rounded border border-white/40 px-1 text-[10px] font-mono text-white/80">space</kbd>
+            <kbd className="rounded border border-white/40 px-1 text-[10px] font-mono text-white/80">{t('space')}</kbd>
           </button>
         </div>
       ) : (

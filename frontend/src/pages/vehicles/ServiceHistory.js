@@ -7,6 +7,7 @@ import Icon from '../../components/ui/Icon';
 import { SearchInput } from '../../components/ui/Misc';
 import { Skeleton } from '../../components/ui/Skeleton';
 import { fmtDate } from '../../lib/format';
+import { useI18n } from '../../i18n/I18nContext';
 
 /**
  * The vehicle's Technical Service Log — every part/service done on the car (money-FREE), newest
@@ -15,6 +16,7 @@ import { fmtDate } from '../../lib/format';
  * Fed by GET /Vehicle/{id}/service-history (invoice work items).
  */
 export default function ServiceHistory({ vehicleId }) {
+  const { t } = useI18n();
   const [q, setQ] = useState('');
   const fetcher = useCallback(async () => (await api.get(`/Vehicle/${vehicleId}/service-history`)).data.data, [vehicleId]);
   const { data, loading } = useFetch(fetcher, [vehicleId]);
@@ -28,19 +30,19 @@ export default function ServiceHistory({ vehicleId }) {
 
   return (
     <SectionCard
-      title="Service History"
-      subtitle="Every part / service done on this car — newest first. Search to answer “when did we last…?”."
-      actions={<Badge tone="gray">{items.length} {items.length === 1 ? 'record' : 'records'}</Badge>}
+      title={t('Service History')}
+      subtitle={t('Every part / service done on this car — newest first. Search to answer “when did we last…?”.')}
+      actions={<Badge tone="gray">{items.length === 1 ? t('1 record') : t('{n} records', { n: items.length })}</Badge>}
       bodyClass="p-4 sm:p-5"
     >
       <div className="mb-3 max-w-sm">
-        <SearchInput value={q} onChange={setQ} placeholder="Search a part / service or garage… e.g. engine oil" />
+        <SearchInput value={q} onChange={setQ} placeholder={t('Search a part / service or garage… e.g. engine oil')} />
       </div>
       {loading ? (
         <div className="space-y-2"><Skeleton className="h-12 rounded-lg" /><Skeleton className="h-12 rounded-lg" /></div>
       ) : filtered.length === 0 ? (
         <p className="py-8 text-center text-sm text-slate-400">
-          {items.length === 0 ? 'No service records yet for this car — add them from a contract’s “Service Records”.' : 'No items match your search.'}
+          {items.length === 0 ? t('No service records yet for this car — add them from a contract’s “Service Records”.') : t('No items match your search.')}
         </p>
       ) : (
         <ul className="divide-y divide-slate-100">
@@ -49,7 +51,7 @@ export default function ServiceHistory({ vehicleId }) {
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium text-slate-800">{it.description}</p>
                 <p className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-400">
-                  <span className="inline-flex items-center gap-1"><Icon.Calendar className="h-3 w-3" /> {it.date ? fmtDate(it.date) : 'No date'}</span>
+                  <span className="inline-flex items-center gap-1"><Icon.Calendar className="h-3 w-3" /> {it.date ? fmtDate(it.date) : t('No date')}</span>
                   {it.garage && <span className="inline-flex items-center gap-1"><Icon.Wrench className="h-3 w-3" /> {it.garage}</span>}
                   {it.invoice_ref && <span className="text-slate-300">· {it.invoice_ref}</span>}
                 </p>

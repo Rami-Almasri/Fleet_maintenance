@@ -10,6 +10,7 @@ import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
 import Icon from '../components/ui/Icon';
 import { useToast } from '../components/ui/Toast';
+import { useI18n } from '../i18n/I18nContext';
 import { aed2, num } from '../lib/format';
 
 /*
@@ -39,11 +40,12 @@ import { aed2, num } from '../lib/format';
 const emptyState = { actionRequired: [], workshop: [], pool: [], log: [], nextContract: 90001 };
 
 // Map the live /maintenance-swaps/board payload into the three reducer buckets.
-const mapBoard = (d) => ({
+// `t` is threaded in because this runs outside a component body.
+const mapBoard = (d, t) => ({
   actionRequired: (d.queue || []).map((c) => ({
     id: `v${c.vehicle_id}`, vehicle_id: c.vehicle_id, plate: c.plate, car: c.car, year: c.year,
     priority: c.tier === 'act_now' ? 'Fix Now' : 'Urgent',
-    reason: c.reason || 'Maintenance due',
+    reason: c.reason || t('Maintenance due'),
     status: c.status,                 // 'with_customer' | 'available'
     customer: c.customer, contractNo: c.contract_no,
   })),
@@ -70,7 +72,10 @@ function opsReducer(state, action) {
         ...state,
         actionRequired: state.actionRequired.filter((c) => c.id !== action.id),
         workshop: [{ id: car.id, plate: car.plate, car: car.car, year: car.year, reason: car.reason, since: 'just now' }, ...state.workshop],
-        log: [logLine('direct', `${car.plate} (${car.car}) sent to workshop — was Available, no contract to close.`), ...state.log],
+        log: [
+          logLine('direct', '{plate} ({car}) sent to workshop — was Available, no contract to close.', { plate: car.plate, car: car.car }),
+          ...state.log,
+        ],
       };
     }
 
@@ -94,8 +99,12 @@ function opsReducer(state, action) {
         workshop: [{ id: orig.id, plate: orig.plate, car: orig.car, year: orig.year, reason: orig.reason, since: 'just now' }, ...state.workshop],
         nextContract: state.nextContract + 1,
         log: [
-          logLine('renew', `${repl.plate} (${repl.car}) → new rental #${newNo} opened for ${orig.customer}.`),
-          logLine('close', `Contract #${orig.contractNo} for ${orig.customer} marked Completed / Swapped (${orig.plate} → workshop).`),
+          logLine('renew', '{plate} ({car}) → new rental #{no} opened for {customer}.', {
+            plate: repl.plate, car: repl.car, no: newNo, customer: orig.customer,
+          }),
+          logLine('close', 'Contract #{no} for {customer} marked Completed / Swapped ({plate} → workshop).', {
+            no: orig.contractNo, customer: orig.customer, plate: orig.plate,
+          }),
           ...state.log,
         ],
       };
@@ -111,10 +120,13 @@ function opsReducer(state, action) {
 }
 
 let _logId = 0;
-const logLine = (kind, text) => ({ id: ++_logId, kind, text });
+// The line is stored as a phrase key + its values, and resolved at render time, so the feed
+// re-reads in the active language instead of freezing the language it was written in.
+const logLine = (kind, key, vars) => ({ id: ++_logId, kind, key, vars });
 
 // ── Column shell ──────────────────────────────────────────────────────────────────────────────────
 function CommandColumn({ title, hint, count, tone, icon, children }) {
+  const { t } = useI18n();
   const tones = {
     red:     'bg-red-50 text-red-700 ring-red-200',
     amber:   'bg-amber-50 text-amber-700 ring-amber-200',
@@ -131,7 +143,7 @@ function CommandColumn({ title, hint, count, tone, icon, children }) {
         <span className="ms-auto rounded-full bg-white px-2.5 py-0.5 text-xs font-bold text-slate-600 ring-1 ring-inset ring-slate-200">{num(count)}</span>
       </div>
       <div className="flex max-h-[64vh] flex-col gap-2.5 overflow-y-auto p-3">
-        {count === 0 ? <p className="py-10 text-center text-sm text-slate-400">Nothing here.</p> : children}
+        {count === 0 ? <p className="py-10 text-center text-sm text-slate-400">{t('Nothing here.')}</p> : children}
       </div>
     </div>
   );
@@ -139,6 +151,7 @@ function CommandColumn({ title, hint, count, tone, icon, children }) {
 
 // ── Action Required card (the only actionable column) ───────────────────────────────────────────────
 function ActionCard({ car, onProcess }) {
+  const { t } = useI18n();
   const withCustomer = car.status === 'with_customer';
   return (
     <div className={`rounded-xl border-s-4 bg-white p-3.5 shadow-sm transition hover:shadow ${withCustomer ? 'border-l-blue-500 border border-slate-200' : 'border-l-emerald-500 border border-slate-200'}`}>
@@ -147,7 +160,9 @@ function ActionCard({ car, onProcess }) {
           <p className="font-bold text-slate-800">{car.plate}</p>
           <p className="truncate text-xs text-slate-400">{[car.car, car.year].filter(Boolean).join(' · ')}</p>
         </div>
-        <Badge tone={car.priority === 'Fix Now' ? 'red' : 'amber'}>{car.priority}</Badge>
+        <Badge tone={car.priority === 'Fix Now' ? 'red' : 'amber'}>
+          {car.priority === 'Fix Now' ? t('Fix Now') : t('Urgent')}
+        </Badge>
       </div>
 
       <p className="mt-2 inline-flex items-center gap-1.5 text-xs text-slate-500">
@@ -161,8 +176,8 @@ function ActionCard({ car, onProcess }) {
           to={`/vehicles/${car.vehicle_id}`}
           className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-indigo-600 transition hover:text-indigo-700"
         >
-          <Icon.Activity className="h-3.5 w-3.5" /> See this car’s history
-          <Icon.ArrowRight className="h-3.5 w-3.5" />
+          <Icon.Activity className="h-3.5 w-3.5" /> {t('See this car’s history')}
+          <Icon.ArrowRight className="h-3.5 w-3.5 rtl:-scale-x-100" />
         </Link>
       )}
 
@@ -170,23 +185,24 @@ function ActionCard({ car, onProcess }) {
       <div className="mt-2.5">
         {withCustomer ? (
           <span className="inline-flex items-center gap-1.5 rounded-lg bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700 ring-1 ring-inset ring-blue-200">
-            <Icon.Users className="h-3.5 w-3.5" /> With customer · {car.customer} · #{car.contractNo}
+            <Icon.Users className="h-3.5 w-3.5" /> {t('With customer · {customer} · #{no}', { customer: car.customer, no: car.contractNo })}
           </span>
         ) : (
           <span className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">
-            <Icon.Check className="h-3.5 w-3.5" /> Available · no active rental
+            <Icon.Check className="h-3.5 w-3.5" /> {t('Available · no active rental')}
           </span>
         )}
       </div>
 
       <Button variant={withCustomer ? 'primary' : 'success'} size="sm" className="mt-3 w-full" onClick={() => onProcess(car)}>
-        <Icon.Refresh className="me-1.5 h-4 w-4" /> Process Swap
+        <Icon.Refresh className="me-1.5 h-4 w-4" /> {t('Process Swap')}
       </Button>
     </div>
   );
 }
 
 function WorkshopCard({ car }) {
+  const { t } = useI18n();
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm">
       <div className="flex items-start justify-between gap-2">
@@ -194,17 +210,18 @@ function WorkshopCard({ car }) {
           <p className="font-bold text-slate-800">{car.plate}</p>
           <p className="truncate text-xs text-slate-400">{[car.car, car.year].filter(Boolean).join(' · ')}</p>
         </div>
-        <Badge tone="red">In repair</Badge>
+        <Badge tone="red">{t('In repair')}</Badge>
       </div>
       <p className="mt-2 inline-flex items-center gap-1.5 text-xs text-slate-500">
         <Icon.Wrench className="h-3.5 w-3.5 text-slate-400" /> <span className="capitalize">{car.reason}</span>
-        {car.since && <span className="text-slate-400">· {car.since}</span>}
+        {car.since && <span className="text-slate-400">· {t(car.since)}</span>}
       </p>
     </div>
   );
 }
 
 function PoolCard({ car }) {
+  const { t } = useI18n();
   return (
     <div className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm">
       <div className="min-w-0">
@@ -212,16 +229,18 @@ function PoolCard({ car }) {
         <p className="truncate text-xs text-slate-400">{[car.car, car.year].filter(Boolean).join(' · ')}</p>
         {car.owesMaintenance && (
           <span
-            title={car.owesMaintenanceNote ? `Owes maintenance — ${car.owesMaintenanceNote}` : 'Pulled from the workshop for a customer — must go back to the garage.'}
+            title={car.owesMaintenanceNote
+              ? t('Owes maintenance — {note}', { note: car.owesMaintenanceNote })
+              : t('Pulled from the workshop for a customer — must go back to the garage.')}
             className="mt-1 inline-flex items-center gap-1 rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-700"
           >
-            Owes maintenance
+            {t('Owes maintenance')}
           </span>
         )}
       </div>
       <div className="flex shrink-0 flex-col items-end gap-1">
         {car.rate != null && <span className="text-xs font-semibold text-slate-500">{aed2(car.rate)}/d</span>}
-        <Badge tone="green">Ready</Badge>
+        <Badge tone="green">{t('Ready')}</Badge>
       </div>
     </div>
   );
@@ -229,26 +248,29 @@ function PoolCard({ car }) {
 
 // ── Swap & Renew modal (only for WITH CUSTOMER cars) ────────────────────────────────────────────────
 function SwapRenewModal({ original, pool, onClose, onConfirm }) {
+  const { t } = useI18n();
   const [picked, setPicked] = useState(null);
 
   return (
     <Modal
       open={!!original}
       onClose={onClose}
-      title={original ? `Swap & Renew — ${original.plate}` : ''}
-      subtitle={original ? `Close #${original.contractNo} for ${original.customer} and open a fresh rental on the replacement` : ''}
+      title={original ? t('Swap & Renew — {plate}', { plate: original.plate }) : ''}
+      subtitle={original
+        ? t('Close #{no} for {customer} and open a fresh rental on the replacement', { no: original.contractNo, customer: original.customer })
+        : ''}
       size="lg"
       footer={
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2 text-sm">
             <span className="font-semibold text-blue-700">{original?.plate}</span>
-            <Icon.ArrowRight className="h-4 w-4 text-slate-400" />
-            <span className={`font-semibold ${picked ? 'text-emerald-600' : 'text-slate-300'}`}>{picked ? picked.plate : 'pick replacement'}</span>
+            <Icon.ArrowRight className="h-4 w-4 text-slate-400 rtl:-scale-x-100" />
+            <span className={`font-semibold ${picked ? 'text-emerald-600' : 'text-slate-300'}`}>{picked ? picked.plate : t('pick replacement')}</span>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="secondary" onClick={onClose}>Cancel</Button>
+            <Button variant="secondary" onClick={onClose}>{t('Cancel')}</Button>
             <Button variant="primary" disabled={!picked} onClick={() => onConfirm(picked)}>
-              <Icon.Check className="me-1.5 h-4 w-4" /> Confirm Swap & Renew
+              <Icon.Check className="me-1.5 h-4 w-4" /> {t('Confirm Swap & Renew')}
             </Button>
           </div>
         </div>
@@ -256,12 +278,12 @@ function SwapRenewModal({ original, pool, onClose, onConfirm }) {
     >
       {/* Plain-language preview of the simulated transaction. */}
       <ol className="mb-4 space-y-1.5 rounded-xl bg-slate-50 p-3 text-xs text-slate-600 ring-1 ring-inset ring-slate-200">
-        <li>① Close contract <b>#{original?.contractNo}</b> ({original?.customer}) — marked <b>Completed / Swapped</b>.</li>
-        <li>② Open a <b>new rental</b> for {original?.customer} on the chosen replacement.</li>
-        <li>③ Move <b>{original?.plate}</b> into the workshop.</li>
+        <li>{t('① Close contract #{no} ({customer}) — marked Completed / Swapped.', { no: original?.contractNo, customer: original?.customer })}</li>
+        <li>{t('② Open a new rental for {customer} on the chosen replacement.', { customer: original?.customer })}</li>
+        <li>{t('③ Move {plate} into the workshop.', { plate: original?.plate })}</li>
       </ol>
 
-      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Choose a replacement</p>
+      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{t('Choose a replacement')}</p>
       <div className="grid max-h-[40vh] grid-cols-1 gap-2 overflow-y-auto sm:grid-cols-2">
         {pool.map((c) => {
           const on = picked?.id === c.id;
@@ -294,21 +316,22 @@ const LOG_TONE = {
   direct: { dot: 'bg-amber-500',   icon: <Icon.Wrench className="h-3.5 w-3.5" /> },
 };
 function ActivityLog({ log }) {
+  const { t } = useI18n();
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-soft">
       <h3 className="mb-3 inline-flex items-center gap-2 text-sm font-bold text-slate-800">
-        <Icon.Activity className="h-4 w-4 text-indigo-500" /> Swap activity (simulated)
+        <Icon.Activity className="h-4 w-4 text-indigo-500" /> {t('Swap activity (simulated)')}
       </h3>
       {log.length === 0 ? (
-        <p className="text-sm text-slate-400">No swaps yet — hit <b>Process Swap</b> on a card to see the engine run.</p>
+        <p className="text-sm text-slate-400">{t('No swaps yet — hit Process Swap on a card to see the engine run.')}</p>
       ) : (
         <ol className="space-y-2">
           {log.map((l) => {
-            const t = LOG_TONE[l.kind] || LOG_TONE.direct;
+            const tone = LOG_TONE[l.kind] || LOG_TONE.direct;
             return (
               <li key={l.id} className="flex items-start gap-2.5 text-xs text-slate-600">
-                <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-white ${t.dot}`}>{t.icon}</span>
-                <span>{l.text}</span>
+                <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-white ${tone.dot}`}>{tone.icon}</span>
+                <span>{t(l.key, l.vars)}</span>
               </li>
             );
           })}
@@ -320,6 +343,7 @@ function ActivityLog({ log }) {
 
 // ── Page ────────────────────────────────────────────────────────────────────────────────────────────
 export default function MaintenanceSwap() {
+  const { t } = useI18n();
   const toast = useToast();
   const [state, dispatch] = useReducer(opsReducer, emptyState);
   const [swapFor, setSwapFor] = useState(null);   // with-customer card awaiting a replacement choice
@@ -330,16 +354,16 @@ export default function MaintenanceSwap() {
   const { data, loading, error, reload } = useFetch(fetcher, []);
   useEffect(() => {
     if (!data) return;
-    const mapped = mapBoard(data);
+    const mapped = mapBoard(data, t);
     snapshotRef.current = mapped;            // remember the starting point so Reset can replay
     dispatch({ type: 'SEED', payload: mapped });
-  }, [data]);
+  }, [data, t]);
 
   // Reset replays from the live snapshot (clears the simulated moves); Refresh re-pulls live data.
   const resetBoard = () => {
     if (snapshotRef.current) {
       dispatch({ type: 'SEED', payload: { ...snapshotRef.current, log: [] } });
-      toast.info('Board reset to the live snapshot.');
+      toast.info(t('Board reset to the live snapshot.'));
     }
   };
 
@@ -349,13 +373,15 @@ export default function MaintenanceSwap() {
       setSwapFor(car);                    // needs a replacement → open the renew modal
     } else {
       dispatch({ type: 'DIRECT_TO_WORKSHOP', id: car.id });
-      toast.success(`${car.plate} sent straight to the workshop (was available).`);
+      toast.success(t('{plate} sent straight to the workshop (was available).', { plate: car.plate }));
     }
   };
 
   const confirmRenew = (replacement) => {
     dispatch({ type: 'SWAP_AND_RENEW', id: swapFor.id, replacementId: replacement.id });
-    toast.success(`Swapped ${swapFor.plate} → ${replacement.plate}; ${swapFor.customer}'s rental renewed.`);
+    toast.success(t('Swapped {from} → {to}; the rental for {customer} has been renewed.', {
+      from: swapFor.plate, to: replacement.plate, customer: swapFor.customer,
+    }));
     setSwapFor(null);
   };
 
@@ -366,16 +392,16 @@ export default function MaintenanceSwap() {
       <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <PageHeader
-            title="Maintenance Swap"
-            subtitle="Live triage of the fleet: what needs maintenance, what's in the workshop, and what's ready to deploy. The Swap & Renew engine keeps a customer on the road while their car gets fixed."
+            title={t('Maintenance Swap')}
+            subtitle={t("Live triage of the fleet: what needs maintenance, what's in the workshop, and what's ready to deploy. The Swap & Renew engine keeps a customer on the road while their car gets fixed.")}
           />
           <div className="flex items-center gap-2">
-            <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">Live data · simulated actions</span>
+            <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">{t('Live data · simulated actions')}</span>
             <Button variant="ghost" size="sm" onClick={() => reload()} disabled={loading}>
-              <Icon.Download className="me-1.5 h-4 w-4" /> Refresh
+              <Icon.Download className="me-1.5 h-4 w-4" /> {t('Refresh')}
             </Button>
             <Button variant="secondary" size="sm" onClick={resetBoard} disabled={!snapshotRef.current}>
-              <Icon.Refresh className="me-1.5 h-4 w-4" /> Reset
+              <Icon.Refresh className="me-1.5 h-4 w-4" /> {t('Reset')}
             </Button>
           </div>
         </div>
@@ -391,23 +417,23 @@ export default function MaintenanceSwap() {
         ) : (
           <>
             <MetricGrid cols={4}>
-              <MetricCard label="Action required" value={num(state.actionRequired.length)} tone="red" icon={<Icon.Flag className="h-5 w-5" />} hint="Fix now (Foresight)" />
-              <MetricCard label="With customer" value={num(withCustomerCount)} tone="blue" icon={<Icon.Users className="h-5 w-5" />} hint="need a swap & renew" />
-              <MetricCard label="In workshop" value={num(state.workshop.length)} tone="amber" icon={<Icon.Wrench className="h-5 w-5" />} hint="currently in repair" />
-              <MetricCard label="Available pool" value={num(state.pool.length)} tone="emerald" icon={<Icon.Car className="h-5 w-5" />} hint="free now · no active contract" />
+              <MetricCard label={t('Action required')} value={num(state.actionRequired.length)} tone="red" icon={<Icon.Flag className="h-5 w-5" />} hint={t('Fix now (Foresight)')} />
+              <MetricCard label={t('With customer')} value={num(withCustomerCount)} tone="blue" icon={<Icon.Users className="h-5 w-5" />} hint={t('need a swap & renew')} />
+              <MetricCard label={t('In workshop')} value={num(state.workshop.length)} tone="amber" icon={<Icon.Wrench className="h-5 w-5" />} hint={t('currently in repair')} />
+              <MetricCard label={t('Available pool')} value={num(state.pool.length)} tone="emerald" icon={<Icon.Car className="h-5 w-5" />} hint={t('free now · no active contract')} />
             </MetricGrid>
 
             {/* Mobile-first: columns stack, then go 3-up from lg. */}
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-              <CommandColumn title="Action Required" hint="Maintenance Foresight · Fix now" count={state.actionRequired.length} tone="red" icon={<Icon.Flag className="h-4.5 w-4.5" />}>
+              <CommandColumn title={t('Action Required')} hint={t('Maintenance Foresight · Fix now')} count={state.actionRequired.length} tone="red" icon={<Icon.Flag className="h-4.5 w-4.5" />}>
                 {state.actionRequired.map((car) => <ActionCard key={car.id} car={car} onProcess={process} />)}
               </CommandColumn>
 
-              <CommandColumn title="Currently in Workshop" hint="operational status = maintenance" count={state.workshop.length} tone="amber" icon={<Icon.Wrench className="h-4.5 w-4.5" />}>
+              <CommandColumn title={t('Currently in Workshop')} hint={t('operational status = maintenance')} count={state.workshop.length} tone="amber" icon={<Icon.Wrench className="h-4.5 w-4.5" />}>
                 {state.workshop.map((car) => <WorkshopCard key={car.id} car={car} />)}
               </CommandColumn>
 
-              <CommandColumn title="Available Pool" hint="Free now — no open rental or maintenance" count={state.pool.length} tone="emerald" icon={<Icon.Car className="h-4.5 w-4.5" />}>
+              <CommandColumn title={t('Available Pool')} hint={t('Free now — no open rental or maintenance')} count={state.pool.length} tone="emerald" icon={<Icon.Car className="h-4.5 w-4.5" />}>
                 {state.pool.map((car) => <PoolCard key={car.id} car={car} />)}
               </CommandColumn>
             </div>

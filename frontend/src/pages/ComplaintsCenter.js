@@ -22,30 +22,39 @@ import { useToast } from '../components/ui/Toast';
 import Button from '../components/ui/Button';
 import { STAGE_ORDER, STAGE_META } from '../components/complaints/stages';
 import ComplaintsAnalytics from '../components/analytics/ComplaintsAnalytics';
+import { useI18n } from '../i18n/I18nContext';
 
-function ago(iso) {
+// Module-level word helpers take the resolver as an argument — the hook is only callable in a component.
+function ago(iso, t) {
   if (!iso) return '—';
   const secs = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
-  if (secs < 90) return 'just now';
+  if (secs < 90) return t('just now');
   const mins = Math.round(secs / 60);
-  if (mins < 60) return `${mins}m ago`;
+  if (mins < 60) return t('{n}m ago', { n: mins });
   const hrs = Math.round(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
+  if (hrs < 24) return t('{n}h ago', { n: hrs });
   const days = Math.round(hrs / 24);
-  return `${days}d ago`;
+  return t('{n}d ago', { n: days });
 }
 
-function fmtDate(iso) {
+// Gregorian calendar + Latin digits under Arabic — a Hijri/Arabic-Indic date would not line up with the
+// rest of the table and is not what this fleet reads.
+function fmtDate(iso, lang) {
   if (!iso) return '';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  return d.toLocaleDateString(lang === 'ar' ? 'ar-AE-u-ca-gregory-nu-latn' : undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  });
 }
 
 const SEV_DOT = { critical: 'bg-rose-500', high: 'bg-orange-500', moderate: 'bg-amber-500', routine: 'bg-emerald-500' };
 
 export default function ComplaintsCenter() {
   const { can } = usePermissions();
+  const { t, lang } = useI18n();
   const toast = useToast();
   const navigate = useNavigate();
   const { id: routeId } = useParams();
@@ -112,25 +121,25 @@ export default function ComplaintsCenter() {
   const stageTabs = useMemo(() => {
     const byStage = kpis.by_status || {};
     return [
-      { key: '__all', label: 'All', emoji: '📋', count: kpis.total || 0 },
+      { key: '__all', label: t('All'), emoji: '📋', count: kpis.total || 0 },
       ...STAGE_ORDER.map((s) => ({ key: s, label: STAGE_META[s].label, emoji: STAGE_META[s].emoji, count: byStage[s] || 0 })),
     ];
-  }, [kpis]);
+  }, [kpis, t]);
 
   const columns = [
     {
       key: 'id',
-      header: 'Complaint',
+      header: t('Complaint'),
       render: (r) => (
         <div className="flex items-center gap-2">
-          <span className={`h-2 w-2 shrink-0 rounded-full ${SEV_DOT[r.severity] || 'bg-slate-300'}`} title={r.severity || 'ungraded'} />
+          <span className={`h-2 w-2 shrink-0 rounded-full ${SEV_DOT[r.severity] || 'bg-slate-300'}`} title={r.severity || t('ungraded')} />
           <span className="font-mono text-sm font-semibold text-slate-700">#{r.id}</span>
         </div>
       ),
     },
     {
       key: 'vehicle',
-      header: 'Vehicle',
+      header: t('Vehicle'),
       render: (r) => (
         <div className="min-w-0">
           <Link to={`/car-status/${r.vehicle_id}`} onClick={(e) => e.stopPropagation()} className="font-mono text-sm font-bold text-slate-800 hover:text-indigo-600">
@@ -142,7 +151,7 @@ export default function ComplaintsCenter() {
     },
     {
       key: 'customer',
-      header: 'Customer',
+      header: t('Customer'),
       render: (r) => (
         <div className="min-w-0">
           <p className="truncate text-sm text-slate-700">{r.customer || <span className="text-slate-300">—</span>}</p>
@@ -152,14 +161,14 @@ export default function ComplaintsCenter() {
     },
     {
       key: 'created_at',
-      header: 'Reported',
+      header: t('Reported'),
       render: (r) => (
-        <span className="whitespace-nowrap text-xs text-slate-500" title={fmtDate(r.created_at)}>{ago(r.created_at)}</span>
+        <span className="whitespace-nowrap text-xs text-slate-500" title={fmtDate(r.created_at, lang)}>{ago(r.created_at, t)}</span>
       ),
     },
     {
       key: 'status',
-      header: 'Status',
+      header: t('Status'),
       render: (r) => {
         const m = STAGE_META[r.status] || { label: r.status, emoji: '•', tone: 'slate' };
         return <Badge tone={m.tone}>{m.emoji} {m.label}</Badge>;
@@ -167,8 +176,8 @@ export default function ComplaintsCenter() {
     },
     {
       key: 'assigned',
-      header: 'Assigned',
-      render: (r) => (r.assigned ? <span className="text-sm text-slate-600">{r.assigned}</span> : <span className="text-xs text-slate-300">Unassigned</span>),
+      header: t('Assigned'),
+      render: (r) => (r.assigned ? <span className="text-sm text-slate-600">{r.assigned}</span> : <span className="text-xs text-slate-300">{t('Unassigned')}</span>),
     },
   ];
 
@@ -178,23 +187,23 @@ export default function ComplaintsCenter() {
         {/* Header */}
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <div className="opx-hint" style={{ letterSpacing: '.16em', textTransform: 'uppercase', marginBottom: 6 }}>Customer Care</div>
-            <h1 className="font-display" style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-.02em', color: 'var(--ink)', margin: 0 }}>Complaints Center</h1>
-            <p style={{ marginTop: 6, fontSize: 13.5, color: 'var(--ink-3)' }}>Every customer complaint, its lifecycle, and what happened after we reached out.</p>
+            <div className="opx-hint" style={{ letterSpacing: '.16em', textTransform: 'uppercase', marginBottom: 6 }}>{t('Customer Care')}</div>
+            <h1 className="font-display" style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-.02em', color: 'var(--ink)', margin: 0 }}>{t('Complaints Center')}</h1>
+            <p style={{ marginTop: 6, fontSize: 13.5, color: 'var(--ink-3)' }}>{t('Every customer complaint, its lifecycle, and what happened after we reached out.')}</p>
           </div>
           {can('maintenance.manage') && (
             <Button onClick={() => setIntakeOpen(true)}>
-              <Icon.Plus className="h-4 w-4" /> Log complaint
+              <Icon.Plus className="h-4 w-4" /> {t('Log complaint')}
             </Button>
           )}
         </div>
 
         {/* KPIs */}
         <MetricGrid cols={4}>
-          <MetricCard label="Total complaints" value={kpis.total ?? '—'} icon={<span aria-hidden>📣</span>} tone="indigo" loading={loading} />
-          <MetricCard label="Open" value={kpis.open ?? '—'} icon={<Icon.Clock className="h-4 w-4" />} tone="amber" hint="Not yet resolved" loading={loading} />
-          <MetricCard label="Became maintenance" value={kpis.converted ?? '—'} icon={<Icon.Wrench className="h-4 w-4" />} tone="violet" hint={kpis.conversion_rate != null ? `${kpis.conversion_rate}% of complaints` : undefined} loading={loading} />
-          <MetricCard label="Median time to close" value={kpis.median_hours != null ? `${kpis.median_hours}h` : '—'} icon={<Icon.Activity className="h-4 w-4" />} tone="emerald" hint="Logged → resolved" loading={loading} />
+          <MetricCard label={t('Total complaints')} value={kpis.total ?? '—'} icon={<span aria-hidden>📣</span>} tone="indigo" loading={loading} />
+          <MetricCard label={t('Open')} value={kpis.open ?? '—'} icon={<Icon.Clock className="h-4 w-4" />} tone="amber" hint={t('Not yet resolved')} loading={loading} />
+          <MetricCard label={t('Became maintenance')} value={kpis.converted ?? '—'} icon={<Icon.Wrench className="h-4 w-4" />} tone="violet" hint={kpis.conversion_rate != null ? t('{pct}% of complaints', { pct: kpis.conversion_rate }) : undefined} loading={loading} />
+          <MetricCard label={t('Median time to close')} value={kpis.median_hours != null ? t('{n}h', { n: kpis.median_hours }) : '—'} icon={<Icon.Activity className="h-4 w-4" />} tone="emerald" hint={t('Logged → resolved')} loading={loading} />
         </MetricGrid>
 
         {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>}
@@ -222,8 +231,8 @@ export default function ComplaintsCenter() {
 
         {/* Table + secondary filters */}
         <SectionCard
-          title="Complaints"
-          subtitle={`${filtered.length} shown`}
+          title={t('Complaints')}
+          subtitle={t('{n} shown', { n: filtered.length })}
           actions={(
             <div className="flex flex-wrap items-center gap-2">
               <div className="relative">
@@ -231,19 +240,19 @@ export default function ComplaintsCenter() {
                 <input
                   value={q}
                   onChange={(e) => setQ(e.target.value)}
-                  placeholder="Search car / customer…"
+                  placeholder={t('Search car / customer…')}
                   className="w-44 rounded-lg border border-slate-200 py-1.5 ps-8 pe-2 text-sm outline-none focus:border-indigo-400"
                 />
               </div>
               <select value={assignee} onChange={(e) => setAssignee(e.target.value)} className="rounded-lg border border-slate-200 py-1.5 px-2 text-sm text-slate-600 outline-none focus:border-indigo-400">
-                <option value="">All assignees</option>
+                <option value="">{t('All assignees')}</option>
                 {assignees.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
               </select>
-              <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} title="From" className="rounded-lg border border-slate-200 py-1.5 px-2 text-sm text-slate-600 outline-none focus:border-indigo-400" />
-              <input type="date" value={to} onChange={(e) => setTo(e.target.value)} title="To" className="rounded-lg border border-slate-200 py-1.5 px-2 text-sm text-slate-600 outline-none focus:border-indigo-400" />
+              <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} title={t('From')} className="rounded-lg border border-slate-200 py-1.5 px-2 text-sm text-slate-600 outline-none focus:border-indigo-400" />
+              <input type="date" value={to} onChange={(e) => setTo(e.target.value)} title={t('To')} className="rounded-lg border border-slate-200 py-1.5 px-2 text-sm text-slate-600 outline-none focus:border-indigo-400" />
               {(q || assignee || from || to || stage !== '__all') && (
                 <button type="button" onClick={() => { setQ(''); setAssignee(''); setFrom(''); setTo(''); setStage('__all'); }} className="rounded-lg px-2 py-1.5 text-xs font-semibold text-slate-500 hover:bg-slate-100">
-                  Clear
+                  {t('Clear')}
                 </button>
               )}
             </div>
@@ -255,7 +264,7 @@ export default function ComplaintsCenter() {
             rowKey={(r) => r.id}
             loading={loading}
             onRowClick={(r) => setOpenId(r.id)}
-            empty="No complaints match these filters."
+            empty={t('No complaints match these filters.')}
           />
         </SectionCard>
       </div>
@@ -271,7 +280,7 @@ export default function ComplaintsCenter() {
         <ComplaintIntakeModal
           vehicles={vehicles}
           onClose={() => setIntakeOpen(false)}
-          onDone={(msg) => { setIntakeOpen(false); toast.success(msg || 'Complaint logged'); reload({ silent: true }); }}
+          onDone={(msg) => { setIntakeOpen(false); toast.success(msg || t('Complaint logged')); reload({ silent: true }); }}
         />
       )}
     </div>

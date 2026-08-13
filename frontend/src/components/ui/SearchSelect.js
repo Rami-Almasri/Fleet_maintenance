@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useI18n } from '../../i18n/I18nContext';
 
 /**
  * Searchable single-select combobox.
@@ -9,7 +10,8 @@ import { createPortal } from 'react-dom';
  * `fixed` coords measured from the input, so it never gets clipped by an
  * ancestor with `overflow-hidden` (e.g. our Card wrapper).
  */
-export default function SearchSelect({ value, onChange, options = [], placeholder = 'Search…', loading = false }) {
+export default function SearchSelect({ value, onChange, options = [], placeholder = null, loading = false }) {
+  const { t } = useI18n();
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const [rect, setRect] = useState(null);   // { top, left, width } of the input, in viewport coords
@@ -87,11 +89,11 @@ export default function SearchSelect({ value, onChange, options = [], placeholde
         value={open ? query : (selected ? selected.label : '')}
         onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
         onFocus={() => { setOpen(true); setQuery(''); }}
-        placeholder={loading ? 'Loading…' : placeholder}
+        placeholder={loading ? t('Loading…') : (placeholder ?? t('Search…'))}
         className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
       />
       {value && !open && (
-        <button type="button" onClick={() => onChange('')} className="absolute end-2 top-1.5 rounded p-1 text-slate-400 hover:text-slate-600" title="Clear">
+        <button type="button" onClick={() => onChange('')} className="absolute end-2 top-1.5 rounded p-1 text-slate-400 hover:text-slate-600" title={t('Clear')}>
           <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
         </button>
       )}

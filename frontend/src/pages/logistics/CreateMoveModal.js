@@ -5,6 +5,7 @@ import Modal from '../../components/ui/Modal';
 import Button from '../../components/ui/Button';
 import SearchSelect from '../../components/ui/SearchSelect';
 import { Input, Select, Textarea } from '../../components/ui/Field';
+import { useI18n } from '../../i18n/I18nContext';
 
 const CUSTOM = '__custom__';
 
@@ -22,6 +23,7 @@ const CUSTOM = '__custom__';
  */
 export default function CreateMoveModal({ open, onClose, onCreated, lockedVehicle = null, maintenanceId = null }) {
   const toast = useToast();
+  const { t } = useI18n();
   const lockedId = lockedVehicle?.id ?? null;
 
   const [vehicles, setVehicles] = useState([]);
@@ -67,8 +69,8 @@ export default function CreateMoveModal({ open, onClose, onCreated, lockedVehicl
 
   const submit = async () => {
     const errs = {};
-    if (!vehicleId) errs.vehicle = 'Pick the car to move';
-    if (!destination) errs.destination = 'Pick or type where it\'s going';
+    if (!vehicleId) errs.vehicle = t('Pick the car to move');
+    if (!destination) errs.destination = t('Pick or type where it\'s going');
     setErrors(errs);
     if (Object.keys(errs).length) return;
 
@@ -82,11 +84,11 @@ export default function CreateMoveModal({ open, onClose, onCreated, lockedVehicl
         maintenance_id: maintenanceId || null,
         notes: notes.trim() || null,
       });
-      toast.success(`Posted to the driver pool · ${destination}`);
+      toast.success(t('Posted to the driver pool · {destination}', { destination }));
       onCreated?.();
       onClose();
     } catch (err) {
-      toast.error(err.response?.data?.message || err.response?.data?.msg || 'Could not create the move');
+      toast.error(err.response?.data?.message || err.response?.data?.msg || t('Could not create the move'));
     } finally {
       setSaving(false);
     }
@@ -96,15 +98,15 @@ export default function CreateMoveModal({ open, onClose, onCreated, lockedVehicl
     <Modal
       open={open}
       onClose={() => !saving && onClose()}
-      title={lockedVehicle ? 'Dispatch this car' : 'New Driver Task'}
+      title={lockedVehicle ? t('Dispatch this car') : t('New Driver Task')}
       subtitle={lockedVehicle
-        ? 'Move this repair car — linked to its maintenance ticket'
-        : 'Send a car somewhere — pool it to all drivers, or assign one directly'}
+        ? t('Move this repair car — linked to its maintenance ticket')
+        : t('Send a car somewhere — pool it to all drivers, or assign one directly')}
       size="md"
       footer={
         <>
-          <Button variant="secondary" onClick={onClose} disabled={saving}>Cancel</Button>
-          <Button onClick={submit} loading={saving}>Post to Pool</Button>
+          <Button variant="secondary" onClick={onClose} disabled={saving}>{t('Cancel')}</Button>
+          <Button onClick={submit} loading={saving}>{t('Post to Pool')}</Button>
         </>
       }
     >
@@ -115,39 +117,39 @@ export default function CreateMoveModal({ open, onClose, onCreated, lockedVehicl
               {lockedVehicle.plate || `#${lockedVehicle.id}`}
             </span>
             {lockedVehicle.label && <span className="truncate text-slate-500">{lockedVehicle.label}</span>}
-            {maintenanceId && <span className="ms-auto shrink-0 text-xs text-slate-400">🔧 Ticket #{maintenanceId}</span>}
+            {maintenanceId && <span className="ms-auto shrink-0 text-xs text-slate-400">🔧 {t('Ticket #{id}', { id: maintenanceId })}</span>}
           </div>
         ) : (
           <div>
-            <span className="mb-1 block text-sm font-medium text-slate-700">Vehicle<span className="ms-0.5 text-red-500">*</span></span>
+            <span className="mb-1 block text-sm font-medium text-slate-700">{t('Vehicle')}<span className="ms-0.5 text-red-500">*</span></span>
             <SearchSelect
               value={vehicleId}
               onChange={setVehicleId}
               options={vehicleOptions}
               loading={loading}
-              placeholder={loading ? 'Loading cars…' : 'Search an available car…'}
+              placeholder={loading ? t('Loading cars…') : t('Search an available car…')}
             />
             {errors.vehicle && <span className="mt-1 block text-xs text-red-600">{errors.vehicle}</span>}
             {!loading && vehicleOptions.length === 0 && (
-              <span className="mt-1 block text-xs text-amber-600">No free cars — every car is rented, in the garage or already on a move.</span>
+              <span className="mt-1 block text-xs text-amber-600">{t('No free cars — every car is rented, in the garage or already on a move.')}</span>
             )}
           </div>
         )}
 
-        <Select label="Destination" required value={destChoice} error={errors.destination} onChange={(e) => setDestChoice(e.target.value)}>
-          <option value="">Select a destination…</option>
+        <Select label={t('Destination')} required value={destChoice} error={errors.destination} onChange={(e) => setDestChoice(e.target.value)}>
+          <option value="">{t('Select a destination…')}</option>
           {presets.map((d) => <option key={d} value={d}>{d}</option>)}
-          <option value={CUSTOM}>Other (type it)…</option>
+          <option value={CUSTOM}>{t('Other (type it)…')}</option>
         </Select>
 
         {destChoice === CUSTOM && (
-          <Input label="Custom destination" required autoFocus placeholder="e.g. Sharjah branch" value={customDest} onChange={(e) => setCustomDest(e.target.value)} />
+          <Input label={t('Custom destination')} required autoFocus placeholder={t('e.g. Sharjah branch')} value={customDest} onChange={(e) => setCustomDest(e.target.value)} />
         )}
 
         <div className="rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2.5 text-sm">
-          <span className="font-medium text-slate-800">Unassigned · Available Pool</span>
+          <span className="font-medium text-slate-800">{t('Unassigned · Available Pool')}</span>
           <span className="block text-xs text-slate-500">
-            Every available driver is notified and the first to tap Claim takes it.
+            {t('Every available driver is notified and the first to tap Claim takes it.')}
           </span>
         </div>
 
@@ -159,14 +161,14 @@ export default function CreateMoveModal({ open, onClose, onCreated, lockedVehicl
             onChange={(e) => setRoundTrip(e.target.checked)}
           />
           <span className="text-sm">
-            <span className="font-medium text-slate-800">Round trip</span>
+            <span className="font-medium text-slate-800">{t('Round trip')}</span>
             <span className="block text-xs text-slate-500">
-              The car is brought back to base after (e.g. to the garage and home). The driver finishes with “Returned / Arrived”. Turn off for a one-way drop.
+              {t('The car is brought back to base after (e.g. to the garage and home). The driver finishes with “Returned / Arrived”. Turn off for a one-way drop.')}
             </span>
           </span>
         </label>
 
-        <Textarea label="Notes (optional)" rows={2} placeholder="Anything the driver should know…" value={notes} onChange={(e) => setNotes(e.target.value)} />
+        <Textarea label={t('Notes (optional)')} rows={2} placeholder={t('Anything the driver should know…')} value={notes} onChange={(e) => setNotes(e.target.value)} />
       </div>
     </Modal>
   );

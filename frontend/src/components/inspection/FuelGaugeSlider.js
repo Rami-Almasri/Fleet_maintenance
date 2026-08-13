@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { snapFuel, fuelFraction } from '../../lib/inspections';
+import { useI18n } from '../../i18n/I18nContext';
 
 // ── Fuel Gauge Slider ─────────────────────────────────────────────────────────
 //
@@ -25,6 +26,7 @@ function toneFor(level) {
 }
 
 export default function FuelGaugeSlider({ value, onChange, label, hint, compareTo = null, active = false }) {
+  const { t } = useI18n();
   const isSet = value != null;
   const level = isSet ? snapFuel(value) : 0;
   const tone = useMemo(() => toneFor(level), [level]);
@@ -50,7 +52,7 @@ export default function FuelGaugeSlider({ value, onChange, label, hint, compareT
               <span className="ml-1 text-xs font-semibold text-slate-400">{fuelFraction(level)}</span>
             </>
           ) : (
-            <span className="text-sm font-medium text-slate-400">Not set</span>
+            <span className="text-sm font-medium text-slate-400">{t('Not set')}</span>
           )}
         </div>
       </div>
@@ -77,7 +79,7 @@ export default function FuelGaugeSlider({ value, onChange, label, hint, compareT
           <span
             className="pointer-events-none absolute -top-1 h-5 w-0.5 -translate-x-1/2 rounded bg-slate-400/70"
             style={{ left: `${comparePct}%` }}
-            title={`Other reading: ${Math.round(comparePct)}%`}
+            title={t('Other reading: {pct}%', { pct: Math.round(comparePct) })}
           />
         )}
 
@@ -109,13 +111,13 @@ export default function FuelGaugeSlider({ value, onChange, label, hint, compareT
           onClick={() => onChange?.(snapFuel(50))}
           className="mt-2 w-full rounded-lg border border-dashed border-slate-300 py-1.5 text-xs font-medium text-slate-500 transition hover:border-indigo-300 hover:text-indigo-600"
         >
-          Tap to set the gauge
+          {t('Tap to set the gauge')}
         </button>
       )}
 
       {delta != null && delta !== 0 && (
         <p className={`mt-2 text-xs font-semibold ${delta < 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
-          {delta < 0 ? '▼' : '▲'} {Math.abs(delta)}% vs the other reading
+          {delta < 0 ? '▼' : '▲'} {t('{pct}% vs the other reading', { pct: Math.abs(delta) })}
         </p>
       )}
     </div>

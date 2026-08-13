@@ -4,22 +4,43 @@
 // exact payload from GET /car-status/vehicle/{id}, so the report needs no extra network calls.
 
 import { SHOW_FINANCIALS } from '../config/features';
+import { PHRASES } from '../i18n/labels';
 import { aed, num, fmtDate } from './format';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const money = (n) => (SHOW_FINANCIALS ? aed(n) : '—');
-const hrs = (h) => (h == null ? '—' : h >= 48 ? `${Math.round(h / 24)}d` : `${h}h`);
 const slug = (s) => String(s || 'vehicle').replace(/[^a-z0-9]+/gi, '_').replace(/^_+|_+$/g, '');
 
+// The report renders into a standalone window, outside the React tree, so it cannot call useI18n().
+// Callers should hand in the hook's `t` and `lang`; when they don't, resolve the very same phrase
+// catalog against the language choice the provider persists to localStorage.
+const LANG_KEY = 'fv:lang';
+function readLang() {
+  try {
+    return localStorage.getItem(LANG_KEY) === 'ar' ? 'ar' : 'en';
+  } catch (e) {
+    return 'en';
+  }
+}
+function makeT(lang) {
+  return (key, vars) => {
+    const phrase = PHRASES[lang] ? PHRASES[lang][key] : undefined;
+    const out = phrase === undefined ? key : phrase;
+    return vars ? out.replace(/\{(\w+)\}/g, (mm, k) => (vars[k] != null ? String(vars[k]) : mm)) : out;
+  };
+}
+
 // Open the report in a new tab (the user then Prints / Saves as PDF). Title drives the suggested filename.
-export function openVehicleReport(data) {
+export function openVehicleReport(data, t, lang) {
+  const language = lang || readLang();
+  const tr = typeof t === 'function' ? t : makeT(language);
   const w = window.open('', '_blank');
   if (!w) return; // pop-up blocked
-  w.document.write(buildVehicleReportHtml(data));
+  w.document.write(buildVehicleReportHtml(data, tr, language));
   w.document.close();
 }
 
-function buildVehicleReportHtml(data) {
+function buildVehicleReportHtml(data, t, lang) {
   const v = data?.vehicle || {};
   const h = data?.header || {};
   const k = data?.kpis || {};
@@ -29,6 +50,10 @@ function buildVehicleReportHtml(data) {
   const garages = data?.garages || {};
   const history = data?.history || [];
   const cats = fa.categories || [];
+  const rtl = lang === 'ar';
+
+  // A compact duration ("3d" / "16h"), worded in the active language.
+  const hrs = (x) => (x == null ? '—' : x >= 48 ? t('{n}d', { n: Math.round(x / 24) }) : t('{n}h', { n: x }));
 
   const today = new Date();
   const dateStr = today.toISOString().slice(0, 10);
@@ -37,18 +62,18 @@ function buildVehicleReportHtml(data) {
   // ── Summary KPI tiles ──
   const kpi = (label, val) => `<div class="kpi"><div class="k">${esc(label)}</div><div class="v">${esc(val)}</div></div>`;
   const kpis = [
-    kpi('Health', `${k.health_score ?? '—'}`),
-    kpi('Reliability', `${k.reliability_score ?? '—'}`),
-    kpi('Maintenance cases', num(k.total_cases)),
-    kpi('Open faults', num(k.open_faults)),
-    kpi('Closed faults', num(k.closed_faults)),
-    kpi('High severity', num(k.high_severity_faults)),
-    kpi('Repeat repairs', num(k.repeat_repairs)),
-    kpi('Downtime (days)', num(k.lifetime_downtime_days)),
-    kpi('Avg repair time', hrs(k.avg_repair_hours)),
-    kpi('Warranty repairs', num(k.warranty_repairs)),
-    kpi('Preventive', `${num(k.preventive_ratio)}%`),
-    kpi('Total cost', money(k.total_cost)),
+    kpi(t('Health'), `${k.health_score ?? '—'}`),
+    kpi(t('Reliability'), `${k.reliability_score ?? '—'}`),
+    kpi(t('Maintenance cases'), num(k.total_cases)),
+    kpi(t('Open faults'), num(k.open_faults)),
+    kpi(t('Closed faults'), num(k.closed_faults)),
+    kpi(t('High severity'), num(k.high_severity_faults)),
+    kpi(t('Repeat repairs'), num(k.repeat_repairs)),
+    kpi(t('Downtime (days)'), num(k.lifetime_downtime_days)),
+    kpi(t('Avg repair time'), hrs(k.avg_repair_hours)),
+    kpi(t('Warranty repairs'), num(k.warranty_repairs)),
+    kpi(t('Preventive'), `${num(k.preventive_ratio)}%`),
+    kpi(t('Total cost'), money(k.total_cost)),
   ].join('');
 
   // ── History summary chips ──
@@ -65,16 +90,16 @@ function buildVehicleReportHtml(data) {
         ${SHOW_FINANCIALS ? `<td class="r">${money(c.cost)}</td>` : ''}
         <td>${esc((c.garages || []).join(', ') || '—')}</td>
       </tr>`).join('')
-    : `<tr><td colspan="${SHOW_FINANCIALS ? 7 : 6}" class="muted">No categorised faults recorded.</td></tr>`;
+    : `<tr><td colspan="${SHOW_FINANCIALS ? 7 : 6}" class="muted">${esc(t('No categorised faults recorded.'))}</td></tr>`;
 
   // ── Reliability ──
   const relRows = [
-    ['MTBF (mean time between failures)', rel.mtbf_days != null ? `${num(rel.mtbf_days)} days` : '—'],
-    ['MTTR (mean time to repair)', hrs(rel.mttr_hours)],
-    ['Repair frequency', rel.repair_frequency != null ? `${rel.repair_frequency} / month` : '—'],
-    ['Avg km between failures', rel.avg_km_between_failures ? `${num(rel.avg_km_between_failures)} km` : '—'],
-    ['Cost per km', SHOW_FINANCIALS && rel.cost_per_km != null ? aed(rel.cost_per_km) : '—'],
-    ['Cost per case', money(rel.cost_per_case)],
+    [t('MTBF (mean time between failures)'), rel.mtbf_days != null ? t('{n} days', { n: num(rel.mtbf_days) }) : '—'],
+    [t('MTTR (mean time to repair)'), hrs(rel.mttr_hours)],
+    [t('Repair frequency'), rel.repair_frequency != null ? t('{n} / month', { n: rel.repair_frequency }) : '—'],
+    [t('Avg km between failures'), rel.avg_km_between_failures ? `${num(rel.avg_km_between_failures)} km` : '—'],
+    [t('Cost per km'), SHOW_FINANCIALS && rel.cost_per_km != null ? aed(rel.cost_per_km) : '—'],
+    [t('Cost per case'), money(rel.cost_per_case)],
   ].map(([a, b]) => `<tr><td>${esc(a)}</td><td class="r">${esc(b)}</td></tr>`).join('');
 
   // ── Garage performance ──
@@ -88,10 +113,15 @@ function buildVehicleReportHtml(data) {
         <td class="r">${num(g.repeat_failures)}</td>
         <td class="r">${g.quality_score}</td>
       </tr>`).join('')
-    : `<tr><td colspan="${SHOW_FINANCIALS ? 7 : 6}" class="muted">No garage history.</td></tr>`;
+    : `<tr><td colspan="${SHOW_FINANCIALS ? 7 : 6}" class="muted">${esc(t('No garage history.'))}</td></tr>`;
 
   // ── Full repair history ──
-  const flag = (r) => [r.returned && 'Returned', r.reopened && 'Reopened', r.failed_inspection && 'Failed QC', r.repeat_repair && 'Repeat'].filter(Boolean).join(', ') || '—';
+  const flag = (r) => [
+    r.returned && t('Returned'),
+    r.reopened && t('Reopened'),
+    r.failed_inspection && t('Failed QC'),
+    r.repeat_repair && t('Repeat'),
+  ].filter(Boolean).join(', ') || '—';
   const histRows = history.length
     ? history.map((r) => `<tr>
         <td>${esc(r.case_no)}</td>
@@ -107,9 +137,16 @@ function buildVehicleReportHtml(data) {
         <td>${esc(r.result)}</td>
         <td>${esc(flag(r))}</td>
       </tr>`).join('')
-    : `<tr><td colspan="${SHOW_FINANCIALS ? 12 : 11}" class="muted">No maintenance history.</td></tr>`;
+    : `<tr><td colspan="${SHOW_FINANCIALS ? 12 : 11}" class="muted">${esc(t('No maintenance history.'))}</td></tr>`;
 
-  return `<!doctype html><html><head><meta charset="utf-8" />
+  const faultHeading = fa.total
+    ? t('Fault analytics — {n} faults · {p}% recurrence', { n: num(fa.total), p: num(fa.recurrence_rate) })
+    : t('Fault analytics');
+  const historyHeading = history.length === 1
+    ? t('Repair history — 1 case')
+    : t('Repair history — {n} cases', { n: num(history.length) });
+
+  return `<!doctype html><html lang="${esc(lang)}" dir="${rtl ? 'rtl' : 'ltr'}"><head><meta charset="utf-8" />
   <title>${esc(fileTitle)}</title>
   <style>
     *{box-sizing:border-box} body{font:13px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;color:#0f172a;margin:0;padding:28px;background:#f8fafc}
@@ -118,7 +155,7 @@ function buildVehicleReportHtml(data) {
     .hd h1{font-size:22px;margin:0 0 4px} .hd .sub{color:#64748b;font-size:13px}
     .hd .badges{margin-top:8px;display:flex;flex-wrap:wrap;gap:6px}
     .badge{border-radius:999px;padding:3px 11px;font-size:11px;font-weight:700;color:#fff}
-    .hero{text-align:right} .hero .big{font-size:34px;font-weight:800;line-height:1} .hero .lbl{color:#64748b;font-size:12px}
+    .hero{text-align:end} .hero .big{font-size:34px;font-weight:800;line-height:1} .hero .lbl{color:#64748b;font-size:12px}
     .sec{padding:20px 26px;border-top:1px solid #f1f5f9} .sec h2{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#64748b;margin:0 0 14px}
     .kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:10px}
     .kpi{border:1px solid #eef2f7;border-radius:10px;padding:10px 12px;background:#fafcff}
@@ -126,8 +163,8 @@ function buildVehicleReportHtml(data) {
     .chips{display:grid;grid-template-columns:repeat(8,1fr);gap:8px}
     .chip{border:1px solid #eef2f7;border-radius:10px;padding:10px;text-align:center;background:#fafcff}
     .chip .n{display:block;font-size:18px;font-weight:800} .chip .l{color:#94a3b8;font-size:10px}
-    table{width:100%;border-collapse:collapse;font-size:12px} th,td{text-align:left;padding:7px 10px;border-bottom:1px solid #f1f5f9}
-    th{color:#94a3b8;font-size:10px;text-transform:uppercase;letter-spacing:.04em;background:#fafcff} td.r,th.r{text-align:right;font-variant-numeric:tabular-nums}
+    table{width:100%;border-collapse:collapse;font-size:12px} th,td{text-align:start;padding:7px 10px;border-bottom:1px solid #f1f5f9}
+    th{color:#94a3b8;font-size:10px;text-transform:uppercase;letter-spacing:.04em;background:#fafcff} td.r,th.r{text-align:end;font-variant-numeric:tabular-nums}
     .muted{color:#94a3b8;text-align:center;padding:18px}
     .two{display:grid;grid-template-columns:1fr 1fr;gap:26px}
     .ft{padding:14px 26px;color:#94a3b8;font-size:11px;border-top:1px solid #f1f5f9;display:flex;justify-content:space-between}
@@ -136,48 +173,48 @@ function buildVehicleReportHtml(data) {
     @media print{body{padding:0;background:#fff}.sheet{border:0}.bar{display:none}.kpis{grid-template-columns:repeat(4,1fr)}.chips{grid-template-columns:repeat(4,1fr)}}
   </style></head>
   <body onload="window.focus()">
-    <div class="bar"><button class="btn" onclick="window.print()">Print / Save as PDF</button></div>
+    <div class="bar"><button class="btn" onclick="window.print()">${esc(t('Print / Save as PDF'))}</button></div>
     <div class="sheet">
       <div class="hd">
         <div>
-          <h1>${esc(v.car || 'Vehicle')}</h1>
+          <h1>${esc(v.car || t('Vehicle'))}</h1>
           <div class="sub">${esc(v.plate_no || '—')}${v.vin ? ` · VIN ${esc(v.vin)}` : ''}${v.odometer ? ` · ${num(v.odometer)} km` : ''}</div>
           <div class="badges">
             <span class="badge" style="background:${toneColor(h.stage_tone)}">${esc(h.stage || '—')}</span>
             ${h.owner ? `<span class="badge" style="background:#475569">${esc(h.owner)}</span>` : ''}
-            <span class="badge" style="background:${toneColor(h.risk && h.risk.tone)}">${esc((h.risk && h.risk.label) || '—')} risk</span>
+            <span class="badge" style="background:${toneColor(h.risk && h.risk.tone)}">${esc(t('{label} risk', { label: (h.risk && h.risk.label) || '—' }))}</span>
           </div>
         </div>
         <div class="hero">
           <div class="big">${k.health_score ?? '—'}</div>
-          <div class="lbl">Health score</div>
-          <div class="lbl" style="margin-top:6px">Report ${esc(fmtDate(dateStr))}</div>
+          <div class="lbl">${esc(t('Health score'))}</div>
+          <div class="lbl" style="margin-top:6px">${esc(t('Report {date}', { date: fmtDate(dateStr) }))}</div>
         </div>
       </div>
 
-      <div class="sec"><h2>Overview</h2><div class="kpis">${kpis}</div></div>
+      <div class="sec"><h2>${esc(t('Overview'))}</h2><div class="kpis">${kpis}</div></div>
 
-      <div class="sec"><h2>Maintenance history summary</h2><div class="chips">${chips}</div></div>
+      <div class="sec"><h2>${esc(t('Maintenance history summary'))}</h2><div class="chips">${chips}</div></div>
 
-      <div class="sec"><h2>Fault analytics${fa.total ? ` — ${num(fa.total)} faults · ${num(fa.recurrence_rate)}% recurrence` : ''}</h2>
-        <table><thead><tr><th>Category</th><th class="r">Faults</th><th class="r">Share</th><th class="r">Avg time</th><th class="r">Parts</th>${SHOW_FINANCIALS ? '<th class="r">Cost</th>' : ''}<th>Garages</th></tr></thead>
+      <div class="sec"><h2>${esc(faultHeading)}</h2>
+        <table><thead><tr><th>${esc(t('Category'))}</th><th class="r">${esc(t('Faults'))}</th><th class="r">${esc(t('Share %'))}</th><th class="r">${esc(t('Avg time'))}</th><th class="r">${esc(t('Parts'))}</th>${SHOW_FINANCIALS ? `<th class="r">${esc(t('Cost'))}</th>` : ''}<th>${esc(t('Garages'))}</th></tr></thead>
         <tbody>${faultRows}</tbody></table>
       </div>
 
       <div class="sec two">
-        <div><h2>Reliability</h2><table><tbody>${relRows}</tbody></table></div>
-        <div><h2>Garage performance</h2>
-          <table><thead><tr><th>Garage</th><th class="r">Visits</th><th class="r">Avg dur.</th>${SHOW_FINANCIALS ? '<th class="r">Avg cost</th>' : ''}<th class="r">Rework</th><th class="r">Fails</th><th class="r">Quality</th></tr></thead>
+        <div><h2>${esc(t('Reliability'))}</h2><table><tbody>${relRows}</tbody></table></div>
+        <div><h2>${esc(t('Garage performance'))}</h2>
+          <table><thead><tr><th>${esc(t('Garage'))}</th><th class="r">${esc(t('Visits'))}</th><th class="r">${esc(t('Avg dur.'))}</th>${SHOW_FINANCIALS ? `<th class="r">${esc(t('Avg cost'))}</th>` : ''}<th class="r">${esc(t('Rework'))}</th><th class="r">${esc(t('Fails'))}</th><th class="r">${esc(t('Quality'))}</th></tr></thead>
           <tbody>${garageRows}</tbody></table>
         </div>
       </div>
 
-      <div class="sec"><h2>Repair history — ${num(history.length)} case${history.length === 1 ? '' : 's'}</h2>
-        <table><thead><tr><th>Case</th><th>Type</th><th>Opened</th><th>Closed</th><th class="r">Duration</th><th>Garage</th><th>Main fault</th><th class="r">Faults</th><th class="r">Parts</th>${SHOW_FINANCIALS ? '<th class="r">Cost</th>' : ''}<th>Result</th><th>Flags</th></tr></thead>
+      <div class="sec"><h2>${esc(historyHeading)}</h2>
+        <table><thead><tr><th>${esc(t('Case'))}</th><th>${esc(t('Type'))}</th><th>${esc(t('Opened'))}</th><th>${esc(t('Closed'))}</th><th class="r">${esc(t('Duration'))}</th><th>${esc(t('Garage'))}</th><th>${esc(t('Main fault'))}</th><th class="r">${esc(t('Faults'))}</th><th class="r">${esc(t('Parts'))}</th>${SHOW_FINANCIALS ? `<th class="r">${esc(t('Cost'))}</th>` : ''}<th>${esc(t('Result'))}</th><th>${esc(t('Flags'))}</th></tr></thead>
         <tbody>${histRows}</tbody></table>
       </div>
 
-      <div class="ft"><span>Generated by Faster · Car History Report</span><span>${esc(v.car || '')} · ${esc(v.plate_no || '')} · ${esc(fmtDate(dateStr))}</span></div>
+      <div class="ft"><span>${esc(t('Generated by Faster · Car History Report'))}</span><span>${esc(v.car || '')} · ${esc(v.plate_no || '')} · ${esc(fmtDate(dateStr))}</span></div>
     </div>
   </body></html>`;
 }

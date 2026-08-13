@@ -12,6 +12,7 @@ import { Card, PageHeader, SearchInput, TableSkeleton, EmptyState } from '../com
 import { Select } from '../components/ui/Field';
 import VendorsAnalytics from '../components/analytics/VendorsAnalytics';
 import { num } from '../lib/format';
+import { useI18n } from '../i18n/I18nContext';
 import VendorForm, { vendorToForm, cleanPayload } from './vendors/VendorForm';
 
 const PAGE_SIZE = 15;
@@ -26,11 +27,21 @@ const TYPE_TONE = {
 };
 const DOT = { blue: 'bg-blue-500', violet: 'bg-violet-500', emerald: 'bg-emerald-500', cyan: 'bg-cyan-500', amber: 'bg-amber-500', gray: 'bg-slate-400' };
 const TYPES = ['garage', 'parts_supplier', 'insurance', 'service_center', 'fuel_station', 'other'];
-const label = (t) => (t || '').replace(/_/g, ' ');
+
+// The vendor-type enum, said in words. The VALUE stays the enum the API speaks; only the label moves.
+const typeLabel = (t, type) => {
+  if (type === 'garage') return t('Garage');
+  if (type === 'parts_supplier') return t('Parts supplier');
+  if (type === 'insurance') return t('Insurance');
+  if (type === 'service_center') return t('Service center');
+  if (type === 'fuel_station') return t('Fuel station');
+  return t('Other');
+};
 
 const isUrl = (s) => typeof s === 'string' && /^https?:\/\//.test(s);
 
 export default function Vendors() {
+  const { t } = useI18n();
   const toast = useToast();
   const { can } = usePermissions();
   const canManage = can('vendors.manage');
@@ -78,10 +89,10 @@ export default function Vendors() {
       const payload = cleanPayload(form);
       if (editing) {
         await api.post(`/Vendor/${editing.id}`, payload);
-        toast.success('Vendor updated');
+        toast.success(t('Vendor updated'));
       } else {
         await api.post('/Vendor', payload);
-        toast.success('Vendor created');
+        toast.success(t('Vendor created'));
       }
       setModalOpen(false);
       reload();
@@ -89,9 +100,9 @@ export default function Vendors() {
       const res = err.response?.data;
       if (res?.errors) {
         setFormErrors(res.errors);
-        toast.error('Please fix the highlighted fields');
+        toast.error(t('Please fix the highlighted fields'));
       } else {
-        toast.error(res?.message || res?.msg || 'Could not save vendor');
+        toast.error(res?.message || res?.msg || t('Could not save vendor'));
       }
     } finally {
       setSaving(false);
@@ -102,11 +113,11 @@ export default function Vendors() {
     setDeleting(true);
     try {
       await api.delete(`/Vendor/${toDelete.id}`);
-      toast.success('Vendor deleted');
+      toast.success(t('Vendor deleted'));
       setToDelete(null);
       reload();
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Could not delete vendor');
+      toast.error(err.response?.data?.message || t('Could not delete vendor'));
     } finally {
       setDeleting(false);
     }
@@ -134,25 +145,28 @@ export default function Vendors() {
   const safePage = Math.min(page, pageCount);
   const paged = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
-  const toggleType = (t) => { setType(type === t ? '' : t); setPage(1); };
+  const toggleType = (next) => { setType(type === next ? '' : next); setPage(1); };
 
   const tiles = [
-    { t: 'garage', label: 'Garages' },
-    { t: 'parts_supplier', label: 'Parts suppliers' },
-    { t: 'insurance', label: 'Insurers' },
-    { t: 'service_center', label: 'Service centers' },
+    { t: 'garage', label: t('Garages') },
+    { t: 'parts_supplier', label: t('Parts suppliers') },
+    { t: 'insurance', label: t('Insurers') },
+    { t: 'service_center', label: t('Service centers') },
   ];
 
   return (
     <div className="py-8">
       <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
-        <PageHeader title="Vendors & Suppliers" subtitle={loading ? 'Loading…' : `${num(filtered.length)} of ${num(list.length)} vendors`}>
+        <PageHeader
+          title={t('Vendors & Suppliers')}
+          subtitle={loading ? t('Loading…') : t('{shown} of {total} vendors', { shown: num(filtered.length), total: num(list.length) })}
+        >
           {canManage && (
             <Button onClick={openCreate}>
               <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M12 5v14M5 12h14" />
               </svg>
-              Add Vendor
+              {t('Add Vendor')}
             </Button>
           )}
         </PageHeader>
@@ -172,22 +186,22 @@ export default function Vendors() {
                 </div>
                 <p className="mt-1 font-display text-2xl font-bold tracking-tight text-slate-900">{loading ? '…' : num(counts[tile.t] || 0)}</p>
               </div>
-              {type === tile.t && <span className="text-xs font-medium text-indigo-600">Filtering ✓</span>}
+              {type === tile.t && <span className="text-xs font-medium text-indigo-600">{t('Filtering ✓')}</span>}
             </button>
           ))}
         </div>
 
         {/* Filters */}
         <div className="flex flex-col gap-3 sm:flex-row">
-          <SearchInput className="flex-1" value={search} onChange={(v) => { setSearch(v); setPage(1); }} placeholder="Search name, phone or specialization…" />
+          <SearchInput className="flex-1" value={search} onChange={(v) => { setSearch(v); setPage(1); }} placeholder={t('Search name, phone or specialization…')} />
           <Select className="sm:w-48" value={type} onChange={(e) => { setType(e.target.value); setPage(1); }}>
-            <option value="">All types</option>
-            {TYPES.map((t) => <option key={t} value={t}>{label(t)}</option>)}
+            <option value="">{t('All types')}</option>
+            {TYPES.map((ty) => <option key={ty} value={ty}>{typeLabel(t, ty)}</option>)}
           </Select>
           <Select className="sm:w-36" value={active} onChange={(e) => { setActive(e.target.value); setPage(1); }}>
-            <option value="">All</option>
-            <option value="active">Active</option>
-            <option value="inactive">Inactive</option>
+            <option value="">{t('All')}</option>
+            <option value="active">{t('Active')}</option>
+            <option value="inactive">{t('Inactive')}</option>
           </Select>
         </div>
 
@@ -203,13 +217,13 @@ export default function Vendors() {
             <table className="min-w-full border-separate border-spacing-0 text-sm stagger-rows">
               <thead className="bg-slate-50/90">
                 <tr className="text-start text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Name</th>
-                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Type</th>
-                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Phone</th>
-                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Specialization / Link</th>
-                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-end">Cars Insured</th>
-                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Status</th>
-                  {canManage && <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-end">Actions</th>}
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">{t('Name')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">{t('Type')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">{t('Phone')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">{t('Specialization / Link')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-end">{t('Cars Insured')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">{t('Status')}</th>
+                  {canManage && <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-end">{t('Actions')}</th>}
                 </tr>
               </thead>
 
@@ -220,25 +234,25 @@ export default function Vendors() {
                   {paged.map((v) => (
                     <tr key={v.id} className="bg-white transition-colors even:bg-slate-50/40 hover:bg-indigo-50/40">
                       <td className="border-b border-slate-100 px-5 py-3.5 font-medium text-slate-900">{v.name}</td>
-                      <td className="border-b border-slate-100 px-5 py-3.5"><Badge tone={TYPE_TONE[v.type] || 'gray'}>{label(v.type)}</Badge></td>
+                      <td className="border-b border-slate-100 px-5 py-3.5"><Badge tone={TYPE_TONE[v.type] || 'gray'}>{typeLabel(t, v.type)}</Badge></td>
                       <td className="border-b border-slate-100 px-5 py-3.5 text-slate-600" dir="ltr">{v.phone || <span className="text-slate-300">—</span>}</td>
                       <td className="border-b border-slate-100 px-5 py-3.5 text-slate-600">
                         {isUrl(v.notes) ? (
                           <a href={v.notes} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-medium text-indigo-600 hover:text-indigo-700">
-                            Map
+                            {t('Map')}
                             <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M14 5h5v5M19 5l-9 9M10 5H5v14h14v-5" /></svg>
                           </a>
                         ) : (v.notes || <span className="text-slate-300">—</span>)}
                       </td>
                       <td className="border-b border-slate-100 px-5 py-3.5 text-end tabular-nums text-slate-600">{v.type === 'insurance' ? num(v.insured_vehicles_count || 0) : <span className="text-slate-300">—</span>}</td>
                       <td className="border-b border-slate-100 px-5 py-3.5">
-                        {v.active ? <Badge tone="green">Active</Badge> : <Badge tone="gray">Inactive</Badge>}
+                        {v.active ? <Badge tone="green">{t('Active')}</Badge> : <Badge tone="gray">{t('Inactive')}</Badge>}
                       </td>
                       {canManage && (
                         <td className="border-b border-slate-100 px-5 py-3.5">
                           <div className="flex justify-end gap-2">
-                            <Button variant="secondary" size="sm" onClick={() => openEdit(v)}>Edit</Button>
-                            <Button variant="ghost" size="sm" className="text-red-600 hover:bg-red-50" onClick={() => setToDelete(v)}>Delete</Button>
+                            <Button variant="secondary" size="sm" onClick={() => openEdit(v)}>{t('Edit')}</Button>
+                            <Button variant="ghost" size="sm" className="text-red-600 hover:bg-red-50" onClick={() => setToDelete(v)}>{t('Delete')}</Button>
                           </div>
                         </td>
                       )}
@@ -248,7 +262,7 @@ export default function Vendors() {
               )}
             </table>
 
-            {!loading && filtered.length === 0 && <EmptyState title="No vendors found" message="Try a different search or filter." />}
+            {!loading && filtered.length === 0 && <EmptyState title={t('No vendors found')} message={t('Try a different search or filter.')} />}
           </div>
 
           {!loading && filtered.length > 0 && (
@@ -261,13 +275,13 @@ export default function Vendors() {
       <Modal
         open={modalOpen}
         onClose={() => !saving && setModalOpen(false)}
-        title={editing ? 'Edit Vendor' : 'Add Vendor'}
-        subtitle={editing ? editing.name : 'Enter the vendor details'}
+        title={editing ? t('Edit Vendor') : t('Add Vendor')}
+        subtitle={editing ? editing.name : t('Enter the vendor details')}
         size="lg"
         footer={
           <>
-            <Button variant="secondary" onClick={() => setModalOpen(false)} disabled={saving}>Cancel</Button>
-            <Button onClick={save} loading={saving}>{editing ? 'Save Changes' : 'Create Vendor'}</Button>
+            <Button variant="secondary" onClick={() => setModalOpen(false)} disabled={saving}>{t('Cancel')}</Button>
+            <Button onClick={save} loading={saving}>{editing ? t('Save changes') : t('Create Vendor')}</Button>
           </>
         }
       >
@@ -280,9 +294,9 @@ export default function Vendors() {
         onClose={() => !deleting && setToDelete(null)}
         onConfirm={confirmDelete}
         loading={deleting}
-        title="Delete vendor?"
-        confirmText="Delete"
-        message={toDelete ? `This will remove ${toDelete.name || 'this vendor'}.` : ''}
+        title={t('Delete vendor?')}
+        confirmText={t('Delete')}
+        message={toDelete ? t('This will remove {name}.', { name: toDelete.name || t('this vendor') }) : ''}
       />
     </div>
   );

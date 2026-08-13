@@ -103,7 +103,11 @@ export const allows = (can, perm) => (Array.isArray(perm) ? perm.some(can) : can
 //     (dispatched_by_id) — mirrors MaintenanceWorkflowService::markUnderRepair().
 //   • "Arrive at our park" (ready_for_pickup, after collect): only the driver who collected it from the
 //     garage (picked_up_from_garage_by) — mirrors MaintenanceWorkflowService::arriveAtPark().
-export function custodyBlocked(tk, userId) {
+//
+// A SUPERVISOR is exempt from the arrival gate — they run these legs themselves (see
+// MaintenanceWorkflowService::maySupersedeDriver), so pass `can` to let them through. The garage
+// check-in gate has no override on the backend and keeps none here.
+export function custodyBlocked(tk, userId, can = null) {
   if (!tk) return false;
   if (tk.workflow_status === 'in_transit' && tk.dispatched_by_id) {
     return Number(tk.dispatched_by_id) !== Number(userId);
@@ -111,33 +115,40 @@ export function custodyBlocked(tk, userId) {
   // The arrival leg only exists once the car has been collected (picked_up_from_garage_at set); before
   // that the action is "Collect from Garage", which any driver may run.
   if (tk.workflow_status === 'ready_for_pickup' && tk.picked_up_from_garage_at && tk.picked_up_from_garage_by) {
+    if (canSupersedeDriver(can)) return false;
     return Number(tk.picked_up_from_garage_by) !== Number(userId);
   }
   return false;
 }
 
+// Does this user hold the dispatch authority that lets them take a leg on someone else's name?
+// Mirrors MaintenanceWorkflowService::SUPERSEDE_DRIVER_PERMISSION.
+const canSupersedeDriver = (can) => typeof can === 'function' && !!can('maintenance.delegate');
+
 // Assigned-pickup gate — when the Supervisor named a driver for the pickup, that job is THAT driver's.
 // Every other driver sees "Assigned to <name>" instead of a Pick up button they'd bounce off (the
 // backend refuses them in MaintenanceWorkflowService::dispatch()). A pickup with NO driver named stays
 // open to the pool — first driver to claim it takes it — which is how garage transfers are raised.
-export function assignmentBlocked(tk, userId) {
+// A supervisor may take any pickup, assigned or not — pass `can` so their button stays live.
+export function assignmentBlocked(tk, userId, can = null) {
   if (!tk || tk.workflow_status !== 'awaiting_dispatch') return false;
   const driverId = tk.delegation?.driver_id ?? tk.assigned_driver_id;
   if (!driverId) return false;
+  if (canSupersedeDriver(can)) return false;
   return Number(driverId) !== Number(userId);
 }
 
 // The driver a pickup is assigned to, for the "Assigned to X" note. Null when it's the current user's
-// job or the pickup is open to the pool.
-export function assignedDriverName(tk, userId) {
-  if (!assignmentBlocked(tk, userId)) return null;
+// job, the pickup is open to the pool, or the viewer may take it anyway.
+export function assignedDriverName(tk, userId, can = null) {
+  if (!assignmentBlocked(tk, userId, can)) return null;
   return tk.delegation?.driver_name || tk.assigned_driver_name || null;
 }
 
 // The name of the driver who holds custody on a gated leg (for the "in X's custody" note shown when the
 // action button is hidden). Returns null when the current user IS the custodian or the leg isn't gated.
-export function custodyHolderName(tk, userId) {
-  if (!custodyBlocked(tk, userId)) return null;
+export function custodyHolderName(tk, userId, can = null) {
+  if (!custodyBlocked(tk, userId, can)) return null;
   if (tk.workflow_status === 'in_transit') return tk.dispatched_by_name || null;
   if (tk.workflow_status === 'ready_for_pickup') return tk.picked_up_from_garage_by_name || null;
   return null;

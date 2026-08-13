@@ -64,7 +64,17 @@ class MaintenanceTaskService
 
         foreach ($findings as $f) {
             $text = trim((string) ($f['text'] ?? ''));
-            if ($text === '' || $existing->has($this->key($text))) {
+            if ($text === '') {
+                continue;
+            }
+
+            // WHERE + HOW MANY, carried on the finding since the intake screen. Applied to an ALREADY
+            // promoted fault too (the branch below), because re-filing a report with the location
+            // corrected must fix the fault, not silently keep the first answer — the finding is the
+            // inspector's live statement and the task is its promotion, not a frozen copy.
+            if ($existing->has($this->key($text))) {
+                $this->applyLocationAndQuantity($existing->get($this->key($text)), $f);
+
                 continue;
             }
 
@@ -78,6 +88,9 @@ class MaintenanceTaskService
                 'maintenance_id' => $ticket->id,
                 'vehicle_id'     => $ticket->vehicle_id,
                 'symptom'        => $text,
+                // HOW MANY physical occurrences this one routable fault covers. Absent on every
+                // pre-existing finding, and 1 is what a finding without a count has always meant.
+                'quantity'       => app(FaultLocationService::class)->normalizeQuantity($f['quantity'] ?? 1),
                 'category_key'   => $f['category_key'] ?? null,
                 'source'         => in_array(($f['source'] ?? null), Maintenance::FINDING_SOURCES, true) ? $f['source'] : Maintenance::FINDING_INSPECTOR,
                 'severity'       => $this->normSeverity($f['severity'] ?? null) ?? $ticket->fault_severity,
@@ -89,6 +102,7 @@ class MaintenanceTaskService
                 'identified_at'  => $this->parseDate($f['at'] ?? null) ?? Carbon::now(),
             ], $classification ?? []));
             $task->save();
+            $this->applyLocationAndQuantity($task, $f);
             $existing->put($this->key($text), $task);
             $newTasks[] = $task;
             $created++;
@@ -97,7 +111,12 @@ class MaintenanceTaskService
                 // Name the event by its own type. The trail used to read "Fault identified: Oil Change"
                 // for a service, which is the audit log asserting the very thing the type layer exists
                 // to deny (audit H5).
-                'description' => $task->kindMeta()['label'] . ' identified: ' . $text,
+                //
+                // The identification is written with its count and its places — "Fault identified:
+                // 2 scratches — rims and body" — through the same formatter every screen uses, so the
+                // audit trail and the board say the same sentence about the same fault. A fault with
+                // neither renders exactly as it always did.
+                'description' => $task->kindMeta()['label'] . ' identified: ' . $task->describe(),
                 'source_tag'  => $task->source,
             ]);
 
@@ -123,6 +142,40 @@ class MaintenanceTaskService
         $this->bindRequiredParts($ticket);
 
         return $created;
+    }
+
+    /**
+     * Carry a finding's WHERE and HOW MANY onto its promoted fault.
+     *
+     * Both are OPTIONAL and absence is meaningful, so each is applied only when the finding actually
+     * carries it: a payload with no `locations` key means "this writer has nothing to say about
+     * places", not "clear the places". An explicit empty array DOES clear them — that is a person
+     * removing a location they had picked, and it must stick.
+     *
+     * Best-effort by design. A location vocabulary hiccup must never sink the promotion of a real
+     * fault an inspector just reported; the fault is the evidence, the place is an attribute of it.
+     *
+     * @param array $finding one entry of the ticket's findings JSON
+     */
+    private function applyLocationAndQuantity(MaintenanceTask $task, array $finding): void
+    {
+        try {
+            $locations = app(FaultLocationService::class);
+
+            if (array_key_exists('quantity', $finding)) {
+                $quantity = $locations->normalizeQuantity($finding['quantity']);
+                if ((int) $task->quantity !== $quantity) {
+                    $task->quantity = $quantity;
+                    $task->save();
+                }
+            }
+
+            if (array_key_exists('locations', $finding)) {
+                $locations->sync($task, (array) $finding['locations']);
+            }
+        } catch (\Throwable $e) {
+            report($e);
+        }
     }
 
     /**

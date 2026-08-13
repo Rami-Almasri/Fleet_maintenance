@@ -71,7 +71,7 @@ export default function CycleGuide({ lanes = [], onClose }) {
           <h3 className="mwf-cycle-title">{t('workflow.cycle.title')}</h3>
           <p className="mwf-cycle-sub">{t('workflow.cycle.subtitle')}</p>
         </div>
-        <button type="button" className="mwf-cycle-x" onClick={onClose} aria-label="Close">
+        <button type="button" className="mwf-cycle-x" onClick={onClose} aria-label={t('Close')}>
           <Icon.X className="h-4 w-4" />
         </button>
       </div>
@@ -84,7 +84,7 @@ export default function CycleGuide({ lanes = [], onClose }) {
               <div className="mwf-cycle-step-hd">
                 <span className="mwf-cycle-num" style={{ color: s.tone, background: `${s.tone}22` }}>{i + 1}</span>
                 <span className="mwf-cycle-nm">{s.name}</span>
-                <span className="mwf-cycle-ct" title={`${s.count} in this stage`}>{s.count}</span>
+                <span className="mwf-cycle-ct" title={t('{n} in this stage', { n: s.count })}>{s.count}</span>
               </div>
               {s.actor && (
                 <p className="mwf-cycle-actor">
@@ -97,7 +97,7 @@ export default function CycleGuide({ lanes = [], onClose }) {
                 </p>
               )}
             </div>
-            {i < steps.length - 1 && <Icon.ArrowRight className="mwf-cycle-arrow h-4 w-4" />}
+            {i < steps.length - 1 && <Icon.ArrowRight className="mwf-cycle-arrow h-4 w-4 rtl:-scale-x-100" />}
           </div>
         ))}
       </div>

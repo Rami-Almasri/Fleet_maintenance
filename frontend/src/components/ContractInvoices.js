@@ -10,6 +10,7 @@ import SearchSelect from './ui/SearchSelect';
 import Icon from './ui/Icon';
 import { Input, Textarea, Select } from './ui/Field';
 import { fmtDate } from '../lib/format';
+import { useI18n } from '../i18n/I18nContext';
 
 // A blank service record. Money fields are gone — this is a Technical Service Log now.
 const EMPTY = { invoice_date: '', vendor_id: '', notes: '', items: [{ description: '', category_key: '' }] };
@@ -22,6 +23,7 @@ const EMPTY = { invoice_date: '', vendor_id: '', notes: '', items: [{ descriptio
  */
 export default function ContractInvoices({ contract, onChanged }) {
   const { can } = usePermissions();
+  const { t } = useI18n();
   const toast = useToast();
   const canManage = can('billing.manage');
 
@@ -89,7 +91,7 @@ export default function ContractInvoices({ contract, onChanged }) {
 
   const submit = async () => {
     const items = form.items.map((it) => ({ description: it.description.trim(), category_key: it.category_key || null })).filter((it) => it.description);
-    if (!items.length) { toast.error('Add at least one part or service.'); return; }
+    if (!items.length) { toast.error(t('Add at least one part or service.')); return; }
     setSaving(true);
     setErrors({});
     try {
@@ -102,43 +104,43 @@ export default function ContractInvoices({ contract, onChanged }) {
       };
       if (editing) {
         await api.post(`/Invoice/${editing.id}`, payload);
-        toast.success('Service record updated');
+        toast.success(t('Service record updated'));
       } else {
         await api.post('/Invoice', payload);
-        toast.success('Service record added');
+        toast.success(t('Service record added'));
       }
       setOpen(false);
       onChanged?.();
     } catch (e) {
       const r = e.response?.data;
-      if (r?.errors) { setErrors(r.errors); toast.error('Please fix the highlighted fields'); }
-      else toast.error(r?.message || r?.msg || 'Could not save the service record');
+      if (r?.errors) { setErrors(r.errors); toast.error(t('Please fix the highlighted fields')); }
+      else toast.error(r?.message || r?.msg || t('Could not save the service record'));
     } finally {
       setSaving(false);
     }
   };
 
   const remove = async (rec) => {
-    if (!window.confirm(`Delete service record ${rec.number}? This cannot be undone.`)) return;
+    if (!window.confirm(t('Delete service record {number}? This cannot be undone.', { number: rec.number }))) return;
     try {
       await api.delete(`/Invoice/${rec.id}`);
-      toast.success('Service record deleted');
+      toast.success(t('Service record deleted'));
       onChanged?.();
     } catch (e) {
-      toast.error(e.response?.data?.message || 'Could not delete the record');
+      toast.error(e.response?.data?.message || t('Could not delete the record'));
     }
   };
 
   return (
     <div className="space-y-5">
       <SectionCard
-        title="Service Records"
-        subtitle="Parts & services done on this car — a technical log (no charges). Feeds the vehicle's Service History."
-        actions={canManage ? <Button variant="secondary" size="sm" onClick={openNew}><Icon.Plus className="h-4 w-4" /> Add service record</Button> : null}
+        title={t('Service Records')}
+        subtitle={t("Parts & services done on this car — a technical log (no charges). Feeds the vehicle's Service History.")}
+        actions={canManage ? <Button variant="secondary" size="sm" onClick={openNew}><Icon.Plus className="h-4 w-4" /> {t('Add service record')}</Button> : null}
       >
         {records.length === 0 ? (
           <div className="px-5 py-10 text-center text-sm text-slate-400">
-            No service records yet{canManage ? ' — use “Add service record” above.' : '.'}
+            {canManage ? t('No service records yet — use “Add service record” above.') : t('No service records yet.')}
           </div>
         ) : (
           <ul className="divide-y divide-slate-100">
@@ -148,14 +150,14 @@ export default function ContractInvoices({ contract, onChanged }) {
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2 text-sm">
                       <span className="inline-flex items-center gap-1.5 text-slate-500">
-                        <Icon.Calendar className="h-3.5 w-3.5 text-slate-400" /> {rec.date ? fmtDate(rec.date) : 'No date'}
+                        <Icon.Calendar className="h-3.5 w-3.5 text-slate-400" /> {rec.date ? fmtDate(rec.date) : t('No date')}
                       </span>
                       {rec.garage && (
                         <span className="inline-flex items-center gap-1.5 font-medium text-slate-700">
                           <Icon.Wrench className="h-3.5 w-3.5 text-slate-400" /> {rec.garage}
                         </span>
                       )}
-                      <Badge tone={rec.origin === 'manual' ? 'indigo' : 'gray'}>{rec.origin === 'manual' ? 'Web' : 'OM'}</Badge>
+                      <Badge tone={rec.origin === 'manual' ? 'indigo' : 'gray'}>{rec.origin === 'manual' ? t('Web') : 'OM'}</Badge>
                     </div>
                     {rec.items?.length > 0 && (
                       <div className="mt-2 flex flex-wrap gap-1.5">
@@ -171,9 +173,9 @@ export default function ContractInvoices({ contract, onChanged }) {
                   </div>
                   {canManage && rec.editable && (
                     <span className="inline-flex shrink-0 gap-2">
-                      <button onClick={() => openEdit(rec)} className="text-xs font-medium text-indigo-600 hover:text-indigo-700">Edit</button>
+                      <button onClick={() => openEdit(rec)} className="text-xs font-medium text-indigo-600 hover:text-indigo-700">{t('Edit')}</button>
                       <span className="text-slate-200">·</span>
-                      <button onClick={() => remove(rec)} className="text-xs font-medium text-red-500 hover:text-red-600">Delete</button>
+                      <button onClick={() => remove(rec)} className="text-xs font-medium text-red-500 hover:text-red-600">{t('Delete')}</button>
                     </span>
                   )}
                 </div>
@@ -186,27 +188,27 @@ export default function ContractInvoices({ contract, onChanged }) {
       <Modal
         open={open}
         onClose={() => setOpen(false)}
-        title={editing ? `Edit service record ${editing.number}` : 'Add service record'}
-        subtitle="Log the parts/services done — and the garage that did them"
+        title={editing ? t('Edit service record {number}', { number: editing.number }) : t('Add service record')}
+        subtitle={t('Log the parts/services done — and the garage that did them')}
         size="lg"
         footer={(
           <>
-            <Button variant="secondary" onClick={() => setOpen(false)} disabled={saving}>Cancel</Button>
-            <Button onClick={submit} loading={saving}>{editing ? 'Save changes' : 'Add record'}</Button>
+            <Button variant="secondary" onClick={() => setOpen(false)} disabled={saving}>{t('Cancel')}</Button>
+            <Button onClick={submit} loading={saving}>{editing ? t('Save changes') : t('Add record')}</Button>
           </>
         )}
       >
         <div className="space-y-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Input label="Service date" type="date" value={form.invoice_date} onChange={set('invoice_date')} error={err('invoice_date')} />
+            <Input label={t('Service date')} type="date" value={form.invoice_date} onChange={set('invoice_date')} error={err('invoice_date')} />
             <div>
-              <span className="mb-1 block text-sm font-medium text-slate-700">Garage</span>
-              <SearchSelect value={form.vendor_id} onChange={(v) => setForm((s) => ({ ...s, vendor_id: v }))} options={garageOptions} placeholder="Pick the garage…" />
+              <span className="mb-1 block text-sm font-medium text-slate-700">{t('Garage')}</span>
+              <SearchSelect value={form.vendor_id} onChange={(v) => setForm((s) => ({ ...s, vendor_id: v }))} options={garageOptions} placeholder={t('Pick the garage…')} />
             </div>
           </div>
 
           <div>
-            <span className="mb-1.5 block text-sm font-medium text-slate-700">Parts / services done</span>
+            <span className="mb-1.5 block text-sm font-medium text-slate-700">{t('Parts / services done')}</span>
             <div className="space-y-2">
               {form.items.map((it, i) => (
                 <div key={i} className="flex items-center gap-2">
@@ -214,24 +216,24 @@ export default function ContractInvoices({ contract, onChanged }) {
                     className="flex-1"
                     value={it.description}
                     onChange={(e) => setItem(i, 'description', e.target.value)}
-                    placeholder="e.g. Oil Filter, Brake Pads, Airbag Sensor"
+                    placeholder={t('e.g. Oil Filter, Brake Pads, Airbag Sensor')}
                   />
                   <Select className="w-40" value={it.category_key} onChange={(e) => setItem(i, 'category_key', e.target.value)}>
-                    <option value="">Category…</option>
+                    <option value="">{t('Category…')}</option>
                     {categories.map((c) => <option key={c.key} value={c.key}>{c.title || c.label || c.key}</option>)}
                   </Select>
-                  <button type="button" onClick={() => removeItem(i)} className="rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-500" title="Remove">
+                  <button type="button" onClick={() => removeItem(i)} className="rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-500" title={t('Remove')}>
                     <Icon.X className="h-4 w-4" />
                   </button>
                 </div>
               ))}
             </div>
             <button type="button" onClick={addItem} className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-700">
-              <Icon.Plus className="h-3.5 w-3.5" /> Add another item
+              <Icon.Plus className="h-3.5 w-3.5" /> {t('Add another item')}
             </button>
           </div>
 
-          <Textarea label="Notes (optional)" rows={2} value={form.notes} onChange={set('notes')} error={err('notes')} placeholder="Anything else about this visit…" />
+          <Textarea label={t('Notes (optional)')} rows={2} value={form.notes} onChange={set('notes')} error={err('notes')} placeholder={t('Anything else about this visit…')} />
         </div>
       </Modal>
     </div>

@@ -37,10 +37,10 @@ const batteryNextChange = (lastChanged) => {
 };
 
 // Human text for the strict km-based service-due verdict (Vehicle::serviceStatus on the API).
-const serviceStatusText = (s) => {
-  if (!s || s.status === 'no_data') return 'No Data';
-  if (s.status === 'service_due') return `Service Due (${num(s.overdue_km)} km overdue)`;
-  return `OK (${num(s.remaining)} km left)`;
+const serviceStatusText = (s, t) => {
+  if (!s || s.status === 'no_data') return t('No Data');
+  if (s.status === 'service_due') return t('Service Due ({km} km overdue)', { km: num(s.overdue_km) });
+  return t('OK ({km} km left)', { km: num(s.remaining) });
 };
 
 // One label→value fact line for the compliance / service block on the health card.
@@ -56,6 +56,7 @@ const FactRow = ({ label, value, tip }) => (
 
 // A coverage line (Mulkiya / Insurance) — expiry date + a days-left urgency badge.
 const CoverageRow = ({ label, date, days }) => {
+  const { t } = useI18n();
   const b = dayBadge(days);
   return (
     <div className="flex items-center justify-between py-2">
@@ -63,7 +64,7 @@ const CoverageRow = ({ label, date, days }) => {
         <p className="text-sm font-medium text-slate-700">{label}</p>
         <p className="text-xs text-slate-400">{fmtDate(date)}</p>
       </div>
-      <Badge tone={b.tone}>{b.text === '—' ? 'None' : b.text}</Badge>
+      <Badge tone={b.tone}>{b.text === '—' ? t('None') : b.text}</Badge>
     </div>
   );
 };
@@ -132,64 +133,64 @@ const STATUS_META = {
   unknown: { tone: 'text-slate-400',   dot: 'bg-slate-300',   ring: 'ring-slate-400/20',   chip: 'No data' },
 };
 
-function buildHealth({ v, reg, maintenance }) {
+function buildHealth({ v, reg, maintenance, t }) {
   const signals = [];
 
   // Registration (Mulkiya)
   const regDays = reg ? reg.registration_days_left : null;
   signals.push({
-    key: 'registration', label: 'Registration',
+    key: 'registration', label: t('Registration'),
     status: regDays == null ? 'unknown' : regDays < 0 ? 'bad' : regDays < 30 ? 'warn' : 'good',
-    detail: regDays == null ? 'No record' : regDays < 0 ? `Expired ${Math.abs(regDays)}d ago`
-      : `${num(regDays)} days left`,
+    detail: regDays == null ? t('No record') : regDays < 0 ? t('Expired {n}d ago', { n: Math.abs(regDays) })
+      : t('{n} days left', { n: num(regDays) }),
   });
 
   // Insurance
   const insDays = reg ? reg.insurance_days_left : null;
   signals.push({
-    key: 'insurance', label: 'Insurance',
+    key: 'insurance', label: t('Insurance'),
     status: insDays == null ? 'unknown' : insDays < 0 ? 'bad' : insDays < 30 ? 'warn' : 'good',
-    detail: insDays == null ? 'No record' : insDays < 0 ? `Expired ${Math.abs(insDays)}d ago`
-      : `${num(insDays)} days left`,
+    detail: insDays == null ? t('No record') : insDays < 0 ? t('Expired {n}d ago', { n: Math.abs(insDays) })
+      : t('{n} days left', { n: num(insDays) }),
   });
 
   // Service interval (km-based verdict from the API)
   const svc = v?.service_status;
   signals.push({
-    key: 'service', label: 'Service interval',
+    key: 'service', label: t('Service interval'),
     status: !svc || svc.status === 'no_data' ? 'unknown' : svc.status === 'service_due' ? 'bad' : 'good',
-    detail: !svc || svc.status === 'no_data' ? 'No data'
-      : svc.status === 'service_due' ? `${num(svc.overdue_km)} km overdue`
-      : `${num(svc.remaining)} km left`,
+    detail: !svc || svc.status === 'no_data' ? t('No data')
+      : svc.status === 'service_due' ? t('{km} km overdue', { km: num(svc.overdue_km) })
+      : t('{km} km left', { km: num(svc.remaining) }),
   });
 
   // Battery — due one year after last change
-  let batStatus = 'unknown', batDetail = 'Not on file';
+  let batStatus = 'unknown', batDetail = t('Not on file');
   if (v?.battery_last_changed) {
     const due = new Date(v.battery_last_changed);
     if (!isNaN(due.getTime())) {
       due.setFullYear(due.getFullYear() + 1);
       const d = daysUntil(due.toISOString());
       batStatus = d < 0 ? 'bad' : d < 30 ? 'warn' : 'good';
-      batDetail = d < 0 ? `Overdue ${Math.abs(d)}d` : `${num(d)} days left`;
+      batDetail = d < 0 ? t('Overdue {n}d', { n: Math.abs(d) }) : t('{n} days left', { n: num(d) });
     }
   }
-  signals.push({ key: 'battery', label: 'Battery', status: batStatus, detail: batDetail });
+  signals.push({ key: 'battery', label: t('Battery'), status: batStatus, detail: batDetail });
 
   // Traffic fines
   const fines = reg ? reg.fines_count : 0;
   signals.push({
-    key: 'fines', label: 'Traffic fines',
+    key: 'fines', label: t('Traffic fines'),
     status: !reg ? 'unknown' : fines > 0 ? 'warn' : 'good',
-    detail: !reg ? 'No record' : fines > 0 ? `${num(fines)} unpaid` : 'None outstanding',
+    detail: !reg ? t('No record') : fines > 0 ? t('{n} unpaid', { n: num(fines) }) : t('None outstanding'),
   });
 
   // Open workshop visits (car currently in maintenance)
   const open = (maintenance || []).filter((m) => m.state === 'open' && !m.in_date).length;
   signals.push({
-    key: 'open_faults', label: 'Open repairs',
+    key: 'open_faults', label: t('Open repairs'),
     status: open > 0 ? 'bad' : 'good',
-    detail: open > 0 ? `${num(open)} in workshop` : 'None open',
+    detail: open > 0 ? t('{n} in workshop', { n: num(open) }) : t('None open'),
   });
 
   // Score: start at 100, penalise by severity. Clamped 0–100.
@@ -227,48 +228,49 @@ function StatBig({ icon, hex, value, label, onClick }) {
 // right. All three read the SAME contract-type split (OfficeManager type: C = rental, U =
 // maintenance, R = booking). Money-free — it's a count/mix view, so it always renders.
 function ContractPortfolio({ contracts = [], onNavigate }) {
+  const { t } = useI18n();
   const total = contracts.length;
-  const countOf = (t) => contracts.filter((c) => c.contract_type === t).length;
+  const countOf = (code) => contracts.filter((c) => c.contract_type === code).length;
   const TYPES = [
-    { key: 'C', label: 'Rental', value: countOf('C'), hex: '#3b82f6', icon: <Icon.Activity className="h-5 w-5" /> },
-    { key: 'U', label: 'Maintenance', value: countOf('U'), hex: '#f59e0b', icon: <Icon.Wrench className="h-5 w-5" /> },
-    { key: 'R', label: 'Booking', value: countOf('R'), hex: '#8b5cf6', icon: <Icon.Clock className="h-5 w-5" /> },
+    { key: 'C', label: t('Rental'), value: countOf('C'), hex: '#3b82f6', icon: <Icon.Activity className="h-5 w-5" /> },
+    { key: 'U', label: t('Maintenance'), value: countOf('U'), hex: '#f59e0b', icon: <Icon.Wrench className="h-5 w-5" /> },
+    { key: 'R', label: t('Booking'), value: countOf('R'), hex: '#8b5cf6', icon: <Icon.Clock className="h-5 w-5" /> },
   ];
-  const barMax = Math.max(1, ...TYPES.map((t) => t.value));
-  const donutSegments = TYPES.filter((t) => t.value > 0).map((t) => ({ label: t.label, value: t.value, color: t.hex }));
+  const barMax = Math.max(1, ...TYPES.map((ty) => ty.value));
+  const donutSegments = TYPES.filter((ty) => ty.value > 0).map((ty) => ({ label: ty.label, value: ty.value, color: ty.hex }));
   const go = onNavigate ? () => onNavigate('financials') : undefined;
 
   return (
     <SectionCard
-      title="Contract portfolio"
-      subtitle="Lifetime contracts by type — rental, maintenance & booking"
-      actions={go ? <button type="button" onClick={go} className="text-sm font-medium text-indigo-600 hover:text-indigo-700">View all →</button> : null}
+      title={t('Contract portfolio')}
+      subtitle={t('Lifetime contracts by type — rental, maintenance & booking')}
+      actions={go ? <button type="button" onClick={go} className="text-sm font-medium text-indigo-600 hover:text-indigo-700">{t('View all')} <span className="inline-block rtl:-scale-x-100">→</span></button> : null}
       bodyClass="p-0"
     >
       <div className="grid grid-cols-1 divide-y divide-slate-100 lg:grid-cols-[220px_minmax(0,1fr)_minmax(0,420px)] lg:divide-x lg:divide-y-0">
         {/* Left — big-number stat column */}
         <div className="flex flex-col justify-center gap-4 p-6">
-          <StatBig icon={<Icon.Calendar className="h-5 w-5" />} hex="#06b6d4" value={total} label="Total contracts" onClick={go} />
-          {TYPES.map((t) => (
-            <StatBig key={t.key} icon={t.icon} hex={t.hex} value={t.value} label={t.label} onClick={go} />
+          <StatBig icon={<Icon.Calendar className="h-5 w-5" />} hex="#06b6d4" value={total} label={t('Total contracts')} onClick={go} />
+          {TYPES.map((ty) => (
+            <StatBig key={ty.key} icon={ty.icon} hex={ty.hex} value={ty.value} label={ty.label} onClick={go} />
           ))}
         </div>
 
         {/* Middle — contracts by type (bar) */}
         <div className="flex flex-col p-6">
-          <p className="mb-4 text-center text-[11px] font-semibold uppercase tracking-wide text-slate-400">Contracts by type</p>
+          <p className="mb-4 text-center text-[11px] font-semibold uppercase tracking-wide text-slate-400">{t('Contracts by type')}</p>
           <div className="flex flex-1 items-end justify-around gap-5" style={{ minHeight: 180 }}>
-            {TYPES.map((t) => (
-              <div key={t.key} className="flex h-full flex-1 flex-col items-center justify-end gap-2">
-                <span className="text-sm font-bold tabular-nums text-slate-700">{num(t.value)}</span>
+            {TYPES.map((ty) => (
+              <div key={ty.key} className="flex h-full flex-1 flex-col items-center justify-end gap-2">
+                <span className="text-sm font-bold tabular-nums text-slate-700">{num(ty.value)}</span>
                 <div className="flex w-full max-w-[52px] flex-1 items-end">
                   <div
                     className="w-full rounded-t-lg"
-                    style={{ height: `${Math.max(4, (t.value / barMax) * 100)}%`, backgroundColor: t.hex, transition: 'height 1s cubic-bezier(0.22,1,0.36,1)' }}
-                    title={`${t.label}: ${num(t.value)}`}
+                    style={{ height: `${Math.max(4, (ty.value / barMax) * 100)}%`, backgroundColor: ty.hex, transition: 'height 1s cubic-bezier(0.22,1,0.36,1)' }}
+                    title={`${ty.label}: ${num(ty.value)}`}
                   />
                 </div>
-                <span className="text-xs font-medium text-slate-500">{t.label}</span>
+                <span className="text-xs font-medium text-slate-500">{ty.label}</span>
               </div>
             ))}
           </div>
@@ -280,11 +282,11 @@ function ContractPortfolio({ contracts = [], onNavigate }) {
             <LeaderDonut
               segments={donutSegments}
               total={total}
-              centerLabel="Contracts"
+              centerLabel={t('Contracts')}
               format={(n) => Math.round(n).toLocaleString()}
             />
           ) : (
-            <div className="flex h-[150px] items-center justify-center text-sm text-slate-400">No contracts yet.</div>
+            <div className="flex h-[150px] items-center justify-center text-sm text-slate-400">{t('No contracts yet.')}</div>
           )}
         </div>
       </div>
@@ -296,19 +298,19 @@ export default function VehicleOverviewDashboard({
   v = {}, stats = {}, reg = null, contracts = [], maintenance = [],
   showFinancials = false, onNavigate,
 }) {
-  const { tf } = useI18n();
-  const health = useMemo(() => buildHealth({ v, reg, maintenance }), [v, reg, maintenance]);
+  const { t, tf } = useI18n();
+  const health = useMemo(() => buildHealth({ v, reg, maintenance, t }), [v, reg, maintenance, t]);
 
   // ── Revenue architecture (money) — from the backend's classified debit buckets ──
   const revenueSegments = useMemo(() => {
     const rb = stats?.revenue_breakdown || {};
     return [
-      { label: 'Rents', value: Number(rb.rents || 0), color: 'blue' },
-      { label: 'Breaches & Damages', value: Number(rb.breaches_damages || 0), color: 'teal' },
-      { label: 'Operational Revenue', value: Number(rb.operational || 0), color: 'purple' },
-      { label: 'Deposits', value: Number(rb.deposits || 0), color: 'orange' },
+      { label: t('Rents'), value: Number(rb.rents || 0), color: 'blue' },
+      { label: t('Breaches & Damages'), value: Number(rb.breaches_damages || 0), color: 'teal' },
+      { label: t('Operational Revenue'), value: Number(rb.operational || 0), color: 'purple' },
+      { label: t('Deposits'), value: Number(rb.deposits || 0), color: 'orange' },
     ].filter((s) => s.value > 0);
-  }, [stats]);
+  }, [stats, t]);
   const revenueTotal = revenueSegments.reduce((a, s) => a + s.value, 0);
 
   // ── Expense architecture (money) — visit cost bucketed by dominant fault category ──
@@ -343,7 +345,7 @@ export default function VehicleOverviewDashboard({
       index[key] = buckets.length;
       buckets.push({
         // Past 12 months the bare month name is ambiguous — stamp the year ("Jan ’25").
-        label: months > 12 ? `${MONTHS[d.getMonth()]} ’${String(d.getFullYear()).slice(2)}` : MONTHS[d.getMonth()],
+        label: months > 12 ? `${t(MONTHS[d.getMonth()])} ’${String(d.getFullYear()).slice(2)}` : t(MONTHS[d.getMonth()]),
         rentals: 0, service: 0,
       });
     }
@@ -363,14 +365,14 @@ export default function VehicleOverviewDashboard({
       });
     });
     return buckets;
-  }, [contracts, maintenance, trendRange]);
+  }, [contracts, maintenance, trendRange, t]);
   const hasTrend = trend.some((b) => b.rentals || b.service);
   const TREND_RANGES = [
     { months: 3, label: '3M' },
     { months: 6, label: '6M' },
     { months: 12, label: '12M' },
     { months: 24, label: '24M' },
-    { months: 0, label: 'All' },
+    { months: 0, label: t('All') },
   ];
 
   // Last confirmed workshop visit — the "Last service" date on the Snapshot card.
@@ -383,10 +385,12 @@ export default function VehicleOverviewDashboard({
     <div className="space-y-6">
       {/* ── 1 · Repair trends (full width; Fault distribution now lives on the profile hero) ── */}
       <SectionCard
-        title="Repair & service trends"
-        subtitle={`Days on rent vs. days in the workshop — ${trendRange ? `last ${trendRange} months` : 'full history'}`}
+        title={t('Repair & service trends')}
+        subtitle={trendRange
+          ? t('Days on rent vs. days in the workshop — last {n} months', { n: trendRange })
+          : t('Days on rent vs. days in the workshop — full history')}
         actions={
-          <div className="flex items-center gap-1 rounded-lg bg-slate-100 p-1" role="group" aria-label="Trend time range">
+          <div className="flex items-center gap-1 rounded-lg bg-slate-100 p-1" role="group" aria-label={t('Trend time range')}>
             {TREND_RANGES.map((r) => (
               <button
                 key={r.label}
@@ -409,16 +413,18 @@ export default function VehicleOverviewDashboard({
           <GroupedBarChart
             data={trend}
             series={[
-              { key: 'rentals', label: 'Rental days', color: 'blue' },
-              { key: 'service', label: 'Shop days', color: 'amber' },
+              { key: 'rentals', label: t('Rental days'), color: 'blue' },
+              { key: 'service', label: t('Shop days'), color: 'amber' },
             ]}
             height={320}
             integer
-            format={(n) => `${Math.round(n).toLocaleString()} d`}
+            format={(n) => t('{n} d', { n: Math.round(n).toLocaleString() })}
           />
         ) : (
           <div className="flex h-[320px] items-center justify-center text-sm text-slate-400">
-            No rental or workshop activity in {trendRange ? `the last ${trendRange} months` : 'this car’s history'}.
+            {trendRange
+              ? t('No rental or workshop activity in the last {n} months.', { n: trendRange })
+              : t('No rental or workshop activity in this car’s history.')}
           </div>
         )}
       </SectionCard>
@@ -435,8 +441,8 @@ export default function VehicleOverviewDashboard({
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <SectionCard
           className="lg:col-span-2"
-          title="Vehicle health summary"
-          subtitle="Compliance, service cadence & workshop status at a glance"
+          title={t('Vehicle health summary')}
+          subtitle={t('Compliance, service cadence & workshop status at a glance')}
           bodyClass="p-6"
         >
           <div className="flex flex-col items-center gap-8 sm:flex-row sm:items-center">
@@ -448,7 +454,7 @@ export default function VehicleOverviewDashboard({
                 size={150}
                 format={(n) => `${Math.round(n)}`}
               />
-              <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-slate-400">Health index</p>
+              <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-slate-400">{t('Health index')}</p>
             </div>
             <div className="grid w-full grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2">
               {health.signals.map((s) => {
@@ -469,78 +475,78 @@ export default function VehicleOverviewDashboard({
               expiries on the left, the standing compliance & warranty facts on the right. */}
           <div className="mt-6 grid grid-cols-1 gap-x-8 gap-y-6 border-t border-slate-100 pt-6 lg:grid-cols-2">
             <div>
-              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Registration &amp; Insurance</h4>
+              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{t('Registration & Insurance')}</h4>
               {reg ? (
                 <>
-                  <CoverageRow label="Registration (Mulkiya)" date={reg.expiry_date} days={reg.registration_days_left} />
-                  <CoverageRow label="Insurance" date={reg.insurance_expiry} days={reg.insurance_days_left} />
+                  <CoverageRow label={t('Registration (Mulkiya)')} date={reg.expiry_date} days={reg.registration_days_left} />
+                  <CoverageRow label={t('Insurance')} date={reg.insurance_expiry} days={reg.insurance_days_left} />
                   <div className="mt-2 border-t border-slate-100 pt-2">
-                    <FactRow label="Insurer" value={reg.insurer} />
+                    <FactRow label={t('Insurer')} value={reg.insurer} />
                   </div>
                 </>
               ) : (
                 <div className="rounded-lg bg-amber-50 px-3 py-3 text-sm text-amber-700 ring-1 ring-inset ring-amber-600/20">
-                  No registration record — this car has no Mulkiya or insurance on file.
+                  {t('No registration record — this car has no Mulkiya or insurance on file.')}
                 </div>
               )}
             </div>
 
             <div>
-              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Compliance &amp; Warranty</h4>
+              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{t('Compliance & Warranty')}</h4>
               {reg && (
                 <>
-                  <FactRow label="Reg. Status" value={reg.status} />
-                  <FactRow label="Mortgaged By" value={reg.mortgaged_by} />
-                  <FactRow label="Violations / Fines" value={`${num(reg.fines_count)} · ${aed2(reg.fines_amount)}`} />
+                  <FactRow label={t('Reg. Status')} value={reg.status} />
+                  <FactRow label={t('Mortgaged By')} value={reg.mortgaged_by} />
+                  <FactRow label={t('Violations / Fines')} value={`${num(reg.fines_count)} · ${aed2(reg.fines_amount)}`} />
                 </>
               )}
-              <FactRow label="Warranty End" value={fmtDate(v?.warranty_end_date)} />
+              <FactRow label={t('Warranty End')} value={fmtDate(v?.warranty_end_date)} />
             </div>
           </div>
         </SectionCard>
 
-        <SectionCard title="Snapshot" subtitle="Key identity & odometer" bodyClass="divide-y divide-slate-100">
+        <SectionCard title={t('Snapshot')} subtitle={t('Key identity & odometer')} bodyClass="divide-y divide-slate-100">
           {[
-            { label: 'Odometer', value: v?.odometer != null ? `${num(v.odometer)} km` : '—' },
-            { label: 'Model year', value: v?.year || '—' },
-            { label: 'Plate', value: v?.plate_display || v?.plate_no || '—' },
+            { label: t('Odometer'), value: v?.odometer != null ? `${num(v.odometer)} km` : '—' },
+            { label: t('Model year'), value: v?.year || '—' },
+            { label: t('Plate'), value: v?.plate_display || v?.plate_no || '—' },
             showFinancials && {
-              label: 'Purchase price',
+              label: t('Purchase price'),
               value: v?.purchase_price != null ? aed(Number(v.purchase_price)) : '—',
-              tip: 'Acquisition cost from the FASTER Asset register, matched to this car by VIN.',
+              tip: t('Acquisition cost from the FASTER Asset register, matched to this car by VIN.'),
             },
             {
-              label: 'Purchase date',
+              label: t('Purchase date'),
               value: v?.purchase_date ? fmtDate(v.purchase_date) : '—',
-              tip: 'Date this car was acquired, from the FASTER Asset register.',
+              tip: t('Date this car was acquired, from the FASTER Asset register.'),
             },
             {
-              label: 'Replacement due',
+              label: t('Replacement due'),
               value: v?.replacement_due_date ? fmtDate(v.replacement_due_date) : '—',
-              tip: 'Planned replacement date for this car, from the FASTER Asset register.',
+              tip: t('Planned replacement date for this car, from the FASTER Asset register.'),
             },
             {
-              label: 'Service interval (Validity)',
+              label: t('Service interval (Validity)'),
               value: v?.service_interval_km != null ? `${num(v.service_interval_km)} km` : '—',
-              tip: 'Per-car km service interval from the Oil Change sheet (Validity).',
+              tip: t('Per-car km service interval from the Oil Change sheet (Validity).'),
             },
             {
-              label: 'Last change',
+              label: t('Last change'),
               value: v?.last_service_odometer != null ? `${num(v.last_service_odometer)} km` : '—',
-              tip: 'Odometer at the last confirmed service — the baseline the next service-due is measured from.',
+              tip: t('Odometer at the last confirmed service — the baseline the next service-due is measured from.'),
             },
             {
-              label: 'Service status',
-              value: serviceStatusText(v?.service_status),
-              tip: 'Strict km-based service-due verdict: odometer vs last-service baseline + interval.',
+              label: t('Service status'),
+              value: serviceStatusText(v?.service_status, t),
+              tip: t('Strict km-based service-due verdict: odometer vs last-service baseline + interval.'),
             },
-            { label: 'Battery last changed', value: fmtDate(v?.battery_last_changed) },
+            { label: t('Battery last changed'), value: fmtDate(v?.battery_last_changed) },
             {
-              label: 'Next battery change',
+              label: t('Next battery change'),
               value: fmtDate(batteryNextChange(v?.battery_last_changed)),
-              tip: 'Due one year after the last battery change.',
+              tip: t('Due one year after the last battery change.'),
             },
-            { label: 'Last service', value: lastVisit ? fmtDate(lastVisit) : '—' },
+            { label: t('Last service'), value: lastVisit ? fmtDate(lastVisit) : '—' },
           ].filter(Boolean).map(({ label, value, tip }) => (
             <div key={label} className="flex items-center justify-between px-6 py-3">
               <span className="flex items-center gap-1 text-sm text-slate-500">
@@ -558,34 +564,34 @@ export default function VehicleOverviewDashboard({
       {false && showFinancials && (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <SectionCard
-            title="Revenue architecture"
-            subtitle="Billed revenue lines classified from the vehicle statement"
+            title={t('Revenue architecture')}
+            subtitle={t('Billed revenue lines classified from the vehicle statement')}
             bodyClass="p-6"
           >
             {revenueTotal > 0 ? (
               <CompositionDonut segments={revenueSegments} total={revenueTotal} format={aed2} />
             ) : (
               <div className="flex h-[176px] items-center justify-center text-sm text-slate-400">
-                No rental revenue billed to this car yet.
+                {t('No rental revenue billed to this car yet.')}
               </div>
             )}
           </SectionCard>
 
           <SectionCard
-            title="Expense architecture"
-            subtitle="Workshop spend grouped by dominant fault category"
+            title={t('Expense architecture')}
+            subtitle={t('Workshop spend grouped by dominant fault category')}
             bodyClass="p-6"
           >
             {expenseTotal > 0 ? (
               <>
                 <CompositionDonut segments={expenseSegments} total={expenseTotal} format={aed2} />
                 <p className="mt-4 rounded-lg bg-slate-50 px-3 py-2 text-[11px] leading-relaxed text-slate-400">
-                  Estimated — each visit's cost is attributed to its dominant fault category, not a booked per-line split.
+                  {t("Estimated — each visit's cost is attributed to its dominant fault category, not a booked per-line split.")}
                 </p>
               </>
             ) : (
               <div className="flex h-[176px] items-center justify-center text-sm text-slate-400">
-                No costed workshop visits recorded yet.
+                {t('No costed workshop visits recorded yet.')}
               </div>
             )}
           </SectionCard>

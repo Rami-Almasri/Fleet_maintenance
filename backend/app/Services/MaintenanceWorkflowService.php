@@ -144,8 +144,20 @@ class MaintenanceWorkflowService
     private const NOTIFY_INSPECTOR   = 'maintenance.initiate';  // Inspector (+ controllers/managers who hold it): re-inspection
     private const NOTIFY_CONTROLLERS = 'maintenance.manage';    // Controllers (Lin & Marwa) + managers: progress visibility
 
-    /** The role that coordinates drivers — auto-watched (and alerted) on any prioritised ticket. */
-    private const SUPERVISOR_ROLE = 'supervisor';
+    /**
+     * The role that coordinates drivers — auto-watched (and alerted) on any prioritised ticket, and
+     * itself assignable to a collection leg (see delegate()). PUBLIC because the picker that offers
+     * those people (MaintenanceWorkflowController::assignableDrivers) must ask the same question as the
+     * gate that accepts them; two copies of the string is how the two quietly drift apart.
+     */
+    public const SUPERVISOR_ROLE = 'supervisor';
+
+    /**
+     * Who may take a transport leg that is on another person's name (see maySupersedeDriver). The
+     * supervisors don't only assign these moves — they drive them too — so the dispatch authority is what
+     * unlocks the custody gates, not membership of the driver pool.
+     */
+    private const SUPERSEDE_DRIVER_PERMISSION = 'maintenance.delegate';
 
     /**
      * How long a system-withdrawn request keeps showing in the review queue as a notice. Long enough that
@@ -239,11 +251,76 @@ class MaintenanceWorkflowService
         // A backward reading was recorded — alert the supervisors/controllers so it's actively chased, not
         // just left on the audit board. (The hard-blocked strict-match stages never reach here as a
         // discrepancy — they throw and are logged via logOdometerBlock instead.)
-        if (($flag['status'] ?? null) === OdometerContinuityService::STATUS_DISCREPANCY) {
+        // STATUS_EXACT is the same event wearing a strict-match stage's label: a reading BELOW the previous
+        // one. It used to be unreachable here because the gate threw first; at a review-not-block stage it
+        // now arrives accepted, and a backward reading is exactly the thing a supervisor must be told about.
+        $backward = in_array($flag['status'] ?? null, [
+            OdometerContinuityService::STATUS_DISCREPANCY,
+            OdometerContinuityService::STATUS_EXACT,
+        ], true);
+        if ($backward) {
             $this->notifyOdometerDiscrepancy($ticket, $flagKey, $flag, $actor);
         }
 
+        // An at-our-park spot-check that ran further forward than the technical buffer: the reading is
+        // ACCEPTED (see OdometerContinuityService — a car really can move between two stages, and blocking
+        // it only taught people to re-type the old number), but a supervisor is asked to confirm it after
+        // the fact on the odometer approval board.
+        // Stage-aware: at "Needs Test Drive" a BACKWARD reading lands here too, because that stage no
+        // longer refuses one — the approval board is now the only thing between the dial the inspector
+        // read and the mileage we have stored.
+        if ($this->continuity->needsSupervisorReview($flag, $stage)) {
+            $this->fileStageDeviationForReview($ticket, $flagKey, $flag, $actor);
+        }
+
         return $flag;
+    }
+
+    /**
+     * File an accepted-but-unexpected stage reading onto the odometer approval queue (/odometer-approvals),
+     * the same board that reviews significant manual odometer edits.
+     *
+     * The row is stamped `source = workflow_stage` so the reviewer knows the reading is ALREADY recorded —
+     * approving confirms the movement was real; rejecting says it was a mis-read and puts the car back on
+     * its previous reading. Idempotent per ticket+stage+reading, so a retried transition can't queue the
+     * same deviation twice. Best-effort: the audit trail must never break the transition itself.
+     */
+    private function fileStageDeviationForReview(Maintenance $ticket, string $flagKey, array $flag, ?User $actor): void
+    {
+        try {
+            $vehicle = $ticket->loadMissing('vehicle')->vehicle;
+            if (! $vehicle) {
+                return; // a workshop-log row with no car — nothing a reviewer could act on
+            }
+
+            $reading  = (int) $flag['reading'];
+            $previous = (int) $flag['previous'];
+
+            \App\Models\OdometerChangeRequest::firstOrCreate(
+                [
+                    'source'             => \App\Models\OdometerChangeRequest::SOURCE_WORKFLOW_STAGE,
+                    // The car is part of the identity, not just a payload: a diagnostic opened straight
+                    // into the workflow (open()) files its deviation while the ticket is still unsaved, so
+                    // maintenance_id is null and would otherwise let two different cars' readings collide
+                    // on the same (stage, km) pair.
+                    'vehicle_id'         => $vehicle->id,
+                    'maintenance_id'     => $ticket->id,
+                    'stage_key'          => $flagKey,
+                    'requested_odometer' => $reading,
+                ],
+                [
+                    'previous_odometer' => $previous,
+                    'delta'             => $reading - $previous,
+                    'note'              => (string) ($flag['note'] ?? 'No note supplied.'),
+                    'workflow_stage'    => $vehicle->operational_status,
+                    'status'            => \App\Models\OdometerChangeRequest::STATUS_PENDING,
+                    'requested_by_id'   => $actor?->id,
+                    'requested_by'      => $actor?->name,
+                ],
+            );
+        } catch (\Throwable $e) {
+            report($e);
+        }
     }
 
     /**
@@ -292,24 +369,36 @@ class MaintenanceWorkflowService
         }
         $flag = $this->continuity->evaluate($reading, $previous, $stage);
 
+        // "Needs Test Drive" reviews instead of blocking: this is the first time anyone physically reads
+        // the dial, so whatever it says is accepted and recorded, and the deviation is filed to the
+        // odometer approval board by recordOdometerFlag() instead of being refused here. Nothing below
+        // this line applies — neither the backward block nor the mandatory-note nudge.
+        // (The universal MAX_JUMP_KM typo guard still runs, in recordOdometerFlag.)
+        if ($this->continuity->stageReviewsInsteadOfBlocking($stage)) {
+            return;
+        }
+
         if ($flag['status'] === OdometerContinuityService::STATUS_EXACT) {
             $delta = (int) $flag['delta'];
             // Audit the rejected attempt BEFORE throwing — the transition rolls back and leaves no trace on
             // the ticket, so this is the only record that someone tried to force an out-of-range value.
+            // Only a BACKWARD reading reaches here now: a forward drift is accepted and reviewed after the
+            // fact (see the AUTHORIZED branch below), because a car really can move between two stages.
             $this->logOdometerBlock($ticket, $actor, $flagKey, $reading, $previous, $delta, OdometerContinuityService::STATUS_EXACT, $note);
             throw new WorkflowTransitionException(
-                'The reading must match the previous stage (' . number_format($previous) . ' km). '
-                . number_format($reading) . ' km is ' . abs($delta) . ' km '
-                . ($delta < 0 ? 'lower — the odometer can\'t run backwards' : 'higher than allowed at this stage')
-                . '; re-check the dial.',
+                number_format($reading) . ' km is ' . abs($delta) . ' km BELOW the previous stage ('
+                . number_format($previous) . ' km) — an odometer can\'t run backwards. Re-check the dial.',
                 ['field' => $field]
             );
         }
 
         if ($flag['status'] === OdometerContinuityService::STATUS_AUTHORIZED && trim((string) $note) === '') {
             // A missing note is a form-completion nudge, NOT an unauthorised value — don't audit it as a block.
+            $tail = $this->continuity->needsSupervisorReview($flag)
+                ? ' — the car shouldn\'t have moved at this point, so write what happened. The reading is accepted and sent to the supervisor for review.'
+                : ' — add a short note explaining why before continuing.';
             throw new WorkflowTransitionException(
-                'This reading is ' . (int) $flag['delta'] . ' km above the previous stage — add a short note explaining why before continuing.',
+                'This reading is ' . (int) $flag['delta'] . ' km above the previous stage' . $tail,
                 ['field' => 'odometer_note']
             );
         }
@@ -871,6 +960,9 @@ class MaintenanceWorkflowService
             $ticket->review_sent_at = $now;
             $ticket->save();
 
+            // The car is booked in for a look → its maintenance visit gets a contract for the whole trip.
+            $this->openMaintenanceContract($ticket, $manager);
+
             $this->cascade($ticket->vehicle_id);
 
             $this->log->record($ticket, VehicleLogEvent::EVENT_INSPECTION_REQUESTED, $manager, [
@@ -1226,6 +1318,9 @@ class MaintenanceWorkflowService
             $locked->review_sent_at  = $now;
             $locked->save();
             $ticket = $locked;
+
+            // Approved → the car is booked in for a look, so its maintenance contract opens here.
+            $this->openMaintenanceContract($ticket, $reviewer);
 
             $this->cascade($ticket->vehicle_id);
 
@@ -2259,6 +2354,10 @@ class MaintenanceWorkflowService
             $ticket->garage_feedback = $text ?: $ticket->garage_feedback;
             $ticket->save();
 
+            // A complaint resolved on the spot never opened a contract; this is a no-op then. It runs
+            // anyway so no close path can leave a workflow-opened contract hanging.
+            $this->closeMaintenanceContract($ticket, $actor);
+
             $this->cascade($ticket->vehicle_id);       // no status change, but keeps derived state honest
 
             $this->log->record($ticket, VehicleLogEvent::EVENT_CLOSED, $actor, [
@@ -2341,6 +2440,9 @@ class MaintenanceWorkflowService
                 $ticket->garage_feedback = $note;
             }
             $ticket->save();
+
+            // Either destination books the car in for work, so the visit's contract opens here too.
+            $this->openMaintenanceContract($ticket, $actor);
 
             $this->cascade($ticket->vehicle_id);
 
@@ -3226,6 +3328,46 @@ class MaintenanceWorkflowService
             );
         }
 
+        // WHERE + HOW MANY per symptom — the same shape as `causes` below, and keyed the same way, so
+        // the three per-symptom side-channels the Decide step carries (cause, location, count) work
+        // identically. Each entry: ['quantity' => int, 'locations' => string[]].
+        //
+        // Absent for every symptom the inspector did not localise, which is the normal case for the
+        // fault types whose policy is `none`, and for every report filed before this existed.
+        $detailChoices = [];
+        $locationSvc   = app(FaultLocationService::class);
+        foreach ((array) ($report['details'] ?? []) as $d) {
+            if (! is_array($d) || ! isset($d['symptom'])) {
+                continue;
+            }
+            $detailChoices[FaultCause::normalizeKey($d['symptom'])] = [
+                'quantity'  => $locationSvc->normalizeQuantity($d['quantity'] ?? 1),
+                'locations' => $locationSvc->normalizeSlugs((array) ($d['locations'] ?? [])),
+            ];
+        }
+
+        // THE LOCATION GATE. A type whose policy says `required` (a scratch, a dent, a tyre, a light)
+        // may not be filed without a place: "scratch" on a car nobody can point at is a fault the
+        // workshop cannot find and the next inspector re-reports. Every offender is named in ONE
+        // message rather than one resubmission each — the inspector is still on the screen and can
+        // fix all of them in the same pass.
+        if ($requiresMaintenance) {
+            $needLocation = $locationSvc->findingsMissingRequiredLocation(array_map(
+                fn ($text) => [
+                    'text'         => $text,
+                    'category_key' => Maintenance::categoryForKeyword($text),
+                    'locations'    => $detailChoices[FaultCause::normalizeKey($text)]['locations'] ?? [],
+                ],
+                $payload['symptoms'],
+            ));
+            if ($needLocation) {
+                throw new WorkflowTransitionException(
+                    'Say where on the car: ' . implode(', ', $needLocation) . '.',
+                    ['field' => 'details', 'findings' => $needLocation],
+                );
+            }
+        }
+
         // The inspector's chosen root cause per symptom (Symptom → Root-Cause diagnostic), keyed by
         // normalised symptom so we can zip it onto the findings below. Each entry: [label, id].
         $causeChoices = [];
@@ -3259,8 +3401,9 @@ class MaintenanceWorkflowService
             // + the eventual Odoo sync; a custom cause is recorded for admin review inside resolve().
             $vehicleForCheck = $ticket->loadMissing('vehicle')->vehicle;
             $ticket->findings = collect($payload['symptoms'])
-                ->map(function ($text) use ($actor, $payload, $causeChoices, $vehicleForCheck) {
+                ->map(function ($text) use ($actor, $payload, $causeChoices, $detailChoices, $vehicleForCheck) {
                     $choice = $causeChoices[FaultCause::normalizeKey($text)] ?? null;
+                    $detail = $detailChoices[FaultCause::normalizeKey($text)] ?? null;
                     [$cause, $causeId] = $choice
                         ? $this->resolveFaultCause($text, $choice['label'], $choice['id'], $actor)
                         : [null, null];
@@ -3278,6 +3421,13 @@ class MaintenanceWorkflowService
                         'severity'      => $payload['severity'],
                         'root_cause'    => $cause,
                         'root_cause_id' => $causeId,
+                        // WHAT IS WRONG, HOW MANY, AND WHERE — the last two stamped at the origin like
+                        // category_key above, not left for readers to re-derive from prose. Always
+                        // written (never conditionally omitted) so a re-filed report that CLEARS a
+                        // location clears it on the fault too; absent on every finding written before
+                        // this existed, which MaintenanceTaskService reads as "nothing to say".
+                        'quantity'      => $detail['quantity'] ?? 1,
+                        'locations'     => $detail['locations'] ?? [],
                         'by'            => $actor->name,
                         'at'            => Carbon::now()->toIso8601String(),
                         // Reality-check against the live diagnostic status — non-null only when this text
@@ -3339,6 +3489,10 @@ class MaintenanceWorkflowService
 
             // A cleared diagnostic stops here — no ticket, so Logistics has nothing to dispatch.
             if (! $requiresMaintenance) {
+                // Nothing wrong with the car: the visit ends at the test drive, so its contract closes
+                // here rather than sitting open for a repair that will never happen.
+                $this->closeMaintenanceContract($ticket, $actor);
+
                 $this->log->record($ticket, VehicleLogEvent::EVENT_DIAGNOSTIC_CLEARED, $actor, [
                     'description' => 'Test drive cleared — no maintenance required (by ' . $actor->name . ')',
                     'meta'        => ['severity' => $payload['severity'], 'maintenance_type' => $payload['maintenance_type']],
@@ -3440,11 +3594,14 @@ class MaintenanceWorkflowService
                 'field' => 'driver_id',
             ]);
         }
-        // The DRIVER role (`logistics`), not the maintenance.logistics permission: supervisors and
-        // managers hold that permission so they can move a car themselves, but they are not the pool
-        // a job is handed to. Mirrors the assignableDrivers() picker exactly.
-        if (! $driver->hasRole('logistics')) {
-            throw new WorkflowTransitionException('That user is not a driver — pick someone from the driver pool.', [
+        // The DRIVER pool (`logistics`) OR a SUPERVISOR. Still deliberately not "anyone holding
+        // maintenance.logistics" — that permission reaches every manager and admin and would turn the
+        // picker into a staff directory. But a supervisor genuinely does collect and return cars himself
+        // when no driver is free, and until now the only way to record that was for him to press "Pick up",
+        // which works only once he is already standing at the car. Naming him here lets the job be PLANNED:
+        // it lands in his queue and rings his bell exactly as a driver's would. Mirrors assignableDrivers().
+        if (! $driver->hasRole('logistics') && ! $driver->hasRole(self::SUPERVISOR_ROLE)) {
+            throw new WorkflowTransitionException('That user is neither a driver nor a supervisor — pick someone from the list.', [
                 'field' => 'driver_id',
             ]);
         }
@@ -3836,6 +3993,25 @@ class MaintenanceWorkflowService
      *
      * @param array{dispatch_odometer:int, vendor_id?:?int, expected_return_date?:?string} $data
      */
+    /**
+     * May this person move a car that is on someone else's name?
+     *
+     * The custody gates below exist so a pickup can't be silently taken over with no accountability. But
+     * the driver pool is not the only group that physically moves cars: the SUPERVISORS run cars to the
+     * garage and bring them back themselves, routinely, and the gates were turning that everyday act into
+     * "ask the supervisor to reassign it" — addressed to the supervisor. So anyone carrying the dispatch
+     * authority (maintenance.delegate — supervisors, managers, admins) may step into a leg assigned to
+     * someone else. Everyone else is still held to their own assignment.
+     *
+     * Nothing is lost by allowing it: every one of these transitions stamps who ACTUALLY did it
+     * (`driver` / `dispatched_by` / `picked_up_from_garage_by`), so the audit trail names the real person
+     * rather than the person the leg was planned for.
+     */
+    private function maySupersedeDriver(User $actor): bool
+    {
+        return $actor->can(self::SUPERSEDE_DRIVER_PERMISSION);
+    }
+
     public function dispatch(Maintenance $ticket, array $data, User $actor): Maintenance
     {
         $this->assertTransition($ticket, Maintenance::WF_IN_TRANSIT);
@@ -3845,7 +4021,8 @@ class MaintenanceWorkflowService
         // NO driver named stays open to the pool (that is how a garage transfer is raised: the leg is
         // left unassigned so whoever is free claims it — see transferGarage()). The driver's queue hides
         // the button under the same rule, so this only catches a stale tab or a direct API call.
-        if ($ticket->assigned_driver_id && (int) $ticket->assigned_driver_id !== $actor->id) {
+        // A SUPERVISOR is exempt (see maySupersedeDriver): they run these moves themselves too.
+        if ($ticket->assigned_driver_id && (int) $ticket->assigned_driver_id !== $actor->id && ! $this->maySupersedeDriver($actor)) {
             $assignee = $ticket->loadMissing('assignedDriver')->assignedDriver?->name;
             throw new WorkflowTransitionException(
                 'This pickup is assigned to ' . ($assignee ?: 'another driver') . ' — ask the supervisor to reassign it if you are taking the car.',
@@ -3904,6 +4081,10 @@ class MaintenanceWorkflowService
             $ticket->driver            = $actor->name;    // the Driver who took the car to the garage
             $ticket->dispatched_by     = $actor->id;
             $ticket->dispatched_at     = Carbon::now();
+            // A supervisor who took the leg themselves becomes the person holding the car — otherwise the
+            // ticket would keep pointing at the planned driver, and the return leg's custody gate would be
+            // measured against someone who never had it.
+            $ticket->assigned_driver_id = $actor->id;
             // A DRIVER has custody of this leg — clear any recovery flag left over from an EARLIER leg
             // (e.g. the car arrived here by tow, then gets driven onward from its next garage). Without
             // this, isRecovery() would keep reporting the stale prior leg's transport method instead of
@@ -3923,12 +4104,16 @@ class MaintenanceWorkflowService
                 $ticket->expected_return_date = $data['expected_return_date'];
             }
 
-            // Contract-link materialises HERE — only once the repair is actually being dispatched.
-            // Attach the ticket to the vehicle's open maintenance (type-'U') contract if one exists.
-            // Best-effort: stays null when no maintenance contract is open (OM owns contracts; we link,
-            // never create one). Stored in linked_contract_id, NOT contract_id (that's the unique 1:1
-            // header column — reusing it would collide with the linked contract's own header row).
-            $ticket->linked_contract_id = $this->resolveMaintenanceContractId($ticket);
+            // BACKSTOP for the contract link. Normally the visit already has one: it was opened the
+            // moment the ticket reached "Needs Test Drive". But a ticket the Inspector starts directly as
+            // a diagnostic (open()) never passes through that stage, so it can arrive here with no
+            // contract at all — and a visit without one is invisible to every money, history and
+            // utilization surface that reads a maintenance visit from its type-'U' contract, including
+            // the visit journey on the contract page. Link-or-create, never a second contract; idempotent,
+            // so the normal path just re-links what's already there.
+            // Stored in linked_contract_id, NOT contract_id (that's the unique 1:1 header column —
+            // reusing it would collide with the linked contract's own header row).
+            $this->openMaintenanceContract($ticket, $actor);
 
             // Pickup done → the car heads to the garage. It lands in the "Now at Garage" arrival
             // checkpoint (in_transit); the repair clock (repair_started_*) starts only once arrival is
@@ -4094,7 +4279,9 @@ class MaintenanceWorkflowService
                 $ticket->expected_return_date = $data['expected_return_date'];
             }
 
-            $ticket->linked_contract_id = $this->resolveMaintenanceContractId($ticket);
+            // Same contract backstop as the driver dispatch above — a recovery-truck collection is just
+            // as much a maintenance visit, and it must not be the one that ends up without a contract.
+            $this->openMaintenanceContract($ticket, $actor);
             $ticket->workflow_status    = Maintenance::WF_IN_TRANSIT;
             $ticket->save();
 
@@ -4301,12 +4488,19 @@ class MaintenanceWorkflowService
             ]);
         }
 
+        $locationSvc = app(FaultLocationService::class);
+
         $incoming = collect($findings)
             ->map(fn ($f) => [
                 'text'          => $this->clean(is_array($f) ? ($f['text'] ?? null) : $f),
                 'severity'      => $this->clean(is_array($f) ? ($f['severity'] ?? null) : null),
                 'root_cause'    => $this->clean(is_array($f) ? ($f['root_cause'] ?? null) : null),
                 'root_cause_id' => is_array($f) ? ($f['root_cause_id'] ?? null) : null,
+                // WHERE + HOW MANY — the mechanic answers the same two questions the inspector does.
+                // Carried on the finding itself here (rather than in a parallel `details` list as the
+                // Decide step does) because this payload is already one object per finding.
+                'quantity'      => $locationSvc->normalizeQuantity(is_array($f) ? ($f['quantity'] ?? 1) : 1),
+                'locations'     => $locationSvc->normalizeSlugs(is_array($f) ? (array) ($f['locations'] ?? []) : []),
             ])
             ->filter(fn ($f) => $f['text'] !== null)
             // Collapse duplicates within this same submission (case-insensitive on text).
@@ -4337,6 +4531,17 @@ class MaintenanceWorkflowService
             );
         }
 
+        // The same location gate the Decide step applies. A fault type that requires a place requires
+        // it whoever found it: a garage-discovered scratch nobody located is exactly as unfindable as
+        // an inspector-reported one, and letting the second door through would make the rule advisory.
+        $needLocation = $locationSvc->findingsMissingRequiredLocation($clean->all());
+        if ($needLocation) {
+            throw new WorkflowTransitionException(
+                'Say where on the car: ' . implode(', ', $needLocation) . '.',
+                ['field' => 'findings', 'findings' => $needLocation],
+            );
+        }
+
         return DB::transaction(function () use ($ticket, $clean, $actor) {
             $vehicle = $ticket->loadMissing('vehicle')->vehicle;
             $garage  = $ticket->garage; // the workshop that DISCOVERED the fault — stamped per finding
@@ -4349,6 +4554,9 @@ class MaintenanceWorkflowService
                     'severity'      => $f['severity'],
                     'root_cause'    => $cause,
                     'root_cause_id' => $causeId,
+                    // Carried onto the promoted fault by MaintenanceTaskService::syncFromFindings.
+                    'quantity'      => $f['quantity'],
+                    'locations'     => $f['locations'],
                     'by'            => $actor->name,
                     // Stamp the garage that DISCOVERED the fault (the ticket's current workshop) onto the
                     // finding, so "Garage-Identified" can name where it was found — not just that it came
@@ -4739,8 +4947,12 @@ class MaintenanceWorkflowService
         // garage (collectFromGarage → picked_up_from_garage_by) owns it until it is physically at our park.
         // This prevents a hand-off in transit with no accountability. Only enforced when a collector is on
         // record (it always is for a HTTP-driven flow, since collect-from-garage precedes arrive-at-park);
-        // legacy/imported tickets with no collector are left unblocked.
-        if ($ticket->picked_up_from_garage_by !== null && (int) $ticket->picked_up_from_garage_by !== (int) $actor->id) {
+        // legacy/imported tickets with no collector are left unblocked. A SUPERVISOR is exempt — they run
+        // these legs themselves, and a real hand-off (driver collects, supervisor brings it in) is a normal
+        // day, not an accountability hole: the arrival stamps who actually closed it.
+        if ($ticket->picked_up_from_garage_by !== null
+            && (int) $ticket->picked_up_from_garage_by !== (int) $actor->id
+            && ! $this->maySupersedeDriver($actor)) {
             $collector = $ticket->loadMissing('pickedUpFromGarageBy')->pickedUpFromGarageBy;
             throw new WorkflowTransitionException(
                 'This car was collected from the garage by ' . ($collector?->name ?: 'another driver')
@@ -4992,6 +5204,12 @@ class MaintenanceWorkflowService
             $ticket->maintenance_notes = $this->composeClosingSummary($ticket, $actor, $data['notes'] ?? null);
 
             $ticket->save();
+
+            // Final QA passed (or the ticket closed straight from our park): the car is signed back into
+            // service, so the maintenance contract this visit opened is closed here. Runs on the
+            // deferred-invoice path too — the car is physically back either way, and an invoice still to
+            // arrive is a finance matter, not a reason to keep the car "in maintenance" on every board.
+            $this->closeMaintenanceContract($ticket, $actor);
 
             $this->cascade($ticket->vehicle_id);   // → available unless another movement holds it
 
@@ -5749,6 +5967,10 @@ class MaintenanceWorkflowService
             $ticket->awaiting_invoice_since = Carbon::now();
             $ticket->maintenance_notes = $this->composeClosingSummary($ticket, $actor, $data['notes'] ?? null);
             $ticket->save();
+
+            // Same as close(): the car is physically back, so the visit's contract closes with it. A
+            // pending invoice is a finance matter and must not keep the car booked into the workshop.
+            $this->closeMaintenanceContract($ticket, $actor);
 
             $this->cascade($ticket->vehicle_id);   // → back in service (awaiting_invoice is NOT WF_TICKET_STATES)
 
@@ -6585,15 +6807,104 @@ class MaintenanceWorkflowService
     }
 
     /**
-     * The maintenance contract to link a dispatched ticket to: the vehicle's currently-open type-'U'
-     * (maintenance) contract, newest out_date first. Returns its id, or null when none is open — the
-     * link is best-effort and we never auto-create a contract (OfficeManager owns contract creation).
+     * Open the car's MAINTENANCE CONTRACT (type 'U') the moment the ticket reaches "Needs Test Drive".
+     *
+     * The maintenance visit now has a contract for its whole life — from the moment we decide to look at
+     * the car to the moment Final QA signs it back into service — instead of only existing when OfficeManager
+     * happened to have opened one. That contract is what every money, history and utilization surface in the
+     * system reads a maintenance visit from ([[maintenance-contracts]]), so a visit without one is invisible
+     * to all of them.
+     *
+     * Two things this deliberately does NOT do:
+     *  • it does not close the car's other open contracts. A car can be out on a live RENTAL and still be
+     *    booked in for a look ("Rental is King" — see [[maintenance-open-across-rental]]); closing the
+     *    rental here would end a real customer's contract as a side effect of raising an inspection.
+     *  • it does not create a second contract when one is already open (OM's, or one we opened earlier).
+     *    The ticket links to whatever is already there.
+     *
+     * Best-effort: the contract is bookkeeping around the repair, never a reason the repair can't proceed.
      */
-    private function resolveMaintenanceContractId(Maintenance $ticket): ?int
+    private function openMaintenanceContract(Maintenance $ticket, ?User $actor = null): void
     {
-        // One look-up rule, owned by VehicleLogService, so the visit's link and every log
-        // event's link can never disagree about which contract is active.
-        return $this->log->activeMaintenanceContractId($ticket->vehicle_id);
+        try {
+            if (! $ticket->vehicle_id) {
+                return; // a workshop-log row with no car — nothing to open a contract against
+            }
+
+            // Already covered? Link to the open contract rather than stacking a second one on the car.
+            if ($existing = $this->log->activeMaintenanceContractId($ticket->vehicle_id)) {
+                if ((int) $ticket->linked_contract_id !== (int) $existing) {
+                    $ticket->forceFill(['linked_contract_id' => $existing])->save();
+                }
+
+                return;
+            }
+
+            $vehicle = $ticket->loadMissing('vehicle')->vehicle;
+
+            $contract = Contract::create([
+                'vehicle_id'    => $ticket->vehicle_id,
+                'contract_type' => 'U',
+                'state'         => 'open',
+                'out_date'      => Carbon::today()->toDateString(),
+                'out_milage'    => $vehicle?->odometer,
+                'opened_by'     => $actor?->name,
+                // Marked as ours, not OfficeManager's: the contract sync matches on contract_no +
+                // contract_type, and this row deliberately carries no contract_no, so a sync can never
+                // mistake it for an OM contract or overwrite it.
+                'origin'        => 'web',
+                'source'        => 'workflow',
+                'reference'     => 'WF-' . $ticket->id,
+            ]);
+
+            $ticket->forceFill(['linked_contract_id' => $contract->id])->save();
+
+            $this->log->record($ticket, VehicleLogEvent::EVENT_CONTRACT_OPENED, $actor, [
+                'description' => 'Maintenance contract opened for this visit',
+                'meta'        => ['contract_id' => $contract->id],
+            ]);
+        } catch (\Throwable $e) {
+            report($e);
+        }
+    }
+
+    /**
+     * Close the maintenance contract this visit opened — the car is signed off and back in service.
+     *
+     * Called from every terminal close, not only the Final QA sign-off, so a visit that ends another
+     * legitimate way (an on-site job marked serviced, a close that lands in the deferred-invoice lane)
+     * can't leave its contract open forever and hold the car "in maintenance" on every board that reads
+     * open type-U contracts.
+     *
+     * Only closes a contract WE opened for THIS ticket (`linked_contract_id` + `source = workflow`). An
+     * OfficeManager contract the ticket merely linked to belongs to OM and is left for OM to close.
+     */
+    private function closeMaintenanceContract(Maintenance $ticket, ?User $actor = null): void
+    {
+        try {
+            if (! $ticket->linked_contract_id) {
+                return;
+            }
+
+            $contract = Contract::find($ticket->linked_contract_id);
+            if (! $contract || $contract->source !== 'workflow' || $contract->in_date !== null) {
+                return; // not ours to close, or already closed
+            }
+
+            $contract->forceFill([
+                'state'      => 'closed',
+                'in_date'    => ($ticket->actual_in_date ?: Carbon::today())->toDateString(),
+                'in_milage'  => $ticket->reinspect_odometer ?? $ticket->park_odometer ?? $ticket->return_odometer,
+                'closed_by'  => $actor?->name,
+            ])->save();
+
+            $this->log->record($ticket, VehicleLogEvent::EVENT_CONTRACT_CLOSED, $actor, [
+                'description' => 'Maintenance contract closed — car back in service',
+                'meta'        => ['contract_id' => $contract->id],
+            ]);
+        } catch (\Throwable $e) {
+            report($e);
+        }
     }
 
     /** Re-derive the car's live operational_status after the ticket changed its garage state. */

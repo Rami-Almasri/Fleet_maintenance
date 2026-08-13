@@ -15,8 +15,10 @@ import RankedBar from '../ui/RankedBar';
 import PieChart from '../ui/PieChart';
 import Segmented from '../ui/Segmented';
 import { aedCompact, num } from '../../lib/format';
+import { useI18n } from '../../i18n/I18nContext';
 
 export default function CustomersAnalytics({ customers = [], showFinancials = false }) {
+  const { t } = useI18n();
   const [view, setView] = useState('owed');
 
   const toItem = (c, value) => ({
@@ -58,11 +60,11 @@ export default function CustomersAnalytics({ customers = [], showFinancials = fa
       if (v > 0) owes += 1; else if (v < 0) credit += 1; else settled += 1;
     });
     return [
-      { label: 'Owes', value: owes, color: 'red' },
-      { label: 'Settled', value: settled, color: 'slate' },
-      { label: 'In credit', value: credit, color: 'emerald' },
+      { label: t('Owes'), value: owes, color: 'red' },
+      { label: t('Settled'), value: settled, color: 'slate' },
+      { label: t('In credit'), value: credit, color: 'emerald' },
     ].filter((s) => s.value > 0);
-  }, [customers]);
+  }, [customers, t]);
 
   if (!customers.length) return null;
 
@@ -73,13 +75,13 @@ export default function CustomersAnalytics({ customers = [], showFinancials = fa
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
       <SectionCard
         className="lg:col-span-2"
-        title={money ? 'Biggest balances' : 'Most active customers'}
+        title={money ? t('Biggest balances') : t('Most active customers')}
         subtitle={
           money
             ? credit
-              ? 'Customers carrying the most advance credit'
-              : 'Customers who owe the most right now'
-            : 'Customers with the most contracts on file'
+              ? t('Customers carrying the most advance credit')
+              : t('Customers who owe the most right now')
+            : t('Customers with the most contracts on file')
         }
         actions={
           money && (
@@ -87,8 +89,8 @@ export default function CustomersAnalytics({ customers = [], showFinancials = fa
               value={view}
               onChange={setView}
               options={[
-                { key: 'owed', label: 'Owed' },
-                { key: 'credit', label: 'Wallet credit' },
+                { key: 'owed', label: t('Owed') },
+                { key: 'credit', label: t('Wallet credit') },
               ]}
             />
           )
@@ -100,24 +102,24 @@ export default function CustomersAnalytics({ customers = [], showFinancials = fa
           showRank
           color={money ? (credit ? 'emerald' : 'red') : 'indigo'}
           format={money ? aedCompact : (n) => num(Math.round(n))}
-          valueLabel={money ? (credit ? 'Wallet' : 'Owed') : 'Contracts'}
+          valueLabel={money ? (credit ? t('Wallet') : t('Owed')) : t('Contracts')}
           labelWidth={170}
           valueWidth={money ? 96 : 60}
-          tooltip={(r) => `${num(r.contracts)} contract${r.contracts === 1 ? '' : 's'}`}
-          empty={money ? (credit ? 'Nobody is carrying credit.' : 'Nobody owes anything.') : 'No contracts on file.'}
+          tooltip={(r) => (r.contracts === 1 ? t('1 contract') : t('{n} contracts', { n: num(r.contracts) }))}
+          empty={money ? (credit ? t('Nobody is carrying credit.') : t('Nobody owes anything.')) : t('No contracts on file.')}
         />
       </SectionCard>
 
       <SectionCard
-        title="Account standing"
-        subtitle="How the customer base splits"
+        title={t('Account standing')}
+        subtitle={t('How the customer base splits')}
         bodyClass="flex items-center justify-center p-5"
       >
         {standing.length ? (
           <PieChart segments={standing} size={150} />
         ) : (
           <div className="flex h-[150px] items-center justify-center text-sm text-slate-400">
-            No balances recorded.
+            {t('No balances recorded.')}
           </div>
         )}
       </SectionCard>

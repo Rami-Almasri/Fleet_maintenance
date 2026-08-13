@@ -6,6 +6,7 @@
 
 import { Fragment, useCallback, useEffect, useState } from 'react';
 import api from '../../api/client';
+import { useI18n } from '../../i18n/I18nContext';
 import { usePermissions } from '../../hooks/usePermissions';
 import Badge from '../ui/Badge';
 import Icon from '../ui/Icon';
@@ -15,17 +16,23 @@ import FindingsList from '../workflow/FindingsList';
 import { fmtDate, num, aed2 } from '../../lib/format';
 
 // workflow_status → chip label + colour (the "lifecycle stage with colour coding").
-const STAGE = {
-  inspection_diagnostic:  { label: 'Diagnostic',       tone: 'violet' },
-  inspection_pending:     { label: 'Needs Dispatch',   tone: 'indigo' },
-  awaiting_dispatch:      { label: 'Ready for Pickup', tone: 'indigo' },
-  in_transit:             { label: 'En Route to Garage', tone: 'blue' },
-  under_repair:           { label: 'In Workshop',       tone: 'amber' },
-  ready_for_reinspection: { label: 'Ready',             tone: 'cyan' },
-  closed:                 { label: 'Closed',            tone: 'green' },
-  diagnostic_cleared:     { label: 'No Maintenance',    tone: 'slate' },
-};
-const REASON = { test_drive: 'Test Drive', customer_reported: 'Complaint', periodic: 'Routine', driver_reported: 'Driver reported' };
+// `t` is threaded in because these live outside the component body.
+const stageMap = (t) => ({
+  inspection_diagnostic:  { label: t('Diagnostic'),         tone: 'violet' },
+  inspection_pending:     { label: t('Needs Dispatch'),     tone: 'indigo' },
+  awaiting_dispatch:      { label: t('Ready for Pickup'),   tone: 'indigo' },
+  in_transit:             { label: t('En Route to Garage'), tone: 'blue' },
+  under_repair:           { label: t('In Workshop'),        tone: 'amber' },
+  ready_for_reinspection: { label: t('Ready'),              tone: 'cyan' },
+  closed:                 { label: t('Closed'),             tone: 'green' },
+  diagnostic_cleared:     { label: t('No Maintenance'),     tone: 'slate' },
+});
+const reasonMap = (t) => ({
+  test_drive: t('Test Drive'),
+  customer_reported: t('Complaint'),
+  periodic: t('Routine'),
+  driver_reported: t('Driver reported'),
+});
 
 const odo = (n) => (n ? `${num(n)} km` : '—');
 
@@ -49,6 +56,7 @@ function photoSrc(url) {
 const ALL_SECTIONS = ['health', 'findings', 'workflow', 'photos'];
 
 export default function VehicleWorkflowPanel({ vehicleId, sections = ALL_SECTIONS }) {
+  const { t } = useI18n();
   const { can } = usePermissions();
   const allowed = can('maintenance.view');
   const show = (s) => sections.includes(s);
@@ -63,9 +71,9 @@ export default function VehicleWorkflowPanel({ vehicleId, sections = ALL_SECTION
     setLoading(true);
     api.get(`/maintenance-tickets/vehicle/${vehicleId}`)
       .then((r) => setData(r.data.data))
-      .catch((e) => setErr(e.response?.data?.message || 'Could not load the maintenance workflow.'))
+      .catch((e) => setErr(e.response?.data?.message || t('Could not load the maintenance workflow.')))
       .finally(() => setLoading(false));
-  }, [allowed, vehicleId]);
+  }, [allowed, vehicleId, t]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -79,7 +87,9 @@ export default function VehicleWorkflowPanel({ vehicleId, sections = ALL_SECTION
   // Consolidated accountability trail: every finding across all of this car's tickets, so the
   // Inspector-vs-Garage split shows at a glance (the same grouping the board card & ticket modal
   // use, just rolled up to the whole car). FindingsList does the grouping.
-  const allFindings = tickets.flatMap((t) => t.findings || []);
+  const allFindings = tickets.flatMap((ticket) => ticket.findings || []);
+  const STAGE = stageMap(t);
+  const REASON = reasonMap(t);
 
   return (
     <div className="space-y-4">
@@ -88,24 +98,24 @@ export default function VehicleWorkflowPanel({ vehicleId, sections = ALL_SECTION
       <div className="overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-soft">
         <div className="flex items-center gap-4 p-4">
           <div className="min-w-0 flex-1">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Health Status</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">{t('Health Status')}</p>
             {loading ? (
               <Skeleton className="mt-2 h-7 w-44" />
             ) : (
               <div className="mt-1.5 flex items-center gap-2">
-                <Badge tone={health?.tone || 'slate'}>{health?.label || 'Unknown'}</Badge>
+                <Badge tone={health?.tone || 'slate'}>{health?.label || t('Unknown')}</Badge>
               </div>
             )}
             {!loading && health?.detail && <p className="mt-1.5 text-sm text-slate-500">{health.detail}</p>}
           </div>
 
           <div className="shrink-0 text-end">
-            <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-slate-400">Last odometer</p>
+            <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-slate-400">{t('Last odometer')}</p>
             {loading ? (
               <Skeleton className="h-20 w-28 rounded-lg" />
             ) : lastOdo?.url ? (
               <button type="button" onClick={() => setLightbox(lastOdo)} className="block">
-                <img src={photoSrc(lastOdo.url)} alt="Last odometer" className="h-20 w-28 rounded-lg object-cover ring-1 ring-slate-200 transition hover:ring-indigo-400" />
+                <img src={photoSrc(lastOdo.url)} alt={t('Last odometer')} className="h-20 w-28 rounded-lg object-cover ring-1 ring-slate-200 transition hover:ring-indigo-400" />
               </button>
             ) : (
               <div className="flex h-20 w-28 items-center justify-center rounded-lg border border-dashed border-slate-200 text-slate-300">
@@ -121,7 +131,7 @@ export default function VehicleWorkflowPanel({ vehicleId, sections = ALL_SECTION
 
       {/* FINDINGS — consolidated Inspector vs Garage trail for the whole car */}
       {show('findings') && !loading && allFindings.length > 0 && (
-        <SectionCard title="Findings" subtitle="Every issue recorded for this car, grouped by who identified it.">
+        <SectionCard title={t('Findings')} subtitle={t('Every issue recorded for this car, grouped by who identified it.')}>
           <div className="px-4 py-4">
             <FindingsList findings={allFindings} />
           </div>
@@ -130,44 +140,44 @@ export default function VehicleWorkflowPanel({ vehicleId, sections = ALL_SECTION
 
       {/* MAINTENANCE WORKFLOW — tickets & diagnostics */}
       {show('workflow') && (
-      <SectionCard title="Maintenance Workflow" subtitle="Tickets & diagnostics for this car — newest first.">
+      <SectionCard title={t('Maintenance Workflow')} subtitle={t('Tickets & diagnostics for this car — newest first.')}>
         {loading ? (
           <div className="space-y-2 p-3"><Skeleton className="h-10" /><Skeleton className="h-10" /></div>
         ) : tickets.length === 0 ? (
-          <p className="px-4 py-6 text-center text-sm text-slate-400">No workflow tickets yet.</p>
+          <p className="px-4 py-6 text-center text-sm text-slate-400">{t('No workflow tickets yet.')}</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-100 text-start text-xs font-semibold uppercase tracking-wide text-slate-400">
-                  <th className="px-3 py-2">Stage</th>
-                  <th className="px-3 py-2">Reason</th>
-                  <th className="px-3 py-2">Dispatch odo</th>
-                  <th className="px-3 py-2">Return odo</th>
-                  <th className="px-3 py-2">Garage</th>
-                  <th className="px-3 py-2 text-end">Cost</th>
-                  <th className="px-3 py-2">Opened</th>
+                  <th className="px-3 py-2">{t('Stage')}</th>
+                  <th className="px-3 py-2">{t('Reason')}</th>
+                  <th className="px-3 py-2">{t('Dispatch odo')}</th>
+                  <th className="px-3 py-2">{t('Return odo')}</th>
+                  <th className="px-3 py-2">{t('Garage')}</th>
+                  <th className="px-3 py-2 text-end">{t('Cost')}</th>
+                  <th className="px-3 py-2">{t('Opened')}</th>
                 </tr>
               </thead>
               <tbody>
-                {tickets.map((t) => {
-                  const st = STAGE[t.workflow_status] || { label: t.status_label || t.workflow_status, tone: 'slate' };
-                  const hasFindings = t.findings?.length > 0;
+                {tickets.map((ticket) => {
+                  const st = STAGE[ticket.workflow_status] || { label: ticket.status_label || ticket.workflow_status, tone: 'slate' };
+                  const hasFindings = ticket.findings?.length > 0;
                   return (
-                    <Fragment key={t.id}>
+                    <Fragment key={ticket.id}>
                       <tr className={`hover:bg-slate-50/60 ${hasFindings ? '' : 'border-b border-slate-50 last:border-0'}`}>
                         <td className="px-3 py-2"><Badge tone={st.tone}>{st.label}</Badge></td>
-                        <td className="px-3 py-2 text-slate-600">{REASON[t.trigger_reason] || t.trigger_reason || '—'}</td>
-                        <td className="px-3 py-2 tabular-nums text-slate-600">{odo(t.dispatch_odometer)}</td>
-                        <td className="px-3 py-2 tabular-nums text-slate-600">{odo(t.return_odometer)}</td>
-                        <td className="px-3 py-2 text-slate-500">{t.garage || '—'}</td>
-                        <td className="px-3 py-2 text-end tabular-nums text-slate-600">{t.cost != null ? aed2(t.cost) : '—'}</td>
-                        <td className="px-3 py-2 text-slate-400">{t.created_at ? fmtDate(t.created_at) : '—'}</td>
+                        <td className="px-3 py-2 text-slate-600">{REASON[ticket.trigger_reason] || ticket.trigger_reason || '—'}</td>
+                        <td className="px-3 py-2 tabular-nums text-slate-600">{odo(ticket.dispatch_odometer)}</td>
+                        <td className="px-3 py-2 tabular-nums text-slate-600">{odo(ticket.return_odometer)}</td>
+                        <td className="px-3 py-2 text-slate-500">{ticket.garage || '—'}</td>
+                        <td className="px-3 py-2 text-end tabular-nums text-slate-600">{ticket.cost != null ? aed2(ticket.cost) : '—'}</td>
+                        <td className="px-3 py-2 text-slate-400">{ticket.created_at ? fmtDate(ticket.created_at) : '—'}</td>
                       </tr>
                       {hasFindings && (
                         <tr className="border-b border-slate-50 last:border-0">
                           <td colSpan={7} className="px-3 pb-3 pt-0">
-                            <FindingsList findings={t.findings} tasks={t.tasks} compact />
+                            <FindingsList findings={ticket.findings} tasks={ticket.tasks} compact />
                           </td>
                         </tr>
                       )}
@@ -183,11 +193,11 @@ export default function VehicleWorkflowPanel({ vehicleId, sections = ALL_SECTION
 
       {/* CONDITION TIMELINE — pre/post photos in a horizontal scroll */}
       {show('photos') && (
-      <SectionCard title="Condition Timeline" subtitle="Pre/post odometer & inspection photos — most recent first.">
+      <SectionCard title={t('Condition Timeline')} subtitle={t('Pre/post odometer & inspection photos — most recent first.')}>
         {loading ? (
           <div className="flex gap-3 p-3">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-32 w-44 shrink-0 rounded-xl" />)}</div>
         ) : photos.length === 0 ? (
-          <p className="px-4 py-6 text-center text-sm text-slate-400">No condition photos captured yet.</p>
+          <p className="px-4 py-6 text-center text-sm text-slate-400">{t('No condition photos captured yet.')}</p>
         ) : (
           <div className="flex gap-3 overflow-x-auto p-1 pb-3">
             {photos.map((p) => (
@@ -199,10 +209,10 @@ export default function VehicleWorkflowPanel({ vehicleId, sections = ALL_SECTION
                     <div className="flex h-full w-full items-center justify-center bg-slate-50 text-slate-300"><Icon.Gauge className="h-7 w-7" /></div>
                   )}
                   <span className="absolute start-1.5 top-1.5">
-                    <Badge tone={p.phase === 'post' ? 'cyan' : 'indigo'}>{p.phase === 'post' ? 'After' : 'Before'}</Badge>
+                    <Badge tone={p.phase === 'post' ? 'cyan' : 'indigo'}>{p.phase === 'post' ? t('After') : t('Before')}</Badge>
                   </span>
                 </div>
-                <p className="mt-1 truncate text-xs font-medium capitalize text-slate-600">{(p.body_part || 'photo').replace(/_/g, ' ')}</p>
+                <p className="mt-1 truncate text-xs font-medium capitalize text-slate-600">{p.body_part ? p.body_part.replace(/_/g, ' ') : t('photo')}</p>
                 <p className="text-[11px] text-slate-400">{p.captured_at ? fmtDate(p.captured_at) : ''}</p>
               </button>
             ))}

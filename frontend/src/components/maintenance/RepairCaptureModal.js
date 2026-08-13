@@ -18,6 +18,7 @@
 // Backend: MaintenanceWorkflowController@captureOptions / @captureRepair.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useI18n } from '../../i18n/I18nContext';
 import Modal from '../ui/Modal';
 import Button from '../ui/Button';
 import { Textarea } from '../ui/Field';
@@ -59,6 +60,7 @@ function StepHeader({ n, title, done }) {
  * technicians route around, and a free-text box is what they route around it TO.
  */
 function ActionPicker({ suggestions, chosen, onAdd, onRemove, onMove, onNote }) {
+  const { t } = useI18n();
   const [query, setQuery] = useState('');
 
   const results = useMemo(() => {
@@ -85,7 +87,7 @@ function ActionPicker({ suggestions, chosen, onAdd, onRemove, onMove, onNote }) 
                     picker that refuses to move on is a picker people abandon. */}
                 {c.requires_part && (
                   <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 ring-1 ring-blue-200">
-                    needs part
+                    {t('needs part')}
                   </span>
                 )}
 
@@ -95,7 +97,7 @@ function ActionPicker({ suggestions, chosen, onAdd, onRemove, onMove, onNote }) 
                     onClick={() => onMove(i, -1)}
                     disabled={i === 0}
                     className="rounded px-1.5 py-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-30"
-                    aria-label="Move earlier"
+                    aria-label={t('Move earlier')}
                   >
                     ↑
                   </button>
@@ -104,7 +106,7 @@ function ActionPicker({ suggestions, chosen, onAdd, onRemove, onMove, onNote }) 
                     onClick={() => onMove(i, 1)}
                     disabled={i === chosen.length - 1}
                     className="rounded px-1.5 py-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-30"
-                    aria-label="Move later"
+                    aria-label={t('Move later')}
                   >
                     ↓
                   </button>
@@ -112,7 +114,7 @@ function ActionPicker({ suggestions, chosen, onAdd, onRemove, onMove, onNote }) 
                     type="button"
                     onClick={() => onRemove(i)}
                     className="rounded px-1.5 py-0.5 text-slate-400 hover:bg-red-50 hover:text-red-600"
-                    aria-label="Remove"
+                    aria-label={t('Remove')}
                   >
                     ✕
                   </button>
@@ -121,7 +123,7 @@ function ActionPicker({ suggestions, chosen, onAdd, onRemove, onMove, onNote }) 
               <input
                 value={c.note || ''}
                 onChange={(e) => onNote(i, e.target.value)}
-                placeholder="Note (optional)"
+                placeholder={t('Note (optional)')}
                 className="mt-1.5 w-full rounded border-0 bg-slate-50 px-2 py-1 text-xs text-slate-700 ring-1 ring-inset ring-slate-200 placeholder:text-slate-400 focus:ring-2 focus:ring-indigo-500"
               />
             </li>
@@ -132,7 +134,7 @@ function ActionPicker({ suggestions, chosen, onAdd, onRemove, onMove, onNote }) 
       <input
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        placeholder={chosen.length ? 'Add another action…' : 'Search actions…'}
+        placeholder={chosen.length ? t('Add another action…') : t('Search actions…')}
         className="w-full rounded-lg border-0 px-3 py-2 text-sm text-slate-800 ring-1 ring-inset ring-slate-300 placeholder:text-slate-400 focus:ring-2 focus:ring-indigo-500"
       />
 
@@ -153,7 +155,7 @@ function ActionPicker({ suggestions, chosen, onAdd, onRemove, onMove, onNote }) 
         ))}
         {results.length === 0 && query && (
           <p className="text-xs text-slate-500">
-            No match. Try a different word — or record the closest action and add a note.
+            {t('No match. Try a different word — or record the closest action and add a note.')}
           </p>
         )}
       </div>
@@ -162,6 +164,7 @@ function ActionPicker({ suggestions, chosen, onAdd, onRemove, onMove, onNote }) 
 }
 
 export default function RepairCaptureModal({ open, taskId, onClose, onSaved }) {
+  const { t } = useI18n();
   const toast = useToast();
   const { outcomes } = useRepairCaptureVocab();
 
@@ -209,7 +212,7 @@ export default function RepairCaptureModal({ open, taskId, onClose, onSaved }) {
 
         friction.current = createFrictionTracker(4);
       })
-      .catch(() => !cancelled && toast.error('Could not load the capture form.'))
+      .catch(() => !cancelled && toast.error(t('Could not load the capture form.')))
       .finally(() => !cancelled && setLoading(false));
 
     // Opened separately from loading the options so a slow options request never delays the start
@@ -218,7 +221,7 @@ export default function RepairCaptureModal({ open, taskId, onClose, onSaved }) {
     startCapture(taskId).then((id) => { if (!cancelled) sessionId.current = id; });
 
     return () => { cancelled = true; };
-  }, [open, taskId, toast]);
+  }, [open, taskId, toast, t]);
 
   /**
    * Closing without saving is an abandonment, and is recorded as one.
@@ -290,14 +293,14 @@ export default function RepairCaptureModal({ open, taskId, onClose, onSaved }) {
       // Set before closing so handleClose does not also fire an abandon for a session that
       // completed — browsers deliver those out of order often enough for it to matter.
       saved.current = true;
-      toast.success('Repair recorded');
+      toast.success(t('Repair recorded'));
       onSaved?.();
       onClose?.();
     } catch (e) {
       const bag = e?.response?.data?.errors || {};
       setErrors(bag);
       toast.error(
-        Object.values(bag).flat()[0] || e?.response?.data?.message || 'Could not save the repair.',
+        Object.values(bag).flat()[0] || e?.response?.data?.message || t('Could not save the repair.'),
       );
     } finally {
       setSaving(false);
@@ -310,7 +313,7 @@ export default function RepairCaptureModal({ open, taskId, onClose, onSaved }) {
     <Modal
       open={open}
       onClose={handleClose}
-      title="Complete repair"
+      title={t('Complete repair')}
       subtitle={fault ? fault.symptom : undefined}
       size="lg"
       footer={
@@ -326,33 +329,33 @@ export default function RepairCaptureModal({ open, taskId, onClose, onSaved }) {
             />
             {/* The honest escape hatch. Without it the only way to close a fault that was never
                 there is to invent a repair for it. */}
-            No fault found — nothing was wrong
+            {t('No fault found — nothing was wrong')}
           </label>
           <div className="flex gap-2">
-            <Button variant="secondary" onClick={handleClose} disabled={saving}>Cancel</Button>
+            <Button variant="secondary" onClick={handleClose} disabled={saving}>{t('Cancel')}</Button>
             <Button onClick={handleSubmit} disabled={!canSubmit} loading={saving}>
-              Save repair
+              {t('Save repair')}
             </Button>
           </div>
         </div>
       }
     >
-      {loading && <p className="py-8 text-center text-sm text-slate-500">Loading…</p>}
+      {loading && <p className="py-8 text-center text-sm text-slate-500">{t('Loading…')}</p>}
 
       {!loading && options && (
         <div className="space-y-6">
           {/* ── Step 1 — confirm the problem ─────────────────────────────────────────── */}
           <section className="space-y-2">
-            <StepHeader n={1} title="The problem" done={step1Done} />
+            <StepHeader n={1} title={t('The problem')} done={step1Done} />
             <dl className="grid grid-cols-1 gap-x-6 gap-y-1.5 rounded-lg bg-slate-50 p-3 text-sm sm:grid-cols-2">
               <div className="flex gap-2">
-                <dt className="text-slate-500">Reported</dt>
+                <dt className="text-slate-500">{t('Reported')}</dt>
                 <dd className="font-medium text-slate-800">{fault?.symptom || '—'}</dd>
               </div>
               <div className="flex gap-2">
-                <dt className="text-slate-500">Diagnosis</dt>
+                <dt className="text-slate-500">{t('Diagnosis')}</dt>
                 <dd className="font-medium text-slate-800">
-                  {fault?.root_cause || <span className="italic text-slate-400">not recorded</span>}
+                  {fault?.root_cause || <span className="italic text-slate-400">{t('not recorded')}</span>}
                 </dd>
               </div>
             </dl>
@@ -362,8 +365,8 @@ export default function RepairCaptureModal({ open, taskId, onClose, onSaved }) {
             <>
               {/* ── Step 2 — what was done ─────────────────────────────────────────── */}
               <section className="space-y-2">
-                <StepHeader n={2} title="What did you do?" done={step2Done} />
-                <p className="text-xs text-slate-500">In the order you did it.</p>
+                <StepHeader n={2} title={t('What did you do?')} done={step2Done} />
+                <p className="text-xs text-slate-500">{t('In the order you did it.')}</p>
                 <ActionPicker
                   suggestions={options.suggested_actions || []}
                   chosen={actions}
@@ -379,7 +382,7 @@ export default function RepairCaptureModal({ open, taskId, onClose, onSaved }) {
               {/* ── Step 3 — did it work ───────────────────────────────────────────── */}
               {step2Done && (
                 <section className="space-y-2">
-                  <StepHeader n={3} title="Did it fix the problem?" done={step3Done} />
+                  <StepHeader n={3} title={t('Did it fix the problem?')} done={step3Done} />
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                     {outcomes.map((o) => (
                       <button
@@ -408,7 +411,7 @@ export default function RepairCaptureModal({ open, taskId, onClose, onSaved }) {
                   their claim is going to be checked by someone else. */}
               {step3Done && (
                 <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600 ring-1 ring-slate-200">
-                  An inspector will confirm this repair separately — you don’t need to verify your own work.
+                  {t('An inspector will confirm this repair separately — you don’t need to verify your own work.')}
                 </p>
               )}
             </>
@@ -416,16 +419,16 @@ export default function RepairCaptureModal({ open, taskId, onClose, onSaved }) {
 
           {noFaultFound && (
             <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800 ring-1 ring-amber-200">
-              Recorded as <strong>no fault found</strong> — no repair actions or outcome needed.
+              {t('Recorded as “no fault found” — no repair actions or outcome needed.')}
             </p>
           )}
 
           <Textarea
-            label="Anything else? (optional)"
+            label={t('Anything else? (optional)')}
             rows={2}
             value={note}
             onChange={(e) => setNote(e.target.value)}
-            placeholder="Notes for whoever sees this car next"
+            placeholder={t('Notes for whoever sees this car next')}
           />
         </div>
       )}

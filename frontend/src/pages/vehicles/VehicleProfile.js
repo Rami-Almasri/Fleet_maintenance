@@ -20,7 +20,7 @@ import VehicleComplaintsPanel from '../../components/vehicles/VehicleComplaintsP
 import VehicleInvestigationTimeline from '../../components/vehicles/VehicleInvestigationTimeline';
 import VehicleComponentsPanel from '../../components/vehicles/VehicleComponentsPanel';
 import ComponentRepeatAlert from '../../components/vehicles/ComponentRepeatAlert';
-import { aed2, fmtDate, fmtClock, num } from '../../lib/format';
+import { aed2, fmtDate, fmtClock, fmtSeconds, num } from '../../lib/format';
 import CompositionDonut from '../../components/ui/CompositionDonut';
 import { faultTagSegments, isServiceOnlyVisit } from '../../lib/faultCategories';
 import { useI18n } from '../../i18n/I18nContext';
@@ -123,21 +123,9 @@ const WF_STATUS_META = {
 };
 
 // Humanise a stage duration (seconds) into the two most significant units: "2d 3h", "4h 12m",
-// "35m", "48s". A running/open stage passes null and renders as a live ticking-style "so far" label
-// upstream, so here we only format finished spans.
-function fmtDuration(seconds) {
-  if (seconds == null) return null;
-  const s = Math.max(0, Math.round(seconds));
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  const remM = m % 60;
-  if (h < 24) return remM ? `${h}h ${remM}m` : `${h}h`;
-  const d = Math.floor(h / 24);
-  const remH = h % 24;
-  return remH ? `${d}d ${remH}h` : `${d}d`;
-}
+// "35m", "48s" — via the shared, locale-aware fmtSeconds. A running/open stage passes null and
+// renders as a live ticking-style "so far" label upstream, so here we only format finished spans.
+const fmtDuration = (seconds) => (seconds == null ? null : fmtSeconds(seconds));
 
 // Resolve a stage's display label + tone from its workflow_status, falling back to the legacy
 // OUT/IN/Test vocabulary for the handful of rows that carry only an event_type.
@@ -190,19 +178,19 @@ function WorkflowJourneys({ journeys }) {
                   <Icon.Wrench className="h-5 w-5" />
                 </span>
                 <div>
-                  <h3 className="text-sm font-semibold text-slate-900">Ticket #{j.ticket_id}</h3>
+                  <h3 className="text-sm font-semibold text-slate-900">{t('Ticket #{id}', { id: j.ticket_id })}</h3>
                   <p className="text-xs text-slate-400">
-                    Opened {fmtDate(j.opened_at)} · {num(j.stage_count)} {j.stage_count === 1 ? 'stage' : 'stages'}
+                    {t('Opened {date}', { date: fmtDate(j.opened_at) })} · {j.stage_count === 1 ? t('1 stage') : t('{n} stages', { n: num(j.stage_count) })}
                   </p>
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 {/* All days — the whole ticket lifespan (open → close / now). */}
                 {j.is_open
-                  ? <Badge tone="blue">Live · {fmtDuration(total) || '0s'}</Badge>
-                  : <Badge tone="green">Closed · {fmtDuration(total) || '0s'} total</Badge>}
+                  ? <Badge tone="blue">{t('Live · {d}', { d: fmtSeconds(total) })}</Badge>
+                  : <Badge tone="green">{t('Closed · {d} total', { d: fmtSeconds(total) })}</Badge>}
                 {/* Days in maintenance — only the time actually spent at the workshop. */}
-                <Badge tone="amber">In maintenance · {fmtDuration(shopSeconds) || '0s'}</Badge>
+                <Badge tone="amber">{t('In maintenance · {d}', { d: fmtSeconds(shopSeconds) })}</Badge>
               </div>
             </div>
 
@@ -218,12 +206,12 @@ function WorkflowJourneys({ journeys }) {
                       key={i}
                       className={`${style.dot} h-full`}
                       style={{ width: `${pct}%` }}
-                      title={`${label} · ${fmtDuration(stg.seconds) || 'in progress'}`}
+                      title={`${t(label)} · ${fmtDuration(stg.seconds) || t('in progress')}`}
                     />
                   );
                 })}
               </div>
-              <p className="mb-4 text-end text-[11px] text-slate-400">time in each stage (proportional)</p>
+              <p className="mb-4 text-end text-[11px] text-slate-400">{t('time in each stage (proportional)')}</p>
 
               {/* Stage-by-stage detail — a vertical rail, the current stage still ticking */}
               <ol className="relative space-y-3 border-s border-slate-200 ps-5">
@@ -236,11 +224,11 @@ function WorkflowJourneys({ journeys }) {
                       <span className={`absolute -start-[27px] mt-1 flex h-3.5 w-3.5 items-center justify-center rounded-full ring-4 ring-white ${style.dot}`} />
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="flex items-center gap-2">
-                          <Badge tone={tone}>{label}</Badge>
+                          <Badge tone={tone}>{t(label)}</Badge>
                           {isCurrent && <span className="text-xs font-medium text-blue-600">{t('vehicleProfile.journeys.currentStage')}</span>}
                         </div>
                         <span className={`text-xs font-semibold tabular-nums ${isCurrent ? 'text-blue-600' : 'text-slate-600'}`}>
-                          {isCurrent ? `${dur || '0s'} so far` : (dur || '—')}
+                          {isCurrent ? t('{d} so far', { d: dur || fmtSeconds(0) }) : (dur || '—')}
                         </span>
                       </div>
                       <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-400">
@@ -359,7 +347,7 @@ function HeroStat({ label, value, unit, note }) {
     <div className="vhero-stat">
       <div className="lbl">{label}</div>
       <div className="num">
-        {Math.round(n).toLocaleString()}
+        {num(Math.round(n))}
         {unit && <span className="unit">{unit}</span>}
       </div>
       {note && <div className="vhero-stat-note">{note}</div>}
@@ -521,14 +509,14 @@ export default function VehicleProfile() {
     try {
       const { data: res } = await api.post(`/Vehicle/${id}/service-ticket`, { service_type: serviceType });
       const ticket = res?.data?.ticket;
-      toast.success(`Maintenance ticket #${ticket?.id} opened — perform the service on the ticket`);
+      toast.success(t('Maintenance ticket #{id} opened — perform the service on the ticket', { id: ticket?.id }));
       if (ticket?.url) navigate(ticket.url);
     } catch (e) {
-      toast.error(e?.response?.data?.message || 'Could not open a maintenance ticket');
+      toast.error(e?.response?.data?.message || t('Could not open a maintenance ticket'));
     } finally {
       setBusy(false);
     }
-  }, [id, navigate, toast]);
+  }, [id, navigate, toast, t]);
 
   // Deep-link from the Service-Due notification: ?serviceTicket=<type> opens/creates the ticket once,
   // then drops the param (so a refresh/back doesn't re-fire) and routes to the ticket.
@@ -553,7 +541,7 @@ export default function VehicleProfile() {
         expected_return_date: maintForm.expected_return_date || undefined,
         force: force || undefined,
       });
-      toast.success('Car sent to maintenance');
+      toast.success(t('Car sent to maintenance'));
       closeMaint();
       setMaintForm({ vendor_id: '', expected_return_date: '' });
       reload();
@@ -563,7 +551,7 @@ export default function VehicleProfile() {
         // car is reserved and the timing clashes — show it and let the operator override
         setConflict({ message: res.data.message, reservations: res.data.data.reservations || [] });
       } else {
-        toast.error(res?.data?.message || 'Could not update status');
+        toast.error(res?.data?.message || t('Could not update status'));
       }
     } finally {
       setBusy(false);
@@ -604,15 +592,15 @@ export default function VehicleProfile() {
   const av = data.availability || {};
   const contracts = data.contracts || [];
   // Newest first — sort by the most recent date on the contract (out, falling back to in).
-  const contractTime = (c) => { const t = new Date(c.out_date || c.in_date || 0).getTime(); return isNaN(t) ? 0 : t; };
+  const contractTime = (c) => { const ms = new Date(c.out_date || c.in_date || 0).getTime(); return isNaN(ms) ? 0 : ms; };
   const sortedContracts = [...contracts].sort((a, b) => contractTime(b) - contractTime(a));
   // Contract History type filter — only offer the types this vehicle actually has.
   const contractTypeCounts = contracts.reduce((acc, c) => { acc[c.contract_type] = (acc[c.contract_type] || 0) + 1; return acc; }, {});
   const contractFilters = [
-    { key: 'all', label: 'All', count: contracts.length },
-    { key: 'C', label: 'Rental', count: contractTypeCounts.C || 0 },
-    { key: 'U', label: 'Maintenance', count: contractTypeCounts.U || 0 },
-    { key: 'R', label: 'Booking', count: contractTypeCounts.R || 0 },
+    { key: 'all', label: t('All'), count: contracts.length },
+    { key: 'C', label: t('Rental'), count: contractTypeCounts.C || 0 },
+    { key: 'U', label: t('Maintenance'), count: contractTypeCounts.U || 0 },
+    { key: 'R', label: t('Booking'), count: contractTypeCounts.R || 0 },
   ].filter((f) => f.key === 'all' || f.count > 0);
   const filteredContracts = contractType === 'all' ? sortedContracts : sortedContracts.filter((c) => c.contract_type === contractType);
   const maintenance = data.maintenance || [];
@@ -637,33 +625,35 @@ export default function VehicleProfile() {
   const ledFromDays = (label, d) => ({
     label,
     status: d == null ? 'unknown' : d < 0 ? 'bad' : d < 30 ? 'warn' : 'good',
-    detail: d == null ? 'no record' : d < 0 ? `expired ${num(Math.abs(d))}d ago` : `${num(d)}d left`,
+    detail: d == null ? t('no record')
+      : d < 0 ? t('expired {n}d ago', { n: num(Math.abs(d)) })
+      : t('{n}d left', { n: num(d) }),
   });
   const svcStatus = v.service_status;
   const heroLeds = [
-    ledFromDays('Registration', reg ? reg.registration_days_left : null),
-    ledFromDays('Insurance', reg ? reg.insurance_days_left : null),
+    ledFromDays(t('Registration'), reg ? reg.registration_days_left : null),
+    ledFromDays(t('Insurance'), reg ? reg.insurance_days_left : null),
     {
-      label: 'Service',
+      label: t('Service'),
       status: !svcStatus || svcStatus.status === 'no_data' ? 'unknown' : svcStatus.status === 'service_due' ? 'bad' : 'good',
-      detail: !svcStatus || svcStatus.status === 'no_data' ? 'no data'
-        : svcStatus.status === 'service_due' ? `${num(svcStatus.overdue_km)} km overdue` : `${num(svcStatus.remaining)} km left`,
+      detail: !svcStatus || svcStatus.status === 'no_data' ? t('no data')
+        : svcStatus.status === 'service_due' ? t('{n} km overdue', { n: num(svcStatus.overdue_km) }) : t('{n} km left', { n: num(svcStatus.remaining) }),
     },
   ];
   // Latest-activity ticker — newest unified-timeline entry, named with the same stage vocabulary.
   const lastEvent = timeline[0] || null;
   const lastEventLabel = !lastEvent ? null
     : lastEvent.kind === 'workflow'
-      ? (WF_STATUS_META[lastEvent.workflow_status]?.label || wfStage(lastEvent.event_type))
-      : (lastEvent.event || 'Workshop event');
+      ? t(WF_STATUS_META[lastEvent.workflow_status]?.label || wfStage(lastEvent.event_type))
+      : (lastEvent.event || t('Workshop event'));
 
   return (
     <div className="opx py-8">
       <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
         {/* Back */}
         <Link to="/vehicles" className="inline-flex items-center gap-1 text-sm font-medium text-slate-500 transition hover:text-slate-700">
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 19l-7-7 7-7" /></svg>
-          Vehicles
+          <svg className="h-4 w-4 rtl:-scale-x-100" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 19l-7-7 7-7" /></svg>
+          {t('Vehicles')}
         </Link>
 
         {/* Hero header — the "command deck": a living dark cockpit panel. Drifting aurora glows,
@@ -685,10 +675,10 @@ export default function VehicleProfile() {
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-3">
                     <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '.2em', textTransform: 'uppercase', color: '#7f92b8' }}>{t('vehicleProfile.hero.dossier')}</span>
-                    <span className="vhero-live"><span className="dot" />LIVE</span>
+                    <span className="vhero-live"><span className="dot" />{t('LIVE')}</span>
                   </div>
                   <h1 className="mt-1.5 font-display text-2xl font-bold tracking-tight text-white sm:text-3xl" style={{ letterSpacing: '-.02em', textShadow: '0 2px 24px rgba(34,211,238,.25)' }}>
-                    {[v.make, v.model].filter(Boolean).join(' ') || 'Vehicle'}
+                    {[v.make, v.model].filter(Boolean).join(' ') || t('Vehicle')}
                   </h1>
                   <div className="mt-2.5 flex flex-wrap items-center gap-2.5">
                     {(v.plate_display || v.plate_no) && <span className="opx-plate" style={{ fontSize: 13, padding: '3px 10px' }}>{v.plate_display || v.plate_no}</span>}
@@ -749,20 +739,20 @@ export default function VehicleProfile() {
                 <CompositionDonut
                   className="!flex-col !gap-5"
                   segments={faultSegments}
-                  centerLabel="Faults"
+                  centerLabel={t('Faults')}
                   size={168}
                   stroke={24}
-                  format={(n) => Math.round(n).toLocaleString()}
+                  format={(n) => num(Math.round(n))}
                 />
               ) : (
                 <div className="flex h-[168px] items-center justify-center text-xs text-slate-400">
-                  No fault history recorded yet.
+                  {t('No fault history recorded yet.')}
                 </div>
               )}
               {/* Always-available: generate the printable Vehicle Report (Save-as-PDF) from this dossier. */}
               <div className="mt-5">
                 <Button variant="secondary" className="w-full justify-center" onClick={() => openVehicleProfileReport(data)}>
-                  <Icon.Download className="h-4 w-4" /> Vehicle Report
+                  <Icon.Download className="h-4 w-4" /> {t('Vehicle Report')}
                 </Button>
               </div>
             </div>
@@ -779,25 +769,25 @@ export default function VehicleProfile() {
           <Tabs
             active={activeTab}
             onChange={changeTab}
-            ariaLabel="Vehicle profile sections"
+            ariaLabel={t('Vehicle profile sections')}
             tabs={[
-              { key: 'overview', label: 'Overview' },
+              { key: 'overview', label: t('Overview') },
               // Plate History is a first-class tab, but only when this plate was actually re-issued
               // across more than one physical vehicle (self-hides for a single-holder plate).
-              ...(plateReused ? [{ key: 'plate', label: 'Plate History' }] : []),
-              { key: 'financials', label: 'Rent', badge: num(contracts.length) },
-              { key: 'visits', label: 'Visits', badge: num(maintenance.length) },
+              ...(plateReused ? [{ key: 'plate', label: t('Plate History') }] : []),
+              { key: 'financials', label: t('Rent'), badge: num(contracts.length) },
+              { key: 'visits', label: t('Visits'), badge: num(maintenance.length) },
               // The rolling-asset view: what is physically fitted to this car right now. No badge —
               // the count comes from the components API, which the profile payload does not carry.
-              { key: 'components', label: 'Installed Components' },
+              { key: 'components', label: t('Installed Components') },
               // One unified history: the sheet Maintenance Log and the workflow audit trail live here.
               // No badge — the profile only knows the legacy row count; the panel itself reports the
               // true merged total ("Showing N of M events") once the activity feed lands.
-              { key: 'activity', label: 'Timeline' },
-              { key: 'journey', label: 'Journey', badge: num(journeys.length) },
-              { key: 'checkpoints', label: 'Progress' },
-              { key: 'complaints', label: 'Complaints' },
-              { key: 'media', label: 'Media' },
+              { key: 'activity', label: t('Timeline') },
+              { key: 'journey', label: t('Journey'), badge: num(journeys.length) },
+              { key: 'checkpoints', label: t('Progress') },
+              { key: 'complaints', label: t('Complaints') },
+              { key: 'media', label: t('Media') },
             ]}
           />
         </div>
@@ -836,7 +826,7 @@ export default function VehicleProfile() {
                 onClick={() => setBridgeOpen(true)}
                 className="text-sm font-medium text-indigo-600 transition hover:text-indigo-700"
               >
-                View profit breakdown →
+                {t('View profit breakdown')} <span className="rtl:-scale-x-100 inline-block">→</span>
               </button>
             )}
           </div>
@@ -904,7 +894,7 @@ export default function VehicleProfile() {
                           {m.in_date && <span className="text-slate-400"> → {fmtDate(m.in_date)}</span>}
                         </td>
                         <td className="border-b border-slate-100 px-6 py-3.5">
-                          <Badge tone={p.tone} dot title={m.reason || ''}>{p.label}</Badge>
+                          <Badge tone={p.tone} dot title={m.reason || ''}>{t(p.label)}</Badge>
                         </td>
                         <td className="border-b border-slate-100 px-6 py-3.5">
                           {m.stage ? <Badge tone={EVENT_TONE[m.stage] || 'gray'}>{m.stage}</Badge> : <span className="text-xs text-slate-300">—</span>}
@@ -913,7 +903,7 @@ export default function VehicleProfile() {
                         <td className="border-b border-slate-100 px-6 py-3.5 text-slate-700">{m.garage || '—'}</td>
                         <td className="border-b border-slate-100 px-6 py-3.5">
                           <div className="flex flex-wrap gap-1">
-                            {(m.tags || []).slice(0, 4).map((t) => <Badge key={t} tone="indigo">{t}</Badge>)}
+                            {(m.tags || []).slice(0, 4).map((tag) => <Badge key={tag} tone="indigo">{tag}</Badge>)}
                             {(m.tags || []).length > 4 && <span className="text-xs text-slate-400">+{m.tags.length - 4}</span>}
                             {(!m.tags || m.tags.length === 0) && <span className="text-xs text-slate-300">—</span>}
                           </div>
@@ -929,12 +919,12 @@ export default function VehicleProfile() {
                                 <div key={e.id} className="flex flex-wrap items-start gap-x-4 gap-y-1 rounded-xl bg-white px-4 py-2.5 text-sm shadow-soft ring-1 ring-inset ring-slate-100">
                                   <Badge tone={EVENT_TONE[e.event] || 'gray'}>{e.event || '—'}</Badge>
                                   <span className="text-slate-500">
-                                    {e.date ? fmtDate(e.date) : 'No date'}
-                                    {e.actual_in && e.actual_in !== e.date && <span className="text-slate-400"> → returned {fmtDate(e.actual_in)}</span>}
+                                    {e.date ? fmtDate(e.date) : t('No date')}
+                                    {e.actual_in && e.actual_in !== e.date && <span className="text-slate-400"> {t('→ returned {date}', { date: fmtDate(e.actual_in) })}</span>}
                                   </span>
                                   {e.garage && <span className="font-medium text-slate-600">{e.garage}</span>}
                                   {e.type && <span className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{e.type}</span>}
-                                  {(e.issues || []).map((t) => <Badge key={t} tone="indigo">{t}</Badge>)}
+                                  {(e.issues || []).map((tag) => <Badge key={tag} tone="indigo">{tag}</Badge>)}
                                   {e.cost != null && Number(e.cost) > 0 && <span className="font-semibold text-slate-700">{aed2(e.cost)}</span>}
                                   {e.notes && <div className="w-full pt-1"><NotesList text={e.notes} /></div>}
                                 </div>
@@ -959,7 +949,7 @@ export default function VehicleProfile() {
                 onClick={() => setShowAllVisits((s) => !s)}
                 className="inline-flex items-center gap-1.5 text-sm font-medium text-indigo-600 transition hover:text-indigo-700"
               >
-                {showAllVisits ? 'Show less' : `Show all ${num(maintenance.length)} visits`}
+                {showAllVisits ? t('Show less') : t('Show all {n} visits', { n: num(maintenance.length) })}
                 <svg className={`h-4 w-4 transition-transform ${showAllVisits ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 9l-7 7-7-7" /></svg>
               </button>
             </div>
@@ -1017,12 +1007,12 @@ export default function VehicleProfile() {
               rows={analytics}
               rowKey={(s) => s.service}
               columns={[
-                { key: 'service', header: 'Service', cellClass: 'font-medium text-slate-900', render: (s) => s.service },
-                { key: 'visits', header: 'Visits', align: 'center', cellClass: 'text-slate-500', render: (s) => s.visits },
-                { key: 'latest', header: 'Latest', align: 'right', cellClass: 'tabular-nums font-medium text-slate-900', render: (s) => aed2(s.latest_cost) },
+                { key: 'service', header: t('Service'), cellClass: 'font-medium text-slate-900', render: (s) => s.service },
+                { key: 'visits', header: t('Visits'), align: 'center', cellClass: 'text-slate-500', render: (s) => s.visits },
+                { key: 'latest', header: t('Latest'), align: 'right', cellClass: 'tabular-nums font-medium text-slate-900', render: (s) => aed2(s.latest_cost) },
                 {
-                  key: 'trend', header: 'Trend (vs previous)', align: 'right',
-                  tooltip: 'Change from the previous recorded price for this service. Red = more expensive, green = cheaper.',
+                  key: 'trend', header: t('Trend (vs previous)'), align: 'right',
+                  tooltip: t('Change from the previous recorded price for this service. Red = more expensive, green = cheaper.'),
                   cellClass: 'tabular-nums font-medium',
                   render: (s) => {
                     const arrow = s.trend === 'up' ? '▲' : s.trend === 'down' ? '▼' : '–';
@@ -1030,10 +1020,10 @@ export default function VehicleProfile() {
                     return <span className={tone}>{s.delta != null ? `${arrow} ${aed2(Math.abs(s.delta))}` : '—'}</span>;
                   },
                 },
-                { key: 'avg', header: 'This car avg', align: 'right', cellClass: 'tabular-nums text-slate-700', render: (s) => aed2(s.avg_cost) },
+                { key: 'avg', header: t('This car avg'), align: 'right', cellClass: 'tabular-nums text-slate-700', render: (s) => aed2(s.avg_cost) },
                 {
-                  key: 'fleet', header: 'Fleet avg', align: 'right',
-                  tooltip: 'Average cost of this service across the whole fleet — to spot a car being over- or under-charged.',
+                  key: 'fleet', header: t('Fleet avg'), align: 'right',
+                  tooltip: t('Average cost of this service across the whole fleet — to spot a car being over- or under-charged.'),
                   cellClass: 'tabular-nums text-slate-700',
                   render: (s) => {
                     const vsFleet = (s.fleet_avg != null && s.avg_cost != null) ? s.avg_cost - s.fleet_avg : null;
@@ -1042,7 +1032,7 @@ export default function VehicleProfile() {
                         {s.fleet_avg != null ? aed2(s.fleet_avg) : '—'}
                         {vsFleet != null && vsFleet !== 0 && (
                           <span className={`ms-1 text-xs ${vsFleet > 0 ? 'text-red-500' : 'text-emerald-600'}`}>
-                            {vsFleet > 0 ? '(above)' : '(below)'}
+                            {vsFleet > 0 ? t('(above)') : t('(below)')}
                           </span>
                         )}
                       </>
@@ -1085,28 +1075,28 @@ export default function VehicleProfile() {
           <DataTable
             rows={showAllContracts ? filteredContracts : filteredContracts.slice(0, CONTRACTS_PREVIEW)}
             rowKey={(c) => c.id}
-            empty={contracts.length === 0 ? 'No contracts for this vehicle.' : 'No contracts of this type.'}
+            empty={contracts.length === 0 ? t('No contracts for this vehicle.') : t('No contracts of this type.')}
             highlightRow={(c) => !c.in_date}
             columns={[
               {
-                key: 'contract', header: 'Contract', cellClass: 'font-medium',
+                key: 'contract', header: t('Contract'), cellClass: 'font-medium',
                 render: (c) => <Link to={`/contracts/${c.id}`} className="text-indigo-600 hover:text-indigo-700">#{c.contract_no || c.id}</Link>,
               },
               {
-                key: 'customer', header: 'Customer',
+                key: 'customer', header: t('Customer'),
                 render: (c) => c.customer_id
                   ? <Link to={`/customers/${c.customer_id}`} className="text-indigo-600 hover:text-indigo-700">{c.customer || `#${c.customer_id}`}</Link>
                   : <span className="text-slate-400">—</span>,
               },
-              { key: 'type', header: 'Type', render: (c) => <ContractTypeBadge type={c.contract_type} /> },
-              { key: 'state', header: 'State', render: (c) => <ContractStateBadge state={c.state} /> },
-              { key: 'out', header: 'Out', cellClass: 'text-slate-500', render: (c) => fmtDate(c.out_date) },
-              { key: 'in', header: 'In', cellClass: 'text-slate-500', render: (c) => fmtDate(c.in_date) },
-              { key: 'debit', header: 'Debit', align: 'right', cellClass: 'tabular-nums text-slate-600', render: (c) => aed2(c.debit) },
-              { key: 'credit', header: 'Credit', align: 'right', cellClass: 'tabular-nums text-slate-600', render: (c) => aed2(c.credit) },
+              { key: 'type', header: t('Type'), render: (c) => <ContractTypeBadge type={c.contract_type} /> },
+              { key: 'state', header: t('State'), render: (c) => <ContractStateBadge state={c.state} /> },
+              { key: 'out', header: t('Out'), cellClass: 'text-slate-500', render: (c) => fmtDate(c.out_date) },
+              { key: 'in', header: t('In'), cellClass: 'text-slate-500', render: (c) => fmtDate(c.in_date) },
+              { key: 'debit', header: t('Debit'), align: 'right', cellClass: 'tabular-nums text-slate-600', render: (c) => aed2(c.debit) },
+              { key: 'credit', header: t('Credit'), align: 'right', cellClass: 'tabular-nums text-slate-600', render: (c) => aed2(c.credit) },
               {
-                key: 'balance', header: 'Balance', align: 'right',
-                tooltip: 'Debit − credit on the contract. Red = customer owes, green = credit due to customer.',
+                key: 'balance', header: t('Balance'), align: 'right',
+                tooltip: t('Debit − credit on the contract. Red = customer owes, green = credit due to customer.'),
                 render: (c) => <Badge tone={Number(c.balance) > 0 ? 'red' : Number(c.balance) < 0 ? 'green' : 'gray'}>{aed2(c.balance)}</Badge>,
               },
             ]}
@@ -1118,7 +1108,7 @@ export default function VehicleProfile() {
                 onClick={() => setShowAllContracts((s) => !s)}
                 className="inline-flex items-center gap-1.5 text-sm font-medium text-indigo-600 transition hover:text-indigo-700"
               >
-                {showAllContracts ? 'Show less' : `Show all ${num(filteredContracts.length)} contracts`}
+                {showAllContracts ? t('Show less') : t('Show all {n} contracts', { n: num(filteredContracts.length) })}
                 <svg className={`h-4 w-4 transition-transform ${showAllContracts ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 9l-7 7-7-7" /></svg>
               </button>
             </div>
@@ -1172,13 +1162,13 @@ export default function VehicleProfile() {
             <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm">
               <p className="flex items-center gap-1.5 font-medium text-red-700">
                 <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /></svg>
-                This car is reserved
+                {t('This car is reserved')}
               </p>
               <p className="mt-1 text-red-600">{conflict.message}</p>
               {conflict.reservations?.length > 0 && (
                 <ul className="mt-2 space-y-1 text-xs text-red-600">
                   {conflict.reservations.map((r, i) => (
-                    <li key={i}>• Reservation {r.label}{r.customer ? ` — ${r.customer}` : ''} ({r.reason})</li>
+                    <li key={i}>• {t('Reservation {label}', { label: r.label })}{r.customer ? ` — ${r.customer}` : ''} ({r.reason})</li>
                   ))}
                 </ul>
               )}
@@ -1236,8 +1226,8 @@ export default function VehicleProfile() {
                     )}
                   </div>
                   <p className="mt-1.5 text-sm text-slate-500">
-                    {logEvent.date ? fmtDate(logEvent.date) : 'No date recorded'}
-                    {logEvent.actual_in && logEvent.actual_in !== logEvent.date && <span className="text-slate-400"> → returned {fmtDate(logEvent.actual_in)}</span>}
+                    {logEvent.date ? fmtDate(logEvent.date) : t('No date recorded')}
+                    {logEvent.actual_in && logEvent.actual_in !== logEvent.date && <span className="text-slate-400"> {t('→ returned {date}', { date: fmtDate(logEvent.actual_in) })}</span>}
                   </p>
                 </div>
                 {logEvent.cost != null && Number(logEvent.cost) > 0 && (
@@ -1280,7 +1270,7 @@ export default function VehicleProfile() {
                 <div>
                   <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{t('vehicleProfile.event.issues')}</p>
                   <div className="flex flex-wrap gap-1.5">
-                    {(logEvent.issues || logEvent.tags).map((t) => <Badge key={t} tone="indigo">{t}</Badge>)}
+                    {(logEvent.issues || logEvent.tags).map((tag) => <Badge key={tag} tone="indigo">{tag}</Badge>)}
                   </div>
                 </div>
               )}
@@ -1378,7 +1368,7 @@ export default function VehicleProfile() {
                   </div>
                 )}
                 <p className="mt-2 text-xs text-slate-400">
-                  Per-contract Net = Rent − Discount + Usage − Operating. These sum to Gross Revenue − Operating above; subtract car-level Maintenance to reach Lifetime Net Profit.
+                  {t('Per-contract Net = Rent − Discount + Usage − Operating. These sum to Gross Revenue − Operating above; subtract car-level Maintenance to reach Lifetime Net Profit.')}
                 </p>
               </div>
             </div>

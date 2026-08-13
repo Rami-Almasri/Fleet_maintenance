@@ -11,6 +11,7 @@ import { ProgressBar } from './ui/Progress';
 import { Skeleton } from './ui/Skeleton';
 import Icon from './ui/Icon';
 import { num } from '../lib/format';
+import { useI18n } from '../i18n/I18nContext';
 
 // Tone → the card's accent colours (rail, ring, chip). Mirrors the app palette.
 const PULSE = {
@@ -38,8 +39,10 @@ const FILTERS = [
 ];
 
 function PulseCard({ v }) {
+  const { t } = useI18n();
   const p = PULSE[v.tone] || PULSE.slate;
   const inGarage = v.completion != null;
+  const flag = CONDITION_FLAG[v.condition_grade];
   return (
     <Link
       to={`/vehicles/${v.id}`}
@@ -52,23 +55,25 @@ function PulseCard({ v }) {
           <p className="mt-0.5 truncate text-xs text-slate-500">{v.car || '—'}</p>
           {/* Visual Condition Grade flag — orange (cosmetic) / yellow (service due) / red
               (grounded); hidden when perfect. */}
-          {CONDITION_FLAG[v.condition_grade] && (
+          {flag && (
             <span
-              title={v.condition_note || CONDITION_FLAG[v.condition_grade].title}
-              className={`mt-1 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${CONDITION_FLAG[v.condition_grade].wrap}`}
+              title={v.condition_note || t(flag.title)}
+              className={`mt-1 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${flag.wrap}`}
             >
-              <span className={`h-1.5 w-1.5 rounded-full ${CONDITION_FLAG[v.condition_grade].dot}`} />
-              {CONDITION_FLAG[v.condition_grade].label}
+              <span className={`h-1.5 w-1.5 rounded-full ${flag.dot}`} />
+              {t(flag.label)}
             </span>
           )}
           {/* Deferred Maintenance — car pulled from the shop for a customer; still owes the garage. */}
           {v.is_deferred_maintenance && (
             <span
-              title={v.deferred_maintenance_reason ? `Owes maintenance — ${v.deferred_maintenance_reason}` : 'Pulled from the workshop for a customer — must go back to the garage.'}
+              title={v.deferred_maintenance_reason
+                ? t('Owes maintenance — {reason}', { reason: v.deferred_maintenance_reason })
+                : t('Pulled from the workshop for a customer — must go back to the garage.')}
               className="mt-1 inline-flex items-center gap-1 rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-700"
             >
               <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
-              🛠️↩️ Owes maint.
+              🛠️↩️ {t('Owes maint.')}
             </span>
           )}
         </div>
@@ -87,10 +92,10 @@ function PulseCard({ v }) {
 
       {inGarage ? (
         <div className="mt-4">
-          <ProgressBar value={v.completion} max={100} tone={v.tone} showPct label="Repair progress" />
+          <ProgressBar value={v.completion} max={100} tone={v.tone} showPct label={t('Repair progress')} />
           <p className="mt-2 flex items-center gap-1 text-[11px] font-medium text-slate-400">
             <Icon.Clock className="h-3 w-3" />
-            {v.days_in_shop != null ? `${v.days_in_shop}d in the shop` : 'In the shop'}
+            {v.days_in_shop != null ? t('{n}d in the shop', { n: v.days_in_shop }) : t('In the shop')}
           </p>
         </div>
       ) : (
@@ -104,6 +109,7 @@ function PulseCard({ v }) {
 }
 
 export default function FleetPulseGrid() {
+  const { t } = useI18n();
   const fetcher = useCallback(async () => {
     const res = await api.get('/Dashboard/fleet-pulse');
     return res.data.data || [];
@@ -150,7 +156,7 @@ export default function FleetPulseGrid() {
                 }`}
               >
                 {f.tone && <span className={`h-2 w-2 rounded-full ${PULSE[f.tone].dot}`} />}
-                {f.label}
+                {t(f.label)}
                 <span className={`tabular-nums ${on ? 'text-white/60' : 'text-slate-400'}`}>{counts[f.key] ?? 0}</span>
               </button>
             );
@@ -161,7 +167,7 @@ export default function FleetPulseGrid() {
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Search plate or model…"
+            placeholder={t('Search plate or model…')}
             className="w-full rounded-xl border border-slate-200 bg-white py-2 ps-9 pe-3 text-sm text-slate-700 shadow-soft outline-none placeholder:text-slate-400 focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
           />
         </div>
@@ -173,7 +179,7 @@ export default function FleetPulseGrid() {
           {Array.from({ length: 15 }).map((_, i) => <Skeleton key={i} className="h-[132px] rounded-2xl" />)}
         </div>
       ) : shown.length === 0 ? (
-        <p className="py-12 text-center text-sm text-slate-400">No vehicles match this view.</p>
+        <p className="py-12 text-center text-sm text-slate-400">{t('No vehicles match this view.')}</p>
       ) : (
         <div className="stagger grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
           {shown.map((v) => <PulseCard key={v.id} v={v} />)}

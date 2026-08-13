@@ -18,6 +18,7 @@
 import { useState } from 'react';
 import { palette, useMounted } from './chartUtils';
 import { ChartTooltip } from './Tooltip';
+import { useI18n } from '../../i18n/I18nContext';
 
 const resolve = (c) => (typeof c === 'string' && c.startsWith('#') ? c : palette(c).from);
 
@@ -28,6 +29,7 @@ const pt = (cx, cy, r, deg) => {
 };
 
 export default function PieChart({ segments = [], size = 210, stacked = false, className = '' }) {
+  const { t } = useI18n();
   const mounted = useMounted();
   const [hover, setHover] = useState(null);
   const [tip, setTip] = useState(null);
@@ -72,7 +74,7 @@ export default function PieChart({ segments = [], size = 210, stacked = false, c
       <div className="shrink-0" style={{ width: size, height: size }}>
         <svg
           width={size} height={size} viewBox={`0 0 ${size} ${size}`}
-          role="img" aria-label="Composition pie chart"
+          role="img" aria-label={t('Composition pie chart')}
           style={{ transform: mounted ? 'scale(1)' : 'scale(0.85)', opacity: mounted ? 1 : 0, transition: 'transform .7s cubic-bezier(0.22,1,0.36,1), opacity .5s ease', transformOrigin: 'center' }}
         >
           {arcs.map((a, i) => {

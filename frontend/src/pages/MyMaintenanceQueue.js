@@ -51,9 +51,15 @@ const SECTIONS = [
   { key: 'pending_inspections',        role: 'inspector',  tone: '#8b5cf6' },
   { key: 'on_site',                    role: 'inspector',  tone: '#14b8a6' },
   { key: 'final_reinspections',        role: 'inspector',  tone: '#10b981' },
+  // Scoped by NAME, not by role — the legs this person was personally handed. It appears on both the
+  // dispatcher and the driver tab because a supervisor can now be assigned a collection himself, and he
+  // reads the dispatcher tab; without it his own job would be lost among every driver's work below.
+  // (Duplicating one key across two tabs is the existing pattern — see final_reinspections.)
+  { key: 'assigned_to_me',             role: 'dispatcher', tone: '#2563eb', supplementary: true },
   { key: 'awaiting_dispatch_decision', role: 'dispatcher', tone: '#a855f7' },
   { key: 'reinspection_failed',        role: 'dispatcher', tone: '#dc2626' },
   { key: 'final_reinspections',        role: 'dispatcher', tone: '#10b981' },
+  { key: 'assigned_to_me',             role: 'driver',     tone: '#2563eb', supplementary: true },
   { key: 'active_dispatches',          role: 'driver',     tone: '#3b82f6' },
   { key: 'waiting_followup',           role: 'driver',     tone: '#f97316' },
   { key: 'return_to_base',             role: 'driver',     tone: '#0ea5e9' },
@@ -432,16 +438,16 @@ function CardActions({ tk, can, userId, onAct, readonly, t }) {
   // Custody gate — a return/arrival leg may only be completed by the SAME driver who took the car
   // (garage check-in) / collected it from the garage (arrival at our park). The backend bounces anyone
   // else with a 422, so we hide the button and name the custodian instead of letting them tap and fail.
-  const custodyLocked = allowed && custodyBlocked(tk, userId);
-  const custodyHolder = custodyHolderName(tk, userId);
+  const custodyLocked = allowed && custodyBlocked(tk, userId, can);
+  const custodyHolder = custodyHolderName(tk, userId, can);
   const custodyHint = act?.action === 'arriveAtPark'
     ? t('queue.custody.arrive', { name: custodyHolder || t('queue.custody.theCollector') })
     : t('queue.custody.checkin', { name: custodyHolder || t('queue.custody.theDriver') });
 
   // Assigned pickup — the Supervisor named a driver, so the card is a status for everyone else. The
   // named driver keeps the Pick up button; the rest are told whose job it is instead of racing for it.
-  const assignedElsewhere = allowed && assignmentBlocked(tk, userId);
-  const assignedTo = assignedDriverName(tk, userId);
+  const assignedElsewhere = allowed && assignmentBlocked(tk, userId, can);
+  const assignedTo = assignedDriverName(tk, userId, can);
 
   if (readonly) {
     return (
@@ -580,6 +586,10 @@ export default function MyMaintenanceQueue() {
   const [maintTypes, setMaintTypes] = useState([]);
   const [keywordMeta, setKeywordMeta] = useState({});
   const [faultCausesCatalog, setFaultCausesCatalog] = useState({});
+  // WHERE ON THE CAR — the shared location vocabulary + the per-fault-type policy that says which
+  // findings take a place at all. Ships inside the findings catalog (one request), so the detail
+  // editor can render the instant a fault chip is tapped. See lib/faultLocations.
+  const [locationCatalog, setLocationCatalog] = useState({ groups: [], policy: {}, maxQuantity: 40 });
   const [drivers, setDrivers] = useState([]);
   const [activeTab, setActiveTab] = useState('');
 
@@ -608,6 +618,11 @@ export default function MyMaintenanceQueue() {
         setFindingsCatalog(f.data?.data?.categories || []);
         setKeywordMeta(f.data?.data?.keyword_risk || {});
         setFaultCausesCatalog(f.data?.data?.fault_causes || {});
+        setLocationCatalog({
+          groups: f.data?.data?.locations || [],
+          policy: f.data?.data?.location_policy || {},
+          maxQuantity: f.data?.data?.max_quantity || 40,
+        });
         setMaintTypes((f.data?.data?.maintenance_types || []).map((x) => x.value));
       })
       .catch(() => { /* pickers stay empty */ });
@@ -709,7 +724,12 @@ export default function MyMaintenanceQueue() {
   const availableTabs = ROLE_TABS.filter((tab) => roles[tab.key]);
   const activeSections = SECTIONS.filter((s) => s.role === activeTab);
   const sectionCount = (s) => counts[s.key] ?? (sections[s.key]?.length || 0);
-  const tabCount = (roleKey) => SECTIONS.filter((s) => s.role === roleKey).reduce((n, s) => n + sectionCount(s), 0);
+  // `supplementary` sections are a re-cut of tickets the other sections in the same tab already list
+  // (assigned_to_me pulls YOUR cars back out of the driver lanes), so counting them would inflate the
+  // tab badge by showing the same car twice.
+  const tabCount = (roleKey) => SECTIONS
+    .filter((s) => s.role === roleKey && !s.supplementary)
+    .reduce((n, s) => n + sectionCount(s), 0);
   const hasAnyTicket = activeSections.some((s) => sectionCount(s) > 0);
 
   // Every ticket in the active tab (deduped by id — final_reinspections appears under two roles).
@@ -732,7 +752,7 @@ export default function MyMaintenanceQueue() {
       const act = resolveAction(tk);
       // A custody-locked leg, or a pickup assigned to someone else, is another driver's to complete —
       // not this user's action item.
-      return act && allows(can, act.perm) && !custodyBlocked(tk, user?.id) && !assignmentBlocked(tk, user?.id);
+      return act && allows(can, act.perm) && !custodyBlocked(tk, user?.id, can) && !assignmentBlocked(tk, user?.id, can);
     }).length;
     const awaitingQa = (counts.final_reinspections ?? (sections.final_reinspections?.length || 0));
     return { total: tickets.length, vehicles: vehicleIds.size, critical, needsAction, awaitingQa };
@@ -985,6 +1005,7 @@ export default function MyMaintenanceQueue() {
           findingsCatalog={findingsCatalog}
           keywordMeta={keywordMeta}
           faultCausesCatalog={faultCausesCatalog}
+          locationCatalog={locationCatalog}
           assignableDrivers={drivers}
           allowedTypes={maintTypes}
           onClose={() => setModal(null)}

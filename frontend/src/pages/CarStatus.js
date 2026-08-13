@@ -11,6 +11,7 @@ import OpsCard, { ProgressSpine } from '../components/workflow/OpsCard';
 import VehicleOpsDrawer from '../components/workflow/VehicleOpsDrawer';
 import { ATTENTION_FILTERS, tone, ROLE, urgency, days } from '../components/workflow/opsMeta';
 import { num } from '../lib/format';
+import { useI18n } from '../i18n/I18nContext';
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // Car Status — the maintenance OPERATIONS DASHBOARD.
@@ -32,6 +33,7 @@ import { num } from '../lib/format';
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
 // The stage lanes, for the board view. `role` is who owns the stage; the ops block owns everything else.
+// `name` is the English source text — it is resolved through the catalog where the lanes are built.
 const STAGES = [
   { key: 'requested',        name: 'Needs Test Drive',   role: 'inspector',  tone: '#d946ef' },
   { key: 'diagnostic',       name: 'Being Inspected',    role: 'inspector',  tone: '#8b5cf6' },
@@ -55,6 +57,7 @@ const EXCEPTION_STAGES = [
 ];
 
 export default function CarStatus() {
+  const { t } = useI18n();
   const [q, setQ] = useState('');
   const [view, setView] = useState('operations');
   const [filter, setFilter] = useState('all');
@@ -76,9 +79,9 @@ export default function CarStatus() {
     return [...STAGES, ...EXCEPTION_STAGES].flatMap((s) =>
       (columns[s.key] || [])
         .filter((tk) => !seen.has(tk.id) && seen.add(tk.id))
-        .map((tk) => ({ ...tk, lane: s })),
+        .map((tk) => ({ ...tk, lane: { ...s, name: t(s.name) } })),
     );
-  }, [columns]);
+  }, [columns, t]);
 
   const needle = q.trim().toLowerCase();
   const matches = useCallback((tk) => {
@@ -108,14 +111,14 @@ export default function CarStatus() {
   // Board lanes — the same tickets, bucketed by stage, honouring search + the attention filter.
   const laneFilter = useCallback((tk) => matches(tk) && activeFilter.test(tk.ops), [matches, activeFilter]);
   const primaryLanes = useMemo(
-    () => STAGES.map((s) => ({ ...s, tickets: (columns[s.key] || []).filter(laneFilter) })),
-    [columns, laneFilter],
+    () => STAGES.map((s) => ({ ...s, name: t(s.name), tickets: (columns[s.key] || []).filter(laneFilter) })),
+    [columns, laneFilter, t],
   );
   const exceptionLanes = useMemo(
     () => EXCEPTION_STAGES
-      .map((s) => ({ ...s, tickets: (columns[s.key] || []).filter(laneFilter) }))
+      .map((s) => ({ ...s, name: t(s.name), tickets: (columns[s.key] || []).filter(laneFilter) }))
       .filter((s) => s.tickets.length > 0),
-    [columns, laneFilter],
+    [columns, laneFilter, t],
   );
   const lanes = useMemo(() => [...primaryLanes, ...exceptionLanes], [primaryLanes, exceptionLanes]);
 
@@ -137,24 +140,23 @@ export default function CarStatus() {
                   <span className={`absolute inline-flex h-full w-full rounded-full bg-emerald-400 ${validating ? 'animate-ping' : 'opacity-75'}`} />
                   <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
                 </span>
-                Live · Maintenance Operations
+                {t('Live · Maintenance Operations')}
               </div>
-              <h1 className="mt-2 font-display text-3xl font-bold tracking-tight sm:text-4xl">Car Status</h1>
+              <h1 className="mt-2 font-display text-3xl font-bold tracking-tight sm:text-4xl">{t('Car Status')}</h1>
               <p className="mt-2 max-w-2xl text-sm text-steel-200">
-                What is happening to every car in maintenance right now — why it came in, what stage the
-                repair has actually reached, what is blocking it, and who is on the hook.
+                {t('What is happening to every car in maintenance right now — why it came in, what stage the repair has actually reached, what is blocking it, and who is on the hook.')}
               </p>
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-3">
-              <HeroStat label="In the pipeline" value={openTotal} />
-              <HeroStat label="ETA overdue" value={filterCounts.overdue} tone="text-red-300" />
-              <HeroStat label="No updates" value={filterCounts.no_update} tone="text-amber-300" />
+              <HeroStat label={t('In the pipeline')} value={openTotal} />
+              <HeroStat label={t('ETA overdue')} value={filterCounts.overdue} tone="text-red-300" />
+              <HeroStat label={t('No updates')} value={filterCounts.no_update} tone="text-amber-300" />
               <button
                 type="button"
                 onClick={() => reload()}
                 className="focus-ring-self inline-flex items-center gap-2 rounded-xl bg-white/10 px-3.5 py-2 text-sm font-semibold text-white ring-1 ring-inset ring-white/15 transition hover:bg-white/15"
               >
-                <Icon.Refresh className={`h-4 w-4 ${validating ? 'animate-spin' : ''}`} /> Refresh
+                <Icon.Refresh className={`h-4 w-4 ${validating ? 'animate-spin' : ''}`} /> {t('Refresh')}
               </button>
             </div>
           </div>
@@ -170,7 +172,7 @@ export default function CarStatus() {
             <SearchInput
               value={q}
               onChange={setQ}
-              placeholder="Plate, car, reason, garage, part…"
+              placeholder={t('Plate, car, reason, garage, part…')}
               className="w-full max-w-xs"
             />
             <div className="flex flex-wrap items-center gap-1.5">
@@ -187,20 +189,21 @@ export default function CarStatus() {
                       on ? `${tone(f.tone).chip} shadow-sm` : 'bg-white text-slate-500 ring-slate-200 hover:text-slate-700'
                     }`}
                   >
-                    {f.label}
+                    {t(f.label)}
                     <span className="tabular-nums opacity-70">{n}</span>
                   </button>
                 );
               })}
             </div>
             <div className="ms-auto flex items-center gap-3">
+              {/* One sentence, one key: Arabic puts the figure elsewhere in the clause. */}
               <span className="text-xs font-medium text-slate-400">
-                <span className="tabular-nums text-slate-600">{num(opsTickets.length)}</span> shown
+                {t('{n} shown', { n: num(opsTickets.length) })}
               </span>
               <Segmented
                 value={view}
                 onChange={setView}
-                options={[{ key: 'operations', label: 'Operations' }, { key: 'board', label: 'Stage board' }]}
+                options={[{ key: 'operations', label: t('Operations') }, { key: 'board', label: t('Stage board') }]}
               />
             </div>
           </div>
@@ -217,8 +220,8 @@ export default function CarStatus() {
           <SectionCard>
             <EmptyState
               icon={<Icon.Wrench className="h-6 w-6" />}
-              title="Pipeline is clear"
-              message="No car is in the maintenance workflow right now."
+              title={t('Pipeline is clear')}
+              message={t('No car is in the maintenance workflow right now.')}
             />
           </SectionCard>
         ) : view === 'operations' ? (
@@ -226,8 +229,8 @@ export default function CarStatus() {
             <SectionCard>
               <EmptyState
                 icon={<Icon.Check className="h-6 w-6" />}
-                title="Nothing matches"
-                message="No car in the pipeline matches this search and filter."
+                title={t('Nothing matches')}
+                message={t('No car in the pipeline matches this search and filter.')}
               />
             </SectionCard>
           ) : (
@@ -270,6 +273,7 @@ function HeroStat({ label, value, tone: toneCls }) {
 
 /** One stage column — accent header with count + role, then its cars as compact ops cards. */
 function Lane({ lane, onOpen }) {
+  const { t } = useI18n();
   const role = ROLE[lane.role] || ROLE.none;
   return (
     <div className="flex w-[300px] shrink-0 flex-col rounded-2xl bg-slate-50/70 ring-1 ring-slate-200/70">
@@ -285,7 +289,7 @@ function Lane({ lane, onOpen }) {
           </span>
         </div>
         <div className="mt-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-          Owned by {role.label}
+          {t('Owned by {who}', { who: t(role.label) })}
         </div>
       </div>
 
@@ -293,7 +297,7 @@ function Lane({ lane, onOpen }) {
         {lane.tickets.length === 0 ? (
           <div className="flex flex-col items-center gap-1 rounded-xl border border-dashed border-slate-200 py-6 text-center">
             <Icon.Check className="h-4 w-4 text-slate-300" />
-            <span className="text-[11px] font-medium text-slate-400">No cars here</span>
+            <span className="text-[11px] font-medium text-slate-400">{t('No cars here')}</span>
           </div>
         ) : (
           lane.tickets.map((tk) => <LaneCard key={tk.id} tk={tk} role={role} onOpen={onOpen} />)
@@ -308,6 +312,7 @@ function Lane({ lane, onOpen }) {
  * column — reason, state, blocker, the spine, the clock and who holds it.
  */
 function LaneCard({ tk, role, onOpen }) {
+  const { t } = useI18n();
   const o = tk.ops || {};
   const st = tone(o.state?.tone);
   const timing = o.timing || {};
@@ -335,8 +340,8 @@ function LaneCard({ tk, role, onOpen }) {
       <div className="mt-2 flex items-start gap-1.5 text-xs leading-snug">
         <Icon.Wrench className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" />
         <span className="min-w-0">
-          <span className="font-semibold text-slate-800">{o.reason?.primary || 'Reason not recorded'}</span>
-          {o.reason?.extra > 0 && <span className="text-slate-400"> +{o.reason.extra} more</span>}
+          <span className="font-semibold text-slate-800">{o.reason?.primary || t('Reason not recorded')}</span>
+          {o.reason?.extra > 0 && <span className="text-slate-400"> {t('+{n} more', { n: o.reason.extra })}</span>}
         </span>
       </div>
 
@@ -366,19 +371,19 @@ function LaneCard({ tk, role, onOpen }) {
       <div className="mt-2 flex items-center gap-1.5 text-[11px] text-slate-500">
         <Icon.Users className="h-3 w-3 shrink-0 text-slate-400" />
         <span className="truncate">
-          {role.label}:{' '}
-          {owner ? <span className="font-semibold text-slate-700">{owner}</span> : <span className="italic">{role.waiting}</span>}
+          {t(role.label)}:{' '}
+          {owner ? <span className="font-semibold text-slate-700">{owner}</span> : <span className="italic">{t(role.waiting)}</span>}
         </span>
       </div>
 
       {/* The clock */}
       <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] font-medium">
         <span className="inline-flex items-center gap-1 text-slate-400">
-          <Icon.Clock className="h-3 w-3" /> {days(timing.days_in_maintenance) ?? '—'} in maintenance
+          <Icon.Clock className="h-3 w-3" /> {t('{d} in maintenance', { d: days(timing.days_in_maintenance) ?? '—' })}
         </span>
-        {timing.days_over > 0 && <span className="text-red-600">{timing.days_over}d overdue</span>}
+        {timing.days_over > 0 && <span className="text-red-600">{t('{n}d overdue', { n: timing.days_over })}</span>}
         {(timing.days_since_checkpoint ?? 0) >= 3 && (
-          <span className="text-amber-600">{timing.days_since_checkpoint}d no update</span>
+          <span className="text-amber-600">{t('{n}d no update', { n: timing.days_since_checkpoint })}</span>
         )}
       </div>
     </button>

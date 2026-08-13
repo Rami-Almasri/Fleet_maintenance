@@ -58,6 +58,20 @@ export function stageRequiresExactMatch(stage) {
   return STRICT_MATCH_STAGES.has(stage);
 }
 
+// Strict-match stages that REVIEW instead of BLOCK. "Needs Test Drive" is the first time anyone physically
+// walks up to the car and reads its dial — whatever it says is the truth about that car right now, and our
+// stored mileage is the thing that may be stale. Refusing the entry can't change the dial; it only teaches
+// the inspector to re-type our old number, which is what actually corrupts the chain. So here every reading
+// goes through, and any deviation (forward past the buffer, or backward) is filed to the odometer approval
+// board for a supervisor to settle afterwards. The MAX_JUMP_KM typo guard still stands.
+// Mirror of REVIEW_NOT_BLOCK_STAGES in OdometerContinuityService.php — keep the two in step.
+export const REVIEW_NOT_BLOCK_STAGES = new Set([STAGE.TEST]);
+
+/** Is `stage` a strict-match stage where a deviation is reviewed after the fact instead of refused? */
+export function stageReviewsInsteadOfBlocking(stage) {
+  return REVIEW_NOT_BLOCK_STAGES.has(stage);
+}
+
 // Stages where the reading MUST be strictly higher than the previous one — no tolerance, no override.
 // The car was GUARANTEED to have moved since the previous checkpoint (driven to the garage), so an equal
 // or lower value is a typo or a mis-read, never a real reading. This mirrors the backend hard block in
@@ -133,16 +147,11 @@ function classifyContinuity(reading, previous, stage) {
   // generic guards below.
   if (STRICT_MATCH_STAGES.has(stage)) {
     if (delta === 0) return { status: STATUS.VERIFIED, previous: p, reading: r, delta };
-    if (delta > 0) {
-      // Pickup never hard-blocks a forward drift — small in-lot moves beyond TOLERANCE_KM are real and
-      // can't be fixed by re-reading the dial, so ANY forward amount is an authorized deviation: allowed
-      // through with a mandatory confirm + note, never an unresolvable wall.
-      if (stage === STAGE.PARK_PICKUP) return { status: STATUS.AUTHORIZED, previous: p, reading: r, delta };
-      // Other strict-match stages (the inspector's start-of-drive anchor, and the final QA sign-off once
-      // the car is back at our park) keep the tight cap — beyond +TOLERANCE hard-blocks.
-      if (delta <= TOLERANCE_KM) return { status: STATUS.AUTHORIZED, previous: p, reading: r, delta };
-      return { status: STATUS.EXACT_MATCH, previous: p, reading: r, delta };
-    }
+    // ANY forward drift is an authorized deviation, never a wall — small in-lot moves beyond TOLERANCE_KM
+    // are real and can't be fixed by re-reading the dial, so the reading goes through with a mandatory
+    // confirm + note. Past the buffer it also lands on the odometer approval board for a supervisor to
+    // audit after the fact (see needsApproval). Mirrors the PHP service's strict-match branch.
+    if (delta > 0) return { status: STATUS.AUTHORIZED, previous: p, reading: r, delta };
     return { status: STATUS.EXACT_MATCH, previous: p, reading: r, delta };
   }
 
@@ -179,7 +188,11 @@ function classifyContinuity(reading, previous, stage) {
  * (likely a typo), a big pickup jump, and a garage test drive all ask for a conscious confirm — but
  * none of them BLOCK: ticking the box lets the workflow proceed exactly as before.
  */
-export function needsConfirm(status, ignoreTolerance = false) {
+export function needsConfirm(status, ignoreTolerance = false, stage = undefined) {
+  // At a review-not-block stage a backward reading is ACCEPTED, so it flips from "hard block, no checkbox"
+  // to exactly what the checkbox is for: a conscious "yes, that's really what the dial says" before the
+  // entry goes off to the approval board.
+  if (status === STATUS.EXACT_MATCH && stageReviewsInsteadOfBlocking(stage)) return true;
   // A must-increase / exact-match violation is a HARD block, not an overridable ack — the reading has to be
   // fixed, so we never offer a "confirm anyway" checkbox for it (see isHardBlocked, which blocks submit).
   if (status === STATUS.MUST_INCREASE || status === STATUS.EXACT_MATCH) return false;
@@ -201,6 +214,11 @@ export function needsNote(continuity, ignoreTolerance = false) {
   // A hard-blocked verdict (must-increase / exact-match) can't be explained away with a note — the reading
   // itself has to be fixed. Asking for a note here would misleadingly imply an override path exists.
   if (isHardBlocked(continuity)) return false;
+  // At a review-not-block stage the note is INVITED, never demanded: a mandatory field is just a block
+  // wearing another hat, and the whole point of this stage is that nothing stands between the inspector
+  // and the number on the dial. The deviation still reaches a supervisor — via the approval board rather
+  // than via a sentence typed under duress.
+  if (stageReviewsInsteadOfBlocking(continuity?.stage)) return false;
   // A strict-match "authorized deviation" (+1..TOLERANCE at a park spot-check) ALWAYS demands a note — that
   // note is exactly what a supervisor audits on the Mileage Discrepancies board. It fires below the generic
   // 10 km threshold, so it's checked first.
@@ -219,7 +237,29 @@ export function needsNote(continuity, ignoreTolerance = false) {
  * gate alongside the soft ack/note requirements.
  */
 export function isHardBlocked(continuity) {
+  // The typo guard is UNIVERSAL and comes first — it holds even at a review-not-block stage, and even
+  // there it is the one thing that must never reach vehicles.odometer. It was previously only enforced
+  // server-side (the modal submitted and the request threw); now that "Needs Test Drive" waives every
+  // other client-side gate, this is the gate that has to be real here.
+  if (continuity?.status === STATUS.IMPLAUSIBLE) return true;
+  // Otherwise nothing at a review-not-block stage blocks submit — a deviation there is recorded and sent
+  // to the approval board, not refused.
+  if (stageReviewsInsteadOfBlocking(continuity?.stage)) return false;
   return continuity?.status === STATUS.MUST_INCREASE || continuity?.status === STATUS.EXACT_MATCH;
+}
+
+/**
+ * Will this (accepted) reading be sent to the odometer approval board? True for a forward drift past the
+ * buffer at an at-our-park spot-check: the car moved when our records say it was standing still, so the
+ * reading is taken but a supervisor is asked to confirm it afterwards. The modal says so up front, so the
+ * driver knows the entry is going to be looked at rather than quietly swallowed.
+ * Mirrors OdometerContinuityService::needsSupervisorReview() (PHP).
+ */
+export function needsApproval(continuity) {
+  // A BACKWARD reading at a review-not-block stage is accepted rather than refused, so the approval board
+  // is the only thing left standing between the dial and our stored mileage — say so in the modal.
+  if (continuity?.status === STATUS.EXACT_MATCH && stageReviewsInsteadOfBlocking(continuity?.stage)) return true;
+  return continuity?.status === STATUS.AUTHORIZED && (continuity?.delta ?? 0) > TOLERANCE_KM;
 }
 
 // Visual tone per status (Tailwind palette family) — shared by the modal hint + drawer badge.
@@ -231,4 +271,8 @@ export const CONTINUITY_TONE = {
   [STATUS.MUST_INCREASE]: 'red',
   [STATUS.AUTHORIZED]: 'amber',
   [STATUS.EXACT_MATCH]: 'red',
+  [STATUS.IMPLAUSIBLE]: 'red',
+  // Not a STATUS — the badge key the hint swaps in for a backward reading at a review-not-block stage,
+  // where the entry is accepted and routed to a supervisor. Amber (something to settle), never red (a wall).
+  exact_required_review: 'amber',
 };

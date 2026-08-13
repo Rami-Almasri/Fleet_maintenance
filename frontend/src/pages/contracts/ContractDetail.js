@@ -7,6 +7,7 @@ import Button from '../../components/ui/Button';
 import { Card, Spinner, ErrorState } from '../../components/ui/Misc';
 import { CommandPanel } from '../../components/ops';
 import ExchangeChainPanel from '../../components/ExchangeChainPanel';
+import VisitJourneyPanel from '../../components/contracts/VisitJourneyPanel';
 import WorkshopEvents from '../../components/WorkshopEvents';
 import ContractInvoices from '../../components/ContractInvoices';
 import ContractPayments from '../../components/ContractPayments';
@@ -422,6 +423,11 @@ export default function ContractDetail() {
 
         {/* Exchange chain — suggested swaps to link, or the linked Parent → Child chain (rentals only) */}
         {c.contract_type === 'C' && <ExchangeChainPanel contract={c} />}
+
+        {/* THE VISIT JOURNEY — every fault found on this visit (inspector's and the garage's), which
+            garage fixed each one and how long it took, plus the stage spine, odometer chain and event
+            trail. Maintenance contracts only; the panel hides itself when there is no visit behind it. */}
+        {isMaintenance && <VisitJourneyPanel contractId={id} />}
 
         {(c.contract_type === 'U' || (c.items && c.items.length > 0)) && (
           <Card className="p-6">

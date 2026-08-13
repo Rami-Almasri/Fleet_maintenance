@@ -15,6 +15,7 @@
 
 import { useState } from 'react';
 import { palette, LINE, useChartWidth, useMounted, niceScale, smoothPath } from './chartUtils';
+import { useI18n } from '../../i18n/I18nContext';
 
 // Resolve a series colour: raw hex passes through, otherwise a palette key → its `from` stop.
 const resolve = (c) => (typeof c === 'string' && c.startsWith('#') ? c : palette(c).from);
@@ -29,6 +30,7 @@ export default function MultiLineChart({
   className = '',
   primary = 0, // which series the hover pill reads from
 }) {
+  const { t } = useI18n();
   const [ref, width] = useChartWidth();
   const mounted = useMounted();
   const [active, setActive] = useState(null);
@@ -69,7 +71,7 @@ export default function MultiLineChart({
 
   return (
     <div ref={ref} className={className}>
-      <svg width={width} height={height} role="img" aria-label="Trend analysis">
+      <svg width={width} height={height} role="img" aria-label={t('Trend analysis')}>
         {/* dashed gridlines + y labels — evenly-spaced "nice" values */}
         {ticks.map((val, t) => {
           const gy = cy(val);

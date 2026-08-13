@@ -8,6 +8,7 @@ import { Card, PageHeader, Spinner, EmptyState, SearchInput } from '../component
 import { Select } from '../components/ui/Field';
 import DamageAnalytics from '../components/analytics/DamageAnalytics';
 import { aed2, fmtDate, num } from '../lib/format';
+import { useI18n } from '../i18n/I18nContext';
 
 const FAULTS = [
   { value: '', label: 'All faults' },
@@ -35,9 +36,10 @@ function ReasonBadge({ reason, level }) {
 
 // Red = renter fault · Green = third party · Grey = the record doesn't say.
 function FaultBadge({ fault, liable }) {
-  if (fault === 'renter') return <Badge tone="red" dot>Renter at fault</Badge>;
-  if (fault === 'third_party') return <Badge tone="green" dot>Third party</Badge>;
-  return <Badge tone="gray" dot>{liable || 'Not specified'}</Badge>;
+  const { t } = useI18n();
+  if (fault === 'renter') return <Badge tone="red" dot>{t('Renter at fault')}</Badge>;
+  if (fault === 'third_party') return <Badge tone="green" dot>{t('Third party')}</Badge>;
+  return <Badge tone="gray" dot>{liable || t('Not specified')}</Badge>;
 }
 
 function Stat({ label, value, tone = 'slate' }) {
@@ -54,6 +56,7 @@ function Stat({ label, value, tone = 'slate' }) {
 }
 
 function IncidentRow({ inc, open, onToggle }) {
+  const { t } = useI18n();
   const details = [inc.service_sup, inc.service_main].filter(Boolean);
   return (
     <Fragment>
@@ -70,7 +73,7 @@ function IncidentRow({ inc, open, onToggle }) {
           <div className="mt-0.5 flex flex-wrap gap-1">
             {inc.severity && <Badge tone={inc.severity === 'High' ? 'red' : inc.severity === 'Medium' ? 'amber' : 'gray'}>{inc.severity}</Badge>}
             {inc.damage_location && <Badge tone="slate">{inc.damage_location}</Badge>}
-            {inc.insurance && <Badge tone={inc.insurance === 'with' ? 'green' : 'red'}>{inc.insurance === 'with' ? 'Insured' : 'Uninsured'}</Badge>}
+            {inc.insurance && <Badge tone={inc.insurance === 'with' ? 'green' : 'red'}>{inc.insurance === 'with' ? t('Insured') : t('Uninsured')}</Badge>}
           </div>
         </td>
         <td className="px-4 py-3">
@@ -89,19 +92,19 @@ function IncidentRow({ inc, open, onToggle }) {
           <td colSpan={8} className="bg-slate-50/50 px-4 py-4">
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5 text-sm">
-                <Field label="Category" value={inc.reason ? `${inc.reason}${inc.level ? ` (${inc.level})` : ''}` : '— not categorized —'} />
-                <Field label="Recorded as" value={inc.type} />
-                <Field label="MAIN (key)" value={inc.service_main} />
-                <Field label="SUP (refine)" value={inc.service_sup} />
-                <Field label="Severity" value={inc.severity} />
-                <Field label="Location on car" value={inc.damage_location} />
-                <Field label="Driver (recorded)" value={inc.driver} />
-                <Field label="Liability (raw)" value={inc.liable_party} />
-                <Field label="Garage" value={inc.garage} />
+                <Field label={t('Category')} value={inc.reason ? `${inc.reason}${inc.level ? ` (${inc.level})` : ''}` : t('— not categorized —')} />
+                <Field label={t('Recorded as')} value={inc.type} />
+                <Field label={t('MAIN (key)')} value={inc.service_main} />
+                <Field label={t('SUP (refine)')} value={inc.service_sup} />
+                <Field label={t('Severity')} value={inc.severity} />
+                <Field label={t('Location on car')} value={inc.damage_location} />
+                <Field label={t('Driver (recorded)')} value={inc.driver} />
+                <Field label={t('Liability (raw)')} value={inc.liable_party} />
+                <Field label={t('Garage')} value={inc.garage} />
               </div>
               <div className="text-sm">
-                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Notes</p>
-                <p className="whitespace-pre-wrap rounded-lg border border-slate-200 bg-white p-3 text-slate-600">{inc.notes || '— No notes recorded —'}</p>
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">{t('Notes')}</p>
+                <p className="whitespace-pre-wrap rounded-lg border border-slate-200 bg-white p-3 text-slate-600">{inc.notes || t('— No notes recorded —')}</p>
               </div>
             </div>
           </td>
@@ -123,6 +126,7 @@ function Field({ label, value }) {
 const PAGE = 60;
 
 export default function DamageAccidents() {
+  const { t } = useI18n();
   const fetcher = useCallback(async () => {
     const { data } = await api.get('/Maintenance/incidents');
     return data.data;
@@ -163,8 +167,8 @@ export default function DamageAccidents() {
     <div className="py-8">
       <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
         <PageHeader
-          title="Damage & Accidents"
-          subtitle="Every accident and damage record from the maintenance log — shown exactly as recorded, colour-coded by who is at fault."
+          title={t('Damage & Accidents')}
+          subtitle={t('Every accident and damage record from the maintenance log — shown exactly as recorded, colour-coded by who is at fault.')}
         />
 
         {error && (
@@ -172,32 +176,32 @@ export default function DamageAccidents() {
         )}
 
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
-          <Stat label="Records" value={num(s.incidents)} />
-          <Stat label="Renter at fault" value={num(s.renter)} tone="red" />
-          <Stat label="Third party" value={num(s.third_party)} tone="green" />
-          <Stat label="Categorized" value={num(s.categorized)} />
-          <Stat label="Critical" value={num(s.by_level?.critical)} tone="red" />
+          <Stat label={t('Records')} value={num(s.incidents)} />
+          <Stat label={t('Renter at fault')} value={num(s.renter)} tone="red" />
+          <Stat label={t('Third party')} value={num(s.third_party)} tone="green" />
+          <Stat label={t('Categorized')} value={num(s.categorized)} />
+          <Stat label={t('Critical')} value={num(s.by_level?.critical)} tone="red" />
         </div>
 
         {/* Legend — the red/green key, stated plainly. */}
         <div className="rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-2.5 text-xs text-slate-600">
-          <span className="me-4 inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-red-500" /> <b>Red</b> — renter at fault</span>
-          <span className="me-4 inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-emerald-500" /> <b>Green</b> — third party (insured accident)</span>
-          <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-slate-400" /> <b>Grey</b> — the record doesn’t state fault</span>
+          <span className="me-4 inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-red-500" /> {t('Red — renter at fault')}</span>
+          <span className="me-4 inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-emerald-500" /> {t('Green — third party (insured accident)')}</span>
+          <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-slate-400" /> {t('Grey — the record doesn’t state fault')}</span>
         </div>
 
         {/* Filters */}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <SearchInput className="flex-1" value={query} onChange={setQuery} placeholder="Search plate, car, damage, notes…" />
+          <SearchInput className="flex-1" value={query} onChange={setQuery} placeholder={t('Search plate, car, damage, notes…')} />
           <Select className="sm:w-52" value={fault} onChange={(e) => setFault(e.target.value)}>
-            {FAULTS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
+            {FAULTS.map((f) => <option key={f.value} value={f.value}>{t(f.label)}</option>)}
           </Select>
           <Select className="sm:w-44" value={level} onChange={(e) => setLevel(e.target.value)}>
-            {LEVELS.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
+            {LEVELS.map((l) => <option key={l.value} value={l.value}>{t(l.label)}</option>)}
           </Select>
           <label className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-600 shadow-sm">
             <input type="checkbox" checked={accidentsOnly} onChange={(e) => setAccidentsOnly(e.target.checked)} className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
-            Accidents only
+            {t('Accidents only')}
           </label>
         </div>
 
@@ -205,20 +209,20 @@ export default function DamageAccidents() {
         {incidents.length > 0 && <DamageAnalytics incidents={incidents} />}
 
         {incidents.length === 0 ? (
-          <Card><EmptyState title="No records match" message="Try clearing the fault filter or search." /></Card>
+          <Card><EmptyState title={t('No records match')} message={t('Try clearing the fault filter or search.')} /></Card>
         ) : (
           <Card>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-slate-100 text-sm">
                 <thead className="bg-slate-50/90">
                   <tr className="text-start text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    <th className="px-4 py-3">Vehicle</th>
-                    <th className="px-4 py-3">Date</th>
-                    <th className="px-4 py-3">What happened</th>
-                    <th className="px-4 py-3">Category (سبب الصيانة)</th>
-                    <th className="px-4 py-3">Fault</th>
-                    <th className="px-4 py-3">Garage</th>
-                    <th className="px-4 py-3 text-end">Cost</th>
+                    <th className="px-4 py-3">{t('Vehicle')}</th>
+                    <th className="px-4 py-3">{t('Date')}</th>
+                    <th className="px-4 py-3">{t('What happened')}</th>
+                    <th className="px-4 py-3">{t('Category (سبب الصيانة)')}</th>
+                    <th className="px-4 py-3">{t('Fault')}</th>
+                    <th className="px-4 py-3">{t('Garage')}</th>
+                    <th className="px-4 py-3 text-end">{t('Cost')}</th>
                     <th className="px-4 py-3 w-8"></th>
                   </tr>
                 </thead>
@@ -230,9 +234,13 @@ export default function DamageAccidents() {
               </table>
             </div>
             <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3 text-xs text-slate-400">
-              <span>Showing {num(shown.length)} of {num(incidents.length)}{incidents.length !== (data?.incidents?.length || 0) ? ` (filtered from ${num(data?.incidents?.length || 0)})` : ''}</span>
+              <span>
+                {incidents.length !== (data?.incidents?.length || 0)
+                  ? t('Showing {shown} of {total} (filtered from {all})', { shown: num(shown.length), total: num(incidents.length), all: num(data?.incidents?.length || 0) })
+                  : t('Showing {shown} of {total}', { shown: num(shown.length), total: num(incidents.length) })}
+              </span>
               {shown.length < incidents.length && (
-                <Button variant="secondary" size="sm" onClick={() => setLimit((l) => l + PAGE)}>Show more</Button>
+                <Button variant="secondary" size="sm" onClick={() => setLimit((l) => l + PAGE)}>{t('Show more')}</Button>
               )}
             </div>
           </Card>

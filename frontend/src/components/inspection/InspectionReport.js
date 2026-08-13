@@ -9,6 +9,7 @@ import {
   FUEL,
 } from '../../lib/inspections';
 import { SHOW_FINANCIALS } from '../../config/features';
+import { useI18n } from '../../i18n/I18nContext';
 
 // Money helper — fuel charge only renders when financials are enabled.
 const money = (n) => `${FUEL.currency} ${Number(n || 0).toFixed(2)}`;
@@ -43,6 +44,7 @@ function toDataUrl(url) {
 }
 
 export default function InspectionReport({ records, labelFor, phaseLabel, session, inspectorName, fuelAudit = null }) {
+  const { t, lang } = useI18n();
   const [exporting, setExporting] = useState(false);
 
   const summary = useMemo(() => {
@@ -91,6 +93,8 @@ export default function InspectionReport({ records, labelFor, phaseLabel, sessio
         pct,
         total: TOTAL_ZONES,
         fuelAudit,
+        t,
+        lang,
       });
       const win = window.open('', '_blank');
       if (!win) return; // popup blocked — silently no-op, on-screen report still stands
@@ -105,9 +109,9 @@ export default function InspectionReport({ records, labelFor, phaseLabel, sessio
     <div>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-sm font-semibold text-slate-900">Condition Report</h2>
+          <h2 className="text-sm font-semibold text-slate-900">{t('Condition Report')}</h2>
           <p className="text-xs text-slate-500">
-            Live summary of this {phaseLabel.toLowerCase()} inspection — export a standalone, photo-embedded report.
+            {t('Live summary of this {phase} inspection — export a standalone, photo-embedded report.', { phase: phaseLabel.toLowerCase() })}
           </p>
         </div>
         <button
@@ -118,13 +122,13 @@ export default function InspectionReport({ records, labelFor, phaseLabel, sessio
           <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
             <path d="M6 9V4h12v5M6 18H4a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-2M6 14h12v6H6z" />
           </svg>
-          {exporting ? 'Building…' : 'Export / Save as PDF'}
+          {exporting ? t('Building…') : t('Export / Save as PDF')}
         </button>
       </div>
 
       {!hasData ? (
         <div className="flex h-28 items-center justify-center rounded-xl border border-dashed border-slate-200 text-sm text-slate-400">
-          Capture photos or flag damage above — the report builds itself as you go
+          {t('Capture photos or flag damage above — the report builds itself as you go')}
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-[auto,1fr]">
@@ -136,18 +140,18 @@ export default function InspectionReport({ records, labelFor, phaseLabel, sessio
                 {summary.capturedCount}
                 <span className="text-base font-medium text-slate-400">/{TOTAL_ZONES}</span>
               </p>
-              <p className="text-xs text-slate-500">zones captured</p>
+              <p className="text-xs text-slate-500">{t('zones captured')}</p>
             </div>
           </div>
 
           {/* tallies + damage breakdown */}
           <div className="space-y-4">
             <div className="flex flex-wrap gap-2">
-              <Stat tone="bg-emerald-50 text-emerald-700 ring-emerald-200" value={summary.photoCount} label="photos" />
+              <Stat tone="bg-emerald-50 text-emerald-700 ring-emerald-200" value={summary.photoCount} label={t('photos')} />
               <Stat
                 tone={summary.damages.length ? 'bg-rose-50 text-rose-700 ring-rose-200' : 'bg-slate-50 text-slate-500 ring-slate-200'}
                 value={summary.damages.length}
-                label="damage flags"
+                label={t('damage flags')}
               />
               {['high', 'medium', 'low'].map((s) =>
                 sevTally[s] ? (
@@ -166,7 +170,7 @@ export default function InspectionReport({ records, labelFor, phaseLabel, sessio
                 <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M20 6 9 17l-5-5" />
                 </svg>
-                No damage flagged — vehicle reads clean for this phase.
+                {t('No damage flagged — vehicle reads clean for this phase.')}
               </div>
             ) : (
               <ul className="divide-y divide-slate-100 overflow-hidden rounded-xl ring-1 ring-slate-200">
@@ -213,6 +217,7 @@ export default function InspectionReport({ records, labelFor, phaseLabel, sessio
 // On-screen fuel audit row: delivery → return, status, and (when financials are
 // enabled) the computed Fuel Charge. The shortage %/litres always show.
 function FuelBlock({ audit }) {
+  const { t } = useI18n();
   const meta = fuelStatusMeta(audit.status);
   const short = audit.status === 'shortage';
   return (
@@ -222,7 +227,7 @@ function FuelBlock({ audit }) {
           <svg className="h-4 w-4 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
             <path d="M4 20V6a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v14M3 20h12M14 9h2.5a2 2 0 0 1 2 2v5a1.5 1.5 0 0 0 3 0V8l-3-3M7 9h4" />
           </svg>
-          Fuel audit
+          {t('Fuel audit')}
         </div>
         <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${meta.ring}`}>
           <span className={`h-1.5 w-1.5 rounded-full ${meta.dot}`} />
@@ -231,19 +236,20 @@ function FuelBlock({ audit }) {
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-600">
         <span>
-          Delivery <b className="text-slate-800">{Math.round(audit.delivered)}%</b> ({fuelFraction(audit.delivered)})
+          {t('Delivery {pct}% ({fraction})', { pct: Math.round(audit.delivered), fraction: fuelFraction(audit.delivered) })}
         </span>
-        <span className="text-slate-400">→</span>
+        <span className="inline-block text-slate-400 rtl:-scale-x-100">→</span>
         <span>
-          Return <b className="text-slate-800">{Math.round(audit.returned)}%</b> ({fuelFraction(audit.returned)})
+          {t('Return {pct}% ({fraction})', { pct: Math.round(audit.returned), fraction: fuelFraction(audit.returned) })}
         </span>
         {short ? (
           <span className="font-semibold text-rose-600">
-            Shortage {audit.shortagePct}% · {audit.litresShort} L
-            {SHOW_FINANCIALS && <> · {money(audit.charge)}</>}
+            {SHOW_FINANCIALS
+              ? t('Shortage {pct}% · {litres} L · {charge}', { pct: audit.shortagePct, litres: audit.litresShort, charge: money(audit.charge) })
+              : t('Shortage {pct}% · {litres} L', { pct: audit.shortagePct, litres: audit.litresShort })}
           </span>
         ) : (
-          <span className="font-medium text-emerald-700">{audit.surplus ? 'Returned fuller — no charge' : 'No fuel shortage'}</span>
+          <span className="font-medium text-emerald-700">{audit.surplus ? t('Returned fuller — no charge') : t('No fuel shortage')}</span>
         )}
       </div>
     </div>
@@ -286,17 +292,19 @@ function Stat({ tone, value, label }) {
 
 // Builds a fully standalone HTML document (inline CSS, embedded photos) the user
 // can print or Save-as-PDF straight from the new tab. Deliberately framework-free.
-function buildReportHtml({ damageRows, summary, labelFor, phaseLabel, session, inspectorName, pct, total, fuelAudit }) {
+function buildReportHtml({ damageRows, summary, labelFor, phaseLabel, session, inspectorName, pct, total, fuelAudit, t, lang }) {
   const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const sevColor = { high: '#e11d48', medium: '#f97316', low: '#f59e0b' };
   const statusColor = { existing: '#64748b', new: '#f59e0b', charged: '#e11d48' };
+  const rtl = lang === 'ar';
+  const arrow = rtl ? '←' : '→';
 
   const damageHtml = damageRows.length
     ? damageRows
         .map(
           (d) => `
         <div class="dmg">
-          ${d.img ? `<img src="${d.img}" alt="${esc(labelFor(d.zone))}" />` : '<div class="noimg">no photo</div>'}
+          ${d.img ? `<img src="${d.img}" alt="${esc(labelFor(d.zone))}" />` : `<div class="noimg">${esc(t('no photo'))}</div>`}
           <div class="dmg-body">
             <div class="dmg-head">
               <strong>${esc(labelFor(d.zone))}</strong>
@@ -311,46 +319,64 @@ function buildReportHtml({ damageRows, summary, labelFor, phaseLabel, session, i
         </div>`
         )
         .join('')
-    : '<div class="clean">✓ No damage flagged — vehicle reads clean for this phase.</div>';
+    : `<div class="clean">${esc(t('✓ No damage flagged — vehicle reads clean for this phase.'))}</div>`;
 
   // Fuel audit section — only rendered once both readings exist.
   const newCount = summary.statusTally?.new || 0;
   const fuelShort = fuelAudit && fuelAudit.status === 'shortage';
   const alerts = [];
-  if (newCount) alerts.push(`${newCount} new damage${newCount > 1 ? 's' : ''} (needs assessment)`);
+  if (newCount) {
+    alerts.push(
+      newCount === 1
+        ? t('1 new damage (needs assessment)')
+        : t('{n} new damages (needs assessment)', { n: newCount })
+    );
+  }
   if (fuelShort) {
     alerts.push(
-      `Fuel shortage ${fuelAudit.shortagePct}% (${fuelAudit.litresShort} L${SHOW_FINANCIALS ? ` · ${money(fuelAudit.charge)}` : ''})`
+      SHOW_FINANCIALS
+        ? t('Fuel shortage {pct}% ({litres} L · {charge})', {
+            pct: fuelAudit.shortagePct,
+            litres: fuelAudit.litresShort,
+            charge: money(fuelAudit.charge),
+          })
+        : t('Fuel shortage {pct}% ({litres} L)', { pct: fuelAudit.shortagePct, litres: fuelAudit.litresShort })
     );
   }
   const alertHtml = alerts.length
-    ? `<div class="alert"><strong>⚠ Charges to settle at check-in</strong><ul>${alerts
+    ? `<div class="alert"><strong>${esc(t('⚠ Charges to settle at check-in'))}</strong><ul>${alerts
         .map((a) => `<li>${esc(a)}</li>`)
         .join('')}</ul></div>`
     : '';
 
   const fuelHtml = fuelAudit
     ? `<div class="sec">
-        <h2>Fuel audit</h2>
+        <h2>${esc(t('Fuel audit'))}</h2>
         <div class="fuel ${fuelShort ? 'short' : 'ok'}">
           <div class="fuel-row">
-            <span>Delivery <strong>${Math.round(fuelAudit.delivered)}%</strong></span>
-            <span class="arrow">→</span>
-            <span>Return <strong>${Math.round(fuelAudit.returned)}%</strong></span>
+            <span>${esc(t('Delivery {pct}%', { pct: Math.round(fuelAudit.delivered) }))}</span>
+            <span class="arrow">${arrow}</span>
+            <span>${esc(t('Return {pct}%', { pct: Math.round(fuelAudit.returned) }))}</span>
           </div>
-          <div class="fuel-verdict">${
+          <div class="fuel-verdict">${esc(
             fuelShort
-              ? `Shortage ${fuelAudit.shortagePct}% · ${fuelAudit.litresShort} L${SHOW_FINANCIALS ? ` · <strong>${money(fuelAudit.charge)}</strong>` : ''}`
+              ? SHOW_FINANCIALS
+                ? t('Shortage {pct}% · {litres} L · {charge}', {
+                    pct: fuelAudit.shortagePct,
+                    litres: fuelAudit.litresShort,
+                    charge: money(fuelAudit.charge),
+                  })
+                : t('Shortage {pct}% · {litres} L', { pct: fuelAudit.shortagePct, litres: fuelAudit.litresShort })
               : fuelAudit.surplus
-              ? 'Returned fuller — no charge'
-              : 'Balanced — no shortage'
-          }</div>
+              ? t('Returned fuller — no charge')
+              : t('Balanced — no shortage')
+          )}</div>
         </div>
       </div>`
     : '';
 
-  return `<!doctype html><html><head><meta charset="utf-8" />
-  <title>Inspection Report — ${esc(session.contract_no)}</title>
+  return `<!doctype html><html lang="${rtl ? 'ar' : 'en'}" dir="${rtl ? 'rtl' : 'ltr'}"><head><meta charset="utf-8" />
+  <title>${esc(t('Inspection Report — {contract}', { contract: session.contract_no }))}</title>
   <style>
     *{box-sizing:border-box} body{font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;color:#0f172a;margin:0;padding:32px;background:#f8fafc}
     .sheet{max-width:760px;margin:0 auto;background:#fff;border:1px solid #e2e8f0;border-radius:16px;overflow:hidden}
@@ -360,7 +386,7 @@ function buildReportHtml({ damageRows, summary, labelFor, phaseLabel, session, i
     .grid{padding:20px 28px;display:flex;gap:28px;border-bottom:1px solid #f1f5f9}
     .meta div{margin-bottom:8px} .meta .k{color:#94a3b8;font-size:11px;text-transform:uppercase;letter-spacing:.04em}
     .meta .v{font-weight:600}
-    .stats{margin-left:auto;text-align:right} .stats .big{font-size:32px;font-weight:800} .stats .lbl{color:#64748b;font-size:12px}
+    .stats{margin-inline-start:auto;text-align:end} .stats .big{font-size:32px;font-weight:800} .stats .lbl{color:#64748b;font-size:12px}
     .sec{padding:22px 28px} .sec h2{font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:#64748b;margin:0 0 14px}
     .dmg{display:flex;gap:14px;padding:12px 0;border-bottom:1px solid #f1f5f9} .dmg:last-child{border-bottom:0}
     .dmg img{width:84px;height:84px;object-fit:cover;border-radius:10px;border:1px solid #e2e8f0}
@@ -370,7 +396,7 @@ function buildReportHtml({ damageRows, summary, labelFor, phaseLabel, session, i
     .clean{background:#ecfdf5;color:#047857;border-radius:10px;padding:14px;font-weight:600}
     .alert{margin:0 28px 4px;background:#fff1f2;border:1px solid #fecdd3;border-radius:12px;padding:14px 18px;color:#9f1239}
     .alert strong{display:block;margin-bottom:6px;font-size:13px;text-transform:uppercase;letter-spacing:.04em}
-    .alert ul{margin:0;padding-left:18px} .alert li{margin:2px 0;font-weight:600}
+    .alert ul{margin:0;padding-inline-start:18px} .alert li{margin:2px 0;font-weight:600}
     .fuel{border:1px solid #e2e8f0;border-radius:12px;padding:14px 16px} .fuel.short{background:#fff1f2;border-color:#fecdd3}
     .fuel.ok{background:#ecfdf5;border-color:#a7f3d0}
     .fuel-row{display:flex;align-items:center;gap:14px;font-size:15px} .fuel-row .arrow{color:#94a3b8}
@@ -381,29 +407,41 @@ function buildReportHtml({ damageRows, summary, labelFor, phaseLabel, session, i
   <body onload="window.focus()">
     <div class="sheet">
       <div class="hd">
-        <div><h1>Vehicle Condition Report</h1><div class="sub">${esc(phaseLabel)} inspection</div></div>
+        <div><h1>${esc(t('Vehicle Condition Report'))}</h1><div class="sub">${esc(t('{phase} inspection', { phase: phaseLabel }))}</div></div>
         <span class="phase">${esc(phaseLabel)}</span>
       </div>
       <div class="grid">
         <div class="meta">
-          <div><div class="k">Contract</div><div class="v">${esc(session.contract_no)}</div></div>
-          <div><div class="k">Vehicle</div><div class="v">${esc(session.vehicle)}</div></div>
-          <div><div class="k">Inspector</div><div class="v">${esc(inspectorName)}</div></div>
+          <div><div class="k">${esc(t('Contract'))}</div><div class="v">${esc(session.contract_no)}</div></div>
+          <div><div class="k">${esc(t('Vehicle'))}</div><div class="v">${esc(session.vehicle)}</div></div>
+          <div><div class="k">${esc(t('Inspector'))}</div><div class="v">${esc(inspectorName)}</div></div>
         </div>
         <div class="stats">
-          <div class="big">${pct}%</div><div class="lbl">${summary.capturedCount}/${total} zones · ${summary.photoCount} photos</div>
+          <div class="big">${pct}%</div><div class="lbl">${esc(
+            t('{captured}/{total} zones · {photos} photos', {
+              captured: summary.capturedCount,
+              total,
+              photos: summary.photoCount,
+            })
+          )}</div>
           <div class="lbl" style="margin-top:6px;color:${summary.damages.length ? '#e11d48' : '#047857'}">
-            ${summary.damages.length ? summary.damages.length + ' damage flag(s)' : 'clean'}
+            ${esc(
+              summary.damages.length === 0
+                ? t('clean')
+                : summary.damages.length === 1
+                ? t('1 damage flag')
+                : t('{n} damage flags', { n: summary.damages.length })
+            )}
           </div>
         </div>
       </div>
       ${alertHtml}
       <div class="sec">
-        <h2>Damage findings</h2>
+        <h2>${esc(t('Damage findings'))}</h2>
         ${damageHtml}
       </div>
       ${fuelHtml}
-      <div class="ft">Generated by Faster · prototype condition report · embedded photos are device-compressed</div>
+      <div class="ft">${esc(t('Generated by Faster · prototype condition report · embedded photos are device-compressed'))}</div>
     </div>
   </body></html>`;
 }

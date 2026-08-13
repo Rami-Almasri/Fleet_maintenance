@@ -18,6 +18,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import api from '../../api/client';
+import { useI18n } from '../../i18n/I18nContext';
 import Icon from '../ui/Icon';
 import { SHOW_FINANCIALS } from '../../config/features';
 
@@ -26,10 +27,12 @@ const payload = (r) => (r?.data && 'data' in r.data ? r.data.data : r?.data);
 const money = (n) =>
   `AED ${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-const shortDate = (iso) => {
+// Gregorian calendar + Latin digits under Arabic — a Hijri stamp would misread against the ledger.
+const shortDate = (iso, lang) => {
   if (!iso) return null;
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? null : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString(lang === 'ar' ? 'ar-AE-u-ca-gregory-nu-latn' : undefined, { day: 'numeric', month: 'short' });
 };
 
 // How each state reads at a glance. `skipped` is deliberately muted rather than red — it is a normal
@@ -42,8 +45,9 @@ const STATE_STYLE = {
 };
 
 function Stage({ label, stage, isLast }) {
+  const { lang } = useI18n();
   const style = STATE_STYLE[stage.state] || STATE_STYLE.pending;
-  const when = shortDate(stage.at);
+  const when = shortDate(stage.at, lang);
 
   return (
     <li className="relative flex gap-3 pb-3 last:pb-0">
@@ -79,14 +83,15 @@ function Stage({ label, stage, isLast }) {
 }
 
 function Chain({ chain, stages }) {
+  const { t } = useI18n();
   return (
     <div className={`rounded-xl border p-3 ${chain.blocking ? 'border-amber-300 bg-amber-50/40' : 'border-slate-200 bg-white'}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold text-slate-800">{chain.part_name}</p>
           <p className="text-[11px] text-slate-500">
-            {chain.supplier || 'no supplier recorded'}
-            {chain.source ? ` · ${chain.source === 'supplier' ? 'from a supplier' : 'from the garage'}` : ''}
+            {chain.supplier || t('no supplier recorded')}
+            {chain.source ? ` · ${chain.source === 'supplier' ? t('from a supplier') : t('from the garage')}` : ''}
           </p>
         </div>
         {SHOW_FINANCIALS && chain.gross > 0 && (
@@ -137,6 +142,7 @@ function SummaryTile({ label, value, tone = 'slate' }) {
 }
 
 export default function ProcurementLifecycle({ ticketId, reloadKey }) {
+  const { t } = useI18n();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -162,12 +168,12 @@ export default function ProcurementLifecycle({ ticketId, reloadKey }) {
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <SummaryTile label="Ordered" value={`${s.ordered} / ${s.parts_total}`} />
-        <SummaryTile label="Received" value={s.received} />
-        <SummaryTile label="Installed" value={s.installed} />
-        {s.returned > 0 && <SummaryTile label="Returned" value={s.returned} tone="violet" />}
+        <SummaryTile label={t('Ordered')} value={`${s.ordered} / ${s.parts_total}`} />
+        <SummaryTile label={t('Received')} value={s.received} />
+        <SummaryTile label={t('Installed')} value={s.installed} />
+        {s.returned > 0 && <SummaryTile label={t('Returned')} value={s.returned} tone="violet" />}
         {s.returned === 0 && SHOW_FINANCIALS && (
-          <SummaryTile label="Owed to suppliers" value={money(s.outstanding_to_suppliers)} tone="sky" />
+          <SummaryTile label={t('Owed to suppliers')} value={money(s.outstanding_to_suppliers)} tone="sky" />
         )}
       </div>
 
@@ -175,11 +181,13 @@ export default function ProcurementLifecycle({ ticketId, reloadKey }) {
       {s.awaiting_invoice > 0 && (
         <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2">
           <p className="text-[12px] font-medium text-amber-800">
-            {s.awaiting_invoice} part{s.awaiting_invoice === 1 ? '' : 's'} bought with no supplier invoice
-            {SHOW_FINANCIALS ? ` — ${money(s.awaiting_invoice_value)} unaccounted` : ''}.
+            {s.awaiting_invoice === 1
+              ? t('1 part bought with no supplier invoice')
+              : t('{n} parts bought with no supplier invoice', { n: s.awaiting_invoice })}
+            {SHOW_FINANCIALS ? ` — ${t('{amount} unaccounted', { amount: money(s.awaiting_invoice_value) })}` : ''}.
           </p>
           <p className="text-[11px] text-amber-700">
-            Record the invoice so this spend can be audited: {s.blocked.join(', ')}.
+            {t('Record the invoice so this spend can be audited: {list}.', { list: s.blocked.join(', ') })}
           </p>
         </div>
       )}
@@ -192,7 +200,7 @@ export default function ProcurementLifecycle({ ticketId, reloadKey }) {
 
       <p className="flex items-center gap-1.5 text-[11px] text-slate-400">
         <Icon.Info className="h-3 w-3" />
-        A crossed-out stage did not apply — most buys raise no purchase order, and most parts are never returned.
+        {t('A crossed-out stage did not apply — most buys raise no purchase order, and most parts are never returned.')}
       </p>
     </div>
   );

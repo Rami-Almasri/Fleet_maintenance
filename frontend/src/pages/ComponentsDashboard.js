@@ -10,6 +10,7 @@ import Badge from '../components/ui/Badge';
 import Icon from '../components/ui/Icon';
 import Segmented from '../components/ui/Segmented';
 import { aed2, fmtDate, num } from '../lib/format';
+import { useI18n } from '../i18n/I18nContext';
 
 /**
  * Fleet Component Intelligence — the asset-layer counterpart to the per-vehicle Installed Components
@@ -22,25 +23,28 @@ import { aed2, fmtDate, num } from '../lib/format';
  * Read-only throughout; the maintenance workflow remains the only writer.
  */
 
-const CATEGORY_LABEL = {
-  engine: 'Engine', brakes: 'Brakes', tyres: 'Tyres & Wheels', suspension: 'Suspension & Steering',
-  transmission: 'Transmission', electrical: 'Electrical', ac: 'Climate / A-C', fluids: 'Fluids',
-  bodywork: 'Bodywork', interior: 'Interior', lights: 'Lights', routine: 'Routine',
-};
+// Vocabulary tables. The words are resolved through the translator at call time, so `t` is threaded
+// in rather than captured — these are plain modules, not components.
+const categoryLabel = (t, v) => ({
+  engine: t('Engine'), brakes: t('Brakes'), tyres: t('Tyres & Wheels'), suspension: t('Suspension & Steering'),
+  transmission: t('Transmission'), electrical: t('Electrical'), ac: t('Climate / A-C'), fluids: t('Fluids'),
+  bodywork: t('Bodywork'), interior: t('Interior'), lights: t('Lights'), routine: t('Routine'),
+}[v]);
 
-const REASON_LABEL = {
-  failed: 'Failed', worn_out: 'Worn out', accident: 'Accident', upgrade: 'Upgraded',
-  recall: 'Recall', transfer: 'Transferred', vehicle_sold: 'Vehicle sold', unknown_legacy: 'Unknown (legacy)',
-};
+const reasonLabel = (t, v) => ({
+  failed: t('Failed'), worn_out: t('Worn out'), accident: t('Accident'), upgrade: t('Upgraded'),
+  recall: t('Recall'), transfer: t('Transferred'), vehicle_sold: t('Vehicle sold'),
+  unknown_legacy: t('Unknown (legacy)'),
+}[v]);
 
 const km = (v) => (v === null || v === undefined ? '—' : `${num(v)} km`);
 
-function humanAge(days) {
+function humanAge(t, days) {
   if (days === null || days === undefined) return '—';
-  if (days < 45) return `${days} d`;
+  if (days < 45) return t('{n} d', { n: days });
   const months = Math.round(days / 30.44);
-  if (months < 24) return `${months} mo`;
-  return `${Math.floor(months / 12)} y ${months % 12} mo`;
+  if (months < 24) return t('{n} mo', { n: months });
+  return t('{y} y {m} mo', { y: Math.floor(months / 12), m: months % 12 });
 }
 
 /** Plate cell → straight into that car's Installed Components tab, the row's natural next step. */
@@ -54,17 +58,19 @@ function PlateLink({ row }) {
 }
 
 function PartCell({ row }) {
+  const { t } = useI18n();
   return (
     <div className="min-w-0">
       <div className="font-semibold text-slate-900">{row.type || row.part_name}</div>
       <div className="truncate text-xs text-slate-400">
-        {[row.brand, row.part_number].filter(Boolean).join(' · ') || CATEGORY_LABEL[row.category] || row.category}
+        {[row.brand, row.part_number].filter(Boolean).join(' · ') || categoryLabel(t, row.category) || row.category}
       </div>
     </div>
   );
 }
 
 export default function ComponentsDashboard() {
+  const { t } = useI18n();
   const [board, setBoard] = useState('warranty');
 
   const fetcher = useCallback(async () => (await api.get('/components/dashboard', { params: { limit: 100 } })).data.data, []);
@@ -76,13 +82,13 @@ export default function ComponentsDashboard() {
   const recent = data?.recently_replaced || {};
   const frequent = data?.frequently_replaced || {};
 
-  if (error) return <ErrorState message="Could not load the component dashboard." onRetry={reload} />;
+  if (error) return <ErrorState message={t('Could not load the component dashboard.')} onRetry={reload} />;
 
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Component Intelligence"
-        subtitle="Every part installed across the fleet — warranty exposure, service life, replacement churn and asset value. Derived entirely from the maintenance workflow."
+        title={t('Component Intelligence')}
+        subtitle={t('Every part installed across the fleet — warranty exposure, service life, replacement churn and asset value. Derived entirely from the maintenance workflow.')}
       />
 
       {loading && !data ? (
@@ -90,69 +96,73 @@ export default function ComponentsDashboard() {
       ) : (
         <MetricGrid cols={6}>
           <MetricCard
-            label="Installed components"
+            label={t('Installed components')}
             value={num(totals.installed_components ?? 0)}
             icon={<Icon.Wrench className="h-5 w-5" />}
-            hint={`Across ${num(totals.vehicles_covered ?? 0)} vehicles`}
+            hint={t('Across {n} vehicles', { n: num(totals.vehicles_covered ?? 0) })}
           />
           {/* Not "everything currently fitted" — everything whose cost we know. Parts installed
               through repair capture carry no purchase and no price, so the hint states the
               denominator rather than letting the headline imply a complete total. */}
           <MetricCard
-            label="Total installed value"
+            label={t('Total installed value')}
             value={aed2(totals.total_installed_value ?? 0)}
             icon={<Icon.Cash className="h-5 w-5" />}
             tone="indigo"
             hint={
               totals.uncosted_components
-                ? `Purchase cost of ${num(totals.costed_components ?? 0)} of ${num(totals.installed_components ?? 0)} fitted parts — ${num(totals.uncosted_components)} were reported without one`
-                : 'Purchase cost of everything currently fitted'
+                ? t('Purchase cost of {costed} of {total} fitted parts — {uncosted} were reported without one', {
+                  costed: num(totals.costed_components ?? 0),
+                  total: num(totals.installed_components ?? 0),
+                  uncosted: num(totals.uncosted_components),
+                })
+                : t('Purchase cost of everything currently fitted')
             }
           />
           <MetricCard
-            label="Average age"
-            value={humanAge(totals.average_age_days)}
+            label={t('Average age')}
+            value={humanAge(t, totals.average_age_days)}
             icon={<Icon.Clock className="h-5 w-5" />}
-            hint="Mean age of the fleet's fitted parts"
+            hint={t("Mean age of the fleet's fitted parts")}
           />
           <MetricCard
-            label="Warranty expiring"
+            label={t('Warranty expiring')}
             value={num(expiring.count ?? 0)}
             tone={expiring.count > 0 ? 'amber' : 'slate'}
             icon={<Icon.Shield className="h-5 w-5" />}
-            hint={`Within the next ${expiring.window_days ?? 60} days`}
+            hint={t('Within the next {n} days', { n: expiring.window_days ?? 60 })}
             onClick={() => setBoard('warranty')}
           />
           <MetricCard
-            label="Past expected life"
+            label={t('Past expected life')}
             value={num(pastLife.count ?? 0)}
             tone={pastLife.count > 0 ? 'red' : 'slate'}
             icon={<Icon.Alert className="h-5 w-5" />}
-            hint="Beyond the catalog's expected km or months"
+            hint={t("Beyond the catalog's expected km or months")}
             onClick={() => setBoard('life')}
           />
           <MetricCard
-            label="Recently replaced"
+            label={t('Recently replaced')}
             value={num(recent.count ?? 0)}
             icon={<Icon.Refresh className="h-5 w-5" />}
-            hint={`In the last ${recent.window_days ?? 90} days`}
+            hint={t('In the last {n} days', { n: recent.window_days ?? 90 })}
             onClick={() => setBoard('recent')}
           />
         </MetricGrid>
       )}
 
       <SectionCard
-        title="Component boards"
-        subtitle="Each board is the full row set behind the card above it — open any number and audit it."
+        title={t('Component boards')}
+        subtitle={t('Each board is the full row set behind the card above it — open any number and audit it.')}
         actions={
           <Segmented
             value={board}
             onChange={setBoard}
             options={[
-              { key: 'warranty', label: `Warranty (${num(expiring.count ?? 0)})` },
-              { key: 'life', label: `Past life (${num(pastLife.count ?? 0)})` },
-              { key: 'recent', label: `Replaced (${num(recent.count ?? 0)})` },
-              { key: 'frequent', label: 'Churn' },
+              { key: 'warranty', label: t('Warranty ({n})', { n: num(expiring.count ?? 0) }) },
+              { key: 'life', label: t('Past life ({n})', { n: num(pastLife.count ?? 0) }) },
+              { key: 'recent', label: t('Replaced ({n})', { n: num(recent.count ?? 0) }) },
+              { key: 'frequent', label: t('Churn') },
             ]}
           />
         }
@@ -162,26 +172,28 @@ export default function ComponentsDashboard() {
             loading={loading && !data}
             rows={expiring.rows || []}
             rowKey={(r) => r.id}
-            empty="No component warranty expires in the next 60 days."
+            empty={t('No component warranty expires in the next 60 days.')}
             stickyHeader
             columns={[
-              { key: 'plate', header: 'Vehicle', render: (r) => <PlateLink row={r} /> },
-              { key: 'part', header: 'Component', render: (r) => <PartCell row={r} /> },
-              { key: 'supplier', header: 'Supplier', render: (r) => r.supplier?.name || '—' },
-              { key: 'installed', header: 'Installed', render: (r) => fmtDate(r.installed_at) },
+              { key: 'plate', header: t('Vehicle'), render: (r) => <PlateLink row={r} /> },
+              { key: 'part', header: t('Component'), render: (r) => <PartCell row={r} /> },
+              { key: 'supplier', header: t('Supplier'), render: (r) => r.supplier?.name || '—' },
+              { key: 'installed', header: t('Installed'), render: (r) => fmtDate(r.installed_at) },
               {
                 key: 'ends',
-                header: 'Warranty ends',
+                header: t('Warranty ends'),
                 render: (r) => (
                   <div>
                     <div className="font-medium">{fmtDate(r.warranty?.until)}</div>
                     <Badge tone={r.warranty?.days_remaining <= 14 ? 'red' : 'amber'}>
-                      {r.warranty?.days_remaining} days left
+                      {r.warranty?.days_remaining === 1
+                        ? t('1 day left')
+                        : t('{n} days left', { n: r.warranty?.days_remaining })}
                     </Badge>
                   </div>
                 ),
               },
-              { key: 'cost', header: 'Cost', align: 'right', cellClass: 'tabular-nums font-semibold', render: (r) => aed2(r.purchase_cost || 0) },
+              { key: 'cost', header: t('Cost'), align: 'right', cellClass: 'tabular-nums font-semibold', render: (r) => aed2(r.purchase_cost || 0) },
             ]}
           />
         )}
@@ -191,21 +203,25 @@ export default function ComponentsDashboard() {
             loading={loading && !data}
             rows={pastLife.rows || []}
             rowKey={(r) => r.id}
-            empty="Nothing is running past its expected service life."
+            empty={t('Nothing is running past its expected service life.')}
             stickyHeader
             columns={[
-              { key: 'plate', header: 'Vehicle', render: (r) => <PlateLink row={r} /> },
-              { key: 'part', header: 'Component', render: (r) => <PartCell row={r} /> },
-              { key: 'installed', header: 'Installed', render: (r) => `${fmtDate(r.installed_at)} · ${km(r.installed_odometer)}` },
-              { key: 'age', header: 'Age', render: (r) => <div>{humanAge(r.age_days)}<div className="text-xs text-slate-400">{km(r.distance_km)} driven</div></div> },
+              { key: 'plate', header: t('Vehicle'), render: (r) => <PlateLink row={r} /> },
+              { key: 'part', header: t('Component'), render: (r) => <PartCell row={r} /> },
+              { key: 'installed', header: t('Installed'), render: (r) => `${fmtDate(r.installed_at)} · ${km(r.installed_odometer)}` },
+              { key: 'age', header: t('Age'), render: (r) => <div>{humanAge(t, r.age_days)}<div className="text-xs text-slate-400">{t('{km} driven', { km: km(r.distance_km) })}</div></div> },
               {
                 key: 'used',
-                header: 'Life used',
+                header: t('Life used'),
                 render: (r) => (
                   <div>
                     <Badge tone="red">{r.service_life?.life_used_pct}%</Badge>
                     <div className="mt-0.5 text-xs text-slate-400">
-                      expected {r.service_life?.expected_life_km ? km(r.service_life.expected_life_km) : `${r.service_life?.expected_life_months} mo`}
+                      {t('expected {life}', {
+                        life: r.service_life?.expected_life_km
+                          ? km(r.service_life.expected_life_km)
+                          : t('{n} mo', { n: r.service_life?.expected_life_months }),
+                      })}
                     </div>
                   </div>
                 ),
@@ -219,29 +235,29 @@ export default function ComponentsDashboard() {
             loading={loading && !data}
             rows={recent.rows || []}
             rowKey={(r) => r.id}
-            empty="No components have been replaced in the last 90 days."
+            empty={t('No components have been replaced in the last 90 days.')}
             stickyHeader
             columns={[
-              { key: 'plate', header: 'Vehicle', render: (r) => <PlateLink row={r} /> },
-              { key: 'part', header: 'Removed part', render: (r) => <PartCell row={r} /> },
-              { key: 'removed', header: 'Removed', render: (r) => fmtDate(r.removed_at) },
+              { key: 'plate', header: t('Vehicle'), render: (r) => <PlateLink row={r} /> },
+              { key: 'part', header: t('Removed part'), render: (r) => <PartCell row={r} /> },
+              { key: 'removed', header: t('Removed'), render: (r) => fmtDate(r.removed_at) },
               {
                 key: 'reason',
-                header: 'Reason',
-                render: (r) => <Badge tone={r.removal_reason === 'failed' ? 'red' : 'gray'}>{REASON_LABEL[r.removal_reason] || r.removal_reason}</Badge>,
+                header: t('Reason'),
+                render: (r) => <Badge tone={r.removal_reason === 'failed' ? 'red' : 'gray'}>{reasonLabel(t, r.removal_reason) || r.removal_reason}</Badge>,
               },
-              { key: 'lasted', header: 'Lasted', render: (r) => <div>{humanAge(r.life_days)}<div className="text-xs text-slate-400">{km(r.life_km)}</div></div> },
+              { key: 'lasted', header: t('Lasted'), render: (r) => <div>{humanAge(t, r.life_days)}<div className="text-xs text-slate-400">{km(r.life_km)}</div></div> },
               {
                 key: 'successor',
-                header: 'Replaced by',
+                header: t('Replaced by'),
                 render: (r) =>
                   r.replaced_by ? (
                     <div>
                       <div className="font-medium text-slate-900">{r.replaced_by.part_name}</div>
-                      <div className="text-xs text-slate-400">fitted {fmtDate(r.replaced_by.installed_at)}</div>
+                      <div className="text-xs text-slate-400">{t('fitted {date}', { date: fmtDate(r.replaced_by.installed_at) })}</div>
                     </div>
                   ) : (
-                    <span className="text-slate-400">Not replaced</span>
+                    <span className="text-slate-400">{t('Not replaced')}</span>
                   ),
               },
             ]}
@@ -253,51 +269,51 @@ export default function ComponentsDashboard() {
             loading={loading && !data}
             rows={frequent.rows || []}
             rowKey={(r) => r.component_catalog_id}
-            empty="No replacement history yet."
+            empty={t('No replacement history yet.')}
             stickyHeader
             columns={[
               {
                 key: 'type',
-                header: 'Component type',
+                header: t('Component type'),
                 render: (r) => (
                   <div>
                     <div className="font-semibold text-slate-900">{r.type}</div>
-                    <div className="text-xs text-slate-400">{CATEGORY_LABEL[r.category] || r.category}</div>
+                    <div className="text-xs text-slate-400">{categoryLabel(t, r.category) || r.category}</div>
                   </div>
                 ),
               },
-              { key: 'replacements', header: 'Replacements', align: 'right', cellClass: 'tabular-nums font-semibold', render: (r) => num(r.replacements) },
-              { key: 'vehicles', header: 'Vehicles', align: 'right', cellClass: 'tabular-nums', render: (r) => num(r.vehicles) },
+              { key: 'replacements', header: t('Replacements'), align: 'right', cellClass: 'tabular-nums font-semibold', render: (r) => num(r.replacements) },
+              { key: 'vehicles', header: t('Vehicles'), align: 'right', cellClass: 'tabular-nums', render: (r) => num(r.vehicles) },
               {
                 key: 'life',
-                header: 'Average life achieved',
+                header: t('Average life achieved'),
                 render: (r) => (
                   <div>
                     <div>{km(r.avg_life_km)}</div>
-                    <div className="text-xs text-slate-400">{humanAge(r.avg_life_days)}</div>
+                    <div className="text-xs text-slate-400">{humanAge(t, r.avg_life_days)}</div>
                   </div>
                 ),
               },
               {
                 key: 'vs',
-                header: 'vs expected',
-                tooltip: 'Average achieved life against the catalog expectation. Consistently short means a bad part or a bad supplier.',
+                header: t('vs expected'),
+                tooltip: t('Average achieved life against the catalog expectation. Consistently short means a bad part or a bad supplier.'),
                 render: (r) => {
                   if (!r.expected_life_km || !r.avg_life_km) return <span className="text-slate-400">—</span>;
                   const pct = Math.round((r.avg_life_km / r.expected_life_km) * 100);
-                  return <Badge tone={pct < 70 ? 'red' : pct < 95 ? 'amber' : 'green'}>{pct}% of expected</Badge>;
+                  return <Badge tone={pct < 70 ? 'red' : pct < 95 ? 'amber' : 'green'}>{t('{pct}% of expected', { pct })}</Badge>;
                 },
               },
-              { key: 'spend', header: 'Total spend', align: 'right', cellClass: 'tabular-nums font-semibold', render: (r) => aed2(r.total_spend || 0) },
+              { key: 'spend', header: t('Total spend'), align: 'right', cellClass: 'tabular-nums font-semibold', render: (r) => aed2(r.total_spend || 0) },
             ]}
           />
         )}
 
-        {!loading && !data && <EmptyState title="No component data" message="Nothing has been installed through the workflow yet." />}
+        {!loading && !data && <EmptyState title={t('No component data')} message={t('Nothing has been installed through the workflow yet.')} />}
       </SectionCard>
 
       <p className="px-1 text-xs leading-relaxed text-slate-400">
-        <span className="font-semibold text-slate-500">Data origin</span> · {data?.data_origin}
+        <span className="font-semibold text-slate-500">{t('Data origin')}</span> · {data?.data_origin}
       </p>
     </div>
   );

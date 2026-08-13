@@ -24,8 +24,25 @@ class OdometerChangeRequest extends Model
     public const STATUS_APPROVED = 'approved';
     public const STATUS_REJECTED = 'rejected';
 
+    /**
+     * Where the row came from — and, crucially, whether the reading has ALREADY been applied:
+     *
+     *  • MANUAL_EDIT     — someone typed a new odometer on the Vehicles form. The reading is HELD; the car
+     *                      still shows its old value until an admin approves. Review decides what happens.
+     *  • WORKFLOW_STAGE  — a maintenance-ticket stage capture that ran more than TOLERANCE_KM above the
+     *                      previous at-our-park reading. The reading was ACCEPTED at capture (blocking it
+     *                      just taught drivers to re-type the old number) and is already on the ticket +
+     *                      the car. Review here is an after-the-fact audit: approve = the movement was
+     *                      real, reject = it was a mis-read, put the car back on its previous reading.
+     */
+    public const SOURCE_MANUAL_EDIT    = 'manual_edit';
+    public const SOURCE_WORKFLOW_STAGE = 'workflow_stage';
+
     protected $fillable = [
         'vehicle_id',
+        'source',
+        'maintenance_id',
+        'stage_key',
         'previous_odometer',
         'requested_odometer',
         'delta',
@@ -50,6 +67,50 @@ class OdometerChangeRequest extends Model
     public function vehicle(): BelongsTo
     {
         return $this->belongsTo(Vehicle::class);
+    }
+
+    /** The maintenance ticket a WORKFLOW_STAGE deviation was captured on (null for a manual edit). */
+    public function maintenance(): BelongsTo
+    {
+        return $this->belongsTo(Maintenance::class);
+    }
+
+    /**
+     * Was the reading already written to the car when this row was raised? True for a stage capture (the
+     * workflow accepted it and healed the odometer forward); false for a manual edit (held pending).
+     * The review actions branch on this — approving an already-applied reading must not re-write it.
+     */
+    public function isAlreadyApplied(): bool
+    {
+        return $this->source === self::SOURCE_WORKFLOW_STAGE;
+    }
+
+    /**
+     * Did the captured reading actually reach the car?
+     *
+     * A stage capture only ever heals the odometer FORWARD, so a BACKWARD reading — which "Needs Test
+     * Drive" now accepts instead of refusing (see OdometerContinuityService::REVIEW_NOT_BLOCK_STAGES) —
+     * is filed for review while the car still sits at its old, higher number. For those rows approving
+     * has to do something: the inspector's whole claim is that our stored mileage is too high. This
+     * distinguishes "recorded and already on the car" (confirm only) from "recorded, car untouched"
+     * (approving writes it).
+     *
+     * Deliberately compared against `previous_odometer`, not merely "!= requested": if a later stage has
+     * since moved the car on, the dispute is stale and the newer reading must not be overwritten — the
+     * same guard reject() applies when winding back.
+     */
+    public function awaitsApplyToVehicle(): bool
+    {
+        if (! $this->isAlreadyApplied()) {
+            return true; // a manual edit is held pending by definition
+        }
+
+        $current = $this->vehicle?->odometer;
+
+        return $current !== null
+            && $this->previous_odometer !== null
+            && (int) $current === (int) $this->previous_odometer
+            && (int) $current !== (int) $this->requested_odometer;
     }
 
     /** Is a change of this magnitude big enough to require the note + approval flow? */

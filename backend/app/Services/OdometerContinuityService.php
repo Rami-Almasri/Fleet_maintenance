@@ -51,8 +51,8 @@ class OdometerContinuityService
     public const STATUS_DISCREPANCY = 'discrepancy'; // ran backwards beyond tolerance — can't be right
     public const STATUS_TEST_DRIVE  = 'test_drive';  // garage OUT > IN — the garage drove it; confirm, don't block
     public const STATUS_CHECK       = 'check';       // pickup jumped a lot — probably fine, but re-read the dial
-    public const STATUS_AUTHORIZED  = 'authorized_deviation'; // strict-match stage: 1..TOLERANCE km over — allowed WITH a note (audited on the oversight board)
-    public const STATUS_EXACT       = 'exact_required';       // strict-match stage: backward, or > TOLERANCE over — a HARD block, not an overridable nudge
+    public const STATUS_AUTHORIZED  = 'authorized_deviation'; // strict-match stage: ANY forward drift — allowed WITH a note; beyond TOLERANCE it also goes to the odometer approval board
+    public const STATUS_EXACT       = 'exact_required';       // strict-match stage: a BACKWARD reading — a HARD block, not an overridable nudge
     public const STATUS_IMPLAUSIBLE = 'implausible';          // forward jump beyond MAX_JUMP_KM — a typo, not a journey. HARD block on every stage.
 
     // ── Stages (which continuity rule applies) ──────────────────────────────────
@@ -69,10 +69,10 @@ class OdometerContinuityService
     /**
      * Strict-match stages — an internal spot-check at OUR OWN PARK, where the car should NOT have moved
      * since the previous reading (the inspector's test capture, and the driver collecting the car for the
-     * garage). An exact match is expected; a small forward drift (1..TOLERANCE_KM) is tolerated but must be
-     * explained with a note (which then surfaces on the /oversight/mileage audit board); anything beyond —
-     * or ANY backward reading — is a HARD block (a typo or an unauthorised long-distance move), not a soft
-     * discrepancy. Mirror of STRICT_MATCH_STAGES in frontend/src/lib/odometerContinuity.js — keep in step.
+     * garage). An exact match is expected; any FORWARD drift is tolerated but must be explained with a note
+     * (which surfaces on the /oversight/mileage audit board, and beyond TOLERANCE_KM also lands on the
+     * odometer approval queue). Only a BACKWARD reading is a hard block — an odometer cannot run backwards,
+     * so that one is always a typo. Mirror of STRICT_MATCH_STAGES in frontend/src/lib/odometerContinuity.js.
      */
     public const STRICT_MATCH_STAGES = [self::STAGE_TEST, self::STAGE_PARK_PICKUP, self::STAGE_REINSPECT];
 
@@ -80,6 +80,32 @@ class OdometerContinuityService
     public function stageRequiresExactMatch(string $stage): bool
     {
         return in_array($stage, self::STRICT_MATCH_STAGES, true);
+    }
+
+    /**
+     * Strict-match stages that REVIEW instead of BLOCK.
+     *
+     * "Needs Test Drive" is the first time anyone actually walks up to the car and reads its dial. Whatever
+     * the number says, it is the truth about that car right now — our stored mileage is the thing that may
+     * be stale (a rental leg nobody closed, a yard move, an OM reading that never landed). Refusing the
+     * entry doesn't make the dial change; it only teaches the inspector to re-type our old number, which is
+     * the one outcome that actually corrupts the chain — exactly the lesson already learned for the forward
+     * drift (see STATUS_AUTHORIZED above).
+     *
+     * So at this stage every reading is ACCEPTED and recorded, and any deviation — forward past the buffer
+     * OR backward — is filed to the odometer approval board (/odometer-approvals) for a supervisor to
+     * settle after the fact. The universal MAX_JUMP_KM typo guard still applies: a six-million-km entry is
+     * not "a different mileage", it's a slipped finger, and it must never reach vehicles.odometer.
+     *
+     * The other strict-match stages keep the hard block: by then the car's mileage has already been
+     * anchored by this very stage, so a backward reading there really is a mis-key.
+     */
+    public const REVIEW_NOT_BLOCK_STAGES = [self::STAGE_TEST];
+
+    /** Is this a strict-match stage where a deviation goes to the approval board instead of being refused? */
+    public function stageReviewsInsteadOfBlocking(string $stage): bool
+    {
+        return in_array($stage, self::REVIEW_NOT_BLOCK_STAGES, true);
     }
 
     /**
@@ -98,6 +124,37 @@ class OdometerContinuityService
     public function stageIgnoresTolerance(string $stage): bool
     {
         return in_array($stage, self::GARAGE_TRANSFER_STAGES, true);
+    }
+
+    /**
+     * Does this (accepted) flag deserve a supervisor's eyes on the odometer approval board?
+     *
+     * Yes for an authorized deviation that ran further than the technical buffer at an at-our-park
+     * spot-check — the car moved when our records say it was standing still, which is a real operational
+     * question ("who drove it, and why wasn't it logged?") even though the reading itself is accepted. A
+     * 1..TOLERANCE_KM drift is just dial-reading noise and stays a note-only event, exactly as before.
+     *
+     * At a REVIEW_NOT_BLOCK stage ("Needs Test Drive") the board is also the landing place for a BACKWARD
+     * reading, because nothing refuses it any more — the approval queue is the only thing standing between
+     * "the inspector read the dial" and "our stored mileage is wrong". Pass $stage to get that behaviour;
+     * omit it and the original forward-only rule applies.
+     */
+    public function needsSupervisorReview(array $flag, ?string $stage = null): bool
+    {
+        $status = $flag['status'] ?? null;
+
+        if ($stage !== null && $this->stageReviewsInsteadOfBlocking($stage)) {
+            // Backward (STATUS_EXACT at a strict-match stage) is now accepted — so it must be reviewed.
+            if ($status === self::STATUS_EXACT) {
+                return true;
+            }
+            // Forward drift keeps the buffer: 1..TOLERANCE_KM is dial-reading noise, not an event.
+            return $status === self::STATUS_AUTHORIZED
+                && (int) ($flag['delta'] ?? 0) > self::TOLERANCE_KM;
+        }
+
+        return $status === self::STATUS_AUTHORIZED
+            && (int) ($flag['delta'] ?? 0) > self::TOLERANCE_KM;
     }
 
     /**
@@ -135,20 +192,16 @@ class OdometerContinuityService
                 return $this->flag(self::STATUS_VERIFIED, $previous, $reading, $delta);
             }
             if ($delta > 0) {
-                // Pickup (driver collecting the car for the garage) never hard-blocks a forward drift —
-                // small in-lot moves beyond TOLERANCE_KM are real and can't be fixed by re-reading the
-                // dial, so ANY forward amount is an "authorized deviation": allowed through with a
-                // mandatory confirm + note (audited on the oversight board), never an unresolvable wall.
-                if ($stage === self::STAGE_PARK_PICKUP) {
-                    return $this->flag(self::STATUS_AUTHORIZED, $previous, $reading, $delta);
-                }
-                // Other strict-match stages (the inspector's start-of-drive anchor, and the final QA
-                // sign-off once the car is back at our park) keep the tight cap — a forward jump beyond the
-                // buffer means the car moved when it shouldn't have (an unlogged drive, or a typo).
-                if ($delta <= self::TOLERANCE_KM) {
-                    return $this->flag(self::STATUS_AUTHORIZED, $previous, $reading, $delta);
-                }
-                return $this->flag(self::STATUS_EXACT, $previous, $reading, $delta);
+                // A forward drift at an at-our-park spot-check is an AUTHORIZED DEVIATION at any size —
+                // never a wall. It used to hard-block past TOLERANCE_KM ("the car shouldn't have moved"),
+                // but the car sometimes genuinely did move those extra km (a yard shuffle, a fuel run,
+                // someone else took it), and re-reading the dial cannot make a true reading go away — the
+                // block only taught drivers to re-type the previous number, which is the one outcome that
+                // actually corrupts the chain. So the reading is accepted WITH a mandatory note, and a
+                // deviation beyond the buffer (see needsSupervisorReview) is filed to the odometer
+                // approval board for a supervisor to audit after the fact. The universal MAX_JUMP_KM
+                // guard above still catches the mis-typed dial.
+                return $this->flag(self::STATUS_AUTHORIZED, $previous, $reading, $delta);
             }
             return $this->flag(self::STATUS_EXACT, $previous, $reading, $delta);
         }

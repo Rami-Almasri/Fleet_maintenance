@@ -12,16 +12,24 @@ import RankedBar from '../ui/RankedBar';
 import PieChart from '../ui/PieChart';
 import BarChart from '../ui/BarChart';
 import { aedCompact, num } from '../../lib/format';
+import { useI18n } from '../../i18n/I18nContext';
 
-const TYPE_META = {
-  C: { label: 'Rental', color: 'purple' },
-  U: { label: 'Maintenance', color: 'amber' },
-  R: { label: 'Booking', color: 'teal' },
-};
+const TYPE_COLOR = { C: 'purple', U: 'amber', R: 'teal' };
+// Literal t() calls so every contract-type label is visible to the phrase catalog.
+const typeLabel = (k, t) => ({
+  C: t('Rental'),
+  U: t('Maintenance'),
+  R: t('Booking'),
+}[k] || t('Other'));
 
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const monthNames = (t) => [
+  t('Jan'), t('Feb'), t('Mar'), t('Apr'), t('May'), t('Jun'),
+  t('Jul'), t('Aug'), t('Sep'), t('Oct'), t('Nov'), t('Dec'),
+];
 
 export default function ContractsAnalytics({ rows = [], showFinancials = false }) {
+  const { t } = useI18n();
+
   const mix = useMemo(() => {
     const totals = {};
     rows.forEach((c) => {
@@ -30,12 +38,12 @@ export default function ContractsAnalytics({ rows = [], showFinancials = false }
     });
     return Object.entries(totals)
       .map(([k, value]) => ({
-        label: TYPE_META[k]?.label || 'Other',
+        label: typeLabel(k, t),
         value,
-        color: TYPE_META[k]?.color || 'slate',
+        color: TYPE_COLOR[k] || 'slate',
       }))
       .sort((a, b) => b.value - a.value);
-  }, [rows]);
+  }, [rows, t]);
 
   // Who owes the most on this page — the collections shortlist.
   const owing = useMemo(
@@ -62,32 +70,33 @@ export default function ContractsAnalytics({ rows = [], showFinancials = false }
       .map((c) => (c.out_date ? new Date(c.out_date) : null))
       .filter((d) => d && !isNaN(d.getTime()));
     if (!dates.length) return null;
+    const months = monthNames(t);
     const key = (d) => `${d.getFullYear()}-${d.getMonth()}`;
     const totals = {};
     dates.forEach((d) => { totals[key(d)] = (totals[key(d)] || 0) + 1; });
     return Object.entries(totals)
       .map(([k, value]) => {
         const [y, m] = k.split('-').map(Number);
-        return { label: MONTHS[m], value, sortKey: y * 12 + m, year: y };
+        return { label: months[m], value, sortKey: y * 12 + m, year: y };
       })
       .sort((a, b) => a.sortKey - b.sortKey)
       .slice(-12);
-  }, [rows]);
+  }, [rows, t]);
 
   if (!rows.length) return null;
 
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
       <SectionCard
-        title="Contract mix"
-        subtitle={`Types on this page · ${num(rows.length)} contracts`}
+        title={t('Contract mix')}
+        subtitle={t('Types on this page · {n} contracts', { n: num(rows.length) })}
         bodyClass="flex items-center justify-center p-5"
       >
         {mix.length ? (
           <PieChart segments={mix} size={150} />
         ) : (
           <div className="flex h-[150px] items-center justify-center text-sm text-slate-400">
-            Nothing to chart.
+            {t('Nothing to chart.')}
           </div>
         )}
       </SectionCard>
@@ -95,8 +104,8 @@ export default function ContractsAnalytics({ rows = [], showFinancials = false }
       {showFinancials ? (
         <SectionCard
           className="lg:col-span-2"
-          title="Biggest outstanding balances"
-          subtitle="Contracts on this page where the customer still owes"
+          title={t('Biggest outstanding balances')}
+          subtitle={t('Contracts on this page where the customer still owes')}
           bodyClass="p-5"
         >
           <RankedBar
@@ -104,17 +113,17 @@ export default function ContractsAnalytics({ rows = [], showFinancials = false }
             showRank
             color="red"
             format={aedCompact}
-            valueLabel="Owed"
+            valueLabel={t('Owed')}
             labelWidth={150}
-            tooltip={(r) => [r.plate, r.state].filter(Boolean).join(' · ') || 'No vehicle on file'}
-            empty="Nothing outstanding on this page."
+            tooltip={(r) => [r.plate, r.state].filter(Boolean).join(' · ') || t('No vehicle on file')}
+            empty={t('Nothing outstanding on this page.')}
           />
         </SectionCard>
       ) : (
         <SectionCard
           className="lg:col-span-2"
-          title="Contracts started"
-          subtitle="Out-dates on this page, by month"
+          title={t('Contracts started')}
+          subtitle={t('Out-dates on this page, by month')}
           bodyClass="px-3 pb-3 pt-2"
         >
           {byMonth ? (
@@ -123,13 +132,13 @@ export default function ContractsAnalytics({ rows = [], showFinancials = false }
               color="indigo"
               height={230}
               yTicks={3}
-              valueLabel="Contracts"
+              valueLabel={t('Contracts')}
               format={(n) => num(Math.round(n))}
               tooltip={(d) => `${d.label} ${d.year}`}
             />
           ) : (
             <div className="flex h-[230px] items-center justify-center text-sm text-slate-400">
-              No out-dates on this page.
+              {t('No out-dates on this page.')}
             </div>
           )}
         </SectionCard>

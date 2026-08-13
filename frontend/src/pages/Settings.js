@@ -178,7 +178,8 @@ export default function Settings() {
               <Badge tone={SHOW_FINANCIALS ? 'emerald' : 'gray'}>{t(SHOW_FINANCIALS ? 'settings.about.visible' : 'settings.about.hidden')}</Badge>
             </Row>
             <Row title={t('settings.about.source')} desc={t('settings.about.sourceDesc')} last>
-              <span className="text-sm text-slate-700">OfficeManager API</span>
+              {/* Product name — stays English in every language. */}
+              <span className="text-sm text-slate-700">{'OfficeManager API'}</span>
             </Row>
           </div>
         </SectionCard>

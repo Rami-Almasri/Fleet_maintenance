@@ -5,6 +5,7 @@ import { SectionCard } from '../../components/ui/Table';
 import Badge from '../../components/ui/Badge';
 import { Skeleton } from '../../components/ui/Skeleton';
 import Icon from '../../components/ui/Icon';
+import { useI18n } from '../../i18n/I18nContext';
 
 // Rental Readiness — a thin renderer over the backend's single readiness authority
 // (VehicleReadinessService::evaluate, GET /readiness/vehicle/{id}). We deliberately do NOT
@@ -32,6 +33,7 @@ const CHECK_TARGET = {
 };
 
 export default function ReadinessChecklist({ vehicleId, onNavigate }) {
+  const { t } = useI18n();
   const fetcher = useCallback(async () => {
     const { data } = await api.get(`/readiness/vehicle/${vehicleId}`);
     return data.data;
@@ -44,8 +46,8 @@ export default function ReadinessChecklist({ vehicleId, onNavigate }) {
   // Secondary panel — never break the profile if readiness is unavailable; fail quietly.
   if (error || !data) {
     return (
-      <SectionCard title="Rental Readiness">
-        <div className="px-5 py-4 text-sm text-slate-400">Readiness is unavailable right now.</div>
+      <SectionCard title={t('Rental Readiness')}>
+        <div className="px-5 py-4 text-sm text-slate-400">{t('Readiness is unavailable right now.')}</div>
       </SectionCard>
     );
   }
@@ -57,15 +59,15 @@ export default function ReadinessChecklist({ vehicleId, onNavigate }) {
 
   // Headline verdict, straight from the service's own summary + a matching tone.
   const headline = fails > 0
-    ? { tone: 'red', text: 'Not ready' }
+    ? { tone: 'red', text: t('Not ready') }
     : warns > 0
-      ? { tone: 'amber', text: `Ready · ${warns} advisory` }
-      : { tone: 'emerald', text: 'Ready for delivery' };
+      ? { tone: 'amber', text: t('Ready · {n} advisory', { n: warns }) }
+      : { tone: 'emerald', text: t('Ready for delivery') };
 
   return (
     <SectionCard
-      title="Rental Readiness"
-      subtitle={`${passes}/${checks.length} checks passing${data.summary ? ` · ${data.summary}` : ''}`}
+      title={t('Rental Readiness')}
+      subtitle={`${t('{passed}/{total} checks passing', { passed: passes, total: checks.length })}${data.summary ? ` · ${data.summary}` : ''}`}
       actions={<Badge tone={headline.tone}>{headline.text}</Badge>}
     >
       <ul className="divide-y divide-slate-100">
@@ -89,8 +91,8 @@ export default function ReadinessChecklist({ vehicleId, onNavigate }) {
                   onClick={() => onNavigate(target.tab)}
                   className="mt-0.5 inline-flex shrink-0 items-center gap-1 whitespace-nowrap text-xs font-semibold text-indigo-600 transition hover:text-indigo-800"
                 >
-                  Fix in {target.label}
-                  <Icon.ArrowRight className="h-3.5 w-3.5" />
+                  {t('Fix in {area}', { area: t(target.label) })}
+                  <Icon.ArrowRight className="h-3.5 w-3.5 rtl:-scale-x-100" />
                 </button>
               )}
             </li>

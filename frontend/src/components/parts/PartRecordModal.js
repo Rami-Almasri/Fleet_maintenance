@@ -3,6 +3,7 @@ import api from '../../api/client';
 import Modal from '../ui/Modal';
 import Button from '../ui/Button';
 import PartPurchaseHistory from './PartPurchaseHistory';
+import { useI18n } from '../../i18n/I18nContext';
 
 // Envelope-aware unwrap: the API wraps most payloads in { data: … }.
 const payload = (r) => (r?.data && 'data' in r.data ? r.data.data : r?.data);
@@ -19,6 +20,7 @@ const payload = (r) => (r?.data && 'data' in r.data ? r.data.data : r?.data);
  * shape both the /parts board and the ticket's Parts card already hold.
  */
 export default function PartRecordModal({ open, request, onClose }) {
+  const { t } = useI18n();
   const [state, setState] = useState({ loading: true, history: null, error: '' });
 
   useEffect(() => {
@@ -40,12 +42,12 @@ export default function PartRecordModal({ open, request, onClose }) {
           setState({
             loading: false,
             history: null,
-            error: err.response?.data?.message || err.response?.data?.msg || 'Could not load the purchase record',
+            error: err.response?.data?.message || err.response?.data?.msg || t('Could not load the purchase record'),
           });
         }
       });
     return () => { alive = false; };
-  }, [open, request]);
+  }, [open, request, t]);
 
   const plate = request?.vehicle?.plate || request?.plate || (request?.vehicle?.id ? `#${request.vehicle.id}` : '');
 
@@ -53,10 +55,10 @@ export default function PartRecordModal({ open, request, onClose }) {
     <Modal
       open={open}
       onClose={onClose}
-      title="Purchase record"
+      title={t('Purchase record')}
       subtitle={request ? `${request.part_name}${plate ? ` · ${plate}` : ''}` : ''}
       size="lg"
-      footer={<Button variant="secondary" onClick={onClose}>Close</Button>}
+      footer={<Button variant="secondary" onClick={onClose}>{t('Close')}</Button>}
     >
       {state.error ? (
         <div className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-800 ring-1 ring-inset ring-red-600/25">

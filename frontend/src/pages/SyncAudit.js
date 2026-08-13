@@ -9,6 +9,7 @@ import MetricCard, { MetricGrid } from '../components/ui/MetricCard';
 import Icon from '../components/ui/Icon';
 import { PageHeader, EmptyState, Spinner } from '../components/ui/Misc';
 import { num, fmtDate } from '../lib/format';
+import { useI18n } from '../i18n/I18nContext';
 
 const STATUS_TONE = {
   done: 'green', completed: 'green', partial: 'amber',
@@ -16,11 +17,11 @@ const STATUS_TONE = {
 };
 
 // "2026-06-20T12:41:51Z" -> "20 Jun 2026, 12:41"
-const fmtDateTime = (v) => {
+const fmtDateTime = (v, lang) => {
   if (!v) return '—';
   const d = new Date(v);
   if (isNaN(d)) return String(v);
-  return d.toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return d.toLocaleString(lang === 'ar' ? 'ar-AE-u-ca-gregory-nu-latn' : 'en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 };
 
 // Human labels for contract columns so the feed reads like English, not a schema.
@@ -39,7 +40,8 @@ const FIELD_LABELS = {
 };
 const FIELD_ORDER = Object.keys(FIELD_LABELS);
 
-const labelOf = (k) => FIELD_LABELS[k] || k.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+// English lives in the table beside the column it names; Arabic resolves through t().
+const labelOf = (k, t) => (FIELD_LABELS[k] ? t(FIELD_LABELS[k]) : k.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()));
 
 // Backend scalarises dates to "YYYY-MM-DD"; render those as friendly dates, everything else as-is.
 const fmtVal = (v) => {
@@ -53,6 +55,7 @@ const Dash = () => <span className="text-slate-300">—</span>;
 
 // ── New-contract card: the full record laid out as a clean definition grid ──────────────
 function NewContractCard({ rec }) {
+  const { t } = useI18n();
   const snap = rec.snapshot || {};
   const keys = [
     ...FIELD_ORDER.filter((k) => snap[k] !== null && snap[k] !== undefined && snap[k] !== ''),
@@ -69,21 +72,21 @@ function NewContractCard({ rec }) {
           <div>
             <p className="text-sm font-semibold text-slate-900">
               {rec.contract_id
-                ? <Link to={`/contracts/${rec.contract_id}`} className="text-emerald-700 hover:text-emerald-800">New contract #{rec.contract_no || rec.contract_id}</Link>
-                : <>New contract #{rec.contract_no || '—'}</>}
+                ? <Link to={`/contracts/${rec.contract_id}`} className="text-emerald-700 hover:text-emerald-800">{t('New contract #{no}', { no: rec.contract_no || rec.contract_id })}</Link>
+                : <>{t('New contract #{no}', { no: rec.contract_no || '—' })}</>}
             </p>
-            <p className="text-[11px] text-slate-400">OM Serial {rec.external_id || '—'}</p>
+            <p className="text-[11px] text-slate-400">{t('OM Serial {id}', { id: rec.external_id || '—' })}</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
           {snap.contract_type && <ContractTypeBadge type={snap.contract_type} />}
-          <Badge tone="emerald" className="font-semibold">New</Badge>
+          <Badge tone="emerald" className="font-semibold">{t('New')}</Badge>
         </div>
       </div>
       <dl className="grid grid-cols-2 gap-x-6 gap-y-2.5 px-4 py-3.5 sm:grid-cols-3">
         {keys.map((k) => (
           <div key={k} className="min-w-0">
-            <dt className="text-[11px] font-medium uppercase tracking-wide text-slate-400">{labelOf(k)}</dt>
+            <dt className="text-[11px] font-medium uppercase tracking-wide text-slate-400">{labelOf(k, t)}</dt>
             <dd className="truncate text-sm font-medium text-slate-700">{fmtVal(snap[k]) ?? <Dash />}</dd>
           </div>
         ))}
@@ -94,6 +97,7 @@ function NewContractCard({ rec }) {
 
 // ── Update card: ONLY the fields that changed, side-by-side was → now ───────────────────
 function UpdateCard({ rec }) {
+  const { t } = useI18n();
   const changes = rec.changes || {};
   const fields = [
     ...FIELD_ORDER.filter((k) => changes[k]),
@@ -105,18 +109,20 @@ function UpdateCard({ rec }) {
       <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
         <p className="text-sm font-semibold text-slate-900">
           {rec.contract_id
-            ? <Link to={`/contracts/${rec.contract_id}`} className="text-indigo-600 hover:text-indigo-700">Contract #{rec.contract_no || rec.contract_id}</Link>
-            : <>Contract #{rec.contract_no || '—'}</>}
+            ? <Link to={`/contracts/${rec.contract_id}`} className="text-indigo-600 hover:text-indigo-700">{t('Contract #{no}', { no: rec.contract_no || rec.contract_id })}</Link>
+            : <>{t('Contract #{no}', { no: rec.contract_no || '—' })}</>}
         </p>
-        <Badge tone="indigo" className="font-semibold">{num(rec.changed_count)} field{rec.changed_count === 1 ? '' : 's'} changed</Badge>
+        <Badge tone="indigo" className="font-semibold">
+          {rec.changed_count === 1 ? t('1 field changed') : t('{n} fields changed', { n: num(rec.changed_count) })}
+        </Badge>
       </div>
       <table className="min-w-full text-sm">
         <thead>
           <tr className="text-start text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-            <th className="px-4 py-2">Field</th>
-            <th className="px-4 py-2">Was</th>
+            <th className="px-4 py-2">{t('Field')}</th>
+            <th className="px-4 py-2">{t('Was')}</th>
             <th className="w-8 px-1 py-2" />
-            <th className="px-4 py-2">Now</th>
+            <th className="px-4 py-2">{t('Now')}</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-50">
@@ -124,16 +130,16 @@ function UpdateCard({ rec }) {
             const ch = changes[k] || {};
             return (
               <tr key={k} className="align-middle">
-                <td className="px-4 py-2 font-medium text-slate-600">{labelOf(k)}</td>
+                <td className="px-4 py-2 font-medium text-slate-600">{labelOf(k, t)}</td>
                 <td className="px-4 py-2">
                   {fmtVal(ch.old) === null
                     ? <Dash />
                     : <span className="rounded-lg bg-red-50 px-1.5 py-0.5 text-red-600 line-through decoration-red-300">{fmtVal(ch.old)}</span>}
                 </td>
-                <td className="px-1 py-2 text-slate-300"><Icon.ArrowRight className="h-4 w-4" /></td>
+                <td className="px-1 py-2 text-slate-300"><Icon.ArrowRight className="h-4 w-4 rtl:-scale-x-100" /></td>
                 <td className="px-4 py-2">
                   {fmtVal(ch.new) === null
-                    ? <span className="rounded-lg bg-slate-100 px-1.5 py-0.5 text-slate-400">cleared</span>
+                    ? <span className="rounded-lg bg-slate-100 px-1.5 py-0.5 text-slate-400">{t('cleared')}</span>
                     : <span className="rounded-lg bg-emerald-50 px-1.5 py-0.5 font-medium text-emerald-700">{fmtVal(ch.new)}</span>}
                 </td>
               </tr>
@@ -147,6 +153,7 @@ function UpdateCard({ rec }) {
 
 // ── Detail feed for one run ─────────────────────────────────────────────────────────────
 function RunFeed({ runId }) {
+  const { t } = useI18n();
   const fetcher = useCallback(async () => (await api.get(`/Sync/audit/${runId}`)).data.data, [runId]);
   const { data, loading, error } = useFetch(fetcher, [runId]);
 
@@ -163,19 +170,19 @@ function RunFeed({ runId }) {
   return (
     <div className="space-y-6">
       <MetricGrid cols={4}>
-        <MetricCard label="New records" value={num(data?.inserts_total ?? inserts.length)} tone="emerald" icon={<Icon.Plus />} hint="Brand-new contracts" />
-        <MetricCard label="Updated records" value={num(data?.updates_total ?? updates.length)} tone="indigo" icon={<Icon.Refresh />} hint="Existing contracts changed" />
-        <MetricCard label="Fields changed" value={num(fieldsChanged)} tone="violet" icon={<Icon.Activity />} hint="Across loaded updates" />
-        <MetricCard label="Auto-corrections" value={num(run.corrections || 0)} tone="amber" icon={<Icon.Shield />} hint="Stale values cleared" />
+        <MetricCard label={t('New records')} value={num(data?.inserts_total ?? inserts.length)} tone="emerald" icon={<Icon.Plus />} hint={t('Brand-new contracts')} />
+        <MetricCard label={t('Updated records')} value={num(data?.updates_total ?? updates.length)} tone="indigo" icon={<Icon.Refresh />} hint={t('Existing contracts changed')} />
+        <MetricCard label={t('Fields changed')} value={num(fieldsChanged)} tone="violet" icon={<Icon.Activity />} hint={t('Across loaded updates')} />
+        <MetricCard label={t('Auto-corrections')} value={num(run.corrections || 0)} tone="amber" icon={<Icon.Shield />} hint={t('Stale values cleared')} />
       </MetricGrid>
 
       {nothing && (
         <SectionCard>
           <EmptyState
-            title={unfinished ? "This run didn't finish" : 'No record changes in this run'}
+            title={unfinished ? t("This run didn't finish") : t('No record changes in this run')}
             message={unfinished
-              ? 'It was interrupted or a phase failed before the change feed was recorded — so there is nothing to show. Re-run the sync and let it finish: the “Checking for recently-returned contracts…” step queries the OM API and can take a minute, so don’t close the window until you see “Sync done.”'
-              : "This sync didn't create or modify any contract — nothing new to review."}
+              ? t('It was interrupted or a phase failed before the change feed was recorded — so there is nothing to show. Re-run the sync and let it finish: the “Checking for recently-returned contracts…” step queries the OM API and can take a minute, so don’t close the window until you see “Sync done.”')
+              : t("This sync didn't create or modify any contract — nothing new to review.")}
           />
         </SectionCard>
       )}
@@ -183,10 +190,10 @@ function RunFeed({ runId }) {
       {inserts.length > 0 && (
         <section className="space-y-3">
           <div className="flex items-center gap-2">
-            <h3 className="text-sm font-semibold text-slate-900">New contracts</h3>
+            <h3 className="text-sm font-semibold text-slate-900">{t('New contracts')}</h3>
             <Badge tone="emerald">{num(data?.inserts_total ?? inserts.length)}</Badge>
             {data?.inserts_total > inserts.length && (
-              <span className="text-xs text-slate-400">showing first {num(inserts.length)}</span>
+              <span className="text-xs text-slate-400">{t('showing first {n}', { n: num(inserts.length) })}</span>
             )}
           </div>
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
@@ -198,10 +205,10 @@ function RunFeed({ runId }) {
       {updates.length > 0 && (
         <section className="space-y-3">
           <div className="flex items-center gap-2">
-            <h3 className="text-sm font-semibold text-slate-900">Updated records</h3>
+            <h3 className="text-sm font-semibold text-slate-900">{t('Updated records')}</h3>
             <Badge tone="indigo">{num(data?.updates_total ?? updates.length)}</Badge>
             {data?.updates_total > updates.length && (
-              <span className="text-xs text-slate-400">showing first {num(updates.length)}, biggest changes first</span>
+              <span className="text-xs text-slate-400">{t('showing first {n}, biggest changes first', { n: num(updates.length) })}</span>
             )}
           </div>
           <div className="space-y-4">
@@ -214,6 +221,7 @@ function RunFeed({ runId }) {
 }
 
 export default function SyncAudit() {
+  const { t, lang } = useI18n();
   const fetcher = useCallback(async () => (await api.get('/Sync/audit')).data.data, []);
   const { data, loading, error } = useFetch(fetcher);
   const [selectedId, setSelectedId] = useState(null);
@@ -223,27 +231,27 @@ export default function SyncAudit() {
   const activeId = selectedId ?? runs[0]?.id ?? null;
 
   const columns = [
-    { key: 'when', header: 'When', cellClass: 'whitespace-nowrap font-medium text-slate-700', render: (r) => fmtDateTime(r.started_at) },
-    { key: 'action', header: 'Run', render: (r) => r.action || '—' },
-    { key: 'scanned', header: 'Scanned', align: 'right', cellClass: 'tabular-nums', render: (r) => (r.scanned == null ? <Dash /> : num(r.scanned)) },
+    { key: 'when', header: t('When'), cellClass: 'whitespace-nowrap font-medium text-slate-700', render: (r) => fmtDateTime(r.started_at, lang) },
+    { key: 'action', header: t('Run'), render: (r) => r.action || '—' },
+    { key: 'scanned', header: t('Scanned'), align: 'right', cellClass: 'tabular-nums', render: (r) => (r.scanned == null ? <Dash /> : num(r.scanned)) },
     {
-      key: 'created', header: 'New', align: 'right', cellClass: 'tabular-nums',
+      key: 'created', header: t('New'), align: 'right', cellClass: 'tabular-nums',
       render: (r) => (r.created > 0 ? <span className="font-semibold text-emerald-700">+{num(r.created)}</span> : <span className="text-slate-300">0</span>),
     },
     {
-      key: 'updated', header: 'Updated', align: 'right', cellClass: 'tabular-nums',
+      key: 'updated', header: t('Updated'), align: 'right', cellClass: 'tabular-nums',
       render: (r) => (r.updated > 0 ? <span className="font-semibold text-indigo-600">{num(r.updated)}</span> : <span className="text-slate-300">0</span>),
     },
     {
-      key: 'corrections', header: 'Corrections', align: 'right',
+      key: 'corrections', header: t('Corrections'), align: 'right',
       render: (r) => (r.corrections > 0 ? <Badge tone="amber" className="font-semibold">{num(r.corrections)}</Badge> : <span className="text-slate-300">0</span>),
     },
-    { key: 'status', header: 'Status', render: (r) => <Badge tone={STATUS_TONE[r.status] || 'slate'}>{r.status}</Badge> },
+    { key: 'status', header: t('Status'), render: (r) => <Badge tone={STATUS_TONE[r.status] || 'slate'}>{r.status}</Badge> },
     {
       key: 'view', header: '', align: 'right',
       render: (r) => (r.id === activeId
-        ? <span className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600">Viewing<Icon.ArrowRight className="h-3.5 w-3.5" /></span>
-        : <span className="text-xs font-medium text-slate-400">View</span>),
+        ? <span className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600">{t('Viewing')}<Icon.ArrowRight className="h-3.5 w-3.5 rtl:-scale-x-100" /></span>
+        : <span className="text-xs font-medium text-slate-400">{t('View')}</span>),
     },
   ];
 
@@ -253,8 +261,8 @@ export default function SyncAudit() {
     <div className="py-8">
       <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
         <PageHeader
-          title="Sync Audit"
-          subtitle="Your data-change news feed: what each CMD sync brought in (new contracts) and exactly what it changed (field-by-field). Run the sync, then refresh."
+          title={t('Sync Audit')}
+          subtitle={t('Your data-change news feed: what each CMD sync brought in (new contracts) and exactly what it changed (field-by-field). Run the sync, then refresh.')}
         />
 
         {error && (
@@ -264,14 +272,14 @@ export default function SyncAudit() {
         {/* Analytics — what the log actually did, before the run table. */}
         {!loading && runs.length > 0 && <SyncAuditAnalytics runs={runs} />}
 
-        <SectionCard title="Sync runs" subtitle="Newest first · click a run to see its change feed below">
+        <SectionCard title={t('Sync runs')} subtitle={t('Newest first · click a run to see its change feed below')}>
           <DataTable
             columns={columns}
             rows={runs}
             rowKey={(r) => r.id}
             onRowClick={(r) => setSelectedId(r.id)}
             highlightRow={(r) => r.status === 'failed' || r.status === 'partial'}
-            empty="No sync runs yet. Run the CMD sync (php artisan om:sync --contracts) and refresh."
+            empty={t('No sync runs yet. Run the CMD sync (php artisan om:sync --contracts) and refresh.')}
           />
         </SectionCard>
 
@@ -283,7 +291,7 @@ export default function SyncAudit() {
 
         {runs.length === 0 && (
           <SectionCard>
-            <EmptyState title="No sync runs yet" message="Run the CMD sync (php artisan om:sync --contracts) and refresh to see the change feed here." />
+            <EmptyState title={t('No sync runs yet')} message={t('Run the CMD sync (php artisan om:sync --contracts) and refresh to see the change feed here.')} />
           </SectionCard>
         )}
       </div>

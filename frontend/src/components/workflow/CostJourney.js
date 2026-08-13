@@ -19,14 +19,19 @@ import { useCallback, useEffect, useState } from 'react';
 import api from '../../api/client';
 import Icon from '../ui/Icon';
 import { SHOW_FINANCIALS } from '../../config/features';
+import { useI18n } from '../../i18n/I18nContext';
 
 const payload = (r) => (r?.data && 'data' in r.data ? r.data.data : r?.data);
 
-const money = (n) =>
-  `AED ${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+// Amounts are always Latin-digit and Gregorian-neutral: an Arabic reader still needs these columns to
+// line up under `tabular-nums`, so the number locale is forced rather than left to the browser.
+const numLocale = (lang) => (lang === 'ar' ? 'ar-AE-u-nu-latn' : undefined);
+
+const money = (n, lang) =>
+  `AED ${Number(n || 0).toLocaleString(numLocale(lang), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 // A credit is written with a leading minus so the arithmetic on screen is the arithmetic in the database.
-const signed = (n) => (Number(n) < 0 ? `− ${money(Math.abs(n))}` : `+ ${money(n)}`);
+const signed = (n, lang) => (Number(n) < 0 ? `− ${money(Math.abs(n), lang)}` : `+ ${money(n, lang)}`);
 
 // The document behind a figure. Rendered on EVERY amount — a line that cannot name one says so in amber
 // rather than looking like the rest, because an unauditable number should never blend in.
@@ -51,12 +56,13 @@ function SourceChip({ source }) {
 }
 
 // Where a part's money came from — the distinction the whole panel exists to keep visible.
-const ORIGIN_LABEL = {
-  supplier: 'Supplier',
-  garage: 'Garage (bought)',
-  garage_invoice: 'Garage supplied',
-  return: 'Returned',
-};
+// A plain module, so the resolver is threaded in rather than captured.
+const originLabel = (t, origin) => ({
+  supplier: t('Supplier'),
+  garage: t('Garage (bought)'),
+  garage_invoice: t('Garage supplied'),
+  return: t('Returned'),
+}[origin]);
 
 function Row({ label, value, sub, tone = 'slate', strong = false }) {
   return (
@@ -76,6 +82,7 @@ function Row({ label, value, sub, tone = 'slate', strong = false }) {
 // several cars, `total` is what the whole document says — shown as context, and clearly labelled as
 // belonging to more than this ticket, so nobody reads the document total as the repair's part cost.
 function InvoiceGroup({ title, subtitle, rows, party }) {
+  const { t, lang } = useI18n();
   if (!rows.length) return null;
 
   return (
@@ -90,30 +97,37 @@ function InvoiceGroup({ title, subtitle, rows, party }) {
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium text-slate-800">{party(inv) || '—'}</p>
                 <p className="text-[11px] text-slate-500">
-                  {inv.invoice_no || 'no number'}{inv.date ? ` · ${inv.date}` : ''}
+                  {inv.invoice_no || t('no number')}{inv.date ? ` · ${inv.date}` : ''}
                 </p>
               </div>
-              <span className="shrink-0 text-sm tabular-nums text-slate-800">{money(inv.allocated)}</span>
+              <span className="shrink-0 text-sm tabular-nums text-slate-800">{money(inv.allocated, lang)}</span>
             </div>
 
+            {/* One sentence, one key: Arabic puts the figure and the count in a different order, so it
+                cannot be assembled from fragments around the markup. */}
             {inv.shared && (
               <p className="mt-1 rounded bg-sky-50 px-1.5 py-1 text-[11px] text-sky-700">
-                This invoice totals {money(inv.total)} and also covers{' '}
-                {inv.shared_with_ticket_ids.length} other ticket
-                {inv.shared_with_ticket_ids.length === 1 ? '' : 's'} — only this ticket's share is counted here.
+                {inv.shared_with_ticket_ids.length === 1
+                  ? t("This invoice totals {total} and also covers 1 other ticket — only this ticket's share is counted here.", {
+                    total: money(inv.total, lang),
+                  })
+                  : t("This invoice totals {total} and also covers {n} other tickets — only this ticket's share is counted here.", {
+                    total: money(inv.total, lang),
+                    n: inv.shared_with_ticket_ids.length,
+                  })}
               </p>
             )}
 
             <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
               {inv.photo_url && (
                 <a href={inv.photo_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-sky-600 hover:underline">
-                  <Icon.Camera className="h-3 w-3" /> Photo
+                  <Icon.Camera className="h-3 w-3" /> {t('Photo')}
                 </a>
               )}
               {inv.variance != null && Math.abs(inv.variance) > 0.01 && (
-                <span className="text-amber-700">variance {money(Math.abs(inv.variance))}</span>
+                <span className="text-amber-700">{t('variance {amount}', { amount: money(Math.abs(inv.variance), lang) })}</span>
               )}
-              {inv.reconciliation_status === 'reconciled' && <span className="text-emerald-700">reconciled</span>}
+              {inv.reconciliation_status === 'reconciled' && <span className="text-emerald-700">{t('reconciled')}</span>}
             </div>
           </div>
         ))}
@@ -124,6 +138,7 @@ function InvoiceGroup({ title, subtitle, rows, party }) {
 
 // ── One part, with its paper ──────────────────────────────────────────────────────────────────────
 function PartRow({ part }) {
+  const { t, lang } = useI18n();
   const isCredit = part.kind === 'credit';
   const invoice = part.invoice;
 
@@ -136,7 +151,7 @@ function PartRow({ part }) {
           </p>
           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-slate-500">
             <span className="rounded bg-slate-100 px-1.5 py-0.5 font-medium text-slate-600">
-              {ORIGIN_LABEL[part.origin] || 'Part'}
+              {originLabel(t, part.origin) || t('Part')}
             </span>
             {part.supplier && <span>{part.supplier}</span>}
             {part.quantity > 1 && <span>× {part.quantity}</span>}
@@ -148,7 +163,7 @@ function PartRow({ part }) {
           {invoice && (
             <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px]">
               <span className="font-medium text-slate-600">
-                {invoice.invoice_no || 'Invoice'}{invoice.date ? ` · ${invoice.date}` : ''}
+                {invoice.invoice_no || t('Invoice')}{invoice.date ? ` · ${invoice.date}` : ''}
               </span>
               {invoice.photo_url && (
                 <a
@@ -157,25 +172,27 @@ function PartRow({ part }) {
                   rel="noreferrer"
                   className="inline-flex items-center gap-1 text-sky-600 hover:underline"
                 >
-                  <Icon.Camera className="h-3 w-3" /> Photo
+                  <Icon.Camera className="h-3 w-3" /> {t('Photo')}
                 </a>
               )}
             </div>
           )}
           {part.invoice_missing && (
             <p className="mt-1.5 text-[11px] font-medium text-amber-600">
-              No supplier invoice recorded — this price has no document behind it.
+              {t('No supplier invoice recorded — this price has no document behind it.')}
             </p>
           )}
           {part.refunded > 0 && !isCredit && (
-            <p className="mt-1 text-[11px] text-emerald-700">Refunded {money(part.refunded)} · net {money(part.net)}</p>
+            <p className="mt-1 text-[11px] text-emerald-700">
+              {t('Refunded {refunded} · net {net}', { refunded: money(part.refunded, lang), net: money(part.net, lang) })}
+            </p>
           )}
 
           <div className="mt-1.5"><SourceChip source={part.source} /></div>
         </div>
 
         <span className={`shrink-0 text-sm tabular-nums ${isCredit ? 'font-medium text-emerald-700' : 'text-slate-800'}`}>
-          {signed(part.total)}
+          {signed(part.total, lang)}
         </span>
       </div>
     </div>
@@ -184,6 +201,7 @@ function PartRow({ part }) {
 
 // ── One fault, whole ──────────────────────────────────────────────────────────────────────────────
 function FaultBlock({ fault }) {
+  const { t, lang } = useI18n();
   const hasMoney =
     fault.parts.length > 0 || fault.labour.length > 0 || fault.awaiting_installation.length > 0;
 
@@ -194,18 +212,19 @@ function FaultBlock({ fault }) {
           <p className="truncate text-sm font-semibold text-slate-800">{fault.symptom}</p>
           {fault.is_incorrect && (
             <p className="mt-0.5 text-[11px] font-medium text-rose-600">
-              Ruled an incorrect diagnosis{fault.incorrect_reason ? ` — ${fault.incorrect_reason}` : ''}. No further
-              cost can be added to it.
+              {fault.incorrect_reason
+                ? t('Ruled an incorrect diagnosis — {reason}. No further cost can be added to it.', { reason: fault.incorrect_reason })
+                : t('Ruled an incorrect diagnosis. No further cost can be added to it.')}
             </p>
           )}
         </div>
-        <span className="shrink-0 text-sm font-semibold tabular-nums text-slate-800">{money(fault.totals.net)}</span>
+        <span className="shrink-0 text-sm font-semibold tabular-nums text-slate-800">{money(fault.totals.net, lang)}</span>
       </div>
 
       {/* What the inspector said it would need — the step before any money moved. */}
       {fault.required_parts.length > 0 && (
         <div className="mt-2.5">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">Required parts</p>
+          <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">{t('Required parts')}</p>
           <div className="mt-1 flex flex-wrap gap-1.5">
             {fault.required_parts.map((rp) => (
               <span key={rp.id} className="rounded bg-white px-2 py-0.5 text-[11px] text-slate-600 ring-1 ring-slate-200">
@@ -219,20 +238,20 @@ function FaultBlock({ fault }) {
 
       {fault.parts.length > 0 && (
         <div className="mt-2.5 space-y-1.5">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">Parts</p>
+          <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">{t('Parts')}</p>
           {fault.parts.map((p, i) => <PartRow key={p.line_item_id || i} part={p} />)}
         </div>
       )}
 
       {fault.labour.length > 0 && (
         <div className="mt-2.5">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">Installation / labour</p>
+          <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">{t('Installation / labour')}</p>
           {fault.labour.map((l) => (
             <div key={l.line_item_id}>
               <Row
                 label={l.description}
-                sub={l.garage_invoice ? `${l.garage_invoice.garage || 'Garage'}${l.garage_invoice.invoice_no ? ` · ${l.garage_invoice.invoice_no}` : ''}` : null}
-                value={l.is_refund ? signed(l.total) : money(l.total)}
+                sub={l.garage_invoice ? `${l.garage_invoice.garage || t('Garage')}${l.garage_invoice.invoice_no ? ` · ${l.garage_invoice.invoice_no}` : ''}` : null}
+                value={l.is_refund ? signed(l.total, lang) : money(l.total, lang)}
                 tone={l.is_refund ? 'emerald' : 'slate'}
               />
               <SourceChip source={l.source} />
@@ -245,7 +264,7 @@ function FaultBlock({ fault }) {
           because adding it would make the ticket disagree with the garage's paper. */}
       {fault.awaiting_installation.length > 0 && (
         <div className="mt-2.5 rounded-lg border border-dashed border-amber-300 bg-amber-50/60 px-3 py-2">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-amber-700">Bought, not yet fitted</p>
+          <p className="text-[11px] font-medium uppercase tracking-wide text-amber-700">{t('Bought, not yet fitted')}</p>
           {fault.awaiting_installation.map((p) => (
             <div key={p.purchase_id} className="mt-1 flex items-center justify-between gap-3 text-[12px]">
               <span className="truncate text-slate-700">
@@ -253,19 +272,20 @@ function FaultBlock({ fault }) {
                 {p.supplier ? ` · ${p.supplier}` : ''}
                 {p.invoice?.invoice_no ? ` · ${p.invoice.invoice_no}` : ''}
               </span>
-              <span className="shrink-0 tabular-nums text-amber-800">{money(p.net)}</span>
+              <span className="shrink-0 tabular-nums text-amber-800">{money(p.net, lang)}</span>
             </div>
           ))}
-          <p className="mt-1 text-[10px] text-amber-700">Not in the ticket total until it is fitted.</p>
+          <p className="mt-1 text-[10px] text-amber-700">{t('Not in the ticket total until it is fitted.')}</p>
         </div>
       )}
 
-      {!hasMoney && <p className="mt-2 text-[12px] text-slate-400">No cost recorded against this fault yet.</p>}
+      {!hasMoney && <p className="mt-2 text-[12px] text-slate-400">{t('No cost recorded against this fault yet.')}</p>}
     </div>
   );
 }
 
 export default function CostJourney({ ticketId, reloadKey }) {
+  const { t, lang } = useI18n();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -287,11 +307,11 @@ export default function CostJourney({ ticketId, reloadKey }) {
   // Money UI is gated by Financial Decoupling like every other computed figure.
   if (!SHOW_FINANCIALS || loading || !data) return null;
 
-  const t = data.totals;
-  const nothingYet = t.net_total === 0 && t.committed === 0;
+  const totals = data.totals;
+  const nothingYet = totals.net_total === 0 && totals.committed === 0;
   if (nothingYet && !data.faults.some((f) => f.required_parts.length > 0)) return null;
 
-  const incorrect = t.incorrect_fault_cost;
+  const incorrect = totals.incorrect_fault_cost;
 
   return (
     <div className="space-y-3">
@@ -302,11 +322,11 @@ export default function CostJourney({ ticketId, reloadKey }) {
       {data.general.lines.length > 0 && (
         <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
           <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
-            Document-level charges
+            {t('Document-level charges')}
           </p>
           {data.general.lines.map((l) => (
             <div key={l.line_item_id}>
-              <Row label={l.description} value={signed(l.total)} />
+              <Row label={l.description} value={signed(l.total, lang)} />
               <SourceChip source={l.source} />
             </div>
           ))}
@@ -319,14 +339,14 @@ export default function CostJourney({ ticketId, reloadKey }) {
       {(data.invoices.supplier.length > 0 || data.invoices.garage.length > 0) && (
         <div className="grid gap-3 sm:grid-cols-2">
           <InvoiceGroup
-            title="Supplier invoices"
-            subtitle="What the parts cost"
+            title={t('Supplier invoices')}
+            subtitle={t('What the parts cost')}
             rows={data.invoices.supplier}
             party={(i) => i.supplier}
           />
           <InvoiceGroup
-            title="Garage invoices"
-            subtitle="What fitting them cost"
+            title={t('Garage invoices')}
+            subtitle={t('What fitting them cost')}
             rows={data.invoices.garage}
             party={(i) => i.garage}
           />
@@ -336,36 +356,38 @@ export default function CostJourney({ ticketId, reloadKey }) {
       {/* The six bands, then the net. Each is a plain sum of ledger rows, so the arithmetic on screen is
           the arithmetic in the database. */}
       <div className="rounded-xl border border-slate-300 bg-white p-3">
-        <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">Total repair cost</p>
+        <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">{t('Total repair cost')}</p>
         <div className="mt-1 divide-y divide-slate-100">
           <Row
-            label="Parts"
+            label={t('Parts')}
             sub={[
-              t.supplier_parts > 0 ? `${money(t.supplier_parts)} from suppliers` : null,
-              t.garage_parts > 0 ? `${money(t.garage_parts)} supplied by the garage` : null,
+              totals.supplier_parts > 0 ? t('{amount} from suppliers', { amount: money(totals.supplier_parts, lang) }) : null,
+              totals.garage_parts > 0 ? t('{amount} supplied by the garage', { amount: money(totals.garage_parts, lang) }) : null,
             ].filter(Boolean).join(' · ') || null}
-            value={money(t.parts)}
+            value={money(totals.parts, lang)}
           />
-          <Row label="Labour" value={money(t.labour)} />
-          {t.vat !== 0 && <Row label="VAT" value={money(t.vat)} />}
-          {t.discounts !== 0 && <Row label="Discounts" value={signed(t.discounts)} tone="emerald" />}
-          {t.refunds !== 0 && (
+          <Row label={t('Labour')} value={money(totals.labour, lang)} />
+          {totals.vat !== 0 && <Row label={t('VAT')} value={money(totals.vat, lang)} />}
+          {totals.discounts !== 0 && <Row label={t('Discounts')} value={signed(totals.discounts, lang)} tone="emerald" />}
+          {totals.refunds !== 0 && (
             <Row
-              label="Refunds & returns"
+              label={t('Refunds & returns')}
               sub={[
-                t.parts_returned !== 0 ? `${money(Math.abs(t.parts_returned))} parts returned` : null,
-                t.labour_refunded !== 0 ? `${money(Math.abs(t.labour_refunded))} labour refunded` : null,
+                totals.parts_returned !== 0 ? t('{amount} parts returned', { amount: money(Math.abs(totals.parts_returned), lang) }) : null,
+                totals.labour_refunded !== 0 ? t('{amount} labour refunded', { amount: money(Math.abs(totals.labour_refunded), lang) }) : null,
               ].filter(Boolean).join(' · ') || null}
-              value={signed(t.refunds)}
+              value={signed(totals.refunds, lang)}
               tone="emerald"
             />
           )}
-          {t.adjustments !== 0 && <Row label="Adjustments" value={signed(t.adjustments)} />}
-          <Row label="Final net total" value={money(t.net_total)} strong />
+          {totals.adjustments !== 0 && <Row label={t('Adjustments')} value={signed(totals.adjustments, lang)} />}
+          <Row label={t('Final net total')} value={money(totals.net_total, lang)} strong />
         </div>
-        {t.committed > 0 && (
+        {totals.committed > 0 && (
           <p className="mt-2 border-t border-slate-100 pt-2 text-[11px] text-amber-700">
-            {money(t.committed)} of parts bought and not yet fitted — outside this total until installation.
+            {t('{amount} of parts bought and not yet fitted — outside this total until installation.', {
+              amount: money(totals.committed, lang),
+            })}
           </p>
         )}
       </div>
@@ -377,8 +399,8 @@ export default function CostJourney({ ticketId, reloadKey }) {
           <div className="flex items-center justify-between gap-3">
             <p className={`text-sm font-semibold ${data.audit.fully_traceable ? 'text-emerald-800' : 'text-amber-800'}`}>
               {data.audit.fully_traceable
-                ? 'Every amount traces to a document'
-                : `${money(data.audit.untraceable)} has no source document`}
+                ? t('Every amount traces to a document')
+                : t('{amount} has no source document', { amount: money(data.audit.untraceable, lang) })}
             </p>
             <span className={`text-sm font-semibold tabular-nums ${data.audit.fully_traceable ? 'text-emerald-800' : 'text-amber-800'}`}>
               {data.audit.coverage_pct}%
@@ -389,13 +411,13 @@ export default function CostJourney({ ticketId, reloadKey }) {
               <ul className="mt-1.5 space-y-1">
                 {data.audit.untraceable_items.map((u, i) => (
                   <li key={u.line_item_id || `lump-${i}`} className="text-[12px] text-amber-800">
-                    {u.description} — {money(u.amount)}
+                    {u.description} — {money(u.amount, lang)}
                     <span className="text-amber-600"> · {u.why}</span>
                   </li>
                 ))}
               </ul>
               <p className="mt-1.5 text-[11px] text-amber-700">
-                Record the invoice it came from, or an adjustment that explains it.
+                {t('Record the invoice it came from, or an adjustment that explains it.')}
               </p>
             </>
           )}
@@ -407,13 +429,13 @@ export default function CostJourney({ ticketId, reloadKey }) {
       {incorrect.amount !== 0 && (
         <div className="rounded-xl border border-rose-200 bg-rose-50 p-3">
           <div className="flex items-center justify-between gap-3">
-            <p className="text-sm font-semibold text-rose-800">Incorrect-diagnosis cost</p>
-            <span className="text-sm font-semibold tabular-nums text-rose-800">{money(incorrect.amount)}</span>
+            <p className="text-sm font-semibold text-rose-800">{t('Incorrect-diagnosis cost')}</p>
+            <span className="text-sm font-semibold tabular-nums text-rose-800">{money(incorrect.amount, lang)}</span>
           </div>
           <ul className="mt-1.5 space-y-1">
             {incorrect.faults.map((f) => (
               <li key={f.id} className="text-[12px] text-rose-700">
-                {f.symptom} — {money(f.spent)}
+                {f.symptom} — {money(f.spent, lang)}
                 {f.reason ? ` · ${f.reason}` : ''}
               </li>
             ))}
@@ -425,7 +447,7 @@ export default function CostJourney({ ticketId, reloadKey }) {
       {/* Traceability: name the tables behind the figures rather than asking anyone to trust them. */}
       <details className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
         <summary className="cursor-pointer text-[11px] font-medium uppercase tracking-wide text-slate-400">
-          Data origin
+          {t('Data origin')}
         </summary>
         <dl className="mt-2 space-y-1">
           {Object.entries(data.sources).map(([k, v]) => (

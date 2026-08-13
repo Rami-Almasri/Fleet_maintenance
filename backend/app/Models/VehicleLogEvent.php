@@ -95,6 +95,11 @@ class VehicleLogEvent extends Model
     public const EVENT_SEVERITY_REVIEW_KEPT = 'severity_review_kept'; // QC "keep current": the recommendation was reviewed and dismissed as a false alarm
 
     // Deferred-invoice decoupling — repair signed off with the invoice still pending, then received.
+    // The maintenance visit's own contract (type 'U'), opened when the car is booked in for a look and
+    // closed when Final QA signs it back into service — see MaintenanceWorkflowService::openMaintenanceContract().
+    public const EVENT_CONTRACT_OPENED  = 'maintenance_contract_opened';
+    public const EVENT_CONTRACT_CLOSED  = 'maintenance_contract_closed';
+
     public const EVENT_AWAITING_INVOICE = 'awaiting_invoice';  // closed operationally, invoice deferred
     public const EVENT_INVOICE_RECEIVED = 'invoice_received';  // the outstanding invoice landed → fully closed
 
@@ -168,6 +173,9 @@ class VehicleLogEvent extends Model
         self::EVENT_READINESS_OVERRIDE  => Maintenance::FINDING_INSPECTOR, // a warning-override sign-off is likewise inspector-side
         self::EVENT_CONDITION_GRADED    => Maintenance::FINDING_INSPECTOR,
         self::EVENT_ODOMETER_CORRECTED  => Maintenance::FINDING_INSPECTOR, // an admin sign-off is likewise inspector-side
+        // Opening/closing the visit's contract is our own bookkeeping, not workshop work.
+        self::EVENT_CONTRACT_OPENED    => Maintenance::FINDING_INSPECTOR,
+        self::EVENT_CONTRACT_CLOSED    => Maintenance::FINDING_INSPECTOR,
         self::EVENT_AWAITING_INVOICE   => Maintenance::FINDING_INSPECTOR, // sign-off with invoice deferred
         self::EVENT_INVOICE_RECEIVED   => Maintenance::FINDING_INSPECTOR,
         self::EVENT_GARAGE_INVOICE_SUBMITTED => Maintenance::FINDING_GARAGE,   // the garage sent the invoice

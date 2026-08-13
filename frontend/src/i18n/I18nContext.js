@@ -11,20 +11,10 @@
 // blanking the UI. {var} tokens are interpolated from the second argument.
 
 import { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react';
-import { LABELS, LANGS, PHRASES } from './labels';
+import { LABELS, LANGS } from './labels';
+import { STORAGE_KEY, interpolate, lookup, resolve } from './translate';
 
-const STORAGE_KEY = 'fv:lang';
 const I18nContext = createContext(null);
-
-// Walk a dot-path ('workflow.meta.dispatch.title') into a nested object.
-function resolve(tree, path) {
-  return path.split('.').reduce((node, key) => (node == null ? undefined : node[key]), tree);
-}
-
-function interpolate(str, vars) {
-  if (!vars || typeof str !== 'string') return str;
-  return str.replace(/\{(\w+)\}/g, (m, k) => (vars[k] != null ? String(vars[k]) : m));
-}
 
 export function I18nProvider({ children }) {
   const [lang, setLangState] = useState(() => {
@@ -67,17 +57,7 @@ export function I18nProvider({ children }) {
   //
   // Phrases are checked first and by exact match, so a sentence containing a '.'
   // is never mistaken for a dot-path.
-  const t = useCallback(
-    (key, vars) => {
-      const phrase = PHRASES[lang]?.[key];
-      if (phrase !== undefined) return interpolate(phrase, vars);
-      const hit = resolve(LABELS[lang], key);
-      const val = hit !== undefined ? hit : resolve(LABELS.en, key);
-      if (val === undefined) return interpolate(key, vars); // the key IS the English
-      return interpolate(val, vars);
-    },
-    [lang],
-  );
+  const t = useCallback((key, vars) => lookup(lang, key, vars), [lang]);
 
   // Same resolution as t(), but falls back to a caller-supplied English string
   // instead of the raw key. This is what lets a page be migrated to i18n in one

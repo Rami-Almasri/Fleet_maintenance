@@ -17,26 +17,30 @@ import {
   getTicketCheckpoints, submitCheckpoint, deleteCheckpoint,
   setExpectedCompletion, setResponsibles, getCheckpointCandidates,
 } from '../../lib/maintenanceCheckpoints';
+import { useI18n } from '../../i18n/I18nContext';
 
 function MonitorBar({ monitor }) {
+  const { t } = useI18n();
   if (!monitor) return null;
   const { expected_on, is_estimated, eta_status, days_left, days_over, overdue, needs_update } = monitor;
   const tone = overdue ? 'text-red-700 bg-red-50 ring-red-200'
     : needs_update ? 'text-amber-700 bg-amber-50 ring-amber-200'
     : 'text-slate-600 bg-slate-50 ring-slate-200';
-  const etaText = !expected_on ? 'No ETA'
-    : overdue ? `${days_over} day(s) overdue`
-    : eta_status === 'due_today' ? 'Due today'
-    : `${days_left} day(s) left`;
+  const etaText = !expected_on ? t('No ETA')
+    : overdue ? t('{n} day(s) overdue', { n: days_over })
+    : eta_status === 'due_today' ? t('Due today')
+    : t('{n} day(s) left', { n: days_left });
   return (
     <div className={`flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg px-3 py-2 text-sm ring-1 ${tone}`}>
       <span className="font-semibold">{etaText}</span>
       {expected_on && (
         <span className="text-xs opacity-80">
-          Expected {fmtDate(expected_on)}{is_estimated ? ' (estimated)' : ''}
+          {is_estimated
+            ? t('Expected {date} (estimated)', { date: fmtDate(expected_on) })
+            : t('Expected {date}', { date: fmtDate(expected_on) })}
         </span>
       )}
-      {needs_update && <span className="text-xs font-medium">· Answer needed today</span>}
+      {needs_update && <span className="text-xs font-medium">{t('· Answer needed today')}</span>}
     </div>
   );
 }
@@ -47,6 +51,7 @@ function MonitorBar({ monitor }) {
  * there is nothing to report, so a car running to plan carries no noise.
  */
 function ChaseBar({ chase }) {
+  const { t } = useI18n();
   if (!chase) return null;
   const unanswered = chase.reminders_open > 0;
   const slipped = chase.reschedule_count > 0;
@@ -57,13 +62,16 @@ function ChaseBar({ chase }) {
       {unanswered && (
         <span className="inline-flex items-center rounded-full bg-red-50 px-2.5 py-1 font-medium text-red-700 ring-1 ring-red-200">
           {chase.days_unanswered > 0
-            ? `Reminder unanswered for ${chase.days_unanswered} day(s) — since ${fmtDate(chase.first_reminder_on)}`
-            : 'Reminded today — not yet answered'}
+            ? t('Reminder unanswered for {n} day(s) — since {date}', {
+                n: chase.days_unanswered,
+                date: fmtDate(chase.first_reminder_on),
+              })
+            : t('Reminded today — not yet answered')}
         </span>
       )}
       {slipped && (
         <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-1 font-medium text-amber-700 ring-1 ring-amber-200">
-          Date already moved {chase.reschedule_count}×
+          {t('Date already moved {n}×', { n: chase.reschedule_count })}
         </span>
       )}
     </div>
@@ -72,6 +80,7 @@ function ChaseBar({ chase }) {
 
 export default function CheckpointModal({ open, ticketId, title, subtitle, onClose, onDone }) {
   const { statusOptions, delayReasons } = useCheckpointVocab();
+  const { t } = useI18n();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -113,11 +122,11 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
       setNextDate(expired ? '' : (d.monitor?.expected_on || ''));
       setAnswer(spent ? RESPONSE_RESCHEDULED : '');
     } catch (e) {
-      setErr(e?.response?.data?.message || 'Failed to load checkpoints.');
+      setErr(e?.response?.data?.message || t('Failed to load checkpoints.'));
     } finally {
       setLoading(false);
     }
-  }, [ticketId]);
+  }, [ticketId, t]);
 
   useEffect(() => {
     if (!open || !ticketId) return;
@@ -139,6 +148,7 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
   const currentEta = data?.monitor?.expected_on || '';
   const rescheduling = answer === RESPONSE_RESCHEDULED;
   const submittedDate = rescheduling ? nextDate : currentEta;
+  const newDateLabel = nextDate && nextDate !== currentEta ? fmtDate(nextDate) : '—';
 
   // The promised day has already gone by and the car is still in the shop. "Is it still coming back on
   // 19 Jul?" is unanswerable once 19 Jul is in the past — there is nothing left to confirm, so the
@@ -174,20 +184,20 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
     e.preventDefault();
     if (busy) return;
     setErr('');
-    if (!answer) { setErr('Answer the question: is the car still coming back on the promised date?'); return; }
-    if (!submittedDate) { setErr('Set the date the car is expected back.'); return; }
+    if (!answer) { setErr(t('Answer the question: is the car still coming back on the promised date?')); return; }
+    if (!submittedDate) { setErr(t('Set the date the car is expected back.')); return; }
     if (rescheduling && currentEta && nextDate === currentEta) {
       setErr(missed
-        ? `${fmtDate(currentEta)} has already passed. Pick the new date the car is expected back.`
-        : 'Pick the NEW date the car is expected back — or answer "Yes" to confirm the current one.');
+        ? t('{date} has already passed. Pick the new date the car is expected back.', { date: fmtDate(currentEta) })
+        : t('Pick the NEW date the car is expected back — or answer "Yes" to confirm the current one.'));
       return;
     }
     if (rescheduling && nextDate && nextDate < todayIso) {
-      setErr('The new date is in the past. Pick the date the car is actually expected back.');
+      setErr(t('The new date is in the past. Pick the date the car is actually expected back.'));
       return;
     }
-    if (rescheduling && !delayReason) { setErr('Select a reason for the changed completion date.'); return; }
-    if (rescheduling && delayReason === 'other' && !delayReasonOther.trim()) { setErr('Explain the reason for the change.'); return; }
+    if (rescheduling && !delayReason) { setErr(t('Select a reason for the changed completion date.')); return; }
+    if (rescheduling && delayReason === 'other' && !delayReasonOther.trim()) { setErr(t('Explain the reason for the change.')); return; }
     setBusy(true);
     try {
       await submitCheckpoint(ticketId, {
@@ -198,22 +208,22 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
       });
       resetForm();
       await load();
-      onDone?.('Progress update saved');
+      onDone?.(t('Progress update saved'));
     } catch (e2) {
-      setErr(e2?.response?.data?.message || 'Failed to save the update.');
+      setErr(e2?.response?.data?.message || t('Failed to save the update.'));
     } finally {
       setBusy(false);
     }
   };
 
   const removeCheckpoint = async (c) => {
-    if (!window.confirm('Delete this checkpoint and its evidence?')) return;
+    if (!window.confirm(t('Delete this checkpoint and its evidence?'))) return;
     try {
       await deleteCheckpoint(ticketId, c.id);
       await load();
-      onDone?.('Checkpoint removed');
+      onDone?.(t('Checkpoint removed'));
     } catch (e2) {
-      setErr(e2?.response?.data?.message || 'Failed to delete.');
+      setErr(e2?.response?.data?.message || t('Failed to delete.'));
     }
   };
 
@@ -223,9 +233,9 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
       await setExpectedCompletion(ticketId, { durationDays, completionDate: expDate });
       setDurationDays('');
       await load();
-      onDone?.('Expected completion updated');
+      onDone?.(t('Expected completion updated'));
     } catch (e2) {
-      setErr(e2?.response?.data?.message || 'Failed to update expected completion.');
+      setErr(e2?.response?.data?.message || t('Failed to update expected completion.'));
     } finally { setBusy(false); }
   };
 
@@ -238,16 +248,16 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
     try {
       await setResponsibles(ticketId, assigned);
       await load();
-      onDone?.('Responsible users updated');
+      onDone?.(t('Responsible users updated'));
     } catch (e2) {
-      setErr(e2?.response?.data?.message || 'Failed to update responsible users.');
+      setErr(e2?.response?.data?.message || t('Failed to update responsible users.'));
     } finally { setBusy(false); }
   };
 
   return (
-    <Modal open={open} onClose={onClose} title={title || 'Maintenance Checkpoint'} subtitle={subtitle} size="xl">
+    <Modal open={open} onClose={onClose} title={title || t('Maintenance Checkpoint')} subtitle={subtitle} size="xl">
       {loading ? (
-        <p className="py-10 text-center text-sm text-slate-400">Loading checkpoints…</p>
+        <p className="py-10 text-center text-sm text-slate-400">{t('Loading checkpoints…')}</p>
       ) : (
         <div className="space-y-5">
           <MonitorBar monitor={data?.monitor} />
@@ -257,15 +267,15 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
 
           {/* Responsible follow-up owners */}
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Responsible</span>
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">{t('Responsible')}</span>
             {(data?.responsibles || []).length === 0
-              ? <span className="text-xs text-slate-400">Default supervisors</span>
+              ? <span className="text-xs text-slate-400">{t('Default supervisors')}</span>
               : data.responsibles.map((u) => (
                   <span key={u.id} className="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700 ring-1 ring-indigo-100">{u.name}</span>
                 ))}
             {canManage && (
               <button type="button" onClick={() => setShowManage((s) => !s)} className="ms-1 text-xs font-medium text-indigo-600 hover:text-indigo-700">
-                {showManage ? 'Hide settings' : 'Edit settings'}
+                {showManage ? t('Hide settings') : t('Edit settings')}
               </button>
             )}
           </div>
@@ -274,20 +284,20 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
           {showManage && canManage && (
             <div className="space-y-4 rounded-xl border border-slate-200 bg-slate-50/60 p-4">
               <div>
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Expected completion</p>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">{t('Expected completion')}</p>
                 <div className="flex flex-wrap items-end gap-3">
-                  <Input label="Duration (days)" type="number" min="1" max="365" value={durationDays}
-                         onChange={(e) => setDurationDays(e.target.value)} className="w-32" placeholder="e.g. 4" />
-                  <span className="pb-2 text-xs text-slate-400">or</span>
-                  <Input label="Completion date" type="date" value={expDate || ''} onChange={(e) => setExpDate(e.target.value)} className="w-44" />
-                  <Button type="button" variant="secondary" onClick={saveExpected} disabled={busy}>Save date</Button>
+                  <Input label={t('Duration (days)')} type="number" min="1" max="365" value={durationDays}
+                         onChange={(e) => setDurationDays(e.target.value)} className="w-32" placeholder={t('e.g. 4')} />
+                  <span className="pb-2 text-xs text-slate-400">{t('or')}</span>
+                  <Input label={t('Completion date')} type="date" value={expDate || ''} onChange={(e) => setExpDate(e.target.value)} className="w-44" />
+                  <Button type="button" variant="secondary" onClick={saveExpected} disabled={busy}>{t('Save date')}</Button>
                 </div>
-                <p className="mt-1 text-[11px] text-slate-400">Enter a duration to derive the date, or set the date directly (the date wins).</p>
+                <p className="mt-1 text-[11px] text-slate-400">{t('Enter a duration to derive the date, or set the date directly (the date wins).')}</p>
               </div>
               <div>
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Responsible users</p>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">{t('Responsible users')}</p>
                 <div className="flex flex-wrap gap-2">
-                  {candidates.length === 0 && <span className="text-xs text-slate-400">Loading…</span>}
+                  {candidates.length === 0 && <span className="text-xs text-slate-400">{t('Loading…')}</span>}
                   {candidates.map((u) => (
                     <label key={u.id} className={`cursor-pointer rounded-full px-3 py-1 text-xs font-medium ring-1 transition ${assigned.includes(u.id) ? 'bg-indigo-600 text-white ring-indigo-600' : 'bg-white text-slate-600 ring-slate-300 hover:bg-slate-50'}`}>
                       <input type="checkbox" className="sr-only" checked={assigned.includes(u.id)} onChange={() => toggleAssigned(u.id)} />
@@ -296,7 +306,7 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
                   ))}
                 </div>
                 <div className="mt-3">
-                  <Button type="button" variant="secondary" onClick={saveResponsibles} disabled={busy}>Save responsible users</Button>
+                  <Button type="button" variant="secondary" onClick={saveResponsibles} disabled={busy}>{t('Save responsible users')}</Button>
                 </div>
               </div>
             </div>
@@ -310,16 +320,15 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
               {missed && (
                 <div className="rounded-lg bg-red-50/70 p-3 ring-1 ring-red-200">
                   <p className="text-sm font-semibold text-red-800">
-                    The car was promised back on {fmtDate(currentEta)}
-                    {daysOver > 0 && ` — ${daysOver} day(s) ago`} and it is still in the shop.
+                    {daysOver > 0
+                      ? t('The car was promised back on {date} — {n} day(s) ago — and it is still in the shop.', { date: fmtDate(currentEta), n: daysOver })
+                      : t('The car was promised back on {date} and it is still in the shop.', { date: fmtDate(currentEta) })}
                   </p>
                   <p className="mt-1 text-sm text-red-700">
-                    That date has passed, so there is nothing left to confirm. Give the new date the car is
-                    coming back and the reason it moved.
+                    {t('That date has passed, so there is nothing left to confirm. Give the new date the car is coming back and the reason it moved.')}
                   </p>
                   <p className="mt-1 text-[11px] text-red-600/90">
-                    If the car is already back, don't file a date here — close it on the maintenance board
-                    so the ticket stops being chased.
+                    {t("If the car is already back, don't file a date here — close it on the maintenance board so the ticket stops being chased.")}
                   </p>
                 </div>
               )}
@@ -329,7 +338,7 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
               {currentEta && !missed && (
                 <div>
                   <p className="text-sm font-semibold text-slate-700">
-                    Is the car still coming back on {fmtDate(currentEta)}?
+                    {t('Is the car still coming back on {date}?', { date: fmtDate(currentEta) })}
                   </p>
                   <div className="mt-2 flex flex-wrap gap-2">
                     <button
@@ -339,7 +348,7 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
                           ? 'bg-emerald-600 text-white ring-emerald-600'
                           : 'bg-white text-slate-700 ring-slate-300 hover:bg-emerald-50'}`}
                     >
-                      Yes — back on {fmtDate(currentEta)}
+                      {t('Yes — back on {date}', { date: fmtDate(currentEta) })}
                     </button>
                     <button
                       type="button" onClick={() => chooseAnswer(RESPONSE_RESCHEDULED)}
@@ -348,7 +357,7 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
                           ? 'bg-amber-600 text-white ring-amber-600'
                           : 'bg-white text-slate-700 ring-slate-300 hover:bg-amber-50'}`}
                     >
-                      No — it moved to a new date
+                      {t('No — it moved to a new date')}
                     </button>
                   </div>
                 </div>
@@ -359,23 +368,23 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
               {rescheduling && (
                 <div className="grid grid-cols-1 gap-3 rounded-lg bg-amber-50/60 p-3 ring-1 ring-amber-100 sm:grid-cols-2">
                   <Input
-                    label={currentEta ? 'New date the car is expected back' : 'Date the car is expected back'}
+                    label={currentEta ? t('New date the car is expected back') : t('Date the car is expected back')}
                     required type="date" min={todayIso} value={nextDate} onChange={(e) => setNextDate(e.target.value)}
                   />
-                  <Select label="Reason it moved" required value={delayReason} onChange={(e) => setDelayReason(e.target.value)}>
-                    <option value="">— Select —</option>
+                  <Select label={t('Reason it moved')} required value={delayReason} onChange={(e) => setDelayReason(e.target.value)}>
+                    <option value="">{t('— Select —')}</option>
                     {delayReasons.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
                   </Select>
                   {delayReason === 'other' && (
-                    <Input label="Explain" required value={delayReasonOther} onChange={(e) => setDelayReasonOther(e.target.value)} placeholder="Why did the date move?" />
+                    <Input label={t('Explain')} required value={delayReasonOther} onChange={(e) => setDelayReasonOther(e.target.value)} placeholder={t('Why did the date move?')} />
                   )}
                   {currentEta && (
                     <p className="text-[11px] text-amber-700 sm:col-span-2">
                       {missed
-                        ? `Replacing the missed date ${fmtDate(currentEta)} with `
-                        : `Moving the completion date from ${fmtDate(currentEta)} to `}
-                      {nextDate && nextDate !== currentEta ? fmtDate(nextDate) : '—'}.
-                      The next reminder will run one day before the new date.
+                        ? t('Replacing the missed date {old} with {new}.', { old: fmtDate(currentEta), new: newDateLabel })
+                        : t('Moving the completion date from {old} to {new}.', { old: fmtDate(currentEta), new: newDateLabel })}
+                      {' '}
+                      {t('The next reminder will run one day before the new date.')}
                     </p>
                   )}
                 </div>
@@ -383,37 +392,37 @@ export default function CheckpointModal({ open, ticketId, title, subtitle, onClo
 
               {answer === RESPONSE_CONFIRMED && (
                 <p className="rounded-lg bg-emerald-50/70 px-3 py-2 text-[11px] text-emerald-700 ring-1 ring-emerald-100">
-                  Recorded as confirmed for {fmtDate(currentEta)}. You will be asked again tomorrow while the car is still in the shop.
+                  {t('Recorded as confirmed for {date}. You will be asked again tomorrow while the car is still in the shop.', { date: fmtDate(currentEta) })}
                 </p>
               )}
 
-              <Select label="Workshop status" value={status} onChange={(e) => setStatus(e.target.value)}>
-                <option value="">— Select —</option>
+              <Select label={t('Workshop status')} value={status} onChange={(e) => setStatus(e.target.value)}>
+                <option value="">{t('— Select —')}</option>
                 {statusOptions.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
               </Select>
 
-              <Textarea label="Progress note" rows={3} value={summary} onChange={(e) => setSummary(e.target.value)} placeholder="What was done since the last update? What's next?" />
+              <Textarea label={t('Progress note')} rows={3} value={summary} onChange={(e) => setSummary(e.target.value)} placeholder={t("What was done since the last update? What's next?")} />
 
               <div>
-                <span className="mb-1.5 block text-sm font-medium text-slate-700">Attachments (photos / videos)</span>
+                <span className="mb-1.5 block text-sm font-medium text-slate-700">{t('Attachments (photos / videos)')}</span>
                 <input ref={fileRef} type="file" accept="image/*,video/*" multiple onChange={(e) => setFiles(Array.from(e.target.files || []))}
                        className="block w-full text-sm text-slate-500 file:me-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-slate-700 hover:file:bg-slate-200" />
-                {files.length > 0 && <p className="mt-1 text-xs text-slate-500">{files.length} file(s) selected</p>}
+                {files.length > 0 && <p className="mt-1 text-xs text-slate-500">{t('{n} file(s) selected', { n: files.length })}</p>}
               </div>
 
               <div className="flex justify-end">
-                <Button type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save answer'}</Button>
+                <Button type="submit" disabled={busy}>{busy ? t('Saving…') : t('Save answer')}</Button>
               </div>
             </form>
           ) : (
             <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-500 ring-1 ring-slate-200">
-              You are not a responsible user for this ticket, so you can view the timeline but not submit updates.
+              {t('You are not a responsible user for this ticket, so you can view the timeline but not submit updates.')}
             </p>
           )}
 
           {/* History */}
           <div>
-            <h4 className="mb-3 text-sm font-semibold text-slate-700">Timeline</h4>
+            <h4 className="mb-3 text-sm font-semibold text-slate-700">{t('Timeline')}</h4>
             <CheckpointTimeline checkpoints={data?.checkpoints || []} canManage={canManage} onDelete={removeCheckpoint} />
           </div>
 

@@ -22,11 +22,35 @@ class MaintenanceTaskResource extends JsonResource
 
         $sevMeta = $t->severity ? (Maintenance::FAULT_SEVERITY_META[$t->severity] ?? null) : null;
 
+        $locations = app(\App\Services\FaultLocationService::class);
+
         return [
             'id'             => $t->id,
             'maintenance_id' => $t->maintenance_id,
             'symptom'        => $t->symptom,
             'category_key'   => $t->category_key,
+
+            // ── WHAT IS WRONG, HOW MANY, AND WHERE ────────────────────────────────────────────────────
+            // The three facts a consumer needs to answer the question without parsing prose. `symptom`
+            // above stays exactly what it always was (the fault's identity, and what every existing
+            // client matches on); these are additive.
+            //
+            //   quantity  — physical occurrences this ONE routable record covers. Always ≥ 1; a fault
+            //               recorded before this existed reads 1, which is what it always meant.
+            //               NOT a row count — nothing that counts faults should start summing it.
+            //   locations — [{ key, label, label_ar, group, precision, inspection_zone }], in the order
+            //               they were picked. Empty means "we do not know where", never "nowhere".
+            //               `inspection_zone` is the matching hotspot-diagram panel, so a consumer can
+            //               join a fault to the inspection photos of the same panel.
+            //   location_mode — whether this TYPE takes a place at all (required | optional | none), so
+            //               a client can render the right editor without re-deriving the policy.
+            //   display   — the one rendered sentence ("2 scratches — rims and body"), from the single
+            //               formatter every surface uses. A convenience for read-only consumers;
+            //               anything that filters or reports should read the parts above, not this.
+            'quantity'       => (int) ($t->quantity ?: 1),
+            'locations'      => $locations->locationRefs($t),
+            'location_mode'  => $locations->policyForTask($t),
+            'display'        => $locations->describe($t),
 
             // ── EVENT TYPE (the primary domain classification) ────────────────────────────────────────
             // What this event IS: fault | service | inspection. Read from the stored discriminator, never

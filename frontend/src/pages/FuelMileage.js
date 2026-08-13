@@ -11,6 +11,7 @@ import { MetricGridSkeleton, Skeleton } from '../components/ui/Skeleton';
 import Icon from '../components/ui/Icon';
 import Drawer from '../components/ui/Drawer';
 import { aed2, num, fmtDate } from '../lib/format';
+import { useI18n } from '../i18n/I18nContext';
 
 // ── Date-window presets ──────────────────────────────────────────────────────
 // The source report is a period snapshot, and the fleet's contract history runs back to 2011 with
@@ -60,6 +61,7 @@ const kmCell = (v) => (v === null || v === undefined ? <span className="text-sla
  */
 export default function FuelMileage({ embedded = false }) {
   const navigate = useNavigate();
+  const { t } = useI18n();
   const [presetKey, setPresetKey] = useState('ytd');
   const preset = PRESETS.find((p) => p.key === presetKey) || PRESETS[0];
   const from = preset.from();
@@ -109,10 +111,13 @@ export default function FuelMileage({ embedded = false }) {
   const s = data?.summary || {};
 
   const exportCsv = () => {
-    const head = ['Plate', 'Car', 'Contracts', 'First Out', 'Last In', 'Actual km', 'Contract km', 'Out-of-Contract km', 'Fuel Debit (AED)', 'Flag'];
+    const head = [
+      t('Plate'), t('Car'), t('Contracts'), t('First Out'), t('Last In'), t('Actual km'),
+      t('Contract km'), t('Out-of-Contract km'), t('Fuel Debit (AED)'), t('Flag'),
+    ];
     const lines = rows.map((r) => [
       r.plate, r.car, r.contracts, r.first_out, r.last_in, r.actual_mileage, r.contract_mileage,
-      r.out_of_contract, r.total_fuel_debit, r.rollback_flag ? 'odometer rollback' : r.leakage_flag ? 'leakage' : '',
+      r.out_of_contract, r.total_fuel_debit, r.rollback_flag ? t('odometer rollback') : r.leakage_flag ? t('leakage') : '',
     ].map((c) => `"${String(c ?? '').replace(/"/g, '""')}"`).join(','));
     const blob = new Blob([[head.join(','), ...lines].join('\n')], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
@@ -126,7 +131,7 @@ export default function FuelMileage({ embedded = false }) {
   const columns = [
     {
       key: 'plate', align: 'left', cellClass: 'font-medium',
-      header: <SortHeader label="Car" col="plate" sort={sort} setSort={setSort} />,
+      header: <SortHeader label={t('Car')} col="plate" sort={sort} setSort={setSort} />,
       render: (r) => (
         <>
           <Link to={`/vehicles/${r.vehicle_id}`} onClick={(e) => e.stopPropagation()} className="text-indigo-600 hover:text-indigo-700">{r.plate || `#${r.vehicle_id}`}</Link>
@@ -136,41 +141,41 @@ export default function FuelMileage({ embedded = false }) {
     },
     {
       key: 'contracts', align: 'right', cellClass: 'tabular-nums text-slate-600',
-      tooltip: 'Number of contracts (movements) for this car in the window. Open = still out.',
-      header: <SortHeader label="Trips" col="contracts" sort={sort} setSort={setSort} align="right" />,
+      tooltip: t('Number of contracts (movements) for this car in the window. Open = still out.'),
+      header: <SortHeader label={t('Trips')} col="contracts" sort={sort} setSort={setSort} align="right" />,
       render: (r) => (
         <>
           {num(r.contracts)}
-          {r.open_now > 0 && <div className="text-[11px] text-blue-500">{r.open_now} open</div>}
+          {r.open_now > 0 && <div className="text-[11px] text-blue-500">{t('{n} open', { n: r.open_now })}</div>}
         </>
       ),
     },
     {
       key: 'span', align: 'right', cellClass: 'tabular-nums text-slate-500 text-xs',
-      tooltip: 'First odometer OUT → last odometer IN in the window.',
-      header: 'Odometer span',
+      tooltip: t('First odometer OUT → last odometer IN in the window.'),
+      header: t('Odometer span'),
       render: (r) => (r.first_out === null ? <span className="text-slate-300">—</span> : (
-        <span>{num(r.first_out)} <span className="text-slate-300">→</span> {num(r.last_in)}</span>
+        <span>{num(r.first_out)} <span className="inline-block text-slate-300 rtl:-scale-x-100">→</span> {num(r.last_in)}</span>
       )),
     },
     {
       key: 'actual_mileage', align: 'right', cellClass: 'tabular-nums text-slate-700',
-      tooltip: 'Actual travel = last IN − first OUT (real odometer movement over the window).',
-      header: <SortHeader label="Actual" col="actual_mileage" sort={sort} setSort={setSort} align="right" />,
+      tooltip: t('Actual travel = last IN − first OUT (real odometer movement over the window).'),
+      header: <SortHeader label={t('Actual')} col="actual_mileage" sort={sort} setSort={setSort} align="right" />,
       render: (r) => (r.actual_mileage < 0
-        ? <span className="tabular-nums font-semibold text-red-600" title="Odometer ran backwards">{num(r.actual_mileage)} km</span>
+        ? <span className="tabular-nums font-semibold text-red-600" title={t('Odometer ran backwards')}>{num(r.actual_mileage)} km</span>
         : kmCell(r.actual_mileage)),
     },
     {
       key: 'contract_mileage', align: 'right', cellClass: 'tabular-nums text-slate-700',
-      tooltip: 'Kilometres explained by contracts = Σ (IN − OUT) over every trip.',
-      header: <SortHeader label="On contract" col="contract_mileage" sort={sort} setSort={setSort} align="right" />,
+      tooltip: t('Kilometres explained by contracts = Σ (IN − OUT) over every trip.'),
+      header: <SortHeader label={t('On contract')} col="contract_mileage" sort={sort} setSort={setSort} align="right" />,
       render: (r) => kmCell(r.contract_mileage),
     },
     {
       key: 'out_of_contract', align: 'right',
-      tooltip: 'Out-of-contract km = Actual − On-contract. Kilometres the car moved with NO contract to explain them — office runs, transport, unlogged use. Big gaps get flagged.',
-      header: <SortHeader label="Out of contract" col="out_of_contract" sort={sort} setSort={setSort} align="right" />,
+      tooltip: t('Out-of-contract km = Actual − On-contract. Kilometres the car moved with NO contract to explain them — office runs, transport, unlogged use. Big gaps get flagged.'),
+      header: <SortHeader label={t('Out of contract')} col="out_of_contract" sort={sort} setSort={setSort} align="right" />,
       render: (r) => (r.out_of_contract === null ? <span className="text-slate-300">—</span> : (
         <span className={`inline-flex items-center gap-1.5 tabular-nums font-semibold ${oocTone(r)}`}>
           {r.rollback_flag && <Icon.Alert className="h-3.5 w-3.5" />}
@@ -180,8 +185,8 @@ export default function FuelMileage({ embedded = false }) {
     },
     {
       key: 'total_fuel_debit', align: 'right', cellClass: 'tabular-nums text-amber-600',
-      tooltip: 'Fuel charged back to customers for returning the car under-fuelled, summed over the window.',
-      header: <SortHeader label="Fuel debit" col="total_fuel_debit" sort={sort} setSort={setSort} align="right" />,
+      tooltip: t('Fuel charged back to customers for returning the car under-fuelled, summed over the window.'),
+      header: <SortHeader label={t('Fuel debit')} col="total_fuel_debit" sort={sort} setSort={setSort} align="right" />,
       render: (r) => (r.total_fuel_debit ? aed2(r.total_fuel_debit) : <span className="text-slate-300">—</span>),
     },
   ];
@@ -190,14 +195,14 @@ export default function FuelMileage({ embedded = false }) {
     <div className="mx-auto max-w-[1500px] space-y-6 px-4 sm:px-6 lg:px-8">
         {!embedded && (
           <PageHeader
-            title="Fuel & Mileage Reconciliation"
-            subtitle="Per car, for the chosen period: real odometer travel vs. the kilometres your contracts explain — the gap is distance driven off-contract. Plus fuel debited back for under-fuelled returns. Click any car for its trip-by-trip ledger."
+            title={t('Fuel & Mileage Reconciliation')}
+            subtitle={t('Per car, for the chosen period: real odometer travel vs. the kilometres your contracts explain — the gap is distance driven off-contract. Plus fuel debited back for under-fuelled returns. Click any car for its trip-by-trip ledger.')}
           />
         )}
 
         {/* Period selector */}
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Period</span>
+          <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">{t('Period')}</span>
           {PRESETS.map((p) => (
             <button
               key={p.key}
@@ -205,11 +210,11 @@ export default function FuelMileage({ embedded = false }) {
               onClick={() => setPresetKey(p.key)}
               className={`rounded-lg px-3 py-1.5 text-sm font-medium ring-1 ring-inset transition ${presetKey === p.key ? 'bg-indigo-600 text-white ring-indigo-600' : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'}`}
             >
-              {p.label}
+              {t(p.label)}
             </button>
           ))}
           <Button variant="secondary" size="sm" onClick={exportCsv} disabled={!rows.length} className="ms-auto">
-            <Icon.Download className="h-4 w-4" /> Export CSV
+            <Icon.Download className="h-4 w-4" /> {t('Export CSV')}
           </Button>
         </div>
 
@@ -220,7 +225,7 @@ export default function FuelMileage({ embedded = false }) {
         {loading ? (
           <>
             <MetricGridSkeleton count={4} />
-            <SectionCard title="Fleet — mileage reconciliation per car">
+            <SectionCard title={t('Fleet — mileage reconciliation per car')}>
               <DataTable columns={columns} rows={[]} loading rowKey={() => 0} />
             </SectionCard>
           </>
@@ -228,53 +233,63 @@ export default function FuelMileage({ embedded = false }) {
           <>
             <MetricGrid cols={4}>
               <MetricCard
-                label="Out-of-Contract km"
+                label={t('Out-of-Contract km')}
                 value={`${num(s.total_out_of_contract)} km`}
                 tone={Math.abs(Number(s.total_out_of_contract)) > 0 ? 'amber' : 'emerald'}
                 icon={<Icon.Route className="h-5 w-5" />}
-                hint={`${num(s.cars_with_leakage)} car${s.cars_with_leakage === 1 ? '' : 's'} flagged`}
-                tooltip="Fleet-wide distance driven with no contract to explain it — the reconciliation gap. Individual cars can be far larger than this net figure."
+                hint={s.cars_with_leakage === 1 ? t('1 car flagged') : t('{n} cars flagged', { n: num(s.cars_with_leakage) })}
+                tooltip={t('Fleet-wide distance driven with no contract to explain it — the reconciliation gap. Individual cars can be far larger than this net figure.')}
               />
               <MetricCard
-                label="Total Fuel Debit"
+                label={t('Total Fuel Debit')}
                 value={aed2(s.total_fuel_debit)}
                 tone="slate"
                 icon={<Icon.Coins className="h-5 w-5" />}
-                hint="Charged back for under-fuelled returns"
-                tooltip="Sum of fuel_debit across every contract in the window — money billed to customers for not refuelling."
+                hint={t('Charged back for under-fuelled returns')}
+                tooltip={t('Sum of fuel_debit across every contract in the window — money billed to customers for not refuelling.')}
               />
               <MetricCard
-                label="Actual vs On-Contract"
+                label={t('Actual vs On-Contract')}
                 value={`${num(s.total_actual_km)} km`}
                 tone="blue"
                 icon={<Icon.Gauge className="h-5 w-5" />}
-                hint={`${num(s.total_contract_km)} km explained by contracts`}
-                tooltip="Total real odometer travel across the fleet vs. how much of it your contracts account for."
+                hint={t('{km} km explained by contracts', { km: num(s.total_contract_km) })}
+                tooltip={t('Total real odometer travel across the fleet vs. how much of it your contracts account for.')}
               />
               <MetricCard
-                label="Cars / Contracts"
+                label={t('Cars / Contracts')}
                 value={`${num(s.vehicles)} / ${num(s.contracts)}`}
                 tone="indigo"
                 icon={<Icon.Car className="h-5 w-5" />}
-                hint={s.cars_with_rollback ? `${num(s.cars_with_rollback)} odometer rollback${s.cars_with_rollback === 1 ? '' : 's'}` : 'No odometer rollbacks'}
-                tooltip="Cars with at least one trip in the window, and the total number of trips (contracts) reconciled."
+                hint={!s.cars_with_rollback
+                  ? t('No odometer rollbacks')
+                  : s.cars_with_rollback === 1
+                    ? t('1 odometer rollback')
+                    : t('{n} odometer rollbacks', { n: num(s.cars_with_rollback) })}
+                tooltip={t('Cars with at least one trip in the window, and the total number of trips (contracts) reconciled.')}
               />
             </MetricGrid>
 
             {/* Controls */}
             <div className="flex flex-wrap items-center gap-3">
-              <SearchInput value={q} onChange={setQ} placeholder="Search plate or make / model…" className="w-full max-w-xs" />
+              <SearchInput value={q} onChange={setQ} placeholder={t('Search plate or make / model…')} className="w-full max-w-xs" />
               <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-slate-600">
                 <input type="checkbox" checked={onlyFlagged} onChange={(e) => setOnlyFlagged(e.target.checked)} className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
-                Only flagged cars (leakage / rollback)
+                {t('Only flagged cars (leakage / rollback)')}
               </label>
-              <span className="ms-auto text-xs text-slate-400">{num(rows.length)} of {num(s.vehicles)} cars</span>
+              <span className="ms-auto text-xs text-slate-400">
+                {t('{shown} of {total} cars', { shown: num(rows.length), total: num(s.vehicles) })}
+              </span>
             </div>
 
             <SectionCard
-              title="Fleet — mileage reconciliation per car"
-              subtitle="Sorted by the biggest out-of-contract gap. Click a car for its contract-by-contract ledger."
-              actions={<span className="text-xs text-slate-400">{num(rows.length)} car{rows.length === 1 ? '' : 's'}</span>}
+              title={t('Fleet — mileage reconciliation per car')}
+              subtitle={t('Sorted by the biggest out-of-contract gap. Click a car for its contract-by-contract ledger.')}
+              actions={(
+                <span className="text-xs text-slate-400">
+                  {rows.length === 1 ? t('1 car') : t('{n} cars', { n: num(rows.length) })}
+                </span>
+              )}
             >
               <DataTable
                 columns={columns}
@@ -282,7 +297,7 @@ export default function FuelMileage({ embedded = false }) {
                 rowKey={(r) => r.vehicle_id}
                 onRowClick={(r) => setSel(r)}
                 highlightRow={(r) => r.rollback_flag}
-                empty={q ? 'No cars match your search.' : 'No contracts in this period.'}
+                empty={q ? t('No cars match your search.') : t('No contracts in this period.')}
               />
               {rows.length > PAGE_SIZE && (
                 <Pagination
@@ -315,6 +330,7 @@ export default function FuelMileage({ embedded = false }) {
 
 // ── Drill-down drawer: one car's contract-by-contract ledger ─────────────────
 function VehicleLedgerDrawer({ vehicle, from, to, onClose, onOpenProfile }) {
+  const { t } = useI18n();
   const [state, setState] = useState({ loading: false, data: null, error: '' });
 
   useEffect(() => {
@@ -326,25 +342,28 @@ function VehicleLedgerDrawer({ vehicle, from, to, onClose, onOpenProfile }) {
     if (to) params.to = to;
     api.get(`/FuelMileage/${vehicle.vehicle_id}`, { params })
       .then(({ data }) => { if (alive) setState({ loading: false, data: data.data, error: '' }); })
-      .catch((err) => { if (alive) setState({ loading: false, data: null, error: err.response?.data?.message || err.message || 'Failed to load ledger' }); });
+      .catch((err) => { if (alive) setState({ loading: false, data: null, error: err.response?.data?.message || err.message || t('Failed to load ledger') }); });
     return () => { alive = false; };
-  }, [vehicle, from, to]);
+  }, [vehicle, from, to, t]);
 
-  const t = state.data?.totals || vehicle || {};
+  // NOTE: `tot` (not `t`) — `t` is the translator.
+  const tot = state.data?.totals || vehicle || {};
 
   return (
     <Drawer
       open={!!vehicle}
       onClose={onClose}
-      eyebrow="Fuel & Mileage ledger"
+      eyebrow={t('Fuel & Mileage ledger')}
       title={vehicle ? (vehicle.plate || `#${vehicle.vehicle_id}`) : ''}
       subtitle={vehicle?.car || undefined}
       width="lg"
       footer={vehicle && (
         <div className="flex items-center justify-between">
-          <span className="text-xs text-slate-400">{num(t.contracts)} trip{t.contracts === 1 ? '' : 's'} in period</span>
+          <span className="text-xs text-slate-400">
+            {tot.contracts === 1 ? t('1 trip in period') : t('{n} trips in period', { n: num(tot.contracts) })}
+          </span>
           <Button size="sm" onClick={() => onOpenProfile(vehicle.vehicle_id)}>
-            Open car profile <Icon.ArrowRight className="h-4 w-4" />
+            {t('Open car profile')} <Icon.ArrowRight className="h-4 w-4 rtl:-scale-x-100" />
           </Button>
         </div>
       )}
@@ -353,19 +372,19 @@ function VehicleLedgerDrawer({ vehicle, from, to, onClose, onOpenProfile }) {
 
       {/* Totals strip */}
       <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <MiniStat label="Actual" value={t.actual_mileage != null ? `${num(t.actual_mileage)} km` : '—'} tone={t.actual_mileage < 0 ? 'red' : 'slate'} />
-        <MiniStat label="On contract" value={t.contract_mileage != null ? `${num(t.contract_mileage)} km` : '—'} />
-        <MiniStat label="Out of contract" value={t.out_of_contract != null ? `${num(t.out_of_contract)} km` : '—'} tone={t.rollback_flag ? 'red' : t.leakage_flag ? 'amber' : 'slate'} />
-        <MiniStat label="Fuel debit" value={t.total_fuel_debit ? aed2(t.total_fuel_debit) : '—'} tone="amber" />
+        <MiniStat label={t('Actual')} value={tot.actual_mileage != null ? `${num(tot.actual_mileage)} km` : '—'} tone={tot.actual_mileage < 0 ? 'red' : 'slate'} />
+        <MiniStat label={t('On contract')} value={tot.contract_mileage != null ? `${num(tot.contract_mileage)} km` : '—'} />
+        <MiniStat label={t('Out of contract')} value={tot.out_of_contract != null ? `${num(tot.out_of_contract)} km` : '—'} tone={tot.rollback_flag ? 'red' : tot.leakage_flag ? 'amber' : 'slate'} />
+        <MiniStat label={t('Fuel debit')} value={tot.total_fuel_debit ? aed2(tot.total_fuel_debit) : '—'} tone="amber" />
       </div>
 
-      {(t.rollback_flag || t.leakage_flag) && (
-        <div className={`mb-4 flex items-start gap-2 rounded-lg px-3 py-2 text-sm ring-1 ring-inset ${t.rollback_flag ? 'bg-red-50 text-red-700 ring-red-600/20' : 'bg-amber-50 text-amber-700 ring-amber-600/20'}`}>
+      {(tot.rollback_flag || tot.leakage_flag) && (
+        <div className={`mb-4 flex items-start gap-2 rounded-lg px-3 py-2 text-sm ring-1 ring-inset ${tot.rollback_flag ? 'bg-red-50 text-red-700 ring-red-600/20' : 'bg-amber-50 text-amber-700 ring-amber-600/20'}`}>
           <Icon.Alert className="mt-0.5 h-4 w-4 shrink-0" />
           <span>
-            {t.rollback_flag
-              ? 'Odometer runs backwards over this period — a reading was mis-entered or the cluster was reset. Verify the trips below.'
-              : 'This car drove a meaningful distance with no contract to explain it. The rows with a highlighted gap show where.'}
+            {tot.rollback_flag
+              ? t('Odometer runs backwards over this period — a reading was mis-entered or the cluster was reset. Verify the trips below.')
+              : t('This car drove a meaningful distance with no contract to explain it. The rows with a highlighted gap show where.')}
           </span>
         </div>
       )}
@@ -377,12 +396,12 @@ function VehicleLedgerDrawer({ vehicle, from, to, onClose, onOpenProfile }) {
           <table className="min-w-full divide-y divide-slate-200 text-sm">
             <thead className="bg-slate-50/90 text-[11px] uppercase tracking-wide text-slate-500">
               <tr>
-                <th className="px-3 py-2 text-start font-semibold">Trip</th>
-                <th className="px-3 py-2 text-start font-semibold">Out → In</th>
-                <th className="px-3 py-2 text-end font-semibold">Odometer</th>
-                <th className="px-3 py-2 text-end font-semibold">Trip km</th>
-                <th className="px-3 py-2 text-end font-semibold" title="Km driven between the previous return and this pickup — off-contract">Gap before</th>
-                <th className="px-3 py-2 text-end font-semibold">Fuel</th>
+                <th className="px-3 py-2 text-start font-semibold">{t('Trip')}</th>
+                <th className="px-3 py-2 text-start font-semibold">{t('Out → In')}</th>
+                <th className="px-3 py-2 text-end font-semibold">{t('Odometer')}</th>
+                <th className="px-3 py-2 text-end font-semibold">{t('Trip km')}</th>
+                <th className="px-3 py-2 text-end font-semibold" title={t('Km driven between the previous return and this pickup — off-contract')}>{t('Gap before')}</th>
+                <th className="px-3 py-2 text-end font-semibold">{t('Fuel')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 bg-white">
@@ -390,13 +409,13 @@ function VehicleLedgerDrawer({ vehicle, from, to, onClose, onOpenProfile }) {
                 <tr key={c.id} className={c.negative ? 'bg-red-50/50' : c.gap_before > 5 ? 'bg-amber-50/40' : ''}>
                   <td className="px-3 py-2">
                     <div className="font-medium text-slate-700">{c.contract_no || `#${c.id}`}</div>
-                    <div className="text-[11px] text-slate-400">{TYPE_LABEL[c.contract_type] || c.contract_type || '—'}{c.open ? ' · open' : ''}</div>
+                    <div className="text-[11px] text-slate-400">{TYPE_LABEL[c.contract_type] ? t(TYPE_LABEL[c.contract_type]) : (c.contract_type || '—')}{c.open ? ` · ${t('open')}` : ''}</div>
                   </td>
                   <td className="px-3 py-2 text-xs text-slate-500">
-                    {fmtDate(c.out_date) || '—'} <span className="text-slate-300">→</span> {c.in_date ? fmtDate(c.in_date) : <span className="text-blue-500">out</span>}
+                    {fmtDate(c.out_date) || '—'} <span className="inline-block text-slate-300 rtl:-scale-x-100">→</span> {c.in_date ? fmtDate(c.in_date) : <span className="text-blue-500">{t('out')}</span>}
                   </td>
                   <td className="px-3 py-2 text-end tabular-nums text-slate-500">
-                    {c.out_milage != null ? num(c.out_milage) : '—'} <span className="text-slate-300">→</span> {c.in_milage != null ? num(c.in_milage) : '—'}
+                    {c.out_milage != null ? num(c.out_milage) : '—'} <span className="inline-block text-slate-300 rtl:-scale-x-100">→</span> {c.in_milage != null ? num(c.in_milage) : '—'}
                   </td>
                   <td className={`px-3 py-2 text-end tabular-nums font-medium ${c.negative ? 'text-red-600' : 'text-slate-700'}`}>
                     {c.contract_mileage != null ? num(c.contract_mileage) : '—'}
@@ -411,7 +430,7 @@ function VehicleLedgerDrawer({ vehicle, from, to, onClose, onOpenProfile }) {
                 </tr>
               ))}
               {!state.loading && !(state.data?.contracts || []).length && (
-                <tr><td colSpan={6} className="px-3 py-8 text-center text-sm text-slate-400">No trips in this period.</td></tr>
+                <tr><td colSpan={6} className="px-3 py-8 text-center text-sm text-slate-400">{t('No trips in this period.')}</td></tr>
               )}
             </tbody>
           </table>

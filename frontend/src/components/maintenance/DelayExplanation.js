@@ -7,6 +7,7 @@
 // recorded" clearly, so an overdue car with no explanation is itself an actionable signal.
 
 import { fmtDate } from '../../lib/format';
+import { useI18n } from '../../i18n/I18nContext';
 import { useCheckpointVocab } from '../../lib/maintenanceCheckpoints';
 
 // Whole days between the previously promised ETA and the revised one (positive = the job slipped later).
@@ -28,6 +29,7 @@ function Field({ label, children }) {
 }
 
 export default function DelayExplanation({ checkpoint, className = '' }) {
+  const { t } = useI18n();
   const { delayReasonLabel } = useCheckpointVocab();
   const c = checkpoint;
 
@@ -35,7 +37,7 @@ export default function DelayExplanation({ checkpoint, className = '' }) {
   if (!c) {
     return (
       <div className={`rounded-xl border border-amber-200 bg-amber-50/60 px-3.5 py-2.5 text-sm font-medium text-amber-700 ${className}`}>
-        No delay reason recorded
+        {t('No delay reason recorded')}
       </div>
     );
   }
@@ -50,34 +52,40 @@ export default function DelayExplanation({ checkpoint, className = '' }) {
   return (
     <div className={`rounded-xl border border-red-200 bg-red-50/50 px-3.5 py-3 ${className}`}>
       <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-red-600">
-        Why is this vehicle delayed?
+        {t('Why is this vehicle delayed?')}
       </p>
       <dl className="grid grid-cols-2 gap-x-4 gap-y-2.5 sm:grid-cols-3">
-        <Field label="Previous ETA">
+        <Field label={t('Previous ETA')}>
           {c.previous_expected_date ? fmtDate(c.previous_expected_date) : <span className="text-slate-400">—</span>}
         </Field>
-        <Field label="New ETA">
+        <Field label={t('New ETA')}>
           {c.next_expected_date ? fmtDate(c.next_expected_date) : <span className="text-slate-400">—</span>}
         </Field>
-        <Field label="Delay">
+        <Field label={t('Delay')}>
           {dd != null
-            ? <span className={dd > 0 ? 'font-semibold text-red-600' : 'text-slate-600'}>{dd > 0 ? `+${dd}` : dd} day{Math.abs(dd) === 1 ? '' : 's'}</span>
+            ? (
+              <span className={dd > 0 ? 'font-semibold text-red-600' : 'text-slate-600'}>
+                {Math.abs(dd) === 1
+                  ? t('{n} day', { n: dd > 0 ? `+${dd}` : dd })
+                  : t('{n} days', { n: dd > 0 ? `+${dd}` : dd })}
+              </span>
+            )
             : <span className="text-slate-400">—</span>}
         </Field>
-        <Field label="Reason">
+        <Field label={t('Reason')}>
           {hasReason ? (
             <span className="block">
               {reason && <span>{reason}</span>}
               {summary && <span className={`block text-[13px] text-slate-500 ${reason ? 'mt-0.5' : ''}`}>“{summary}”</span>}
             </span>
           ) : (
-            <span className="font-medium text-amber-600">No delay reason recorded</span>
+            <span className="font-medium text-amber-600">{t('No delay reason recorded')}</span>
           )}
         </Field>
-        <Field label="Updated by">
+        <Field label={t('Updated by')}>
           {c.by || <span className="text-slate-400">—</span>}
         </Field>
-        <Field label="Updated">
+        <Field label={t('Updated')}>
           {c.at ? fmtDate(c.at) : <span className="text-slate-400">—</span>}
         </Field>
       </dl>

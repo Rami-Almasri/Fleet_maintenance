@@ -42,6 +42,10 @@ class DamageCatalog extends Model
 
     protected $fillable = [
         'slug', 'name', 'name_ar', 'category_key', 'area_key', 'damage_type',
+        // Does this damage type have a WHERE, and is it required? required | optional | none.
+        // `area_key` above is the coarse catalog-level hint; this is the policy for the per-event
+        // locations in maintenance_task_locations. Seeded from config('vehicle_locations.policy').
+        'location_mode',
         'is_chargeable', 'is_insurable', 'affects_roadworthiness', 'is_active', 'sort_order',
     ];
 

@@ -194,7 +194,7 @@ export default function ContractForm() {
   // Create a walk-in customer inline, then select them for this contract.
   const createCustomer = async () => {
     const name = (newCust?.name || '').trim();
-    if (!name) { toast.error('Enter the customer name first'); return; }
+    if (!name) { toast.error(tr('Enter the customer name first')); return; }
     setCreatingCust(true);
     try {
       const { data } = await api.post('/Customer', {
@@ -205,9 +205,9 @@ export default function ContractForm() {
       setCustomers((list) => [c, ...list]);   // appears in the picker immediately
       setVal('customer_id', c.id);             // and is selected for this contract
       setNewCust(null);
-      toast.success(`Customer “${c.name_en || name}” created`);
+      toast.success(tr('Customer “{name}” created', { name: c.name_en || name }));
     } catch (e) {
-      toast.error(e.response?.data?.message || 'Could not create customer');
+      toast.error(e.response?.data?.message || tr('Could not create customer'));
     } finally {
       setCreatingCust(false);
     }
@@ -253,11 +253,11 @@ export default function ContractForm() {
         markAuto('out_date', 'out_time', ...(me ? ['opened_by'] : []));
       }
     } catch (e) {
-      toast.error('Failed to load form data');
+      toast.error(tr('Failed to load form data'));
     } finally {
       setLoading(false);
     }
-  }, [id, isEdit, toast, me]);
+  }, [id, isEdit, toast, me, tr]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -341,8 +341,8 @@ export default function ContractForm() {
     routine: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
   };
   const LEVEL_META = {
-    critical: { label: 'Critical', emoji: '🔴' }, special: { label: 'Special', emoji: '🟣' },
-    minor: { label: 'Minor', emoji: '🟡' }, routine: { label: 'Routine', emoji: '🟢' },
+    critical: { label: tr('Critical'), emoji: '🔴' }, special: { label: tr('Special'), emoji: '🟣' },
+    minor: { label: tr('Minor'), emoji: '🟡' }, routine: { label: tr('Routine'), emoji: '🟢' },
   };
   const LEVEL_RANK = { critical: 0, special: 1, minor: 2, routine: 3 };
   // Predicted priority for this visit = most severe level among the chosen tags.
@@ -386,18 +386,18 @@ export default function ContractForm() {
     if (!days || (!day && !week && !month)) return null;
     let rem = days, total = 0;
     const parts = [];
-    if (month) { const m = Math.floor(rem / 30); if (m) { total += m * month; rem -= m * 30; parts.push(`${m}×month`); } }
-    if (week) { const w = Math.floor(rem / 7); if (w) { total += w * week; rem -= w * 7; parts.push(`${w}×week`); } }
+    if (month) { const m = Math.floor(rem / 30); if (m) { total += m * month; rem -= m * 30; parts.push(tr('{n}×month', { n: m })); } }
+    if (week) { const w = Math.floor(rem / 7); if (w) { total += w * week; rem -= w * 7; parts.push(tr('{n}×week', { n: w })); } }
     const perDay = day || (week ? week / 7 : month / 30);
-    if (rem > 0 && perDay) { total += rem * perDay; parts.push(`${rem}×day`); }
+    if (rem > 0 && perDay) { total += rem * perDay; parts.push(tr('{n}×day', { n: rem })); }
     return { total: Number(total.toFixed(2)), parts, days };
-  }, [form.days, form.out_date, form.in_date, form.day_price, form.week_price, form.month_price]);
+  }, [form.days, form.out_date, form.in_date, form.day_price, form.week_price, form.month_price, tr]);
 
   // Apply the wallet: collect only (charges − wallet) as cash. The pre-paid credit is
   // consumed automatically through the customer's running balance — no double counting.
   const applyWallet = () => {
     if (charges <= 0) {
-      toast.error('Enter the contract charges (Contract Debit) first, then apply the wallet.');
+      toast.error(tr('Enter the contract charges (Contract Debit) first, then apply the wallet.'));
       return;
     }
     setForm((f) => ({
@@ -405,7 +405,7 @@ export default function ContractForm() {
       contract_credit: Number(cashToCollect.toFixed(2)),
       contract_balance: Number((charges - cashToCollect).toFixed(2)),
     }));
-    toast.success(`Applied ${aed2(applied)} from wallet · collect ${aed2(cashToCollect)} from customer`);
+    toast.success(tr('Applied {applied} from wallet · collect {cash} from customer', { applied: aed2(applied), cash: aed2(cashToCollect) }));
   };
 
   // Gate the save on the vehicle's condition grade before doing anything else (new
@@ -418,32 +418,32 @@ export default function ContractForm() {
     const type = form.contract_type || 'C';
     const missing = {};
     if (['C', 'R', 'U'].includes(type) && !form.vehicle_id) {
-      missing.vehicle_id = ['Select a vehicle for this contract.'];
+      missing.vehicle_id = [tr('Select a vehicle for this contract.')];
     }
     if (['C', 'R'].includes(type) && !form.customer_id) {
-      missing.customer_id = ['Select a customer for this contract.'];
+      missing.customer_id = [tr('Select a customer for this contract.')];
     }
     if (Object.keys(missing).length) {
       setErrors(missing);
-      toast.error('Please fix the highlighted fields');
+      toast.error(tr('Please fix the highlighted fields'));
       return;
     }
 
     // Red = absolute block, no exception.
     if (!isEdit && isHandover && conditionBlocksRent) {
-      toast.error('This vehicle is graded Red (critical / grounded) and cannot be rented or booked. Pick another car or send it to maintenance.');
+      toast.error(tr('This vehicle is graded Red (critical / grounded) and cannot be rented or booked. Pick another car or send it to maintenance.'));
       return;
     }
     // Mandatory maintenance = absolute block. The inspector marked this ticket non-deferrable at the
     // Decide step, so the car is grounded until the workshop completes it — no pull-out is offered.
     if (!isEdit && mandatoryMaintenance) {
-      toast.error('This vehicle is in mandatory maintenance and cannot be rented until the workshop completes it. Pick another car.');
+      toast.error(tr('This vehicle is in mandatory maintenance and cannot be rented until the workshop completes it. Pick another car.'));
       return;
     }
     // Yellow = manager-overridable. Managers get a reason prompt; everyone else is blocked.
     if (!isEdit && isYellowHandover && !mgrOverride) {
       if (!canOverrideYellow) {
-        toast.error('This vehicle is graded Yellow (maintenance needed). Only a manager can override to rent or book it.');
+        toast.error(tr('This vehicle is graded Yellow (maintenance needed). Only a manager can override to rent or book it.'));
         return;
       }
       setOverrideReason('');
@@ -532,11 +532,11 @@ export default function ContractForm() {
       let res;
       if (isEdit) {
         res = await api.post(`/Contract/${id}`, payload);
-        toast.success('Contract updated');
+        toast.success(tr('Contract updated'));
         navigate(`/contracts/${id}`);
       } else {
         res = await api.post('/Contract', payload);
-        toast.success('Contract created');
+        toast.success(tr('Contract created'));
         const newId = res.data?.data?.id;
         navigate(newId ? `/contracts/${newId}` : '/contracts');
       }
@@ -544,18 +544,18 @@ export default function ContractForm() {
       const r = e.response?.data;
       if (r?.errors?.condition_ack) {
         // Backend safety net: the car needs a recorded acknowledgment. Re-open the prompt.
-        toast.error(r.errors.condition_ack[0] || 'Confirm the vehicle condition before handover.');
+        toast.error(r.errors.condition_ack[0] || tr('Confirm the vehicle condition before handover.'));
         setCosmeticAck(true);
       } else if (r?.errors?.manager_override) {
         // Backend safety net: a Yellow car needs a manager override. Re-open it for managers.
-        toast.error(r.errors.manager_override[0] || 'A manager override is required for this vehicle.');
+        toast.error(r.errors.manager_override[0] || tr('A manager override is required for this vehicle.'));
         if (canOverrideYellow) setMgrOverride(true);
       } else if (r?.errors?.vehicle_id) {
         // Backend safety net: a hard vehicle-level block (mandatory maintenance, sold, already rented…).
         // vehicle_id isn't a visible field, so surface it as a toast rather than an inline error.
-        toast.error(r.errors.vehicle_id[0] || 'This vehicle cannot be rented or booked.');
-      } else if (r?.errors) { setErrors(r.errors); toast.error('Please fix the highlighted fields'); }
-      else toast.error(r?.message || r?.msg || 'Could not save contract');
+        toast.error(r.errors.vehicle_id[0] || tr('This vehicle cannot be rented or booked.'));
+      } else if (r?.errors) { setErrors(r.errors); toast.error(tr('Please fix the highlighted fields')); }
+      else toast.error(r?.message || r?.msg || tr('Could not save contract'));
     } finally {
       setSaving(false);
     }
@@ -571,12 +571,12 @@ export default function ContractForm() {
       <div className="mx-auto max-w-5xl space-y-6 px-4 sm:px-6 lg:px-8">
         <div className="space-y-2">
           <Link to={isEdit ? `/contracts/${id}` : '/contracts'} className="inline-flex items-center gap-1 text-sm font-medium text-slate-500 transition-colors hover:text-slate-700">
-            <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 19l-7-7 7-7" /></svg>
-            {isEdit ? 'Contract' : 'Contracts'}
+            <svg aria-hidden="true" className="h-4 w-4 rtl:-scale-x-100" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 19l-7-7 7-7" /></svg>
+            {isEdit ? tr('Contract') : tr('Contracts')}
           </Link>
           <PageHeader
-            title={isEdit ? `Edit Contract #${form.contract_no || id}` : 'New Contract'}
-            subtitle={isEdit ? 'Correct the recorded details of this contract.' : 'Fill in the sections below — auto-filled values stay editable.'}
+            title={isEdit ? tr('Edit Contract #{no}', { no: form.contract_no || id }) : tr('New Contract')}
+            subtitle={isEdit ? tr('Correct the recorded details of this contract.') : tr('Fill in the sections below — auto-filled values stay editable.')}
           />
         </div>
 
@@ -585,16 +585,16 @@ export default function ContractForm() {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <p className="text-sm font-semibold text-emerald-800">
-                  💰 {selectedCustomer?.name_en || 'This customer'} has {aed2(wallet)} available credit (wallet)
+                  💰 {tr('{who} has {amount} available credit (wallet)', { who: selectedCustomer?.name_en || tr('This customer'), amount: aed2(wallet) })}
                 </p>
                 <p className="mt-0.5 text-xs text-emerald-700">
                   {charges > 0
-                    ? `Apply it to cover ${aed2(applied)} of ${aed2(charges)} charges — collect only ${aed2(cashToCollect)} from the customer.`
-                    : 'Money paid earlier and not yet used. Enter the charges (Contract Debit) below, then apply it.'}
+                    ? tr('Apply it to cover {applied} of {charges} charges — collect only {cash} from the customer.', { applied: aed2(applied), charges: aed2(charges), cash: aed2(cashToCollect) })
+                    : tr('Money paid earlier and not yet used. Enter the charges (Contract Debit) below, then apply it.')}
                 </p>
               </div>
               <Button variant="secondary" onClick={applyWallet} disabled={charges <= 0}>
-                Apply to this contract
+                {tr('Apply to this contract')}
               </Button>
             </div>
           </div>
@@ -624,7 +624,7 @@ export default function ContractForm() {
           <label className="block">
             <div className="mb-1 flex items-center justify-between">
               <span className="flex items-center gap-1.5 text-sm font-medium text-slate-700">
-                Customer
+                {tr('Customer')}
                 {auto.customer_id && (
                   <span className="rounded-full bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-600 ring-1 ring-indigo-100">✨ {tr('contractForm.auto')}</span>
                 )}
@@ -634,7 +634,7 @@ export default function ContractForm() {
                 onClick={() => setNewCust(newCust ? null : { name: '', mobile: '' })}
                 className="text-xs font-medium text-indigo-600 transition hover:text-indigo-700"
               >
-                {newCust ? 'Pick existing' : '+ New customer'}
+                {newCust ? tr('Pick existing') : tr('+ New customer')}
               </button>
             </div>
             {newCust ? (
@@ -642,7 +642,7 @@ export default function ContractForm() {
                 <input
                   autoFocus
                   className={inputCls}
-                  placeholder="Full name *"
+                  placeholder={tr('Full name *')}
                   value={newCust.name}
                   onChange={(e) => setNewCust((n) => ({ ...n, name: e.target.value }))}
                   onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); createCustomer(); } }}
@@ -682,21 +682,21 @@ export default function ContractForm() {
         )}
         {isHandover && conditionGrade === 'yellow' && (
           <div className="rounded-2xl border border-yellow-300 bg-yellow-50 px-5 py-4 text-sm text-yellow-800 shadow-soft">
-            <p className="font-semibold">🔧 This vehicle is graded Yellow (maintenance needed).</p>
+            <p className="font-semibold">🔧 {tr('This vehicle is graded Yellow (maintenance needed).')}</p>
             <p className="mt-0.5">
               {conditionNote ? `“${conditionNote}” — ` : ''}
               {canOverrideYellow
-                ? 'Renting it needs a manager override — you’ll be asked for a reason, which is recorded on the contract.'
-                : 'It cannot be rented or booked without a manager’s override. Send it to the garage, or pick another car.'}
+                ? tr('Renting it needs a manager override — you’ll be asked for a reason, which is recorded on the contract.')
+                : tr('It cannot be rented or booked without a manager’s override. Send it to the garage, or pick another car.')}
             </p>
           </div>
         )}
         {isHandover && conditionGrade === 'red' && (
           <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-800 shadow-soft">
-            <p className="font-semibold">⛔ This vehicle is graded Red (critical / grounded).</p>
+            <p className="font-semibold">⛔ {tr('This vehicle is graded Red (critical / grounded).')}</p>
             <p className="mt-0.5">
               {conditionNote ? `“${conditionNote}” — ` : ''}
-              It cannot be rented or booked. Pick another car, or send this one to maintenance first.
+              {tr('It cannot be rented or booked. Pick another car, or send this one to maintenance first.')}
             </p>
           </div>
         )}
@@ -798,7 +798,7 @@ export default function ContractForm() {
               </div>
               {reasons.length > 0 && (
                 <div className="mt-3">
-                  <p className="mb-1.5 text-xs text-slate-400">Common reasons (colour = priority):</p>
+                  <p className="mb-1.5 text-xs text-slate-400">{tr('Common reasons (colour = priority):')}</p>
                   <div className="flex flex-wrap gap-1.5">
                     {reasons
                       .filter((r) => !tags.some((x) => x.toLowerCase() === r.reason.toLowerCase()))
@@ -899,8 +899,8 @@ export default function ContractForm() {
         )}
 
         <div className="flex items-center justify-end gap-3 border-t border-slate-200/60 pt-5">
-          <Button variant="secondary" onClick={() => navigate(isEdit ? `/contracts/${id}` : '/contracts')} disabled={saving}>Cancel</Button>
-          <Button onClick={submit} loading={saving}>{isEdit ? 'Save Changes' : 'Create Contract'}</Button>
+          <Button variant="secondary" onClick={() => navigate(isEdit ? `/contracts/${id}` : '/contracts')} disabled={saving}>{tr('Cancel')}</Button>
+          <Button onClick={submit} loading={saving}>{isEdit ? tr('Save Changes') : tr('Create Contract')}</Button>
         </div>
       </div>
 
@@ -963,7 +963,7 @@ export default function ContractForm() {
             onChange={(e) => setOverrideReason(e.target.value)}
             rows={2}
             autoFocus
-            placeholder="Why is this Yellow car being rented?"
+            placeholder={tr('Why is this Yellow car being rented?')}
             className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
           />
         </label>

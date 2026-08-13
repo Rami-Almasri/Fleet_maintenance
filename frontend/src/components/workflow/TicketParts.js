@@ -13,6 +13,7 @@ import { fmtAgo, aed, num } from '../../lib/format';
 import { canOrderParts } from './meta';
 import PartPurchaseHistory from '../parts/PartPurchaseHistory';
 import PartRecordModal from '../parts/PartRecordModal';
+import { useI18n } from '../../i18n/I18nContext';
 
 // Envelope-aware unwrap: the API wraps most payloads in { data: … }.
 const payload = (r) => (r?.data && 'data' in r.data ? r.data.data : r?.data);
@@ -23,13 +24,17 @@ const STATUS_TONE = {
   purchased: 'violet', installed: 'amber', completed: 'green',
   rejected: 'red', cancelled: 'gray',
 };
-const STATUS_LABEL = {
-  requested: 'Requested', under_review: 'Under review', approved: 'Approved',
-  purchased: 'Purchased', installed: 'Installed', completed: 'Completed',
-  rejected: 'Rejected', cancelled: 'Cancelled',
-};
+// Labels are resolved through the translator at render time, so `t` is threaded in rather than the
+// English sitting frozen in a module-level table.
+const statusLabel = (t, status) => ({
+  requested: t('Requested'), under_review: t('Under review'), approved: t('Approved'),
+  purchased: t('Purchased'), installed: t('Installed'), completed: t('Completed'),
+  rejected: t('Rejected'), cancelled: t('Cancelled'),
+}[status] || status);
 const CLASS_TONE = { consumable: 'gray', standard: 'blue', major: 'amber' };
-const CLASS_LABEL = { consumable: 'Consumable', standard: 'Standard', major: 'Major' };
+const classLabel = (t, cls) => ({
+  consumable: t('Consumable'), standard: t('Standard'), major: t('Major'),
+}[cls] || cls);
 
 // A stable empty default — an inline `tasks = []` would mint a new array on every render, re-running
 // every memo/effect keyed on it for a ticket that simply has no faults yet.
@@ -52,10 +57,11 @@ function ContextFact({ label, value }) {
 // (the backend also alerts the admins on submit).
 function TicketPartRequestModal({ open, onClose, onCreated, ticket, tasks }) {
   const toast = useToast();
+  const { t } = useI18n();
 
   // Only OPEN faults are worth requesting a part against (a cancelled/mis-diagnosed one isn't repaired).
   const faultOptions = useMemo(
-    () => (tasks || []).filter((t) => !t.is_incorrect && t.status !== 'cancelled'),
+    () => (tasks || []).filter((task) => !task.is_incorrect && task.status !== 'cancelled'),
     [tasks],
   );
 
@@ -95,7 +101,7 @@ function TicketPartRequestModal({ open, onClose, onCreated, ticket, tasks }) {
 
   // The fault the part is for — drives the stronger Vehicle + Part + Fault duplicate signal.
   const selectedFault = useMemo(() => {
-    if (form?.maintenance_task_id) return faultOptions.find((t) => String(t.id) === String(form.maintenance_task_id)) || null;
+    if (form?.maintenance_task_id) return faultOptions.find((task) => String(task.id) === String(form.maintenance_task_id)) || null;
     return faultOptions.length === 1 ? faultOptions[0] : null;
   }, [faultOptions, form?.maintenance_task_id]);
 
@@ -142,13 +148,13 @@ function TicketPartRequestModal({ open, onClose, onCreated, ticket, tasks }) {
         notes: form.notes.trim() || null,
       };
       await api.post('/part-requests', body);
-      toast.success(dup?.duplicate ? 'Request created — admins notified of a possible duplicate' : 'Part request created');
+      toast.success(dup?.duplicate ? t('Request created — admins notified of a possible duplicate') : t('Part request created'));
       onCreated?.();
       onClose();
     } catch (err) {
       const res = err.response?.data;
-      if (res?.errors) { setErrors(res.errors); toast.error('Please fix the highlighted fields'); }
-      else toast.error(res?.message || res?.msg || 'Could not submit the request');
+      if (res?.errors) { setErrors(res.errors); toast.error(t('Please fix the highlighted fields')); }
+      else toast.error(res?.message || res?.msg || t('Could not submit the request'));
     } finally {
       setSaving(false);
     }
@@ -157,87 +163,90 @@ function TicketPartRequestModal({ open, onClose, onCreated, ticket, tasks }) {
   if (!form) return null;
 
   const prev = dup?.duplicate ? dup?.context?.previous : null;
+  // Arabic clause order differs, so the whole warning is ONE interpolated sentence rather than English
+  // fragments stitched around <span>s. The "when" clause is resolved first and passed in as a token.
+  const whenAgo = dup?.days_between != null
+    ? (Number(dup.days_between) === 1 ? t('1 day ago') : t('{n} days ago', { n: num(dup.days_between) }))
+    : t('recently');
 
   return (
     <Modal
       open={open}
       onClose={() => !saving && onClose()}
-      title="Request a Part"
+      title={t('Request a Part')}
       subtitle={ticket ? `${ticket.plate || `#${ticket.id}`}${ticket.car ? ` · ${ticket.car}` : ''}` : ''}
       size="lg"
       footer={
         <>
-          <Button variant="secondary" onClick={onClose} disabled={saving}>Cancel</Button>
-          <Button onClick={submit} loading={saving}>Create request</Button>
+          <Button variant="secondary" onClick={onClose} disabled={saving}>{t('Cancel')}</Button>
+          <Button onClick={submit} loading={saving}>{t('Create request')}</Button>
         </>
       }
     >
       <div className="space-y-4">
         {/* Context — everything here is pulled straight from the ticket and cannot be edited. */}
         <dl className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-xl bg-slate-50 px-4 py-3.5 ring-1 ring-inset ring-slate-100 sm:grid-cols-4">
-          <ContextFact label="Vehicle" value={ticket?.car} />
-          <ContextFact label="Plate" value={ticket?.plate} />
-          <ContextFact label="Maintenance Ticket" value={`#${ticket?.id}`} />
-          <ContextFact label="Workshop" value={ticket?.garage} />
+          <ContextFact label={t('Vehicle')} value={ticket?.car} />
+          <ContextFact label={t('Plate')} value={ticket?.plate} />
+          <ContextFact label={t('Maintenance Ticket')} value={`#${ticket?.id}`} />
+          <ContextFact label={t('Workshop')} value={ticket?.garage} />
         </dl>
 
         {/* Fault — from the ticket. A single-fault ticket is pre-selected; a multi-fault one must pick. */}
         {faultOptions.length <= 1 ? (
-          <ContextFact label="Fault" value={faultOptions[0]?.symptom || 'General (no specific fault)'} />
+          <ContextFact label={t('Fault')} value={faultOptions[0]?.symptom || t('General (no specific fault)')} />
         ) : (
           <Select
-            label="Fault"
+            label={t('Fault')}
             required
             value={form.maintenance_task_id}
             error={errors.maintenance_task_id?.[0]}
             onChange={(e) => set('maintenance_task_id', e.target.value)}
           >
-            <option value="">Select the related fault…</option>
-            {faultOptions.map((t) => (
-              <option key={t.id} value={t.id}>{t.symptom || `Fault #${t.id}`}</option>
+            <option value="">{t('Select the related fault…')}</option>
+            {faultOptions.map((task) => (
+              <option key={task.id} value={task.id}>{task.symptom || t('Fault #{id}', { id: task.id })}</option>
             ))}
           </Select>
         )}
 
         {/* Duplicate-purchase intelligence — surfaced BEFORE the request is created. */}
         {checking && partName.trim().length >= 2 && !dup && (
-          <p className="text-xs text-slate-400">Checking this vehicle’s purchase record for this part…</p>
+          <p className="text-xs text-slate-400">{t('Checking this vehicle’s purchase record for this part…')}</p>
         )}
         {prev && (
           <div className={`rounded-xl px-4 py-3 ring-1 ring-inset ${dup.priority === 'high' ? 'bg-red-50 text-red-800 ring-red-600/25' : 'bg-amber-50 text-amber-800 ring-amber-600/25'}`}>
             {dup.same_fault ? (
               <>
-                <p className="flex items-center gap-1.5 font-bold">⚠️ Same Part — Same Fault</p>
+                <p className="flex items-center gap-1.5 font-bold">{t('⚠️ Same Part — Same Fault')}</p>
                 <p className="mt-1 text-sm">
-                  This <span className="font-semibold">{prev.part_name}</span> was already bought for the same fault
-                  {selectedFault?.symptom ? <> (<span className="font-semibold">{selectedFault.symptom}</span>)</> : ''}
-                  {dup.days_between != null ? <> <span className="font-semibold">{num(dup.days_between)} day(s) ago</span></> : ' recently'}.
-                  This likely means the previous repair failed — <span className="font-semibold">High priority</span>.
+                  {selectedFault?.symptom
+                    ? t('This {part} was already bought for the same fault ({fault}) {when}. This likely means the previous repair failed — high priority.', { part: prev.part_name, fault: selectedFault.symptom, when: whenAgo })
+                    : t('This {part} was already bought for the same fault {when}. This likely means the previous repair failed — high priority.', { part: prev.part_name, when: whenAgo })}
                 </p>
               </>
             ) : (
               <>
-                <p className="flex items-center gap-1.5 font-bold">⚠️ Duplicate Purchase Detected</p>
+                <p className="flex items-center gap-1.5 font-bold">{t('⚠️ Duplicate Purchase Detected')}</p>
                 <p className="mt-1 text-sm">
-                  This vehicle already received <span className="font-semibold">{prev.part_name}</span>
-                  {dup.days_between != null ? <> <span className="font-semibold">{num(dup.days_between)} day(s) ago</span></> : ' recently'}.
+                  {t('This vehicle already received {part} {when}.', { part: prev.part_name, when: whenAgo })}
                 </p>
               </>
             )}
             <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-3">
               {prev.source_name && (
-                <div><dt className="font-semibold uppercase tracking-wide opacity-70">Supplier</dt><dd>{prev.source_name}</dd></div>
+                <div><dt className="font-semibold uppercase tracking-wide opacity-70">{t('Supplier')}</dt><dd>{prev.source_name}</dd></div>
               )}
               {/* The prior-purchase price is the crux of the warning ("you already spent this") — a recorded
                   figure, not a computed roll-up, so it is shown even while SHOW_FINANCIALS hides other money. */}
               {prev.purchase_price != null && (
-                <div><dt className="font-semibold uppercase tracking-wide opacity-70">Cost</dt><dd>{aed(prev.purchase_price)}{prev.currency && prev.currency !== 'AED' ? ` ${prev.currency}` : ''}</dd></div>
+                <div><dt className="font-semibold uppercase tracking-wide opacity-70">{t('Cost')}</dt><dd>{aed(prev.purchase_price)}{prev.currency && prev.currency !== 'AED' ? ` ${prev.currency}` : ''}</dd></div>
               )}
               {prev.maintenance_id && (
-                <div><dt className="font-semibold uppercase tracking-wide opacity-70">Ticket</dt><dd>#{prev.maintenance_id}</dd></div>
+                <div><dt className="font-semibold uppercase tracking-wide opacity-70">{t('Ticket')}</dt><dd>#{prev.maintenance_id}</dd></div>
               )}
             </dl>
-            <p className="mt-2 text-[11px] font-medium opacity-80">Admins will be notified to review this before approval.</p>
+            <p className="mt-2 text-[11px] font-medium opacity-80">{t('Admins will be notified to review this before approval.')}</p>
           </div>
         )}
 
@@ -247,16 +256,16 @@ function TicketPartRequestModal({ open, onClose, onCreated, ticket, tasks }) {
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Input
-            label="Part name"
+            label={t('Part name')}
             required
-            placeholder="e.g. Brake master cylinder"
+            placeholder={t('e.g. Brake master cylinder')}
             value={form.part_name}
             error={errors.part_name?.[0]}
             onChange={(e) => set('part_name', e.target.value)}
           />
           <Input
-            label="Part number"
-            placeholder="Optional"
+            label={t('Part number')}
+            placeholder={t('Optional')}
             value={form.part_number}
             error={errors.part_number?.[0]}
             onChange={(e) => set('part_number', e.target.value)}
@@ -265,7 +274,7 @@ function TicketPartRequestModal({ open, onClose, onCreated, ticket, tasks }) {
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Input
-            label="Quantity"
+            label={t('Quantity')}
             required
             type="number"
             min={1}
@@ -276,32 +285,32 @@ function TicketPartRequestModal({ open, onClose, onCreated, ticket, tasks }) {
           {/* Price entry stays visible even while money DISPLAY is hidden — it is a record, not a total. */}
           <div className="grid grid-cols-[1fr_auto] gap-2">
             <Input
-              label="Estimated price"
+              label={t('Estimated price')}
               type="number"
               min={0}
               step="0.01"
-              placeholder="Optional"
+              placeholder={t('Optional')}
               value={form.estimated_price}
               error={errors.estimated_price?.[0]}
               onChange={(e) => set('estimated_price', e.target.value)}
             />
-            <Input label="Cur." className="w-20" value={form.currency} onChange={(e) => set('currency', e.target.value)} />
+            <Input label={t('Cur.')} className="w-20" value={form.currency} onChange={(e) => set('currency', e.target.value)} />
           </div>
         </div>
 
         <Textarea
-          label="Reason"
+          label={t('Reason')}
           required
           rows={3}
-          placeholder="Why is this part needed?"
+          placeholder={t('Why is this part needed?')}
           value={form.reason}
           error={errors.reason?.[0]}
           onChange={(e) => set('reason', e.target.value)}
         />
         <Textarea
-          label="Notes"
+          label={t('Notes')}
           rows={2}
-          placeholder="Anything else (optional)"
+          placeholder={t('Anything else (optional)')}
           value={form.notes}
           error={errors.notes?.[0]}
           onChange={(e) => set('notes', e.target.value)}
@@ -319,6 +328,7 @@ export default function TicketParts({
   ticketId, ticket, tasks = NO_TASKS, canView = true, canRequest = false,
   openSignal = 0, onChanged, variant = 'drawer',
 }) {
+  const { t } = useI18n();
   const [rows, setRows] = useState(null);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
@@ -371,7 +381,7 @@ export default function TicketParts({
           {isCommand
             ? <span className="flex h-6 w-6 items-center justify-center rounded-lg" style={{ background: '#9869071a', color: '#986907' }}><Icon.Wrench className="h-4 w-4" /></span>
             : <Icon.Wrench className="h-3.5 w-3.5 text-slate-400" />}
-          Parts
+          {t('Parts')}
           {count > 0 && (
             <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500">{count}</span>
           )}
@@ -379,7 +389,7 @@ export default function TicketParts({
         {canRequestNow && (
           <Button size="sm" variant="secondary" onClick={() => setModalOpen(true)}>
             <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14" /></svg>
-            Request Part
+            {t('Request Part')}
           </Button>
         )}
       </div>
@@ -392,8 +402,9 @@ export default function TicketParts({
           </div>
         ) : count === 0 ? (
           <p className="text-xs text-slate-400">
-            No parts requested for this ticket yet.
-            {canRequestNow && ' Use “Request Part” to order one.'}
+            {canRequestNow
+              ? t('No parts requested for this ticket yet. Use “Request Part” to order one.')
+              : t('No parts requested for this ticket yet.')}
           </p>
         ) : (
           <ul className="space-y-2">
@@ -403,26 +414,26 @@ export default function TicketParts({
               <li key={r.id}>
                 <Link
                   to={`/parts?focus=${r.id}`}
-                  title="Open on the Parts board"
+                  title={t('Open on the Parts board')}
                   className="block rounded-lg bg-slate-50/70 px-3 py-2.5 ring-1 ring-inset ring-slate-100 transition hover:bg-indigo-50/60 hover:ring-indigo-200"
                 >
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-1.5">
                       <span className="font-medium text-slate-900">{r.part_name}</span>
-                      {r.part_class && <Badge tone={CLASS_TONE[r.part_class] || 'gray'}>{CLASS_LABEL[r.part_class] || r.part_class}</Badge>}
+                      {r.part_class && <Badge tone={CLASS_TONE[r.part_class] || 'gray'}>{classLabel(t, r.part_class)}</Badge>}
                       {r.quantity > 1 && <span className="text-xs text-slate-400">×{r.quantity}</span>}
                     </div>
                     <p className="mt-0.5 text-xs text-slate-500">
-                      {r.fault_symptom ? r.fault_symptom : 'General'}
+                      {r.fault_symptom ? r.fault_symptom : t('General')}
                       {r.part_number ? ` · #${r.part_number}` : ''}
-                      {SHOW_FINANCIALS && r.estimated_price != null ? ` · est. ${aed(r.estimated_price)}` : ''}
+                      {SHOW_FINANCIALS && r.estimated_price != null ? ` · ${t('est. {amount}', { amount: aed(r.estimated_price) })}` : ''}
                     </p>
                     <p className="mt-0.5 text-[11px] text-slate-400">
                       {r.requested_by || '—'}{r.requested_at ? ` · ${fmtAgo(r.requested_at)}` : ''}
                     </p>
                   </div>
-                  <Badge tone={STATUS_TONE[r.status] || 'gray'}>{STATUS_LABEL[r.status] || r.status}</Badge>
+                  <Badge tone={STATUS_TONE[r.status] || 'gray'}>{statusLabel(t, r.status)}</Badge>
                 </div>
                 </Link>
                 {/* Outside the Link — the row navigates to the Parts board, this opens the record in place.
@@ -434,7 +445,7 @@ export default function TicketParts({
                   className="mt-1 inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
                 >
                   <Icon.Clock className="h-3 w-3" />
-                  Purchase record
+                  {t('Purchase record')}
                 </button>
               </li>
             ))}
@@ -444,7 +455,7 @@ export default function TicketParts({
         {/* The hub for approve → purchase → install stays the standalone board — scoped to this ticket. */}
         {count > 0 && (
           <Link to={`/parts?ticket=${ticketId}`} className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-700">
-            Manage on Parts board <Icon.ArrowRight className="h-3.5 w-3.5" />
+            {t('Manage on Parts board')} <Icon.ArrowRight className="h-3.5 w-3.5 rtl:-scale-x-100" />
           </Link>
         )}
       </div>

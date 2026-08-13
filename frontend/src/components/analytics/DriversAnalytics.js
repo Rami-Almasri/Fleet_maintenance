@@ -12,19 +12,26 @@ import { SectionCard } from '../ui/Table';
 import BarChart from '../ui/BarChart';
 import PieChart from '../ui/PieChart';
 import { num } from '../../lib/format';
+import { useI18n } from '../../i18n/I18nContext';
 
 // Remaining-validity bands, worst first. Fixed rather than data-derived: "expired"
 // and "good for a year" are different kinds of problem, and that meaning must not
-// drift with the dataset.
+// drift with the dataset. `key` is the stable identity; `label` is display only.
 const BANDS = [
-  { label: 'Expired', color: 'red', test: (d) => d < 0 },
-  { label: '≤30d', color: 'orange', test: (d) => d >= 0 && d <= 30 },
-  { label: '31–90d', color: 'amber', test: (d) => d > 30 && d <= 90 },
-  { label: '91–365d', color: 'blue', test: (d) => d > 90 && d <= 365 },
-  { label: '1y+', color: 'emerald', test: (d) => d > 365 },
+  { key: 'expired', label: (t) => t('Expired'), color: 'red', test: (d) => d < 0 },
+  { key: 'lte30', label: (t) => t('≤30d'), color: 'orange', test: (d) => d >= 0 && d <= 30 },
+  { key: '31to90', label: (t) => t('31–90d'), color: 'amber', test: (d) => d > 30 && d <= 90 },
+  { key: '91to365', label: (t) => t('91–365d'), color: 'blue', test: (d) => d > 90 && d <= 365 },
+  { key: '1yPlus', label: (t) => t('1y+'), color: 'emerald', test: (d) => d > 365 },
 ];
 
 const STATUS_COLOR = { active: 'emerald', suspended: 'red' };
+
+const statusLabel = (k, t) => ({
+  active: t('Active'),
+  suspended: t('Suspended'),
+  unknown: t('Unknown'),
+}[k] || k.charAt(0).toUpperCase() + k.slice(1));
 
 const daysToExpiry = (d) => {
   if (!d) return null;
@@ -33,8 +40,10 @@ const daysToExpiry = (d) => {
 };
 
 export default function DriversAnalytics({ drivers = [] }) {
+  const { t } = useI18n();
+
   const runway = useMemo(() => {
-    const buckets = BANDS.map((b) => ({ label: b.label, value: 0, color: b.color }));
+    const buckets = BANDS.map((b) => ({ key: b.key, label: b.label(t), value: 0, color: b.color }));
     let unknown = 0;
     drivers.forEach((d) => {
       const days = daysToExpiry(d.license_expiry);
@@ -43,7 +52,7 @@ export default function DriversAnalytics({ drivers = [] }) {
       if (i >= 0) buckets[i].value += 1;
     });
     return { buckets, unknown, any: buckets.some((b) => b.value > 0) };
-  }, [drivers]);
+  }, [drivers, t]);
 
   const status = useMemo(() => {
     const totals = {};
@@ -53,12 +62,12 @@ export default function DriversAnalytics({ drivers = [] }) {
     });
     return Object.entries(totals)
       .map(([k, value]) => ({
-        label: k.charAt(0).toUpperCase() + k.slice(1),
+        label: statusLabel(k, t),
         value,
         color: STATUS_COLOR[k] || 'slate',
       }))
       .sort((a, b) => b.value - a.value);
-  }, [drivers]);
+  }, [drivers, t]);
 
   if (!drivers.length) return null;
 
@@ -68,8 +77,8 @@ export default function DriversAnalytics({ drivers = [] }) {
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
       <SectionCard
         className="lg:col-span-2"
-        title="Licence expiry runway"
-        subtitle="Drivers by how long their licence is still valid"
+        title={t('Licence expiry runway')}
+        subtitle={t('Drivers by how long their licence is still valid')}
         bodyClass="px-3 pb-3 pt-2"
       >
         {runway.any ? (
@@ -80,34 +89,36 @@ export default function DriversAnalytics({ drivers = [] }) {
               data={runway.buckets}
               height={230}
               yTicks={3}
-              valueLabel="Drivers"
+              valueLabel={t('Drivers')}
               format={(n) => num(Math.round(n))}
-              tooltip={(d) => (d.label === 'Expired' ? 'Cannot legally drive' : 'Valid')}
+              tooltip={(d) => (d.key === 'expired' ? t('Cannot legally drive') : t('Valid'))}
             />
             <p className="px-3 pb-1 text-xs leading-relaxed text-slate-500">
-              {urgent > 0 ? (
-                <>
-                  <span className="font-semibold text-red-600">{num(urgent)}</span> driver
-                  {urgent === 1 ? '' : 's'} expired or expiring within 30 days.
-                </>
-              ) : (
-                <>No licence expires in the next 30 days.</>
-              )}
+              {urgent > 0
+                ? (urgent === 1
+                  ? t('{n} driver expired or expiring within 30 days.', { n: num(urgent) })
+                  : t('{n} drivers expired or expiring within 30 days.', { n: num(urgent) }))
+                : t('No licence expires in the next 30 days.')}
               {runway.unknown > 0 && (
-                <> {num(runway.unknown)} driver{runway.unknown === 1 ? ' has' : 's have'} no expiry date on file.</>
+                <>
+                  {' '}
+                  {runway.unknown === 1
+                    ? t('{n} driver has no expiry date on file.', { n: num(runway.unknown) })
+                    : t('{n} drivers have no expiry date on file.', { n: num(runway.unknown) })}
+                </>
               )}
             </p>
           </>
         ) : (
           <div className="flex h-[230px] items-center justify-center text-sm text-slate-400">
-            No licence expiry dates on file.
+            {t('No licence expiry dates on file.')}
           </div>
         )}
       </SectionCard>
 
       <SectionCard
-        title="Driver status"
-        subtitle="Who is available to dispatch"
+        title={t('Driver status')}
+        subtitle={t('Who is available to dispatch')}
         bodyClass="flex items-center justify-center p-5"
       >
         <PieChart segments={status} size={150} />

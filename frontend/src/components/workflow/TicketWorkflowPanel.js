@@ -37,6 +37,10 @@ export default function TicketWorkflowPanel({ ticketId, onChanged, hideBack = fa
   const [findingsCatalog, setFindingsCatalog] = useState([]);
   const [keywordMeta, setKeywordMeta] = useState({});
   const [faultCausesCatalog, setFaultCausesCatalog] = useState({});
+  // WHERE ON THE CAR — the shared location vocabulary + the per-fault-type policy that says which
+  // findings take a place at all. Ships inside the findings catalog (one request), so the detail
+  // editor can render the instant a fault chip is tapped. See lib/faultLocations.
+  const [locationCatalog, setLocationCatalog] = useState({ groups: [], policy: {}, maxQuantity: 40 });
   const [maintTypes, setMaintTypes] = useState([]);
   const [drivers, setDrivers] = useState([]);
 
@@ -57,6 +61,11 @@ export default function TicketWorkflowPanel({ ticketId, onChanged, hideBack = fa
         setFindingsCatalog(f.data?.data?.categories || []);
         setKeywordMeta(f.data?.data?.keyword_risk || {});
         setFaultCausesCatalog(f.data?.data?.fault_causes || {});
+        setLocationCatalog({
+          groups: f.data?.data?.locations || [],
+          policy: f.data?.data?.location_policy || {},
+          maxQuantity: f.data?.data?.max_quantity || 40,
+        });
         setMaintTypes((f.data?.data?.maintenance_types || []).map((x) => x.value));
       })
       .catch(() => { /* pickers fall back to empty */ });
@@ -117,6 +126,7 @@ export default function TicketWorkflowPanel({ ticketId, onChanged, hideBack = fa
           findingsCatalog={findingsCatalog}
           keywordMeta={keywordMeta}
           faultCausesCatalog={faultCausesCatalog}
+          locationCatalog={locationCatalog}
           assignableDrivers={drivers}
           allowedTypes={maintTypes}
           onClose={() => setModal(null)}

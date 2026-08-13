@@ -10,11 +10,21 @@ import Icon from '../components/ui/Icon';
 import { Skeleton } from '../components/ui/Skeleton';
 import DateRangePicker from '../components/ui/DateRangePicker';
 import MaintenanceHistoryAnalytics from '../components/analytics/MaintenanceHistoryAnalytics';
+import { useI18n } from '../i18n/I18nContext';
 
-const fmtDate = (iso) => (iso ? new Date(iso).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
-const plural = (n, w) => `${Number(n).toLocaleString()} ${w}${n === 1 ? '' : 's'}`;
+// Arabic must render Gregorian dates with Latin digits — a bare toLocale*() would emit Hijri +
+// Arabic-Indic numerals and break the tabular columns. `lang` is threaded in from the component.
+const fmtDate = (lang, iso) => (iso
+  ? new Date(iso).toLocaleDateString(lang === 'ar' ? 'ar-AE-u-ca-gregory-nu-latn' : undefined, { day: '2-digit', month: 'short', year: 'numeric' })
+  : '—');
+const nfmt = (lang, n) => Number(n).toLocaleString(lang === 'ar' ? 'ar-AE-u-nu-latn' : undefined);
+// Count sentences branch in ENGLISH and emit two separate phrase keys, so Arabic gets its own wording
+// rather than an English-shaped "1 / not 1" split.
+const visitCount = (t, lang, n) => (Number(n) === 1 ? t('1 visit') : t('{n} visits', { n: nfmt(lang, n) }));
+const dayCount = (t, lang, n) => (Number(n) === 1 ? t('1 day') : t('{n} days', { n: nfmt(lang, n) }));
 
 export default function MaintenanceHistory() {
+  const { t, lang } = useI18n();
   const [days, setDays] = useState(0); // default: all-time — total days each car has ever spent in the shop
   const [from, setFrom] = useState(''); // explicit date range (YYYY-MM-DD); either bound overrides `days`
   const [to, setTo] = useState('');
@@ -96,10 +106,10 @@ export default function MaintenanceHistory() {
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <Link to="/" className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-400 hover:text-slate-600">
-              <Icon.ArrowRight className="h-3 w-3 rotate-180" /> Dashboard
+              <Icon.ArrowRight className="h-3 w-3 rotate-180 rtl:-scale-x-100" /> {t('Dashboard')}
             </Link>
-            <h1 className="font-display text-2xl font-bold tracking-tight text-slate-900">Maintenance History</h1>
-            <p className="mt-1 max-w-2xl text-sm text-slate-500">Every car that went to the workshop — how often it went in, and how long it spent there.</p>
+            <h1 className="font-display text-2xl font-bold tracking-tight text-slate-900">{t('Maintenance History')}</h1>
+            <p className="mt-1 max-w-2xl text-sm text-slate-500">{t('Every car that went to the workshop — how often it went in, and how long it spent there.')}</p>
           </div>
           <DateRangePicker
             days={days}
@@ -111,10 +121,10 @@ export default function MaintenanceHistory() {
 
         {/* Summary KPIs */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <Kpi icon="Car" label="Cars maintained" value={loading ? null : summary.cars} />
-          <Kpi icon="Wrench" label="Total visits" value={loading ? null : summary.totalVisits.toLocaleString()} />
-          <Kpi icon="Clock" label="Avg days in shop" value={loading ? null : `${summary.avgDays}d`} />
-          <Kpi icon="Activity" label="Currently in shop" value={loading ? null : summary.inShop} tone={summary.inShop ? 'amber' : 'slate'} />
+          <Kpi icon="Car" label={t('Cars maintained')} value={loading ? null : nfmt(lang, summary.cars)} />
+          <Kpi icon="Wrench" label={t('Total visits')} value={loading ? null : nfmt(lang, summary.totalVisits)} />
+          <Kpi icon="Clock" label={t('Avg days in shop')} value={loading ? null : t('{n}d', { n: nfmt(lang, summary.avgDays) })} />
+          <Kpi icon="Activity" label={t('Currently in shop')} value={loading ? null : nfmt(lang, summary.inShop)} tone={summary.inShop ? 'amber' : 'slate'} />
         </div>
 
         {/* Analytics — the whole window, before the search narrows the table below. */}
@@ -126,7 +136,7 @@ export default function MaintenanceHistory() {
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Search plate or model…"
+            placeholder={t('Search plate or model…')}
             className="w-full rounded-lg border border-slate-200 bg-white py-2 ps-9 pe-3 text-sm outline-none focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100"
           />
         </div>
@@ -136,20 +146,20 @@ export default function MaintenanceHistory() {
         ) : rows.length === 0 ? (
           <div className="flex flex-col items-center justify-center rounded-2xl bg-white py-20 text-center shadow-sm ring-1 ring-slate-200">
             <Icon.Check className="h-10 w-10 text-emerald-500" />
-            <p className="mt-3 text-sm font-medium text-slate-700">No workshop visits in this window</p>
-            <p className="text-xs text-slate-400">Try a wider time range.</p>
+            <p className="mt-3 text-sm font-medium text-slate-700">{t('No workshop visits in this window')}</p>
+            <p className="text-xs text-slate-400">{t('Try a wider time range.')}</p>
           </div>
         ) : (
           <div className="overflow-x-auto rounded-2xl border border-slate-200/60 bg-white shadow-soft">
             <table className="w-full min-w-[760px] border-separate border-spacing-0 text-sm">
               <thead>
                 <tr className="text-start">
-                  <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Vehicle</th>
-                  <SortHead label="Visits" sortKey="visits" align="right" />
-                  <SortHead label="Time in shop" sortKey="days_in_shop" align="right" />
-                  <SortHead label="First visit" sortKey="first_visit" />
-                  <SortHead label="Last visit" sortKey="last_visit" />
-                  <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Status</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">{t('Vehicle')}</th>
+                  <SortHead label={t('Visits')} sortKey="visits" align="right" />
+                  <SortHead label={t('Time in shop')} sortKey="days_in_shop" align="right" />
+                  <SortHead label={t('First visit')} sortKey="first_visit" />
+                  <SortHead label={t('Last visit')} sortKey="last_visit" />
+                  <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50/90 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">{t('Status')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -165,25 +175,25 @@ export default function MaintenanceHistory() {
                     </td>
                     <td className="border-b border-slate-100 px-5 py-3.5 text-end">
                       <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${r.visits >= 10 ? 'bg-red-100 text-red-700' : r.visits >= 5 ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>
-                        {plural(r.visits, 'visit')}
+                        {visitCount(t, lang, r.visits)}
                       </span>
                     </td>
                     <td className="border-b border-slate-100 px-5 py-3.5 text-end font-semibold tabular-nums text-slate-700">
-                      {r.days_in_shop == null ? <span className="text-slate-300">—</span> : plural(r.days_in_shop, 'day')}
+                      {r.days_in_shop == null ? <span className="text-slate-300">—</span> : dayCount(t, lang, r.days_in_shop)}
                     </td>
-                    <td className="border-b border-slate-100 px-5 py-3.5 text-slate-500">{fmtDate(r.first_visit)}</td>
-                    <td className="border-b border-slate-100 px-5 py-3.5 text-slate-500">{fmtDate(r.last_visit)}</td>
+                    <td className="border-b border-slate-100 px-5 py-3.5 text-slate-500">{fmtDate(lang, r.first_visit)}</td>
+                    <td className="border-b border-slate-100 px-5 py-3.5 text-slate-500">{fmtDate(lang, r.last_visit)}</td>
                     <td className="border-b border-slate-100 px-5 py-3.5">
                       <div className="flex items-center gap-3">
                         {r.currently_in_shop
-                          ? <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700"><span className="h-1.5 w-1.5 rounded-full bg-amber-500" /> In shop</span>
-                          : <span className="text-xs text-slate-400">Returned</span>}
+                          ? <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700"><span className="h-1.5 w-1.5 rounded-full bg-amber-500" /> {t('In shop')}</span>
+                          : <span className="text-xs text-slate-400">{t('Returned')}</span>}
                         <button
                           onClick={() => toggleVisits(r.id)}
                           className={`ms-auto inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-semibold transition ${isOpen ? 'border-indigo-300 bg-indigo-50 text-indigo-700' : 'border-slate-200 bg-white text-slate-600 hover:border-indigo-200 hover:text-indigo-600'}`}
                           aria-expanded={isOpen}
                         >
-                          See {plural(r.visits, 'visit')}
+                          {Number(r.visits) === 1 ? t('See 1 visit') : t('See {n} visits', { n: nfmt(lang, r.visits) })}
                           <Icon.ChevronDown className={`h-3 w-3 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
                         </button>
                       </div>
@@ -210,35 +220,36 @@ export default function MaintenanceHistory() {
 
 // The "see N visits" drill-down: each individual workshop trip for one car within the window.
 function VisitList({ detail }) {
+  const { t, lang } = useI18n();
   if (!detail || detail.loading) {
     return <div className="space-y-2">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-9 rounded-lg" />)}</div>;
   }
   if (detail.error) {
-    return <p className="text-sm text-rose-600">Couldn’t load this car’s visits. Please try again.</p>;
+    return <p className="text-sm text-rose-600">{t('Couldn’t load this car’s visits. Please try again.')}</p>;
   }
   if (!detail.items.length) {
-    return <p className="text-sm text-slate-400">No individual visits recorded in this window.</p>;
+    return <p className="text-sm text-slate-400">{t('No individual visits recorded in this window.')}</p>;
   }
   return (
     <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
       <table className="w-full text-sm">
         <thead>
           <tr className="text-start text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-            <th className="px-4 py-2">Went in</th>
-            <th className="px-4 py-2">Came back</th>
-            <th className="px-4 py-2 text-end">Days</th>
-            <th className="px-4 py-2">Garage</th>
-            <th className="px-4 py-2">What was done</th>
+            <th className="px-4 py-2">{t('Went in')}</th>
+            <th className="px-4 py-2">{t('Came back')}</th>
+            <th className="px-4 py-2 text-end">{t('Days')}</th>
+            <th className="px-4 py-2">{t('Garage')}</th>
+            <th className="px-4 py-2">{t('What was done')}</th>
           </tr>
         </thead>
         <tbody>
           {detail.items.map((v, i) => (
             <tr key={`${v.out_date}-${i}`} className="border-t border-slate-100">
-              <td className="whitespace-nowrap px-4 py-2 font-medium text-slate-700">{fmtDate(v.out_date)}</td>
+              <td className="whitespace-nowrap px-4 py-2 font-medium text-slate-700">{fmtDate(lang, v.out_date)}</td>
               <td className="whitespace-nowrap px-4 py-2 text-slate-500">
-                {v.returned ? fmtDate(v.in_date) : <span className="inline-flex items-center gap-1 text-amber-600"><span className="h-1.5 w-1.5 rounded-full bg-amber-500" /> Still in</span>}
+                {v.returned ? fmtDate(lang, v.in_date) : <span className="inline-flex items-center gap-1 text-amber-600"><span className="h-1.5 w-1.5 rounded-full bg-amber-500" /> {t('Still in')}</span>}
               </td>
-              <td className="whitespace-nowrap px-4 py-2 text-end tabular-nums text-slate-600">{v.days == null ? '—' : plural(v.days, 'day')}</td>
+              <td className="whitespace-nowrap px-4 py-2 text-end tabular-nums text-slate-600">{v.days == null ? '—' : dayCount(t, lang, v.days)}</td>
               <td className="px-4 py-2 text-slate-600">{v.garage || <span className="text-slate-300">—</span>}</td>
               <td className="px-4 py-2 text-slate-600">{v.issue || v.notes || <span className="text-slate-300">—</span>}</td>
             </tr>

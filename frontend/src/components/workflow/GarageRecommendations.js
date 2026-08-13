@@ -1053,7 +1053,7 @@ export default function GarageRecommendations({ ticketId, query, payload, select
               <span className="text-sm font-semibold text-slate-400">/100</span>
             </div>
             <div className="flex items-center gap-1.5 pb-0.5">
-              {top.warn && <Icon.Alert className="h-3.5 w-3.5 text-amber-500" title="Mixed re-inspection record" />}
+              {top.warn && <Icon.Alert className="h-3.5 w-3.5 text-amber-500" title={t('Mixed re-inspection record')} />}
               <ConfBadge conf={top.confidence} t={t} />
             </div>
           </div>

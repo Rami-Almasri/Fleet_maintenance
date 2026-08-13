@@ -20,6 +20,7 @@
 // without it the cell shows row[col.key]. `cellClass`/`headerClass` add classes.
 
 import { Tooltip } from './Tooltip';
+import { useI18n } from '../../i18n/I18nContext';
 
 const ALIGN = { left: 'text-start', right: 'text-end', center: 'text-center' };
 
@@ -37,9 +38,10 @@ export default function DataTable({
   sortKey,                 // key of the currently-sorted column (opt-in)
   sortDir,                 // 'asc' | 'desc' — direction of the active sort
   onSort,                  // key => void — called when a sortable header is clicked
-  empty = 'Nothing to show.',
+  empty = null,
   className = '',
 }) {
+  const { t } = useI18n();
   const py = dense ? 'py-2.5' : 'py-3.5';
   const colCount = columns.length || 1;
 
@@ -74,7 +76,7 @@ export default function DataTable({
                       type="button"
                       onClick={() => onSort(c.key)}
                       className={`inline-flex w-full items-center gap-1 ${justify} uppercase tracking-wide transition-colors hover:text-slate-800 ${active ? 'text-indigo-600' : ''}`}
-                      title="Sort by this column"
+                      title={t('Sort by this column')}
                     >
                       {label}
                     </button>
@@ -101,7 +103,7 @@ export default function DataTable({
           ) : rows.length === 0 ? (
             <tr>
               <td colSpan={colCount} className="px-5 py-12 text-center text-sm text-slate-400">
-                {empty}
+                {empty ?? t('Nothing to show.')}
               </td>
             </tr>
           ) : (

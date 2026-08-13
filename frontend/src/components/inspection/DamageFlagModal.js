@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { DAMAGE_TYPES, SEVERITIES, damageStatus, damageStatusMeta } from '../../lib/inspections';
+import { useI18n } from '../../i18n/I18nContext';
 
 // Rich manual damage flag (Option A). Captures the three things the Fleet Health
 // reports need — what kind of damage, how severe, and a free-text note — for one
@@ -8,6 +9,7 @@ import { DAMAGE_TYPES, SEVERITIES, damageStatus, damageStatusMeta } from '../../
 // Controlled by the parent: `initial` pre-fills when editing an existing flag;
 // `onSave({ type, severity, note })` persists it; `onRemove` clears the flag.
 export default function DamageFlagModal({ open, zoneLabel, initial, onSave, onRemove, onClose }) {
+  const { t } = useI18n();
   const [type, setType] = useState(initial?.type || null);
   const [severity, setSeverity] = useState(initial?.severity || null);
   const [note, setNote] = useState(initial?.note || '');
@@ -55,7 +57,7 @@ export default function DamageFlagModal({ open, zoneLabel, initial, onSave, onRe
       {/* backdrop */}
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} aria-hidden="true" />
 
-      <div role="dialog" aria-modal="true" aria-label="Flag damage" className="relative w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-200">
+      <div role="dialog" aria-modal="true" aria-label={t('Flag damage')} className="relative w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-200">
         {/* header */}
         <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
           <div className="flex items-center gap-2.5">
@@ -65,7 +67,7 @@ export default function DamageFlagModal({ open, zoneLabel, initial, onSave, onRe
               </svg>
             </span>
             <div>
-              <h2 className="text-sm font-bold text-slate-900">Flag damage</h2>
+              <h2 className="text-sm font-bold text-slate-900">{t('Flag damage')}</h2>
               <p className="text-xs text-slate-500">{zoneLabel}</p>
             </div>
           </div>
@@ -77,19 +79,20 @@ export default function DamageFlagModal({ open, zoneLabel, initial, onSave, onRe
         <div className="space-y-5 px-5 py-5">
           {/* Damage type */}
           <div>
-            <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Damage type</label>
+            <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">{t('Damage type')}</label>
             <div className="grid grid-cols-2 gap-2">
-              {DAMAGE_TYPES.map((t) => (
+              {/* `dt`, not `t` — the map parameter must never shadow the translator. */}
+              {DAMAGE_TYPES.map((dt) => (
                 <button
-                  key={t.id}
-                  onClick={() => setType(t.id)}
+                  key={dt.id}
+                  onClick={() => setType(dt.id)}
                   className={`rounded-xl border px-3 py-2.5 text-sm font-medium transition ${
-                    type === t.id
+                    type === dt.id
                       ? 'border-indigo-500 bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200'
                       : 'border-slate-200 text-slate-600 hover:border-slate-300'
                   }`}
                 >
-                  {t.label}
+                  {t(dt.label)}
                 </button>
               ))}
             </div>
@@ -97,7 +100,7 @@ export default function DamageFlagModal({ open, zoneLabel, initial, onSave, onRe
 
           {/* Severity */}
           <div>
-            <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Severity</label>
+            <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">{t('Severity')}</label>
             <div className="grid grid-cols-3 gap-2">
               {SEVERITIES.map((s) => (
                 <button
@@ -107,8 +110,8 @@ export default function DamageFlagModal({ open, zoneLabel, initial, onSave, onRe
                     severity === s.id ? s.toneActive : s.tone + ' hover:brightness-95'
                   }`}
                 >
-                  <span className="block text-sm font-semibold">{s.label}</span>
-                  <span className="block text-[10px] opacity-80">{s.sub}</span>
+                  <span className="block text-sm font-semibold">{t(s.label)}</span>
+                  <span className="block text-[10px] opacity-80">{t(s.sub)}</span>
                 </button>
               ))}
             </div>
@@ -117,21 +120,21 @@ export default function DamageFlagModal({ open, zoneLabel, initial, onSave, onRe
           {/* Note */}
           <div>
             <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Quick note <span className="font-normal normal-case text-slate-400">(optional)</span>
+              {t('Quick note')} <span className="font-normal normal-case text-slate-400">{t('(optional)')}</span>
             </label>
             <textarea
               value={note}
               onChange={(e) => setNote(e.target.value)}
               rows={3}
               maxLength={1000}
-              placeholder="e.g. 8 cm scratch above the handle, paint not broken"
+              placeholder={t('e.g. 8 cm scratch above the handle, paint not broken')}
               className="w-full resize-none rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none transition focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10"
             />
           </div>
 
           {/* Status — the dispute-killer dimension */}
           <div>
-            <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Status</label>
+            <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">{t('Status')}</label>
             <div className="grid grid-cols-2 gap-2">
               <button
                 onClick={() => setOrigin('existing')}
@@ -141,8 +144,8 @@ export default function DamageFlagModal({ open, zoneLabel, initial, onSave, onRe
                     : 'border-slate-200 text-slate-600 hover:border-slate-300'
                 }`}
               >
-                Existing
-                <span className="block text-[10px] font-normal text-slate-400">Pre-existing at delivery</span>
+                {t('Existing')}
+                <span className="block text-[10px] font-normal text-slate-400">{t('Pre-existing at delivery')}</span>
               </button>
               <button
                 onClick={() => setOrigin('new')}
@@ -152,25 +155,25 @@ export default function DamageFlagModal({ open, zoneLabel, initial, onSave, onRe
                     : 'border-slate-200 text-slate-600 hover:border-slate-300'
                 }`}
               >
-                New
-                <span className="block text-[10px] font-normal text-slate-400">Found at return · needs assessment</span>
+                {t('New')}
+                <span className="block text-[10px] font-normal text-slate-400">{t('Found at return · needs assessment')}</span>
               </button>
             </div>
 
             {/* Invoice link → promotes the flag to "Charged" */}
             <div className="mt-2.5">
               <label className="mb-1 block text-[11px] font-medium text-slate-500">
-                Link invoice <span className="font-normal text-slate-400">(optional · marks it Charged)</span>
+                {t('Link invoice')} <span className="font-normal text-slate-400">{t('(optional · marks it Charged)')}</span>
               </label>
               <div className="flex items-center gap-2">
                 <input
                   value={invoiceId}
                   onChange={(e) => setInvoiceId(e.target.value)}
-                  placeholder="e.g. INV-2026-0142"
+                  placeholder={t('e.g. INV-2026-0142')}
                   className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10"
                 />
                 <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${statusMeta.toneActive}`}>
-                  {statusMeta.label}
+                  {t(statusMeta.label)}
                 </span>
               </div>
             </div>
@@ -184,21 +187,21 @@ export default function DamageFlagModal({ open, zoneLabel, initial, onSave, onRe
               onClick={onRemove}
               className="rounded-lg px-3 py-2 text-sm font-semibold text-rose-600 transition hover:bg-rose-50"
             >
-              Remove flag
+              {t('Remove flag')}
             </button>
           ) : (
             <span />
           )}
           <div className="flex items-center gap-2">
             <button onClick={onClose} className="rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100">
-              Cancel
+              {t('Cancel')}
             </button>
             <button
               onClick={() => canSave && onSave({ type, severity, note: note.trim() || null, origin, invoiceId: trimmedInvoice || null })}
               disabled={!canSave}
               className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-rose-700 disabled:opacity-40"
             >
-              {editing ? 'Update flag' : 'Save flag'}
+              {editing ? t('Update flag') : t('Save flag')}
             </button>
           </div>
         </div>

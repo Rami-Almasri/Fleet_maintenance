@@ -53,10 +53,10 @@ class OdometerContinuityServiceTest extends TestCase
         }
     }
 
-    public function test_strict_match_stages_enforce_exact_with_a_small_noted_tolerance(): void
+    public function test_strict_match_stages_expect_a_match_and_allow_a_noted_forward_drift(): void
     {
         // Behaviour shared by EVERY strict-match stage: the car should not have moved since the last
-        // reading, so an exact match is clean, a small forward drift is allowed but must carry a note,
+        // reading, so an exact match is clean, a forward drift is allowed but must carry a note,
         // and a backward reading is always a hard block (an odometer cannot go down — it is a typo).
         foreach (OdometerContinuityService::STRICT_MATCH_STAGES as $stage) {
             $this->assertSame(OdometerContinuityService::STATUS_VERIFIED, $this->svc->evaluate(100, 100, $stage)['status'], "exact {$stage}");
@@ -71,36 +71,73 @@ class OdometerContinuityServiceTest extends TestCase
         $this->assertFalse($this->svc->stageRequiresExactMatch(OdometerContinuityService::STAGE_PICKUP));
     }
 
-    public function test_a_large_forward_drift_hard_blocks_the_anchor_stages_but_never_park_pickup(): void
+    public function test_a_large_forward_drift_is_accepted_on_every_strict_stage_and_sent_for_review(): void
     {
-        // The one place the strict stages deliberately diverge, and the reason is operational rather
-        // than numerical: at PARK_PICKUP a driver is collecting a car from our own lot, where a real
-        // in-lot move of more than TOLERANCE_KM genuinely happens and CANNOT be resolved by re-reading
-        // the dial. Hard-blocking there would strand the driver with no legal way to proceed, so any
-        // forward amount is allowed through as an audited "authorized deviation" with a mandatory note.
-        $this->assertSame(
-            OdometerContinuityService::STATUS_AUTHORIZED,
-            $this->svc->evaluate(106, 100, OdometerContinuityService::STAGE_PARK_PICKUP)['status'],
-            '+6 at park pickup must stay unblockable',
-        );
-        $this->assertSame(
-            OdometerContinuityService::STATUS_AUTHORIZED,
-            $this->svc->evaluate(400, 100, OdometerContinuityService::STAGE_PARK_PICKUP)['status'],
-            'even a large in-lot move must not become an unresolvable wall',
-        );
-
-        // The other strict stages keep the tight cap: the inspector's start-of-drive anchor and the
-        // final QA sign-off both mean the car should not have moved at all, so a jump past the buffer
-        // is an unlogged drive or a typo — something the operator must correct, not acknowledge.
-        foreach ([OdometerContinuityService::STAGE_TEST, OdometerContinuityService::STAGE_REINSPECT] as $stage) {
-            $this->assertSame(OdometerContinuityService::STATUS_EXACT, $this->svc->evaluate(106, 100, $stage)['status'], "+6 {$stage}");
+        // No strict stage hard-blocks a FORWARD reading any more. A car genuinely does move between two
+        // of our checkpoints — a yard shuffle, a fuel run, someone else taking it — and re-reading the
+        // dial cannot make a true reading go away. The old wall only taught drivers to re-type the
+        // previous number, which is the one outcome that actually corrupts the mileage chain. So the
+        // reading is taken as an audited "authorized deviation" with a mandatory note.
+        foreach (OdometerContinuityService::STRICT_MATCH_STAGES as $stage) {
+            $this->assertSame(OdometerContinuityService::STATUS_AUTHORIZED, $this->svc->evaluate(106, 100, $stage)['status'], "+6 {$stage}");
+            $this->assertSame(OdometerContinuityService::STATUS_AUTHORIZED, $this->svc->evaluate(400, 100, $stage)['status'], "+300 {$stage}");
         }
 
-        // Backward is a hard block everywhere, including the lenient stage.
+        // …but a drift PAST the buffer is escalated: it goes to the odometer approval board, because the
+        // car moved when our records say it was standing still. A drift within the buffer is dial-reading
+        // noise and stays a note-only event.
+        $this->assertTrue($this->svc->needsSupervisorReview($this->svc->evaluate(112, 100, OdometerContinuityService::STAGE_TEST)));
+        $this->assertFalse($this->svc->needsSupervisorReview($this->svc->evaluate(103, 100, OdometerContinuityService::STAGE_TEST)));
+        $this->assertFalse($this->svc->needsSupervisorReview($this->svc->evaluate(100, 100, OdometerContinuityService::STAGE_TEST)));
+
+        // Backward still CLASSIFIES as exact-required everywhere — that direction is physically impossible.
+        // Whether it blocks or is merely reviewed is a per-stage decision (see the review-not-block test).
         $this->assertSame(
             OdometerContinuityService::STATUS_EXACT,
             $this->svc->evaluate(99, 100, OdometerContinuityService::STAGE_PARK_PICKUP)['status'],
-            'park pickup is lenient FORWARD only',
+            'strict stages are lenient FORWARD only',
+        );
+    }
+
+    /**
+     * "Needs Test Drive" is the first time anyone physically reads the dial, so it REVIEWS instead of
+     * BLOCKING: a backward reading is accepted and routed to the odometer approval board rather than
+     * refused. Every other strict-match stage keeps the hard block, because by then this stage has
+     * already anchored the car's mileage.
+     */
+    public function test_the_test_drive_stage_reviews_a_backward_reading_instead_of_blocking_it(): void
+    {
+        $this->assertTrue($this->svc->stageReviewsInsteadOfBlocking(OdometerContinuityService::STAGE_TEST));
+        $this->assertFalse($this->svc->stageReviewsInsteadOfBlocking(OdometerContinuityService::STAGE_PARK_PICKUP));
+        $this->assertFalse($this->svc->stageReviewsInsteadOfBlocking(OdometerContinuityService::STAGE_REINSPECT));
+
+        $backward = $this->svc->evaluate(90, 100, OdometerContinuityService::STAGE_TEST);
+        $this->assertSame(OdometerContinuityService::STATUS_EXACT, $backward['status']);
+
+        // WITH the stage: the backward reading is the supervisor's to settle, so it must be filed.
+        $this->assertTrue($this->svc->needsSupervisorReview($backward, OdometerContinuityService::STAGE_TEST));
+        // WITHOUT the stage: the original forward-only rule is untouched, so existing callers can't drift.
+        $this->assertFalse($this->svc->needsSupervisorReview($backward));
+        // A backward reading at a stage that still blocks is never filed — it never gets that far.
+        $this->assertFalse($this->svc->needsSupervisorReview(
+            $this->svc->evaluate(90, 100, OdometerContinuityService::STAGE_PARK_PICKUP),
+            OdometerContinuityService::STAGE_PARK_PICKUP,
+        ));
+
+        // The forward buffer is unchanged by the new leniency: noise stays noise, a real drift still goes up.
+        $this->assertFalse($this->svc->needsSupervisorReview(
+            $this->svc->evaluate(103, 100, OdometerContinuityService::STAGE_TEST),
+            OdometerContinuityService::STAGE_TEST,
+        ));
+        $this->assertTrue($this->svc->needsSupervisorReview(
+            $this->svc->evaluate(112, 100, OdometerContinuityService::STAGE_TEST),
+            OdometerContinuityService::STAGE_TEST,
+        ));
+
+        // The typo guard is NOT waived — a slipped digit is not "a different mileage".
+        $this->assertSame(
+            OdometerContinuityService::STATUS_IMPLAUSIBLE,
+            $this->svc->evaluate(6_276_888, 62_769, OdometerContinuityService::STAGE_TEST)['status'],
         );
     }
 

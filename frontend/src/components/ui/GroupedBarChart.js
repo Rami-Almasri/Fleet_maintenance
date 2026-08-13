@@ -15,6 +15,7 @@
 
 import { useState } from 'react';
 import { ChartTooltip } from './Tooltip';
+import { useI18n } from '../../i18n/I18nContext';
 import { palette, LINE, useUid, useChartWidth, useMounted, niceScale } from './chartUtils';
 
 export default function GroupedBarChart({
@@ -26,6 +27,7 @@ export default function GroupedBarChart({
   integer = false,
   className = '',
 }) {
+  const { t } = useI18n();
   const [ref, width] = useChartWidth();
   const mounted = useMounted();
   const gid = useUid('gbar');
@@ -73,7 +75,7 @@ export default function GroupedBarChart({
 
   return (
     <div ref={ref} className={className}>
-      <svg width={width} height={height} role="img" aria-label="Grouped activity bar chart">
+      <svg width={width} height={height} role="img" aria-label={t('Grouped activity bar chart')}>
         <defs>
           {series.map((s) => {
             const pal = palette(s.color);

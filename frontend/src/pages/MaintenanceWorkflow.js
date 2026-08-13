@@ -173,8 +173,8 @@ function TicketCard({ tk, tone, laneKey, laneName, can, userId, active, onSelect
   const openFaults = tk.tasks_progress?.open ?? 0;
   const readyBlocked = act?.action === 'ready' && openFaults > 0;
   const readyHint = `Fix all ${openFaults} open fault${openFaults > 1 ? 's' : ''} first`;
-  const custodyLocked = custodyBlocked(tk, userId);
-  const custodyHolder = custodyHolderName(tk, userId);
+  const custodyLocked = custodyBlocked(tk, userId, can);
+  const custodyHolder = custodyHolderName(tk, userId, can);
   const custodyHint = act?.action === 'arriveAtPark'
     ? `Only ${custodyHolder || 'the driver who collected the car from the garage'} can complete the arrival at our park`
     : `Only ${custodyHolder || 'the driver who picked up the car'} can check it in`;
@@ -490,6 +490,10 @@ export default function MaintenanceWorkflow() {
   const [maintTypes, setMaintTypes] = useState([]);
   const [keywordMeta, setKeywordMeta] = useState({});
   const [faultCausesCatalog, setFaultCausesCatalog] = useState({});
+  // WHERE ON THE CAR — the shared location vocabulary + the per-fault-type policy that says which
+  // findings take a place at all. Ships inside the findings catalog (one request), so the detail
+  // editor can render the instant a fault chip is tapped. See lib/faultLocations.
+  const [locationCatalog, setLocationCatalog] = useState({ groups: [], policy: {}, maxQuantity: 40 });
   const [drivers, setDrivers] = useState([]);
   const [sevFilter, setSevFilter] = useState('');
   const [query, setQuery] = useState('');
@@ -524,6 +528,11 @@ export default function MaintenanceWorkflow() {
         setFindingsCatalog(f.data?.data?.categories || []);
         setKeywordMeta(f.data?.data?.keyword_risk || {});
         setFaultCausesCatalog(f.data?.data?.fault_causes || {});
+        setLocationCatalog({
+          groups: f.data?.data?.locations || [],
+          policy: f.data?.data?.location_policy || {},
+          maxQuantity: f.data?.data?.max_quantity || 40,
+        });
         setMaintTypes((f.data?.data?.maintenance_types || []).map((x) => x.value));
       })
       .catch(() => { /* pickers fall back to empty */ });
@@ -625,7 +634,7 @@ export default function MaintenanceWorkflow() {
           <ComplaintTriageModal ticket={modal.ticket} vehicles={vehicles} onClose={() => setModal(null)} onDone={onDone} />
         )}
         {modal && !['logistics', 'route', 'complaint', 'breakdown', 'triage', 'test'].includes(modal.action) && (
-          <TicketActionModal action={modal.action} ticket={modal.ticket || null} vehicles={vehicles} garages={garages} findingsCatalog={findingsCatalog} keywordMeta={keywordMeta} faultCausesCatalog={faultCausesCatalog} assignableDrivers={drivers} allowedTypes={maintTypes} onClose={() => setModal(null)} onDone={onDone} />
+          <TicketActionModal action={modal.action} ticket={modal.ticket || null} vehicles={vehicles} garages={garages} findingsCatalog={findingsCatalog} keywordMeta={keywordMeta} faultCausesCatalog={faultCausesCatalog} locationCatalog={locationCatalog} assignableDrivers={drivers} allowedTypes={maintTypes} onClose={() => setModal(null)} onDone={onDone} />
         )}
       </>
     );
@@ -801,6 +810,7 @@ export default function MaintenanceWorkflow() {
           findingsCatalog={findingsCatalog}
           keywordMeta={keywordMeta}
           faultCausesCatalog={faultCausesCatalog}
+          locationCatalog={locationCatalog}
           assignableDrivers={drivers}
           allowedTypes={maintTypes}
           onClose={() => setModal(null)}

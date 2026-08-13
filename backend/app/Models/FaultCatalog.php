@@ -25,6 +25,9 @@ class FaultCatalog extends Model
 
     protected $fillable = [
         'slug', 'name', 'name_ar', 'category_key',
+        // Does this fault type have a WHERE, and is it required? required | optional | none.
+        // Seeded from config('vehicle_locations.policy'); resolved by FaultLocationService.
+        'location_mode',
         'default_severity', 'on_site', 'is_active', 'sort_order',
     ];
 

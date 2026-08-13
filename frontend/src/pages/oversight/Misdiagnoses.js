@@ -11,7 +11,9 @@ import { useI18n } from '../../i18n/I18nContext';
 import Icon from '../../components/ui/Icon';
 import { Skeleton } from '../../components/ui/Skeleton';
 
-const fmtDate = (iso) => (iso ? new Date(iso).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
+// Arabic must still render Gregorian dates with Latin digits — a Hijri/Arabic-Indic date would not
+// line up with the rest of the audit trail.
+const fmtDate = (iso, lang) => (iso ? new Date(iso).toLocaleDateString(lang === 'ar' ? 'ar-AE-u-ca-gregory-nu-latn' : undefined, { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
 
 const SEV_TONE = {
   red: 'bg-red-50 text-red-700 ring-red-200',
@@ -21,7 +23,7 @@ const SEV_TONE = {
 };
 
 export default function Misdiagnoses() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState('');
@@ -50,7 +52,7 @@ export default function Misdiagnoses() {
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <Link to="/apps/reports" className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-400 hover:text-slate-600">
-              <Icon.ArrowRight className="h-3 w-3 rotate-180" /> Reports
+              <Icon.ArrowRight className="h-3 w-3 rotate-180 rtl:-scale-x-100" /> {t('Reports')}
             </Link>
             <h1 className="font-display text-2xl font-bold tracking-tight text-slate-900">{t('oversight.misdiag.title')}</h1>
             <p className="mt-1 max-w-2xl text-sm text-slate-500">{t('oversight.misdiag.subtitle')}</p>
@@ -94,7 +96,13 @@ export default function Misdiagnoses() {
           </div>
         ) : (
           <>
-          <AuditAnalytics rows={rows} title="Cars with the most mis-diagnoses" subtitle="Repeat wrong calls on the same car — the signal that a fault is being misread, not recurring" metricLabel="Mis-diagnoses" color="red" />
+          <AuditAnalytics
+            rows={rows}
+            title={t('Cars with the most mis-diagnoses')}
+            subtitle={t('Repeat wrong calls on the same car — the signal that a fault is being misread, not recurring')}
+            metricLabel={t('Mis-diagnoses')}
+            color="red"
+          />
           <div className="space-y-3">
             {rows.map((r) => (
               <div key={r.task_id} className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
@@ -122,7 +130,7 @@ export default function Misdiagnoses() {
                 <div className="mt-3 grid gap-3 border-t border-slate-100 pt-3 sm:grid-cols-3">
                   <Field label={t('oversight.misdiag.diagnosedBy')} icon="Users" value={r.diagnosed_by} />
                   <Field label={t('oversight.misdiag.overruledBy')} icon="Shield" value={r.overruled_by} />
-                  <Field label={t('oversight.common.when')} icon="Clock" value={fmtDate(r.at)} />
+                  <Field label={t('oversight.common.when')} icon="Clock" value={fmtDate(r.at, lang)} />
                 </div>
                 {r.reason && (
                   <p className="mt-3 rounded-lg bg-red-50/60 px-3 py-2 text-sm italic text-slate-600 ring-1 ring-red-100">

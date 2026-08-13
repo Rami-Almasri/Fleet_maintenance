@@ -693,6 +693,12 @@ const phrasesAr = {
   'Approve': 'اعتماد',
   'Approve — possible duplicate': 'اعتماد — يُحتمل أنه مكرر',
   'Approve & Apply': 'اعتماد وتطبيق',
+  // The backward-reading branch on the odometer approval board: the capture was accepted but never
+  // reached the car (the heal only moves forward), so here approving is what corrects the mileage down.
+  'The dial read LOWER than our records, so the car was left on {km} km. Approving sets it to the reading below.':
+    'أظهر العدّاد رقمًا أقل من سجلاتنا، لذلك بقيت السيارة على {km} كم. الاعتماد يضبطها على القراءة أدناه.',
+  'The car is still on {km} km — this reading was never applied. Rejecting simply closes the review and nothing changes.':
+    'ما تزال السيارة على {km} كم — لم تُطبَّق هذه القراءة أصلًا. الرفض يغلق المراجعة فقط دون أي تغيير.',
   'Approve & send': 'اعتماد وإرسال',
   'Approve &amp; send': 'اعتماد وإرسال',
   'Approve anyway': 'اعتماد على أي حال',

@@ -13,6 +13,7 @@ import Segmented from '../../components/ui/Segmented';
 import DateRangePicker from '../../components/ui/DateRangePicker';
 import ComponentRepeatAlert from './ComponentRepeatAlert';
 import { aed2, fmtDate, num } from '../../lib/format';
+import { useI18n } from '../../i18n/I18nContext';
 
 /**
  * Vehicle Installed Components — "what is physically on this car TODAY", plus the full replacement
@@ -24,7 +25,8 @@ import { aed2, fmtDate, num } from '../../lib/format';
  * is upstream in the ticket, which is exactly where the evidence lives.
  */
 
-// Human labels for the raw category keys the catalog uses.
+// Human labels for the raw category keys the catalog uses. The English here is also the i18n
+// phrase key — every read site resolves it through t() before it reaches the screen.
 const CATEGORY_LABEL = {
   engine: 'Engine', brakes: 'Brakes', tyres: 'Tyres & Wheels', suspension: 'Suspension & Steering',
   transmission: 'Transmission', electrical: 'Electrical', ac: 'Climate / A-C', fluids: 'Fluids',
@@ -57,13 +59,17 @@ const EVENT_LABEL = {
 
 const km = (v) => (v === null || v === undefined ? '—' : `${num(v)} km`);
 
-/** "2 y 3 mo" / "8 mo" / "12 d" — an age a human reads at a glance instead of counting days. */
-function humanAge(days) {
+/**
+ * "2 y 3 mo" / "8 mo" / "12 d" — an age a human reads at a glance instead of counting days.
+ * The translator is a parameter because this lives outside a component; every caller passes its
+ * own `t` from useI18n().
+ */
+function humanAge(days, t) {
   if (days === null || days === undefined) return '—';
-  if (days < 45) return `${days} d`;
+  if (days < 45) return t('{n} d', { n: days });
   const months = Math.round(days / 30.44);
-  if (months < 24) return `${months} mo`;
-  return `${Math.floor(months / 12)} y ${months % 12} mo`;
+  if (months < 24) return t('{n} mo', { n: months });
+  return t('{y} y {m} mo', { y: Math.floor(months / 12), m: months % 12 });
 }
 
 /**
@@ -95,15 +101,16 @@ function filterByRange(rows, field, { days, from, to }) {
   return rows.filter((r) => {
     const raw = r[field];
     if (!raw) return false;
-    const t = new Date(raw).getTime();
-    if (Number.isNaN(t)) return false;
-    if (start && t < start.getTime()) return false;
-    if (end && t > end.getTime()) return false;
+    const ts = new Date(raw).getTime();
+    if (Number.isNaN(ts)) return false;
+    if (start && ts < start.getTime()) return false;
+    if (end && ts > end.getTime()) return false;
     return true;
   });
 }
 
 export default function VehicleComponentsPanel({ vehicleId }) {
+  const { t } = useI18n();
   const [selectedId, setSelectedId] = useState(null);
   const [view, setView] = useState('installed');
   const [q, setQ] = useState('');
@@ -143,11 +150,11 @@ export default function VehicleComponentsPanel({ vehicleId }) {
     const needle = q.trim().toLowerCase();
     if (!needle) return windowed;
     return windowed.filter((r) =>
-      [r.type, r.part_name, r.brand, r.part_number, r.serial_no, r.supplier?.name, CATEGORY_LABEL[r.category] || r.category]
+      [r.type, r.part_name, r.brand, r.part_number, r.serial_no, r.supplier?.name, CATEGORY_LABEL[r.category] ? t(CATEGORY_LABEL[r.category]) : r.category]
         .filter(Boolean)
         .some((v) => String(v).toLowerCase().includes(needle))
     );
-  }, [windowed, q]);
+  }, [windowed, q, t]);
 
   const windowActive = range.days > 0 || !!range.from || !!range.to;
 
@@ -165,49 +172,51 @@ export default function VehicleComponentsPanel({ vehicleId }) {
     const base = [
       {
         key: 'category',
-        header: 'Category',
+        header: t('Category'),
         render: (r) => (
-          <span className="text-xs font-medium text-slate-500">{CATEGORY_LABEL[r.category] || r.category || '—'}</span>
+          <span className="text-xs font-medium text-slate-500">
+            {CATEGORY_LABEL[r.category] ? t(CATEGORY_LABEL[r.category]) : r.category || '—'}
+          </span>
         ),
       },
       {
         key: 'part',
-        header: 'Part',
+        header: t('Part'),
         render: (r) => (
           <div className="min-w-0">
             <div className="flex items-center gap-1.5">
               <span className="font-semibold text-slate-900">{r.type || r.part_name}</span>
               {r.position && (
                 <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500">
-                  {POSITION_LABEL[r.position] || r.position}
+                  {POSITION_LABEL[r.position] ? t(POSITION_LABEL[r.position]) : r.position}
                 </span>
               )}
               {r.kind === 'consumable' && (
-                <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-600">Service</span>
+                <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-600">{t('Service')}</span>
               )}
             </div>
             <div className="truncate text-xs text-slate-400">{r.part_name}</div>
           </div>
         ),
       },
-      { key: 'brand', header: 'Brand', render: (r) => r.brand || '—' },
+      { key: 'brand', header: t('Brand'), render: (r) => r.brand || '—' },
       {
         key: 'part_number',
-        header: 'Part Number',
+        header: t('Part Number'),
         cellClass: 'font-mono text-xs',
         render: (r) => r.part_number || '—',
       },
       {
         key: 'installed_at',
-        header: 'Installed',
+        header: t('Installed'),
         render: (r) => (
           <div>
             <div>{fmtDate(r.installed_at)}</div>
-            <div className="text-xs text-slate-400">{humanAge(r.age_days)} ago</div>
+            <div className="text-xs text-slate-400">{t('{age} ago', { age: humanAge(r.age_days, t) })}</div>
           </div>
         ),
       },
-      { key: 'installed_odometer', header: 'Mileage', align: 'right', cellClass: 'tabular-nums', render: (r) => km(r.installed_odometer) },
+      { key: 'installed_odometer', header: t('Mileage'), align: 'right', cellClass: 'tabular-nums', render: (r) => km(r.installed_odometer) },
     ];
 
     if (view === 'installed') {
@@ -215,16 +224,19 @@ export default function VehicleComponentsPanel({ vehicleId }) {
         ...base,
         {
           key: 'warranty',
-          header: 'Warranty',
+          header: t('Warranty'),
           render: (r) => (
             <div>
               <Badge tone={WARRANTY_TONE[r.warranty?.status] || 'gray'}>
-                {r.warranty?.months ? `${r.warranty.months} mo` : WARRANTY_LABEL[r.warranty?.status] || '—'}
+                {r.warranty?.months
+                  ? t('{n} mo', { n: r.warranty.months })
+                  : WARRANTY_LABEL[r.warranty?.status] ? t(WARRANTY_LABEL[r.warranty?.status]) : '—'}
               </Badge>
               {r.warranty?.until && (
                 <div className="mt-0.5 text-xs text-slate-400">
-                  {r.warranty.status === 'expired' ? 'ended ' : 'ends '}
-                  {fmtDate(r.warranty.until)}
+                  {r.warranty.status === 'expired'
+                    ? t('ended {date}', { date: fmtDate(r.warranty.until) })
+                    : t('ends {date}', { date: fmtDate(r.warranty.until) })}
                 </div>
               )}
             </div>
@@ -232,13 +244,13 @@ export default function VehicleComponentsPanel({ vehicleId }) {
         },
         {
           key: 'life',
-          header: 'Service life',
+          header: t('Service life'),
           render: (r) => <LifeBar life={r.service_life} />,
         },
-        { key: 'supplier', header: 'Supplier', render: (r) => r.supplier?.name || '—' },
+        { key: 'supplier', header: t('Supplier'), render: (r) => r.supplier?.name || '—' },
         {
           key: 'cost',
-          header: 'Cost',
+          header: t('Cost'),
           align: 'right',
           cellClass: 'tabular-nums font-semibold text-slate-800',
           // A blank cost means two different things and the user must be able to tell them
@@ -248,8 +260,8 @@ export default function VehicleComponentsPanel({ vehicleId }) {
           render: (r) => {
             if (r.purchase_cost !== null && r.purchase_cost !== undefined) return aed2(r.purchase_cost);
             return r.evidence_channel === 'repair_capture' ? (
-              <span title="Recorded by the technician at repair capture — there is no purchase order, so no cost or supplier exists for this part.">
-                <Badge tone="gray">Reported</Badge>
+              <span title={t('Recorded by the technician at repair capture — there is no purchase order, so no cost or supplier exists for this part.')}>
+                <Badge tone="gray">{t('Reported')}</Badge>
               </span>
             ) : (
               '—'
@@ -263,7 +275,7 @@ export default function VehicleComponentsPanel({ vehicleId }) {
       ...base,
       {
         key: 'removed_at',
-        header: 'Removed',
+        header: t('Removed'),
         render: (r) => (
           <div>
             <div>{fmtDate(r.removed_at)}</div>
@@ -273,30 +285,34 @@ export default function VehicleComponentsPanel({ vehicleId }) {
       },
       {
         key: 'reason',
-        header: 'Reason',
-        render: (r) => <Badge tone={r.removal_reason === 'failed' ? 'red' : 'gray'}>{REASON_LABEL[r.removal_reason] || r.removal_reason || '—'}</Badge>,
+        header: t('Reason'),
+        render: (r) => (
+          <Badge tone={r.removal_reason === 'failed' ? 'red' : 'gray'}>
+            {REASON_LABEL[r.removal_reason] ? t(REASON_LABEL[r.removal_reason]) : r.removal_reason || '—'}
+          </Badge>
+        ),
       },
       {
         key: 'lived',
-        header: 'Lasted',
+        header: t('Lasted'),
         render: (r) => (
           <div>
-            <div>{humanAge(r.age_days)}</div>
+            <div>{humanAge(r.age_days, t)}</div>
             <div className="text-xs text-slate-400">{km(r.distance_km)}</div>
           </div>
         ),
       },
       {
         key: 'cost',
-        header: 'Cost',
+        header: t('Cost'),
         align: 'right',
         cellClass: 'tabular-nums font-semibold text-slate-800',
         render: (r) => (r.purchase_cost === null || r.purchase_cost === undefined ? '—' : aed2(r.purchase_cost)),
       },
     ];
-  }, [view]);
+  }, [view, t]);
 
-  if (error) return <ErrorState message="Could not load this vehicle's components." onRetry={reload} />;
+  if (error) return <ErrorState message={t("Could not load this vehicle's components.")} onRetry={reload} />;
 
   return (
     <div className="space-y-6">
@@ -309,61 +325,76 @@ export default function VehicleComponentsPanel({ vehicleId }) {
       ) : (
         <MetricGrid cols={5}>
           <MetricCard
-            label="Installed components"
+            label={t('Installed components')}
             value={num(summary.installed_count ?? 0)}
             icon={<Icon.Wrench className="h-5 w-5" />}
-            hint="Parts currently fitted to this vehicle"
+            hint={t('Parts currently fitted to this vehicle')}
           />
           {/* The value is a SUM OVER WHAT IS KNOWN, not a total, and the hint has to say so.
               A part fitted through repair capture has no purchase behind it and therefore no
               cost — counting it as zero would understate the car silently, and printing the
               remainder as "installed value" would claim a completeness we do not have. */}
           <MetricCard
-            label="Installed value"
+            label={t('Installed value')}
             value={aed2(summary.total_installed_value ?? 0)}
             icon={<Icon.Cash className="h-5 w-5" />}
             hint={
               summary.uncosted_count
-                ? `Based on ${num(summary.costed_count ?? 0)} of ${num(summary.installed_count ?? 0)} fitted parts — ${num(summary.uncosted_count)} have no recorded cost. Lifetime spend ${aed2(summary.lifetime_component_spend ?? 0)}`
-                : `Lifetime component spend ${aed2(summary.lifetime_component_spend ?? 0)}`
+                ? t('Based on {costed} of {total} fitted parts — {uncosted} have no recorded cost. Lifetime spend {spend}', {
+                    costed: num(summary.costed_count ?? 0),
+                    total: num(summary.installed_count ?? 0),
+                    uncosted: num(summary.uncosted_count),
+                    spend: aed2(summary.lifetime_component_spend ?? 0),
+                  })
+                : t('Lifetime component spend {spend}', { spend: aed2(summary.lifetime_component_spend ?? 0) })
             }
           />
           <MetricCard
-            label="Average age"
-            value={humanAge(summary.average_age_days)}
+            label={t('Average age')}
+            value={humanAge(summary.average_age_days, t)}
             icon={<Icon.Clock className="h-5 w-5" />}
-            hint="Mean age of everything currently fitted"
+            hint={t('Mean age of everything currently fitted')}
           />
           <MetricCard
-            label="Warranty expiring"
+            label={t('Warranty expiring')}
             value={num(summary.warranty_expiring ?? 0)}
             tone={summary.warranty_expiring > 0 ? 'amber' : undefined}
             icon={<Icon.Shield className="h-5 w-5" />}
-            hint={`${num(summary.under_warranty ?? 0)} still comfortably under warranty`}
+            hint={t('{n} still comfortably under warranty', { n: num(summary.under_warranty ?? 0) })}
           />
           <MetricCard
-            label="Past expected life"
+            label={t('Past expected life')}
             value={num(summary.past_expected_life ?? 0)}
             tone={summary.past_expected_life > 0 ? 'red' : undefined}
             icon={<Icon.Alert className="h-5 w-5" />}
-            hint={`${num(summary.due_soon ?? 0)} more due soon`}
+            hint={t('{n} more due soon', { n: num(summary.due_soon ?? 0) })}
           />
         </MetricGrid>
       )}
 
       <SectionCard
-        title="Current configuration"
+        title={t('Current configuration')}
         subtitle={
+          // Two whole sentences rather than one with a swapped word: Arabic will not accept a
+          // FITTED/REMOVED verb dropped into a fixed frame.
           windowActive
-            ? `Showing parts ${view === 'installed' ? 'FITTED' : 'REMOVED'} in the selected window — ${num(windowed.length)} of ${num(rows.length)}. The cards above always describe the car as it stands today.`
-            : 'Derived from the maintenance workflow — components appear here only when a ticket installs them.'
+            ? view === 'installed'
+              ? t('Showing parts FITTED in the selected window — {shown} of {total}. The cards above always describe the car as it stands today.', {
+                  shown: num(windowed.length),
+                  total: num(rows.length),
+                })
+              : t('Showing parts REMOVED in the selected window — {shown} of {total}. The cards above always describe the car as it stands today.', {
+                  shown: num(windowed.length),
+                  total: num(rows.length),
+                })
+            : t('Derived from the maintenance workflow — components appear here only when a ticket installs them.')
         }
         actions={
           // The search box carries no intrinsic width, so as a flex sibling of the Segmented it
           // shrank until the icon's padding swallowed the placeholder. Pin a width and let the row
           // wrap instead of crushing both controls in a narrow card header.
           <div className="flex flex-wrap items-center justify-end gap-2">
-            <SearchInput className="w-full sm:w-64" value={q} onChange={setQ} placeholder="Part, brand, number, supplier…" />
+            <SearchInput className="w-full sm:w-64" value={q} onChange={setQ} placeholder={t('Part, brand, number, supplier…')} />
             <DateRangePicker
               days={range.days}
               from={range.from}
@@ -375,8 +406,8 @@ export default function VehicleComponentsPanel({ vehicleId }) {
               onChange={setView}
               options={[
                 // Counts follow the window, so a tab never advertises rows the window has hidden.
-                { key: 'installed', label: `Installed (${installedInWindow})` },
-                { key: 'history', label: `Replaced (${historyInWindow})` },
+                { key: 'installed', label: t('Installed ({n})', { n: installedInWindow }) },
+                { key: 'history', label: t('Replaced ({n})', { n: historyInWindow }) },
               ]}
             />
           </div>
@@ -384,11 +415,11 @@ export default function VehicleComponentsPanel({ vehicleId }) {
       >
         {!loading && rows.length === 0 ? (
           <EmptyState
-            title={view === 'installed' ? 'No components recorded yet' : 'No replacements recorded yet'}
+            title={view === 'installed' ? t('No components recorded yet') : t('No replacements recorded yet')}
             message={
               view === 'installed'
-                ? 'This vehicle has no installed components on record. Components are created automatically when a maintenance ticket reaches its install step — there is no manual entry.'
-                : 'Nothing has been replaced on this vehicle yet. The first time a part is swapped, the old one is retired here with its reason and the part that replaced it.'
+                ? t('This vehicle has no installed components on record. Components are created automatically when a maintenance ticket reaches its install step — there is no manual entry.')
+                : t('Nothing has been replaced on this vehicle yet. The first time a part is swapped, the old one is retired here with its reason and the part that replaced it.')
             }
           />
         ) : (
@@ -402,8 +433,10 @@ export default function VehicleComponentsPanel({ vehicleId }) {
             highlightRow={(r) => r.service_life?.status === 'overdue' || r.warranty?.status === 'expiring_soon'}
             empty={
               windowActive && windowed.length === 0
-                ? `Nothing was ${view === 'installed' ? 'fitted' : 'removed'} in this window. Widen the date range to see more.`
-                : 'Nothing matches that search.'
+                ? view === 'installed'
+                  ? t('Nothing was fitted in this window. Widen the date range to see more.')
+                  : t('Nothing was removed in this window. Widen the date range to see more.')
+                : t('Nothing matches that search.')
             }
             stickyHeader
           />
@@ -417,8 +450,9 @@ export default function VehicleComponentsPanel({ vehicleId }) {
 
 /** A compact proportion bar for "how much of its expected life this part has used". */
 function LifeBar({ life }) {
+  const { t } = useI18n();
   if (!life || life.status === 'unknown') {
-    return <span className="text-xs text-slate-400">No expectation set</span>;
+    return <span className="text-xs text-slate-400">{t('No expectation set')}</span>;
   }
   const pct = Math.min(100, life.life_used_pct ?? 0);
   const bar = life.status === 'overdue' ? 'bg-rose-500' : life.status === 'due_soon' ? 'bg-amber-500' : 'bg-emerald-500';
@@ -429,7 +463,9 @@ function LifeBar({ life }) {
         <div className={`h-full rounded-full ${bar}`} style={{ width: `${pct}%` }} />
       </div>
       <div className="mt-1 text-xs text-slate-400">
-        {life.life_used_pct}% used · by {life.basis === 'distance' ? 'distance' : 'age'}
+        {life.basis === 'distance'
+          ? t('{pct}% used · by distance', { pct: life.life_used_pct })
+          : t('{pct}% used · by age', { pct: life.life_used_pct })}
       </div>
     </div>
   );
@@ -440,6 +476,7 @@ function LifeBar({ life }) {
  * append-only biography, warranty, and both neighbours in the replacement chain.
  */
 function ComponentDossierDrawer({ componentId, onClose }) {
+  const { t } = useI18n();
   const fetcher = useCallback(
     async () => (componentId ? (await api.get(`/components/${componentId}`)).data.data : null),
     [componentId]
@@ -454,87 +491,101 @@ function ComponentDossierDrawer({ componentId, onClose }) {
       open={!!componentId}
       onClose={onClose}
       width="lg"
-      eyebrow={c ? CATEGORY_LABEL[c.category] || c.category : 'Component'}
-      title={c ? c.part_name || c.type : 'Component'}
-      subtitle={c ? [c.brand, c.part_number, c.position && (POSITION_LABEL[c.position] || c.position)].filter(Boolean).join(' · ') : ''}
+      eyebrow={c ? (CATEGORY_LABEL[c.category] ? t(CATEGORY_LABEL[c.category]) : c.category) : t('Component')}
+      title={c ? c.part_name || c.type : t('Component')}
+      subtitle={
+        c
+          ? [c.brand, c.part_number, c.position && (POSITION_LABEL[c.position] ? t(POSITION_LABEL[c.position]) : c.position)]
+              .filter(Boolean)
+              .join(' · ')
+          : ''
+      }
     >
-      {error && <ErrorState message="Could not load this component." />}
-      {loading && !data && <div className="p-5 text-sm text-slate-400">Loading…</div>}
+      {error && <ErrorState message={t('Could not load this component.')} />}
+      {loading && !data && <div className="p-5 text-sm text-slate-400">{t('Loading…')}</div>}
 
       {c && (
         <div className="space-y-5 p-5">
           <div className="flex flex-wrap items-center gap-2">
-            <Badge tone={STATUS_TONE[c.status] || 'gray'}>{c.status === 'active' ? 'Installed' : c.status === 'retired' ? 'Removed' : 'In stock'}</Badge>
-            <Badge tone={WARRANTY_TONE[c.warranty?.status] || 'gray'}>{WARRANTY_LABEL[c.warranty?.status]}</Badge>
+            <Badge tone={STATUS_TONE[c.status] || 'gray'}>
+              {c.status === 'active' ? t('Installed') : c.status === 'retired' ? t('Removed') : t('In stock')}
+            </Badge>
+            <Badge tone={WARRANTY_TONE[c.warranty?.status] || 'gray'}>
+              {WARRANTY_LABEL[c.warranty?.status] ? t(WARRANTY_LABEL[c.warranty?.status]) : ''}
+            </Badge>
             {c.service_life?.status !== 'unknown' && (
-              <Badge tone={LIFE_TONE[c.service_life?.status] || 'gray'}>{LIFE_LABEL[c.service_life?.status]}</Badge>
+              <Badge tone={LIFE_TONE[c.service_life?.status] || 'gray'}>
+                {LIFE_LABEL[c.service_life?.status] ? t(LIFE_LABEL[c.service_life?.status]) : ''}
+              </Badge>
             )}
           </div>
 
-          <DossierSection title="Fitment">
-            <Row label="Type" value={c.type} />
-            <Row label="Brand / model" value={[c.brand, c.model].filter(Boolean).join(' ') || '—'} />
-            <Row label="Part number" value={c.part_number} mono />
-            <Row label="Serial number" value={c.serial_no} mono />
-            <Row label="Position" value={c.position ? POSITION_LABEL[c.position] || c.position : '—'} />
-            <Row label="Installed" value={`${fmtDate(c.installed_at)} · ${km(c.installed_odometer)}`} />
-            <Row label="Age" value={`${humanAge(c.age_days)} · ${km(c.distance_km)} driven`} />
-            <Row label="Fitted by" value={c.installed_by_name || c.technician_name || '—'} />
-            <Row label="Workshop" value={c.installer?.name} />
+          <DossierSection title={t('Fitment')}>
+            <Row label={t('Type')} value={c.type} />
+            <Row label={t('Brand / model')} value={[c.brand, c.model].filter(Boolean).join(' ') || '—'} />
+            <Row label={t('Part number')} value={c.part_number} mono />
+            <Row label={t('Serial number')} value={c.serial_no} mono />
+            <Row label={t('Position')} value={c.position ? (POSITION_LABEL[c.position] ? t(POSITION_LABEL[c.position]) : c.position) : '—'} />
+            <Row label={t('Installed')} value={`${fmtDate(c.installed_at)} · ${km(c.installed_odometer)}`} />
+            <Row label={t('Age')} value={t('{age} · {distance} driven', { age: humanAge(c.age_days, t), distance: km(c.distance_km) })} />
+            <Row label={t('Fitted by')} value={c.installed_by_name || c.technician_name || '—'} />
+            <Row label={t('Workshop')} value={c.installer?.name} />
           </DossierSection>
 
-          <DossierSection title="Commercial">
-            <Row label="Supplier" value={c.supplier?.name} />
-            <Row label="Purchase cost" value={c.purchase_cost === null ? '—' : aed2(c.purchase_cost)} />
-            <Row label="Cost per km" value={c.cost_per_km ? `${aed2(c.cost_per_km)} / km` : '—'} />
-            <Row label="Warranty" value={c.warranty?.months ? `${c.warranty.months} months` : 'None'} />
+          <DossierSection title={t('Commercial')}>
+            <Row label={t('Supplier')} value={c.supplier?.name} />
+            <Row label={t('Purchase cost')} value={c.purchase_cost === null ? '—' : aed2(c.purchase_cost)} />
+            <Row label={t('Cost per km')} value={c.cost_per_km ? `${aed2(c.cost_per_km)} / km` : '—'} />
+            <Row label={t('Warranty')} value={c.warranty?.months ? t('{n} months', { n: c.warranty.months }) : t('None')} />
             <Row
-              label="Warranty ends"
+              label={t('Warranty ends')}
               value={
                 c.warranty?.until
-                  ? `${fmtDate(c.warranty.until)}${c.warranty.days_remaining >= 0 ? ` · ${c.warranty.days_remaining} days left` : ' · expired'}`
+                  ? c.warranty.days_remaining >= 0
+                    ? t('{date} · {n} days left', { date: fmtDate(c.warranty.until), n: c.warranty.days_remaining })
+                    : t('{date} · expired', { date: fmtDate(c.warranty.until) })
                   : '—'
               }
             />
           </DossierSection>
 
           {c.removed_at && (
-            <DossierSection title="Removal">
-              <Row label="Removed" value={`${fmtDate(c.removed_at)} · ${km(c.removed_odometer)}`} />
-              <Row label="Reason" value={REASON_LABEL[c.removal_reason] || c.removal_reason} />
-              <Row label="Where it went" value={(c.disposition || '').replace(/_/g, ' ') || '—'} />
-              <Row label="Removed by" value={c.removed_by_name} />
-              <Row label="Note" value={c.removal_note} />
+            <DossierSection title={t('Removal')}>
+              <Row label={t('Removed')} value={`${fmtDate(c.removed_at)} · ${km(c.removed_odometer)}`} />
+              <Row label={t('Reason')} value={REASON_LABEL[c.removal_reason] ? t(REASON_LABEL[c.removal_reason]) : c.removal_reason} />
+              <Row label={t('Where it went')} value={(c.disposition || '').replace(/_/g, ' ') || '—'} />
+              <Row label={t('Removed by')} value={c.removed_by_name} />
+              <Row label={t('Note')} value={c.removal_note} />
             </DossierSection>
           )}
 
-          <DossierSection title="Where this record came from">
-            <LinkRow label="Maintenance ticket" to={links.maintenance_id && `/maintenance-workflow/${links.maintenance_id}`} value={links.maintenance_id && `#${links.maintenance_id}`} />
-            <Row label="Purchase order" value={links.purchase_order_no} mono />
-            <LinkRow label="Part purchase" to={links.part_purchase_id && `/parts?purchase=${links.part_purchase_id}`} value={links.part_purchase_id && `#${links.part_purchase_id}`} />
-            <LinkRow label="Invoice" to={links.maintenance_invoice_id && `/maintenance-workflow/${links.maintenance_id}?tab=invoices`} value={links.maintenance_invoice_id && `#${links.maintenance_invoice_id}`} />
-            <LinkRow label="Supplier" to={links.supplier_vendor_id && `/vendors/${links.supplier_vendor_id}`} value={c.supplier?.name} />
-            <LinkRow label="Removal ticket" to={links.removal_maintenance_id && `/maintenance-workflow/${links.removal_maintenance_id}`} value={links.removal_maintenance_id && `#${links.removal_maintenance_id}`} />
-            <Row label="Record source" value={c.source === 'workflow' ? 'Maintenance workflow' : c.source} />
+          <DossierSection title={t('Where this record came from')}>
+            <LinkRow label={t('Maintenance ticket')} to={links.maintenance_id && `/maintenance-workflow/${links.maintenance_id}`} value={links.maintenance_id && `#${links.maintenance_id}`} />
+            <Row label={t('Purchase order')} value={links.purchase_order_no} mono />
+            <LinkRow label={t('Part purchase')} to={links.part_purchase_id && `/parts?purchase=${links.part_purchase_id}`} value={links.part_purchase_id && `#${links.part_purchase_id}`} />
+            <LinkRow label={t('Invoice')} to={links.maintenance_invoice_id && `/maintenance-workflow/${links.maintenance_id}?tab=invoices`} value={links.maintenance_invoice_id && `#${links.maintenance_invoice_id}`} />
+            <LinkRow label={t('Supplier')} to={links.supplier_vendor_id && `/vendors/${links.supplier_vendor_id}`} value={c.supplier?.name} />
+            <LinkRow label={t('Removal ticket')} to={links.removal_maintenance_id && `/maintenance-workflow/${links.removal_maintenance_id}`} value={links.removal_maintenance_id && `#${links.removal_maintenance_id}`} />
+            <Row label={t('Record source')} value={c.source === 'workflow' ? t('Maintenance workflow') : c.source} />
           </DossierSection>
 
           {(data.replaces || data.replaced_by) && (
-            <DossierSection title="Replacement chain">
-              {data.replaces && <ChainRow role="This replaced" node={data.replaces} onOpen={onClose} />}
-              {data.replaced_by && <ChainRow role="Replaced by" node={data.replaced_by} onOpen={onClose} />}
+            <DossierSection title={t('Replacement chain')}>
+              {data.replaces && <ChainRow role={t('This replaced')} node={data.replaces} onOpen={onClose} />}
+              {data.replaced_by && <ChainRow role={t('Replaced by')} node={data.replaced_by} onOpen={onClose} />}
             </DossierSection>
           )}
 
-          <DossierSection title="History">
+          <DossierSection title={t('History')}>
             {(data.events || []).length === 0 ? (
-              <p className="py-2 text-sm text-slate-400">No events recorded.</p>
+              <p className="py-2 text-sm text-slate-400">{t('No events recorded.')}</p>
             ) : (
               <ol className="space-y-3">
                 {data.events.map((e) => (
                   <li key={e.id} className="flex gap-3">
                     <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-indigo-400" />
                     <div className="min-w-0">
-                      <div className="text-sm font-medium text-slate-800">{EVENT_LABEL[e.event] || e.event}</div>
+                      <div className="text-sm font-medium text-slate-800">{EVENT_LABEL[e.event] ? t(EVENT_LABEL[e.event]) : e.event}</div>
                       <div className="text-xs text-slate-400">
                         {fmtDate(e.at)}
                         {e.odometer ? ` · ${km(e.odometer)}` : ''}
@@ -549,7 +600,7 @@ function ComponentDossierDrawer({ componentId, onClose }) {
           </DossierSection>
 
           {(data.inspections || []).length > 0 && (
-            <DossierSection title="Inspections & services">
+            <DossierSection title={t('Inspections & services')}>
               {data.inspections.map((r) => (
                 <Row key={r.id} label={(r.service_type || '').replace(/_/g, ' ')} value={`${fmtDate(r.performed_at)} · ${r.workshop || '—'}`} />
               ))}
@@ -557,8 +608,8 @@ function ComponentDossierDrawer({ componentId, onClose }) {
           )}
 
           {(data.media || []).length > 0 && (
-            <DossierSection title="Photos">
-              <p className="py-1 text-sm text-slate-500">{data.media.length} file(s) attached to this component.</p>
+            <DossierSection title={t('Photos')}>
+              <p className="py-1 text-sm text-slate-500">{t('{n} file(s) attached to this component.', { n: data.media.length })}</p>
             </DossierSection>
           )}
         </div>
@@ -598,17 +649,19 @@ function LinkRow({ label, to, value }) {
 }
 
 function ChainRow({ role, node, onOpen }) {
+  const { t } = useI18n();
   return (
     <div className="flex items-center justify-between gap-4 py-2 text-sm">
       <div className="min-w-0">
         <div className="text-xs text-slate-400">{role}</div>
         <div className="truncate font-medium text-slate-900">{node.part_name || node.type}</div>
         <div className="text-xs text-slate-400">
-          Installed {fmtDate(node.installed_at)}
-          {node.removed_at ? ` · removed ${fmtDate(node.removed_at)}` : ' · still fitted'}
+          {node.removed_at
+            ? t('Installed {installed} · removed {removed}', { installed: fmtDate(node.installed_at), removed: fmtDate(node.removed_at) })
+            : t('Installed {installed} · still fitted', { installed: fmtDate(node.installed_at) })}
         </div>
       </div>
-      <Badge tone={STATUS_TONE[node.status] || 'gray'}>{node.status === 'active' ? 'Installed' : 'Removed'}</Badge>
+      <Badge tone={STATUS_TONE[node.status] || 'gray'}>{node.status === 'active' ? t('Installed') : t('Removed')}</Badge>
     </div>
   );
 }

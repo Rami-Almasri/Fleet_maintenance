@@ -18,19 +18,21 @@ import { usePageStat } from '../components/PageStat';
 import CustomersAnalytics from '../components/analytics/CustomersAnalytics';
 import { aed2, num } from '../lib/format';
 import { SHOW_FINANCIALS } from '../config/features';
+import { useI18n } from '../i18n/I18nContext';
 import CustomerForm, { customerToForm, cleanPayload } from './customers/CustomerForm';
 
 const PAGE_SIZE = 15;
 
-const balanceBadge = (b) => {
+const balanceBadge = (t, b) => {
   const v = Number(b || 0);
-  if (v > 0) return { tone: 'red', text: aed2(v) + ' owed' };
+  if (v > 0) return { tone: 'red', text: t('{amount} owed', { amount: aed2(v) }) };
   // negative balance = money the customer paid in advance, available for next rent
-  if (v < 0) return { tone: 'green', text: aed2(Math.abs(v)) + ' wallet' };
-  return { tone: 'gray', text: 'Settled' };
+  if (v < 0) return { tone: 'green', text: t('{amount} wallet', { amount: aed2(Math.abs(v)) }) };
+  return { tone: 'gray', text: t('Settled') };
 };
 
 export default function Customers() {
+  const { t } = useI18n();
   const toast = useToast();
   const { can } = usePermissions();
   const canManage = can('customers.manage');
@@ -76,10 +78,10 @@ export default function Customers() {
       const payload = cleanPayload(form);
       if (editing) {
         await api.post(`/Customer/${editing.id}`, payload);
-        toast.success('Customer updated');
+        toast.success(t('Customer updated'));
       } else {
         await api.post('/Customer', payload);
-        toast.success('Customer created');
+        toast.success(t('Customer created'));
       }
       setModalOpen(false);
       reload();
@@ -87,9 +89,9 @@ export default function Customers() {
       const res = err.response?.data;
       if (res?.errors) {
         setFormErrors(res.errors);
-        toast.error('Please fix the highlighted fields');
+        toast.error(t('Please fix the highlighted fields'));
       } else {
-        toast.error(res?.message || res?.msg || 'Could not save customer');
+        toast.error(res?.message || res?.msg || t('Could not save customer'));
       }
     } finally {
       setSaving(false);
@@ -100,11 +102,11 @@ export default function Customers() {
     setDeleting(true);
     try {
       await api.delete(`/Customer/${toDelete.id}`);
-      toast.success('Customer deleted');
+      toast.success(t('Customer deleted'));
       setToDelete(null);
       reload();
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Could not delete customer');
+      toast.error(err.response?.data?.message || t('Could not delete customer'));
     } finally {
       setDeleting(false);
     }
@@ -128,9 +130,9 @@ export default function Customers() {
   const inCredit = useMemo(() => list.filter((c) => Number(c.balance || 0) < 0).length, [list]);
   usePageStat({
     percent: SHOW_FINANCIALS && list.length ? (inCredit / list.length) * 100 : null,
-    label: 'In credit',
+    label: t('In credit'),
     color: 'emerald',
-    hint: `${inCredit} of ${list.length} customers have wallet credit available`,
+    hint: t('{inCredit} of {total} customers have wallet credit available', { inCredit, total: list.length }),
   });
 
   // Headline aggregates over the full list (derived directly from per-customer balance).
@@ -147,11 +149,14 @@ export default function Customers() {
   return (
     <div className="py-8">
       <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
-        <PageHeader title="Customers" subtitle={loading ? 'Loading…' : `${num(filtered.length)} of ${num(list.length)} customers`}>
+        <PageHeader
+          title={t('Customers')}
+          subtitle={loading ? t('Loading…') : t('{shown} of {total} customers', { shown: num(filtered.length), total: num(list.length) })}
+        >
           {canManage && (
             <Button onClick={openCreate}>
               <Icon.Plus className="h-4 w-4" />
-              Add Customer
+              {t('Add Customer')}
             </Button>
           )}
         </PageHeader>
@@ -162,38 +167,38 @@ export default function Customers() {
         ) : (
           <MetricGrid cols={SHOW_FINANCIALS ? 4 : 1}>
             <MetricCard
-              label="Total Customers"
+              label={t('Total Customers')}
               value={num(list.length)}
               tone="indigo"
               icon={<Icon.Users className="h-5 w-5" />}
-              hint={search ? `${num(filtered.length)} match the search` : 'Across the fleet'}
+              hint={search ? t('{n} match the search', { n: num(filtered.length) }) : t('Across the fleet')}
             />
             {/* Wallet / Credit / Outstanding money cards — financials only */}
             {SHOW_FINANCIALS && (
               <>
                 <MetricCard
-                  label="In Credit"
+                  label={t('In Credit')}
                   value={num(inCredit)}
                   tone="emerald"
                   icon={<Icon.Coins className="h-5 w-5" />}
-                  hint={list.length ? `${Math.round((inCredit / list.length) * 100)}% of customers` : '—'}
-                  tooltip="Customers carrying wallet credit — money paid in advance, available toward their next rental."
+                  hint={list.length ? t('{pct}% of customers', { pct: Math.round((inCredit / list.length) * 100) }) : '—'}
+                  tooltip={t('Customers carrying wallet credit — money paid in advance, available toward their next rental.')}
                 />
                 <MetricCard
-                  label="Wallet Credit"
+                  label={t('Wallet Credit')}
                   value={aed2(walletTotal)}
                   tone="green"
                   icon={<Icon.Cash className="h-5 w-5" />}
-                  hint="Total carried-forward credit held"
-                  tooltip="Sum of all advance payments customers have on file (negative balances)."
+                  hint={t('Total carried-forward credit held')}
+                  tooltip={t('Sum of all advance payments customers have on file (negative balances).')}
                 />
                 <MetricCard
-                  label="Outstanding"
+                  label={t('Outstanding')}
                   value={aed2(owedTotal)}
                   tone={owedTotal > 0 ? 'red' : 'slate'}
                   icon={<Icon.Invoice className="h-5 w-5" />}
-                  hint={`${num(owedCount)} customer${owedCount === 1 ? '' : 's'} owing`}
-                  tooltip="Total amount owed across all customers (positive balances)."
+                  hint={owedCount === 1 ? t('1 customer owing') : t('{n} customers owing', { n: num(owedCount) })}
+                  tooltip={t('Total amount owed across all customers (positive balances).')}
                 />
               </>
             )}
@@ -210,14 +215,14 @@ export default function Customers() {
         )}
 
         <SectionCard
-          title="All Customers"
-          subtitle={loading ? undefined : `${num(filtered.length)} shown`}
+          title={t('All Customers')}
+          subtitle={loading ? undefined : t('{n} shown', { n: num(filtered.length) })}
           actions={
             <div className="w-full sm:w-80">
               <SearchInput
                 value={search}
                 onChange={(v) => { setSearch(v); setPage(1); }}
-                placeholder="Search name, mobile, email, passport, license…"
+                placeholder={t('Search name, mobile, email, passport, license…')}
               />
             </div>
           }
@@ -227,11 +232,11 @@ export default function Customers() {
             rowKey={(c) => c.id}
             loading={loading}
             skeletonRows={PAGE_SIZE}
-            empty="No customers found. Try a different search."
+            empty={t('No customers found. Try a different search.')}
             highlightRow={(c) => SHOW_FINANCIALS && Number(c.balance || 0) > 0}
             columns={[
               {
-                key: 'customer', header: 'Customer', cellClass: 'font-medium',
+                key: 'customer', header: t('Customer'), cellClass: 'font-medium',
                 render: (c) => (
                   <>
                     <Link to={`/customers/${c.id}`} className="text-indigo-600 hover:text-indigo-700">{c.name_en || '—'}</Link>
@@ -239,25 +244,25 @@ export default function Customers() {
                   </>
                 ),
               },
-              { key: 'mobile', header: 'Mobile', cellClass: 'text-slate-500', render: (c) => c.mobile1 || '—' },
+              { key: 'mobile', header: t('Mobile'), cellClass: 'text-slate-500', render: (c) => c.mobile1 || '—' },
               {
-                key: 'contracts', header: 'Contracts', align: 'right', cellClass: 'tabular-nums text-slate-500',
+                key: 'contracts', header: t('Contracts'), align: 'right', cellClass: 'tabular-nums text-slate-500',
                 render: (c) => num(c.contracts_count),
               },
               ...(SHOW_FINANCIALS ? [{
-                key: 'balance', header: 'Balance', align: 'right',
-                tooltip: 'Positive = amount owed. Negative = wallet credit (advance paid, available toward the next rental).',
-                render: (c) => { const b = balanceBadge(c.balance); return <Badge tone={b.tone}>{b.text}</Badge>; },
+                key: 'balance', header: t('Balance'), align: 'right',
+                tooltip: t('Positive = amount owed. Negative = wallet credit (advance paid, available toward the next rental).'),
+                render: (c) => { const b = balanceBadge(t, c.balance); return <Badge tone={b.tone}>{b.text}</Badge>; },
               }] : []),
               {
-                key: 'actions', header: 'Actions', align: 'right',
+                key: 'actions', header: t('Actions'), align: 'right',
                 render: (c) => (
                   <div className="flex justify-end gap-2">
                     <Link to={`/customers/${c.id}`}>
-                      <Button variant="secondary" size="sm">View</Button>
+                      <Button variant="secondary" size="sm">{t('View')}</Button>
                     </Link>
-                    {canManage && <Button variant="secondary" size="sm" onClick={() => openEdit(c)}>Edit</Button>}
-                    {canManage && <Button variant="ghost" size="sm" className="text-red-600 hover:bg-red-50" onClick={() => setToDelete(c)}>Delete</Button>}
+                    {canManage && <Button variant="secondary" size="sm" onClick={() => openEdit(c)}>{t('Edit')}</Button>}
+                    {canManage && <Button variant="ghost" size="sm" className="text-red-600 hover:bg-red-50" onClick={() => setToDelete(c)}>{t('Delete')}</Button>}
                   </div>
                 ),
               },
@@ -274,13 +279,13 @@ export default function Customers() {
       <Modal
         open={modalOpen}
         onClose={() => !saving && setModalOpen(false)}
-        title={editing ? 'Edit Customer' : 'Add Customer'}
-        subtitle={editing ? (editing.name_en || `#${editing.customer_no || editing.id}`) : 'Enter the customer details'}
+        title={editing ? t('Edit Customer') : t('Add Customer')}
+        subtitle={editing ? (editing.name_en || `#${editing.customer_no || editing.id}`) : t('Enter the customer details')}
         size="xl"
         footer={
           <>
-            <Button variant="secondary" onClick={() => setModalOpen(false)} disabled={saving}>Cancel</Button>
-            <Button onClick={save} loading={saving}>{editing ? 'Save Changes' : 'Create Customer'}</Button>
+            <Button variant="secondary" onClick={() => setModalOpen(false)} disabled={saving}>{t('Cancel')}</Button>
+            <Button onClick={save} loading={saving}>{editing ? t('Save changes') : t('Create Customer')}</Button>
           </>
         }
       >
@@ -293,9 +298,14 @@ export default function Customers() {
         onClose={() => !deleting && setToDelete(null)}
         onConfirm={confirmDelete}
         loading={deleting}
-        title="Delete customer?"
-        confirmText="Delete"
-        message={toDelete ? `This will remove ${toDelete.name_en || 'this customer'} (#${toDelete.customer_no || toDelete.id}). This can be undone via the database (soft delete).` : ''}
+        title={t('Delete customer?')}
+        confirmText={t('Delete')}
+        message={toDelete
+          ? t('This will remove {name} (#{no}). This can be undone via the database (soft delete).', {
+            name: toDelete.name_en || t('this customer'),
+            no: toDelete.customer_no || toDelete.id,
+          })
+          : ''}
       />
     </div>
   );

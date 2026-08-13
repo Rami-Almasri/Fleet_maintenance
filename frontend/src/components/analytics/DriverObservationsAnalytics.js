@@ -14,6 +14,7 @@ import { SectionCard } from '../ui/Table';
 import RankedBar from '../ui/RankedBar';
 import PieChart from '../ui/PieChart';
 import { num } from '../../lib/format';
+import { useI18n } from '../../i18n/I18nContext';
 
 const STATUS = {
   open: { label: 'Open', color: 'amber' },
@@ -22,6 +23,8 @@ const STATUS = {
 };
 
 export default function DriverObservationsAnalytics({ rows = [] }) {
+  const { t } = useI18n();
+
   const outcomes = useMemo(() => {
     const totals = {};
     rows.forEach((r) => {
@@ -29,9 +32,9 @@ export default function DriverObservationsAnalytics({ rows = [] }) {
       totals[k] = (totals[k] || 0) + 1;
     });
     return Object.entries(totals)
-      .map(([k, value]) => ({ label: STATUS[k].label, value, color: STATUS[k].color }))
+      .map(([k, value]) => ({ label: t(STATUS[k].label), value, color: STATUS[k].color }))
       .sort((a, b) => b.value - a.value);
-  }, [rows]);
+  }, [rows, t]);
 
   const byCar = useMemo(() => {
     const groups = new Map();
@@ -39,7 +42,7 @@ export default function DriverObservationsAnalytics({ rows = [] }) {
       const key = r.vehicle_id ?? r.plate ?? 'unknown';
       const g = groups.get(key) || {
         key,
-        label: r.plate || (r.vehicle_id ? `#${r.vehicle_id}` : 'Unknown car'),
+        label: r.plate || (r.vehicle_id ? `#${r.vehicle_id}` : t('Unknown car')),
         sub: r.car || undefined,
         to: r.vehicle_id ? `/car-status/${r.vehicle_id}` : undefined,
         value: 0,
@@ -53,7 +56,7 @@ export default function DriverObservationsAnalytics({ rows = [] }) {
       .filter((g) => g.value > 1) // one note is normal; repeats are the signal
       .sort((a, b) => b.value - a.value)
       .slice(0, 10);
-  }, [rows]);
+  }, [rows, t]);
 
   if (!rows.length) return null;
 
@@ -61,8 +64,8 @@ export default function DriverObservationsAnalytics({ rows = [] }) {
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
       <SectionCard
         className="lg:col-span-2"
-        title="Cars flagged more than once"
-        subtitle="Repeat driver mentions — an early fault signal before any ticket exists"
+        title={t('Cars flagged more than once')}
+        subtitle={t('Repeat driver mentions — an early fault signal before any ticket exists')}
         bodyClass="p-5"
       >
         <RankedBar
@@ -70,20 +73,20 @@ export default function DriverObservationsAnalytics({ rows = [] }) {
           showRank
           color="amber"
           format={(n) => num(Math.round(n))}
-          valueLabel="Observations"
+          valueLabel={t('Observations')}
           valueWidth={56}
           tooltip={(r) =>
             r.escalated > 0
-              ? `${num(r.escalated)} escalated to an inspection`
-              : 'None escalated yet'
+              ? t('{n} escalated to an inspection', { n: num(r.escalated) })
+              : t('None escalated yet')
           }
-          empty="No car has been flagged twice — nothing repeating."
+          empty={t('No car has been flagged twice — nothing repeating.')}
         />
       </SectionCard>
 
       <SectionCard
-        title="What happens to a note"
-        subtitle="Triage outcomes"
+        title={t('What happens to a note')}
+        subtitle={t('Triage outcomes')}
         bodyClass="p-5"
       >
         {/* stacked: this card is a third-width column, so the side-by-side legend

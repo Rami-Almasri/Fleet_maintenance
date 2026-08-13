@@ -243,7 +243,7 @@ function InvoiceEditor({ ticket, invoice, garages, findingsCatalog, onClose, onS
               <SearchSelect value={vendorId} onChange={setVendorId} options={garageOptions} placeholder={t('workflow.ph.pickGarage')} />
             )}
           </div>
-          <Input label={t('workflow.invoices.invoiceNo')} value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)} placeholder="e.g. INV-2043" />
+          <Input label={t('workflow.invoices.invoiceNo')} value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)} placeholder={t('e.g. INV-2043')} />
         </div>
 
         {/* Fault multi-select — which faults this invoice covers */}

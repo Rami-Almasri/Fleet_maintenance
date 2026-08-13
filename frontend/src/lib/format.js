@@ -1,4 +1,15 @@
 // Shared formatting helpers used across pages.
+//
+// These are plain functions, not hooks — they are called from render bodies,
+// table column definitions and module-level config all over the app. Several of
+// them return WORDS ("just now", "2h 10m", "May", "PM"), so they localize through
+// `translate()` / `dateLocale()` from the i18n module, which read the active
+// language directly. That keeps every existing call site unchanged while still
+// rendering Arabic. See the header of i18n/translate.js — importing from there
+// rather than from I18nContext is deliberate, so suites that mock the React
+// layer don't turn these helpers into undefined.
+
+import { translate, dateLocale, numberLocale } from '../i18n/translate';
 
 export const aed = (n) =>
   'AED ' + Number(n || 0).toLocaleString('en-AE', { maximumFractionDigits: 0 });
@@ -11,28 +22,29 @@ export const aed2 = (n) =>
 // callers that show polarity (RankedBar diverging) render the sign themselves.
 export const aedCompact = (n) => {
   const v = Math.abs(Number(n) || 0);
-  if (v >= 1e6) return `AED ${(v / 1e6).toFixed(v >= 1e7 ? 0 : 1)}M`;
-  if (v >= 1e3) return `AED ${Math.round(v / 1e3)}k`;
+  if (v >= 1e6) return translate('AED {v}M', { v: (v / 1e6).toFixed(v >= 1e7 ? 0 : 1) });
+  if (v >= 1e3) return translate('AED {v}k', { v: Math.round(v / 1e3) });
   return `AED ${Math.round(v)}`;
 };
 
-export const num = (n) => Number(n || 0).toLocaleString();
+export const num = (n) => Number(n || 0).toLocaleString(numberLocale());
 
-// "2025-05-07T00:00:00.000000Z" | "2025-05-07" -> "07 May 2025"
+// "2025-05-07T00:00:00.000000Z" | "2025-05-07" -> "07 May 2025" (Arabic: Gregorian
+// month name, Latin digits — never Hijri).
 export const fmtDate = (value) => {
   if (!value) return '—';
   const d = new Date(value);
   if (isNaN(d)) return String(value);
-  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  return d.toLocaleDateString(dateLocale(), { day: '2-digit', month: 'short', year: 'numeric' });
 };
 
 // "22:48:00" | "12:24" -> "10:48 PM" (12-hour clock; leaves unparseable values as-is)
-export const fmtTime = (t) => {
-  if (!t) return '—';
-  const m = String(t).match(/^(\d{1,2}):(\d{2})/);
-  if (!m) return String(t);
+export const fmtTime = (value) => {
+  if (!value) return '—';
+  const m = String(value).match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return String(value);
   let h = Number(m[1]);
-  const ap = h >= 12 ? 'PM' : 'AM';
+  const ap = h >= 12 ? translate('PM') : translate('AM');
   h %= 12;
   if (h === 0) h = 12;
   return `${h}:${m[2]} ${ap}`;
@@ -46,10 +58,10 @@ export const fmtSeconds = (seconds) => {
   const d = Math.floor(s / 86400);
   const h = Math.floor((s % 86400) / 3600);
   const m = Math.floor((s % 3600) / 60);
-  if (d) return `${d}d ${h}h`;
-  if (h) return `${h}h ${m}m`;
-  if (m) return `${m}m`;
-  return `${s}s`;
+  if (d) return translate('{d}d {h}h', { d, h });
+  if (h) return translate('{h}h {m}m', { h, m });
+  if (m) return translate('{n}m', { n: m });
+  return translate('{n}s', { n: s });
 };
 
 // A full date/datetime value -> the local time portion only, "10:48 PM" (12-hour, matches fmtTime).
@@ -61,7 +73,7 @@ export const fmtClock = (value) => {
   if (isNaN(d)) return '';
   let h = d.getHours();
   const min = String(d.getMinutes()).padStart(2, '0');
-  const ap = h >= 12 ? 'PM' : 'AM';
+  const ap = h >= 12 ? translate('PM') : translate('AM');
   h %= 12;
   if (h === 0) h = 12;
   return `${h}:${min} ${ap}`;
@@ -71,8 +83,8 @@ export const fmtClock = (value) => {
 export const combineDateTime = (date, time) => {
   if (!date) return null;
   const ymd = String(date).slice(0, 10);
-  const t = time && /^\d{1,2}:\d{2}/.test(time) ? (String(time).length === 5 ? `${time}:00` : time) : '00:00:00';
-  const d = new Date(`${ymd}T${t}`);
+  const hms = time && /^\d{1,2}:\d{2}/.test(time) ? (String(time).length === 5 ? `${time}:00` : time) : '00:00:00';
+  const d = new Date(`${ymd}T${hms}`);
   return isNaN(d) ? null : d;
 };
 
@@ -84,9 +96,9 @@ export const fmtDuration = (start, end) => {
   const d = Math.floor(mins / 1440); mins -= d * 1440;
   const h = Math.floor(mins / 60); const m = mins - h * 60;
   const parts = [];
-  if (d) parts.push(`${d}d`);
-  if (h) parts.push(`${h}h`);
-  if (m || parts.length === 0) parts.push(`${m}m`);
+  if (d) parts.push(translate('{n}d', { n: d }));
+  if (h) parts.push(translate('{n}h', { n: h }));
+  if (m || parts.length === 0) parts.push(translate('{n}m', { n: m }));
   return parts.join(' ');
 };
 
@@ -96,23 +108,23 @@ export const fmtAgo = (value) => {
   const d = new Date(value);
   if (isNaN(d)) return null;
   const secs = Math.round((Date.now() - d.getTime()) / 1000);
-  if (secs < 45) return 'just now';
+  if (secs < 45) return translate('just now');
   const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m ago`;
+  if (mins < 60) return translate('{n}m ago', { n: mins });
   const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
+  if (hrs < 24) return translate('{n}h ago', { n: hrs });
   const days = Math.floor(hrs / 24);
-  if (days < 30) return `${days}d ago`;
+  if (days < 30) return translate('{n}d ago', { n: days });
   const months = Math.floor(days / 30);
-  if (months < 12) return `${months}mo ago`;
-  return `${Math.floor(months / 12)}y ago`;
+  if (months < 12) return translate('{n}mo ago', { n: months });
+  return translate('{n}y ago', { n: Math.floor(months / 12) });
 };
 
 // A "days left" pill descriptor (red overdue / amber soon / green ok).
 export const dayBadge = (d) => {
   if (d === null || d === undefined) return { text: '—', tone: 'gray' };
-  if (d < 0) return { text: `${Math.abs(d)}d ago`, tone: 'red' };
-  if (d <= 7) return { text: `${d}d`, tone: 'amber' };
-  if (d <= 30) return { text: `${d}d`, tone: 'blue' };
-  return { text: `${d}d`, tone: 'green' };
+  if (d < 0) return { text: translate('{n}d ago', { n: Math.abs(d) }), tone: 'red' };
+  if (d <= 7) return { text: translate('{n}d', { n: d }), tone: 'amber' };
+  if (d <= 30) return { text: translate('{n}d', { n: d }), tone: 'blue' };
+  return { text: translate('{n}d', { n: d }), tone: 'green' };
 };

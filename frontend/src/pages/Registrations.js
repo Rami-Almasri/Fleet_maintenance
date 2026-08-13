@@ -8,16 +8,25 @@ import { Select } from '../components/ui/Field';
 import { usePageStat } from '../components/PageStat';
 import RegistrationsAnalytics from '../components/analytics/RegistrationsAnalytics';
 import { fmtDate, dayBadge, num } from '../lib/format';
+import { useI18n } from '../i18n/I18nContext';
 
 const PAGE_SIZE = 15;
 
 // Registration / insurance coverage cell.
 function CoverageCell({ has, date, days }) {
-  if (!has) return <Badge tone="red">None</Badge>;
+  const { t } = useI18n();
+  // dayBadge still decides the tone; the words are rebuilt here so they can go through t().
   const b = dayBadge(days);
+  if (!has) return <Badge tone="red">{t('None')}</Badge>;
+  const text =
+    days === null || days === undefined
+      ? t('Valid')
+      : days < 0
+        ? t('{n}d ago', { n: Math.abs(days) })
+        : t('{n}d', { n: days });
   return (
     <div>
-      <Badge tone={b.tone}>{b.text === '—' ? 'Valid' : b.text}</Badge>
+      <Badge tone={b.tone}>{text}</Badge>
       <div className="mt-1 text-xs text-slate-400">{fmtDate(date)}</div>
     </div>
   );
@@ -25,9 +34,10 @@ function CoverageCell({ has, date, days }) {
 
 // Clickable column header that sorts by soonest expiry, with an active ↓ indicator.
 function SortHeader({ label, active, onClick }) {
+  const { t } = useI18n();
   return (
     <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">
-      <button onClick={onClick} className={`group inline-flex items-center gap-1 uppercase tracking-wide transition ${active ? 'text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`} title="Sort by soonest expiry">
+      <button onClick={onClick} className={`group inline-flex items-center gap-1 uppercase tracking-wide transition ${active ? 'text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`} title={t('Sort by soonest expiry')}>
         {label}
         <svg className={`h-3.5 w-3.5 transition ${active ? 'opacity-100' : 'opacity-30 group-hover:opacity-60'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
           <path d="M12 5v14M19 12l-7 7-7-7" />
@@ -41,6 +51,7 @@ const DOT = { green: 'bg-emerald-500', red: 'bg-red-500', blue: 'bg-blue-500', a
 
 // Clickable summary tile that toggles a filter.
 function StatTile({ label, value, tone, active, onClick }) {
+  const { t } = useI18n();
   return (
     <button
       onClick={onClick}
@@ -55,12 +66,13 @@ function StatTile({ label, value, tone, active, onClick }) {
         </div>
         <p className="mt-1 font-display text-2xl font-bold tracking-tight text-slate-900">{value}</p>
       </div>
-      {active && <span className="text-xs font-medium text-indigo-600">Filtering</span>}
+      {active && <span className="text-xs font-medium text-indigo-600">{t('Filtering')}</span>}
     </button>
   );
 }
 
 export default function Registrations() {
+  const { t } = useI18n();
   const fetcher = useCallback(async () => {
     const { data } = await api.get('/Registration/coverage');
     return data.data || [];
@@ -85,9 +97,9 @@ export default function Registrations() {
   // Floating page gauge: share of cars with valid insurance.
   usePageStat({
     percent: list.length ? (counts.insured / list.length) * 100 : null,
-    label: 'Insured',
+    label: t('Insured'),
     color: 'blue',
-    hint: `${counts.insured} of ${list.length} cars have valid insurance`,
+    hint: t('{insured} of {total} cars have valid insurance', { insured: counts.insured, total: list.length }),
   });
 
   const filtered = useMemo(() => {
@@ -131,37 +143,37 @@ export default function Registrations() {
   return (
     <div className="py-8">
       <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
-        <PageHeader title="Registration & Insurance" subtitle="Mulkiya & insurance coverage for every car in the fleet." />
+        <PageHeader title={t('Registration & Insurance')} subtitle={t('Mulkiya & insurance coverage for every car in the fleet.')} />
 
         {/* Summary tiles (click to filter) */}
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          <StatTile label="Insured" value={loading ? '…' : num(counts.insured)} tone="green" active={ins === 'with'} onClick={() => toggle(setIns, ins, 'with', 'insurance')} />
-          <StatTile label="Not insured" value={loading ? '…' : num(counts.uninsured)} tone="red" active={ins === 'without'} onClick={() => toggle(setIns, ins, 'without', 'insurance')} />
-          <StatTile label="Registered" value={loading ? '…' : num(counts.registered)} tone="blue" active={reg === 'with'} onClick={() => toggle(setReg, reg, 'with', 'registration')} />
-          <StatTile label="Not registered" value={loading ? '…' : num(counts.unregistered)} tone="amber" active={reg === 'without'} onClick={() => toggle(setReg, reg, 'without', 'registration')} />
+          <StatTile label={t('Insured')} value={loading ? '…' : num(counts.insured)} tone="green" active={ins === 'with'} onClick={() => toggle(setIns, ins, 'with', 'insurance')} />
+          <StatTile label={t('Not insured')} value={loading ? '…' : num(counts.uninsured)} tone="red" active={ins === 'without'} onClick={() => toggle(setIns, ins, 'without', 'insurance')} />
+          <StatTile label={t('Registered')} value={loading ? '…' : num(counts.registered)} tone="blue" active={reg === 'with'} onClick={() => toggle(setReg, reg, 'with', 'registration')} />
+          <StatTile label={t('Not registered')} value={loading ? '…' : num(counts.unregistered)} tone="amber" active={reg === 'without'} onClick={() => toggle(setReg, reg, 'without', 'registration')} />
         </div>
 
         {/* Filters */}
         <div className="flex flex-col gap-3 sm:flex-row">
-          <SearchInput className="flex-1" value={search} onChange={onSearch} placeholder="Search plate, VIN, chassis, make or model…" />
+          <SearchInput className="flex-1" value={search} onChange={onSearch} placeholder={t('Search plate, VIN, chassis, make or model…')} />
           <Select className="sm:w-44" value={ins} onChange={(e) => { setIns(e.target.value); setSort('insurance'); setPage(1); }}>
-            <option value="all">Insurance: all</option>
-            <option value="with">With insurance</option>
-            <option value="without">Without insurance</option>
+            <option value="all">{t('Insurance: all')}</option>
+            <option value="with">{t('With insurance')}</option>
+            <option value="without">{t('Without insurance')}</option>
           </Select>
           <Select className="sm:w-44" value={reg} onChange={(e) => { setReg(e.target.value); setSort('registration'); setPage(1); }}>
-            <option value="all">Registration: all</option>
-            <option value="with">With registration</option>
-            <option value="without">Without registration</option>
+            <option value="all">{t('Registration: all')}</option>
+            <option value="with">{t('With registration')}</option>
+            <option value="without">{t('Without registration')}</option>
           </Select>
           <Select className="sm:w-56" value={sort} onChange={(e) => { setSort(e.target.value); setPage(1); }}>
-            <option value="default">Sort: plate (default)</option>
-            <option value="insurance">Insurance: soonest expiry first</option>
-            <option value="registration">Registration: soonest expiry first</option>
+            <option value="default">{t('Sort: plate (default)')}</option>
+            <option value="insurance">{t('Insurance: soonest expiry first')}</option>
+            <option value="registration">{t('Registration: soonest expiry first')}</option>
           </Select>
           {hasFilters && (
             <button onClick={clearAll} className="rounded-lg px-3 py-2 text-sm font-medium text-slate-500 transition hover:bg-slate-100 hover:text-slate-700">
-              Clear
+              {t('Clear')}
             </button>
           )}
         </div>
@@ -178,13 +190,13 @@ export default function Registrations() {
             <table className="min-w-full border-separate border-spacing-0 text-sm stagger-rows">
               <thead className="bg-slate-50/90">
                 <tr className="text-start text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Vehicle</th>
-                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">VIN / Chassis</th>
-                  <SortHeader label="Registration" active={sort === 'registration'} onClick={() => { setSort(sort === 'registration' ? 'default' : 'registration'); setPage(1); }} />
-                  <SortHeader label="Insurance" active={sort === 'insurance'} onClick={() => { setSort(sort === 'insurance' ? 'default' : 'insurance'); setPage(1); }} />
-                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Insurer</th>
-                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Car Status</th>
-                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Contract Status</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">{t('Vehicle')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">{t('VIN / Chassis')}</th>
+                  <SortHeader label={t('Registration')} active={sort === 'registration'} onClick={() => { setSort(sort === 'registration' ? 'default' : 'registration'); setPage(1); }} />
+                  <SortHeader label={t('Insurance')} active={sort === 'insurance'} onClick={() => { setSort(sort === 'insurance' ? 'default' : 'insurance'); setPage(1); }} />
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">{t('Insurer')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">{t('Car Status')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">{t('Contract Status')}</th>
                 </tr>
               </thead>
 
@@ -195,7 +207,7 @@ export default function Registrations() {
                   {paged.map((r) => (
                     <tr key={r.vehicle_id} className="bg-white transition-colors even:bg-slate-50/40 hover:bg-indigo-50/40">
                       <td className="border-b border-slate-100 px-5 py-3.5">
-                        <div className="font-medium text-slate-900">{r.plate_no || <span className="text-slate-400">no plate</span>}</div>
+                        <div className="font-medium text-slate-900">{r.plate_no || <span className="text-slate-400">{t('no plate')}</span>}</div>
                         <div className="text-xs text-slate-400">{[r.make, r.model].filter(Boolean).join(' ') || '—'}</div>
                       </td>
                       <td className="border-b border-slate-100 px-5 py-3.5 font-mono text-xs text-slate-500">{r.chasis_no || r.vin || '—'}</td>
@@ -212,7 +224,7 @@ export default function Registrations() {
                             </div>
                           </div>
                         ) : (
-                          <Badge tone="gray">No open contract</Badge>
+                          <Badge tone="gray">{t('No open contract')}</Badge>
                         )}
                       </td>
                     </tr>
@@ -221,7 +233,7 @@ export default function Registrations() {
               )}
             </table>
 
-            {!loading && filtered.length === 0 && <EmptyState title="No cars match these filters" message="Try clearing the filters or search." />}
+            {!loading && filtered.length === 0 && <EmptyState title={t('No cars match these filters')} message={t('Try clearing the filters or search.')} />}
           </div>
 
           {!loading && filtered.length > 0 && (

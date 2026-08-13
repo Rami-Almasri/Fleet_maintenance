@@ -162,6 +162,9 @@ class MaintenanceTask extends Model
         // Domain classification — the primary type + its catalog source-of-truth + provenance.
         'kind', 'fault_catalog_id', 'service_catalog_id', 'inspection_type_id', 'damage_catalog_id',
         'classification_source', 'needs_review',
+        // HOW MANY physical occurrences this ONE routable record covers (2 scratches = 1 task, qty 2).
+        // Never a row count — see the add_quantity_to_maintenance_tasks migration for why.
+        'quantity',
         'symptom', 'category_key', 'source', 'severity',
         'root_cause_id', 'root_cause', 'notes', 'resolution_note',
         'status', 'current_vendor_id',
@@ -192,6 +195,7 @@ class MaintenanceTask extends Model
     ];
 
     protected $casts = [
+        'quantity'              => 'integer',
         'identified_at'         => 'datetime',
         'started_at'            => 'datetime',
         'resolved_at'           => 'datetime',
@@ -485,6 +489,33 @@ class MaintenanceTask extends Model
     public function media(): HasMany
     {
         return $this->hasMany(MaintenanceMedia::class, 'maintenance_task_id')->latest();
+    }
+
+    /**
+     * WHERE on the car this event is — none, one, or several, in the order the inspector picked them.
+     *
+     * The third axis beside WHAT (`kind` + its catalog) and HOW BAD (`severity`), and deliberately
+     * type-agnostic: a scratch, a dent, a crack and a fault type invented next year all use this same
+     * relation. Empty is a valid and common answer — every fault recorded before this existed has no
+     * rows here, which reads as "we do not know where it was" rather than as missing data.
+     *
+     * Written only via {@see \App\Services\FaultLocationService::sync()}.
+     */
+    public function locations(): HasMany
+    {
+        return $this->hasMany(MaintenanceTaskLocation::class, 'maintenance_task_id')->orderBy('sort_order');
+    }
+
+    /**
+     * The one operational sentence for this event: "2 scratches — rims and body".
+     *
+     * A convenience over {@see \App\Services\FaultLocationService::describe()} so a caller holding a
+     * task does not have to resolve the service; the formatting itself still happens in exactly one
+     * place ({@see \App\Support\FaultPhrase}) for every surface that prints a fault.
+     */
+    public function describe(string $locale = 'en'): string
+    {
+        return app(\App\Services\FaultLocationService::class)->describe($this, $locale);
     }
 
     // ── Scopes ──────────────────────────────────────────────────────────────────────────────────

@@ -8,6 +8,7 @@
 
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import IntelligenceCenter from './IntelligenceCenter';
+import { I18nProvider } from '../i18n/I18nContext';
 import api from '../api/client';
 
 jest.mock('../api/client', () => ({ get: jest.fn(), post: jest.fn() }));
@@ -80,8 +81,11 @@ beforeEach(() => {
   api.get.mockResolvedValue({ data: SNAPSHOT });
 });
 
+// The page resolves its text through useI18n, so it needs the provider the app
+// wraps it in. Language defaults to English, so the assertions below still read
+// the same English sentences.
 const load = async () => {
-  render(<IntelligenceCenter />);
+  render(<I18nProvider><IntelligenceCenter /></I18nProvider>);
   await waitFor(() => expect(screen.getByText('Intelligence Center')).toBeInTheDocument());
 };
 

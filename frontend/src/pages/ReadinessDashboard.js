@@ -15,6 +15,7 @@ import Icon from '../components/ui/Icon';
 import FleetStatusCard from '../components/ui/FleetStatusCard';
 import MaintenanceCarsCard from '../components/workflow/MaintenanceCarsCard';
 import { fmtAgo } from '../lib/format';
+import { useI18n } from '../i18n/I18nContext';
 
 // The four inspection pillars, each owned by a role. A user sees the queues for the pillars their
 // role owns; managers / admins / super-admin see them all. This is the "role-based views" contract.
@@ -34,12 +35,14 @@ const carCell = (car, plate, tone) => (
   </div>
 );
 
-// Compact "how long undocumented" — hours up to 2 days, then days.
-const fmtHours = (h) => (h == null ? '' : h >= 48 ? `${Math.floor(h / 24)}d` : `${h}h`);
+// Compact "how long undocumented" — hours up to 2 days, then days. `t` is threaded in because this
+// is a plain module-level helper, not a component, and its output is words on screen.
+const fmtHours = (h, t) => (h == null ? '' : h >= 48 ? t('{n}d', { n: Math.floor(h / 24) }) : t('{n}h', { n: h }));
 
 // A collapsible "at risk" handover queue (check-out or check-in). Cars with MISSING data float to the
 // very top marked RED, then the most-overdue first. Only the 5 most urgent show until "Show all".
 function HandoverQueue({ title, subtitle, accent, rows, total, critical, loading, onRowClick }) {
+  const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
 
   const sorted = useMemo(
@@ -49,21 +52,21 @@ function HandoverQueue({ title, subtitle, accent, rows, total, critical, loading
     [rows],
   );
   const visible = expanded ? sorted : sorted.slice(0, DEFAULT_VISIBLE);
-  const truncated = total > rows.length ? ` · first ${rows.length} of ${total}` : '';
+  const truncated = total > rows.length ? t(' · first {shown} of {total}', { shown: rows.length, total }) : '';
 
   const columns = [
-    { key: 'car', header: 'Car', render: (r) => carCell(r.car, r.plate_no, r.missing_data ? 'bg-red-500' : accent) },
-    { key: 'customer', header: 'Customer', cellClass: 'text-slate-700', render: (r) => r.customer || '—' },
+    { key: 'car', header: t('Car'), render: (r) => carCell(r.car, r.plate_no, r.missing_data ? 'bg-red-500' : accent) },
+    { key: 'customer', header: t('Customer'), cellClass: 'text-slate-700', render: (r) => r.customer || '—' },
     {
-      key: 'flags', header: 'Status', render: (r) => (
+      key: 'flags', header: t('Status'), render: (r) => (
         <div className="flex flex-wrap items-center gap-1.5">
-          {r.missing_data && <Badge tone="red">Missing data</Badge>}
-          {r.overdue && <Badge tone="amber">{fmtHours(r.hours)} overdue</Badge>}
+          {r.missing_data && <Badge tone="red">{t('Missing data')}</Badge>}
+          {r.overdue && <Badge tone="amber">{t('{duration} overdue', { duration: fmtHours(r.hours, t) })}</Badge>}
         </div>
       ),
     },
     {
-      key: 'when', header: 'When', align: 'right', cellClass: 'whitespace-nowrap text-slate-500',
+      key: 'when', header: t('When'), align: 'right', cellClass: 'whitespace-nowrap text-slate-500',
       render: (r) => (r.when ? fmtAgo(r.when) : '—'),
     },
   ];
@@ -71,8 +74,8 @@ function HandoverQueue({ title, subtitle, accent, rows, total, critical, loading
   return (
     <SectionCard
       title={title}
-      subtitle={`${total} undocumented${subtitle ? ` · ${subtitle}` : ''}${truncated}`}
-      actions={<Badge tone={critical > 0 ? 'red' : 'emerald'}>{critical} critical</Badge>}
+      subtitle={`${t('{n} undocumented', { n: total })}${subtitle ? ` · ${subtitle}` : ''}${truncated}`}
+      actions={<Badge tone={critical > 0 ? 'red' : 'emerald'}>{t('{n} critical', { n: critical })}</Badge>}
     >
       <DataTable
         columns={columns}
@@ -80,7 +83,7 @@ function HandoverQueue({ title, subtitle, accent, rows, total, critical, loading
         rowKey={(r) => r.contract_id}
         loading={loading}
         onRowClick={onRowClick}
-        empty="Every recent handover is documented."
+        empty={t('Every recent handover is documented.')}
       />
       {sorted.length > DEFAULT_VISIBLE && (
         <div className="border-t border-slate-100 px-5 py-3 text-center">
@@ -89,7 +92,7 @@ function HandoverQueue({ title, subtitle, accent, rows, total, critical, loading
             onClick={() => setExpanded((v) => !v)}
             className="inline-flex items-center gap-1 text-sm font-semibold text-indigo-600 transition hover:text-indigo-800"
           >
-            {expanded ? 'Show less' : `Show all ${sorted.length}`}
+            {expanded ? t('Show less') : t('Show all {n}', { n: sorted.length })}
             <Icon.ArrowRight className={`h-3.5 w-3.5 transition-transform ${expanded ? '-rotate-90' : 'rotate-90'}`} />
           </button>
         </div>
@@ -100,6 +103,7 @@ function HandoverQueue({ title, subtitle, accent, rows, total, critical, loading
 
 export default function ReadinessDashboard() {
   const toast = useToast();
+  const { t } = useI18n();
   const navigate = useNavigate();
   const { can, hasRole, isSuperAdmin } = usePermissions();
 
@@ -139,9 +143,9 @@ export default function ReadinessDashboard() {
   const fleet = data?.fleet_status || {};
   const activeFleet = (fleet.available || 0) + (fleet.rented || 0) + (fleet.maintenance || 0);
   const fleetSegments = [
-    { label: 'Available', value: fleet.available || 0, color: 'green' },
-    { label: 'Rented', value: fleet.rented || 0, color: 'blue' },
-    { label: 'Maintenance', value: fleet.maintenance || 0, color: 'yellow' },
+    { label: t('Available'), value: fleet.available || 0, color: 'green' },
+    { label: t('Rented'), value: fleet.rented || 0, color: 'blue' },
+    { label: t('Maintenance'), value: fleet.maintenance || 0, color: 'yellow' },
   ];
 
   const setReady = async (row) => {
@@ -150,12 +154,12 @@ export default function ReadinessDashboard() {
       const { data: res } = await api.post(`/vehicle-status/${row.vehicle_id}/set-ready`, {
         override_reason: reason.trim() || undefined,
       });
-      toast.success(res.message || `${row.car} set to Ready`);
+      toast.success(res.message || t('{car} set to Ready', { car: row.car }));
       setConfirm(null);
       setReason('');
       await reload({ silent: true });
     } catch (e) {
-      toast.error(e.response?.data?.message || 'Could not set the car to Ready');
+      toast.error(e.response?.data?.message || t('Could not set the car to Ready'));
     } finally {
       setBusyId(null);
     }
@@ -178,10 +182,14 @@ export default function ReadinessDashboard() {
     });
     try {
       await api.post(`/readiness/vehicle/${row.vehicle_id}/checklist-field`, { field: 'cleaning_status', value });
-      toast.success(`${row.car} marked ${value}`);
+      toast.success(
+        value === 'clean'
+          ? t('{car} marked clean', { car: row.car })
+          : t('{car} marked dirty', { car: row.car }),
+      );
       await reload({ silent: true }); // reconcile totals with the server
     } catch (e) {
-      toast.error(e.response?.data?.message || 'Could not update the cleaning status');
+      toast.error(e.response?.data?.message || t('Could not update the cleaning status'));
       await reload({ silent: true }); // roll the optimistic drop back to the true state
     } finally {
       setCleaningBusy(null);
@@ -195,34 +203,34 @@ export default function ReadinessDashboard() {
 
   // ── Columns ──────────────────────────────────────────────────────────────────────────────────
   const damageColumns = [
-    { key: 'car', header: 'Car', render: (r) => carCell(r.car, r.plate_no, 'bg-amber-400') },
+    { key: 'car', header: t('Car'), render: (r) => carCell(r.car, r.plate_no, 'bg-amber-400') },
     {
-      key: 'damage', header: 'Damage', render: (r) => (
+      key: 'damage', header: t('Damage'), render: (r) => (
         <div className="flex items-center gap-2">
           <Badge tone={SEVERITY_TONE[r.severity] || 'slate'}>{r.severity}</Badge>
           <span className="text-slate-700">{r.damage_type}{r.body_part ? ` · ${r.body_part}` : ''}</span>
         </div>
       ),
     },
-    { key: 'inspector', header: 'Flagged by', cellClass: 'text-slate-600', render: (r) => r.inspector || '—' },
+    { key: 'inspector', header: t('Flagged by'), cellClass: 'text-slate-600', render: (r) => r.inspector || '—' },
     {
-      key: 'flagged_at', header: 'When', align: 'right', cellClass: 'whitespace-nowrap text-slate-500',
+      key: 'flagged_at', header: t('When'), align: 'right', cellClass: 'whitespace-nowrap text-slate-500',
       render: (r) => (r.flagged_at ? fmtAgo(r.flagged_at) : '—'),
     },
   ];
 
   const signoffColumns = [
-    { key: 'car', header: 'Car', render: (r) => carCell(r.car, r.plate_no, 'bg-violet-400') },
-    { key: 'stage', header: 'Stage', render: (r) => <Badge tone="violet">{r.stage}</Badge> },
-    { key: 'inspector', header: 'Inspector', cellClass: 'text-slate-600', render: (r) => r.inspector || '—' },
+    { key: 'car', header: t('Car'), render: (r) => carCell(r.car, r.plate_no, 'bg-violet-400') },
+    { key: 'stage', header: t('Stage'), render: (r) => <Badge tone="violet">{r.stage}</Badge> },
+    { key: 'inspector', header: t('Inspector'), cellClass: 'text-slate-600', render: (r) => r.inspector || '—' },
     {
-      key: 'days_waiting', header: 'Waiting', align: 'right', cellClass: 'tabular-nums',
-      render: (r) => (r.days_waiting == null ? '—' : r.days_waiting === 0 ? 'Today' : `${r.days_waiting}d`),
+      key: 'days_waiting', header: t('Waiting'), align: 'right', cellClass: 'tabular-nums',
+      render: (r) => (r.days_waiting == null ? '—' : r.days_waiting === 0 ? t('Today') : t('{n}d', { n: r.days_waiting })),
     },
     {
       key: 'action', header: '', align: 'right',
       render: (r) => {
-        if (!canSetReady) return <span className="text-xs text-slate-300">No access</span>;
+        if (!canSetReady) return <span className="text-xs text-slate-300">{t('No access')}</span>;
         // Advisory-only: a car with open readiness items is NEVER blocked here. If it has advisories we
         // flag the button amber so the user knows the confirm step will ask them to record a reason.
         const advisories = (r.readiness && !r.readiness.gate_ready) ? (r.readiness.gate_blockers || []) : [];
@@ -233,7 +241,7 @@ export default function ReadinessDashboard() {
             loading={busyId === r.vehicle_id}
             onClick={(e) => { e.stopPropagation(); setReason(''); setConfirm(r); }}
           >
-            {advisories.length ? 'Set to Ready ⚠' : 'Set to Ready'}
+            {advisories.length ? `${t('Set to Ready')} ⚠` : t('Set to Ready')}
           </Button>
         );
       },
@@ -241,18 +249,23 @@ export default function ReadinessDashboard() {
   ];
 
   // MANAGER — Missing Data: which cars have a blank Cleaning entry, and who to chase.
-  const STATUS_LABEL = (v) => (!v || v === 'pending' ? 'Not entered' : v.charAt(0).toUpperCase() + v.slice(1));
+  const STATUS_LABEL = (v) => {
+    if (!v || v === 'pending') return t('Not entered');
+    if (v === 'clean') return t('Clean');
+    if (v === 'dirty') return t('Dirty');
+    return v.charAt(0).toUpperCase() + v.slice(1);
+  };
   const missingColumns = [
-    { key: 'car', header: 'Car', render: (r) => carCell(r.car, r.plate_no, 'bg-red-400') },
+    { key: 'car', header: t('Car'), render: (r) => carCell(r.car, r.plate_no, 'bg-red-400') },
     {
-      key: 'missing', header: 'Missing', render: (r) => (
+      key: 'missing', header: t('Missing'), render: (r) => (
         <div className="flex flex-wrap items-center gap-1.5">
           {(r.missing || []).map((m) => <Badge key={m} tone="red">{m}</Badge>)}
         </div>
       ),
     },
     {
-      key: 'cleaning_status', header: 'Cleaning', cellClass: 'text-slate-600',
+      key: 'cleaning_status', header: t('Cleaning'), cellClass: 'text-slate-600',
       render: (r) => <span className={!r.cleaning_status || r.cleaning_status === 'pending' ? 'text-red-500' : ''}>{STATUS_LABEL(r.cleaning_status)}</span>,
     },
     // Inline set-buttons — only for users who can actually persist the change (vehicles.manage).
@@ -266,7 +279,7 @@ export default function ReadinessDashboard() {
             loading={cleaningBusy === r.vehicle_id}
             onClick={(e) => { e.stopPropagation(); setCleaning(r, 'clean'); }}
           >
-            Mark Clean
+            {t('Mark Clean')}
           </Button>
           <Button
             variant="secondary"
@@ -274,7 +287,7 @@ export default function ReadinessDashboard() {
             disabled={cleaningBusy === r.vehicle_id}
             onClick={(e) => { e.stopPropagation(); setCleaning(r, 'dirty'); }}
           >
-            Mark Dirty
+            {t('Mark Dirty')}
           </Button>
         </div>
       ),
@@ -286,19 +299,19 @@ export default function ReadinessDashboard() {
     const c = data?.counts || {};
     const list = [];
     if (isLogistics) {
-      list.push({ label: 'Check-outs to document', value: c.checkouts, icon: <Icon.Truck className="h-5 w-5" />, tone: 'blue' });
-      list.push({ label: 'Check-ins to document', value: c.checkins, icon: <Icon.Route className="h-5 w-5" />, tone: 'cyan' });
+      list.push({ label: t('Check-outs to document'), value: c.checkouts, icon: <Icon.Truck className="h-5 w-5" />, tone: 'blue' });
+      list.push({ label: t('Check-ins to document'), value: c.checkins, icon: <Icon.Route className="h-5 w-5" />, tone: 'cyan' });
     }
-    if (isSupervisor) list.push({ label: 'Damage reviews', value: c.damage_reviews, icon: <Icon.Alert className="h-5 w-5" />, tone: 'amber' });
-    if (isInspector) list.push({ label: 'Garage sign-offs', value: c.garage_signoffs, icon: <Icon.Wrench className="h-5 w-5" />, tone: 'violet' });
+    if (isSupervisor) list.push({ label: t('Damage reviews'), value: c.damage_reviews, icon: <Icon.Alert className="h-5 w-5" />, tone: 'amber' });
+    if (isInspector) list.push({ label: t('Garage sign-offs'), value: c.garage_signoffs, icon: <Icon.Wrench className="h-5 w-5" />, tone: 'violet' });
     // MANAGER-only: cars missing a Cleaning / Tools-Docs entry — a data-entry accountability alert.
-    if (seeAll) list.push({ label: 'Missing data', value: c.missing_data, icon: <Icon.Flag className="h-5 w-5" />, tone: 'red' });
+    if (seeAll) list.push({ label: t('Missing data'), value: c.missing_data, icon: <Icon.Flag className="h-5 w-5" />, tone: 'red' });
     return list;
-  }, [isLogistics, isSupervisor, isInspector, seeAll, data]);
+  }, [isLogistics, isSupervisor, isInspector, seeAll, data, t]);
 
   const liveBadge = (
     <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200">
-      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />Live
+      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />{t('Live')}
     </span>
   );
 
@@ -306,15 +319,15 @@ export default function ReadinessDashboard() {
     <div className="py-8">
       <div className="mx-auto max-w-[1400px] space-y-6 px-4 sm:px-6 lg:px-8">
         <PageHeader
-          title="Readiness"
-          subtitle="Fleet status at a glance, then the cars that need attention first — undocumented handovers over 24h and cars missing a data entry. The full lists stay collapsed until you ask for them."
+          title={t('Readiness')}
+          subtitle={t('Fleet status at a glance, then the cars that need attention first — undocumented handovers over 24h and cars missing a data entry. The full lists stay collapsed until you ask for them.')}
         />
 
         {noQueues ? (
-          <SectionCard title="Readiness">
+          <SectionCard title={t('Readiness')}>
             <EmptyState
-              title="No readiness queue for your role"
-              message="Check-out / check-in tasks are shown to Logistics, damage reviews to Supervisors, and garage sign-offs to the Inspector."
+              title={t('No readiness queue for your role')}
+              message={t('Check-out / check-in tasks are shown to Logistics, damage reviews to Supervisors, and garage sign-offs to the Inspector.')}
             />
           </SectionCard>
         ) : (
@@ -326,9 +339,9 @@ export default function ReadinessDashboard() {
               ) : (
                 <FleetStatusCard
                   className="lg:col-span-1"
-                  title="Fleet Status"
-                  centerLabel="Active Fleet"
-                  unit="cars"
+                  title={t('Fleet Status')}
+                  centerLabel={t('Active Fleet')}
+                  unit={t('cars')}
                   segments={fleetSegments}
                   total={activeFleet}
                   periods={[]}
@@ -360,8 +373,8 @@ export default function ReadinessDashboard() {
             {isLogistics && (
               <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
                 <HandoverQueue
-                  title="Check-Out · At risk"
-                  subtitle="handed out, no documented handover"
+                  title={t('Check-Out · At risk')}
+                  subtitle={t('handed out, no documented handover')}
                   accent="bg-blue-400"
                   rows={checkouts}
                   total={counts.checkouts || 0}
@@ -370,8 +383,8 @@ export default function ReadinessDashboard() {
                   onRowClick={goToCar}
                 />
                 <HandoverQueue
-                  title="Check-In · At risk"
-                  subtitle="returned, no documented return"
+                  title={t('Check-In · At risk')}
+                  subtitle={t('returned, no documented return')}
                   accent="bg-cyan-400"
                   rows={checkins}
                   total={counts.checkins || 0}
@@ -385,8 +398,8 @@ export default function ReadinessDashboard() {
             {/* INSPECTOR — Garage sign-offs. The actionable queue: the guarded "Set to Ready". */}
             {isInspector && (
               <SectionCard
-                title="Garage Inspection · Pending sign-off"
-                subtitle="Repairs back from the garage awaiting the Inspector's re-inspection sign-off. The Pre-Delivery gate guards each release."
+                title={t('Garage Inspection · Pending sign-off')}
+                subtitle={t("Repairs back from the garage awaiting the Inspector's re-inspection sign-off. The Pre-Delivery gate guards each release.")}
               >
                 <DataTable
                   columns={signoffColumns}
@@ -394,7 +407,7 @@ export default function ReadinessDashboard() {
                   rowKey={(r) => r.ticket_id}
                   loading={loading && !data}
                   onRowClick={goToCar}
-                  empty="Nothing waiting for sign-off."
+                  empty={t('Nothing waiting for sign-off.')}
                   stickyHeader
                 />
               </SectionCard>
@@ -403,8 +416,8 @@ export default function ReadinessDashboard() {
             {/* SUPERVISOR — Damage assessments awaiting approval. */}
             {isSupervisor && (
               <SectionCard
-                title="Damage Assessment · Awaiting approval"
-                subtitle="Damage flagged during inspection that a Supervisor still needs to review and approve."
+                title={t('Damage Assessment · Awaiting approval')}
+                subtitle={t('Damage flagged during inspection that a Supervisor still needs to review and approve.')}
               >
                 <DataTable
                   columns={damageColumns}
@@ -412,7 +425,7 @@ export default function ReadinessDashboard() {
                   rowKey={(r) => r.id}
                   loading={loading && !data}
                   onRowClick={goToCar}
-                  empty="No damage waiting for review."
+                  empty={t('No damage waiting for review.')}
                   stickyHeader
                 />
               </SectionCard>
@@ -431,13 +444,13 @@ export default function ReadinessDashboard() {
         onClose={() => { setConfirm(null); setReason(''); }}
         onConfirm={() => confirm && setReady(confirm)}
         loading={busyId != null}
-        title="Set car to Ready?"
-        confirmText="Set to Ready"
+        title={t('Set car to Ready?')}
+        confirmText={t('Set to Ready')}
         variant={confirmAdvisories.length ? 'warning' : 'success'}
         confirmDisabled={confirmAdvisories.length > 0 && !reason.trim()}
         message={
           confirm
-            ? `Sign ${confirm.car} back into service? This closes its open maintenance and returns it to the Available pool.`
+            ? t('Sign {car} back into service? This closes its open maintenance and returns it to the Available pool.', { car: confirm.car })
             : ''
         }
       >
@@ -445,7 +458,9 @@ export default function ReadinessDashboard() {
           <div className="mt-3 space-y-3">
             <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
               <p className="mb-1 text-xs font-semibold text-amber-800">
-                This car still has {confirmAdvisories.length} open readiness advisory{confirmAdvisories.length === 1 ? '' : ' items'} — you can proceed, but it will be logged as a warning override:
+                {confirmAdvisories.length === 1
+                  ? t('This car still has 1 open readiness advisory — you can proceed, but it will be logged as a warning override:')
+                  : t('This car still has {n} open readiness advisory items — you can proceed, but it will be logged as a warning override:', { n: confirmAdvisories.length })}
               </p>
               <ul className="space-y-0.5 text-xs text-amber-700">
                 {confirmAdvisories.map((b, i) => (
@@ -454,13 +469,13 @@ export default function ReadinessDashboard() {
               </ul>
             </div>
             <label className="block">
-              <span className="text-xs font-medium text-slate-600">Reason for overriding <span className="text-red-500">*</span></span>
+              <span className="text-xs font-medium text-slate-600">{t('Reason for overriding')} <span className="text-red-500">*</span></span>
               <textarea
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
                 rows={2}
                 autoFocus
-                placeholder="Why is this car being set Ready despite the open advisories?"
+                placeholder={t('Why is this car being set Ready despite the open advisories?')}
                 className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-300"
               />
             </label>
@@ -473,15 +488,20 @@ export default function ReadinessDashboard() {
 
 // The manager's full Missing-Data accountability list — collapsed to the top few until "Show all".
 function MissingDataBoard({ rows, total, columns, loading, onRowClick }) {
+  const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const visible = expanded ? rows : rows.slice(0, DEFAULT_VISIBLE);
-  const truncated = total > rows.length ? ` · first ${rows.length} of ${total}` : '';
+  const truncated = total > rows.length ? t(' · first {shown} of {total}', { shown: rows.length, total }) : '';
 
   return (
     <SectionCard
-      title="Missing Data · Cleaning"
-      subtitle={`${total} car${total === 1 ? '' : 's'} with a blank cleaning entry — the data entry is overdue${truncated}`}
-      actions={<Badge tone={total > 0 ? 'red' : 'emerald'}>{total} to enter</Badge>}
+      title={t('Missing Data · Cleaning')}
+      subtitle={
+        total === 1
+          ? `${t('1 car with a blank cleaning entry — the data entry is overdue')}${truncated}`
+          : `${t('{n} cars with a blank cleaning entry — the data entry is overdue', { n: total })}${truncated}`
+      }
+      actions={<Badge tone={total > 0 ? 'red' : 'emerald'}>{t('{n} to enter', { n: total })}</Badge>}
     >
       <DataTable
         columns={columns}
@@ -489,7 +509,7 @@ function MissingDataBoard({ rows, total, columns, loading, onRowClick }) {
         rowKey={(r) => r.vehicle_id}
         loading={loading}
         onRowClick={onRowClick}
-        empty="Every car has its Cleaning status on record."
+        empty={t('Every car has its Cleaning status on record.')}
       />
       {rows.length > DEFAULT_VISIBLE && (
         <div className="border-t border-slate-100 px-5 py-3 text-center">
@@ -498,7 +518,7 @@ function MissingDataBoard({ rows, total, columns, loading, onRowClick }) {
             onClick={() => setExpanded((v) => !v)}
             className="inline-flex items-center gap-1 text-sm font-semibold text-indigo-600 transition hover:text-indigo-800"
           >
-            {expanded ? 'Show less' : `Show all ${rows.length}`}
+            {expanded ? t('Show less') : t('Show all {n}', { n: rows.length })}
             <Icon.ArrowRight className={`h-3.5 w-3.5 transition-transform ${expanded ? '-rotate-90' : 'rotate-90'}`} />
           </button>
         </div>

@@ -107,6 +107,8 @@ export default function Notifications() {
       setMeta({ last_page: payload.last_page || 1, total: payload.total || 0 });
       setItems((prev) => (replace ? payload.items : [...prev, ...(payload.items || [])]));
     } catch (err) {
+      // Kept as the raw English key: the render site runs it through t(), so a backend
+      // message passes through unchanged while this fallback is translated.
       setError(err.response?.data?.message || err.message || 'Could not load notifications');
     } finally {
       setLoading(false);
@@ -135,7 +137,7 @@ export default function Notifications() {
     if (n.type === 'maint_checkpoint' && canCheckpoint && n.meta?.ticket_id) {
       setCheckpointTicket({
         ticketId: n.meta.ticket_id,
-        label: n.meta.plate || `Ticket #${n.meta.ticket_id}`,
+        label: n.meta.plate || t('Ticket #{id}', { id: n.meta.ticket_id }),
         sub: n.meta.garage || undefined,
       });
       return;
@@ -208,7 +210,7 @@ export default function Notifications() {
   // stage of the job (Inspection → Workshop & Moves → Control). A group that this
   // role can't see is dropped entirely, so the picker only ever shows real work.
   const laneSections = useMemo(() => {
-    const overview = tabs.filter((t) => t.key === 'all' || t.key === 'other');
+    const overview = tabs.filter((tab) => tab.key === 'all' || tab.key === 'other');
     const groups = LANE_GROUPS
       .map((g) => ({ ...g, items: lanes.filter((l) => l.group === g.key) }))
       .filter((g) => g.items.length > 0);
@@ -252,13 +254,13 @@ export default function Notifications() {
   // Fall back to "All" if the active type-tab no longer exists (e.g. all its
   // notifications were dismissed or the filter changed).
   useEffect(() => {
-    if (activeTab !== 'all' && !tabs.some((t) => t.key === activeTab)) {
+    if (activeTab !== 'all' && !tabs.some((tab) => tab.key === activeTab)) {
       setActiveTab('all');
     }
   }, [tabs, activeTab]);
 
   const visible = useMemo(() => byTab[activeTab] || [], [byTab, activeTab]);
-  const activeTabDef = tabs.find((t) => t.key === activeTab) || tabs[0];
+  const activeTabDef = tabs.find((tab) => tab.key === activeTab) || tabs[0];
 
   // Workload stats for the ACTIVE lane — the numbers an operator reads first. Computed
   // before the focus filter so the tiles always show the true lane totals.
@@ -305,7 +307,7 @@ export default function Notifications() {
             {t('actionCenter.markAllRead')}
           </Button>
           <Button variant="secondary" size="sm" onClick={onClearAll} disabled={visible.length === 0}>
-            {activeTab === 'all' ? t('actionCenter.clearAll') : t('actionCenter.clearLane', { lane: activeTabDef.label })}
+            {activeTab === 'all' ? t('actionCenter.clearAll') : t('actionCenter.clearLane', { lane: t(activeTabDef.label) })}
           </Button>
         </PageHeader>
 
@@ -395,14 +397,14 @@ export default function Notifications() {
               job. Chips wrap onto as many lines as they need; nothing hides off-screen. */}
           <nav aria-label={t('actionCenter.lanesNav')} className="divide-y divide-slate-100">
             {(() => {
-              const chip = (t) => (
+              const chip = (tab) => (
                 <LaneChip
-                  key={t.key}
-                  tab={t}
-                  active={activeTab === t.key}
-                  count={chipCounts.counts[t.key] || 0}
-                  unread={chipCounts.unread[t.key] || 0}
-                  onClick={() => setActiveTab(t.key)}
+                  key={tab.key}
+                  tab={tab}
+                  active={activeTab === tab.key}
+                  count={chipCounts.counts[tab.key] || 0}
+                  unread={chipCounts.unread[tab.key] || 0}
+                  onClick={() => setActiveTab(tab.key)}
                 />
               );
               return (
@@ -416,8 +418,8 @@ export default function Notifications() {
                     return (
                       <div key={g.key} className="px-3 py-3 sm:flex sm:items-start sm:gap-3">
                         <div className="mb-2 flex w-40 shrink-0 items-center gap-1.5 sm:mb-0 sm:mt-1.5">
-                          <span className="text-[11px] font-bold uppercase tracking-[0.07em] text-slate-500" title={g.hint}>
-                            {g.label}
+                          <span className="text-[11px] font-bold uppercase tracking-[0.07em] text-slate-500" title={g.hint ? t(g.hint) : ''}>
+                            {t(g.label)}
                           </span>
                           {unread > 0
                             ? <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" aria-hidden="true" />
@@ -438,7 +440,7 @@ export default function Notifications() {
           {activeTab !== 'all' && activeTabDef.blurb && (
             <p className="flex items-start gap-2 border-t border-slate-100 bg-slate-50/60 px-4 py-2.5 text-xs leading-relaxed text-slate-600">
               <svg className="mt-px h-4 w-4 shrink-0 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 8v4m0 4h.01M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z" /></svg>
-              <span><span className="font-semibold text-slate-700">{activeTabDef.label}:</span> {activeTabDef.blurb}</span>
+              <span><span className="font-semibold text-slate-700">{t(activeTabDef.label)}:</span> {t(activeTabDef.blurb)}</span>
             </p>
           )}
         </div>
@@ -446,7 +448,7 @@ export default function Notifications() {
         {/* ── Error ──────────────────────────────────────────────────────── */}
         {error && (
           <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">
-            {error}
+            {t(error)}
           </div>
         )}
 
@@ -456,8 +458,8 @@ export default function Notifications() {
         ) : items.length === 0 ? (
           <Card>
             <EmptyState
-              title={filter === 'unread' ? 'No unread notifications' : "You're all caught up"}
-              message="New fleet alerts will land here automatically as conditions change."
+              title={filter === 'unread' ? t('No unread notifications') : t("You're all caught up")}
+              message={t('New fleet alerts will land here automatically as conditions change.')}
             />
           </Card>
         ) : visible.length === 0 ? (
@@ -470,10 +472,10 @@ export default function Notifications() {
                   <path d="M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" />
                 </svg>
               )}
-              title={focus === 'critical' ? 'No critical items' : 'Nothing needs action'}
+              title={focus === 'critical' ? t('No critical items') : t('Nothing needs action')}
               message={focus === 'critical'
-                ? 'Nothing in this lane is critical right now — the highest-priority work is clear.'
-                : 'Every item here has already been actioned or read. Nice work.'}
+                ? t('Nothing in this lane is critical right now — the highest-priority work is clear.')
+                : t('Every item here has already been actioned or read. Nice work.')}
               action={<Button variant="secondary" size="sm" onClick={() => setFocus('all')}>{t('actionCenter.showEverything')}</Button>}
             />
           </Card>
@@ -495,7 +497,7 @@ export default function Notifications() {
                   const unread = rows.filter((r) => !r.read).length;
                   return (
                     <section key={bucket} className="space-y-3">
-                      <SectionHeader accent="bg-slate-300" label={bucket} count={rows.length} unread={unread} />
+                      <SectionHeader accent="bg-slate-300" label={t(bucket)} count={rows.length} unread={unread} />
                       {renderNodes(rows)}
                     </section>
                   );
@@ -504,7 +506,7 @@ export default function Notifications() {
             {page < meta.last_page && (
               <div className="flex justify-center pt-1">
                 <Button variant="secondary" size="md" loading={loadingMore} onClick={loadMore}>
-                  Load more
+                  {t('Load more')}
                 </Button>
               </div>
             )}
@@ -518,7 +520,7 @@ export default function Notifications() {
         <CheckpointModal
           open
           ticketId={checkpointTicket.ticketId}
-          title={`Checkpoint · ${checkpointTicket.label}`}
+          title={t('Checkpoint · {name}', { name: checkpointTicket.label })}
           subtitle={checkpointTicket.sub}
           onClose={() => setCheckpointTicket(null)}
           onDone={(msg) => {
@@ -545,6 +547,7 @@ const HIGHLIGHT_TONE = {
 // One entity fact (Vehicle · D-58213). Icon-led, label above the value, so the
 // card reads as a structured record instead of a sentence. Actionable when `href`.
 function EntityField({ label, value, icon, mono, href }) {
+  const { t } = useI18n();
   const body = (
     <>
       <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-400 ring-1 ring-inset ring-slate-200/70 group-hover/ent:bg-indigo-50 group-hover/ent:text-indigo-500">
@@ -553,7 +556,7 @@ function EntityField({ label, value, icon, mono, href }) {
         </svg>
       </span>
       <span className="min-w-0">
-        <span className="block text-[10px] font-semibold uppercase tracking-wide text-slate-400">{label}</span>
+        <span className="block text-[10px] font-semibold uppercase tracking-wide text-slate-400">{t(label)}</span>
         <span className={`block truncate text-[13px] font-semibold text-slate-700 ${mono ? 'font-mono tabular-nums' : ''} ${href ? 'text-indigo-600 group-hover/ent:underline' : ''}`}>
           {value}
         </span>
@@ -622,8 +625,8 @@ function NotificationRow({ n, onAction, onMarkRead, onDismiss, grouped = false }
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
               {settled
                 ? <Badge tone="slate">{t('actionCenter.settled')}</Badge>
-                : <Badge tone={SEVERITY_TONE[n.severity] || 'blue'} dot>{theme.label}</Badge>}
-              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{kind}</span>
+                : <Badge tone={SEVERITY_TONE[n.severity] || 'blue'} dot>{t(theme.label)}</Badge>}
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{t(kind)}</span>
               {!n.read && !settled && <span className={`h-2 w-2 shrink-0 rounded-full ${theme.dot}`} aria-label={t('actionCenter.unreadDot')} />}
             </div>
             <h3 className={`mt-1.5 text-sm leading-snug ${n.read ? 'font-semibold text-slate-700' : 'font-bold text-slate-900'}`}>
@@ -679,15 +682,15 @@ function NotificationRow({ n, onAction, onMarkRead, onDismiss, grouped = false }
           <div className="mt-4 flex items-center gap-2">
             {label && (
               <Button variant={CTA_VARIANT[n.severity] || 'primary'} size={grouped ? 'sm' : 'md'} onClick={() => onAction?.(n)} className="shadow-sm">
-                {label}
-                <svg aria-hidden="true" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                {t(label)}
+                <svg aria-hidden="true" className="h-3.5 w-3.5 rtl:-scale-x-100" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M9 5l7 7-7 7" />
                 </svg>
               </Button>
             )}
             {onMarkRead && !n.read && (
               <Button variant="ghost" size={grouped ? 'sm' : 'md'} onClick={() => onMarkRead(n)}>
-                Mark read
+                {t('Mark read')}
               </Button>
             )}
           </div>
@@ -714,13 +717,14 @@ function NotificationRow({ n, onAction, onMarkRead, onDismiss, grouped = false }
 // ─────────────────────────────────────────────────────────────────────────────
 
 function LaneChip({ tab, active, count, unread, onClick }) {
+  const { t } = useI18n();
   const empty = count === 0;
   return (
     <button
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      title={tab.blurb || tab.label}
+      title={t(tab.blurb || tab.label)}
       className={[
         'group inline-flex items-center gap-2 rounded-xl px-3 py-2 text-[13px] font-bold ring-1 ring-inset transition-all duration-150',
         'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500',
@@ -742,7 +746,7 @@ function LaneChip({ tab, active, count, unread, onClick }) {
         <path d={iconPath(tab.icon || 'bell')} />
       </svg>
 
-      <span className="whitespace-nowrap">{tab.label}</span>
+      <span className="whitespace-nowrap">{t(tab.label)}</span>
 
       {count > 0 && (
         <span
@@ -756,7 +760,7 @@ function LaneChip({ tab, active, count, unread, onClick }) {
       )}
 
       {unread > 0 && !active && (
-        <span aria-label={`${unread} unread`} className="h-1.5 w-1.5 shrink-0 rounded-full bg-indigo-500" />
+        <span aria-label={t('{n} unread', { n: unread })} className="h-1.5 w-1.5 shrink-0 rounded-full bg-indigo-500" />
       )}
     </button>
   );
@@ -775,7 +779,7 @@ const STAT_TONE = {
 };
 
 function StatTile({ label, value, tone = 'slate', icon = 'bell', active = false, disabled = false, onClick }) {
-  const t = STAT_TONE[tone] || STAT_TONE.slate;
+  const st = STAT_TONE[tone] || STAT_TONE.slate;
   const clickable = !!onClick && !disabled;
   const zero = !value;
   return (
@@ -786,18 +790,18 @@ function StatTile({ label, value, tone = 'slate', icon = 'bell', active = false,
       disabled={!clickable}
       className={[
         'flex items-center gap-3 rounded-2xl border bg-white px-4 py-3 text-start shadow-soft transition-all duration-150',
-        active ? `${t.bg} ring-2 ${t.activeRing} border-transparent` : 'border-slate-200/70',
+        active ? `${st.bg} ring-2 ${st.activeRing} border-transparent` : 'border-slate-200/70',
         clickable ? 'hover:-translate-y-px hover:shadow-card focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2' : 'cursor-default',
         zero && !active ? 'opacity-70' : '',
       ].join(' ')}
     >
-      <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${zero ? 'bg-slate-100 text-slate-400' : t.icon}`}>
+      <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${zero ? 'bg-slate-100 text-slate-400' : st.icon}`}>
         <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
           <path d={iconPath(icon)} />
         </svg>
       </span>
       <span className="min-w-0">
-        <span className={`block text-xl font-bold leading-none tabular-nums ${zero ? 'text-slate-400' : t.text}`}>{value}</span>
+        <span className={`block text-xl font-bold leading-none tabular-nums ${zero ? 'text-slate-400' : st.text}`}>{value}</span>
         <span className="mt-1 block truncate text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</span>
       </span>
     </button>
@@ -809,6 +813,7 @@ function StatTile({ label, value, tone = 'slate', icon = 'bell', active = false,
 // ─────────────────────────────────────────────────────────────────────────────
 
 function SectionHeader({ accent, label, sub, count, unread }) {
+  const { t } = useI18n();
   return (
     <div className="flex items-center gap-2.5 px-1">
       <span className={`h-5 w-1.5 rounded-full ${accent}`} aria-hidden="true" />
@@ -816,7 +821,7 @@ function SectionHeader({ accent, label, sub, count, unread }) {
       <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold tabular-nums text-slate-500">{count}</span>
       {sub && <span className="hidden text-xs text-slate-400 sm:inline">· {sub}</span>}
       {unread > 0 && (
-        <span className="ms-auto rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-bold tabular-nums text-indigo-600">{unread} unread</span>
+        <span className="ms-auto rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-bold tabular-nums text-indigo-600">{t('{n} unread', { n: unread })}</span>
       )}
     </div>
   );
@@ -843,7 +848,11 @@ function PrioritySection({ severity, rows, children }) {
             </svg>
           </span>
           <div className="min-w-0">
-            <p className="text-sm font-bold">Critical · {rows.length} need{rows.length === 1 ? 's' : ''} immediate attention</p>
+            <p className="text-sm font-bold">
+              {rows.length === 1
+                ? t('Critical · 1 item needs immediate attention')
+                : t('Critical · {n} items need immediate attention', { n: rows.length })}
+            </p>
             <p className="text-xs text-red-50/90">{t('actionCenter.criticalLead')}</p>
           </div>
           {unread > 0 && <span className="ms-auto rounded-full bg-white/20 px-2.5 py-1 text-[11px] font-bold tabular-nums">{t('actionCenter.unreadCount', { n: unread })}</span>}
@@ -855,7 +864,7 @@ function PrioritySection({ severity, rows, children }) {
 
   return (
     <section className="space-y-3">
-      <SectionHeader accent={theme.accent} label={def.label} sub={def.sub} count={rows.length} unread={unread} />
+      <SectionHeader accent={theme.accent} label={t(def.label)} sub={t(def.sub)} count={rows.length} unread={unread} />
       {children}
     </section>
   );
@@ -867,6 +876,7 @@ function PrioritySection({ severity, rows, children }) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function VehicleGroup({ node, onAction, onMarkRead, onDismiss }) {
+  const { t } = useI18n();
   const worst = worstSeverity(node.items);
   const theme = severityTheme(worst);
   const heading = clusterLabel(node);
@@ -883,11 +893,15 @@ function VehicleGroup({ node, onAction, onMarkRead, onDismiss }) {
         </span>
         <div className="min-w-0">
           <p className={`truncate text-sm font-bold text-slate-800 ${isPlate ? 'font-mono' : ''}`}>{heading}</p>
-          <p className="text-[11px] font-medium text-slate-400">{node.items.length} related alerts on this {isPlate ? 'vehicle' : 'ticket'}</p>
+          <p className="text-[11px] font-medium text-slate-400">
+            {isPlate
+              ? t('{n} related alerts on this vehicle', { n: node.items.length })
+              : t('{n} related alerts on this ticket', { n: node.items.length })}
+          </p>
         </div>
         <div className="ms-auto flex shrink-0 items-center gap-2">
-          <Badge tone={SEVERITY_TONE[worst] || 'blue'} dot>{theme.label}</Badge>
-          {unread > 0 && <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-bold tabular-nums text-indigo-600">{unread} new</span>}
+          <Badge tone={SEVERITY_TONE[worst] || 'blue'} dot>{t(theme.label)}</Badge>
+          {unread > 0 && <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-bold tabular-nums text-indigo-600">{t('{n} new', { n: unread })}</span>}
         </div>
       </header>
       <div className="divide-y divide-slate-100">
@@ -905,9 +919,10 @@ function VehicleGroup({ node, onAction, onMarkRead, onDismiss }) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function LaneEmptyState({ tab, isAll }) {
-  const blurb = tab.blurb
-    ? `${tab.blurb.charAt(0).toUpperCase()}${tab.blurb.slice(1)}`
-    : 'Operational alerts for this lane';
+  const { t } = useI18n();
+  // Sentence-case only matters in English; on an Arabic string the transform is a no-op.
+  const laneBlurb = tab.blurb ? t(tab.blurb) : t('Operational alerts for this lane');
+  const blurb = `${laneBlurb.charAt(0).toUpperCase()}${laneBlurb.slice(1)}`;
   return (
     <Card>
       <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
@@ -916,18 +931,18 @@ function LaneEmptyState({ tab, isAll }) {
             <path d="M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" />
           </svg>
         </div>
-        <p className="text-sm font-bold text-slate-900">{isAll ? "You're all caught up" : tab.empty}</p>
+        <p className="text-sm font-bold text-slate-900">{isAll ? t("You're all caught up") : t(tab.empty)}</p>
         <p className="mt-1.5 max-w-md text-sm text-slate-500">
           {isAll
-            ? 'Nothing needs you right now. New fleet alerts land here automatically the moment conditions change.'
-            : `Nothing needs you in this lane right now.`}
+            ? t('Nothing needs you right now. New fleet alerts land here automatically the moment conditions change.')
+            : t('Nothing needs you in this lane right now.')}
         </p>
         {!isAll && (
           <div className="mt-4 flex items-start gap-2 rounded-xl bg-slate-50 px-3.5 py-2.5 text-start ring-1 ring-inset ring-slate-200/60">
             <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-white text-slate-400 ring-1 ring-inset ring-slate-200">
               <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={iconPath(tab.icon || 'bell')} /></svg>
             </span>
-            <span className="text-xs text-slate-500"><span className="font-semibold text-slate-600">What lands here:</span> {blurb}.</span>
+            <span className="text-xs text-slate-500"><span className="font-semibold text-slate-600">{t('What lands here:')}</span> {blurb}.</span>
           </div>
         )}
       </div>

@@ -1,4 +1,5 @@
 import { Input, Select } from '../../components/ui/Field';
+import { useI18n } from '../../i18n/I18nContext';
 
 export const DRIVER_STATUSES = ['active', 'suspended'];
 
@@ -12,22 +13,25 @@ function Section({ title, children }) {
 }
 
 export default function DriverForm({ values, onChange, errors = {} }) {
+  const { t } = useI18n();
   const set = (field) => (e) => onChange(field, e.target.value);
   const err = (f) => (errors[f] ? errors[f][0] : '');
+  // The stored value stays the API enum; only the word the user reads is translated.
+  const statusLabel = (s) => (s === 'active' ? t('Active') : t('Suspended'));
 
   return (
     <div className="space-y-6">
-      <Section title="Identity">
-        <Input label="Full Name" required value={values.name || ''} onChange={set('name')} error={err('name')} placeholder="Ahmed Khan" />
-        <Input label="Phone" value={values.phone || ''} onChange={set('phone')} error={err('phone')} placeholder="05x xxx xxxx" />
+      <Section title={t('Identity')}>
+        <Input label={t('Full Name')} required value={values.name || ''} onChange={set('name')} error={err('name')} placeholder={t('Ahmed Khan')} />
+        <Input label={t('Phone')} value={values.phone || ''} onChange={set('phone')} error={err('phone')} placeholder={t('05x xxx xxxx')} />
       </Section>
 
-      <Section title="Licence & Status">
-        <Input label="Licence No." value={values.license_no || ''} onChange={set('license_no')} error={err('license_no')} />
-        <Input label="Licence Expiry" type="date" value={values.license_expiry || ''} onChange={set('license_expiry')} error={err('license_expiry')} />
-        <Select label="Status" value={values.status || 'active'} onChange={set('status')} error={err('status')}>
+      <Section title={t('Licence & Status')}>
+        <Input label={t('Licence No.')} value={values.license_no || ''} onChange={set('license_no')} error={err('license_no')} />
+        <Input label={t('Licence Expiry')} type="date" value={values.license_expiry || ''} onChange={set('license_expiry')} error={err('license_expiry')} />
+        <Select label={t('Status')} value={values.status || 'active'} onChange={set('status')} error={err('status')}>
           {DRIVER_STATUSES.map((s) => (
-            <option key={s} value={s}>{s}</option>
+            <option key={s} value={s}>{statusLabel(s)}</option>
           ))}
         </Select>
       </Section>

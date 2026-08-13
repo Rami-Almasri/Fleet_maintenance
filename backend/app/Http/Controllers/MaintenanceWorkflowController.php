@@ -100,7 +100,12 @@ class MaintenanceWorkflowController extends Controller
         'tasks.assignments.vendor:id,name', 'tasks.currentVendor:id,name', 'tasks.lastFailedVendor:id,name', 'tasks.media', 'tasks.markedIncorrectBy:id,name',
         // Event Type layer — the catalog row each fault/service/inspection was typed from, so the resource
         // can ship `catalog` (and resolve a service's reminder type) without an N+1 per task.
-        'tasks.faultCatalog:id,slug,name', 'tasks.serviceCatalog:id,slug,name,service_reminder_type', 'tasks.inspectionType:id,slug,name',
+        // `category_key` + `location_mode` ride along because the resource answers "does this fault type
+        // take a place, and is it required?" per task; resolving that lazily would N+1 the drawer.
+        'tasks.faultCatalog:id,slug,name,category_key,location_mode', 'tasks.serviceCatalog:id,slug,name,service_reminder_type', 'tasks.inspectionType:id,slug,name',
+        'tasks.damageCatalog:id,slug,name,category_key,location_mode',
+        // WHERE each fault is — the per-fault places, with the vocabulary row each points at.
+        'tasks.locations.location:id,slug,name,name_ar,group_key,precision,inspection_zone',
         // Per-fault parts (Parts Purchase workflow) — drawer/command only, so opening a fault lists its parts.
         // `partRequests` (ticket-level) additionally catches requests raised with no fault attached.
         'tasks.partRequests', 'partRequests',
@@ -148,7 +153,11 @@ class MaintenanceWorkflowController extends Controller
         'tasks.currentVendor:id,name', 'tasks.lastFailedVendor:id,name',
         // Event Type layer — the card renders a type pill and filters by kind, so the catalog each task
         // was typed from is loaded once for the whole board rather than per card.
-        'tasks.faultCatalog:id,slug,name', 'tasks.serviceCatalog:id,slug,name,service_reminder_type', 'tasks.inspectionType:id,slug,name',
+        'tasks.faultCatalog:id,slug,name,category_key,location_mode', 'tasks.serviceCatalog:id,slug,name,service_reminder_type', 'tasks.inspectionType:id,slug,name',
+        'tasks.damageCatalog:id,slug,name,category_key,location_mode',
+        // WHERE each fault is — loaded once for the whole board so a card can print "2 scratches —
+        // rims and body" without a query per fault.
+        'tasks.locations.location:id,slug,name,name_ar,group_key,precision,inspection_zone',
         // Part requests per fault — so the board (and the Car Status stage board) can show whether a car
         // is still waiting on a part, without a second round-trip to the Parts board.
         // Operations Dashboard (Car Status) — the graph the State resolvers read (faults → part requests
@@ -239,6 +248,14 @@ class MaintenanceWorkflowController extends Controller
                 'fixes'  => \App\Services\Garage\RepairOutlook::fixesOf($k),
             ]);
 
+        // WHERE ON THE CAR — the shared location vocabulary, shipped WITH the findings catalog rather
+        // than behind its own request for the same reason keyword_risk is: the picker needs it the
+        // instant a chip is tapped, and the modal already makes this one call. `location_policy` tells
+        // the client which keywords take a place at all (required / optional / none), so a fault type
+        // with no location — a wiper fault, an overheating engine — never shows a picker nobody can
+        // answer. Both are derived from config + the catalogs; neither is hard-coded per fault type.
+        $locations = app(\App\Services\FaultLocationService::class);
+
         return ResponseHelper::SuccessResponse(
             [
                 'categories'        => array_values(config('maintenance_findings.categories', [])),
@@ -250,6 +267,11 @@ class MaintenanceWorkflowController extends Controller
                 'fault_causes'      => $faultCauses,
                 // Keyed by keyword string → { risk, label, tone, emoji, rank } (active library rows only)
                 'keyword_risk'      => $keywordRisk,
+                // Grouped "where on the car" vocabulary → [{ key, label, label_ar, locations[] }]
+                'locations'         => $locations->groupedCatalog(),
+                // Keyed by keyword string → 'required' | 'optional' | 'none'
+                'location_policy'   => $locations->policyByKeyword((array) config('maintenance_findings.categories', [])),
+                'max_quantity'      => (int) config('vehicle_locations.max_quantity', 40),
             ],
             'Findings catalog retrieved successfully',
             200
@@ -561,7 +583,20 @@ class MaintenanceWorkflowController extends Controller
             $open = Maintenance::openWorkflow()
                 ->where('workflow_status', '!=', Maintenance::WF_AWAITING_INVOICE)
                 ->whereHas('vehicle', fn ($q) => $q->whereIn('status', Vehicle::ACTIVE_STATUSES))
-                ->with(self::BOARD_EAGER)->withCount('media')->orderBy('id')->get();
+                // Newest FIRST inside every lane. The board is read top-down all day, so the card someone
+                // just moved here has to be the one you see without scrolling — the old ascending order
+                // buried today's work under months of older tickets in the busy lanes. This orders the
+                // cards WITHIN each column; the columns themselves still follow the lifecycle (COLUMNS).
+                //
+                // "Newest" means most recently ARRIVED IN THIS STAGE (last_state_change_at), not
+                // most recently created: a lane is a waiting room, and the question its reader is asking
+                // is "what just landed in front of me". An old ticket that has just been re-dispatched is
+                // new to the lane it now sits in, and sorting by id would hide it near the bottom. Falls
+                // back to id for legacy rows that pre-date the stamp (NULLs sort last, then newest id).
+                ->with(self::BOARD_EAGER)->withCount('media')
+                ->orderByRaw('last_state_change_at IS NULL, last_state_change_at DESC')
+                ->orderByDesc('id')
+                ->get();
 
             $columns = [];
             $counts  = [];
@@ -622,6 +657,11 @@ class MaintenanceWorkflowController extends Controller
      *                                      and waiting on the inspector's sign-off — drivers see them
      *                                      to know the car is in, but cannot close/reopen).
      *
+     * Ahead of all of them sits `assigned_to_me`, which every user gets (possibly empty): the legs this
+     * person was personally named to collect or bring back. It is scoped by NAME, not by permission —
+     * a supervisor can now be handed a leg himself, and he also holds maintenance.logistics, so without
+     * it his own job would be buried among every driver's work.
+     *
      * A user who holds several (a manager/admin) gets every section. Tickets are serialized exactly as
      * the board serializes them, so the frontend reuses the same card.
      */
@@ -635,9 +675,14 @@ class MaintenanceWorkflowController extends Controller
 
             // Active fleet only: cars that are Ready (OM status 2) or Rented (3) — keeps each role's
             // queue aligned with the board.
+            // Newest first, by arrival in the current stage — the same ordering the board uses, so a
+            // ticket doesn't sit near the top of one screen and the bottom of the other.
             $open    = Maintenance::openWorkflow()
                 ->whereHas('vehicle', fn ($q) => $q->whereIn('status', Vehicle::ACTIVE_STATUSES))
-                ->with(self::EAGER)->withCount('media')->orderBy('id')->get();
+                ->with(self::EAGER)->withCount('media')
+                ->orderByRaw('last_state_change_at IS NULL, last_state_change_at DESC')
+                ->orderByDesc('id')
+                ->get();
             $section = fn (array $states) => $open->whereIn('workflow_status', $states)->values();
 
             $sections = [];
@@ -647,6 +692,23 @@ class MaintenanceWorkflowController extends Controller
                 $sections[$key] = MaintenanceWorkflowResource::collection($rows);
                 $counts[$key]   = $rows->count();
             };
+
+            // MY LEGS — cars this person was personally named to collect or bring back, whoever they are.
+            // A supervisor can now be assigned a leg (see MaintenanceWorkflowService::delegate), and he
+            // holds maintenance.logistics too, so the driver sections below would drown his own job in
+            // every driver's work. This is his — and any driver's — "what did someone hand ME" list, so
+            // it goes first and is scoped by name, not by permission.
+            $mine = $open
+                ->where('assigned_driver_id', $user->id)
+                ->whereIn('workflow_status', [
+                    Maintenance::WF_AWAITING_DISPATCH,
+                    Maintenance::WF_IN_TRANSIT,
+                    Maintenance::WF_UNDER_REPAIR,
+                    Maintenance::WF_READY_FOR_PICKUP,
+                ])
+                ->values();
+            $sections['assigned_to_me'] = MaintenanceWorkflowResource::collection($mine);
+            $counts['assigned_to_me']   = $mine->count();
 
             if ($isInspector) {
                 // Customer complaints awaiting Abu Maroof's triage (talk / resolve on-site / send in).
@@ -1777,6 +1839,18 @@ class MaintenanceWorkflowController extends Controller
                 'causes.*.symptom'       => ['required_with:causes', 'string', 'max:255'],
                 'causes.*.root_cause'    => ['nullable', 'string', 'max:191'],
                 'causes.*.root_cause_id' => ['nullable', 'integer', Rule::exists('fault_causes', 'id')],
+                // WHERE + HOW MANY, per symptom. Same per-symptom side-channel shape as `causes`
+                // above. Optional throughout: a fault type whose policy says it has no place sends
+                // nothing, and so does every client built before this existed.
+                //
+                // `locations.*` is validated against the vocabulary table rather than an in-code list,
+                // so a place added to config/vehicle_locations.php + re-seeded is accepted with no
+                // change here — the point of making location a catalog rather than an enum.
+                'details'              => ['nullable', 'array'],
+                'details.*.symptom'    => ['required_with:details', 'string', 'max:255'],
+                'details.*.quantity'   => ['nullable', 'integer', 'min:1', 'max:' . (int) config('vehicle_locations.max_quantity', 40)],
+                'details.*.locations'  => ['nullable', 'array'],
+                'details.*.locations.*' => ['string', 'max:60', Rule::exists('vehicle_locations', 'slug')->where('is_active', true)],
                 'severity'             => ['nullable', 'string', 'max:30'],
                 // The inspector's mandatory fault-severity grade. Required when a ticket is opened
                 // (enforced in the service against requires_maintenance); validated for shape here.
@@ -2184,6 +2258,12 @@ class MaintenanceWorkflowController extends Controller
                 // its text), but if it IS sent it must be a real type and its catalog reference must
                 // match — the API refuses to accept a mixed pair rather than storing one and silently
                 // correcting the other. The model guard and DB CHECK are the two lines behind this.
+                // WHERE + HOW MANY. Carried on the finding itself (this payload is already one object
+                // per finding), unlike the Decide step's parallel `details` list. Same optionality.
+                'findings.*.quantity'     => ['nullable', 'integer', 'min:1', 'max:' . (int) config('vehicle_locations.max_quantity', 40)],
+                'findings.*.locations'    => ['nullable', 'array'],
+                'findings.*.locations.*'  => ['string', 'max:60', Rule::exists('vehicle_locations', 'slug')->where('is_active', true)],
+
                 'findings.*.kind'         => ['nullable', 'string', Rule::in(MaintenanceTask::KINDS)],
                 'findings.*.catalog_id'   => ['nullable', 'integer'],
                 'findings.*.catalog_slug' => ['nullable', 'string', 'max:80'],
@@ -2974,33 +3054,43 @@ class MaintenanceWorkflowController extends Controller
     // ── Supervisor Notification & Delegation ───────────────────────────────────
 
     /**
-     * The drivers a Supervisor can assign: ACTIVE users in the DRIVER role (`logistics`) — the field
-     * pool that actually collects cars. Deliberately NOT `permission('maintenance.logistics')`: that
-     * permission is also carried by supervisors, workshop managers and admins so they CAN move a car
-     * themselves, and listing them turned the picker into a staff directory where the real driver was
-     * one name in nine.
+     * Who a Supervisor can hand the collection to: ACTIVE users in the DRIVER role (`logistics`) — the
+     * field pool that actually collects cars — plus the SUPERVISORS, who really do fetch a car themselves
+     * when no driver is free. Still deliberately NOT `permission('maintenance.logistics')`: that permission
+     * also reaches workshop managers and admins, and listing them turned the picker into a staff directory
+     * where the real driver was one name in nine.
      *
-     * The requesting supervisor is excluded from their own list. Assigning the job to yourself is not
-     * a delegation — if they want to take the car they press "Pick up" on the ticket, which records
-     * them as the custodian directly instead of routing a notification back to themselves.
+     * Each row carries `role` ('driver' | 'supervisor') so the picker can group them and the supervisor
+     * knows he is booking a colleague off his own bench rather than a driver.
      *
-     * Feeds the Assign-driver picker. Returns a flat {id, name, email} list.
+     * The requesting user is excluded from their own list. Assigning the job to yourself is not a
+     * delegation — to take the car yourself you press "Pick up" on the ticket, which records you as the
+     * custodian directly instead of routing a notification back to yourself.
+     *
+     * Feeds the Assign-driver picker. Returns a flat {id, name, email, role} list, drivers first.
      */
     public function assignableDrivers(Request $request)
     {
         return $this->run(function () use ($request) {
             $hasStatus = \Illuminate\Support\Facades\Schema::hasColumn('users', 'status');
-            $drivers = \App\Models\User::role('logistics')
+            $people = \App\Models\User::role(['logistics', MaintenanceWorkflowService::SUPERVISOR_ROLE])
                 ->when($hasStatus, fn ($q) => $q->where('status', 'active'))
                 ->where('id', '!=', $request->user()->id)
                 ->orderBy('name')
                 ->get(['id', 'name', 'email']);
 
-            return ResponseHelper::SuccessResponse(
-                $drivers->map(fn ($u) => ['id' => $u->id, 'name' => $u->name, 'email' => $u->email])->all(),
-                'Assignable drivers retrieved',
-                200
-            );
+            $rows = $people->map(function ($u) {
+                // A user carrying both roles is shown as a driver — that's the pool the job belongs to.
+                $role = $u->hasRole('logistics') ? 'driver' : 'supervisor';
+
+                return ['id' => $u->id, 'name' => $u->name, 'email' => $u->email, 'role' => $role];
+            })
+                // Drivers first: they are the default answer, supervisors the fallback when none is free.
+                ->sortBy(fn ($r) => [$r['role'] === 'driver' ? 0 : 1, $r['name']])
+                ->values()
+                ->all();
+
+            return ResponseHelper::SuccessResponse($rows, 'Assignable drivers retrieved', 200);
         });
     }
 

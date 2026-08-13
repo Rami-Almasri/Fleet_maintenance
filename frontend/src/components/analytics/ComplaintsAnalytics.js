@@ -15,6 +15,7 @@ import RankedBar from '../ui/RankedBar';
 import GroupedBarChart from '../ui/GroupedBarChart';
 import { STAGE_ORDER, STAGE_META } from '../complaints/stages';
 import { num } from '../../lib/format';
+import { useI18n } from '../../i18n/I18nContext';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const WINDOW = 12;
@@ -23,14 +24,21 @@ const WINDOW = 12;
 const TONE = { slate: 'slate', amber: 'amber', blue: 'blue', violet: 'purple', emerald: 'emerald' };
 
 export default function ComplaintsAnalytics({ rows = [] }) {
+  const { t } = useI18n();
+
   const byStage = useMemo(() => {
     const totals = {};
     rows.forEach((r) => { totals[r.status] = (totals[r.status] || 0) + 1; });
     return STAGE_ORDER.map((key) => {
-      const meta = STAGE_META[key] || { label: key, tone: 'slate' };
-      return { key, label: meta.label, value: totals[key] || 0, color: TONE[meta.tone] || 'slate' };
+      const meta = STAGE_META[key];
+      return {
+        key,
+        label: meta ? t(meta.label) : key,
+        value: totals[key] || 0,
+        color: TONE[meta?.tone] || 'slate',
+      };
     });
-  }, [rows]);
+  }, [rows, t]);
 
   // Intake per month, split serious vs the rest. Both series are counts of
   // complaints, so they share one axis honestly.
@@ -41,7 +49,7 @@ export default function ComplaintsAnalytics({ rows = [] }) {
     for (let i = WINDOW - 1; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       index[`${d.getFullYear()}-${d.getMonth()}`] = buckets.length;
-      buckets.push({ label: MONTHS[d.getMonth()], serious: 0, other: 0 });
+      buckets.push({ label: t(MONTHS[d.getMonth()]), serious: 0, other: 0 });
     }
     rows.forEach((r) => {
       if (!r.created_at) return;
@@ -53,7 +61,7 @@ export default function ComplaintsAnalytics({ rows = [] }) {
       else buckets[b].other += 1;
     });
     return buckets;
-  }, [rows]);
+  }, [rows, t]);
 
   if (!rows.length) return null;
 
@@ -62,32 +70,32 @@ export default function ComplaintsAnalytics({ rows = [] }) {
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
       <SectionCard
-        title="Where complaints sit"
-        subtitle="Open cases per lifecycle stage"
+        title={t('Where complaints sit')}
+        subtitle={t('Open cases per lifecycle stage')}
         bodyClass="p-5"
       >
         <RankedBar
           items={byStage}
           format={(n) => num(Math.round(n))}
-          valueLabel="Complaints"
+          valueLabel={t('Complaints')}
           labelWidth={116}
           valueWidth={44}
-          empty="No complaints in this filter."
+          empty={t('No complaints in this filter.')}
         />
       </SectionCard>
 
       <SectionCard
         className="lg:col-span-2"
-        title="Complaints over time"
-        subtitle="Intake per month, last 12 months — serious cases called out separately"
+        title={t('Complaints over time')}
+        subtitle={t('Intake per month, last 12 months — serious cases called out separately')}
         bodyClass="px-3 pb-3 pt-2"
       >
         {hasTrend ? (
           <GroupedBarChart
             data={trend}
             series={[
-              { key: 'serious', label: 'Critical / high', color: 'red' },
-              { key: 'other', label: 'Moderate / routine', color: 'blue' },
+              { key: 'serious', label: t('Critical / high'), color: 'red' },
+              { key: 'other', label: t('Moderate / routine'), color: 'blue' },
             ]}
             height={240}
             integer
@@ -95,7 +103,7 @@ export default function ComplaintsAnalytics({ rows = [] }) {
           />
         ) : (
           <div className="flex h-[240px] items-center justify-center text-sm text-slate-400">
-            No complaints raised in the last 12 months.
+            {t('No complaints raised in the last 12 months.')}
           </div>
         )}
       </SectionCard>

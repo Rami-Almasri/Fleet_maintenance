@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import api from '../api/client';
 import useFetch from '../hooks/useFetch';
+import { useI18n } from '../i18n/I18nContext';
 import { PageHeader, SearchInput } from '../components/ui/Misc';
 import MetricCard, { MetricGrid } from '../components/ui/MetricCard';
 import { MetricGridSkeleton } from '../components/ui/Skeleton';
@@ -20,11 +21,12 @@ const PERIODS = [
 ];
 
 // Short absolute date "05 Jul" / "05 Jul 2026" from an ISO string, for the history list.
-const shortDate = (iso) => {
+// The caller passes the locale so Arabic still renders a Gregorian date in Latin digits.
+const shortDate = (iso, locale) => {
   if (!iso) return '—';
   const d = new Date(iso);
   if (isNaN(d)) return '—';
-  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  return d.toLocaleDateString(locale || 'en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 };
 
 // This board is maintenance-only — every car currently inside the workshop workflow, nothing else.
@@ -47,7 +49,8 @@ const inGroup = (row, key) => {
   return !g || !g.stages ? true : g.stages.includes(row.stage);
 };
 
-const days = (v) => (v == null ? '—' : v === 0 ? 'Today' : `${num(v)}d`);
+// Words come out of here, so the translator is threaded in from the component.
+const days = (v, t) => (v == null ? '—' : v === 0 ? t('Today') : t('{n}d', { n: num(v) }));
 
 // A calm per-status left accent (rounded pill) instead of washing the whole row in one colour.
 const TONE_BAR = {
@@ -61,6 +64,8 @@ const TONE_BAR = {
 };
 
 export default function VehicleStatusDashboard() {
+  const { t, lang } = useI18n();
+  const dateLocale = lang === 'ar' ? 'ar-AE-u-ca-gregory-nu-latn' : 'en-GB';
   // Reporting window + the car whose history drawer is open.
   const [period, setPeriod] = useState('live');
   const [selected, setSelected] = useState(null); // { id, title, subtitle } for the timeline drawer
@@ -123,7 +128,7 @@ export default function VehicleStatusDashboard() {
   const columns = [
     {
       key: 'title',
-      header: 'Car',
+      header: t('Car'),
       render: (r) => (
         <div className="flex min-w-0 items-center gap-3">
           <span className={`h-9 w-1.5 shrink-0 rounded-full ${TONE_BAR[r.status_tone] || TONE_BAR.gray}`} />
@@ -136,34 +141,34 @@ export default function VehicleStatusDashboard() {
     },
     {
       key: 'status',
-      header: 'Stage',
+      header: t('Stage'),
       render: (r) => <Badge tone={r.status_tone}>{r.status}</Badge>,
     },
     {
       key: 'owner',
-      header: 'With',
-      tooltip: 'Who holds the car right now — the person or role responsible at this stage.',
+      header: t('With'),
+      tooltip: t('Who holds the car right now — the person or role responsible at this stage.'),
       cellClass: 'text-slate-700',
       render: (r) => r.owner || '—',
     },
     {
       key: 'next_action',
-      header: 'Next Action',
-      tooltip: 'The next step to move this car forward — click the row to go do it.',
+      header: t('Next Action'),
+      tooltip: t('The next step to move this car forward — click the row to go do it.'),
       cellClass: 'font-medium text-slate-800',
       render: (r) => r.next_action || '—',
     },
     {
       key: 'days_in_status',
-      header: 'Waiting',
+      header: t('Waiting'),
       align: 'right',
-      tooltip: `How long the car has sat in its current stage. ${SLA_DAYS}+ days is flagged as overdue.`,
+      tooltip: t('How long the car has sat in its current stage. {n}+ days is flagged as overdue.', { n: SLA_DAYS }),
       render: (r) => {
         const overdue = (r.days_in_status ?? 0) >= SLA_DAYS;
         return (
           <span className="inline-flex items-center justify-end gap-1.5 tabular-nums">
-            {overdue && <span className="h-1.5 w-1.5 rounded-full bg-red-500" title="Overdue" />}
-            <span className={overdue ? 'font-semibold text-red-600' : 'text-slate-600'}>{days(r.days_in_status)}</span>
+            {overdue && <span className="h-1.5 w-1.5 rounded-full bg-red-500" title={t('Overdue')} />}
+            <span className={overdue ? 'font-semibold text-red-600' : 'text-slate-600'}>{days(r.days_in_status, t)}</span>
           </span>
         );
       },
@@ -174,7 +179,7 @@ export default function VehicleStatusDashboard() {
   const historyColumns = [
     {
       key: 'car',
-      header: 'Car',
+      header: t('Car'),
       render: (j) => (
         <div className="min-w-0">
           <p className="font-semibold text-slate-900">{j.vehicle?.title || '—'}</p>
@@ -184,32 +189,32 @@ export default function VehicleStatusDashboard() {
     },
     {
       key: 'outcome',
-      header: 'Outcome',
+      header: t('Outcome'),
       render: (j) => <Badge tone={j.open ? 'amber' : 'green'}>{j.outcome}</Badge>,
     },
     {
       key: 'when',
-      header: 'When',
+      header: t('When'),
       cellClass: 'text-slate-600 whitespace-nowrap',
-      render: (j) => `${shortDate(j.opened_at)}${j.closed_at ? ` → ${shortDate(j.closed_at)}` : ''}`,
+      render: (j) => `${shortDate(j.opened_at, dateLocale)}${j.closed_at ? ` → ${shortDate(j.closed_at, dateLocale)}` : ''}`,
     },
     {
       key: 'total',
-      header: 'Total time',
+      header: t('Total time'),
       align: 'right',
       cellClass: 'tabular-nums text-slate-700',
       render: (j) => fmtSeconds(j.total_seconds),
     },
     {
       key: 'stages',
-      header: 'Stages',
+      header: t('Stages'),
       align: 'right',
       cellClass: 'tabular-nums text-slate-500',
       render: (j) => num(j.stage_count),
     },
     {
       key: 'last',
-      header: 'Last handled by',
+      header: t('Last handled by'),
       cellClass: 'text-slate-600',
       render: (j) => j.last_responsible || '—',
     },
@@ -219,8 +224,8 @@ export default function VehicleStatusDashboard() {
     <div className="py-8">
       <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
         <PageHeader
-          title="Maintenance Status Board"
-          subtitle="Every car currently in the workshop — where it is, who holds it, what's next, and how long it's been waiting. Pick a period to review past journeys, or click any car for its full stage-by-stage history."
+          title={t('Maintenance Status Board')}
+          subtitle={t("Every car currently in the workshop — where it is, who holds it, what's next, and how long it's been waiting. Pick a period to review past journeys, or click any car for its full stage-by-stage history.")}
         />
 
         {/* Reporting window — the live all-day board, or a look-back over past journeys. */}
@@ -233,18 +238,18 @@ export default function VehicleStatusDashboard() {
                 period === p.key ? 'bg-slate-900 text-white shadow-sm' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
               }`}
             >
-              {p.label}
+              {t(p.label)}
             </button>
           ))}
         </div>
 
         {period !== 'live' ? (
           <SectionCard
-            title="Maintenance history"
+            title={t('Maintenance history')}
             subtitle={
               histLoading && !hist
-                ? 'Loading…'
-                : `${journeys.length} journey${journeys.length === 1 ? '' : 's'} · ${hist?.counts?.open || 0} still open · ${hist?.counts?.closed || 0} completed`
+                ? t('Loading…')
+                : `${journeys.length === 1 ? t('1 journey') : t('{n} journeys', { n: journeys.length })} · ${t('{n} still open', { n: hist?.counts?.open || 0 })} · ${t('{n} completed', { n: hist?.counts?.closed || 0 })}`
             }
           >
             {histError && !hist ? (
@@ -256,7 +261,7 @@ export default function VehicleStatusDashboard() {
                 rowKey={(j) => j.ticket_id || `${j.vehicle?.id}-${j.opened_at}`}
                 loading={histLoading && !hist}
                 onRowClick={(j) => j.vehicle && setSelected({ id: j.vehicle.id, title: j.vehicle.title, subtitle: j.vehicle.plate_no })}
-                empty="No maintenance happened in this period."
+                empty={t('No maintenance happened in this period.')}
                 stickyHeader
               />
             )}
@@ -269,53 +274,53 @@ export default function VehicleStatusDashboard() {
         ) : (
           <MetricGrid cols={5}>
             <MetricCard
-              label="In Maintenance"
+              label={t('In Maintenance')}
               value={num(kpi.total)}
               icon={<Icon.Wrench className="h-5 w-5" />}
               tone="amber"
               onClick={() => setFilter('all')}
-              hint="Cars in the workshop workflow"
+              hint={t('Cars in the workshop workflow')}
             />
             <MetricCard
-              label="Needs Action"
+              label={t('Needs Action')}
               value={num(kpi.action)}
               icon={<Icon.Alert className="h-5 w-5" />}
               tone="red"
               onClick={() => setFilter('action')}
-              hint="Waiting on the team"
+              hint={t('Waiting on the team')}
             />
             <MetricCard
-              label="In Garage"
+              label={t('In Garage')}
               value={num(kpi.garage)}
               icon={<Icon.Wrench className="h-5 w-5" />}
               tone="violet"
               onClick={() => setFilter('garage')}
-              hint="Under repair now"
+              hint={t('Under repair now')}
             />
             <MetricCard
-              label="Ready to Sign-off"
+              label={t('Ready to Sign-off')}
               value={num(kpi.signoff)}
               icon={<Icon.Check className="h-5 w-5" />}
               tone="green"
               onClick={() => setFilter('signoff')}
-              hint="Re-inspection"
+              hint={t('Re-inspection')}
             />
             <MetricCard
-              label="Longest Waiting"
-              value={kpi.longest ? days(kpi.longest.days_in_status) : '—'}
+              label={t('Longest Waiting')}
+              value={kpi.longest ? days(kpi.longest.days_in_status, t) : '—'}
               icon={<Icon.Clock className="h-5 w-5" />}
               tone={kpi.longest && kpi.longest.days_in_status >= SLA_DAYS ? 'red' : 'slate'}
-              hint={kpi.longest ? kpi.longest.title : 'Nothing waiting'}
+              hint={kpi.longest ? kpi.longest.title : t('Nothing waiting')}
             />
           </MetricGrid>
         )}
 
         <SectionCard
-          title="Workshop follow-up"
+          title={t('Workshop follow-up')}
           subtitle={
             kpi.overdue > 0
-              ? `${visible.length} of ${maint.length} cars · ${kpi.overdue} overdue`
-              : `${visible.length} of ${maint.length} cars`
+              ? t('{shown} of {total} cars · {overdue} overdue', { shown: visible.length, total: maint.length, overdue: kpi.overdue })
+              : t('{shown} of {total} cars', { shown: visible.length, total: maint.length })
           }
           actions={
             <div className="flex flex-wrap items-center gap-2">
@@ -330,11 +335,11 @@ export default function VehicleStatusDashboard() {
                         : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
                     }`}
                   >
-                    {f.label}
+                    {t(f.label)}
                   </button>
                 ))}
               </div>
-              <SearchInput value={q} onChange={setQ} placeholder="Plate or model…" className="w-44" />
+              <SearchInput value={q} onChange={setQ} placeholder={t('Plate or model…')} className="w-44" />
             </div>
           }
         >
@@ -347,7 +352,7 @@ export default function VehicleStatusDashboard() {
               rowKey={(r) => r.id}
               loading={loading && !data}
               onRowClick={(r) => setSelected({ id: r.id, title: r.title, subtitle: r.subtitle })}
-              empty="No cars in maintenance right now."
+              empty={t('No cars in maintenance right now.')}
               stickyHeader
             />
           )}

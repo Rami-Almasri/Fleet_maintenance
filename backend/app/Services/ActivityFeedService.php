@@ -93,6 +93,8 @@ class ActivityFeedService
         VehicleLogEvent::EVENT_COST_RECORDED        => 'Cost recorded',
         VehicleLogEvent::EVENT_INVOICE_REQUESTED    => 'Invoice requested',
         VehicleLogEvent::EVENT_TRANSPORT_ASSIGNED   => 'Transport method assigned',
+        VehicleLogEvent::EVENT_CONTRACT_OPENED      => 'Maintenance contract opened',
+        VehicleLogEvent::EVENT_CONTRACT_CLOSED      => 'Maintenance contract closed',
         VehicleLogEvent::EVENT_AWAITING_INVOICE     => 'Awaiting invoice',
         VehicleLogEvent::EVENT_INVOICE_RECEIVED     => 'Invoice received',
         VehicleLogEvent::EVENT_GARAGE_INVOICE_SUBMITTED => 'Garage invoice submitted',

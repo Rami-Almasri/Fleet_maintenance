@@ -9,10 +9,12 @@
 // (Sora) + tagline (Inter) appear when expanded or in the mobile drawer.
 
 import { useState } from 'react';
+import { useI18n } from '../i18n/I18nContext';
 
 const LOGO_SRC = '/brand-logo.webp';
 
 export default function Brand({ collapsed = false, markOnly = false }) {
+  const { t } = useI18n();
   const [imgOk, setImgOk] = useState(true);
 
   return (
@@ -38,7 +40,7 @@ export default function Brand({ collapsed = false, markOnly = false }) {
       {!markOnly && (
       <div className={`min-w-0 leading-tight ${collapsed ? 'lg:hidden' : ''}`}>
         <p className="truncate font-display text-[16px] font-bold tracking-tight text-white">Faster</p>
-        <p className="truncate text-[10px] font-semibold uppercase tracking-[0.16em] text-accent-400/90">Fleet Maintenance</p>
+        <p className="truncate text-[10px] font-semibold uppercase tracking-[0.16em] text-accent-400/90">{t('Fleet Maintenance')}</p>
       </div>
       )}
     </div>

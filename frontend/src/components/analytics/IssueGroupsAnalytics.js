@@ -17,6 +17,7 @@ import { SectionCard } from '../ui/Table';
 import RankedBar from '../ui/RankedBar';
 import CompositionDonut from '../ui/CompositionDonut';
 import { num } from '../../lib/format';
+import { useI18n } from '../../i18n/I18nContext';
 
 const SEV_COLOR = { critical: 'red', warning: 'amber', info: 'blue' };
 
@@ -30,11 +31,12 @@ export default function IssueGroupsAnalytics({
   centerLabel = 'Open issues',
   criticalNote,
 }) {
+  const { t } = useI18n();
   const open = useMemo(() => groups.filter((g) => (g.count || 0) > 0), [groups]);
 
   const labelFor = useMemo(
-    () => ({ critical: criticalLabel, warning: warningLabel, info: infoLabel }),
-    [criticalLabel, warningLabel, infoLabel],
+    () => ({ critical: t(criticalLabel), warning: t(warningLabel), info: t(infoLabel) }),
+    [t, criticalLabel, warningLabel, infoLabel],
   );
 
   const board = useMemo(
@@ -58,58 +60,60 @@ export default function IssueGroupsAnalytics({
     open.forEach((g) => { totals[g.severity] = (totals[g.severity] || 0) + (g.count || 0); });
     return ['critical', 'warning', 'info']
       .filter((k) => totals[k] > 0)
-      .map((k) => ({ label: labelFor[k], value: totals[k], color: SEV_COLOR[k] }));
+      .map((k) => ({ key: k, label: labelFor[k], value: totals[k], color: SEV_COLOR[k] }));
   }, [open, labelFor]);
 
   const total = mix.reduce((a, s) => a + s.value, 0);
   if (!total || !board.length) return null;
 
-  const critical = mix.find((s) => s.label === criticalLabel)?.value || 0;
+  const critical = mix.find((s) => s.key === 'critical')?.value || 0;
   const share = Math.round((critical / total) * 100);
 
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
       <SectionCard
         className="lg:col-span-2"
-        title={rankTitle}
-        subtitle={rankSubtitle}
+        title={t(rankTitle)}
+        subtitle={t(rankSubtitle)}
         bodyClass="p-5"
       >
         <RankedBar
           items={board}
           showRank
           format={(n) => num(Math.round(n))}
-          valueLabel="Records"
+          valueLabel={t('Records')}
           labelWidth={190}
           valueWidth={56}
           tooltip={(r) => r.description || r.sub}
-          empty="Nothing to clean up."
+          empty={t('Nothing to clean up.')}
         />
       </SectionCard>
 
       <SectionCard
-        title="Severity mix"
-        subtitle="How much of the backlog really matters"
+        title={t('Severity mix')}
+        subtitle={t('How much of the backlog really matters')}
         bodyClass="p-5"
       >
         <CompositionDonut
           segments={mix}
           total={total}
-          centerLabel={centerLabel}
+          centerLabel={t(centerLabel)}
           format={(n) => num(Math.round(n))}
           size={150}
           stroke={20}
         />
         <p className="mt-4 border-t border-slate-100 pt-3 text-xs leading-relaxed text-slate-500">
-          {critical > 0 ? (
-            <>
-              <span className="font-semibold text-red-600">{share}%</span> of what's open is{' '}
-              {criticalLabel.toLowerCase()} — {num(critical)} record{critical === 1 ? '' : 's'}{' '}
-              {criticalNote || 'that break something downstream'}.
-            </>
-          ) : (
-            <>Nothing urgent is open — what's left is detail rather than damage.</>
-          )}
+          {critical > 0
+            ? (critical === 1
+              ? t('{share}% of what is open is {label} — {n} record {note}.', {
+                share, label: t(criticalLabel).toLowerCase(), n: num(critical),
+                note: t(criticalNote || 'that break something downstream'),
+              })
+              : t('{share}% of what is open is {label} — {n} records {note}.', {
+                share, label: t(criticalLabel).toLowerCase(), n: num(critical),
+                note: t(criticalNote || 'that break something downstream'),
+              }))
+            : t('Nothing urgent is open — what is left is detail rather than damage.')}
         </p>
       </SectionCard>
     </div>

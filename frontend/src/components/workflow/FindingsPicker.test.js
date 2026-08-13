@@ -12,13 +12,21 @@ jest.mock('../../api/client', () => ({ post: jest.fn() }));
 jest.mock('../../i18n/I18nContext', () => {
   const { LABELS } = jest.requireActual('../../i18n/labels');
   const walk = (p) => p.split('.').reduce((n, k) => (n == null ? undefined : n[k]), LABELS.en);
+  const fill = (s, v) => (v ? s.replace(/\{(\w+)\}/g, (m, key) => (v[key] != null ? String(v[key]) : m)) : s);
   return {
     useI18n: () => ({
       lang: 'en',
       t: (k, v) => {
         const hit = walk(k);
         if (typeof hit !== 'string') return k;
-        return v ? hit.replace(/\{(\w+)\}/g, (m, key) => (v[key] != null ? String(v[key]) : m)) : hit;
+        return fill(hit, v);
+      },
+      // Same contract as the real resolver: fall back to the caller's English
+      // rather than to the raw key. Without this the component throws, because
+      // the stub only had `t`.
+      tf: (k, fallback, v) => {
+        const hit = walk(k);
+        return fill(typeof hit === 'string' ? hit : fallback, v);
       },
     }),
   };

@@ -10,10 +10,14 @@ import CustomerReconciliation from '../../components/CustomerReconciliation';
 import { useCountUp } from '../../components/ui/Gauge';
 import { aed2, fmtDate, num } from '../../lib/format';
 import { SHOW_FINANCIALS } from '../../config/features';
+import { useI18n } from '../../i18n/I18nContext';
 
 function CountUp({ value, format }) {
+  const { lang } = useI18n();
   const v = useCountUp(Number(value) || 0);
-  return <>{format ? format(v) : Math.round(v).toLocaleString()}</>;
+  // Latin digits under Arabic too — these sit in tabular-nums KPI tiles.
+  const locale = lang === 'ar' ? 'ar-AE-u-nu-latn' : undefined;
+  return <>{format ? format(v) : Math.round(v).toLocaleString(locale)}</>;
 }
 
 const STAT_TONE = {
@@ -25,13 +29,13 @@ const STAT_TONE = {
 };
 
 function Stat({ label, value, icon, tone = 'gray', format, highlight }) {
-  const t = STAT_TONE[tone] || STAT_TONE.gray;
+  const styles = STAT_TONE[tone] || STAT_TONE.gray;
   return (
     <div className="opx-kpi">
       <div className="flex items-center justify-between gap-2">
         <p className="lbl" style={{ marginBottom: 0 }}>{label}</p>
         {icon && (
-          <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${t.bg}`}>
+          <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${styles.bg}`}>
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={icon} /></svg>
           </span>
         )}
@@ -55,6 +59,7 @@ function Field({ label, value }) {
 const balTone = (b) => (Number(b) > 0 ? 'red' : Number(b) < 0 ? 'green' : 'gray');
 
 export default function CustomerProfile() {
+  const { t } = useI18n();
   const { id } = useParams();
   const fetcher = useCallback(async () => {
     const { data } = await api.get(`/Customer/${id}/profile`);
@@ -67,8 +72,10 @@ export default function CustomerProfile() {
   if (error || !data) {
     return (
       <div className="mx-auto max-w-3xl px-4 py-12">
-        <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error || 'Not found'}</div>
-        <Link to="/customers" className="mt-4 inline-block text-sm font-medium text-indigo-600">← Back to customers</Link>
+        <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error || t('Not found')}</div>
+        <Link to="/customers" className="mt-4 inline-block text-sm font-medium text-indigo-600">
+          <span aria-hidden className="inline-block rtl:-scale-x-100">←</span> {t('Back to customers')}
+        </Link>
       </div>
     );
   }
@@ -91,8 +98,8 @@ export default function CustomerProfile() {
       <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
         {/* Back */}
         <Link to="/customers" className="inline-flex items-center gap-1 text-sm font-medium text-slate-500 transition hover:text-slate-700">
-          <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 19l-7-7 7-7" /></svg>
-          Customers
+          <svg aria-hidden="true" className="h-4 w-4 rtl:-scale-x-100" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 19l-7-7 7-7" /></svg>
+          {t('Customers')}
         </Link>
 
         {/* Hero */}
@@ -103,7 +110,7 @@ export default function CustomerProfile() {
                 {initials}
               </div>
               <div className="min-w-0">
-                <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">{c.name_en || 'Customer'}</h1>
+                <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">{c.name_en || t('Customer')}</h1>
                 <p className="mt-1 text-xs font-medium text-white/50">#{c.customer_no || c.id}{c.nationality ? ` · ${c.nationality}` : ''}</p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {c.mobile1 && (
@@ -125,17 +132,17 @@ export default function CustomerProfile() {
             {/* Balance highlight */}
             {SHOW_FINANCIALS && (
               <div className="w-full shrink-0 rounded-2xl bg-white/5 p-4 ring-1 ring-inset ring-white/10 backdrop-blur lg:w-72">
-                <p className="text-xs font-medium text-white/55">{balance > 0 ? 'Outstanding (owes)' : balance < 0 ? 'Credit (overpaid)' : 'Balance'}</p>
+                <p className="text-xs font-medium text-white/55">{balance > 0 ? t('Outstanding (owes)') : balance < 0 ? t('Credit (overpaid)') : t('Balance')}</p>
                 <p className={`mt-1 text-3xl font-bold tracking-tight ${balance > 0 ? 'text-red-300' : balance < 0 ? 'text-emerald-300' : 'text-white'}`}>
                   {aed2(Math.abs(balance))}
                 </p>
                 <div className="mt-3 flex gap-4 border-t border-white/10 pt-3 text-xs">
                   <div>
-                    <p className="text-white/45">Wallet</p>
+                    <p className="text-white/45">{t('Wallet')}</p>
                     <p className="font-semibold text-white">{aed2(wallet)}</p>
                   </div>
                   <div>
-                    <p className="text-white/45">Deposit held</p>
+                    <p className="text-white/45">{t('Deposit held')}</p>
                     <p className="font-semibold text-white">{aed2(c.deposit)}</p>
                   </div>
                 </div>
@@ -148,37 +155,37 @@ export default function CustomerProfile() {
         <div className={`grid grid-cols-2 gap-4 ${SHOW_FINANCIALS ? 'sm:grid-cols-3 lg:grid-cols-5' : 'sm:grid-cols-2'}`}>
           {SHOW_FINANCIALS && (
             <>
-              <Stat label={balance > 0 ? 'Outstanding' : balance < 0 ? 'Credit' : 'Balance'} value={Math.abs(balance)} format={aed2} tone={balance > 0 ? 'red' : 'emerald'} highlight={balance !== 0}
+              <Stat label={balance > 0 ? t('Outstanding') : balance < 0 ? t('Credit') : t('Balance')} value={Math.abs(balance)} format={aed2} tone={balance > 0 ? 'red' : 'emerald'} highlight={balance !== 0}
                 icon="M12 8c-1.7 0-3 .9-3 2s1.3 2 3 2 3 .9 3 2-1.3 2-3 2m0-8V6m0 12v-2m9-4a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" />
-              <Stat label="Available Wallet" value={wallet} format={aed2} tone="emerald" highlight={wallet > 0}
+              <Stat label={t('Available Wallet')} value={wallet} format={aed2} tone="emerald" highlight={wallet > 0}
                 icon="M3 7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7zm13 5h5M16 12a1.5 1.5 0 0 0 0 3h5v-3h-5z" />
-              <Stat label="Deposit Held" value={c.deposit} format={aed2} tone="indigo"
+              <Stat label={t('Deposit Held')} value={c.deposit} format={aed2} tone="indigo"
                 icon="M3 10l9-6 9 6M5 10v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-9M9 20v-6h6v6" />
             </>
           )}
-          <Stat label="Total Contracts" value={stats.contracts_count} tone="indigo"
+          <Stat label={t('Total Contracts')} value={stats.contracts_count} tone="indigo"
             icon="M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z" />
-          <Stat label="Open Now" value={stats.open_count} tone="emerald" highlight={stats.open_count > 0}
+          <Stat label={t('Open Now')} value={stats.open_count} tone="emerald" highlight={stats.open_count > 0}
             icon="M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" />
         </div>
 
         {/* Contact + Documents */}
         <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-          <CommandPanel title="Contact" dotColor="#22d3ee">
-            <Field label="Mobile" value={c.mobile1} />
-            <Field label="Mobile 2" value={c.mobile2} />
-            <Field label="WhatsApp" value={c.whatsapp} />
-            <Field label="Email" value={c.email} />
-            <Field label="City" value={c.city} />
-            <Field label="Address" value={c.address} />
+          <CommandPanel title={t('Contact')} dotColor="#22d3ee">
+            <Field label={t('Mobile')} value={c.mobile1} />
+            <Field label={t('Mobile 2')} value={c.mobile2} />
+            <Field label={t('WhatsApp')} value={c.whatsapp} />
+            <Field label={t('Email')} value={c.email} />
+            <Field label={t('City')} value={c.city} />
+            <Field label={t('Address')} value={c.address} />
           </CommandPanel>
-          <CommandPanel title="Documents" dotColor="#8b7bfb">
-            <Field label="Passport" value={c.passport_no} />
-            <Field label="Passport Expiry" value={fmtDate(c.passport_expiry)} />
-            <Field label="License" value={c.license_no} />
-            <Field label="License Expiry" value={fmtDate(c.license_expiry)} />
-            <Field label="Emirates ID" value={c.id_no} />
-            <Field label="ID Expiry" value={fmtDate(c.id_expiry)} />
+          <CommandPanel title={t('Documents')} dotColor="#8b7bfb">
+            <Field label={t('Passport')} value={c.passport_no} />
+            <Field label={t('Passport Expiry')} value={fmtDate(c.passport_expiry)} />
+            <Field label={t('License')} value={c.license_no} />
+            <Field label={t('License Expiry')} value={fmtDate(c.license_expiry)} />
+            <Field label={t('Emirates ID')} value={c.id_no} />
+            <Field label={t('ID Expiry')} value={fmtDate(c.id_expiry)} />
           </CommandPanel>
         </div>
 
@@ -186,11 +193,11 @@ export default function CustomerProfile() {
         {SHOW_FINANCIALS && <CustomerReconciliation ledger={categoryLedger} totals={ledgerTotals} />}
 
         {/* Rental history — a timeline of this customer's contracts */}
-        <CommandPanel title="Rental History" dotColor="#34d399" label="ledger" meta={`${num(contracts.length)} total · newest first`} bodyFlush>
+        <CommandPanel title={t('Rental History')} dotColor="#34d399" label={t('ledger')} meta={t('{n} total · newest first', { n: num(contracts.length) })} bodyFlush>
           {contracts.length === 0 ? (
             <EmptyState
-              title="No contracts yet"
-              message="Contracts appear here automatically once this customer rents a car."
+              title={t('No contracts yet')}
+              message={t('Contracts appear here automatically once this customer rents a car.')}
             />
           ) : (
             <div className="relative px-6 py-6">
@@ -219,8 +226,8 @@ export default function CustomerProfile() {
                               {ct.vehicle_id ? <Link to={`/vehicles/${ct.vehicle_id}`} className="font-medium text-slate-600 hover:text-indigo-600">{ct.vehicle}</Link> : <span className="font-medium text-slate-600">{ct.vehicle}</span>}
                             </span>
                           )}
-                          <span>{fmtDate(ct.out_date)} → {ct.in_date ? fmtDate(ct.in_date) : <span className="text-emerald-600">still out</span>}</span>
-                          {SHOW_FINANCIALS && <span className="text-slate-400">Dr {aed2(ct.debit)} · Cr {aed2(ct.credit)}</span>}
+                          <span>{fmtDate(ct.out_date)} → {ct.in_date ? fmtDate(ct.in_date) : <span className="text-emerald-600">{t('still out')}</span>}</span>
+                          {SHOW_FINANCIALS && <span className="text-slate-400">{t('Dr {debit} · Cr {credit}', { debit: aed2(ct.debit), credit: aed2(ct.credit) })}</span>}
                         </div>
                       </div>
                     </li>
@@ -236,7 +243,7 @@ export default function CustomerProfile() {
                     className="rounded-full"
                     aria-expanded={showAllContracts}
                   >
-                    {showAllContracts ? 'Show less' : `Show ${hiddenContracts} more`}
+                    {showAllContracts ? t('Show less') : t('Show {n} more', { n: hiddenContracts })}
                     <svg aria-hidden="true" className={`h-4 w-4 transition-transform ${showAllContracts ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 9l-7 7-7-7" /></svg>
                   </Button>
                 </div>

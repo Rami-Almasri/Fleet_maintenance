@@ -10,6 +10,7 @@ import {
   FUEL,
 } from '../../lib/inspections';
 import { SHOW_FINANCIALS } from '../../config/features';
+import { useI18n } from '../../i18n/I18nContext';
 
 // ── Inspection Summary — "The Dispute Killer" ─────────────────────────────────
 //
@@ -31,6 +32,7 @@ export default function InspectionSummary({
   onFinalize,
   finalized = false,
 }) {
+  const { t } = useI18n();
   const groups = useMemo(() => {
     const damages = Object.entries(records)
       .filter(([, r]) => r.damage)
@@ -55,11 +57,10 @@ export default function InspectionSummary({
                 <path d="M9 12l2 2 4-4M7.8 4.5a2 2 0 0 0-1.4.6L4.1 7.4a2 2 0 0 0-.6 1.4v6.4a2 2 0 0 0 .6 1.4l2.3 2.3a2 2 0 0 0 1.4.6h8.4a2 2 0 0 0 1.4-.6l2.3-2.3a2 2 0 0 0 .6-1.4V8.8a2 2 0 0 0-.6-1.4l-2.3-2.3a2 2 0 0 0-1.4-.6z" />
               </svg>
             </span>
-            <h2 className="text-sm font-semibold text-slate-900">Inspection Summary — the dispute killer</h2>
+            <h2 className="text-sm font-semibold text-slate-900">{t('Inspection Summary — the dispute killer')}</h2>
           </div>
           <p className="mt-0.5 text-xs text-slate-500">
-            Damage and fuel reconciled into one signed-off view. New findings and fuel shortages are isolated so the final
-            amount can’t be disputed.
+            {t('Damage and fuel reconciled into one signed-off view. New findings and fuel shortages are isolated so the final amount can’t be disputed.')}
           </p>
         </div>
 
@@ -75,7 +76,7 @@ export default function InspectionSummary({
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d={finalized ? 'M20 6 9 17l-5-5' : 'M5 13l4 4L19 7'} />
             </svg>
-            {finalized ? 'Check-in finalized' : 'Finalize check-in'}
+            {finalized ? t('Check-in finalized') : t('Finalize check-in')}
           </button>
         )}
       </div>
@@ -85,30 +86,30 @@ export default function InspectionSummary({
         <StatusCard
           meta={damageStatusMeta('new')}
           value={newCount}
-          label="New damages"
-          sub="Needs assessment"
+          label={t('New damages')}
+          sub={t('Needs assessment')}
           emphatic={newCount > 0}
         />
         <StatusCard
           meta={damageStatusMeta('charged')}
           value={groups.charged.length}
-          label="Charged"
-          sub="Linked to invoice"
+          label={t('Charged')}
+          sub={t('Linked to invoice')}
           emphatic={groups.charged.length > 0}
         />
         <StatusCard
           meta={damageStatusMeta('existing')}
           value={groups.existing.length}
-          label="Existing"
-          sub="Documented at delivery"
+          label={t('Existing')}
+          sub={t('Documented at delivery')}
         />
-        <FuelCard audit={fuelAudit} meta={fuelMeta} />
+        <FuelCard audit={fuelAudit} meta={fuelMeta} t={t} />
       </div>
 
       {/* the verdict banner */}
       {finalized ? (
         <Banner tone="emerald">
-          Check-in finalized — this reconciled report is the customer’s record of record.
+          {t('Check-in finalized — this reconciled report is the customer’s record of record.')}
         </Banner>
       ) : disputable ? (
         <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-4">
@@ -116,7 +117,7 @@ export default function InspectionSummary({
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
             </svg>
-            Charges to settle at check-in
+            {t('Charges to settle at check-in')}
           </div>
           <ul className="mt-2 space-y-1.5">
             {groups.new.map((d, i) => (
@@ -131,7 +132,7 @@ export default function InspectionSummary({
             {fuelShort && (
               <li className="flex items-center gap-2 text-sm text-rose-800">
                 <span className="h-1.5 w-1.5 rounded-full bg-rose-500" />
-                <span className="font-semibold">Fuel shortage</span>
+                <span className="font-semibold">{t('Fuel shortage')}</span>
                 <span className="text-rose-600">
                   — {fuelAudit.shortagePct}% ({fuelAudit.litresShort} L)
                   {SHOW_FINANCIALS && <> · <b>{money(fuelAudit.charge)}</b></>}
@@ -141,14 +142,17 @@ export default function InspectionSummary({
           </ul>
           {SHOW_FINANCIALS && fuelShort && (
             <p className="mt-2 text-xs font-medium text-rose-500">
-              Fuel Charge auto-calculated from the gauge gap at {FUEL.pricePerL.toFixed(2)} {FUEL.currency}/L on a{' '}
-              {FUEL.tankCapacityL} L tank.
+              {t('Fuel Charge auto-calculated from the gauge gap at {price} {currency}/L on a {tank} L tank.', {
+                price: FUEL.pricePerL.toFixed(2),
+                currency: FUEL.currency,
+                tank: FUEL.tankCapacityL,
+              })}
             </p>
           )}
         </div>
       ) : (
         <Banner tone="emerald">
-          Nothing new to charge — no new damage and fuel reads balanced. Vehicle is clear for this phase.
+          {t('Nothing new to charge — no new damage and fuel reads balanced. Vehicle is clear for this phase.')}
         </Banner>
       )}
 
@@ -180,12 +184,12 @@ function StatusCard({ meta, value, label, sub, emphatic = false }) {
   );
 }
 
-function FuelCard({ audit, meta }) {
+function FuelCard({ audit, meta, t }) {
   if (!audit) {
     return (
       <div className="rounded-2xl border border-dashed border-slate-200 p-3.5">
-        <span className="text-sm font-semibold text-slate-400">Fuel</span>
-        <p className="mt-1 text-[11px] text-slate-400">Set both gauges to audit</p>
+        <span className="text-sm font-semibold text-slate-400">{t('Fuel')}</span>
+        <p className="mt-1 text-[11px] text-slate-400">{t('Set both gauges to audit')}</p>
       </div>
     );
   }
@@ -200,7 +204,9 @@ function FuelCard({ audit, meta }) {
         {Math.round(audit.delivered)}% → {Math.round(audit.returned)}%
       </p>
       <p className="text-[11px] text-slate-400">
-        {short ? `Short ${audit.shortagePct}% · ${audit.litresShort} L` : audit.surplus ? 'Returned fuller' : 'Balanced'}
+        {short
+          ? t('Short {pct}% · {litres} L', { pct: audit.shortagePct, litres: audit.litresShort })
+          : audit.surplus ? t('Returned fuller') : t('Balanced')}
         {' · '}
         {fuelFraction(audit.returned)}
       </p>

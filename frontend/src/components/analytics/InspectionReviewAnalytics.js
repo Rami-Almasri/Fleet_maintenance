@@ -17,6 +17,7 @@ import AnalyticsCard from './AnalyticsCard';
 import RankedBar from '../ui/RankedBar';
 import PieChart from '../ui/PieChart';
 import { num } from '../../lib/format';
+import { useI18n } from '../../i18n/I18nContext';
 
 // Age buckets, oldest-first so the slice that needs attention leads the legend.
 const AGE_BUCKETS = [
@@ -28,21 +29,24 @@ const AGE_BUCKETS = [
 
 // "customer_reported" → "Customer reported". The trigger vocabulary lives in the
 // page; prettifying the raw value keeps this chart correct if a new trigger is added.
-const pretty = (s) =>
-  String(s || 'Not recorded').replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase());
+// `translate` is the i18n resolver, threaded in because this is a module-level helper.
+const pretty = (s, translate) =>
+  String(s || translate('Not recorded')).replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase());
 
 export default function InspectionReviewAnalytics({ tickets = [] }) {
+  const { t } = useI18n();
+
   const triggers = useMemo(() => {
     const groups = new Map();
-    tickets.forEach((t) => {
-      const key = t.trigger_reason || 'unknown';
-      const g = groups.get(key) || { key, label: pretty(key), value: 0, rented: 0 };
+    tickets.forEach((tk) => {
+      const key = tk.trigger_reason || 'unknown';
+      const g = groups.get(key) || { key, label: t(pretty(key, t)), value: 0, rented: 0 };
       g.value += 1;
-      if (t.operational_status === 'rented') g.rented += 1;
+      if (tk.operational_status === 'rented') g.rented += 1;
       groups.set(key, g);
     });
     return [...groups.values()].sort((a, b) => b.value - a.value).slice(0, 10);
-  }, [tickets]);
+  }, [tickets, t]);
 
   // WHERE the requests came from. A separate breakdown from the trigger chart above — the two answer
   // different questions ("what's wrong?" vs. "who found it?"), which is the whole point of storing
@@ -50,24 +54,24 @@ export default function InspectionReviewAnalytics({ tickets = [] }) {
   // find vs. inspectors vs. the scheduler?".
   const origins = useMemo(() => {
     const groups = new Map();
-    tickets.forEach((t) => {
-      const key = t.request_origin || 'unknown';
-      const label = t.request_origin_label || pretty(key);
+    tickets.forEach((tk) => {
+      const key = tk.request_origin || 'unknown';
+      const label = t(tk.request_origin_label || pretty(key, t));
       const g = groups.get(key) || { key, label, value: 0, rented: 0 };
       g.value += 1;
-      if (t.operational_status === 'rented') g.rented += 1;
+      if (tk.operational_status === 'rented') g.rented += 1;
       groups.set(key, g);
     });
     return [...groups.values()].sort((a, b) => b.value - a.value).slice(0, 10);
-  }, [tickets]);
+  }, [tickets, t]);
 
   // Waiting time = since the request was raised (legacy system requests predate the review
   // gate and can carry no requested_at, so fall back to when the ticket was created).
   const waiting = useMemo(() => {
     const now = Date.now();
     const totals = {};
-    tickets.forEach((t) => {
-      const raw = t.handoffs?.requested?.at || t.created_at;
+    tickets.forEach((tk) => {
+      const raw = tk.handoffs?.requested?.at || tk.created_at;
       const ms = raw ? Date.parse(raw) : NaN;
       if (Number.isNaN(ms)) {
         totals.undated = (totals.undated || 0) + 1;
@@ -79,10 +83,10 @@ export default function InspectionReviewAnalytics({ tickets = [] }) {
     });
     const rows = AGE_BUCKETS
       .filter((b) => totals[b.key] > 0)
-      .map((b) => ({ label: b.label, value: totals[b.key], color: b.color }));
-    if (totals.undated) rows.push({ label: 'No date on file', value: totals.undated, color: 'slate' });
+      .map((b) => ({ label: t(b.label), value: totals[b.key], color: b.color }));
+    if (totals.undated) rows.push({ label: t('No date on file'), value: totals.undated, color: 'slate' });
     return rows;
-  }, [tickets]);
+  }, [tickets, t]);
 
   if (!tickets.length) return null;
 
@@ -93,31 +97,31 @@ export default function InspectionReviewAnalytics({ tickets = [] }) {
         variant="opx"
         dotColor="#8b7bfb"
         className="lg:col-span-2"
-        title="Why these were requested"
-        subtitle="Trigger behind each request awaiting review"
+        title={t('Why these were requested')}
+        subtitle={t('Trigger behind each request awaiting review')}
       >
         <RankedBar
           items={triggers}
           showRank
           color="violet"
           format={(n) => num(Math.round(n))}
-          valueLabel="Requests"
+          valueLabel={t('Requests')}
           labelWidth={160}
           valueWidth={56}
           tooltip={(r) =>
             r.rented > 0
-              ? `${num(r.rented)} still out on rent — the car has to come back first`
-              : 'All cars are back with us'
+              ? t('{n} still out on rent — the car has to come back first', { n: num(r.rented) })
+              : t('All cars are back with us')
           }
-          empty="Nothing awaiting review."
+          empty={t('Nothing awaiting review.')}
         />
       </AnalyticsCard>
 
       <AnalyticsCard
         variant="opx"
         dotColor="#e11d48"
-        title="How long they've been waiting"
-        subtitle="Age of each request still awaiting review"
+        title={t("How long they've been waiting")}
+        subtitle={t('Age of each request still awaiting review')}
       >
         {/* stacked: this card is a third of the row — a side-by-side legend would squeeze
             the labels and their numbers into ~180px. */}
@@ -132,23 +136,23 @@ export default function InspectionReviewAnalytics({ tickets = [] }) {
     <AnalyticsCard
       variant="opx"
       dotColor="#10b981"
-      title="Where these came from"
-      subtitle="Who or what raised each request awaiting review"
+      title={t('Where these came from')}
+      subtitle={t('Who or what raised each request awaiting review')}
     >
       <RankedBar
         items={origins}
         showRank
         color="emerald"
         format={(n) => num(Math.round(n))}
-        valueLabel="Requests"
+        valueLabel={t('Requests')}
         labelWidth={160}
         valueWidth={56}
         tooltip={(r) =>
           r.rented > 0
-            ? `${num(r.rented)} still out on rent — the car has to come back first`
-            : 'All cars are back with us'
+            ? t('{n} still out on rent — the car has to come back first', { n: num(r.rented) })
+            : t('All cars are back with us')
         }
-        empty="Nothing awaiting review."
+        empty={t('Nothing awaiting review.')}
       />
     </AnalyticsCard>
     </div>

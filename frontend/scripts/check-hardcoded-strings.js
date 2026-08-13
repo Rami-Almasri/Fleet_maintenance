@@ -48,6 +48,24 @@ const ENGLISH_IN_TABLE = new Set([
   'lib/maintenanceCheckpoints.js',
 ]);
 
+// Individual strings that are user-visible but INTENTIONALLY not translated, with the reason. These
+// are exact-match exemptions scoped to one file, not a whole-file skip, so anything else that file
+// gains is still caught. Keep the reason — it is the record of why Arabic mode shows English here.
+const LANGUAGE_NEUTRAL = {
+  // The product wordmark and its logo alt text. A brand name is not translated.
+  'components/Brand.js': ['Faster'],
+  // A language picker. Each language is listed in its OWN name (endonym) — translating "English"
+  // to "الإنجليزية" would be wrong here; a reader looking for their language looks for its own name.
+  'components/keywords/KeywordKnowledgeDrawer.js': ['English'],
+  // "John Smith" is the example for the field labelled "Name (EN)" — the ENGLISH name field, whose
+  // sibling "Name (AR)" takes the Arabic one. WhatsApp is a brand.
+  'pages/customers/CustomerForm.js': ['John Smith', 'WhatsApp'],
+  // Unit symbol for millimetres of tyre tread.
+  'components/workflow/LineItemsEditor.js': ['mm'],
+  // Example vendor placeholder naming a real company.
+  'pages/vendors/VendorForm.js': ['Al Futtaim Garage'],
+};
+
 const files = [];
 (function walk(dir) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
@@ -92,17 +110,37 @@ function blankCalls(src, names) {
   return out;
 }
 
-// A run of text only counts as prose if it reads like prose: letters, and no JavaScript operators.
-// This is what keeps `{cond ? a : b}` fragments and `arr.length > 0 && ...` out of the results.
-const OPERATORS = /[=<>{}[\]()|&?:;+*/\\`$@_^~]/;
-const hasWord = (s) => /[A-Za-z]{2,}/.test(s) && /[a-z]/.test(s);
-const isProse = (s) => hasWord(s) && !OPERATORS.test(s) && !/^[A-Z0-9_]+$/.test(s);
+// A run of text only counts as prose if it reads like prose.
+//
+// This used to reject anything containing = < > { } [ ] ( ) | & ? : ; + * / \ ` $ @ _ ^ ~, which kept
+// code fragments out but ALSO hid real sentences — every question, every parenthetical, every
+// ampersand. "Why buy it again?", "Add a note (optional)", "Fuel & Mileage" and "Part class:" all
+// sat untranslated in files this script called clean. So the test now works the other way round:
+// require two real words, and reject only what actually looks like code.
+//
+// The decisive signal is a STRAIGHT QUOTE. Prose in this codebase uses the typographic ’ and “ ”;
+// a straight ' or " inside a candidate means we captured a JSX expression such as
+// `{n > 8 ? 'text-red-600' : x}`, whose `>` … `<` reads as a text node to the matcher below.
+const CODEY = /[={}[\]<>`$|\\@^~]|\w\(|=>|\w\.\w|\w_\w|['"]/;
+const words = (s) => (s.match(/[A-Za-z][A-Za-z'’-]+/g) || []).length;
+const isProse = (s) =>
+  words(s) >= 2 &&
+  /[a-z]{2}/.test(s) &&
+  !CODEY.test(s) &&
+  !/^[A-Z0-9_\s-]+$/.test(s) &&   // SCREAMING_CASE constants
+  !/^[\d\s.,:/-]+$/.test(s) &&    // bare numbers and dates
+  !/@/.test(s);                   // emails
 
 // Attributes a user reads. `label` and `subtitle` are here because this codebase's Input / Select /
 // Modal / SectionCard render them as visible text — a form whose fields are all `label="…"` is
 // entirely untranslated even though it has no JSX text at all. Everything else (className, key,
 // to, …) is machinery and stays out.
-const VISIBLE_ATTR = /\b(placeholder|title|aria-label|alt|label|subtitle)=(?:"([^"]{2,120})"|'([^']{2,120})')/g;
+const VISIBLE_ATTR = /\b(placeholder|title|aria-label|alt|label|subtitle|emptyMessage|confirmText|cancelText|valueLabel|tooltip|hint|eyebrow|heading|message)=(?:"([^"]{2,200})"|'([^']{2,200})')/g;
+
+// Calls that put words on screen without any JSX. A toast is as user-visible as a heading, but it
+// is an ordinary function argument, so nothing above would ever have looked at it — which is how
+// "Purchase recorded", "Could not open a checkpoint for this car." and friends stayed English.
+const UI_CALL = /\b(?:toast\.(?:success|error|info|warn)|window\.alert|window\.confirm|alert|confirm)\(\s*(?:'((?:[^'\\]|\\.){4,200})'|"((?:[^"\\]|\\.){4,200})")/g;
 
 function scan(file) {
   let src = fs.readFileSync(file, 'utf8');
@@ -128,6 +166,11 @@ function scan(file) {
     const s = (m[2] || m[3] || '').trim();
     if (isProse(s)) hits.push({ line: lineOf(m.index), text: s });
   }
+  // Toasts, alerts and confirms — words on screen that never pass through JSX.
+  for (const m of src.matchAll(UI_CALL)) {
+    const s = (m[1] || m[2] || '').trim();
+    if (isProse(s)) hits.push({ line: lineOf(m.index), text: s });
+  }
   return hits;
 }
 
@@ -139,7 +182,8 @@ const results = {};
 for (const f of files) {
   const rel = path.relative(SRC, f).replace(/\\/g, '/');
   if (rel.startsWith('i18n/') || ENGLISH_IN_TABLE.has(rel)) continue;
-  const hits = scan(f);
+  const exempt = LANGUAGE_NEUTRAL[rel] || [];
+  const hits = scan(f).filter((h) => !exempt.includes(h.text));
   if (hits.length) results[rel] = hits;
 }
 

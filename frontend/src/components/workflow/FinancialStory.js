@@ -17,18 +17,20 @@ import { Link } from 'react-router-dom';
 import api from '../../api/client';
 import Icon from '../ui/Icon';
 import { SHOW_FINANCIALS } from '../../config/features';
+import { useI18n } from '../../i18n/I18nContext';
 
 const payload = (r) => (r?.data && 'data' in r.data ? r.data.data : r?.data);
 
-const money = (n) =>
-  `AED ${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+// Arabic must stay on Gregorian dates and Latin digits, so the locale is passed explicitly.
+const money = (n, lang) =>
+  `AED ${Number(n || 0).toLocaleString(lang === 'ar' ? 'ar-AE-u-nu-latn' : undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-const when = (iso) => {
+const when = (iso, lang) => {
   if (!iso) return '';
   const d = new Date(iso);
   return Number.isNaN(d.getTime())
     ? ''
-    : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+    : d.toLocaleDateString(lang === 'ar' ? 'ar-AE-u-ca-gregory-nu-latn' : undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 };
 
 // Phase → the dot colour on the spine. Written out in full so Tailwind ships the classes.
@@ -49,6 +51,7 @@ const PHASE_LABEL = {
 };
 
 function Event({ event, isLast }) {
+  const { t, lang } = useI18n();
   const moved = Number(event.signed_amount || 0) !== 0;
 
   return (
@@ -59,26 +62,26 @@ function Event({ event, isLast }) {
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-baseline justify-between gap-x-3">
           <span className="text-[13px] font-medium text-slate-800">{event.title}</span>
-          <span className="text-[11px] tabular-nums text-slate-400">{when(event.at)}</span>
+          <span className="text-[11px] tabular-nums text-slate-400">{when(event.at, lang)}</span>
         </div>
 
         {event.detail && <p className="mt-0.5 text-[12px] text-slate-600">{event.detail}</p>}
 
         <div className="mt-1 flex flex-wrap items-center gap-2">
           <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">
-            {PHASE_LABEL[event.phase] || event.phase}
+            {PHASE_LABEL[event.phase] ? t(PHASE_LABEL[event.phase]) : event.phase}
           </span>
           {event.reference && (
             <span className="text-[10px] font-medium text-slate-500">{event.reference}</span>
           )}
           {SHOW_FINANCIALS && moved && (
             <span className={`text-[11px] font-semibold tabular-nums ${event.signed_amount < 0 ? 'text-emerald-700' : 'text-slate-700'}`}>
-              {event.signed_amount < 0 ? '− ' : '+ '}{money(Math.abs(event.signed_amount))}
+              {event.signed_amount < 0 ? '− ' : '+ '}{money(Math.abs(event.signed_amount), lang)}
             </span>
           )}
           {SHOW_FINANCIALS && !moved && event.amount > 0 && (
-            <span className="text-[11px] tabular-nums text-slate-400" title="Recorded, but not part of the ticket total">
-              {money(event.amount)}
+            <span className="text-[11px] tabular-nums text-slate-400" title={t('Recorded, but not part of the ticket total')}>
+              {money(event.amount, lang)}
             </span>
           )}
         </div>
@@ -88,6 +91,7 @@ function Event({ event, isLast }) {
 }
 
 export default function FinancialStory({ ticketId, reloadKey }) {
+  const { t, lang } = useI18n();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showAll, setShowAll] = useState(false);
@@ -126,8 +130,9 @@ export default function FinancialStory({ ticketId, reloadKey }) {
           <div className="flex items-center gap-2">
             <Icon.Alert className="h-4 w-4 text-amber-700" />
             <p className="text-sm font-semibold text-amber-900">
-              This ticket cannot be closed yet — {blockers.length} financial{' '}
-              {blockers.length === 1 ? 'item' : 'items'} still open
+              {blockers.length === 1
+                ? t('This ticket cannot be closed yet — 1 financial item is still open')
+                : t('This ticket cannot be closed yet — {n} financial items are still open', { n: blockers.length })}
             </p>
           </div>
 
@@ -138,7 +143,7 @@ export default function FinancialStory({ ticketId, reloadKey }) {
                   <p className="text-[12px] text-amber-900">{b.message}</p>
                   {SHOW_FINANCIALS && b.amount > 0 && (
                     <span className="shrink-0 text-[12px] font-semibold tabular-nums text-amber-900">
-                      {money(b.amount)}
+                      {money(b.amount, lang)}
                     </span>
                   )}
                 </div>
@@ -146,7 +151,7 @@ export default function FinancialStory({ ticketId, reloadKey }) {
                   {b.action}
                   {b.route && (
                     <Link to={b.route} className="ms-1 text-sky-700 underline hover:text-sky-800">
-                      Open
+                      {t('Open')}
                     </Link>
                   )}
                 </p>
@@ -159,7 +164,7 @@ export default function FinancialStory({ ticketId, reloadKey }) {
       {/* Explained but not finished. Shown, never blocked on. */}
       {warnings.length > 0 && (
         <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">Still outstanding</p>
+          <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">{t('Still outstanding')}</p>
           {warnings.map((w, i) => (
             <p key={`${w.code}-${i}`} className="mt-0.5 text-[12px] text-slate-600">
               {w.message} <span className="text-slate-400">{w.action}</span>
@@ -172,7 +177,7 @@ export default function FinancialStory({ ticketId, reloadKey }) {
         <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
           <Icon.Check className="h-4 w-4 text-emerald-700" />
           <p className="text-[12px] font-medium text-emerald-800">
-            Every amount on this ticket traces to a document — it is ready to close.
+            {t('Every amount on this ticket traces to a document — it is ready to close.')}
           </p>
         </div>
       )}
@@ -182,7 +187,7 @@ export default function FinancialStory({ ticketId, reloadKey }) {
         <div className="rounded-xl border border-slate-200 bg-white p-3">
           <div className="flex items-center justify-between">
             <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
-              Financial timeline
+              {t('Financial timeline')}
             </p>
             {hidden > 0 && (
               <button
@@ -190,7 +195,7 @@ export default function FinancialStory({ ticketId, reloadKey }) {
                 onClick={() => setShowAll(true)}
                 className="text-[11px] text-sky-600 hover:underline"
               >
-                Show {hidden} earlier
+                {t('Show {n} earlier', { n: hidden })}
               </button>
             )}
           </div>

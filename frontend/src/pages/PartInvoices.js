@@ -24,6 +24,7 @@ import { Card, PageHeader, TableSkeleton, EmptyState } from '../components/ui/Mi
 import { Input, Textarea } from '../components/ui/Field';
 import { aed, fmtAgo } from '../lib/format';
 import { SHOW_FINANCIALS } from '../config/features';
+import { useI18n } from '../i18n/I18nContext';
 
 const payload = (r) => (r?.data && 'data' in r.data ? r.data.data : r?.data);
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
@@ -55,42 +56,57 @@ function StatusChip({ status, label }) {
  */
 function LifecycleActions({ invoice, onDone }) {
   const toast = useToast();
+  const { t } = useI18n();
   const [busy, setBusy] = useState(null);
   const allowed = invoice.allowed_transitions || [];
+
+  // One sentence per move, so both languages read naturally instead of being stitched from a verb.
+  const DONE = {
+    submit: t('Invoice submitted'),
+    approve: t('Invoice approved'),
+    pay: t('Invoice payment recorded'),
+    cancel: t('Invoice cancelled'),
+  };
+  const FAILED = {
+    submit: t('Could not submit the invoice.'),
+    approve: t('Could not approve the invoice.'),
+    pay: t('Could not record the payment.'),
+    cancel: t('Could not cancel the invoice.'),
+  };
 
   const act = async (verb, body) => {
     setBusy(verb);
     try {
       await api.post(`/financial-documents/supplier-invoice/${invoice.id}/${verb}`, body || {});
-      toast.success(`Invoice ${verb === 'pay' ? 'payment recorded' : verb + 'd'}`);
+      toast.success(DONE[verb]);
       onDone?.();
     } catch (e) {
-      toast.error(e?.response?.data?.message || `Could not ${verb} the invoice.`);
+      toast.error(e?.response?.data?.message || FAILED[verb]);
     } finally {
       setBusy(null);
     }
   };
 
   const cancel = () => {
-    const reason = window.prompt('Why is this invoice being cancelled?');
+    const reason = window.prompt(t('Why is this invoice being cancelled?'));
     if (reason && reason.trim()) act('cancel', { reason: reason.trim() });
   };
 
   return (
     <>
       {allowed.includes('pending') && invoice.stored_status === 'draft' && (
-        <Button variant="ghost" size="sm" loading={busy === 'submit'} onClick={() => act('submit')}>Submit</Button>
+        <Button variant="ghost" size="sm" loading={busy === 'submit'} onClick={() => act('submit')}>{t('Submit')}</Button>
       )}
       {allowed.includes('approved') && (
-        <Button variant="success" size="sm" loading={busy === 'approve'} onClick={() => act('approve')}>Approve</Button>
+        <Button variant="success" size="sm" loading={busy === 'approve'} onClick={() => act('approve')}>{t('Approve')}</Button>
       )}
       {allowed.includes('paid') && (
         <Button size="sm" loading={busy === 'pay'} onClick={() => act('pay')}>
-          Pay {invoice.outstanding > 0 ? aed(invoice.outstanding) : ''}
+          {invoice.outstanding > 0 ? t('Pay {amount}', { amount: aed(invoice.outstanding) }) : t('Pay')}
         </Button>
       )}
       {allowed.includes('cancelled') && (
-        <Button variant="ghost" size="sm" className="text-red-600 hover:bg-red-50" onClick={cancel}>Cancel</Button>
+        <Button variant="ghost" size="sm" className="text-red-600 hover:bg-red-50" onClick={cancel}>{t('Cancel')}</Button>
       )}
     </>
   );
@@ -99,6 +115,7 @@ function LifecycleActions({ invoice, onDone }) {
 // ── The invoice editor ────────────────────────────────────────────────────────────────────────────
 function InvoiceModal({ open, invoice, onClose, onDone, suppliers }) {
   const toast = useToast();
+  const { t } = useI18n();
   const [form, setForm] = useState({});
   const [picked, setPicked] = useState([]);      // purchase ids on this invoice
   const [available, setAvailable] = useState([]); // unbilled supplier purchases + this invoice's own
@@ -178,46 +195,51 @@ function InvoiceModal({ open, invoice, onClose, onDone, suppliers }) {
       await api.post(editing ? `/part-invoices/${invoice.id}` : '/part-invoices', body, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
-      toast.success(editing ? 'Invoice updated' : 'Invoice recorded');
+      toast.success(editing ? t('Invoice updated') : t('Invoice recorded'));
       onDone?.();
       onClose?.();
     } catch (e) {
-      toast.error(e?.response?.data?.message || 'Could not save the invoice.');
+      toast.error(e?.response?.data?.message || t('Could not save the invoice.'));
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <Modal open={open} onClose={onClose} title={editing ? `Invoice ${invoice.invoice_no || ''}` : 'Record supplier invoice'} size="lg">
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={editing ? t('Invoice {no}', { no: invoice.invoice_no || '' }) : t('Record supplier invoice')}
+      size="lg"
+    >
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-3">
           <SearchSelect
-            label="Supplier"
+            label={t('Supplier')}
             value={form.vendor_id || ''}
             onChange={(v) => setForm((f) => ({ ...f, vendor_id: v }))}
             options={suppliers.map((v) => ({ value: v.id, label: v.name }))}
-            placeholder="Pick a supplier…"
+            placeholder={t('Pick a supplier…')}
           />
           <Input
-            label="Or supplier name (one-off)"
+            label={t('Or supplier name (one-off)')}
             value={form.supplier_name || ''}
             onChange={set('supplier_name')}
-            placeholder="ABC Auto Parts"
+            placeholder={t('ABC Auto Parts')}
           />
-          <Input label="Invoice number" value={form.invoice_no || ''} onChange={set('invoice_no')} placeholder="INV-2026-001" />
-          <Input label="Invoice date" type="date" value={form.invoice_date || ''} onChange={set('invoice_date')} />
+          <Input label={t('Invoice number')} value={form.invoice_no || ''} onChange={set('invoice_no')} placeholder="INV-2026-001" />
+          <Input label={t('Invoice date')} type="date" value={form.invoice_date || ''} onChange={set('invoice_date')} />
         </div>
 
         {/* The parts on the document. Garage-sourced buys never appear here — they bill on the garage. */}
         <div>
           <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
-            Parts on this invoice
+            {t('Parts on this invoice')}
           </p>
           <div className="max-h-56 overflow-y-auto rounded-lg border border-slate-200">
             {available.length === 0 && (
               <p className="px-3 py-4 text-center text-sm text-slate-400">
-                No supplier purchases are waiting for an invoice.
+                {t('No supplier purchases are waiting for an invoice.')}
               </p>
             )}
             {available.map((p) => (
@@ -240,9 +262,9 @@ function InvoiceModal({ open, invoice, onClose, onDone, suppliers }) {
         </div>
 
         <div className="grid grid-cols-2 gap-3">
-          <Input label="Tax / VAT" type="number" min="0" step="0.01" value={form.tax_amount || ''} onChange={set('tax_amount')} placeholder="0.00" />
+          <Input label={t('Tax / VAT')} type="number" min="0" step="0.01" value={form.tax_amount || ''} onChange={set('tax_amount')} placeholder="0.00" />
           <Input
-            label="Total printed on the invoice"
+            label={t('Total printed on the invoice')}
             type="number"
             min="0"
             step="0.01"
@@ -254,46 +276,49 @@ function InvoiceModal({ open, invoice, onClose, onDone, suppliers }) {
 
         {/* The variance gate, mirrored in the UI so it is understood before it is enforced. */}
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
-          <div className="flex justify-between py-0.5"><span className="text-slate-600">Parts attached</span><span className="tabular-nums">{aed(subtotal)}</span></div>
+          <div className="flex justify-between py-0.5"><span className="text-slate-600">{t('Parts attached')}</span><span className="tabular-nums">{aed(subtotal)}</span></div>
           {Number(form.tax_amount) > 0 && (
-            <div className="flex justify-between py-0.5"><span className="text-slate-600">Tax</span><span className="tabular-nums">{aed(form.tax_amount)}</span></div>
+            <div className="flex justify-between py-0.5"><span className="text-slate-600">{t('Tax')}</span><span className="tabular-nums">{aed(form.tax_amount)}</span></div>
           )}
-          <div className="flex justify-between border-t border-slate-200 pt-1 font-semibold"><span>Invoice total</span><span className="tabular-nums">{aed(total)}</span></div>
+          <div className="flex justify-between border-t border-slate-200 pt-1 font-semibold"><span>{t('Invoice total')}</span><span className="tabular-nums">{aed(total)}</span></div>
           {stated != null && Math.abs(variance) > 0.01 && (
             <p className="mt-1.5 text-[12px] font-medium text-amber-700">
-              The paper says {aed(stated)} — a difference of {aed(Math.abs(variance))}. Explain it below to save.
+              {t('The paper says {stated} — a difference of {diff}. Explain it below to save.', {
+                stated: aed(stated),
+                diff: aed(Math.abs(variance)),
+              })}
             </p>
           )}
         </div>
 
         {stated != null && Math.abs(variance) > 0.01 && (
           <Textarea
-            label="Why the totals differ"
+            label={t('Why the totals differ')}
             rows={2}
             value={form.variance_explanation || ''}
             onChange={set('variance_explanation')}
-            placeholder="e.g. supplier added a delivery charge"
+            placeholder={t('e.g. supplier added a delivery charge')}
           />
         )}
 
         <div>
           <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
-            Photo of the invoice
+            {t('Photo of the invoice')}
           </label>
           <input type="file" accept="image/*" onChange={(e) => setPhoto(e.target.files?.[0] || null)} className="text-sm" />
           {invoice?.photo_url && !photo && (
-            <a href={invoice.photo_url} target="_blank" rel="noreferrer" className="ml-2 text-sm text-sky-600 hover:underline">
-              view current
+            <a href={invoice.photo_url} target="_blank" rel="noreferrer" className="ms-2 text-sm text-sky-600 hover:underline">
+              {t('view current')}
             </a>
           )}
         </div>
 
-        <Textarea label="Notes" rows={2} value={form.notes || ''} onChange={set('notes')} />
+        <Textarea label={t('Notes')} rows={2} value={form.notes || ''} onChange={set('notes')} />
 
         <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button variant="ghost" onClick={onClose}>{t('Cancel')}</Button>
           <Button loading={saving} disabled={needsExplanation} onClick={submit}>
-            {editing ? 'Save invoice' : 'Record invoice'}
+            {editing ? t('Save invoice') : t('Record invoice')}
           </Button>
         </div>
       </div>
@@ -304,6 +329,7 @@ function InvoiceModal({ open, invoice, onClose, onDone, suppliers }) {
 // ── The ledger ────────────────────────────────────────────────────────────────────────────────────
 export default function PartInvoices() {
   const toast = useToast();
+  const { t } = useI18n();
   const { can } = usePermissions();
   const canManage = can('parts.purchase');
 
@@ -339,10 +365,10 @@ export default function PartInvoices() {
   const remove = async (row) => {
     try {
       await api.delete(`/part-invoices/${row.id}`);
-      toast.success('Invoice deleted — the purchases are untouched.');
+      toast.success(t('Invoice deleted — the purchases are untouched.'));
       load();
     } catch (e) {
-      toast.error(e?.response?.data?.message || 'Could not delete the invoice.');
+      toast.error(e?.response?.data?.message || t('Could not delete the invoice.'));
     }
   };
 
@@ -352,17 +378,19 @@ export default function PartInvoices() {
     <div className="py-8">
       <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
         <PageHeader
-          title="Supplier Parts Invoices"
-          subtitle="What the supplier charged for a part — the document behind its price. Parts the garage supplied are billed on the garage's own invoice, not here."
-          actions={canManage && <Button onClick={() => setEditing(null)}>Record invoice</Button>}
+          title={t('Supplier Parts Invoices')}
+          subtitle={t("What the supplier charged for a part — the document behind its price. Parts the garage supplied are billed on the garage's own invoice, not here.")}
+          actions={canManage && <Button onClick={() => setEditing(null)}>{t('Record invoice')}</Button>}
         />
 
         {SHOW_FINANCIALS && !loading && rows.length > 0 && (
           <Card className="px-5 py-4">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total billed by suppliers</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t('Total billed by suppliers')}</p>
             <p className="mt-1 text-2xl font-semibold tabular-nums text-slate-900">{aed(totalBilled)}</p>
             <p className="mt-1 text-[11px] text-slate-500">
-              Across {rows.length} invoice{rows.length === 1 ? '' : 's'}. This is part cost only — labour is on the garages' invoices.
+              {rows.length === 1
+                ? t("Across 1 invoice. This is part cost only — labour is on the garages' invoices.")
+                : t("Across {n} invoices. This is part cost only — labour is on the garages' invoices.", { n: rows.length })}
             </p>
           </Card>
         )}
@@ -372,12 +400,12 @@ export default function PartInvoices() {
             <table className="min-w-full border-separate border-spacing-0 text-sm">
               <thead className="bg-slate-50/90">
                 <tr className="text-start text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  <th className="border-b border-slate-200 px-5 py-3 text-start">Invoice</th>
-                  <th className="border-b border-slate-200 px-5 py-3 text-start">Supplier</th>
-                  <th className="border-b border-slate-200 px-5 py-3 text-start">Parts</th>
-                  <th className="border-b border-slate-200 px-5 py-3 text-end">Total</th>
-                  <th className="border-b border-slate-200 px-5 py-3 text-start">Recorded</th>
-                  <th className="border-b border-slate-200 px-5 py-3 text-end">Actions</th>
+                  <th className="border-b border-slate-200 px-5 py-3 text-start">{t('Invoice')}</th>
+                  <th className="border-b border-slate-200 px-5 py-3 text-start">{t('Supplier')}</th>
+                  <th className="border-b border-slate-200 px-5 py-3 text-start">{t('Parts')}</th>
+                  <th className="border-b border-slate-200 px-5 py-3 text-end">{t('Total')}</th>
+                  <th className="border-b border-slate-200 px-5 py-3 text-start">{t('Recorded')}</th>
+                  <th className="border-b border-slate-200 px-5 py-3 text-end">{t('Actions')}</th>
                 </tr>
               </thead>
               {loading ? (
@@ -392,11 +420,11 @@ export default function PartInvoices() {
                         <div className="mt-1 flex flex-wrap items-center gap-1">
                           <StatusChip status={r.status} label={r.status_label} />
                           {r.outstanding > 0 && SHOW_FINANCIALS && (
-                            <span className="text-[11px] text-slate-500">{aed(r.outstanding)} owed</span>
+                            <span className="text-[11px] text-slate-500">{t('{amount} owed', { amount: aed(r.outstanding) })}</span>
                           )}
                         </div>
                         {r.variance != null && Math.abs(r.variance) > 0.01 && (
-                          <Badge tone="amber">variance {aed(Math.abs(r.variance))}</Badge>
+                          <Badge tone="amber">{t('variance {amount}', { amount: aed(Math.abs(r.variance)) })}</Badge>
                         )}
                       </td>
                       <td className="border-b border-slate-100 px-5 py-3.5 text-slate-700">{r.supplier}</td>
@@ -414,14 +442,14 @@ export default function PartInvoices() {
                       <td className="border-b border-slate-100 px-5 py-3.5">
                         <div className="flex justify-end gap-2">
                           {r.photo_url && (
-                            <a href={r.photo_url} target="_blank" rel="noreferrer" className="text-sm text-sky-600 hover:underline">Photo</a>
+                            <a href={r.photo_url} target="_blank" rel="noreferrer" className="text-sm text-sky-600 hover:underline">{t('Photo')}</a>
                           )}
                           {canManage && <LifecycleActions invoice={r} onDone={load} />}
                           {/* Editing and deleting stop once the invoice is an accepted obligation —
                               a correction after approval is an adjustment, not a silent rewrite. */}
-                          {canManage && r.editable && <Button variant="ghost" size="sm" onClick={() => setEditing(r)}>Edit</Button>}
+                          {canManage && r.editable && <Button variant="ghost" size="sm" onClick={() => setEditing(r)}>{t('Edit')}</Button>}
                           {canManage && r.editable && (
-                            <Button variant="ghost" size="sm" className="text-red-600 hover:bg-red-50" onClick={() => remove(r)}>Delete</Button>
+                            <Button variant="ghost" size="sm" className="text-red-600 hover:bg-red-50" onClick={() => remove(r)}>{t('Delete')}</Button>
                           )}
                         </div>
                       </td>
@@ -432,8 +460,8 @@ export default function PartInvoices() {
             </table>
             {!loading && rows.length === 0 && (
               <EmptyState
-                title="No supplier invoices yet"
-                message="Record the invoice a supplier gave you, and attach the parts it covers."
+                title={t('No supplier invoices yet')}
+                message={t('Record the invoice a supplier gave you, and attach the parts it covers.')}
               />
             )}
           </div>

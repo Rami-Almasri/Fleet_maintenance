@@ -13,8 +13,11 @@ import { useMemo } from 'react';
 import AnalyticsCard from './AnalyticsCard';
 import RankedBar from '../ui/RankedBar';
 import { num } from '../../lib/format';
+import { useI18n } from '../../i18n/I18nContext';
 
 export default function MaintenanceWorkflowAnalytics({ lanes = [] }) {
+  const { t } = useI18n();
+
   const byStage = useMemo(
     () =>
       lanes.map((l) => ({
@@ -55,33 +58,33 @@ export default function MaintenanceWorkflowAnalytics({ lanes = [] }) {
       <AnalyticsCard
         variant="opx"
         dotColor="#8b5cf6"
-        title="Pipeline by stage"
-        subtitle="Open tickets at each step, in journey order"
+        title={t('Pipeline by stage')}
+        subtitle={t('Open tickets at each step, in journey order')}
       >
         <RankedBar
           items={byStage}
           format={(n) => num(Math.round(n))}
-          valueLabel="Tickets"
+          valueLabel={t('Tickets')}
           labelWidth={130}
           valueWidth={44}
           tooltip={(r) => r.hint}
-          empty="No tickets in the pipeline."
+          empty={t('No tickets in the pipeline.')}
         />
       </AnalyticsCard>
 
       <AnalyticsCard
         variant="opx"
         dotColor="#f97316"
-        title="Open work by garage"
-        subtitle="Where the fleet's cars are sitting right now"
+        title={t('Open work by garage')}
+        subtitle={t("Where the fleet's cars are sitting right now")}
       >
         <RankedBar
           items={byGarage}
           format={(n) => num(Math.round(n))}
-          valueLabel="Cars"
+          valueLabel={t('Cars')}
           labelWidth={140}
           valueWidth={44}
-          empty="Nothing dispatched."
+          empty={t('Nothing dispatched.')}
         />
       </AnalyticsCard>
     </div>

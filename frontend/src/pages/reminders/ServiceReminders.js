@@ -17,6 +17,7 @@ import Icon from '../../components/ui/Icon';
 import { useToast } from '../../components/ui/Toast';
 import { usePermissions } from '../../hooks/usePermissions';
 import { num, fmtDate, fmtAgo } from '../../lib/format';
+import { useI18n } from '../../i18n/I18nContext';
 
 // Shared status language for reminders/schedules — overdue reads red, due-soon amber.
 const STATUS = {
@@ -40,11 +41,28 @@ const TYPES = {
   general:       'General Service',
 };
 
-// A compact "how far from due" note (km first, else days).
-const remaining = (r) => {
-  if (r.km_remaining != null) return `${num(Math.abs(r.km_remaining))} km ${r.km_remaining < 0 ? 'over' : 'left'}`;
-  if (r.days_remaining != null) return `${Math.abs(r.days_remaining)}d ${r.days_remaining < 0 ? 'over' : 'left'}`;
+// A compact "how far from due" note (km first, else days). `t` is threaded in from the
+// caller because this sits outside a component body and still returns words.
+const remaining = (r, t) => {
+  if (r.km_remaining != null) {
+    const km = num(Math.abs(r.km_remaining));
+    return r.km_remaining < 0 ? t('{km} km over', { km }) : t('{km} km left', { km });
+  }
+  if (r.days_remaining != null) {
+    const d = Math.abs(r.days_remaining);
+    return r.days_remaining < 0 ? t('{d}d over', { d }) : t('{d}d left', { d });
+  }
   return '—';
+};
+
+// Tooltip on the locked "Notified" button — one whole sentence per variant so the
+// Arabic can reorder "when" and "who" freely.
+const alertSentTitle = (r, t) => {
+  if (!r.last_notified_at) return t('Alert sent');
+  const ago = fmtAgo(r.last_notified_at);
+  return r.notified_by_name
+    ? t('Alert sent {ago} by {name}', { ago, name: r.notified_by_name })
+    : t('Alert sent {ago}', { ago });
 };
 
 const EMPTY_FORM = {
@@ -61,6 +79,7 @@ const EMPTY_FORM = {
  */
 function ReminderDialog({ reminder, vehicles, onClose, onSaved }) {
   const toast = useToast();
+  const { t } = useI18n();
   const editing = Boolean(reminder?.id);
   const [form, setForm] = useState(() => (editing
     ? {
@@ -87,8 +106,8 @@ function ReminderDialog({ reminder, vehicles, onClose, onSaved }) {
   );
 
   const submit = async () => {
-    if (!editing && !form.vehicle_id) return toast.error('Pick a vehicle first');
-    if (!form.interval_km && !form.interval_days) return toast.error('Give an interval — km, days, or both');
+    if (!editing && !form.vehicle_id) return toast.error(t('Pick a vehicle first'));
+    if (!form.interval_km && !form.interval_days) return toast.error(t('Give an interval — km, days, or both'));
     setBusy(true);
     try {
       // Blank strings must go over as null, not '' — the API validates integers/dates.
@@ -103,10 +122,10 @@ function ReminderDialog({ reminder, vehicles, onClose, onSaved }) {
       };
       if (editing) await api.post(`/ServiceReminders/${reminder.id}`, payload);
       else await api.post('/ServiceReminders', { ...payload, vehicle_id: Number(form.vehicle_id) });
-      toast.success(editing ? 'Reminder updated' : 'Reminder created');
+      toast.success(editing ? t('Reminder updated') : t('Reminder created'));
       onSaved();
     } catch (e) {
-      toast.error(e.response?.data?.message || 'Could not save the reminder');
+      toast.error(e.response?.data?.message || t('Could not save the reminder'));
     } finally {
       setBusy(false);
     }
@@ -116,49 +135,49 @@ function ReminderDialog({ reminder, vehicles, onClose, onSaved }) {
     <Modal
       open
       onClose={() => !busy && onClose()}
-      title={editing ? `Edit ${reminder.name}` : 'New service reminder'}
+      title={editing ? t('Edit {name}', { name: reminder.name }) : t('New service reminder')}
       subtitle={editing
-        ? 'Saving marks this reminder as manually maintained — the auto-seeder will stop overwriting it.'
-        : 'Set the cadence and the last-service anchor; the next-due point is computed from them.'}
+        ? t('Saving marks this reminder as manually maintained — the auto-seeder will stop overwriting it.')
+        : t('Set the cadence and the last-service anchor; the next-due point is computed from them.')}
       footer={(
         <div className="flex justify-end gap-2">
-          <Button variant="secondary" onClick={onClose} disabled={busy}>Cancel</Button>
-          <Button variant="primary" loading={busy} onClick={submit}>{editing ? 'Save' : 'Create'}</Button>
+          <Button variant="secondary" onClick={onClose} disabled={busy}>{t('Cancel')}</Button>
+          <Button variant="primary" loading={busy} onClick={submit}>{editing ? t('Save') : t('Create')}</Button>
         </div>
       )}
     >
       <div className="space-y-4">
         {editing ? (
           <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
-            {reminder.vehicle?.label || `#${reminder.vehicle_id}`} · {TYPES[reminder.service_type] || reminder.service_type}
+            {reminder.vehicle?.label || `#${reminder.vehicle_id}`} · {t(TYPES[reminder.service_type] || reminder.service_type)}
           </div>
         ) : (
           <>
             <div>
-              <span className="mb-1 block text-sm font-medium text-slate-700">Vehicle<span className="ms-0.5 text-red-500">*</span></span>
+              <span className="mb-1 block text-sm font-medium text-slate-700">{t('Vehicle')}<span className="ms-0.5 text-red-500">*</span></span>
               <SearchSelect
                 value={form.vehicle_id}
                 onChange={(id) => setForm((f) => ({ ...f, vehicle_id: id }))}
                 options={options}
-                placeholder="Search plate…"
+                placeholder={t('Search plate…')}
               />
             </div>
-            <Select label="Service" value={form.service_type} onChange={set('service_type')}>
-              {Object.entries(TYPES).map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+            <Select label={t('Service')} value={form.service_type} onChange={set('service_type')}>
+              {Object.entries(TYPES).map(([k, label]) => <option key={k} value={k}>{t(label)}</option>)}
             </Select>
           </>
         )}
 
         <div className="grid grid-cols-2 gap-3">
-          <Input label="Every (km)" type="number" min="1" value={form.interval_km} onChange={set('interval_km')} placeholder="e.g. 5000" />
-          <Input label="Every (days)" type="number" min="1" value={form.interval_days} onChange={set('interval_days')} placeholder="e.g. 180" />
+          <Input label={t('Every (km)')} type="number" min="1" value={form.interval_km} onChange={set('interval_km')} placeholder={t('e.g. 5000')} />
+          <Input label={t('Every (days)')} type="number" min="1" value={form.interval_days} onChange={set('interval_days')} placeholder={t('e.g. 180')} />
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <Input label="Last service odometer" type="number" min="0" value={form.last_service_odometer} onChange={set('last_service_odometer')} placeholder="km at last service" />
-          <Input label="Last service date" type="date" value={form.last_service_at} onChange={set('last_service_at')} />
+          <Input label={t('Last service odometer')} type="number" min="0" value={form.last_service_odometer} onChange={set('last_service_odometer')} placeholder={t('km at last service')} />
+          <Input label={t('Last service date')} type="date" value={form.last_service_at} onChange={set('last_service_at')} />
         </div>
-        <Input label="Custom name (optional)" value={form.name} onChange={set('name')} placeholder={TYPES[form.service_type] || ''} />
-        <Textarea label="Notes (optional)" rows={2} value={form.notes} onChange={set('notes')} />
+        <Input label={t('Custom name (optional)')} value={form.name} onChange={set('name')} placeholder={TYPES[form.service_type] ? t(TYPES[form.service_type]) : ''} />
+        <Textarea label={t('Notes (optional)')} rows={2} value={form.notes} onChange={set('notes')} />
       </div>
     </Modal>
   );
@@ -171,6 +190,7 @@ function ReminderDialog({ reminder, vehicles, onClose, onSaved }) {
  */
 function ScheduleDialog({ reminder, onClose, onDone }) {
   const toast = useToast();
+  const { t } = useI18n();
   const navigate = useNavigate();
   const [odometer, setOdometer] = useState(reminder.vehicle?.odometer ?? '');
   const [busy, setBusy] = useState(false);
@@ -182,11 +202,11 @@ function ScheduleDialog({ reminder, onClose, onDone }) {
         odometer: odometer === '' ? null : Number(odometer),
       });
       const url = data?.data?.ticket?.url;
-      toast.success(data?.message || 'Maintenance ticket opened');
+      toast.success(data?.message || t('Maintenance ticket opened'));
       onDone();
       if (url) navigate(url);
     } catch (e) {
-      toast.error(e.response?.data?.message || 'Could not open the ticket');
+      toast.error(e.response?.data?.message || t('Could not open the ticket'));
     } finally {
       setBusy(false);
     }
@@ -197,22 +217,22 @@ function ScheduleDialog({ reminder, onClose, onDone }) {
       open
       onClose={() => !busy && onClose()}
       size="sm"
-      title={`Schedule ${reminder.name}`}
-      subtitle={`${reminder.vehicle?.label || `#${reminder.vehicle_id}`} — opens a maintenance ticket for this service. The reminder rolls forward when that ticket is closed.`}
+      title={t('Schedule {name}', { name: reminder.name })}
+      subtitle={t('{vehicle} — opens a maintenance ticket for this service. The reminder rolls forward when that ticket is closed.', { vehicle: reminder.vehicle?.label || `#${reminder.vehicle_id}` })}
       footer={(
         <div className="flex justify-end gap-2">
-          <Button variant="secondary" onClick={onClose} disabled={busy}>Cancel</Button>
-          <Button variant="primary" loading={busy} onClick={submit}>Open ticket</Button>
+          <Button variant="secondary" onClick={onClose} disabled={busy}>{t('Cancel')}</Button>
+          <Button variant="primary" loading={busy} onClick={submit}>{t('Open ticket')}</Button>
         </div>
       )}
     >
       <Input
-        label="Odometer now"
+        label={t('Odometer now')}
         type="number"
         min="0"
         value={odometer}
         onChange={(e) => setOdometer(e.target.value)}
-        placeholder="Defaults to the car's current reading"
+        placeholder={t("Defaults to the car's current reading")}
       />
     </Modal>
   );
@@ -230,6 +250,7 @@ export default function ServiceReminders() {
   const { can } = usePermissions();
   const canManage = can('reminders.manage');
   const toast = useToast();
+  const { t } = useI18n();
   // Open on the cars that actually need service (overdue + due soon). OK / No-data rows
   // are hidden by default but one click away via the "All" / "OK" chips.
   const [filter, setFilter] = useState('action');
@@ -316,9 +337,9 @@ export default function ServiceReminders() {
   }), [tire.list, tireStatus]);
 
   const tireGroups = useMemo(() => ([
-    { key: 'tire_rotation', label: 'Tire Rotation', hint: 'Even out tread wear — swap positions.', rows: tireShown.filter((r) => r.service_type === 'tire_rotation') },
-    { key: 'tire_change',   label: 'Tire Change',   hint: 'Replace worn tires — end of tread life.', rows: tireShown.filter((r) => r.service_type === 'tire_change') },
-  ]), [tireShown]);
+    { key: 'tire_rotation', label: t('Tire Rotation'), hint: t('Even out tread wear — swap positions.'), rows: tireShown.filter((r) => r.service_type === 'tire_rotation') },
+    { key: 'tire_change',   label: t('Tire Change'),   hint: t('Replace worn tires — end of tread life.'), rows: tireShown.filter((r) => r.service_type === 'tire_change') },
+  ]), [tireShown, t]);
 
   // Active communication: alert the fleet team (drivers/technicians) that this car needs a service.
   // Distinct from "Schedule service" — this only tells people, it opens no ticket.
@@ -326,10 +347,10 @@ export default function ServiceReminders() {
     setBusyId(r.id);
     try {
       const { data: res } = await api.post(`/ServiceReminders/${r.id}/notify`);
-      toast.success(res?.message || `Team alerted — ${r.name} on ${r.vehicle?.label || 'vehicle'}`);
+      toast.success(res?.message || t('Team alerted — {service} on {vehicle}', { service: r.name, vehicle: r.vehicle?.label || t('vehicle') }));
       reload({ silent: true });
     } catch (e) {
-      toast.error(e.response?.data?.message || 'Could not send the notification');
+      toast.error(e.response?.data?.message || t('Could not send the notification'));
     } finally {
       setBusyId(null);
     }
@@ -340,10 +361,10 @@ export default function ServiceReminders() {
     setBusyId(r.id);
     try {
       await api.post(`/ServiceReminders/${r.id}`, { is_muted: !r.is_muted });
-      toast.success(r.is_muted ? 'Reminder un-muted' : 'Reminder muted');
+      toast.success(r.is_muted ? t('Reminder un-muted') : t('Reminder muted'));
       reload({ silent: true });
     } catch (e) {
-      toast.error(e.response?.data?.message || 'Could not update the reminder');
+      toast.error(e.response?.data?.message || t('Could not update the reminder'));
     } finally {
       setBusyId(null);
     }
@@ -352,17 +373,17 @@ export default function ServiceReminders() {
   const remove = async () => {
     try {
       await api.delete(`/ServiceReminders/${deleting.id}`);
-      toast.success('Reminder deleted');
+      toast.success(t('Reminder deleted'));
       setDeleting(null);
       reload({ silent: true });
     } catch (e) {
-      toast.error(e.response?.data?.message || 'Could not delete the reminder');
+      toast.error(e.response?.data?.message || t('Could not delete the reminder'));
     }
   };
 
   const columns = [
     {
-      key: 'vehicle', header: 'Vehicle', cellClass: 'font-medium',
+      key: 'vehicle', header: t('Vehicle'), cellClass: 'font-medium',
       render: (r) => (
         <div className="min-w-0">
           {r.vehicle_id ? (
@@ -375,47 +396,50 @@ export default function ServiceReminders() {
       ),
     },
     {
-      key: 'name', header: 'Service',
+      key: 'name', header: t('Service'),
       render: (r) => (
         <div className="flex items-center gap-2">
           <span className={`font-medium ${r.is_muted ? 'text-slate-400' : 'text-slate-700'}`}>{r.name}</span>
-          {r.source === 'auto' && <Badge tone="slate">auto</Badge>}
-          {r.is_muted && <Badge tone="gray">muted</Badge>}
+          {r.source === 'auto' && <Badge tone="slate">{t('auto')}</Badge>}
+          {r.is_muted && <Badge tone="gray">{t('muted')}</Badge>}
         </div>
       ),
     },
     {
-      key: 'interval', header: 'Interval', cellClass: 'text-slate-500 whitespace-nowrap',
-      render: (r) => [r.interval_km ? `${num(r.interval_km)} km` : null, r.interval_days ? `${r.interval_days}d` : null].filter(Boolean).join(' · ') || '—',
+      key: 'interval', header: t('Interval'), cellClass: 'text-slate-500 whitespace-nowrap',
+      render: (r) => [
+        r.interval_km ? `${num(r.interval_km)} km` : null,
+        r.interval_days ? t('{d}d', { d: r.interval_days }) : null,
+      ].filter(Boolean).join(' · ') || '—',
     },
     {
-      key: 'last', header: 'Last service', cellClass: 'text-slate-500 whitespace-nowrap',
+      key: 'last', header: t('Last service'), cellClass: 'text-slate-500 whitespace-nowrap',
       render: (r) => r.last_service_odometer != null ? `${num(r.last_service_odometer)} km` : (r.last_service_at ? fmtDate(r.last_service_at) : '—'),
     },
     {
-      key: 'next', header: 'Next due', cellClass: 'whitespace-nowrap font-medium text-slate-700',
+      key: 'next', header: t('Next due'), cellClass: 'whitespace-nowrap font-medium text-slate-700',
       render: (r) => r.next_due_odometer != null ? `${num(r.next_due_odometer)} km` : (r.next_due_at ? fmtDate(r.next_due_at) : '—'),
     },
     {
-      key: 'status', header: 'Status', align: 'right',
+      key: 'status', header: t('Status'), align: 'right',
       render: (r) => {
         const s = STATUS[r.status] || STATUS.no_data;
         return (
           <div className="flex items-center justify-end gap-2">
-            <span className="text-xs text-slate-400">{remaining(r)}</span>
-            <Badge tone={s.tone}>{s.label}</Badge>
+            <span className="text-xs text-slate-400">{remaining(r, t)}</span>
+            <Badge tone={s.tone}>{t(s.label)}</Badge>
           </div>
         );
       },
     },
     {
-      key: 'notified', header: 'Alert',
+      key: 'notified', header: t('Alert'),
       render: (r) => r.notified ? (
         <div className="flex items-center gap-1.5">
-          <Badge tone="green">Notified</Badge>
+          <Badge tone="green">{t('Notified')}</Badge>
           {r.last_notified_at && <span className="whitespace-nowrap text-xs text-slate-400" title={fmtDate(r.last_notified_at)}>{fmtAgo(r.last_notified_at)}</span>}
         </div>
-      ) : <Badge tone="slate">Not notified</Badge>,
+      ) : <Badge tone="slate">{t('Not notified')}</Badge>,
     },
     {
       key: 'actions', header: '', align: 'right',
@@ -425,17 +449,17 @@ export default function ServiceReminders() {
           <div className="flex items-center justify-end gap-1.5">
             {/* Tell the team (once), then lock to a disabled "Notified" state. */}
             {r.notified ? (
-              <Button size="sm" variant="secondary" disabled title={r.last_notified_at ? `Alert sent ${fmtAgo(r.last_notified_at)}${r.notified_by_name ? ` by ${r.notified_by_name}` : ''}` : 'Alert sent'}>
-                <Icon.Check className="h-3.5 w-3.5" /> Notified
+              <Button size="sm" variant="secondary" disabled title={alertSentTitle(r, t)}>
+                <Icon.Check className="h-3.5 w-3.5" /> {t('Notified')}
               </Button>
             ) : (
-              <Button size="sm" variant="secondary" loading={busyId === r.id} onClick={() => notify(r)} title="Alert the drivers and technicians">
-                <Icon.Alert className="h-3.5 w-3.5" /> Notify
+              <Button size="sm" variant="secondary" loading={busyId === r.id} onClick={() => notify(r)} title={t('Alert the drivers and technicians')}>
+                <Icon.Alert className="h-3.5 w-3.5" /> {t('Notify')}
               </Button>
             )}
             {/* The act: open the maintenance ticket that actually performs the service. */}
-            <Button size="sm" variant="primary" onClick={() => setScheduling(r)} title="Open a maintenance ticket for this service">
-              <Icon.Wrench className="h-3.5 w-3.5" /> Schedule
+            <Button size="sm" variant="primary" onClick={() => setScheduling(r)} title={t('Open a maintenance ticket for this service')}>
+              <Icon.Wrench className="h-3.5 w-3.5" /> {t('Schedule')}
             </Button>
             <RowMenu
               onEdit={() => setEditing(r)}
@@ -453,12 +477,12 @@ export default function ServiceReminders() {
     <div className="py-8">
       <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
         <PageHeader
-          title="Service Reminders"
-          subtitle="Every car's recurring service due points — oil, filters, brakes, tires, battery. Oil-change and tire reminders are seeded automatically per car; add or edit any to override. “Schedule” opens the maintenance ticket that performs the work."
+          title={t('Service Reminders')}
+          subtitle={t('Every car’s recurring service due points — oil, filters, brakes, tires, battery. Oil-change and tire reminders are seeded automatically per car; add or edit any to override. “Schedule” opens the maintenance ticket that performs the work.')}
         >
           {canManage && (
             <Button variant="primary" onClick={() => setEditing({})}>
-              <Icon.Plus className="h-4 w-4" /> New reminder
+              <Icon.Plus className="h-4 w-4" /> {t('New reminder')}
             </Button>
           )}
         </PageHeader>
@@ -466,27 +490,27 @@ export default function ServiceReminders() {
         {error && <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error}</div>}
 
         <div className="flex flex-wrap items-center gap-3">
-          <SearchInput value={q} onChange={setQ} placeholder="Search plate, make / model or service…" className="w-full max-w-xs" />
+          <SearchInput value={q} onChange={setQ} placeholder={t('Search plate, make / model or service…')} className="w-full max-w-xs" />
           <select
             value={type}
             onChange={(e) => setType(e.target.value)}
             className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700"
           >
-            <option value="all">All services</option>
+            <option value="all">{t('All services')}</option>
             {typesPresent.map(([k, n]) => (
-              <option key={k} value={k}>{TYPES[k] || k} ({n})</option>
+              <option key={k} value={k}>{`${t(TYPES[k] || k)} (${n})`}</option>
             ))}
           </select>
           <FilterChips
             value={filter}
             onChange={setFilter}
             options={[
-              { key: 'action', label: 'Action needed', count: counts.overdue + counts.due_soon, tone: 'amber' },
-              { key: 'all', label: 'All', count: counts.all },
-              { key: 'overdue', label: 'Overdue', count: counts.overdue, tone: 'red' },
-              { key: 'due_soon', label: 'Due soon', count: counts.due_soon, tone: 'amber' },
-              { key: 'ok', label: 'OK', count: counts.ok, tone: 'green' },
-              { key: 'tires', label: 'Tires 🛞', count: counts.tires, tone: 'indigo' },
+              { key: 'action', label: t('Action needed'), count: counts.overdue + counts.due_soon, tone: 'amber' },
+              { key: 'all', label: t('All'), count: counts.all },
+              { key: 'overdue', label: t('Overdue'), count: counts.overdue, tone: 'red' },
+              { key: 'due_soon', label: t('Due soon'), count: counts.due_soon, tone: 'amber' },
+              { key: 'ok', label: t('OK'), count: counts.ok, tone: 'green' },
+              { key: 'tires', label: `${t('Tires')} 🛞`, count: counts.tires, tone: 'indigo' },
             ]}
           />
         </div>
@@ -494,26 +518,26 @@ export default function ServiceReminders() {
         {loading ? (
           <>
             <MetricGridSkeleton count={3} />
-            <SectionCard title="Service reminders"><DataTable loading columns={columns} /></SectionCard>
+            <SectionCard title={t('Service reminders')}><DataTable loading columns={columns} /></SectionCard>
           </>
         ) : filter === 'tires' ? (
           <>
             <MetricGrid cols={4}>
-              <MetricCard label="Tire reminders" value={num(tire.byStatus.all)} tone="indigo" icon={<Icon.Wrench className="h-5 w-5" />} hint="Rotation + change, fleet-wide" />
-              <MetricCard label="Overdue" value={num(tire.byStatus.overdue)} tone="red" icon={<Icon.Alert className="h-5 w-5" />} hint="Past their due point — service now" />
-              <MetricCard label="Due soon" value={num(tire.byStatus.due_soon)} tone="amber" icon={<Icon.Clock className="h-5 w-5" />} hint="Within 500 km / 7 days of due" />
-              <MetricCard label="OK" value={num(tire.byStatus.ok)} tone="green" icon={<Icon.Check className="h-5 w-5" />} hint="Healthy — no action needed" />
+              <MetricCard label={t('Tire reminders')} value={num(tire.byStatus.all)} tone="indigo" icon={<Icon.Wrench className="h-5 w-5" />} hint={t('Rotation + change, fleet-wide')} />
+              <MetricCard label={t('Overdue')} value={num(tire.byStatus.overdue)} tone="red" icon={<Icon.Alert className="h-5 w-5" />} hint={t('Past their due point — service now')} />
+              <MetricCard label={t('Due soon')} value={num(tire.byStatus.due_soon)} tone="amber" icon={<Icon.Clock className="h-5 w-5" />} hint={t('Within 500 km / 7 days of due')} />
+              <MetricCard label={t('OK')} value={num(tire.byStatus.ok)} tone="green" icon={<Icon.Check className="h-5 w-5" />} hint={t('Healthy — no action needed')} />
             </MetricGrid>
 
             <FilterChips
               value={tireStatus}
               onChange={setTireStatus}
               options={[
-                { key: 'action', label: 'Action needed', count: tire.byStatus.overdue + tire.byStatus.due_soon, tone: 'amber' },
-                { key: 'all', label: 'All', count: tire.byStatus.all },
-                { key: 'overdue', label: 'Overdue', count: tire.byStatus.overdue, tone: 'red' },
-                { key: 'due_soon', label: 'Due soon', count: tire.byStatus.due_soon, tone: 'amber' },
-                { key: 'ok', label: 'OK', count: tire.byStatus.ok, tone: 'green' },
+                { key: 'action', label: t('Action needed'), count: tire.byStatus.overdue + tire.byStatus.due_soon, tone: 'amber' },
+                { key: 'all', label: t('All'), count: tire.byStatus.all },
+                { key: 'overdue', label: t('Overdue'), count: tire.byStatus.overdue, tone: 'red' },
+                { key: 'due_soon', label: t('Due soon'), count: tire.byStatus.due_soon, tone: 'amber' },
+                { key: 'ok', label: t('OK'), count: tire.byStatus.ok, tone: 'green' },
               ]}
             />
 
@@ -522,14 +546,14 @@ export default function ServiceReminders() {
                 key={g.key}
                 title={`🛞 ${g.label}`}
                 subtitle={g.hint}
-                actions={<span className="text-xs text-slate-400">{num(g.rows.length)} shown</span>}
+                actions={<span className="text-xs text-slate-400">{t('{n} shown', { n: num(g.rows.length) })}</span>}
               >
                 <DataTable
                   rows={g.rows}
                   rowKey={(r) => r.id}
                   columns={columns}
                   highlightRow={(r) => r.status === 'overdue'}
-                  empty={tireStatus === 'action' ? 'All caught up — no tires need attention.' : 'No tire reminders in this view.'}
+                  empty={tireStatus === 'action' ? t('All caught up — no tires need attention.') : t('No tire reminders in this view.')}
                 />
               </SectionCard>
             ))}
@@ -537,22 +561,22 @@ export default function ServiceReminders() {
         ) : (
           <>
             <MetricGrid cols={3}>
-              <MetricCard label="Total reminders" value={num(counts.all)} tone="indigo" icon={<Icon.Wrench className="h-5 w-5" />} hint="Across the fleet" />
-              <MetricCard label="Overdue" value={num(counts.overdue)} tone="red" icon={<Icon.Alert className="h-5 w-5" />} hint="Past their due point — service now" />
-              <MetricCard label="Due soon" value={num(counts.due_soon)} tone="amber" icon={<Icon.Clock className="h-5 w-5" />} hint="Within 500 km / 7 days of due" />
+              <MetricCard label={t('Total reminders')} value={num(counts.all)} tone="indigo" icon={<Icon.Wrench className="h-5 w-5" />} hint={t('Across the fleet')} />
+              <MetricCard label={t('Overdue')} value={num(counts.overdue)} tone="red" icon={<Icon.Alert className="h-5 w-5" />} hint={t('Past their due point — service now')} />
+              <MetricCard label={t('Due soon')} value={num(counts.due_soon)} tone="amber" icon={<Icon.Clock className="h-5 w-5" />} hint={t('Within 500 km / 7 days of due')} />
             </MetricGrid>
 
             <SectionCard
-              title="Service reminders"
-              subtitle="Soonest due first. “Notify” alerts the drivers/technicians; “Schedule” opens the maintenance ticket that performs the service."
-              actions={<span className="text-xs text-slate-400">{num(shown.length)} shown</span>}
+              title={t('Service reminders')}
+              subtitle={t('Soonest due first. “Notify” alerts the drivers/technicians; “Schedule” opens the maintenance ticket that performs the service.')}
+              actions={<span className="text-xs text-slate-400">{t('{n} shown', { n: num(shown.length) })}</span>}
             >
               <DataTable
                 rows={shown}
                 rowKey={(r) => r.id}
                 columns={columns}
                 highlightRow={(r) => r.status === 'overdue'}
-                empty={filter === 'action' ? 'All caught up — nothing due right now.' : 'No service reminders in this view.'}
+                empty={filter === 'action' ? t('All caught up — nothing due right now.') : t('No service reminders in this view.')}
               />
             </SectionCard>
           </>
@@ -578,9 +602,14 @@ export default function ServiceReminders() {
 
       <ConfirmDialog
         open={Boolean(deleting)}
-        title="Delete this reminder?"
-        message={deleting ? `${deleting.name} on ${deleting.vehicle?.label || `#${deleting.vehicle_id}`} will stop being tracked. Auto-seeded reminders come back on the next sync.` : ''}
-        confirmText="Delete"
+        title={t('Delete this reminder?')}
+        message={deleting
+          ? t('{service} on {vehicle} will stop being tracked. Auto-seeded reminders come back on the next sync.', {
+            service: deleting.name,
+            vehicle: deleting.vehicle?.label || `#${deleting.vehicle_id}`,
+          })
+          : ''}
+        confirmText={t('Delete')}
         variant="danger"
         onConfirm={remove}
         onClose={() => setDeleting(null)}
@@ -591,20 +620,21 @@ export default function ServiceReminders() {
 
 /** Kebab menu for the row's secondary actions (edit / mute / delete). */
 function RowMenu({ onEdit, onMute, onDelete, muted }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const item = 'block w-full px-3 py-1.5 text-start text-slate-600 hover:bg-slate-50';
   return (
     <div className="relative">
-      <button type="button" onClick={() => setOpen((o) => !o)} className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600" aria-label="More actions">
+      <button type="button" onClick={() => setOpen((o) => !o)} className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600" aria-label={t('More actions')}>
         <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path d="M10 6a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Zm0 5.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Zm0 5.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z" /></svg>
       </button>
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
           <div className="absolute end-0 z-20 mt-1 w-40 overflow-hidden rounded-lg bg-white py-1 text-sm shadow-lg ring-1 ring-slate-200">
-            <button type="button" className={item} onClick={() => { setOpen(false); onEdit(); }}>Edit reminder</button>
-            <button type="button" className={item} onClick={() => { setOpen(false); onMute(); }}>{muted ? 'Un-mute' : 'Mute'}</button>
-            <button type="button" className={`${item} text-red-600 hover:bg-red-50`} onClick={() => { setOpen(false); onDelete(); }}>Delete</button>
+            <button type="button" className={item} onClick={() => { setOpen(false); onEdit(); }}>{t('Edit reminder')}</button>
+            <button type="button" className={item} onClick={() => { setOpen(false); onMute(); }}>{muted ? t('Un-mute') : t('Mute')}</button>
+            <button type="button" className={`${item} text-red-600 hover:bg-red-50`} onClick={() => { setOpen(false); onDelete(); }}>{t('Delete')}</button>
           </div>
         </>
       )}

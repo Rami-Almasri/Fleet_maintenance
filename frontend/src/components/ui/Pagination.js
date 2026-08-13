@@ -1,11 +1,13 @@
 import Button from './Button';
+import { useI18n } from '../../i18n/I18nContext';
 
 // Full pagination when the total is known (client-side data sets).
 export default function Pagination({ page, pageCount, total, pageSize, onPage }) {
+  const { t } = useI18n();
   if (!pageCount || pageCount <= 1) {
     return (
       <div className="flex items-center justify-between border-t border-slate-100 px-6 py-3 text-sm text-slate-500">
-        <span>{total} {total === 1 ? 'result' : 'results'}</span>
+        <span>{total === 1 ? t('1 result') : t('{n} results', { n: total })}</span>
       </div>
     );
   }
@@ -14,16 +16,15 @@ export default function Pagination({ page, pageCount, total, pageSize, onPage })
   return (
     <div className="flex items-center justify-between border-t border-slate-100 px-6 py-3">
       <span className="text-sm text-slate-500">
-        Showing <span className="font-medium text-slate-700">{from}–{to}</span> of{' '}
-        <span className="font-medium text-slate-700">{total}</span>
+        {t('Showing {from}–{to} of {total}', { from, to, total })}
       </span>
       <div className="flex items-center gap-2">
         <Button variant="secondary" size="sm" disabled={page <= 1} onClick={() => onPage(page - 1)}>
-          Previous
+          {t('Previous')}
         </Button>
-        <span className="px-2 text-sm text-slate-600">Page {page} of {pageCount}</span>
+        <span className="px-2 text-sm text-slate-600">{t('Page {page} of {total}', { page, total: pageCount })}</span>
         <Button variant="secondary" size="sm" disabled={page >= pageCount} onClick={() => onPage(page + 1)}>
-          Next
+          {t('Next')}
         </Button>
       </div>
     </div>
@@ -32,18 +33,19 @@ export default function Pagination({ page, pageCount, total, pageSize, onPage })
 
 // Prev/next only — for server pages where the total is unknown.
 export function CursorPagination({ page, onPage, hasNext, count, total }) {
+  const { t, lang } = useI18n();
   return (
     <div className="flex items-center justify-between border-t border-slate-100 px-6 py-3">
       <span className="text-sm text-slate-500">
-        Page {page} · {count} on this page
-        {total != null && <> · <span className="font-medium text-slate-700">{total.toLocaleString()}</span> total</>}
+        {t('Page {page} · {count} on this page', { page, count })}
+        {total != null && ` · ${t('{n} total', { n: total.toLocaleString(lang === 'ar' ? 'ar-AE-u-nu-latn' : undefined) })}`}
       </span>
       <div className="flex items-center gap-2">
         <Button variant="secondary" size="sm" disabled={page <= 1} onClick={() => onPage(page - 1)}>
-          Previous
+          {t('Previous')}
         </Button>
         <Button variant="secondary" size="sm" disabled={!hasNext} onClick={() => onPage(page + 1)}>
-          Next
+          {t('Next')}
         </Button>
       </div>
     </div>

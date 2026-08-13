@@ -9,6 +9,7 @@ import { MetricGridSkeleton } from '../../components/ui/Skeleton';
 import FilterChips from '../../components/ui/FilterChips';
 import Icon from '../../components/ui/Icon';
 import { num } from '../../lib/format';
+import { useI18n } from '../../i18n/I18nContext';
 import ActivityTimeline, { CATEGORY_META, CATEGORY_KEYS } from '../../components/activity/ActivityTimeline';
 
 // Rolling-window presets. 'all' reaches back far enough to mean "everything" (the API otherwise
@@ -27,6 +28,7 @@ const isoFrom = (days) => {
 };
 
 export default function GlobalActivityFeed() {
+  const { t } = useI18n();
   const [category, setCategory] = useState('all');
   const [win, setWin] = useState('7d');
   const [q, setQ] = useState('');
@@ -54,25 +56,25 @@ export default function GlobalActivityFeed() {
     const entries = Object.entries(summary.by_category || {});
     if (!entries.length) return null;
     const [key, count] = entries.sort((a, b) => b[1] - a[1])[0];
-    return { key, count, label: CATEGORY_META[key]?.label || key };
-  }, [summary]);
+    return { key, count, label: t(CATEGORY_META[key]?.label || key) };
+  }, [summary, t]);
 
   const categoryOptions = useMemo(() => ([
-    { key: 'all', label: 'All actions', count: summary.total },
+    { key: 'all', label: t('All actions'), count: summary.total },
     ...CATEGORY_KEYS.map((k) => ({
       key: k,
-      label: CATEGORY_META[k].label,
+      label: t(CATEGORY_META[k].label),
       count: summary.by_category?.[k] || 0,
       tone: CATEGORY_META[k].tone,
     })),
-  ]), [summary]);
+  ]), [summary, t]);
 
   return (
     <div className="py-8">
       <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
         <PageHeader
-          title="Activity Feed"
-          subtitle="Every action on every car, told as a story — a car's burst of work rolls into one Maintenance Session, with movements (Check-in / Check-out) as the headline. Switch to Detailed for the raw, immutable trail."
+          title={t('Activity Feed')}
+          subtitle={t("Every action on every car, told as a story — a car's burst of work rolls into one Maintenance Session, with movements (Check-in / Check-out) as the headline. Switch to Detailed for the raw, immutable trail.")}
         >
           <div className="flex flex-wrap items-center gap-2">
             {WINDOWS.map((w) => (
@@ -82,7 +84,7 @@ export default function GlobalActivityFeed() {
                 onClick={() => setWin(w.key)}
                 className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${win === w.key ? 'bg-indigo-600 text-white shadow-soft' : 'bg-white text-slate-500 ring-1 ring-inset ring-slate-200 hover:text-slate-700'}`}
               >
-                {w.label}
+                {t(w.label)}
               </button>
             ))}
           </div>
@@ -94,20 +96,20 @@ export default function GlobalActivityFeed() {
           <MetricGridSkeleton count={4} />
         ) : (
           <MetricGrid cols={4}>
-            <MetricCard label="Events in window" value={num(summary.total)} tone="indigo" icon={<Icon.Activity className="h-5 w-5" />} hint="Logged actions in the selected period" />
-            <MetricCard label="Last 24 hours" value={num(summary.last_24h)} tone="emerald" icon={<Icon.Clock className="h-5 w-5" />} hint="Actions in the past day" />
-            <MetricCard label="Vehicles touched" value={num(summary.vehicles)} tone="blue" icon={<Icon.Car className="h-5 w-5" />} hint="Distinct cars with activity" />
-            <MetricCard label="Busiest category" value={busiest ? busiest.label : '—'} tone={busiest ? CATEGORY_META[busiest.key]?.tone : 'slate'} icon={<Icon.Chart className="h-5 w-5" />} hint={busiest ? `${num(busiest.count)} events` : 'No activity yet'} />
+            <MetricCard label={t('Events in window')} value={num(summary.total)} tone="indigo" icon={<Icon.Activity className="h-5 w-5" />} hint={t('Logged actions in the selected period')} />
+            <MetricCard label={t('Last 24 hours')} value={num(summary.last_24h)} tone="emerald" icon={<Icon.Clock className="h-5 w-5" />} hint={t('Actions in the past day')} />
+            <MetricCard label={t('Vehicles touched')} value={num(summary.vehicles)} tone="blue" icon={<Icon.Car className="h-5 w-5" />} hint={t('Distinct cars with activity')} />
+            <MetricCard label={t('Busiest category')} value={busiest ? busiest.label : '—'} tone={busiest ? CATEGORY_META[busiest.key]?.tone : 'slate'} icon={<Icon.Chart className="h-5 w-5" />} hint={busiest ? t('{n} events', { n: num(busiest.count) }) : t('No activity yet')} />
           </MetricGrid>
         )}
 
         <SectionCard
-          title="Activity trail"
-          subtitle="Filter by action type, then narrow with the time window or search."
+          title={t('Activity trail')}
+          subtitle={t('Filter by action type, then narrow with the time window or search.')}
           actions={
             <div className="flex items-center gap-3">
               <div className="inline-flex rounded-full bg-slate-100 p-0.5 text-xs font-semibold">
-                {[{ key: 'story', label: 'Story' }, { key: 'detailed', label: 'Detailed' }].map((v) => (
+                {[{ key: 'story', label: t('Story') }, { key: 'detailed', label: t('Detailed') }].map((v) => (
                   <button
                     key={v.key}
                     type="button"
@@ -118,7 +120,11 @@ export default function GlobalActivityFeed() {
                   </button>
                 ))}
               </div>
-              <span className="text-xs text-slate-400">{num(events.length)} shown{data?.has_more ? ' · more available' : ''}</span>
+              <span className="text-xs text-slate-400">
+                {data?.has_more
+                  ? t('{n} shown · more available', { n: num(events.length) })
+                  : t('{n} shown', { n: num(events.length) })}
+              </span>
             </div>
           }
         >
@@ -130,7 +136,7 @@ export default function GlobalActivityFeed() {
                 <input
                   value={q}
                   onChange={(e) => { setQ(e.target.value); setLimit(60); }}
-                  placeholder="Search action, note, user, plate…"
+                  placeholder={t('Search action, note, user, plate…')}
                   className="w-full rounded-full border border-slate-200 bg-white py-2 ps-9 pe-3 text-sm text-slate-700 placeholder:text-slate-400 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
                 />
               </div>
@@ -143,7 +149,7 @@ export default function GlobalActivityFeed() {
                 events={events}
                 showVehicle
                 group={view === 'story'}
-                emptyMessage={q || category !== 'all' ? 'No activity matches these filters in this window.' : 'No activity recorded in this window yet.'}
+                emptyMessage={q || category !== 'all' ? t('No activity matches these filters in this window.') : t('No activity recorded in this window yet.')}
               />
             )}
 
@@ -154,7 +160,7 @@ export default function GlobalActivityFeed() {
                   onClick={() => setLimit((l) => Math.min(200, l + 60))}
                   className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 py-1.5 text-sm font-medium text-indigo-600 shadow-soft transition hover:border-slate-300 hover:text-indigo-700"
                 >
-                  Load more <Icon.ArrowRight className="h-4 w-4" />
+                  {t('Load more')} <Icon.ArrowRight className="h-4 w-4 rtl:-scale-x-100" />
                 </button>
               </div>
             )}
@@ -163,10 +169,11 @@ export default function GlobalActivityFeed() {
 
         <Card className="!bg-slate-50/60">
           <p className="px-4 py-3 text-xs leading-relaxed text-slate-400">
-            <span className="font-semibold text-slate-500">Data origin:</span> one unified read over three append-only trails —
-            the vehicle event log (workflow, readiness, condition, cleaning), the logistics movement log, and inspection records.
-            Every row carries who acted and when; nothing here can be edited. Open a car from any event to see its full{' '}
-            <Link to="/vehicles" className="font-medium text-indigo-500 hover:text-indigo-600">vehicle timeline</Link>.
+            <span className="font-semibold text-slate-500">{t('Data origin:')}</span>{' '}
+            {t('one unified read over three append-only trails — the vehicle event log (workflow, readiness, condition, cleaning), the logistics movement log, and inspection records. Every row carries who acted and when; nothing here can be edited.')}{' '}
+            <Link to="/vehicles" className="font-medium text-indigo-500 hover:text-indigo-600">
+              {t('Open a car from any event to see its full vehicle timeline.')}
+            </Link>
           </p>
         </Card>
       </div>

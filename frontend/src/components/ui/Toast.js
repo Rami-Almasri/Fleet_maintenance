@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useI18n } from '../../i18n/I18nContext';
 
 const ToastContext = createContext(null);
 
@@ -10,6 +11,7 @@ const TONE = {
 };
 
 export function ToastProvider({ children }) {
+  const { t } = useI18n();
   const [toasts, setToasts] = useState([]);
   const idRef = useRef(0);
 
@@ -42,11 +44,11 @@ export function ToastProvider({ children }) {
       {children}
       {createPortal(
         <div className="fixed bottom-4 end-4 z-[60] flex w-full max-w-sm flex-col gap-2">
-          {toasts.map((t) => {
-            const tone = TONE[t.type] || TONE.info;
+          {toasts.map((toast) => {
+            const tone = TONE[toast.type] || TONE.info;
             return (
               <div
-                key={t.id}
+                key={toast.id}
                 className={`flex items-start gap-3 overflow-hidden rounded-xl bg-white p-4 shadow-lg ring-1 ${tone.ring}`}
               >
                 <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${tone.bar} text-white`}>
@@ -54,8 +56,8 @@ export function ToastProvider({ children }) {
                     <path d={tone.icon} />
                   </svg>
                 </span>
-                <p className="flex-1 text-sm text-slate-700">{t.message}</p>
-                <button onClick={() => remove(t.id)} aria-label="Dismiss notification" className="text-slate-400 transition hover:text-slate-600">
+                <p className="flex-1 text-sm text-slate-700">{toast.message}</p>
+                <button onClick={() => remove(toast.id)} aria-label={t('Dismiss notification')} className="text-slate-400 transition hover:text-slate-600">
                   <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" aria-hidden="true">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                   </svg>

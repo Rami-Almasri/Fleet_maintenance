@@ -268,6 +268,12 @@ Route::middleware('auth:sanctum')->prefix('Contract')->controller(ContractContro
     Route::get('/', 'index')->middleware('permission:contracts.view');
     Route::get('/next-no', 'nextNo')->middleware('permission:contracts.manage');   // auto contract number for the New form
     Route::get('/{contract}', 'show')->middleware('permission:contracts.view');
+    // The visit journey: every fault, garage, repair time and event under a maintenance contract.
+    // Declared BEFORE nothing in particular — '{contract}/journey' can't collide with '{contract}' —
+    // but kept next to show() because it's the same page's second half.
+    // Readable by maintenance viewers too: the people who lived the visit shouldn't need contract rights
+    // to read it back.
+    Route::get('/{contract}/journey', 'journey')->middleware('permission:contracts.view|maintenance.view');
     Route::post('/', 'store')->middleware('permission:contracts.manage');
     Route::post('/{contract}', 'update')->middleware('permission:contracts.manage');
     Route::delete('/{contract}', 'destroy')->middleware('permission:contracts.manage');

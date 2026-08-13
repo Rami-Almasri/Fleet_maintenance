@@ -11,15 +11,18 @@ import { EmptyState } from '../ui/Misc';
 import Icon from '../ui/Icon';
 import ComplaintDetailDrawer from '../complaints/ComplaintDetailDrawer';
 import { STAGE_META } from '../complaints/stages';
+import { useI18n } from '../../i18n/I18nContext';
 
-function fmtDate(iso) {
+// Arabic still shows a Gregorian date in Latin digits so it lines up with the rest of the timeline.
+function fmtDate(iso, lang) {
   if (!iso) return '';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  return d.toLocaleDateString(lang === 'ar' ? 'ar-AE-u-ca-gregory-nu-latn' : undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
 export default function VehicleComplaintsPanel({ vehicleId }) {
+  const { t, lang } = useI18n();
   const [openId, setOpenId] = useState(null);
   const fetcher = useCallback(
     async () => (await api.get('/complaints', { params: { vehicle_id: vehicleId } })).data.data,
@@ -36,7 +39,7 @@ export default function VehicleComplaintsPanel({ vehicleId }) {
     return <p className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</p>;
   }
   if (!rows.length) {
-    return <EmptyState icon={<span aria-hidden className="text-2xl">📣</span>} title="No complaints" message="No customer complaints have been raised on this vehicle." />;
+    return <EmptyState icon={<span aria-hidden className="text-2xl">📣</span>} title={t('No complaints')} message={t('No customer complaints have been raised on this vehicle.')} />;
   }
 
   return (
@@ -55,11 +58,11 @@ export default function VehicleComplaintsPanel({ vehicleId }) {
                 <span className="font-mono text-xs font-semibold text-slate-400">#{r.id}</span>
                 <Badge tone={m.tone}>{m.emoji} {m.label}</Badge>
                 {r.customer && <span className="text-xs text-slate-500">{r.customer}</span>}
-                <span className="text-xs text-slate-400">· {fmtDate(r.created_at)}</span>
+                <span className="text-xs text-slate-400">· {fmtDate(r.created_at, lang)}</span>
               </div>
               {r.complaint && <p className="mt-1 truncate text-sm italic text-slate-600">“{r.complaint}”</p>}
             </div>
-            <Icon.ArrowRight className="mt-1 h-4 w-4 shrink-0 text-slate-300" />
+            <Icon.ArrowRight className="mt-1 h-4 w-4 shrink-0 text-slate-300 rtl:-scale-x-100" />
           </button>
         );
       })}

@@ -1,5 +1,6 @@
 import { severityTheme, iconPath, timeAgo, actionLabel, metaChips } from '../lib/notifications';
 import Button from './ui/Button';
+import { useI18n } from '../i18n/I18nContext';
 
 // Severity → Button variant, so the CTA carries the card's urgency colour while
 // still rendering through the shared Button primitive.
@@ -17,6 +18,7 @@ const SEVERITY_BUTTON_VARIANT = {
 // Info (blue) reads at a glance. Each card carries a direct, outcome-oriented
 // action button (View Contract / Renew Insurance / Open Ticket …) plus a dismiss.
 export default function NotificationCard({ n, onAction, onMarkRead, onDismiss }) {
+  const { t } = useI18n();
   const theme = severityTheme(n.severity);
   const chips = metaChips(n);
   // A resolved card is history, not a to-do: the condition cleared on its own (car sold, papers
@@ -49,9 +51,9 @@ export default function NotificationCard({ n, onAction, onMarkRead, onDismiss })
               'inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide',
               settled ? 'bg-slate-100 text-slate-500' : `${theme.chipBg} ${theme.chipText}`,
             ].join(' ')}>
-              {settled ? 'No longer applies' : theme.label}
+              {settled ? t('No longer applies') : t(theme.label)}
             </span>
-            {!n.read && !settled && <span className={`h-2 w-2 rounded-full ${theme.dot}`} aria-label="unread" />}
+            {!n.read && !settled && <span className={`h-2 w-2 rounded-full ${theme.dot}`} aria-label={t('unread')} />}
             <span className="ms-auto whitespace-nowrap text-[11px] font-medium text-slate-400">{timeAgo(n.created_at)}</span>
           </div>
           <h3 className={`mt-1.5 text-sm leading-snug ${settled ? 'font-semibold text-slate-500' : n.read ? 'font-semibold text-slate-700' : 'font-bold text-slate-900'}`}>
@@ -65,8 +67,8 @@ export default function NotificationCard({ n, onAction, onMarkRead, onDismiss })
             type="button"
             onClick={() => onDismiss(n.id)}
             className="-me-1 -mt-1 rounded-lg p-1 text-slate-300 opacity-0 transition-colors duration-150 hover:bg-slate-100 hover:text-slate-500 focus-visible:opacity-100 group-hover:opacity-100"
-            title="Dismiss"
-            aria-label="Dismiss notification"
+            title={t('Dismiss')}
+            aria-label={t('Dismiss notification')}
           >
             <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M6 18L18 6M6 6l12 12" />
@@ -105,8 +107,8 @@ export default function NotificationCard({ n, onAction, onMarkRead, onDismiss })
             onClick={() => onAction?.(n)}
             className={`inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-semibold transition-all duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 active:scale-[0.97] ${theme.btn}`}
           >
-            {label}
-            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            {t(label)}
+            <svg className="h-3.5 w-3.5 rtl:-scale-x-100" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M9 5l7 7-7 7" />
             </svg>
           </button>
@@ -117,7 +119,7 @@ export default function NotificationCard({ n, onAction, onMarkRead, onDismiss })
             onClick={() => onMarkRead(n)}
             className="rounded-xl px-3 py-2 text-xs font-medium text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
           >
-            Mark read
+            {t('Mark read')}
           </button>
         )}
       </div>

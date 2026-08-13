@@ -5,8 +5,10 @@ import useFetch from '../hooks/useFetch';
 import Badge from '../components/ui/Badge';
 import { Card, PageHeader, Spinner, EmptyState } from '../components/ui/Misc';
 import { aed2, fmtDate, num } from '../lib/format';
+import { useI18n } from '../i18n/I18nContext';
 
 export default function MaintenanceAnalytics() {
+  const { t } = useI18n();
   const fetcher = useCallback(async () => {
     const { data } = await api.get('/Maintenance/analytics');
     return data.data;
@@ -22,7 +24,7 @@ export default function MaintenanceAnalytics() {
   return (
     <div className="py-8">
       <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
-        <PageHeader title="Maintenance Analytics" subtitle="Average service costs and which garage gives the best price — spot overcharging and rising part costs." />
+        <PageHeader title={t('Maintenance Analytics')} subtitle={t('Average service costs and which garage gives the best price — spot overcharging and rising part costs.')} />
 
         {error && (
           <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20">{error}</div>
@@ -33,8 +35,8 @@ export default function MaintenanceAnalytics() {
           <Card className="ring-1 ring-red-200">
             <div className="flex items-center justify-between border-b border-red-100 bg-red-50/60 px-6 py-4">
               <div>
-                <h3 className="text-base font-semibold text-red-700">🔁 Recurring Faults</h3>
-                <p className="mt-0.5 text-xs text-slate-500">Cars that came back for the SAME fault 3+ times — chronic problems worth investigating.</p>
+                <h3 className="text-base font-semibold text-red-700">🔁 {t('Recurring Faults')}</h3>
+                <p className="mt-0.5 text-xs text-slate-500">{t('Cars that came back for the SAME fault 3+ times — chronic problems worth investigating.')}</p>
               </div>
               <Badge tone="red">{num(recurring.length)}</Badge>
             </div>
@@ -42,10 +44,10 @@ export default function MaintenanceAnalytics() {
               <table className="min-w-full divide-y divide-slate-100 text-sm">
                 <thead className="bg-slate-50/90">
                   <tr className="text-start text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    <th className="px-5 py-3.5">Car</th>
-                    <th className="px-5 py-3.5">Recurring fault</th>
-                    <th className="px-5 py-3.5 text-center">Times</th>
-                    <th className="px-5 py-3.5">Last</th>
+                    <th className="px-5 py-3.5">{t('Car')}</th>
+                    <th className="px-5 py-3.5">{t('Recurring fault')}</th>
+                    <th className="px-5 py-3.5 text-center">{t('Times')}</th>
+                    <th className="px-5 py-3.5">{t('Last')}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -66,7 +68,7 @@ export default function MaintenanceAnalytics() {
               </table>
             </div>
             {recurring.length > 30 && (
-              <div className="border-t border-slate-100 px-6 py-2 text-xs text-slate-400">Showing the top 30 of {num(recurring.length)}.</div>
+              <div className="border-t border-slate-100 px-6 py-2 text-xs text-slate-400">{t('Showing the top 30 of {total}.', { total: num(recurring.length) })}</div>
             )}
           </Card>
         )}
@@ -74,18 +76,18 @@ export default function MaintenanceAnalytics() {
         {/* Average cost per service (fleet-wide) */}
         <Card>
           <div className="border-b border-slate-100 px-6 py-4">
-            <h3 className="text-base font-semibold text-slate-900">Average Cost per Service</h3>
-            <p className="mt-0.5 text-xs text-slate-400">Across all vehicles (items with a recorded cost).</p>
+            <h3 className="text-base font-semibold text-slate-900">{t('Average Cost per Service')}</h3>
+            <p className="mt-0.5 text-xs text-slate-400">{t('Across all vehicles (items with a recorded cost).')}</p>
           </div>
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-slate-100 text-sm">
               <thead className="bg-slate-50/90">
                 <tr className="text-start text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  <th className="px-5 py-3.5">Service</th>
-                  <th className="px-5 py-3.5 text-center">Visits</th>
-                  <th className="px-5 py-3.5 text-end">Average</th>
-                  <th className="px-5 py-3.5 text-end">Lowest</th>
-                  <th className="px-5 py-3.5 text-end">Highest</th>
+                  <th className="px-5 py-3.5">{t('Service')}</th>
+                  <th className="px-5 py-3.5 text-center">{t('Visits')}</th>
+                  <th className="px-5 py-3.5 text-end">{t('Average')}</th>
+                  <th className="px-5 py-3.5 text-end">{t('Lowest')}</th>
+                  <th className="px-5 py-3.5 text-end">{t('Highest')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -101,16 +103,16 @@ export default function MaintenanceAnalytics() {
               </tbody>
             </table>
           </div>
-          {averages.length === 0 && <EmptyState title="No cost data yet" message="Add maintenance items with a cost (or import the maintenance log) to see averages." />}
+          {averages.length === 0 && <EmptyState title={t('No cost data yet')} message={t('Add maintenance items with a cost (or import the maintenance log) to see averages.')} />}
         </Card>
 
         {/* Vendor price comparison per service */}
         <div>
-          <h3 className="mb-1 text-base font-semibold text-slate-900">Vendor Price Comparison</h3>
-          <p className="mb-4 text-xs text-slate-400">For each service, which garage is cheapest vs most expensive. Biggest price gaps first.</p>
+          <h3 className="mb-1 text-base font-semibold text-slate-900">{t('Vendor Price Comparison')}</h3>
+          <p className="mb-4 text-xs text-slate-400">{t('For each service, which garage is cheapest vs most expensive. Biggest price gaps first.')}</p>
 
           {comparison.length === 0 && (
-            <Card><EmptyState title="Not enough data" message="Vendor comparison needs maintenance items with costs and a garage assigned." /></Card>
+            <Card><EmptyState title={t('Not enough data')} message={t('Vendor comparison needs maintenance items with costs and a garage assigned.')} /></Card>
           )}
 
           <div className="space-y-4">
@@ -119,19 +121,19 @@ export default function MaintenanceAnalytics() {
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-6 py-4">
                   <h4 className="font-semibold text-slate-900">{c.service}</h4>
                   <div className="flex items-center gap-2 text-xs">
-                    <Badge tone="gray">{num(c.vendor_count)} {c.vendor_count === 1 ? 'garage' : 'garages'}</Badge>
-                    {c.spread > 0 && <Badge tone="amber">spread {aed2(c.spread)}</Badge>}
+                    <Badge tone="gray">{c.vendor_count === 1 ? t('1 garage') : t('{n} garages', { n: num(c.vendor_count) })}</Badge>
+                    {c.spread > 0 && <Badge tone="amber">{t('spread {amount}', { amount: aed2(c.spread) })}</Badge>}
                   </div>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="min-w-full divide-y divide-slate-100 text-sm">
                     <thead className="bg-slate-50/90">
                       <tr className="text-start text-xs font-semibold uppercase tracking-wide text-slate-500">
-                        <th className="px-5 py-3.5">Garage</th>
-                        <th className="px-5 py-3.5 text-center">Times</th>
-                        <th className="px-5 py-3.5 text-end">Avg</th>
-                        <th className="px-5 py-3.5 text-end">Lowest</th>
-                        <th className="px-5 py-3.5 text-end">Highest</th>
+                        <th className="px-5 py-3.5">{t('Garage')}</th>
+                        <th className="px-5 py-3.5 text-center">{t('Times')}</th>
+                        <th className="px-5 py-3.5 text-end">{t('Avg')}</th>
+                        <th className="px-5 py-3.5 text-end">{t('Lowest')}</th>
+                        <th className="px-5 py-3.5 text-end">{t('Highest')}</th>
                         <th className="px-5 py-3.5"></th>
                       </tr>
                     </thead>
@@ -147,8 +149,8 @@ export default function MaintenanceAnalytics() {
                             <td className="px-5 py-3.5 text-end text-slate-600">{aed2(v.min_cost)}</td>
                             <td className="px-5 py-3.5 text-end text-slate-600">{aed2(v.max_cost)}</td>
                             <td className="px-5 py-3.5">
-                              {isCheapest && <Badge tone="green">Best price</Badge>}
-                              {isDearest && <Badge tone="red">Most expensive</Badge>}
+                              {isCheapest && <Badge tone="green">{t('Best price')}</Badge>}
+                              {isDearest && <Badge tone="red">{t('Most expensive')}</Badge>}
                             </td>
                           </tr>
                         );

@@ -28,7 +28,6 @@ import Icon from '../ui/Icon';
 import Tooltip from '../ui/Tooltip';
 import { TASK_STATUS, SERVICE_CONFIRM, isAtGarage } from './meta';
 import RepairCaptureModal from '../maintenance/RepairCaptureModal';
-import RepairVerifyModal from '../maintenance/RepairVerifyModal';
 import { evaluateContinuity, needsNote, stageIgnoresTolerance, STAGE } from '../../lib/odometerContinuity';
 import OdometerContinuityHint, { odoGateBlocked } from './OdometerContinuityHint';
 import { uploadRepairVideo } from '../../lib/maintenanceMedia';
@@ -36,25 +35,32 @@ import { uploadRepairVideo } from '../../lib/maintenanceMedia';
 const MAX_VIDEO_MB = 256; // matches the backend multipart cap (262144 KB)
 const FIX_STAGE_LABEL = { presigning: 'Preparing upload…', uploading: 'Uploading…', saving: 'Saving…' };
 
-const TERMINAL = ['completed', 'cancelled'];
+// Mirrors MaintenanceTask::TERMINAL exactly — a fault ruled Incorrect lands on `not_found`, which is just
+// as finished as completed/cancelled. Omitting it here made such a fault read as still OPEN in this panel
+// (it kept the Mark fixed / Incorrect controls and blocked the all-fixed check below).
+const TERMINAL = ['completed', 'cancelled', 'not_found'];
 
 // "2d 4h" / "6h 12m" from seconds — the auto-derived wall-clock display. Never editable: the manual
 // input below is LABOR time (mechanic's actual hours), a different metric kept deliberately separate.
-const fmtElapsed = (secs) => {
+// `t` is threaded in because this lives outside a component body.
+const fmtElapsed = (secs, t) => {
   if (secs == null || secs <= 0) return null;
   const d = Math.floor(secs / 86400);
   const h = Math.floor((secs % 86400) / 3600);
   const m = Math.floor((secs % 3600) / 60);
-  if (d > 0) return `${d}d ${h}h`;
-  if (h > 0) return `${h}h ${m}m`;
-  return `${m}m`;
+  if (d > 0) return t('{d}d {h}h', { d, h });
+  if (h > 0) return t('{h}h {m}m', { h, m });
+  return t('{m}m', { m });
 };
 
-// "12 Jul 2026" from an ISO string; empty when unparseable.
-const fmtDay = (iso) => {
+// "12 Jul 2026" from an ISO string; empty when unparseable. Arabic gets Gregorian + Latin digits.
+const fmtDay = (iso, lang) => {
   if (!iso) return '';
   try {
-    return new Date(iso).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
+    return new Date(iso).toLocaleDateString(
+      lang === 'ar' ? 'ar-AE-u-ca-gregory-nu-latn' : undefined,
+      { day: '2-digit', month: 'short', year: 'numeric' },
+    );
   } catch {
     return '';
   }
@@ -72,7 +78,7 @@ const CONFIRM_TONE = {
 };
 
 export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone }) {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const { can } = usePermissions();
   const canApprove = can('maintenance.recurring.manage'); // clear a blocked recurring-fault repair
   const [tasks, setTasks] = useState(ticket?.tasks || []);
@@ -101,12 +107,6 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
   // has any chance of existing: the correct path has to be the easy one.
   const [captureTaskId, setCaptureTaskId] = useState(null);
 
-  // Independent verification — a DIFFERENT permission from the capture above, because the party
-  // performing a repair must never be the only party confirming it. The server additionally refuses
-  // a verifier who recorded the repair, which is the guarantee a permission alone cannot give (the
-  // `maintenance` role holds both).
-  const canVerify = can('inspections.manage');
-  const [verifyTaskId, setVerifyTaskId] = useState(null);
   const [fixNote, setFixNote] = useState('');
   const [fixOdometer, setFixOdometer] = useState(''); // routine service: odometer at the moment of change
   const [fixVideo, setFixVideo] = useState(null);   // a File
@@ -155,9 +155,13 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
     [garages, garage],
   );
   const openFaults = tasks.filter((task) => !TERMINAL.includes(task.status)).length;
-  // Resolved-Transfer Oversight — moving the car to another garage while EVERY fault is already fixed is
-  // unusual (nothing left to repair). When that's the case the justification note becomes MANDATORY and
-  // the move is logged for review on /oversight/resolved-transfers (enforced server-side too).
+  // NOTHING LEFT TO MOVE — every fault on the ticket is already resolved. A transfer moves OPEN work to
+  // the next garage (routeTicketToGarage skips terminal faults), so with zero open faults the move would
+  // carry nothing: the car would change garage while all the repair history stays attributed to the one
+  // that did the work. So the Transfer control is not offered at all here — the car is done, the next
+  // step is Mark Ready. (The server still accepts the move on the Resolved-Transfer Oversight path — see
+  // workflow.task.allFixedTransferWarning — but this panel is its only caller, so it is no longer reachable
+  // from the UI.) If the LAST fault is fixed while the transfer form is open, this closes the form too.
   const allFixed = tasks.length > 0 && openFaults === 0;
   const reasonMissing = allFixed && reason.trim() === '';
   const busy = busyId !== null || transferring || fixBusy || disputeBusy;
@@ -248,7 +252,7 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
     const file = e.target.files?.[0];
     if (!file) { setFixVideo(null); return; }
     if (file.size > MAX_VIDEO_MB * 1024 * 1024) {
-      setFixError(`File is too large (max ${MAX_VIDEO_MB} MB).`);
+      setFixError(t('File is too large (max {mb} MB).', { mb: MAX_VIDEO_MB }));
       setFixVideo(null);
       return;
     }
@@ -384,15 +388,21 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
               {/* Live Status — the car's whereabouts + lifecycle stage, stated plainly so the page is
                   the single source of truth: "Currently at [Garage] · Status: [In Workshop]". */}
               <span className="block truncate text-sm font-bold text-slate-800">
-                {carAtGarage ? 'Currently at' : 'En route to'} {garage}
+                {carAtGarage ? t('Currently at {garage}', { garage }) : t('En route to {garage}', { garage })}
               </span>
               {!carAtGarage && wfStatus === 'in_transit' && (
                 <span className="mt-0.5 block truncate text-[11px] font-semibold text-blue-500">
-                  Status: In Transit — awaiting arrival check-in
+                  {t('Status: In Transit — awaiting arrival check-in')}
                 </span>
               )}
             </span>
           </span>
+          {allFixed ? (
+            /* No open faults → no work to hand over. State why instead of showing a dead button. */
+            <span className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-emerald-50 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">
+              <Icon.Check className="h-3.5 w-3.5" /> {t('workflow.task.allFixedNoTransfer')}
+            </span>
+          ) : (
           <Button
             size="sm"
             variant="secondary"
@@ -407,8 +417,9 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
               setTransportMethod(offerTransportChoice ? null : 'driver');
             }}
           >
-            <Icon.ArrowRight className="h-3.5 w-3.5" /> {t('workflow.task.transferCar')}
+            <Icon.ArrowRight className="h-3.5 w-3.5 rtl:-scale-x-100" /> {t('workflow.task.transferCar')}
           </Button>
+          )}
         </div>
       ) : (
         <div className="mb-3 rounded-xl border border-amber-100 bg-amber-50/70 px-3.5 py-2.5 text-sm text-amber-800">
@@ -422,9 +433,7 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
         <div className="mb-3 flex items-start gap-2 rounded-xl border border-blue-100 bg-blue-50/70 px-3.5 py-2.5 text-[13px] text-blue-800">
           <Icon.Truck className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" />
           <span>
-            The car is in transit to <span className="font-semibold">{garage}</span>. Faults are held
-            {' '}<span className="font-semibold">In Transit</span> — run the <span className="font-semibold">“Now at Garage”</span>
-            {' '}check-in (arrival odometer) to resume work.
+            {t('The car is in transit to {garage}. Faults are held In Transit — run the “Now at Garage” check-in (arrival odometer) to resume work.', { garage })}
           </span>
         </div>
       )}
@@ -434,7 +443,7 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
           it's a genuine open decision. A car that arrived by a normal driver skips this screen entirely
           (see the button's onClick above) and goes straight to the driver transfer form — it's presumably
           still drivable, so there's nothing to ask. Same for a pre-arrival re-route (not carAtGarage). */}
-      {transferOpen && garage && offerTransportChoice && !transportMethod && (
+      {transferOpen && !allFixed && garage && offerTransportChoice && !transportMethod && (
         <div className="mb-3 space-y-2.5 rounded-xl bg-slate-50 p-3 ring-1 ring-inset ring-slate-200">
           <p className="text-sm font-semibold text-slate-700">{t('workflow.task.transportMethodQuestion')}</p>
           <div className="grid gap-2 sm:grid-cols-2">
@@ -463,7 +472,7 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
 
       {/* Whole-car transfer form — all open faults move together to the next garage (sequential).
           Unchanged from before except it now carries the chosen transport_method along on submit. */}
-      {transferOpen && garage && transportMethod && (
+      {transferOpen && !allFixed && garage && transportMethod && (
         <div className="mb-3 space-y-2 rounded-xl bg-slate-50 p-3 ring-1 ring-inset ring-slate-200">
           {/* The chosen-method chip (+ the ability to change it) only makes sense once a real choice was
               offered — a driver-arrived car or a pre-arrival re-route skipped the dialog entirely, so
@@ -492,7 +501,7 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
             inputMode="numeric"
             value={odometer}
             onChange={(e) => { setOdometer(e.target.value); setOdoConfirmed(false); setOdoNote(''); }}
-            placeholder="Current odometer (km) — required"
+            placeholder={t('Current odometer (km) — required')}
           />
           {/* Shared continuity hint — a transfer is a road trip, so forward travel is expected and waived
               (ignoreTolerance): only a backward "Discrepancy" still surfaces the confirm/note. */}
@@ -536,7 +545,7 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
                   {t('common.cancel')}
                 </Button>
                 <Button size="sm" variant="danger" disabled={transferring} onClick={() => transferCar(true)}>
-                  Proceed anyway
+                  {t('Proceed anyway')}
                 </Button>
               </div>
             </div>
@@ -591,7 +600,7 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
                           (not a real fault). The amber "Recurring" badge carries the previous repair in its tip. */}
                       {! task.is_incorrect && (task.recurrence_flagged ? (
                         <Tooltip content={task.recurrence?.garage
-                          ? t('workflow.task.history.recurringTip', { garage: task.recurrence.garage, date: task.recurrence?.repaired_on ? fmtDay(task.recurrence.repaired_on) : '—' })
+                          ? t('workflow.task.history.recurringTip', { garage: task.recurrence.garage, date: task.recurrence?.repaired_on ? fmtDay(task.recurrence.repaired_on, lang) : '—' })
                           : t('workflow.task.history.recurringTipShort')}>
                           <span className="inline-flex cursor-help items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 font-semibold text-amber-700 ring-1 ring-inset ring-amber-200">
                             🔁 {t('workflow.task.history.recurring')}
@@ -652,7 +661,7 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
                         <span className="text-slate-400">· {t('workflow.task.at', { garage: task.current_garage })}</span>
                       )}
                       {task.total_cost > 0 && (
-                        <span className="text-slate-400">· {t('workflow.task.cost')} {Number(task.total_cost).toLocaleString()}</span>
+                        <span className="text-slate-400">· {t('workflow.task.cost')} {Number(task.total_cost).toLocaleString(lang === 'ar' ? 'ar-AE-u-nu-latn' : undefined)}</span>
                       )}
                       {/* THIS fault's own repair time — measured from the workshop confirmation, so
                           sibling faults on the same car read differently. Summed across all attempts of
@@ -660,10 +669,10 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
                       {task.repair_time?.cumulative_work_seconds > 0 && (
                         <Tooltip content={t('workflow.task.workTip', {
                           n: task.repair_time.attempt_count,
-                          custody: fmtElapsed(task.repair_time.cumulative_custody_seconds) || '—',
+                          custody: fmtElapsed(task.repair_time.cumulative_custody_seconds, t) || '—',
                         })}>
                           <span className="inline-flex cursor-help items-center gap-1 rounded-full bg-sky-50 px-2 py-0.5 font-medium text-sky-700 ring-1 ring-inset ring-sky-200">
-                            ⏱ {fmtElapsed(task.repair_time.cumulative_work_seconds)}
+                            ⏱ {fmtElapsed(task.repair_time.cumulative_work_seconds, t)}
                             {task.repair_time.attempt_count > 1 && ` · ×${task.repair_time.attempt_count}`}
                           </span>
                         </Tooltip>
@@ -673,7 +682,7 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
                       {!task.repair_time?.cumulative_work_seconds && task.repair_time?.cumulative_custody_seconds > 0 && (
                         <Tooltip content={t('workflow.task.custodyOnlyTip')}>
                           <span className="inline-flex cursor-help items-center gap-1 rounded-full bg-slate-50 px-2 py-0.5 font-medium text-slate-500 ring-1 ring-inset ring-slate-200">
-                            🚗 {fmtElapsed(task.repair_time.cumulative_custody_seconds)}
+                            🚗 {fmtElapsed(task.repair_time.cumulative_custody_seconds, t)}
                           </span>
                         </Tooltip>
                       )}
@@ -735,7 +744,7 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
                             <div className="flex flex-wrap gap-x-1.5"><dt className="text-red-700">{t('workflow.task.review.repairDuration')}:</dt><dd className="font-semibold">{t('workflow.task.review.durationDays', { n: task.recurrence.repair_days })}</dd></div>
                           )}
                           {task.recurrence?.repaired_on && (
-                            <div className="flex flex-wrap gap-x-1.5"><dt className="text-red-700">{t('workflow.task.review.fixedOn')}:</dt><dd className="font-semibold">{fmtDay(task.recurrence.repaired_on)}</dd></div>
+                            <div className="flex flex-wrap gap-x-1.5"><dt className="text-red-700">{t('workflow.task.review.fixedOn')}:</dt><dd className="font-semibold">{fmtDay(task.recurrence.repaired_on, lang)}</dd></div>
                           )}
                         </dl>
                         <p className="mt-1.5 text-[11px] font-semibold text-red-800">
@@ -767,7 +776,7 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
                             <div className="flex flex-wrap gap-x-1.5"><dt className="text-amber-700">{t('workflow.task.review.repairDuration')}:</dt><dd className="font-semibold">{t('workflow.task.review.durationDays', { n: task.recurrence.repair_days })}</dd></div>
                           )}
                           {task.recurrence?.repaired_on && (
-                            <div className="flex flex-wrap gap-x-1.5"><dt className="text-amber-700">{t('workflow.task.review.fixedOn')}:</dt><dd className="font-semibold">{fmtDay(task.recurrence.repaired_on)}</dd></div>
+                            <div className="flex flex-wrap gap-x-1.5"><dt className="text-amber-700">{t('workflow.task.review.fixedOn')}:</dt><dd className="font-semibold">{fmtDay(task.recurrence.repaired_on, lang)}</dd></div>
                           )}
                         </dl>
                         {task.repair_gate === 'approved' ? (
@@ -818,15 +827,15 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
                 {/* Fix Evidence — capture a repair video + resolution note before completing the fault. */}
                 {isFixing && (
                   <div className="mt-3 space-y-2 rounded-lg bg-emerald-50/60 p-3 ring-1 ring-inset ring-emerald-200">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">Mark fixed — add evidence</p>
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">{t('Mark fixed — add evidence')}</p>
 
-                    <p className="text-[11px] text-emerald-700">A resolution note and a repair photo or video are both required to mark this fault fixed.</p>
+                    <p className="text-[11px] text-emerald-700">{t('A resolution note and a repair photo or video are both required to mark this fault fixed.')}</p>
 
                     <Textarea
                       rows={2}
                       value={fixNote}
                       onChange={(e) => setFixNote(e.target.value)}
-                      placeholder="Resolution note — what was done to fix it (required)"
+                      placeholder={t('Resolution note — what was done to fix it (required)')}
                     />
 
                     {/* Routine service (oil / battery): capture the odometer AT the change so the next
@@ -835,7 +844,7 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
                     {fixTask?.routine_service_type && (
                       <div className="rounded-lg bg-white px-3 py-2 ring-1 ring-inset ring-emerald-200">
                         <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-emerald-700">
-                          Odometer at service (km)
+                          {t('Odometer at service (km)')}
                         </label>
                         <input
                           type="number"
@@ -843,10 +852,10 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
                           inputMode="numeric"
                           value={fixOdometer}
                           onChange={(e) => setFixOdometer(e.target.value)}
-                          placeholder="Reading when the service was done"
+                          placeholder={t('Reading when the service was done')}
                           className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 placeholder:text-slate-400 focus:border-emerald-400 focus:outline-none focus:ring-1 focus:ring-emerald-400"
                         />
-                        <p className="mt-1 text-[11px] text-slate-400">Schedules the next {fixTask.routine_service_type.replace('_', ' ')} reminder from this reading.</p>
+                        <p className="mt-1 text-[11px] text-slate-400">{t('Schedules the next {service} reminder from this reading.', { service: fixTask.routine_service_type.replace('_', ' ') })}</p>
                       </div>
                     )}
 
@@ -858,18 +867,18 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
 
                     <label className={`flex cursor-pointer items-center gap-2 rounded-lg border border-dashed px-3 py-2 text-sm hover:bg-emerald-50 ${fixVideo ? 'border-emerald-300 bg-white text-slate-600' : 'border-emerald-400 bg-white text-emerald-700'}`}>
                       <Icon.Video className="h-4 w-4 text-emerald-600" />
-                      <span className="truncate">{fixVideo ? fixVideo.name : 'Attach repair photo or video (required)'}</span>
+                      <span className="truncate">{fixVideo ? fixVideo.name : t('Attach repair photo or video (required)')}</span>
                       <input type="file" accept="video/*,image/*" capture="environment" className="hidden" disabled={fixBusy} onChange={pickVideo} />
                     </label>
                     {fixVideo && (
                       <p className="px-0.5 text-[11px] text-slate-400">
                         {(fixVideo.size / (1024 * 1024)).toFixed(1)} MB
-                        <button type="button" className="ms-2 text-slate-400 underline hover:text-slate-600" disabled={fixBusy} onClick={() => setFixVideo(null)}>remove</button>
+                        <button type="button" className="ms-2 text-slate-400 underline hover:text-slate-600" disabled={fixBusy} onClick={() => setFixVideo(null)}>{t('remove')}</button>
                       </p>
                     )}
 
                     {fixError && <p className="text-xs font-medium text-red-600">{fixError}</p>}
-                    {fixBusy && fixStage && <p className="text-xs font-medium text-emerald-700">{FIX_STAGE_LABEL[fixStage] || 'Working…'}</p>}
+                    {fixBusy && fixStage && <p className="text-xs font-medium text-emerald-700">{t(FIX_STAGE_LABEL[fixStage] || 'Working…')}</p>}
 
                     <div className="flex justify-end gap-2">
                       <Button size="sm" variant="ghost" disabled={fixBusy} onClick={closeFix}>{t('common.cancel')}</Button>
@@ -904,28 +913,16 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
                   </div>
                 )}
 
-                {/* Independent verification — offered on a completed fault to anyone with
-                    inspection responsibility. Whether THIS user may actually verify (they cannot if
-                    they recorded the repair) is decided by the server and explained inside the
-                    modal, so the rule is stated once, where it is enforced. */}
-                {!isFixing && terminal && !task.is_incorrect && canVerify && (
-                  <div className="mt-2 border-t border-slate-100 pt-2">
-                    <Button size="sm" variant="secondary" onClick={() => setVerifyTaskId(task.id)}>
-                      Verify repair
-                    </Button>
-                  </div>
-                )}
-
                 {/* Resolution note + video evidence on a fixed fault. */}
                 {!isFixing && terminal && !task.is_incorrect && (task.resolution_note || (task.media && task.media.length > 0)) && (
                   <div className="mt-2 space-y-1.5 border-t border-slate-100 pt-2">
                     {task.resolution_note && (
-                      <p className="text-[12px] text-slate-500"><span className="font-semibold text-slate-600">Fix note:</span> {task.resolution_note}</p>
+                      <p className="text-[12px] text-slate-500"><span className="font-semibold text-slate-600">{t('Fix note:')}</span> {task.resolution_note}</p>
                     )}
                     {(task.media || []).map((m) => (
                       <a key={m.id} href={m.url || undefined} target="_blank" rel="noreferrer"
                          className={`inline-flex items-center gap-1.5 text-[12px] font-medium ${m.url ? 'text-emerald-700 hover:underline' : 'cursor-not-allowed text-slate-400'}`}>
-                        <Icon.Video className="h-3.5 w-3.5" /> {m.original_name || 'Repair video'}
+                        <Icon.Video className="h-3.5 w-3.5" /> {m.original_name || t('Repair video')}
                       </a>
                     ))}
                   </div>
@@ -943,13 +940,6 @@ export default function TaskRoutingModal({ ticket, garages = [], onClose, onDone
         open={Boolean(captureTaskId)}
         taskId={captureTaskId}
         onClose={() => setCaptureTaskId(null)}
-        onSaved={() => onDone?.()}
-      />
-
-      <RepairVerifyModal
-        open={Boolean(verifyTaskId)}
-        taskId={verifyTaskId}
-        onClose={() => setVerifyTaskId(null)}
         onSaved={() => onDone?.()}
       />
     </Modal>

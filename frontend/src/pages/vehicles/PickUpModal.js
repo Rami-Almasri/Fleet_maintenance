@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import api from '../../api/client';
+import { useI18n } from '../../i18n/I18nContext';
 import { useToast } from '../../components/ui/Toast';
 import Modal from '../../components/ui/Modal';
 import Button from '../../components/ui/Button';
@@ -21,6 +22,7 @@ const SEV_DOT = { critical: '🔴', high: '🟠', moderate: '🟡', routine: '�
  * again server-side). Mirrors DispatchModal's shape.
  */
 export default function PickUpModal({ open, vehicle, onClose, onPickedUp }) {
+  const { t } = useI18n();
   const toast = useToast();
   const [odometer, setOdometer] = useState('');
   const [note, setNote] = useState('');
@@ -37,10 +39,10 @@ export default function PickUpModal({ open, vehicle, onClose, onPickedUp }) {
     setLoadingFlags(true);
     api.get('/inspector-pad', { params: { vehicle_id: vehicle.id } })
       .then(({ data }) => { if (active) setFlags(data.data || []); })
-      .catch(() => active && toast.error('Could not load the pending flags'))
+      .catch(() => active && toast.error(t('Could not load the pending flags')))
       .finally(() => active && setLoadingFlags(false));
     return () => { active = false; };
-  }, [open, vehicle, toast]);
+  }, [open, vehicle, toast, t]);
 
   if (!vehicle) return null;
 
@@ -48,7 +50,7 @@ export default function PickUpModal({ open, vehicle, onClose, onPickedUp }) {
     const errs = {};
     const km = Number(odometer);
     if (!odometer.trim() || !Number.isFinite(km) || km < 1) {
-      errs.odometer = 'Enter the current odometer reading to pick the car up';
+      errs.odometer = t('Enter the current odometer reading to pick the car up');
     }
     setErrors(errs);
     if (Object.keys(errs).length) return;
@@ -59,13 +61,13 @@ export default function PickUpModal({ open, vehicle, onClose, onPickedUp }) {
         odometer: Math.round(km),
         note: note.trim() || null,
       });
-      toast.success(`${carLabel} picked up for maintenance`);
+      toast.success(t('{car} picked up for maintenance', { car: carLabel }));
       onPickedUp?.();
       onClose();
     } catch (err) {
       const res = err.response?.data;
       if (res?.errors) setErrors(res.errors);
-      toast.error(res?.message || res?.msg || 'Could not pick up the vehicle');
+      toast.error(res?.message || res?.msg || t('Could not pick up the vehicle'));
     } finally {
       setSaving(false);
     }
@@ -77,30 +79,30 @@ export default function PickUpModal({ open, vehicle, onClose, onPickedUp }) {
     <Modal
       open={open}
       onClose={() => !saving && onClose()}
-      title="Pick Up for Maintenance"
-      subtitle={`${vehicle.plate_no || carLabel} — open a maintenance ticket`}
+      title={t('Pick Up for Maintenance')}
+      subtitle={t('{car} — open a maintenance ticket', { car: vehicle.plate_no || carLabel })}
       size="md"
       footer={
         <>
-          <Button variant="secondary" onClick={onClose} disabled={saving}>Cancel</Button>
-          <Button onClick={submit} loading={saving}>Pick Up</Button>
+          <Button variant="secondary" onClick={onClose} disabled={saving}>{t('Cancel')}</Button>
+          <Button onClick={submit} loading={saving}>{t('Pick Up')}</Button>
         </>
       }
     >
       <div className="space-y-4">
         <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600 ring-1 ring-inset ring-slate-200">
-          Sending <span className="font-medium text-slate-800">{carLabel}</span>
-          {vehicle.plate_no && <span className="text-slate-400"> · {vehicle.plate_no}</span>} to maintenance.
+          {t('Sending {car} to maintenance.', { car: carLabel })}
+          {vehicle.plate_no && <span className="text-slate-400"> · {vehicle.plate_no}</span>}
         </div>
 
         <Input
-          label="Current odometer (km)"
+          label={t('Current odometer (km)')}
           required
           type="number"
           min="1"
           inputMode="numeric"
           autoFocus
-          placeholder="e.g. 84500"
+          placeholder={t('e.g. 84500')}
           value={odometer}
           error={errors.odometer}
           onChange={(e) => setOdometer(e.target.value)}
@@ -108,12 +110,12 @@ export default function PickUpModal({ open, vehicle, onClose, onPickedUp }) {
 
         {/* Preview: the inspector flags that will be attached to the new ticket. */}
         <div className="rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2.5 text-sm">
-          <span className="font-medium text-slate-800">Inspector flags to attach</span>
+          <span className="font-medium text-slate-800">{t('Inspector flags to attach')}</span>
           {loadingFlags ? (
-            <span className="block text-xs text-slate-500">Loading…</span>
+            <span className="block text-xs text-slate-500">{t('Loading…')}</span>
           ) : flags.length === 0 ? (
             <span className="block text-xs text-slate-500">
-              No pending flags for this car — a ticket will still open, ready for the garage’s diagnosis.
+              {t('No pending flags for this car — a ticket will still open, ready for the garage’s diagnosis.')}
             </span>
           ) : (
             <ul className="mt-2 space-y-1.5">
@@ -134,9 +136,9 @@ export default function PickUpModal({ open, vehicle, onClose, onPickedUp }) {
         </div>
 
         <Textarea
-          label="Note (optional)"
+          label={t('Note (optional)')}
           rows={2}
-          placeholder="Anything the supervisor / garage should know…"
+          placeholder={t('Anything the supervisor / garage should know…')}
           value={note}
           onChange={(e) => setNote(e.target.value)}
         />

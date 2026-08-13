@@ -3,6 +3,7 @@ import api from '../../api/client';
 import Modal from '../../components/ui/Modal';
 import Button from '../../components/ui/Button';
 import { useToast } from '../../components/ui/Toast';
+import { useI18n } from '../../i18n/I18nContext';
 
 // Visual Condition Grading (Abu Marouf) — grade a car's cosmetic/physical condition,
 // independent of the OM lifecycle status and the live movement. The grade drives the
@@ -31,6 +32,7 @@ const GRADES = [
 ];
 
 export default function ConditionGradeModal({ open, vehicle, onClose, onSaved }) {
+  const { t } = useI18n();
   const toast = useToast();
   const [grade, setGrade] = useState('green');
   const [note, setNote] = useState('');
@@ -54,11 +56,11 @@ export default function ConditionGradeModal({ open, vehicle, onClose, onSaved })
         // Green carries no cosmetic note; the backend also clears it.
         condition_note: grade === 'green' ? null : (note.trim() || null),
       });
-      toast.success('Condition grade updated');
+      toast.success(t('Condition grade updated'));
       onSaved?.();
       onClose();
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Could not update the condition grade');
+      toast.error(err.response?.data?.message || t('Could not update the condition grade'));
     } finally {
       setSaving(false);
     }
@@ -70,13 +72,13 @@ export default function ConditionGradeModal({ open, vehicle, onClose, onSaved })
     <Modal
       open={open}
       onClose={() => !saving && onClose()}
-      title="Condition grade"
+      title={t('Condition grade')}
       subtitle={`${vehicle.plate_no || vehicle.vin} · ${carLabel}`}
       size="md"
       footer={
         <>
-          <Button variant="secondary" onClick={onClose} disabled={saving}>Cancel</Button>
-          <Button onClick={save} loading={saving}>Save grade</Button>
+          <Button variant="secondary" onClick={onClose} disabled={saving}>{t('Cancel')}</Button>
+          <Button onClick={save} loading={saving}>{t('Save grade')}</Button>
         </>
       }
     >
@@ -96,9 +98,9 @@ export default function ConditionGradeModal({ open, vehicle, onClose, onSaved })
                 <span className={`mt-0.5 h-3 w-3 shrink-0 rounded-full ${g.chip}`} />
                 <span className="min-w-0">
                   <span className={`block text-sm font-semibold ${on ? g.text : 'text-slate-800'}`}>
-                    {g.emoji} {g.title}
+                    {g.emoji} {t(g.title)}
                   </span>
-                  <span className="mt-0.5 block text-xs text-slate-500">{g.desc}</span>
+                  <span className="mt-0.5 block text-xs text-slate-500">{t(g.desc)}</span>
                 </span>
               </button>
             );
@@ -108,7 +110,7 @@ export default function ConditionGradeModal({ open, vehicle, onClose, onSaved })
         {grade !== 'green' && (
           <label className="block">
             <span className="mb-1 block text-sm font-medium text-slate-700">
-              Condition note {grade === 'orange' && <span className="text-slate-400">(shown to ops at handover)</span>}
+              {t('Condition note')} {grade === 'orange' && <span className="text-slate-400">{t('(shown to ops at handover)')}</span>}
             </span>
             <textarea
               rows={3}
@@ -116,10 +118,10 @@ export default function ConditionGradeModal({ open, vehicle, onClose, onSaved })
               onChange={(e) => setNote(e.target.value)}
               placeholder={
                 grade === 'orange'
-                  ? 'e.g. Scratch on rear bumper, small dent on driver door…'
+                  ? t('e.g. Scratch on rear bumper, small dent on driver door…')
                   : grade === 'yellow'
-                    ? 'e.g. Brake noise, service light on, pulling slightly right…'
-                    : 'e.g. Engine warning + overheating, unsafe to drive…'
+                    ? t('e.g. Brake noise, service light on, pulling slightly right…')
+                    : t('e.g. Engine warning + overheating, unsafe to drive…')
               }
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
             />

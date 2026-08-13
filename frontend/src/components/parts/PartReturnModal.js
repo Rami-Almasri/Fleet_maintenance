@@ -15,18 +15,21 @@ import Modal from '../ui/Modal';
 import Button from '../ui/Button';
 import { Input, Select, Textarea } from '../ui/Field';
 import { aed } from '../../lib/format';
+import { useI18n } from '../../i18n/I18nContext';
 
-const REASONS = [
-  { value: 'wrong_part', label: 'Wrong part supplied' },
-  { value: 'faulty_part', label: 'Faulty / defective' },
-  { value: 'wrong_fitment', label: "Didn't fit this vehicle" },
-  { value: 'not_needed', label: 'No longer needed' },
-  { value: 'over_ordered', label: 'Over-ordered' },
-  { value: 'other', label: 'Other' },
+// The stored `value` is the API's reason code and never changes; only the words shown do.
+const reasonOptions = (t) => [
+  { value: 'wrong_part', label: t('Wrong part supplied') },
+  { value: 'faulty_part', label: t('Faulty / defective') },
+  { value: 'wrong_fitment', label: t("Didn't fit this vehicle") },
+  { value: 'not_needed', label: t('No longer needed') },
+  { value: 'over_ordered', label: t('Over-ordered') },
+  { value: 'other', label: t('Other') },
 ];
 
 export default function PartReturnModal({ open, purchase, onClose, onDone }) {
   const toast = useToast();
+  const { t } = useI18n();
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
 
@@ -71,13 +74,13 @@ export default function PartReturnModal({ open, purchase, onClose, onDone }) {
       });
       toast.success(
         form.status === 'refunded'
-          ? `Return recorded — ${aed(refund)} credited back to the ticket.`
-          : 'Return logged. The ticket keeps the cost until the refund lands.',
+          ? t('Return recorded — {amount} credited back to the ticket.', { amount: aed(refund) })
+          : t('Return logged. The ticket keeps the cost until the refund lands.'),
       );
       onDone?.();
       onClose?.();
     } catch (e) {
-      toast.error(e?.response?.data?.message || 'Could not record the return.');
+      toast.error(e?.response?.data?.message || t('Could not record the return.'));
     } finally {
       setSaving(false);
     }
@@ -86,17 +89,21 @@ export default function PartReturnModal({ open, purchase, onClose, onDone }) {
   if (!purchase) return null;
 
   return (
-    <Modal open={open} onClose={onClose} title={`Return — ${purchase.part_name}`} size="md">
+    <Modal open={open} onClose={onClose} title={t('Return — {part}', { part: purchase.part_name })} size="md">
       <div className="space-y-4">
         <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
-          Bought from <span className="font-medium text-slate-800">{purchase.supplier || purchase.source_name || 'supplier'}</span>
-          {' · '}{purchased} × {aed(unit)} = <span className="font-medium text-slate-800">{aed(unit * purchased)}</span>
-          {purchase.installed_at && <span className="ml-1 text-amber-600">· already fitted</span>}
+          {t('Bought from {supplier} · {qty} × {unit} = {total}', {
+            supplier: purchase.supplier || purchase.source_name || t('supplier'),
+            qty: purchased,
+            unit: aed(unit),
+            total: aed(unit * purchased),
+          })}
+          {purchase.installed_at && <span className="ms-1 text-amber-600">{t('· already fitted')}</span>}
         </div>
 
         <div className="grid grid-cols-2 gap-3">
           <Input
-            label="Quantity returned"
+            label={t('Quantity returned')}
             type="number"
             min="0.01"
             max={String(purchased)}
@@ -104,22 +111,22 @@ export default function PartReturnModal({ open, purchase, onClose, onDone }) {
             value={form.quantity || ''}
             onChange={set('quantity')}
           />
-          <Select label="Reason" value={form.reason_code || ''} onChange={set('reason_code')}>
-            {REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+          <Select label={t('Reason')} value={form.reason_code || ''} onChange={set('reason_code')}>
+            {reasonOptions(t).map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
           </Select>
         </div>
 
         <Textarea
-          label="Details (optional)"
+          label={t('Details (optional)')}
           rows={2}
           value={form.reason_note || ''}
           onChange={set('reason_note')}
-          placeholder="What was wrong with it?"
+          placeholder={t('What was wrong with it?')}
         />
 
         <div className="grid grid-cols-2 gap-3">
           <Input
-            label="Restocking fee kept by supplier"
+            label={t('Restocking fee kept by supplier')}
             type="number"
             min="0"
             step="0.01"
@@ -128,7 +135,7 @@ export default function PartReturnModal({ open, purchase, onClose, onDone }) {
             placeholder="0.00"
           />
           <Input
-            label="Refund amount"
+            label={t('Refund amount')}
             type="number"
             min="0"
             step="0.01"
@@ -139,31 +146,31 @@ export default function PartReturnModal({ open, purchase, onClose, onDone }) {
         </div>
 
         {/* The one question that decides whether the ticket total moves today. */}
-        <Select label="Has the money come back?" value={form.status || ''} onChange={set('status')}>
-          <option value="refunded">Yes — refunded now (credits the ticket)</option>
-          <option value="sent">Not yet — part sent back, awaiting refund</option>
-          <option value="requested">Not yet — return logged, part still with us</option>
+        <Select label={t('Has the money come back?')} value={form.status || ''} onChange={set('status')}>
+          <option value="refunded">{t('Yes — refunded now (credits the ticket)')}</option>
+          <option value="sent">{t('Not yet — part sent back, awaiting refund')}</option>
+          <option value="requested">{t('Not yet — return logged, part still with us')}</option>
         </Select>
 
         <div className="rounded-lg border border-slate-200 bg-white p-3 text-sm">
           <div className="flex justify-between py-0.5">
-            <span className="text-slate-600">Purchase</span>
+            <span className="text-slate-600">{t('Purchase')}</span>
             <span className="tabular-nums text-slate-800">+ {aed(unit * purchased)}</span>
           </div>
           <div className="flex justify-between py-0.5">
-            <span className="text-slate-600">Return credit</span>
+            <span className="text-slate-600">{t('Return credit')}</span>
             <span className="tabular-nums text-emerald-700">
-              {form.status === 'refunded' ? `− ${aed(refund)}` : '— (not yet)'}
+              {form.status === 'refunded' ? `− ${aed(refund)}` : t('— (not yet)')}
             </span>
           </div>
           {kept > 0 && form.status === 'refunded' && (
             <div className="flex justify-between py-0.5 text-[12px]">
-              <span className="text-slate-500">Kept by the supplier (stays a real cost)</span>
+              <span className="text-slate-500">{t('Kept by the supplier (stays a real cost)')}</span>
               <span className="tabular-nums text-slate-500">{aed(kept)}</span>
             </div>
           )}
           <div className="mt-1 flex justify-between border-t border-slate-100 pt-1.5 font-semibold">
-            <span className="text-slate-700">Net cost of this part</span>
+            <span className="text-slate-700">{t('Net cost of this part')}</span>
             <span className="tabular-nums text-slate-900">
               {aed(form.status === 'refunded' ? unit * purchased - refund : unit * purchased)}
             </span>
@@ -171,13 +178,12 @@ export default function PartReturnModal({ open, purchase, onClose, onDone }) {
         </div>
 
         <p className="text-[11px] text-slate-500">
-          The purchase is never deleted. It stays on the ticket with this return recorded beside it, so the
-          history of what was bought and what came back is always readable.
+          {t('The purchase is never deleted. It stays on the ticket with this return recorded beside it, so the history of what was bought and what came back is always readable.')}
         </p>
 
         <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button loading={saving} onClick={submit}>Record return</Button>
+          <Button variant="ghost" onClick={onClose}>{t('Cancel')}</Button>
+          <Button loading={saving} onClick={submit}>{t('Record return')}</Button>
         </div>
       </div>
     </Modal>

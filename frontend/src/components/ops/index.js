@@ -5,6 +5,8 @@
    the small vocabularies below.  Styling lives in ./ops.css (scoped .opx).
    ======================================================================= */
 import { useEffect, useRef, useState } from 'react';
+import { useI18n } from '../../i18n/I18nContext';
+import { translate, numberLocale } from '../../i18n/translate';
 import './ops.css';
 
 /* ---------- state vocabularies (the two independent dimensions) ---------- */
@@ -12,16 +14,17 @@ import './ops.css';
 // Dimension 1 — Rental availability, derived from operational_status / status.
 export function rentalMeta(v = {}) {
   const s = String(v.operational_status || v.rental_state || v.status || '').toLowerCase();
-  if (['rented', 'on_rent'].includes(s)) return { key: 'rented', label: 'Rented' };
-  if (['reserved', 'booked'].includes(s)) return { key: 'reserved', label: 'Reserved' };
-  if (['in_transit', 'transfer', 'transit'].includes(s)) return { key: 'reserved', label: 'In Transit' };
+  if (['rented', 'on_rent'].includes(s)) return { key: 'rented', label: translate('Rented') };
+  if (['reserved', 'booked'].includes(s)) return { key: 'reserved', label: translate('Reserved') };
+  if (['in_transit', 'transfer', 'transit'].includes(s)) return { key: 'reserved', label: translate('In Transit') };
   if (v.available === false || ['blocked', 'out_of_order', 'suspended', 'grounded', 'under_maintenance'].includes(s))
-    return { key: 'blocked', label: 'Blocked' };
-  return { key: 'avail', label: 'Available' };
+    return { key: 'blocked', label: translate('Blocked') };
+  return { key: 'avail', label: translate('Available') };
 }
 
 // Dimension 2 — Maintenance lifecycle, derived from workflow_status (never
-// overwritten by the rental dimension). Returns a label + tone.
+// overwritten by the rental dimension). Returns a label + tone. The labels below are the English
+// source text; maintenanceMeta() resolves each one through the catalog at read time.
 const WF_LIFECYCLE = {
   none: { label: 'None', tone: 'none' },
   inspection_pending: { label: 'Inspection', tone: 'reserved' },
@@ -47,8 +50,12 @@ const WF_LIFECYCLE = {
 };
 export function maintenanceMeta(v = {}) {
   const raw = String(v.maintenance_state || v.workflow_status || '').toLowerCase();
-  if (!raw || raw === 'none') return { label: 'None', tone: 'none', active: false };
-  const m = WF_LIFECYCLE[raw] || { label: v.status_label || 'In Workshop', tone: 'reserved' };
+  if (!raw || raw === 'none') return { label: translate('None'), tone: 'none', active: false };
+  const known = WF_LIFECYCLE[raw];
+  // `status_label` is backend copy, not a literal — it is shown as sent.
+  const m = known
+    ? { ...known, label: translate(known.label) }
+    : { label: v.status_label || translate('In Workshop'), tone: 'reserved' };
   return { ...m, active: true, paused: raw === 'paused_returned_to_service' || raw === 'paused_for_rental' };
 }
 
@@ -244,6 +251,7 @@ const LANE_RAIL = { avail: '#34d399', rented: '#60a5fa', reserved: '#a78bfa', pa
 const LANE_PAGE_SIZE = 3;
 
 function LaneColumn({ lane }) {
+  const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const items = lane.items || [];
   const shown = expanded ? items : items.slice(0, LANE_PAGE_SIZE);
@@ -261,12 +269,12 @@ function LaneColumn({ lane }) {
           : <div className="opx-empty" style={{ padding: '20px 10px' }}>—</div>}
         {hidden > 0 && (
           <button type="button" className="opx-lane-more" onClick={() => setExpanded(true)}>
-            Show {hidden} more
+            {t('Show {n} more', { n: hidden })}
           </button>
         )}
         {expanded && items.length > LANE_PAGE_SIZE && (
           <button type="button" className="opx-lane-more" onClick={() => setExpanded(false)}>
-            Show less
+            {t('Show less')}
           </button>
         )}
       </div>
@@ -287,12 +295,13 @@ export function LaneBoard({ lanes = [] }) {
 /* --------------------------- Live status matrix ------------------------ */
 // rows/cols: [{key,label}]; data: { [rowKey]: { [colKey]: number } }; flags: Set("row:col")
 export function StatusMatrix({ rows = [], cols = [], data = {}, flagCell, hotCell }) {
+  const { t } = useI18n();
   return (
     <div className="opx-mx">
       <table>
         <thead>
           <tr>
-            <th style={{ textAlign: 'left' }}>Maint ↓ / Rental →</th>
+            <th style={{ textAlign: 'start' }}>{t('Maint ↓ / Rental →')}</th>
             {cols.map((c) => <th key={c.key}>{c.label}</th>)}
           </tr>
         </thead>
@@ -323,6 +332,7 @@ export function StatusMatrix({ rows = [], cols = [], data = {}, flagCell, hotCel
 /* ----------------------------- Fleet heatmap --------------------------- */
 // cells: [{ id, plate, state: 'avail'|'rented'|'reserved'|'paused'|'maint'|'idle', title }]
 export function FleetHeatmap({ cells = [], onCell }) {
+  const { t } = useI18n();
   return (
     <div>
       <div className="opx-heat">
@@ -332,12 +342,12 @@ export function FleetHeatmap({ cells = [], onCell }) {
         ))}
       </div>
       <div className="opx-heat-legend">
-        <span><i style={{ background: 'rgba(52,211,153,.55)' }} />Available</span>
-        <span><i style={{ background: 'rgba(96,165,250,.6)' }} />Rented</span>
-        <span><i style={{ background: 'rgba(167,139,250,.55)' }} />Reserved</span>
-        <span><i style={{ background: 'rgba(245,165,36,.7)' }} />Paused</span>
-        <span><i style={{ background: 'rgba(251,113,133,.55)' }} />Maintenance</span>
-        <span><i style={{ background: 'rgba(133,146,171,.28)' }} />Idle</span>
+        <span><i style={{ background: 'rgba(52,211,153,.55)' }} />{t('Available')}</span>
+        <span><i style={{ background: 'rgba(96,165,250,.6)' }} />{t('Rented')}</span>
+        <span><i style={{ background: 'rgba(167,139,250,.55)' }} />{t('Reserved')}</span>
+        <span><i style={{ background: 'rgba(245,165,36,.7)' }} />{t('Paused')}</span>
+        <span><i style={{ background: 'rgba(251,113,133,.55)' }} />{t('Maintenance')}</span>
+        <span><i style={{ background: 'rgba(133,146,171,.28)' }} />{t('Idle')}</span>
       </div>
     </div>
   );
@@ -356,9 +366,10 @@ const FEED_ICON = (ev) => {
   return { ic: '◆', tone: '' };
 };
 export function LiveActivityFeed({ events = [], freshCount = 0, onEvent }) {
+  const { t } = useI18n();
   return (
     <div className="opx-feed">
-      {events.length === 0 ? <div className="opx-empty">No activity in range</div> : null}
+      {events.length === 0 ? <div className="opx-empty">{t('No activity in range')}</div> : null}
       {events.map((ev, i) => {
         const meta = FEED_ICON(ev);
         return (
@@ -372,7 +383,7 @@ export function LiveActivityFeed({ events = [], freshCount = 0, onEvent }) {
               <div className="sub">
                 {ev.stage ? <span>{ev.stage}</span> : null}
                 {ev.actor_name ? <span>{ev.actor_name}</span> : null}
-                {ev.odometer ? <span>{Number(ev.odometer).toLocaleString()} km</span> : null}
+                {ev.odometer ? <span>{Number(ev.odometer).toLocaleString(numberLocale())} km</span> : null}
                 {ev.time_label ? <span>{ev.time_label}</span> : null}
               </div>
             </div>
@@ -405,6 +416,7 @@ export function JourneyMap({ nodes = [] }) {
 // inset-inline-end, so it already mirrors with the document direction. No caller
 // ever passed it.
 export function ContextualDrawer({ open, onClose, title, subtitle, children, footer }) {
+  const { t } = useI18n();
   useEffect(() => {
     if (!open) return undefined;
     const onKey = (e) => e.key === 'Escape' && onClose && onClose();
@@ -421,7 +433,7 @@ export function ContextualDrawer({ open, onClose, title, subtitle, children, foo
             <div style={{ fontSize: 15, fontWeight: 700 }}>{title}</div>
             {subtitle ? <div className="opx-hint" style={{ marginTop: 2 }}>{subtitle}</div> : null}
           </div>
-          <button className="opx-x" onClick={onClose} aria-label="Close">✕</button>
+          <button className="opx-x" onClick={onClose} aria-label={t('Close')}>✕</button>
         </div>
         <div className="opx-drawer-bd">{children}</div>
         {footer ? <div className="opx-drawer-ft">{footer}</div> : null}
@@ -432,15 +444,20 @@ export function ContextualDrawer({ open, onClose, title, subtitle, children, foo
 
 /* -------------------------------- Clock -------------------------------- */
 export function OpsClock() {
+  const { lang } = useI18n();
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
+  // Arabic must stay Gregorian with Latin digits, or the clock switches calendar and breaks the
+  // tabular alignment of the header strip.
+  const timeLoc = lang === 'ar' ? 'ar-AE-u-nu-latn' : undefined;
+  const dateLoc = lang === 'ar' ? 'ar-AE-u-ca-gregory-nu-latn' : undefined;
   return (
     <span className="clock tnum">
-      <b>{now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</b>
-      {' · '}{now.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}
+      <b>{now.toLocaleTimeString(timeLoc, { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</b>
+      {' · '}{now.toLocaleDateString(dateLoc, { weekday: 'short', month: 'short', day: 'numeric' })}
     </span>
   );
 }

@@ -11,6 +11,7 @@
    works from a vehicle resource OR a maintenance ticket without adapters.
    ======================================================================= */
 import './dualstate.css';
+import { useI18n } from '../../i18n/I18nContext';
 
 /* -- lifecycle label/tone map (mirrors ops/index WF_LIFECYCLE, kept local
       so this primitive has no scoped-CSS side-effects) -- */
@@ -71,6 +72,7 @@ export function maintenanceDimension(v = {}) {
 }
 
 export default function DualState({ vehicle = {}, size = 'sm', stack = false, showNone = true }) {
+  const { t } = useI18n();
   const r = rentalDimension(vehicle);
   const m = maintenanceDimension(vehicle);
   const crit = isCritical(vehicle.fault_severity || vehicle.severity)
@@ -79,12 +81,12 @@ export default function DualState({ vehicle = {}, size = 'sm', stack = false, sh
   const mTone = m.paused && crit ? 'paused' : m.key; // paused stays amber even when critical; crit marked by the dot
   return (
     <span className={`ds-dual ${stack ? 'stack' : ''}`}>
-      <span className={`ds-chip ${size} ds-${r.key}`}><span className="ds-dot" />{r.label}</span>
+      <span className={`ds-chip ${size} ds-${r.key}`}><span className="ds-dot" />{t(r.label)}</span>
       {showM && (
-        <span className={`ds-chip ${size} ds-${mTone}`} title={m.paused ? 'Repair paused — vehicle returned to service' : undefined}>
+        <span className={`ds-chip ${size} ds-${mTone}`} title={m.paused ? t('Repair paused — vehicle returned to service') : undefined}>
           {m.paused ? <span className="ds-dot" style={{ marginRight: 1 }} /> : <span className="ds-dot" />}
-          {m.paused ? '⏸ ' : ''}{m.label}
-          {crit && m.paused ? <span className="ds-crit-dot" title="Critical fault" /> : null}
+          {m.paused ? '⏸ ' : ''}{t(m.label)}
+          {crit && m.paused ? <span className="ds-crit-dot" title={t('Critical fault')} /> : null}
         </span>
       )}
     </span>
@@ -109,6 +111,7 @@ export default function DualState({ vehicle = {}, size = 'sm', stack = false, sh
 const TYPE_TONE = { C: 'rent', U: 'maint', R: 'book' };
 
 export function ContractLines({ vehicle = {}, linkTo }) {
+  const { t } = useI18n();
   const lines = vehicle.contract_lines || [];
   if (!lines.length) return null;
 
@@ -116,8 +119,10 @@ export function ContractLines({ vehicle = {}, linkTo }) {
     <div className="ds-docs">
       {lines.map((l, i) => {
         const note = l.kind === 'note';
-        const dates = [l.since ? `since ${l.since}` : '', l.due ? `due ${l.due}` : '']
-          .filter(Boolean).join(' · ');
+        const dates = [
+          l.since ? t('since {date}', { date: l.since }) : '',
+          l.due ? t('due {date}', { date: l.due }) : '',
+        ].filter(Boolean).join(' · ');
 
         // The TYPE leads — it's the thing being asked of the row ("what kind of contract is
         // this?"). The number follows as the lookup key.
@@ -125,8 +130,8 @@ export function ContractLines({ vehicle = {}, linkTo }) {
           <span
             className={`ds-doc ${note ? 'note' : TYPE_TONE[l.type] || 'rent'}`}
             title={note
-              ? 'Raised by the Fleet maintenance workflow. No OfficeManager contract was opened for it — there is nothing to look up in OM.'
-              : `${l.label} contract ${l.contract_no ? `#${l.contract_no}` : ''} — from OfficeManager. Click to open it.`}
+              ? t('Raised by the Fleet maintenance workflow. No OfficeManager contract was opened for it — there is nothing to look up in OM.')
+              : t('{kind} contract {number} — from OfficeManager. Click to open it.', { kind: l.label, number: l.contract_no ? `#${l.contract_no}` : '' })}
           >
             <span className="ds-doc-kind">{l.label}</span>
             {note
@@ -150,21 +155,22 @@ export function ContractLines({ vehicle = {}, linkTo }) {
    Renders nothing unless the vehicle is actually paused, so it can be
    dropped in unconditionally. */
 export function PausedRibbon({ vehicle = {}, reason }) {
+  const { t } = useI18n();
   const m = maintenanceDimension(vehicle);
   if (!m.paused) return null;
   const crit = isCritical(vehicle.fault_severity || vehicle.severity)
     || ['red', 'yellow'].includes(String(vehicle.condition_grade || '').toLowerCase());
   const detail = reason || vehicle.deferred_maintenance_reason
     || vehicle.finding || vehicle.findings?.[0]?.text
-    || 'Repair on hold — the vehicle is available for rental and will resume from its exact previous stage.';
+    || t('Repair on hold — the vehicle is available for rental and will resume from its exact previous stage.');
   return (
     <div className={`ds-ribbon ${crit ? 'crit' : ''}`}>
       <span className="ds-ribbon-ic">⏸</span>
       <div className="ds-ribbon-tx">
-        <b>Maintenance Paused · Returned to Service</b>
+        <b>{t('Maintenance Paused · Returned to Service')}</b>
         <span>{detail}</span>
       </div>
-      <span className="ds-ribbon-tag">{crit ? 'Critical' : 'On hold'}</span>
+      <span className="ds-ribbon-tag">{crit ? t('Critical') : t('On hold')}</span>
     </div>
   );
 }

@@ -15,6 +15,7 @@ import { EmptyState } from '../ui/Misc';
 import { usePermissions } from '../../hooks/usePermissions';
 import { isFeatureEnabled } from '../../config/features';
 import { aed } from '../../lib/format';
+import { useI18n } from '../../i18n/I18nContext';
 import ActionItem from './ActionItem';
 
 const ITEMS_PER_CATEGORY = 4;
@@ -34,18 +35,19 @@ const BUBBLE = {
 };
 const ACCENT = ['bg-red-500', 'bg-amber-500', 'bg-blue-500', 'bg-slate-300'];
 
-const dueLabel = (d) => {
-  if (d == null) return 'Ending soon';
-  if (d <= 0) return d === 0 ? 'Due today' : `${Math.abs(d)}d overdue`;
-  if (d === 1) return 'Due tomorrow';
-  return `Due in ${d} days`;
+// These helpers live outside the component, so the translator is threaded in as an argument.
+const dueLabel = (t, d) => {
+  if (d == null) return t('Ending soon');
+  if (d <= 0) return d === 0 ? t('Due today') : t('{n}d overdue', { n: Math.abs(d) });
+  if (d === 1) return t('Due tomorrow');
+  return t('Due in {n} days', { n: d });
 };
 
-const etaSub = (it) => {
+const etaSub = (t, it) => {
   const eta = it.eta || {};
   const parts = [];
-  if (eta.days_over > 0) parts.push(`${eta.days_over}d over target`);
-  else if (eta.days_left != null) parts.push(`${eta.days_left}d to target`);
+  if (eta.days_over > 0) parts.push(t('{n}d over target', { n: eta.days_over }));
+  else if (eta.days_left != null) parts.push(t('{n}d to target', { n: eta.days_left }));
   else if (it.stage) parts.push(it.stage);
   if (it.garage) parts.push(it.garage);
   return parts.join(' · ');
@@ -54,7 +56,9 @@ const etaSub = (it) => {
 const vehicleTitle = (it, fallback) => it.plate || it.car || fallback;
 
 // Declarative category catalog. `flag: 'financial'` mirrors the money gate used
-// everywhere else. `map` turns a raw backend item into ActionItem props.
+// everywhere else. `map` turns a raw backend item into ActionItem props — it takes
+// the translator because the catalog itself is module-level. `title` is the English
+// phrase key; it is resolved with t() where the panel renders it.
 const CATEGORIES = [
   {
     key: 'in_maintenance',
@@ -64,10 +68,10 @@ const CATEGORIES = [
     modules: ['maintenance'],
     permission: 'maintenance.view',
     viewAllTo: '/car-status',
-    map: (it) => ({
+    map: (it, t) => ({
       to: it.id ? `/car-status/${it.id}` : '/car-status',
-      title: vehicleTitle(it, 'Vehicle'),
-      sub: etaSub(it),
+      title: vehicleTitle(it, t('Vehicle')),
+      sub: etaSub(t, it),
       tone: it.eta?.days_over > 0 ? 'red' : 'amber',
     }),
   },
@@ -79,10 +83,10 @@ const CATEGORIES = [
     modules: ['fleet-operations'],
     permission: 'contracts.view',
     viewAllTo: '/contracts',
-    map: (it) => ({
+    map: (it, t) => ({
       to: it.id ? `/contracts/${it.id}` : '/contracts',
-      title: vehicleTitle(it, `Contract ${it.contract_no || ''}`.trim()),
-      sub: [dueLabel(it.days_left), it.customer].filter(Boolean).join(' · '),
+      title: vehicleTitle(it, it.contract_no ? t('Contract {no}', { no: it.contract_no }) : t('Contract')),
+      sub: [dueLabel(t, it.days_left), it.customer].filter(Boolean).join(' · '),
       tone: it.days_left <= 0 ? 'red' : 'amber',
     }),
   },
@@ -94,9 +98,9 @@ const CATEGORIES = [
     modules: ['maintenance', 'fleet-operations'],
     permission: 'inspections.view',
     viewAllTo: '/inspections/schedules',
-    map: (it) => ({
+    map: (it, t) => ({
       to: '/inspections/schedules',
-      title: vehicleTitle(it, 'Vehicle'),
+      title: vehicleTitle(it, t('Vehicle')),
       sub: [it.name, it.label].filter(Boolean).join(' · '),
       tone: it.status === 'overdue' ? 'red' : 'amber',
     }),
@@ -110,9 +114,9 @@ const CATEGORIES = [
     permission: null,
     flag: 'financial',
     viewAllTo: '/contracts',
-    map: (it) => ({
+    map: (it, t) => ({
       to: it.id ? `/contracts/${it.id}` : '/contracts',
-      title: it.customer || vehicleTitle(it, 'Contract'),
+      title: it.customer || vehicleTitle(it, t('Contract')),
       sub: [aed(it.balance), it.plate].filter(Boolean).join(' · '),
       tone: 'red',
     }),
@@ -120,6 +124,7 @@ const CATEGORIES = [
 ];
 
 function CategoryPanel({ category, rows, total, severity }) {
+  const { t } = useI18n();
   const more = total - rows.length;
 
   return (
@@ -129,7 +134,7 @@ function CategoryPanel({ category, rows, total, severity }) {
         <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${BUBBLE[category.tone] || BUBBLE.slate}`}>
           {category.icon}
         </span>
-        <h3 className="flex-1 text-sm font-semibold text-slate-800">{category.title}</h3>
+        <h3 className="flex-1 text-sm font-semibold text-slate-800">{t(category.title)}</h3>
         <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold tabular-nums text-slate-600">{total}</span>
       </div>
       <div className="-mx-1">
@@ -142,8 +147,8 @@ function CategoryPanel({ category, rows, total, severity }) {
           to={category.viewAllTo}
           className="mt-1 flex items-center justify-center gap-1 rounded-lg py-1.5 text-xs font-semibold text-indigo-600 outline-none transition hover:bg-indigo-50 focus-visible:ring-2 focus-visible:ring-indigo-500/50"
         >
-          View all {total}
-          <Icon.ArrowRight className="h-3.5 w-3.5" />
+          {t('View all {n}', { n: total })}
+          <Icon.ArrowRight className="h-3.5 w-3.5 rtl:-scale-x-100" />
         </Link>
       )}
     </div>
@@ -151,6 +156,7 @@ function CategoryPanel({ category, rows, total, severity }) {
 }
 
 function ActionCenter({ data = {}, loading = false, moduleId = null }) {
+  const { t } = useI18n();
   const { can } = usePermissions();
 
   if (loading) {
@@ -177,7 +183,7 @@ function ActionCenter({ data = {}, loading = false, moduleId = null }) {
     .map((category) => {
       const bucket = data[category.key] || { count: 0, items: [] };
       const items = bucket.items || [];
-      const rows = items.slice(0, ITEMS_PER_CATEGORY).map(category.map);
+      const rows = items.slice(0, ITEMS_PER_CATEGORY).map((it) => category.map(it, t));
       const severity = rows.reduce((min, r) => Math.min(min, TONE_RANK[r.tone] ?? 3), 3);
       return { category, rows, total: bucket.count ?? items.length, severity, has: rows.length > 0 };
     })
@@ -189,8 +195,8 @@ function ActionCenter({ data = {}, loading = false, moduleId = null }) {
       <div className="rounded-2xl border border-slate-200/60 bg-white shadow-soft">
         <EmptyState
           icon={<Icon.Check className="h-6 w-6 text-emerald-500" />}
-          title="All clear"
-          message="Nothing needs your attention right now. New alerts will appear here as they come up."
+          title={t('All clear')}
+          message={t('Nothing needs your attention right now. New alerts will appear here as they come up.')}
         />
       </div>
     );

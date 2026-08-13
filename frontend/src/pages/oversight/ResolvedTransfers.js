@@ -13,10 +13,11 @@ import Icon from '../../components/ui/Icon';
 import { Skeleton } from '../../components/ui/Skeleton';
 import { Card, PageHeader, SearchInput, EmptyState, ErrorState } from '../../components/ui/Misc';
 
-const fmtDate = (iso) => (iso ? new Date(iso).toLocaleString(undefined, { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—');
+// Arabic keeps Gregorian dates and Latin digits so the audit trail stays comparable.
+const fmtDate = (iso, lang) => (iso ? new Date(iso).toLocaleString(lang === 'ar' ? 'ar-AE-u-ca-gregory-nu-latn' : undefined, { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—');
 
 export default function ResolvedTransfers() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -43,7 +44,7 @@ export default function ResolvedTransfers() {
       <div className="mx-auto max-w-[1200px] space-y-6 px-4 sm:px-6 lg:px-8">
         <div>
           <Link to="/apps/reports" className="mb-2 inline-flex items-center gap-1 text-xs font-medium text-slate-400 transition-colors hover:text-slate-600">
-            <Icon.ArrowRight className="h-3 w-3 rotate-180" /> Reports
+            <Icon.ArrowRight className="h-3 w-3 rotate-180 rtl:-scale-x-100" /> {t('Reports')}
           </Link>
           <PageHeader title={t('oversight.resolvedTransfers.title')} subtitle={t('oversight.resolvedTransfers.subtitle')}>
             <div className="rounded-2xl border border-slate-200/60 bg-white px-4 py-3 text-center shadow-soft">
@@ -75,9 +76,9 @@ export default function ResolvedTransfers() {
           <>
           <AuditAnalytics
             rows={rows}
-            title="Cars transferred on most often"
-            subtitle="Repeat clean transfers per car — normal for a busy car, worth a look when one dominates"
-            metricLabel="Transfers"
+            title={t('Cars transferred on most often')}
+            subtitle={t('Repeat clean transfers per car — normal for a busy car, worth a look when one dominates')}
+            metricLabel={t('Transfers')}
             color="emerald"
           />
           <div className="stagger space-y-3">
@@ -87,7 +88,7 @@ export default function ResolvedTransfers() {
                 <div className="sm:w-44 sm:flex-shrink-0">
                   <Link to={`/maintenance-workflow/${r.ticket_id}`} className="font-mono text-base font-bold text-slate-900 hover:text-indigo-600">{r.plate_no || `#${r.ticket_id}`}</Link>
                   {r.car && <p className="text-xs text-slate-400">{r.car}</p>}
-                  <p className="mt-1 text-[11px] text-slate-400">{fmtDate(r.at)}</p>
+                  <p className="mt-1 text-[11px] text-slate-400">{fmtDate(r.at, lang)}</p>
                 </div>
 
                 {/* From → To garage */}
@@ -103,7 +104,7 @@ export default function ResolvedTransfers() {
                     </span>
                   </div>
                   <div className="mt-1.5 flex flex-wrap gap-3 text-[11px] text-slate-400">
-                    {r.odometer != null && <span>{t('oversight.resolvedTransfers.odometer')}: {Number(r.odometer).toLocaleString()} km</span>}
+                    {r.odometer != null && <span>{t('oversight.resolvedTransfers.odometer')}: {Number(r.odometer).toLocaleString(lang === 'ar' ? 'ar-AE-u-nu-latn' : undefined)} km</span>}
                     {r.flagged_by && <span>{t('oversight.resolvedTransfers.by')}: {r.flagged_by}</span>}
                   </div>
                 </div>

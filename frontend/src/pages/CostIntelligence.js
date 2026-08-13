@@ -11,6 +11,7 @@ import Icon from '../components/ui/Icon';
 import FinancialBreakdownDrawer from '../components/FinancialBreakdownDrawer';
 import CostIntelligenceAnalytics from '../components/analytics/CostIntelligenceAnalytics';
 import { aed2, num } from '../lib/format';
+import { useI18n } from '../i18n/I18nContext';
 
 const STATUS_TONE = { ready: 'green', rented: 'blue', maintenance: 'amber', sold: 'gray', disposed: 'gray' };
 const ACTIVE_FLEET = ['rented', 'ready'];
@@ -37,6 +38,7 @@ const cmp = (a, b, dir) => {
  * by a lifetime denominator.
  */
 export default function CostIntelligence() {
+  const { t } = useI18n();
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [q, setQ] = useState('');
@@ -64,7 +66,7 @@ export default function CostIntelligence() {
       type="button"
       onClick={(e) => { e.stopPropagation(); setDrill({ vehicleId: id, metric }); }}
       className="cursor-pointer decoration-dotted underline-offset-2 hover:text-indigo-700 hover:underline"
-      title="Show how this number is calculated"
+      title={t('Show how this number is calculated')}
     >
       {node}
     </button>
@@ -94,48 +96,52 @@ export default function CostIntelligence() {
   const maxCatCost = categories.reduce((m, c) => Math.max(m, c.maintenance_cost || 0), 0) || 1;
   const s = data?.summary || {};
 
+  // The filter VALUE stays 'Uncategorized' (it is matched against the raw row); only the wording shown
+  // to the user is translated.
+  const catLabel = (value) => (value === 'Uncategorized' ? t('Uncategorized') : value);
+
   const columns = [
     {
       key: 'plate', align: 'left', cellClass: 'font-medium',
-      header: 'Car',
+      header: t('Car'),
       render: (r) => (
         <>
           <Link to={`/vehicles/${r.vehicle_id}`} onClick={(e) => e.stopPropagation()} className="text-indigo-600 hover:text-indigo-700">{r.plate || `#${r.vehicle_id}`}</Link>
-          <div className="text-xs text-slate-400">{r.car || '—'}{r.category ? ` · ${r.category}` : ''}</div>
+          <div className="text-xs text-slate-400">{r.car || '—'}{r.category ? ` · ${catLabel(r.category)}` : ''}</div>
         </>
       ),
     },
     {
-      key: 'status', header: 'Status',
+      key: 'status', header: t('Status'),
       render: (r) => <Badge tone={STATUS_TONE[r.status] || 'slate'}>{r.status || '—'}</Badge>,
     },
     {
-      key: 'maintenance_cost', align: 'right', header: 'Maintenance', cellClass: 'tabular-nums text-amber-600', sortable: true,
-      tooltip: 'Sum of all recorded repairs for this car (same source as the Profit Bridge).',
+      key: 'maintenance_cost', align: 'right', header: t('Maintenance'), cellClass: 'tabular-nums text-amber-600', sortable: true,
+      tooltip: t('Sum of all recorded repairs for this car (same source as the Profit Bridge).'),
       render: (r) => drillNum('maintenance', r.maintenance_cost ? aed2(r.maintenance_cost) : <span className="text-slate-300">—</span>, r.vehicle_id),
     },
     {
-      key: 'distance_km', align: 'right', header: 'Distance (km)', cellClass: 'tabular-nums text-slate-500', sortable: true,
-      tooltip: 'Validated lifetime travel (last odometer IN − first OUT). "—" when no reliable reading exists.',
+      key: 'distance_km', align: 'right', header: t('Distance (km)'), cellClass: 'tabular-nums text-slate-500', sortable: true,
+      tooltip: t('Validated lifetime travel (last odometer IN − first OUT). "—" when no reliable reading exists.'),
       render: (r) => drillNum('distance', count(r.distance_km), r.vehicle_id),
     },
     {
-      key: 'cost_per_km', align: 'right', header: 'Cost / km', cellClass: 'tabular-nums font-semibold text-slate-800', sortable: true,
-      tooltip: 'Maintenance cost ÷ validated distance. Lifetime-only — shows "—" while a date filter is active.',
+      key: 'cost_per_km', align: 'right', header: t('Cost / km'), cellClass: 'tabular-nums font-semibold text-slate-800', sortable: true,
+      tooltip: t('Maintenance cost ÷ validated distance. Lifetime-only — shows "—" while a date filter is active.'),
       render: (r) => drillNum('cost_per_km', money(r.cost_per_km), r.vehicle_id),
     },
     {
-      key: 'cost_per_day', align: 'right', header: 'Cost / day', cellClass: 'tabular-nums text-slate-600', sortable: true,
-      tooltip: 'Maintenance cost ÷ in-service days. Lifetime-only — shows "—" while a date filter is active.',
+      key: 'cost_per_day', align: 'right', header: t('Cost / day'), cellClass: 'tabular-nums text-slate-600', sortable: true,
+      tooltip: t('Maintenance cost ÷ in-service days. Lifetime-only — shows "—" while a date filter is active.'),
       render: (r) => drillNum('cost_per_day', money(r.cost_per_day), r.vehicle_id),
     },
     {
-      key: 'cost_per_rental', align: 'right', header: 'Cost / rental', cellClass: 'tabular-nums text-slate-600', sortable: true,
-      tooltip: 'Maintenance cost ÷ number of rentals.',
+      key: 'cost_per_rental', align: 'right', header: t('Cost / rental'), cellClass: 'tabular-nums text-slate-600', sortable: true,
+      tooltip: t('Maintenance cost ÷ number of rentals.'),
       render: (r) => drillNum('cost_per_rental', money(r.cost_per_rental), r.vehicle_id),
     },
     {
-      key: 'rentals', align: 'right', header: 'Rentals', cellClass: 'tabular-nums text-slate-500', sortable: true,
+      key: 'rentals', align: 'right', header: t('Rentals'), cellClass: 'tabular-nums text-slate-500', sortable: true,
       render: (r) => drillNum('rentals', r.rentals || <span className="text-slate-300">—</span>, r.vehicle_id),
     },
   ];
@@ -144,8 +150,8 @@ export default function CostIntelligence() {
     <div className="py-8">
       <div className="mx-auto max-w-[1500px] space-y-6 px-4 sm:px-6 lg:px-8">
         <PageHeader
-          title="Cost Intelligence"
-          subtitle="Running cost per car — expense per km, per day and per rental across the fleet."
+          title={t('Cost Intelligence')}
+          subtitle={t('Running cost per car — expense per km, per day and per rental across the fleet.')}
         />
 
         {error && (
@@ -155,28 +161,28 @@ export default function CostIntelligence() {
         {/* Date window — scopes maintenance spend, rentals and the category rollup. */}
         <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200/70 bg-white px-4 py-3 shadow-soft">
           <span className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-600">
-            <Icon.Calendar className="h-4 w-4 text-slate-400" /> Period
+            <Icon.Calendar className="h-4 w-4 text-slate-400" /> {t('Period')}
           </span>
           <label className="inline-flex items-center gap-1.5 text-sm text-slate-500">
-            From
+            {t('From')}
             <input type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)}
               className="rounded-lg border-slate-300 text-sm text-slate-700 focus:border-indigo-500 focus:ring-indigo-500" />
           </label>
           <label className="inline-flex items-center gap-1.5 text-sm text-slate-500">
-            To
+            {t('To')}
             <input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)}
               className="rounded-lg border-slate-300 text-sm text-slate-700 focus:border-indigo-500 focus:ring-indigo-500" />
           </label>
           {windowed ? (
             <button type="button" onClick={() => { setFrom(''); setTo(''); }}
               className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-200">
-              Clear · lifetime
+              {t('Clear · lifetime')}
             </button>
           ) : (
-            <span className="text-xs text-slate-400">Lifetime (all dates)</span>
+            <span className="text-xs text-slate-400">{t('Lifetime (all dates)')}</span>
           )}
           {windowed && (
-            <span className="ms-auto text-xs text-amber-600">Cost/km &amp; Cost/day are lifetime-only — shown as “—” while filtered.</span>
+            <span className="ms-auto text-xs text-amber-600">{t('Cost/km & Cost/day are lifetime-only — shown as “—” while filtered.')}</span>
           )}
         </div>
 
@@ -185,45 +191,51 @@ export default function CostIntelligence() {
         ) : (
           <MetricGrid cols={4}>
             <MetricCard
-              label="Fleet Cost / km"
+              label={t('Fleet Cost / km')}
               value={s.fleet_cost_per_km != null ? aed2(s.fleet_cost_per_km) : '—'}
               tone="indigo"
               icon={<Icon.TrendUp className="h-5 w-5" />}
-              hint={windowed ? 'Lifetime-only while filtered' : 'Total maintenance ÷ total km'}
-              tooltip="Fleet maintenance spend divided by total validated distance. Computed on totals, not an average of per-car ratios."
+              hint={windowed ? t('Lifetime-only while filtered') : t('Total maintenance ÷ total km')}
+              tooltip={t('Fleet maintenance spend divided by total validated distance. Computed on totals, not an average of per-car ratios.')}
             />
             <MetricCard
-              label="Fleet Cost / day"
+              label={t('Fleet Cost / day')}
               value={s.fleet_cost_per_day != null ? aed2(s.fleet_cost_per_day) : '—'}
               tone="blue"
               icon={<Icon.TrendUp className="h-5 w-5" />}
-              hint={windowed ? 'Lifetime-only while filtered' : 'Total maintenance ÷ in-service days'}
+              hint={windowed ? t('Lifetime-only while filtered') : t('Total maintenance ÷ in-service days')}
             />
             <MetricCard
-              label="Fleet Cost / rental"
+              label={t('Fleet Cost / rental')}
               value={s.fleet_cost_per_rental != null ? aed2(s.fleet_cost_per_rental) : '—'}
               tone="violet"
               icon={<Icon.TrendUp className="h-5 w-5" />}
-              hint="Total maintenance ÷ total rentals"
+              hint={t('Total maintenance ÷ total rentals')}
             />
             <MetricCard
-              label={windowed ? 'Maintenance (period)' : 'Total Maintenance'}
+              label={windowed ? t('Maintenance (period)') : t('Total Maintenance')}
               value={aed2(s.total_maintenance)}
               tone="amber"
               icon={<Icon.Wrench className="h-5 w-5" />}
-              hint={windowed ? 'Spend within the selected dates' : `${num(s.km_unknown || 0)} car${(s.km_unknown || 0) === 1 ? '' : 's'} without a distance reading`}
-              tooltip="Fleet-wide logged maintenance spend. Cars without a reliable odometer reading are excluded from the per-km figure."
+              hint={
+                windowed
+                  ? t('Spend within the selected dates')
+                  : (s.km_unknown || 0) === 1
+                    ? t('1 car without a distance reading')
+                    : t('{n} cars without a distance reading', { n: num(s.km_unknown || 0) })
+              }
+              tooltip={t('Fleet-wide logged maintenance spend. Cars without a reliable odometer reading are excluded from the per-km figure.')}
             />
           </MetricGrid>
         )}
 
         {/* Cost by rental segment — which category costs the fleet the most. */}
         <SectionCard
-          title="Cost by category"
-          subtitle="Rental segments ranked by maintenance spend. Click a segment to filter the fleet below."
+          title={t('Cost by category')}
+          subtitle={t('Rental segments ranked by maintenance spend. Click a segment to filter the fleet below.')}
           actions={cat != null && (
             <button type="button" onClick={() => setCat(null)} className="rounded-lg bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100">
-              Clear “{cat}” filter
+              {t('Clear “{category}” filter', { category: catLabel(cat) })}
             </button>
           )}
         >
@@ -232,7 +244,7 @@ export default function CostIntelligence() {
               {Array.from({ length: 4 }).map((_, i) => <div key={i} className="shimmer h-8 w-full rounded-lg bg-slate-100" />)}
             </div>
           ) : categories.length === 0 ? (
-            <div className="px-5 py-10 text-center text-sm text-slate-400">No categorized cars yet — run the vehicle-status sheet import to populate categories.</div>
+            <div className="px-5 py-10 text-center text-sm text-slate-400">{t('No categorized cars yet — run the vehicle-status sheet import to populate categories.')}</div>
           ) : (
             <div className="divide-y divide-slate-100">
               {categories.map((c) => {
@@ -246,17 +258,19 @@ export default function CostIntelligence() {
                     className={`flex w-full items-center gap-4 px-5 py-3 text-start transition-colors hover:bg-indigo-50/40 ${selected ? 'bg-indigo-50/60' : ''}`}
                   >
                     <div className="w-40 shrink-0">
-                      <div className="truncate text-sm font-medium text-slate-800">{label}</div>
+                      <div className="truncate text-sm font-medium text-slate-800">{catLabel(label)}</div>
                       <div className="text-xs text-slate-400">
-                        {num(c.vehicles)} car{c.vehicles === 1 ? '' : 's'} · {num(c.vehicles_costing)} with spend
+                        {c.vehicles === 1
+                          ? t('1 car · {m} with spend', { m: num(c.vehicles_costing) })
+                          : t('{n} cars · {m} with spend', { n: num(c.vehicles), m: num(c.vehicles_costing) })}
                       </div>
                     </div>
                     <div className="relative h-2.5 flex-1 overflow-hidden rounded-full bg-slate-100">
                       <div className="absolute inset-y-0 start-0 rounded-full bg-amber-400" style={{ width: `${Math.max(2, (c.maintenance_cost / maxCatCost) * 100)}%` }} />
                     </div>
                     <div className="w-32 shrink-0 text-end tabular-nums text-sm font-semibold text-amber-600">{aed2(c.maintenance_cost)}</div>
-                    <div className="hidden w-24 shrink-0 text-end tabular-nums text-sm text-slate-500 sm:block" title="Cost per rental">
-                      {c.cost_per_rental != null ? `${aed2(c.cost_per_rental)}/rental` : '—'}
+                    <div className="hidden w-24 shrink-0 text-end tabular-nums text-sm text-slate-500 sm:block" title={t('Cost per rental')}>
+                      {c.cost_per_rental != null ? t('{amount}/rental', { amount: aed2(c.cost_per_rental) }) : '—'}
                     </div>
                   </button>
                 );
@@ -266,15 +280,15 @@ export default function CostIntelligence() {
         </SectionCard>
 
         <div className="flex flex-wrap items-center gap-3">
-          <SearchInput value={q} onChange={setQ} placeholder="Search plate or make / model…" className="w-full max-w-xs" />
+          <SearchInput value={q} onChange={setQ} placeholder={t('Search plate or make / model…')} className="w-full max-w-xs" />
           <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-slate-600">
             <input type="checkbox" checked={activeOnly} onChange={(e) => setActiveOnly(e.target.checked)} className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
-            Only rented &amp; ready cars
+            {t('Only rented & ready cars')}
           </label>
           {cat != null && (
-            <Badge tone="indigo">Category: {cat}</Badge>
+            <Badge tone="indigo">{t('Category: {category}', { category: catLabel(cat) })}</Badge>
           )}
-          <span className="ms-auto text-xs text-slate-400">{num(rows.length)} of {num(s.vehicles)} cars</span>
+          <span className="ms-auto text-xs text-slate-400">{t('{n} of {total} cars', { n: num(rows.length), total: num(s.vehicles) })}</span>
         </div>
 
         {/* Analytics — same filtered rows as the table below. */}
@@ -283,21 +297,29 @@ export default function CostIntelligence() {
         )}
 
         <SectionCard
-          title="Fleet — running cost per car"
-          subtitle={hidden > 0 ? `${num(hidden)} car${hidden === 1 ? '' : 's'} hidden by the filters above` : undefined}
+          title={t('Fleet — running cost per car')}
+          subtitle={hidden > 0
+            ? (hidden === 1
+              ? t('1 car hidden by the filters above')
+              : t('{n} cars hidden by the filters above', { n: num(hidden) }))
+            : undefined}
           actions={(
             <div className="flex items-center gap-2">
               <span className="text-xs text-slate-400">
-                {num(rows.length)}{hidden > 0 ? ` of ${num(s.vehicles)}` : ''} car{rows.length === 1 ? '' : 's'}
+                {hidden > 0
+                  ? t('{n} of {total} cars', { n: num(rows.length), total: num(s.vehicles) })
+                  : rows.length === 1
+                    ? t('1 car')
+                    : t('{n} cars', { n: num(rows.length) })}
               </span>
               {hidden > 0 && (
                 <button
                   type="button"
                   onClick={showAll}
                   className="rounded-lg bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100"
-                  title="Clear every filter and list the whole fleet"
+                  title={t('Clear every filter and list the whole fleet')}
                 >
-                  Show all {num(s.vehicles)}
+                  {t('Show all {n}', { n: num(s.vehicles) })}
                 </button>
               )}
             </div>
@@ -312,20 +334,20 @@ export default function CostIntelligence() {
             sortDir={sort.dir}
             onSort={onSort}
             onRowClick={(r) => navigate(`/vehicles/${r.vehicle_id}`)}
-            empty={q ? 'No cars match your search.' : 'No vehicles found.'}
+            empty={q ? t('No cars match your search.') : t('No vehicles found.')}
           />
           {/* The default view hides most of the fleet. Say so, and offer the way out — a count with no
               way to widen it reads as "this is all there is". */}
           {hidden > 0 && (
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 bg-slate-50/60 px-5 py-3 text-xs text-slate-500">
               <span>
-                Showing <span className="font-semibold text-slate-700">{num(rows.length)}</span> of {num(s.vehicles)} cars
-                {activeOnly && ' · rented & ready only'}
-                {cat != null && ` · category “${cat}”`}
-                {q.trim() && ` · matching “${q.trim()}”`}
+                {t('Showing {n} of {total} cars', { n: num(rows.length), total: num(s.vehicles) })}
+                {activeOnly && ` · ${t('rented & ready only')}`}
+                {cat != null && ` · ${t('category “{category}”', { category: catLabel(cat) })}`}
+                {q.trim() && ` · ${t('matching “{query}”', { query: q.trim() })}`}
               </span>
               <button type="button" onClick={showAll} className="font-medium text-indigo-600 hover:text-indigo-700 hover:underline">
-                Show all {num(s.vehicles)} cars →
+                {t('Show all {n} cars', { n: num(s.vehicles) })} <span className="inline-block rtl:-scale-x-100">→</span>
               </button>
             </div>
           )}

@@ -6,6 +6,7 @@ import DataTable, { SectionCard } from '../components/ui/Table';
 import MetricCard, { MetricGrid } from '../components/ui/MetricCard';
 import { PageHeader } from '../components/ui/Misc';
 import { fmtDate } from '../lib/format';
+import { useI18n } from '../i18n/I18nContext';
 
 // /maintenance-bookings — every car that is BOTH in the workshop AND has an upcoming booking
 // (type-R reservation). The at-a-glance "a customer is expecting this car soon, but it's still in
@@ -15,15 +16,17 @@ import { fmtDate } from '../lib/format';
 
 // Small day-countdown chip: red when the pickup is ≤2 days out (the danger window), amber ≤5, else slate.
 function DaysChip({ days }) {
+  const { t } = useI18n();
   const tone =
     days <= 2 ? 'bg-red-50 text-red-700 ring-red-200'
       : days <= 5 ? 'bg-amber-50 text-amber-700 ring-amber-200'
         : 'bg-slate-50 text-slate-600 ring-slate-200';
-  const label = days <= 0 ? 'today' : `${days}d`;
+  const label = days <= 0 ? t('today') : t('{n}d', { n: days });
   return <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ${tone}`}>{label}</span>;
 }
 
 export default function MaintenanceBookings() {
+  const { t } = useI18n();
   const fetcher = useCallback(() => api.get('/Maintenance/booking-conflicts').then((r) => r.data?.data), []);
   const { data, loading, error, reload } = useFetch(fetcher, [], { refreshInterval: 60000 });
 
@@ -33,7 +36,7 @@ export default function MaintenanceBookings() {
   const columns = [
     {
       key: 'car',
-      header: 'Vehicle',
+      header: t('Vehicle'),
       render: (r) => (
         <Link to={`/vehicles/${r.vehicle_id}`} className="group/car block">
           <span className="font-semibold text-slate-800 group-hover/car:text-indigo-600">{r.plate || `#${r.vehicle_id}`}</span>
@@ -43,7 +46,7 @@ export default function MaintenanceBookings() {
     },
     {
       key: 'customer',
-      header: 'Booking',
+      header: t('Booking'),
       render: (r) => (
         <div>
           <span className="font-medium text-slate-700">{r.customer || '—'}</span>
@@ -53,21 +56,21 @@ export default function MaintenanceBookings() {
     },
     {
       key: 'booking_start',
-      header: 'Pickup',
+      header: t('Pickup'),
       render: (r) => (
         <div className="flex items-center gap-2">
           <span className="tabular-nums text-slate-700">{fmtDate(r.booking_start)}</span>
           <DaysChip days={r.days_left} />
-          {r.upcoming_count > 1 && <span className="text-xs text-slate-400">+{r.upcoming_count - 1} more</span>}
+          {r.upcoming_count > 1 && <span className="text-xs text-slate-400">{t('+{n} more', { n: r.upcoming_count - 1 })}</span>}
         </div>
       ),
     },
     {
       key: 'in_maintenance_since',
-      header: 'In shop',
+      header: t('In shop'),
       render: (r) => (
         <div>
-          <span className="tabular-nums text-slate-600">{r.in_maintenance_since ? `since ${fmtDate(r.in_maintenance_since)}` : '—'}</span>
+          <span className="tabular-nums text-slate-600">{r.in_maintenance_since ? t('since {date}', { date: fmtDate(r.in_maintenance_since) }) : '—'}</span>
           {r.workflow_stage && <span className="block text-xs capitalize text-slate-400">{r.workflow_stage}</span>}
           {r.garage && <span className="block text-xs text-slate-400">{r.garage}</span>}
         </div>
@@ -75,21 +78,21 @@ export default function MaintenanceBookings() {
     },
     {
       key: 'expected_return_date',
-      header: 'Expected back',
+      header: t('Expected back'),
       render: (r) => (
         <span className={`tabular-nums ${r.expected_return_date ? 'text-slate-600' : 'text-slate-400'}`}>
-          {r.expected_return_date ? fmtDate(r.expected_return_date) : 'unknown'}
+          {r.expected_return_date ? fmtDate(r.expected_return_date) : t('unknown')}
         </span>
       ),
     },
     {
       key: 'at_risk',
-      header: 'Status',
+      header: t('Status'),
       render: (r) =>
         r.at_risk ? (
           <div>
             <span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-700 ring-1 ring-red-200">
-              ⚠ At risk
+              ⚠ {t('At risk')}
             </span>
             <ul className="mt-1 space-y-0.5">
               {r.risk_reasons.map((reason) => (
@@ -99,7 +102,7 @@ export default function MaintenanceBookings() {
           </div>
         ) : (
           <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200">
-            ✓ On track
+            ✓ {t('On track')}
           </span>
         ),
     },
@@ -108,24 +111,30 @@ export default function MaintenanceBookings() {
   return (
     <div className="mx-auto max-w-6xl space-y-6 px-4 py-8 sm:px-6 lg:px-8">
       <PageHeader
-        title="Booked cars in maintenance"
-        subtitle="Cars currently in the workshop that a customer has already booked — chase the garage or swap the car before the pickup slips."
+        title={t('Booked cars in maintenance')}
+        subtitle={t('Cars currently in the workshop that a customer has already booked — chase the garage or swap the car before the pickup slips.')}
       />
 
       {error && (
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error} · <button type="button" onClick={() => reload()} className="font-semibold underline">retry</button>
+          {error} · <button type="button" onClick={() => reload()} className="font-semibold underline">{t('retry')}</button>
         </div>
       )}
 
       <MetricGrid cols={2}>
-        <MetricCard label="Booked & in shop" value={summary.total} tone="indigo" hint="Cars in maintenance with an upcoming booking" />
-        <MetricCard label="At risk" value={summary.at_risk} tone={summary.at_risk > 0 ? 'red' : 'emerald'} hint="Pickup may slip — no/late return date or ≤2 days out" />
+        <MetricCard label={t('Booked & in shop')} value={summary.total} tone="indigo" hint={t('Cars in maintenance with an upcoming booking')} />
+        <MetricCard label={t('At risk')} value={summary.at_risk} tone={summary.at_risk > 0 ? 'red' : 'emerald'} hint={t('Pickup may slip — no/late return date or ≤2 days out')} />
       </MetricGrid>
 
       <SectionCard
-        title="Conflicts"
-        subtitle={loading ? 'Loading…' : `${summary.total} car${summary.total === 1 ? '' : 's'} booked while in the workshop`}
+        title={t('Conflicts')}
+        subtitle={
+          loading
+            ? t('Loading…')
+            : summary.total === 1
+              ? t('1 car booked while in the workshop')
+              : t('{n} cars booked while in the workshop', { n: summary.total })
+        }
       >
         <DataTable
           columns={columns}
@@ -133,7 +142,7 @@ export default function MaintenanceBookings() {
           rowKey={(r) => r.vehicle_id}
           loading={loading}
           highlightRow={(r) => r.at_risk}
-          empty="No booked cars are currently in maintenance. 🎉"
+          empty={t('No booked cars are currently in maintenance. 🎉')}
         />
       </SectionCard>
     </div>

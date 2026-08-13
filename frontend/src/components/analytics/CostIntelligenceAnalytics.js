@@ -18,6 +18,7 @@ import BarChart from '../ui/BarChart';
 import Segmented from '../ui/Segmented';
 import { niceMax } from '../ui/chartUtils';
 import { aed2, aedCompact, num } from '../../lib/format';
+import { useI18n } from '../../i18n/I18nContext';
 
 const VIEWS = {
   km:     { label: 'Per km',      key: 'cost_per_km',      format: aed2,       color: 'indigo', valueLabel: 'Cost / km',     lifetimeOnly: true,  subtitle: 'Maintenance spend per validated kilometre travelled' },
@@ -29,6 +30,7 @@ const VIEWS = {
 const BANDS = 5;
 
 export default function CostIntelligenceAnalytics({ rows = [], windowed = false }) {
+  const { t } = useI18n();
   const [view, setView] = useState('km');
 
   // A date filter nulls out the lifetime ratios — fall back rather than render a
@@ -41,8 +43,8 @@ export default function CostIntelligenceAnalytics({ rows = [], windowed = false 
     () =>
       Object.entries(VIEWS)
         .filter(([, o]) => !(windowed && o.lifetimeOnly))
-        .map(([key, o]) => ({ key, label: o.label })),
-    [windowed],
+        .map(([key, o]) => ({ key, label: t(o.label) })),
+    [windowed, t],
   );
 
   const board = useMemo(
@@ -91,8 +93,8 @@ export default function CostIntelligenceAnalytics({ rows = [], windowed = false 
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
       <SectionCard
         className="lg:col-span-2"
-        title="Costliest cars to run"
-        subtitle={v.subtitle}
+        title={t('Costliest cars to run')}
+        subtitle={t(v.subtitle)}
         actions={<Segmented value={active} onChange={setView} options={options} />}
         bodyClass="p-5"
       >
@@ -101,25 +103,26 @@ export default function CostIntelligenceAnalytics({ rows = [], windowed = false 
           showRank
           color={v.color}
           format={v.format}
-          valueLabel={v.valueLabel}
+          valueLabel={t(v.valueLabel)}
           valueWidth={112}
           tooltip={(r) =>
-            `${aedCompact(r.spend)} total` +
-            (r.km != null ? ` · ${num(r.km)} km` : '') +
-            ` · ${num(r.rentals)} rental${r.rentals === 1 ? '' : 's'}`
+            t('{amount} total', { amount: aedCompact(r.spend) }) +
+            (r.km != null ? ` · ${t('{n} km', { n: num(r.km) })}` : '') +
+            ' · ' +
+            (r.rentals === 1 ? t('1 rental') : t('{n} rentals', { n: num(r.rentals) }))
           }
-          empty="No cars with this measure in the current filter."
+          empty={t('No cars with this measure in the current filter.')}
         />
       </SectionCard>
 
       <SectionCard
-        title="Cost per km — fleet spread"
-        subtitle="How many cars fall in each cost band"
+        title={t('Cost per km — fleet spread')}
+        subtitle={t('How many cars fall in each cost band')}
         bodyClass="px-3 pb-3 pt-2"
       >
         {windowed ? (
           <div className="flex h-[240px] items-center justify-center px-6 text-center text-sm text-slate-400">
-            Cost per km is a lifetime measure — clear the date filter to see the spread.
+            {t('Cost per km is a lifetime measure — clear the date filter to see the spread.')}
           </div>
         ) : spread ? (
           <BarChart
@@ -127,13 +130,13 @@ export default function CostIntelligenceAnalytics({ rows = [], windowed = false 
             color="indigo"
             height={240}
             yTicks={3}
-            valueLabel="Cars"
+            valueLabel={t('Cars')}
             format={(n) => num(Math.round(n))}
-            tooltip={(d) => `AED ${d.lo.toFixed(2)}–${d.hi.toFixed(2)} per km`}
+            tooltip={(d) => t('AED {lo}–{hi} per km', { lo: d.lo.toFixed(2), hi: d.hi.toFixed(2) })}
           />
         ) : (
           <div className="flex h-[240px] items-center justify-center px-6 text-center text-sm text-slate-400">
-            No car has both a maintenance cost and a validated distance yet.
+            {t('No car has both a maintenance cost and a validated distance yet.')}
           </div>
         )}
       </SectionCard>

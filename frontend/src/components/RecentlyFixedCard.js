@@ -8,23 +8,26 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api/client';
+import { useI18n } from '../i18n/I18nContext';
 import Icon from './ui/Icon';
 import { Skeleton } from './ui/Skeleton';
 import { SectionCard } from './ui/Table';
 import { InfoTip } from './ui/Tooltip';
 import { SHOW_FINANCIALS } from '../config/features';
 
-const fmtDate = (iso) => (iso ? new Date(iso).toLocaleDateString(undefined, { day: '2-digit', month: 'short' }) : '—');
+// Gregorian calendar + Latin digits under Arabic — the column is tabular and a Hijri stamp breaks it.
+const dateLocale = (lang) => (lang === 'ar' ? 'ar-AE-u-ca-gregory-nu-latn' : undefined);
+const fmtDate = (iso, lang) => (iso ? new Date(iso).toLocaleDateString(dateLocale(lang), { day: '2-digit', month: 'short' }) : '—');
 const fmtAED = (n) => `AED ${Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 
-const ago = (iso) => {
+const ago = (iso, t) => {
   if (!iso) return '';
   const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
-  if (days <= 0) return 'today';
-  if (days === 1) return 'yesterday';
-  if (days < 30) return `${days}d ago`;
+  if (days <= 0) return t('today');
+  if (days === 1) return t('yesterday');
+  if (days < 30) return t('{n}d ago', { n: days });
   const months = Math.floor(days / 30);
-  return `${months}mo ago`;
+  return t('{n}mo ago', { n: months });
 };
 
 // The reported problem — what someone actually complained about, in priority order.
@@ -42,19 +45,20 @@ const faultsOf = (tk) => {
 const completedAt = (tk) => tk.completed_at || tk.handoffs?.closed?.at || tk.actual_in_date || tk.updated_at || null;
 
 // How long the car was off the road, as a label. A same-day job reads in hours, never a bogus "0d".
-const repairSpan = (tk) => {
+const repairSpan = (tk, t) => {
   let secs = tk.stage_timing?.durations?.total_downtime;
   if (secs == null) {
     const end = completedAt(tk);
     if (!tk.created_at || !end) return null;
     secs = Math.max(0, Math.round((new Date(end) - new Date(tk.created_at)) / 1000));
   }
-  if (secs < 3600) return 'same day';
-  if (secs < 86400) return `${Math.round(secs / 3600)}h in shop`;
-  return `${Math.round(secs / 86400)}d in shop`;
+  if (secs < 3600) return t('same day');
+  if (secs < 86400) return t('{n}h in shop', { n: Math.round(secs / 3600) });
+  return t('{n}d in shop', { n: Math.round(secs / 86400) });
 };
 
-// Data origin — 'sheet' rows are imported workshop history, everything else ran in this app.
+// Data origin — 'sheet' rows are imported workshop history, everything else ran in this app. The keys
+// are the API's `source` values and never localize; the labels resolve through the translator.
 const ORIGINS = [
   ['all', 'All'],
   ['system', 'System'],
@@ -62,6 +66,7 @@ const ORIGINS = [
 ];
 
 export default function RecentlyFixedCard({ limit = 6 }) {
+  const { t, lang } = useI18n();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [origin, setOrigin] = useState('all');
@@ -80,15 +85,15 @@ export default function RecentlyFixedCard({ limit = 6 }) {
     <SectionCard
       title={
         <span className="flex items-center gap-1.5">
-          Recently Fixed
-          <InfoTip content="The newest repairs that were signed off and closed — the car is back in the fleet. Each row shows the problem that was reported, the faults actually repaired, the garage that did the work and the total time the car spent off the road." />
+          {t('Recently Fixed')}
+          <InfoTip content={t('The newest repairs that were signed off and closed — the car is back in the fleet. Each row shows the problem that was reported, the faults actually repaired, the garage that did the work and the total time the car spent off the road.')} />
         </span>
       }
-      subtitle="Cars back in service — the problem, the fix, and how long it took"
+      subtitle={t('Cars back in service — the problem, the fix, and how long it took')}
       actions={
         <div className="flex items-center gap-3">
           {/* Data origin — imported workshop sheet vs repairs this app ran end-to-end. */}
-          <div className="inline-flex rounded-lg bg-slate-100 p-0.5" title="Sheet = imported workshop history · System = a repair this app ran end-to-end">
+          <div className="inline-flex rounded-lg bg-slate-100 p-0.5" title={t('Sheet = imported workshop history · System = a repair this app ran end-to-end')}>
             {ORIGINS.map(([key, label]) => (
               <button
                 key={key}
@@ -98,11 +103,13 @@ export default function RecentlyFixedCard({ limit = 6 }) {
                   origin === key ? 'bg-white text-slate-900 shadow-soft' : 'text-slate-500 hover:text-slate-700'
                 }`}
               >
-                {label}
+                {t(label)}
               </button>
             ))}
           </div>
-          <Link to="/completed-repairs" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">All fixed repairs →</Link>
+          <Link to="/completed-repairs" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">
+            {t('All fixed repairs')} <span className="inline-block rtl:-scale-x-100" aria-hidden>→</span>
+          </Link>
         </div>
       }
     >
@@ -111,13 +118,13 @@ export default function RecentlyFixedCard({ limit = 6 }) {
           {Array.from({ length: limit }).map((_, i) => <li key={i}><Skeleton className="h-16 rounded-xl" /></li>)}
         </ul>
       ) : rows.length === 0 ? (
-        <p className="py-8 text-center text-sm text-slate-400">No repairs signed off yet.</p>
+        <p className="py-8 text-center text-sm text-slate-400">{t('No repairs signed off yet.')}</p>
       ) : (
         <ul className="space-y-1">
           {rows.map((tk) => {
             const problem = problemOf(tk);
             const faults = faultsOf(tk);
-            const span = repairSpan(tk);
+            const span = repairSpan(tk, t);
             const closed = completedAt(tk);
             const isSheet = tk.source === 'sheet';
             return (
@@ -135,15 +142,15 @@ export default function RecentlyFixedCard({ limit = 6 }) {
                       <span className="truncate font-mono text-sm">{tk.plate || `#${tk.id}`}</span>
                       {tk.car && <span className="truncate text-[11px] font-normal text-slate-400">{tk.car}</span>}
                     </Link>
-                    <span className="shrink-0 text-[11px] tabular-nums text-slate-400" title={closed ? new Date(closed).toLocaleString() : 'No completion date recorded'}>
-                      {closed ? `${fmtDate(closed)} · ${ago(closed)}` : '—'}
+                    <span className="shrink-0 text-[11px] tabular-nums text-slate-400" title={closed ? new Date(closed).toLocaleString(dateLocale(lang)) : t('No completion date recorded')}>
+                      {closed ? `${fmtDate(closed, lang)} · ${ago(closed, t)}` : '—'}
                     </span>
                   </div>
 
                   {/* The problem that started it all — skipped when the fault chips below already say it. */}
                   {(problem || faults.length === 0) && (
                     <p className="mt-0.5 truncate text-xs text-slate-600" title={problem || ''}>
-                      {problem || <span className="text-slate-300">No description recorded</span>}
+                      {problem || <span className="text-slate-300">{t('No description recorded')}</span>}
                     </p>
                   )}
 
@@ -162,10 +169,10 @@ export default function RecentlyFixedCard({ limit = 6 }) {
                   <p className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px] text-slate-500">
                     <span className="inline-flex items-center gap-1 truncate">
                       <Icon.Wrench className="h-3 w-3 text-slate-300" />
-                      {tk.garage || 'On-site'}
+                      {tk.garage || t('On-site')}
                     </span>
                     {span && (
-                      <span className="inline-flex items-center gap-1 tabular-nums" title="Total time the car was off the road">
+                      <span className="inline-flex items-center gap-1 tabular-nums" title={t('Total time the car was off the road')}>
                         <Icon.Clock className="h-3 w-3 text-slate-300" />
                         {span}
                       </span>
@@ -179,10 +186,10 @@ export default function RecentlyFixedCard({ limit = 6 }) {
                         isSheet ? 'bg-amber-50 text-amber-700 ring-1 ring-amber-200' : 'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200'
                       }`}
                       title={isSheet
-                        ? 'Imported from the historical workshop sheet — only what the sheet recorded is shown.'
-                        : 'Ran end-to-end in this app — full people chain, faults and odometer readings.'}
+                        ? t('Imported from the historical workshop sheet — only what the sheet recorded is shown.')
+                        : t('Ran end-to-end in this app — full people chain, faults and odometer readings.')}
                     >
-                      {isSheet ? 'Sheet' : 'System'}
+                      {isSheet ? t('Sheet') : t('System')}
                     </span>
                   </p>
                 </div>

@@ -9,13 +9,15 @@
 // Derived from the /Vendor list already on the page.
 
 import { useMemo } from 'react';
+import { useI18n } from '../../i18n/I18nContext';
 import { SectionCard } from '../ui/Table';
 import GroupedBarChart from '../ui/GroupedBarChart';
 import RankedBar from '../ui/RankedBar';
 import PieChart from '../ui/PieChart';
 import { num } from '../../lib/format';
 
-// Vendor type → the page's own badge colour, so the charts and the table agree.
+// Vendor type → its display label. The keys are the API's own enum values and never localize; the
+// label is looked up through the translator at render time so the charts and the table agree.
 const TYPE_LABEL = {
   garage: 'Garage',
   parts_supplier: 'Parts',
@@ -26,16 +28,18 @@ const TYPE_LABEL = {
 };
 
 export default function VendorsAnalytics({ vendors = [] }) {
+  const { t } = useI18n();
+
   const byType = useMemo(() => {
     const groups = new Map();
     vendors.forEach((v) => {
       const k = v.type || 'other';
-      const g = groups.get(k) || { label: TYPE_LABEL[k] || 'Other', active: 0, inactive: 0 };
+      const g = groups.get(k) || { label: t(TYPE_LABEL[k] || 'Other'), active: 0, inactive: 0 };
       if (v.active) g.active += 1; else g.inactive += 1;
       groups.set(k, g);
     });
     return [...groups.values()].sort((a, b) => (b.active + b.inactive) - (a.active + a.inactive));
-  }, [vendors]);
+  }, [vendors, t]);
 
   const insurers = useMemo(
     () =>
@@ -55,10 +59,10 @@ export default function VendorsAnalytics({ vendors = [] }) {
   const standing = useMemo(() => {
     const active = vendors.filter((v) => v.active).length;
     return [
-      { label: 'Active', value: active, color: 'emerald' },
-      { label: 'Inactive', value: vendors.length - active, color: 'slate' },
+      { label: t('Active'), value: active, color: 'emerald' },
+      { label: t('Inactive'), value: vendors.length - active, color: 'slate' },
     ].filter((s) => s.value > 0);
-  }, [vendors]);
+  }, [vendors, t]);
 
   if (!vendors.length) return null;
 
@@ -68,16 +72,16 @@ export default function VendorsAnalytics({ vendors = [] }) {
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
       <SectionCard
         className="lg:col-span-2"
-        title="Supplier network by type"
-        subtitle="How many vendors of each kind, and how many have gone inactive"
+        title={t('Supplier network by type')}
+        subtitle={t('How many vendors of each kind, and how many have gone inactive')}
         bodyClass="px-3 pb-3 pt-2"
       >
         {byType.length ? (
           <GroupedBarChart
             data={byType}
             series={[
-              { key: 'active', label: 'Active', color: 'emerald' },
-              { key: 'inactive', label: 'Inactive', color: 'slate' },
+              { key: 'active', label: t('Active'), color: 'emerald' },
+              { key: 'inactive', label: t('Inactive'), color: 'slate' },
             ]}
             height={240}
             integer
@@ -85,32 +89,32 @@ export default function VendorsAnalytics({ vendors = [] }) {
           />
         ) : (
           <div className="flex h-[240px] items-center justify-center text-sm text-slate-400">
-            No vendors match this filter.
+            {t('No vendors match this filter.')}
           </div>
         )}
       </SectionCard>
 
       {insurers.length ? (
         <SectionCard
-          title="Insurance coverage"
-          subtitle={`${num(insuredTotal)} cars covered`}
+          title={t('Insurance coverage')}
+          subtitle={t('{n} cars covered', { n: num(insuredTotal) })}
           bodyClass="p-5"
         >
           <RankedBar
             items={insurers}
             color="cyan"
             format={(n) => num(Math.round(n))}
-            valueLabel="Cars insured"
+            valueLabel={t('Cars insured')}
             labelWidth={120}
             valueWidth={44}
-            tooltip={(r) => (r.active ? 'Active insurer' : 'Marked inactive — check renewals')}
-            empty="No insured vehicles recorded."
+            tooltip={(r) => (r.active ? t('Active insurer') : t('Marked inactive — check renewals'))}
+            empty={t('No insured vehicles recorded.')}
           />
         </SectionCard>
       ) : (
         <SectionCard
-          title="Vendor standing"
-          subtitle="Active vs inactive suppliers"
+          title={t('Vendor standing')}
+          subtitle={t('Active vs inactive suppliers')}
           bodyClass="flex items-center justify-center p-5"
         >
           <PieChart segments={standing} size={150} />

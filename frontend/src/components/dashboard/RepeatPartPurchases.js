@@ -22,6 +22,7 @@ import { InfoTip } from '../ui/Tooltip';
 import { aed2, fmtDate, num } from '../../lib/format';
 import { SHOW_FINANCIALS } from '../../config/features';
 import { usePermissions } from '../../hooks/usePermissions';
+import { useI18n } from '../../i18n/I18nContext';
 
 // The "again" window — how close together the two buys must be to count as a repeat. 30 days is the
 // operational default ("we bought it last month and we're buying it again"); the others are there
@@ -34,6 +35,7 @@ const PRIORITY = {
 };
 
 export default function RepeatPartPurchases({ limit = 8 }) {
+  const { t } = useI18n();
   const { can } = usePermissions();
   const allowed = can('parts.view');
 
@@ -64,16 +66,16 @@ export default function RepeatPartPurchases({ limit = 8 }) {
     <SectionCard
       title={
         <span className="flex items-center gap-1.5">
-          Bought Again
-          <InfoTip content="Cars that received the SAME part twice within the selected window. Each row shows both purchases, how far apart they were, what each cost, and who approved them. Matching is by part name — part numbers are hand-typed and differ between suppliers for the same component, so a number-only match would report a clean fleet while the same part goes on twice." />
+          {t('Bought Again')}
+          <InfoTip content={t('Cars that received the SAME part twice within the selected window. Each row shows both purchases, how far apart they were, what each cost, and who approved them. Matching is by part name — part numbers are hand-typed and differ between suppliers for the same component, so a number-only match would report a clean fleet while the same part goes on twice.')} />
         </span>
       }
-      subtitle={`Same part, same car, bought twice within ${windowDays} days — and who signed each buy off`}
+      subtitle={t('Same part, same car, bought twice within {days} days — and who signed each buy off', { days: windowDays })}
       bodyClass="px-4 pb-4 pt-1 sm:px-5"
       actions={
         <div className="flex flex-wrap items-center justify-end gap-3">
           {/* The gap window. */}
-          <div className="inline-flex rounded-lg bg-slate-100 p-0.5" title="Maximum days between the two purchases">
+          <div className="inline-flex rounded-lg bg-slate-100 p-0.5" title={t('Maximum days between the two purchases')}>
             {WINDOWS.map((w) => (
               <button
                 key={w}
@@ -83,23 +85,23 @@ export default function RepeatPartPurchases({ limit = 8 }) {
                   windowDays === w ? 'bg-white text-slate-900 shadow-soft' : 'text-slate-500 hover:text-slate-700'
                 }`}
               >
-                {w}d
+                {t('{n}d', { n: w })}
               </button>
             ))}
           </div>
           {/* Filters, wipers and oil are MEANT to come round again — hidden unless asked for, so the
               list stays a list of things that look wrong. */}
-          <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-slate-500" title="Filters, wipers, bulbs and fluids repeat by design">
+          <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-slate-500" title={t('Filters, wipers, bulbs and fluids repeat by design')}>
             <input
               type="checkbox"
               checked={withConsumables}
               onChange={(e) => setWithConsumables(e.target.checked)}
               className="h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
             />
-            Include routine parts
+            {t('Include routine parts')}
           </label>
           <Link to="/parts" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">
-            Parts board →
+            {t('Parts board')} <span className="inline-block rtl:-scale-x-100">→</span>
           </Link>
         </div>
       }
@@ -122,7 +124,7 @@ export default function RepeatPartPurchases({ limit = 8 }) {
           </ul>
           {data?.truncated && (
             <p className="mt-3 text-center text-xs text-slate-400">
-              Showing the {num(rows.length)} most recent — there are more repeats in this window.
+              {t('Showing the {n} most recent — there are more repeats in this window.', { n: num(rows.length) })}
             </p>
           )}
         </>
@@ -133,15 +135,22 @@ export default function RepeatPartPurchases({ limit = 8 }) {
 
 /** The counts above the list: how many repeats, on how many cars, how many nobody approved. */
 function SummaryStrip({ summary }) {
+  const { t } = useI18n();
   const tiles = [
-    { label: 'repeat buys', value: num(summary.pairs || 0), tone: 'text-slate-900' },
-    { label: 'cars affected', value: num(summary.vehicles || 0), tone: 'text-slate-900' },
-    { label: 'high priority', value: num(summary.high || 0), tone: summary.high ? 'text-rose-600' : 'text-slate-400' },
+    { label: t('repeat buys'), value: num(summary.pairs || 0), tone: 'text-slate-900' },
+    { label: t('cars affected'), value: num(summary.vehicles || 0), tone: 'text-slate-900' },
+    { label: t('high priority'), value: num(summary.high || 0), tone: summary.high ? 'text-rose-600' : 'text-slate-400' },
     // The accountability count — a repeat that never passed an approval step at all.
-    { label: 'no approval on file', value: num(summary.no_approval || 0), tone: summary.no_approval ? 'text-amber-600' : 'text-slate-400' },
+    { label: t('no approval on file'), value: num(summary.no_approval || 0), tone: summary.no_approval ? 'text-amber-600' : 'text-slate-400' },
   ];
   if (SHOW_FINANCIALS && summary.repeat_spend != null) {
-    tiles.push({ label: `spent on the repeat buy${summary.spend_covers !== summary.pairs ? ` (${num(summary.spend_covers)} of ${num(summary.pairs)} priced)` : ''}`, value: aed2(summary.repeat_spend), tone: 'text-slate-900' });
+    tiles.push({
+      label: summary.spend_covers !== summary.pairs
+        ? t('spent on the repeat buy ({priced} of {total} priced)', { priced: num(summary.spend_covers), total: num(summary.pairs) })
+        : t('spent on the repeat buy'),
+      value: aed2(summary.repeat_spend),
+      tone: 'text-slate-900',
+    });
   }
 
   return (
@@ -157,6 +166,7 @@ function SummaryStrip({ summary }) {
 }
 
 function RepeatRow({ row }) {
+  const { t } = useI18n();
   const p = PRIORITY[row.priority];
   const demo = row.current.is_demo || row.previous.is_demo;
 
@@ -171,20 +181,22 @@ function RepeatRow({ row }) {
           {row.vehicle.plate || `#${row.vehicle.id}`}
         </Link>
         {row.vehicle.car && <span className="text-[11px] text-slate-400">{row.vehicle.car}</span>}
-        <span className="font-semibold text-slate-800">· {row.part_name || 'Unnamed part'}</span>
+        <span className="font-semibold text-slate-800">· {row.part_name || t('Unnamed part')}</span>
         <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">
-          bought again after {num(row.days_between)} {row.days_between === 1 ? 'day' : 'days'}
+          {row.days_between === 1
+            ? t('bought again after 1 day')
+            : t('bought again after {n} days', { n: num(row.days_between) })}
         </span>
-        {p && <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset ${p.chip}`}>{p.label}</span>}
+        {p && <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset ${p.chip}`}>{t(p.label)}</span>}
         {/* The gravest shape of this finding: the same part, for the SAME fault — a fix that did not hold. */}
         {row.same_fault && (
           <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700 ring-1 ring-inset ring-rose-200">
-            same fault — the repair did not hold
+            {t('same fault — the repair did not hold')}
           </span>
         )}
         {row.part_class === 'consumable' && (
-          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500" title="Filters, wipers, bulbs and fluids are expected to be re-bought">
-            routine part
+          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500" title={t('Filters, wipers, bulbs and fluids are expected to be re-bought')}>
+            {t('routine part')}
           </span>
         )}
       </div>
@@ -192,15 +204,15 @@ function RepeatRow({ row }) {
       {/* Identity evidence — matching two agreeing SKUs is a stronger claim than matching two names. */}
       <p className="mt-1 text-[11px] text-slate-400">
         {row.matched_by === 'part_number'
-          ? <>Matched on part number <span className="font-mono">{row.part_number}</span> — both buys carry the same SKU.</>
-          : <>Matched on part name. The two buys carry different (or no) part numbers, which is normal when suppliers differ.</>}
-        {demo && <span className="ms-2 rounded-full bg-amber-50 px-1.5 py-px font-semibold text-amber-700 ring-1 ring-inset ring-amber-200">Demo data</span>}
+          ? t('Matched on part number {number} — both buys carry the same SKU.', { number: row.part_number })
+          : t('Matched on part name. The two buys carry different (or no) part numbers, which is normal when suppliers differ.')}
+        {demo && <span className="ms-2 rounded-full bg-amber-50 px-1.5 py-px font-semibold text-amber-700 ring-1 ring-inset ring-amber-200">{t('Demo data')}</span>}
       </p>
 
       {/* The two buys, first then repeat. */}
       <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-        <BuySide side={row.previous} label="First bought" />
-        <BuySide side={row.current} label="Bought again" highlight />
+        <BuySide side={row.previous} label={t('First bought')} />
+        <BuySide side={row.current} label={t('Bought again')} highlight />
       </div>
     </li>
   );
@@ -208,33 +220,34 @@ function RepeatRow({ row }) {
 
 /** One purchase: when, from whom, for how much, on which ticket — and the approval behind it. */
 function BuySide({ side, label, highlight }) {
+  const { t } = useI18n();
   return (
     <div className={`rounded-lg px-3 py-2 ring-1 ring-inset ${highlight ? 'bg-white ring-slate-200' : 'bg-slate-50/70 ring-slate-100'}`}>
       <div className="flex items-baseline justify-between gap-2">
         <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</span>
         <span className="text-[11px] tabular-nums text-slate-500">
           {fmtDate(side.purchased_at)}
-          {side.days_ago != null && <span className="text-slate-400"> · {side.days_ago}d ago</span>}
+          {side.days_ago != null && <span className="text-slate-400"> · {t('{n}d ago', { n: side.days_ago })}</span>}
         </span>
       </div>
 
       <p className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-xs text-slate-600">
         <span className="inline-flex items-center gap-1 truncate">
           <Icon.Truck className="h-3 w-3 shrink-0 text-slate-300" />
-          {side.source_name || (side.purchase_source === 'garage' ? 'Garage' : 'Supplier not recorded')}
+          {side.source_name || (side.purchase_source === 'garage' ? t('Garage') : t('Supplier not recorded'))}
         </span>
         {SHOW_FINANCIALS && side.total_price != null && (
           <span className="font-semibold tabular-nums">{aed2(side.total_price)}</span>
         )}
         {side.maintenance_id && (
           <Link to={`/maintenance-workflow/${side.maintenance_id}`} className="text-indigo-600 hover:text-indigo-700">
-            Ticket #{side.maintenance_id}
+            {t('Ticket #{id}', { id: side.maintenance_id })}
           </Link>
         )}
       </p>
 
       {side.fault && (
-        <p className="mt-0.5 truncate text-[11px] text-slate-500" title={side.fault}>Fault: {side.fault}</p>
+        <p className="mt-0.5 truncate text-[11px] text-slate-500" title={side.fault}>{t('Fault: {fault}', { fault: side.fault })}</p>
       )}
 
       <Approval approval={side.approval} boughtBy={side.purchased_by} />
@@ -250,16 +263,22 @@ function BuySide({ side, label, highlight }) {
  *                  data, it IS the finding, so it reads as a warning rather than a dash.
  */
 function Approval({ approval, boughtBy }) {
+  const { t } = useI18n();
   const state = approval?.state;
+  const requestedBy = approval?.requested_by
+    ? <span className="text-slate-400"> · {t('requested by {who}', { who: approval.requested_by })}</span>
+    : null;
 
   if (state === 'approved') {
+    const who = approval.approved_by || t('an unnamed approver');
     return (
       <p className="mt-1.5 flex items-start gap-1.5 text-[11px] text-emerald-700">
         <Icon.Check className="mt-px h-3 w-3 shrink-0" />
         <span>
-          Approved by <span className="font-semibold">{approval.approved_by || 'an unnamed approver'}</span>
-          {approval.approved_at && <> on {fmtDate(approval.approved_at)}</>}
-          {approval.requested_by && <span className="text-slate-400"> · requested by {approval.requested_by}</span>}
+          {approval.approved_at
+            ? t('Approved by {who} on {date}', { who, date: fmtDate(approval.approved_at) })
+            : t('Approved by {who}', { who })}
+          {requestedBy}
         </span>
       </p>
     );
@@ -270,8 +289,8 @@ function Approval({ approval, boughtBy }) {
       <p className="mt-1.5 flex items-start gap-1.5 text-[11px] text-amber-700">
         <Icon.Alert className="mt-px h-3 w-3 shrink-0" />
         <span>
-          Request #{approval.request_id} is <span className="font-semibold">{approval.request_status}</span> — never approved
-          {approval.requested_by && <span className="text-slate-400"> · requested by {approval.requested_by}</span>}
+          {t('Request #{id} is {status} — never approved', { id: approval.request_id, status: approval.request_status })}
+          {requestedBy}
         </span>
       </p>
     );
@@ -281,8 +300,8 @@ function Approval({ approval, boughtBy }) {
     <p className="mt-1.5 flex items-start gap-1.5 text-[11px] text-amber-700">
       <Icon.Alert className="mt-px h-3 w-3 shrink-0" />
       <span>
-        No approval on file — bought without a part request
-        {boughtBy && <span className="text-slate-400"> · recorded by {boughtBy}</span>}
+        {t('No approval on file — bought without a part request')}
+        {boughtBy && <span className="text-slate-400"> · {t('recorded by {who}', { who: boughtBy })}</span>}
       </span>
     </p>
   );
@@ -290,16 +309,16 @@ function Approval({ approval, boughtBy }) {
 
 /** Nothing found is a real answer here — say what was searched, and offer the wider search. */
 function EmptyState({ windowDays, onWiden }) {
+  const { t } = useI18n();
   return (
     <div className="py-8 text-center">
-      <p className="text-sm font-medium text-slate-600">No car received the same part twice within {windowDays} days.</p>
+      <p className="text-sm font-medium text-slate-600">{t('No car received the same part twice within {days} days.', { days: windowDays })}</p>
       <p className="mx-auto mt-1 max-w-lg text-xs text-slate-400">
-        Searched every purchase in the parts ledger from the last 12 months. Parts bought before the ledger
-        went live — recorded only as invoice lines on a ticket — are not counted here.
+        {t('Searched every purchase in the parts ledger from the last 12 months. Parts bought before the ledger went live — recorded only as invoice lines on a ticket — are not counted here.')}
       </p>
       {windowDays < 90 && (
         <button type="button" onClick={onWiden} className="mt-3 text-xs font-semibold text-indigo-600 hover:text-indigo-700">
-          Widen the window to 90 days →
+          {t('Widen the window to 90 days')} <span className="inline-block rtl:-scale-x-100">→</span>
         </button>
       )}
     </div>

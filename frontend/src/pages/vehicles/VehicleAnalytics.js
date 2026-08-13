@@ -8,6 +8,7 @@ import { useMemo, useState } from 'react';
 import { SectionCard } from '../../components/ui/Table';
 import GroupedBarChart from '../../components/ui/GroupedBarChart';
 import PieChart from '../../components/ui/PieChart';
+import { useI18n } from '../../i18n/I18nContext';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const RANGES = [
@@ -25,6 +26,7 @@ function monthKey(str) {
 }
 
 export default function VehicleAnalytics({ contracts = [], maintenance = [] }) {
+  const { t, lang } = useI18n();
   const [range, setRange] = useState(6);
 
   // ── Activity trend: rentals started vs. service visits, per month ──────────
@@ -35,7 +37,7 @@ export default function VehicleAnalytics({ contracts = [], maintenance = [] }) {
     for (let i = range - 1; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const key = `${d.getFullYear()}-${d.getMonth()}`;
-      const label = MONTHS[d.getMonth()] + (range > 12 ? ` '${String(d.getFullYear()).slice(2)}` : '');
+      const label = t(MONTHS[d.getMonth()]) + (range > 12 ? ` '${String(d.getFullYear()).slice(2)}` : '');
       index[key] = buckets.length;
       buckets.push({ label, rentals: 0, service: 0 });
     }
@@ -49,7 +51,7 @@ export default function VehicleAnalytics({ contracts = [], maintenance = [] }) {
       if (k != null) buckets[k].service += 1;
     });
     return buckets;
-  }, [contracts, maintenance, range]);
+  }, [contracts, maintenance, range, t]);
 
   const hasTrend = trend.some((b) => b.rentals || b.service);
 
@@ -58,26 +60,26 @@ export default function VehicleAnalytics({ contracts = [], maintenance = [] }) {
     const counts = { C: 0, R: 0, U: 0 };
     contracts.forEach((c) => { if (counts[c.contract_type] != null) counts[c.contract_type] += 1; });
     return [
-      { label: 'Rentals', value: counts.C, color: 'purple' },
-      { label: 'Bookings', value: counts.R, color: 'teal' },
-      { label: 'Maintenance', value: counts.U, color: 'amber' },
-      { label: 'Service visits', value: maintenance.length, color: 'slate' },
+      { label: t('Rentals'), value: counts.C, color: 'purple' },
+      { label: t('Bookings'), value: counts.R, color: 'teal' },
+      { label: t('Maintenance'), value: counts.U, color: 'amber' },
+      { label: t('Service visits'), value: maintenance.length, color: 'slate' },
     ].filter((s) => s.value > 0);
-  }, [contracts, maintenance]);
+  }, [contracts, maintenance, t]);
 
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
       <SectionCard
         className="lg:col-span-2"
-        title="Activity analysis"
-        subtitle="Rentals started vs. workshop visits, per month"
+        title={t('Activity analysis')}
+        subtitle={t('Rentals started vs. workshop visits, per month')}
         actions={
           <select
             value={range}
             onChange={(e) => setRange(Number(e.target.value))}
             className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-600 outline-none transition hover:bg-slate-100 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/15"
           >
-            {RANGES.map((r) => <option key={r.key} value={r.key}>{r.label}</option>)}
+            {RANGES.map((r) => <option key={r.key} value={r.key}>{t(r.label)}</option>)}
           </select>
         }
         bodyClass="px-4 pb-4 pt-2"
@@ -86,30 +88,30 @@ export default function VehicleAnalytics({ contracts = [], maintenance = [] }) {
           <GroupedBarChart
             data={trend}
             series={[
-              { key: 'rentals', label: 'Rentals', color: 'purple' },
-              { key: 'service', label: 'Service visits', color: 'teal' },
+              { key: 'rentals', label: t('Rentals'), color: 'purple' },
+              { key: 'service', label: t('Service visits'), color: 'teal' },
             ]}
             height={280}
             integer
-            format={(n) => Math.round(n).toLocaleString()}
+            format={(n) => Math.round(n).toLocaleString(lang === 'ar' ? 'ar-AE-u-nu-latn' : undefined)}
           />
         ) : (
           <div className="flex h-[280px] items-center justify-center text-sm text-slate-400">
-            No rental or workshop activity in this window.
+            {t('No rental or workshop activity in this window.')}
           </div>
         )}
       </SectionCard>
 
       <SectionCard
-        title="Contract analysis"
-        subtitle="Lifetime activity mix"
+        title={t('Contract analysis')}
+        subtitle={t('Lifetime activity mix')}
         bodyClass="flex items-center justify-center p-6"
       >
         {mix.length ? (
           <PieChart segments={mix} size={190} />
         ) : (
           <div className="flex h-[190px] items-center justify-center text-sm text-slate-400">
-            No contracts recorded yet.
+            {t('No contracts recorded yet.')}
           </div>
         )}
       </SectionCard>

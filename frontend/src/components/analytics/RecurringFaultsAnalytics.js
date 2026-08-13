@@ -21,6 +21,7 @@ import BarChart from '../ui/BarChart';
 import LineChart from '../ui/LineChart';
 import Skeleton from '../ui/Skeleton';
 import { num } from '../../lib/format';
+import { useI18n } from '../../i18n/I18nContext';
 
 // The days-to-return histogram is a severity ramp: a fault back within a week means the repair never
 // worked; two months out is closer to ordinary wear.
@@ -29,32 +30,44 @@ const SPEED_COLOR = { '0-7': 'red', '8-30': 'orange', '31-60': 'amber', '61+': '
 // What a windowed ranking is currently counting, said in its subtitle. The window is echoed back by the
 // API rather than read off local state, so the caption can never describe a range the numbers aren't in.
 const DAY_LABEL = { 30: 'last 30 days', 90: 'last 90 days', 180: 'last 6 months', 365: 'last year' };
-const shortDate = (iso) => {
+const shortDate = (iso, lang) => {
   if (!iso) return '';
   const [y, m, d] = iso.split('-').map(Number);
-  return new Date(y, m - 1, d).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+  return new Date(y, m - 1, d).toLocaleDateString(
+    lang === 'ar' ? 'ar-AE-u-ca-gregory-nu-latn' : undefined,
+    { day: 'numeric', month: 'short', year: 'numeric' },
+  );
 };
-const ALL_TIME = 'across the fleet';
-const scopeLabel = (w) => {
-  if (!w) return ALL_TIME;
-  if (w.from && w.to) return `${shortDate(w.from)} – ${shortDate(w.to)}`;
-  if (w.from) return `since ${shortDate(w.from)}`;
-  if (w.to) return `up to ${shortDate(w.to)}`;
-  if (w.days > 0) return DAY_LABEL[w.days] || `last ${num(w.days)} days`;
-  return ALL_TIME;
+const scopeLabel = (w, t, lang) => {
+  if (!w) return t('across the fleet');
+  if (w.from && w.to) return `${shortDate(w.from, lang)} – ${shortDate(w.to, lang)}`;
+  if (w.from) return t('since {date}', { date: shortDate(w.from, lang) });
+  if (w.to) return t('up to {date}', { date: shortDate(w.to, lang) });
+  if (w.days > 0) return DAY_LABEL[w.days] ? t(DAY_LABEL[w.days]) : t('last {n} days', { n: num(w.days) });
+  return t('across the fleet');
 };
-const isScoped = (w) => scopeLabel(w) !== ALL_TIME;
+// Structurally the same test scopeLabel() makes: anything other than the all-time fallback is scoped.
+const isScoped = (w) => !!(w && (w.from || w.to || w.days > 0));
 
 // The window a ranking is actually counting, stated in full above the bars. It lives in the BODY, not
 // in the card's subtitle: the header truncates to make room for the picker, and a scope caption that
 // reads "across the fl…" is worse than none. Read off the API's echo, never local state, so it can
 // never describe a range the bars aren't in.
 function ScopeNote({ window: w, noun }) {
+  const { t, lang } = useI18n();
   const scoped = isScoped(w);
+  // The English is branched in code rather than pluralized inline: Arabic has six plural forms, so a
+  // `n === 1 ? 'case' : 'cases'` ternary cannot be translated as one phrase.
+  const countLabel = () => {
+    if (noun === 'faultCase') {
+      return w.cases === 1 ? t('1 fault case') : t('{n} fault cases', { n: num(w.cases) });
+    }
+    return w.cases === 1 ? t('1 case') : t('{n} cases', { n: num(w.cases) });
+  };
   return (
     <p className={`mb-3 text-xs ${scoped ? 'font-medium text-indigo-600' : 'text-slate-400'}`}>
-      {scopeLabel(w)}
-      {w?.cases != null && ` · ${num(w.cases)} ${noun}${w.cases === 1 ? '' : 's'}`}
+      {scopeLabel(w, t, lang)}
+      {w?.cases != null && ` · ${countLabel()}`}
     </p>
   );
 }
@@ -62,7 +75,11 @@ function ScopeNote({ window: w, noun }) {
 // The "made of what?" list inside a tooltip — the cars behind a fault, the faults behind a car, the
 // faults inside a speed bucket. One shape for all three so a breakdown always reads the same way.
 function Breakdown({ items = [], more = 0, unit, empty }) {
+  const { t } = useI18n();
   if (!items.length) return empty || null;
+  const moreLabel = unit === 'car'
+    ? (more === 1 ? t('+1 other car') : t('+{n} other cars', { n: num(more) }))
+    : (more === 1 ? t('+1 other fault') : t('+{n} other faults', { n: num(more) }));
   return (
     <div className="mt-1 space-y-0.5">
       {items.map((it) => (
@@ -72,7 +89,7 @@ function Breakdown({ items = [], more = 0, unit, empty }) {
         </div>
       ))}
       {more > 0 && (
-        <div className="text-white/50">+{num(more)} other {unit}{more === 1 ? '' : 's'}</div>
+        <div className="text-white/50">{moreLabel}</div>
       )}
     </div>
   );
@@ -88,6 +105,7 @@ export default function RecurringFaultsAnalytics({
   carWindow = { days: 0, from: null, to: null },
   onCarWindowChange,
 }) {
+  const { t } = useI18n();
   if (loading && !stats) {
     return <Skeleton className="h-[300px] w-full rounded-2xl" />;
   }
@@ -119,8 +137,8 @@ export default function RecurringFaultsAnalytics({
       {/* ── Trend ────────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 gap-4">
         <SectionCard
-          title="Is rework getting worse?"
-          subtitle="Recurring-fault cases opened per month"
+          title={t('Is rework getting worse?')}
+          subtitle={t('Recurring-fault cases opened per month')}
           bodyClass="p-5 pb-2"
         >
           <LineChart
@@ -128,10 +146,10 @@ export default function RecurringFaultsAnalytics({
             color="red"
             height={240}
             format={(n) => num(Math.round(n))}
-            valueLabel="Cases opened"
+            valueLabel={t('Cases opened')}
             tooltip={(d) => (d.verified > 0
-              ? `${num(d.verified)} after a verified fix`
-              : 'None had a verified fix')}
+              ? t('{n} after a verified fix', { n: num(d.verified) })
+              : t('None had a verified fix'))}
           />
         </SectionCard>
       </div>
@@ -139,8 +157,8 @@ export default function RecurringFaultsAnalytics({
       {/* ── How fast they fail + which faults ────────────────────────────── */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <SectionCard
-          title="How fast the repair failed"
-          subtitle="Days between the repair and the fault returning"
+          title={t('How fast the repair failed')}
+          subtitle={t('Days between the repair and the fault returning')}
           bodyClass="p-5 pb-2"
         >
           {hasSpeed ? (
@@ -148,21 +166,21 @@ export default function RecurringFaultsAnalytics({
               data={speed}
               height={230}
               format={(n) => num(Math.round(n))}
-              valueLabel="Cases"
+              valueLabel={t('Cases')}
               // A bucket count on its own doesn't say what to fix. Hovering names the faults that came
               // back in that window, biggest first, so "9 within a week" becomes "6 of them brake noise".
               tooltip={(d) => <Breakdown items={d.faults} more={d.more} unit="fault" />}
             />
           ) : (
             <div className="flex h-[200px] items-center justify-center text-sm text-slate-400">
-              No timing recorded yet.
+              {t('No timing recorded yet.')}
             </div>
           )}
         </SectionCard>
 
         <SectionCard
-          title="Faults that keep coming back"
-          subtitle="By fault category"
+          title={t('Faults that keep coming back')}
+          subtitle={t('By fault category')}
           bodyClass="p-5"
           // Which faults dominate goes stale fastest: a batch of brake jobs replaced in March keeps
           // topping the all-time list long after it stopped recurring, so this ranking gets a window of
@@ -178,26 +196,26 @@ export default function RecurringFaultsAnalytics({
             />
           ) : null}
         >
-          <ScopeNote window={stats.faults_window} noun="fault case" />
+          <ScopeNote window={stats.faults_window} noun="faultCase" />
           <RankedBar
             items={stats.faults || []}
             showRank
             color="orange"
             format={(n) => num(Math.round(n))}
-            valueLabel="Cases"
+            valueLabel={t('Cases')}
             valueWidth={56}
             labelWidth={150}
             // Hovering names the CARS behind the fault: "Brake failure, 10 cases" reads very
             // differently once you see it is one car ten times rather than ten cars once each.
             tooltip={(f) => (
               <>
-                <div>Across {num(f.cars)} car{f.cars === 1 ? '' : 's'}</div>
+                <div>{f.cars === 1 ? t('Across 1 car') : t('Across {n} cars', { n: num(f.cars) })}</div>
                 <Breakdown items={f.top_cars} more={f.cars_more} unit="car" />
               </>
             )}
             empty={isScoped(stats.faults_window)
-              ? 'No faults came back in this window.'
-              : 'No recurring faults recorded.'}
+              ? t('No faults came back in this window.')
+              : t('No recurring faults recorded.')}
           />
         </SectionCard>
       </div>
@@ -205,8 +223,8 @@ export default function RecurringFaultsAnalytics({
       {/* ── Who owns the rework ──────────────────────────────────────────── */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <SectionCard
-          title="Repairs that came back, by garage"
-          subtitle="A count of returns — not a blame ranking"
+          title={t('Repairs that came back, by garage')}
+          subtitle={t('A count of returns — not a blame ranking')}
           bodyClass="p-5"
         >
           <RankedBar
@@ -214,21 +232,21 @@ export default function RecurringFaultsAnalytics({
             showRank
             color="amber"
             format={(n) => num(Math.round(n))}
-            valueLabel="Returns"
+            valueLabel={t('Returns')}
             valueWidth={56}
             labelWidth={150}
             tooltip={(g) => [
-              g.workshop > 0 ? `${num(g.workshop)} ruled workshop responsibility` : null,
-              g.verified > 0 ? `${num(g.verified)} after a verified fix` : null,
-              g.open > 0 ? `${num(g.open)} still awaiting a ruling` : null,
-            ].filter(Boolean).join(' · ') || 'No rulings against this garage'}
-            empty="No garage recorded on the previous repairs."
+              g.workshop > 0 ? t('{n} ruled workshop responsibility', { n: num(g.workshop) }) : null,
+              g.verified > 0 ? t('{n} after a verified fix', { n: num(g.verified) }) : null,
+              g.open > 0 ? t('{n} still awaiting a ruling', { n: num(g.open) }) : null,
+            ].filter(Boolean).join(' · ') || t('No rulings against this garage')}
+            empty={t('No garage recorded on the previous repairs.')}
           />
         </SectionCard>
 
         <SectionCard
-          title="Cars that keep coming back"
-          subtitle="Cases raised per car"
+          title={t('Cars that keep coming back')}
+          subtitle={t('Cases raised per car')}
           bodyClass="p-5"
           // Its own window, independent of the fault ranking's: "which cars are hurting us THIS quarter"
           // is a different question from "which faults", and a car sold months ago should be able to
@@ -249,18 +267,18 @@ export default function RecurringFaultsAnalytics({
             showRank
             color="red"
             format={(n) => num(Math.round(n))}
-            valueLabel="Cases"
+            valueLabel={t('Cases')}
             valueWidth={56}
             labelWidth={150}
             // Hovering names the FAULTS this car keeps coming back with: "4 cases" says the car is a
             // problem, "3 of them the same AC fault" says what the problem is.
             tooltip={(r) => (
               <>
-                <div>{r.open > 0 ? `${num(r.open)} still awaiting a ruling` : 'All ruled on'}</div>
+                <div>{r.open > 0 ? t('{n} still awaiting a ruling', { n: num(r.open) }) : t('All ruled on')}</div>
                 <Breakdown items={r.faults} more={r.more} unit="fault" />
               </>
             )}
-            empty={isScoped(stats.cars_window) ? 'No cases raised in this window.' : 'No cases raised.'}
+            empty={isScoped(stats.cars_window) ? t('No cases raised in this window.') : t('No cases raised.')}
           />
         </SectionCard>
       </div>

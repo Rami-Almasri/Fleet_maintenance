@@ -6,21 +6,23 @@ import Drawer from './ui/Drawer';
 import Badge from './ui/Badge';
 import { Skeleton } from './ui/Skeleton';
 import { aed2, num, fmtDate } from '../lib/format';
+import { useI18n } from '../i18n/I18nContext';
 
 // ---- Value formatting per unit -----------------------------------------------------------------
 // Money → AED with 2dp; per-km ratio → 4dp (fractions of a fils matter at fleet scale); counts/
 // distances → plain number + unit. A null value is "not measured" (—), never a fake 0.
-function fmtVal(value, unit) {
+// `t` is threaded in because this is a plain module-level helper whose output is words on screen.
+function fmtVal(value, unit, t) {
   if (value == null) return '—';
   if (unit === 'AED') return aed2(value);
   if (unit === 'AED/km') return `AED ${Number(value).toLocaleString('en-AE', { minimumFractionDigits: 4, maximumFractionDigits: 4 })} / km`;
-  if (unit === 'AED/day') return `${aed2(value)} / day`;
-  if (unit === 'AED/rental') return `${aed2(value)} / rental`;
+  if (unit === 'AED/day') return t('{amount} / day', { amount: aed2(value) });
+  if (unit === 'AED/rental') return t('{amount} / rental', { amount: aed2(value) });
   if (unit === 'km') return `${num(value)} km`;
   if (unit === 'km/day') return `${num(value)} km/day`;
-  if (unit === 'days') return `${num(value)} days`;
-  if (unit === 'rentals') return `${num(value)} rentals`;
-  if (unit === 'years') return `${num(value)} years`;
+  if (unit === 'days') return t('{n} days', { n: num(value) });
+  if (unit === 'rentals') return t('{n} rentals', { n: num(value) });
+  if (unit === 'years') return t('{n} years', { n: num(value) });
   if (!unit) return num(value);
   return `${num(value)} ${unit}`;
 }
@@ -45,19 +47,20 @@ function ConfidenceBadge({ value }) {
 
 // ---- Reconciliation strip — proves the number ties out to its sources ---------------------------
 function Recon({ recon, unit }) {
-  if (!recon) return null;
+  const { t } = useI18n();
   const dec = unit === 'AED/km' ? 4 : 2;
   const f = (n) => Number(n).toLocaleString('en-AE', { minimumFractionDigits: dec, maximumFractionDigits: dec });
+  if (!recon) return null;
   return (
     <div className={`rounded-xl px-4 py-3 text-xs ring-1 ring-inset ${recon.ok ? 'bg-emerald-50 text-emerald-800 ring-emerald-600/15' : 'bg-red-50 text-red-800 ring-red-600/25'}`}>
       <div className="mb-1.5 flex items-center justify-between">
-        <span className="font-semibold">{recon.ok ? '✓ Reconciled — the number ties out' : '⚠ Discrepancy — this does not tie out'}</span>
+        <span className="font-semibold">{recon.ok ? t('✓ Reconciled — the number ties out') : t('⚠ Discrepancy — this does not tie out')}</span>
         <span className="text-[11px] opacity-70">{recon.basis}</span>
       </div>
       <div className="grid grid-cols-3 gap-2 tabular-nums">
-        <div><div className="opacity-60">Displayed value</div><div className="font-semibold">{f(recon.displayed)}</div></div>
-        <div><div className="opacity-60">Sum of sources</div><div className="font-semibold">{f(recon.source_sum)}</div></div>
-        <div><div className="opacity-60">Difference</div><div className="font-semibold">{f(recon.difference)} {recon.ok ? '✓' : '✗'}</div></div>
+        <div><div className="opacity-60">{t('Displayed value')}</div><div className="font-semibold">{f(recon.displayed)}</div></div>
+        <div><div className="opacity-60">{t('Sum of sources')}</div><div className="font-semibold">{f(recon.source_sum)}</div></div>
+        <div><div className="opacity-60">{t('Difference')}</div><div className="font-semibold">{f(recon.difference)} {recon.ok ? '✓' : '✗'}</div></div>
       </div>
     </div>
   );
@@ -65,32 +68,33 @@ function Recon({ recon, unit }) {
 
 // ---- Business-rule card — WHY a decision was taken (rule + measured + threshold + result) -------
 function BusinessRule({ rule, onOpen }) {
-  if (!rule) return null;
-  const matched = /matched|overdue|approaching/i.test(rule.result || '');
+  const { t } = useI18n();
   const Line = ({ label, item }) => (
     <div className="flex items-baseline justify-between gap-4 py-1 text-sm">
       <span className="text-slate-500">{label}</span>
       {item.ref ? (
         <button type="button" onClick={() => onOpen(item.ref)} className="font-medium text-indigo-700 underline decoration-dotted underline-offset-2 tabular-nums">
-          {fmtVal(item.value, item.unit)} ▸
+          {fmtVal(item.value, item.unit, t)} <span className="inline-block rtl:-scale-x-100">▸</span>
         </button>
       ) : (
-        <span className="font-medium tabular-nums text-slate-900">{fmtVal(item.value, item.unit)}</span>
+        <span className="font-medium tabular-nums text-slate-900">{fmtVal(item.value, item.unit, t)}</span>
       )}
     </div>
   );
+  if (!rule) return null;
+  const matched = /matched|overdue|approaching/i.test(rule.result || '');
   return (
     <div className="rounded-xl border border-slate-200/70 bg-white px-4 py-3">
-      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Business rule</p>
+      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{t('Business rule')}</p>
       <p className="mb-2 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">{rule.statement}</p>
-      {(rule.measured || []).map((m, i) => <Line key={i} label={m.label || 'Measured'} item={m} />)}
-      {rule.threshold && <Line label={`Threshold (${rule.operator || ''})`} item={rule.threshold} />}
+      {(rule.measured || []).map((m, i) => <Line key={i} label={m.label || t('Measured')} item={m} />)}
+      {rule.threshold && <Line label={t('Threshold ({operator})', { operator: rule.operator || '' })} item={rule.threshold} />}
       <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-dashed border-slate-200 pt-2 text-sm">
-        <span className="font-semibold text-slate-900">Result</span>
+        <span className="font-semibold text-slate-900">{t('Result')}</span>
         <Badge tone={matched ? 'amber' : 'green'}>{rule.result}</Badge>
       </div>
       {rule.action && rule.action !== 'None' && (
-        <p className="mt-1 text-xs text-slate-500">→ {rule.action}</p>
+        <p className="mt-1 text-xs text-slate-500"><span className="inline-block rtl:-scale-x-100">→</span> {rule.action}</p>
       )}
     </div>
   );
@@ -98,33 +102,34 @@ function BusinessRule({ rule, onOpen }) {
 
 // ---- Formula card — the exact working; each operand with a `ref` drills deeper ------------------
 function Formula({ formula, onOpen }) {
+  const { t } = useI18n();
   if (!formula) return null;
   return (
     <div className="rounded-xl border border-slate-200/70 bg-white px-1 py-1 shadow-soft">
-      <p className="px-3 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-slate-400">How it is calculated</p>
+      <p className="px-3 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{t('How it is calculated')}</p>
       <div className="divide-y divide-slate-100">
-        {formula.terms.map((t, i) => {
-          const clickable = !!t.ref;
+        {formula.terms.map((term, i) => {
+          const clickable = !!term.ref;
           const Row = clickable ? 'button' : 'div';
           return (
             <Row
               key={i}
               type={clickable ? 'button' : undefined}
-              onClick={clickable ? () => onOpen(t.ref) : undefined}
+              onClick={clickable ? () => onOpen(term.ref) : undefined}
               className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-start text-sm ${clickable ? 'cursor-pointer hover:bg-indigo-50/60' : ''}`}
             >
               <span className="flex items-center gap-2">
-                <span className="w-4 text-center font-mono text-slate-400">{t.op}</span>
-                <span className={clickable ? 'font-medium text-indigo-700 underline decoration-dotted underline-offset-2' : 'text-slate-600'}>{t.label}</span>
-                {clickable && <span className="text-[10px] text-slate-400">drill ▸</span>}
+                <span className="w-4 text-center font-mono text-slate-400">{term.op}</span>
+                <span className={clickable ? 'font-medium text-indigo-700 underline decoration-dotted underline-offset-2' : 'text-slate-600'}>{term.label}</span>
+                {clickable && <span className="text-[10px] text-slate-400">{t('drill')} <span className="inline-block rtl:-scale-x-100">▸</span></span>}
               </span>
-              <span className="tabular-nums font-medium text-slate-900">{fmtVal(t.value, t.unit)}</span>
+              <span className="tabular-nums font-medium text-slate-900">{fmtVal(term.value, term.unit, t)}</span>
             </Row>
           );
         })}
         <div className="flex items-center justify-between gap-3 border-t-2 border-slate-200 px-3 py-2.5">
           <span className="font-display text-sm font-bold text-slate-900">= {formula.result_label}</span>
-          <span className="font-display tabular-nums text-base font-bold text-slate-900">{fmtVal(formula.result, formula.result_unit)}</span>
+          <span className="font-display tabular-nums text-base font-bold text-slate-900">{fmtVal(formula.result, formula.result_unit, t)}</span>
         </div>
       </div>
     </div>
@@ -133,10 +138,11 @@ function Formula({ formula, onOpen }) {
 
 // ---- Evidence chain — supporting artifacts (measurements, invoices, records) --------------------
 function Evidence({ items, onOpen }) {
+  const { t } = useI18n();
   if (!items || !items.length) return null;
   return (
     <div className="rounded-xl border border-slate-200/70 bg-white">
-      <p className="border-b border-slate-100 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Evidence</p>
+      <p className="border-b border-slate-100 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{t('Evidence')}</p>
       <div className="divide-y divide-slate-100">
         {items.map((e, i) => {
           const clickable = !!e.ref;
@@ -147,7 +153,7 @@ function Evidence({ items, onOpen }) {
               <span className={clickable ? 'font-medium text-indigo-700' : 'text-slate-600'}>{e.label}</span>
               <span className="flex items-center gap-2">
                 {e.kind && <Badge tone="slate" className="text-[10px]">{e.kind}</Badge>}
-                {clickable && <span className="text-[10px] text-slate-400">▸</span>}
+                {clickable && <span className="inline-block text-[10px] text-slate-400 rtl:-scale-x-100">▸</span>}
               </span>
             </Row>
           );
@@ -159,11 +165,12 @@ function Evidence({ items, onOpen }) {
 
 // ---- Record card — raw fields of an original business transaction (leaf) ------------------------
 function Record({ record }) {
+  const { t } = useI18n();
   const entries = Object.entries(record).filter(([, v]) => v != null && v !== '');
   if (!entries.length) return null;
   return (
     <div className="rounded-xl border border-slate-200/70 bg-white px-4 py-3">
-      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Original record</p>
+      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{t('Original record')}</p>
       <dl className="grid grid-cols-1 gap-x-6 gap-y-1 sm:grid-cols-2">
         {entries.map(([k, v]) => (
           <div key={k} className="flex items-baseline justify-between gap-4 border-b border-slate-50 py-1 text-sm">
@@ -182,6 +189,7 @@ function Record({ record }) {
 // the header keeps showing the FULL total alongside the filtered subtotal, so a filtered view can
 // never be mistaken for the whole number.
 function Children({ ids, label, facets, facetLabel, facetNote, nodes, onOpen }) {
+  const { t } = useI18n();
   const [facet, setFacet] = useState(null);
   const list = useMemo(
     () => (facet ? (ids || []).filter((id) => nodes[id]?.group?.key === facet) : ids || []),
@@ -197,12 +205,14 @@ function Children({ ids, label, facets, facetLabel, facetNote, nodes, onOpen }) 
 
   return (
     <div className="rounded-xl border border-slate-200/70 bg-white">
-      <p className="border-b border-slate-100 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{label || `Contributing records (${ids.length})`}</p>
+      <p className="border-b border-slate-100 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+        {label || t('Contributing records ({n})', { n: ids.length })}
+      </p>
 
       {facets?.length > 1 && (
         <div className="border-b border-slate-100 px-3 py-2.5">
           <div className="mb-1.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-            {facetLabel || 'Type'}
+            {facetLabel || t('Type')}
             {facetNote && <span className="cursor-help text-slate-300" title={facetNote}>ⓘ</span>}
           </div>
           <div className="flex flex-wrap gap-1.5">
@@ -211,14 +221,16 @@ function Children({ ids, label, facets, facetLabel, facetNote, nodes, onOpen }) 
               onClick={() => setFacet(null)}
               className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${facet === null ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
             >
-              All ({ids.length})
+              {t('All ({n})', { n: ids.length })}
             </button>
             {facets.map((f) => (
               <button
                 key={f.key}
                 type="button"
                 onClick={() => setFacet((cur) => (cur === f.key ? null : f.key))}
-                title={`${f.label} — ${f.count} line${f.count === 1 ? '' : 's'}, ${aed2(f.total)}`}
+                title={f.count === 1
+                  ? t('{label} — 1 line, {total}', { label: f.label, total: aed2(f.total) })
+                  : t('{label} — {count} lines, {total}', { label: f.label, count: f.count, total: aed2(f.total) })}
                 className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${facet === f.key ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
               >
                 {f.label} ({f.count})
@@ -227,8 +239,11 @@ function Children({ ids, label, facets, facetLabel, facetNote, nodes, onOpen }) 
           </div>
           {active && (
             <p className="mt-2 rounded-lg bg-indigo-50/70 px-3 py-1.5 text-[11px] text-indigo-800">
-              Showing <span className="font-semibold">{list.length}</span> of {ids.length} lines ·{' '}
-              <span className="font-semibold tabular-nums">{aed2(subtotal)}</span> of this bucket
+              {t('Showing {shown} of {total} lines · {subtotal} of this bucket', {
+                shown: list.length,
+                total: ids.length,
+                subtotal: aed2(subtotal),
+              })}
             </p>
           )}
         </div>
@@ -255,8 +270,8 @@ function Children({ ids, label, facets, facetLabel, facetNote, nodes, onOpen }) 
                 </span>
               </span>
               <span className="flex shrink-0 items-center gap-2">
-                <span className="tabular-nums text-sm font-semibold text-slate-900">{fmtVal(c.value, c.unit)}</span>
-                <span className="text-[10px] text-slate-400">▸</span>
+                <span className="tabular-nums text-sm font-semibold text-slate-900">{fmtVal(c.value, c.unit, t)}</span>
+                <span className="inline-block text-[10px] text-slate-400 rtl:-scale-x-100">▸</span>
               </span>
             </button>
           );
@@ -271,6 +286,7 @@ function Children({ ids, label, facets, facetLabel, facetNote, nodes, onOpen }) 
 // number with no explanation. Styled distinctly (amber, struck value) so it can never be misread as
 // part of the sum, and still drillable down to the original record.
 function Excluded({ ids, label, note, nodes, onOpen }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   if (!ids || !ids.length) return null;
   return (
@@ -281,7 +297,7 @@ function Excluded({ ids, label, note, nodes, onOpen }) {
         className="flex w-full items-center justify-between gap-3 px-4 py-2 text-start"
       >
         <span className="text-xs font-semibold uppercase tracking-wide text-amber-700">{label}</span>
-        <span className="text-[11px] text-amber-700">{open ? 'hide' : 'show'} {open ? '▴' : '▾'}</span>
+        <span className="text-[11px] text-amber-700">{open ? t('hide') : t('show')} {open ? '▴' : '▾'}</span>
       </button>
       {note && <p className="border-t border-amber-200/70 px-4 py-2 text-[11px] text-amber-800">{note}</p>}
       {open && (
@@ -297,8 +313,8 @@ function Excluded({ ids, label, note, nodes, onOpen }) {
                   {c.subtitle && <span className="block truncate text-xs text-amber-700/70">{c.subtitle}</span>}
                 </span>
                 <span className="flex shrink-0 items-center gap-2">
-                  <span className="tabular-nums text-sm font-medium text-amber-700 line-through">{fmtVal(c.value, c.unit)}</span>
-                  <span className="text-[10px] text-amber-500">▸</span>
+                  <span className="tabular-nums text-sm font-medium text-amber-700 line-through">{fmtVal(c.value, c.unit, t)}</span>
+                  <span className="inline-block text-[10px] text-amber-500 rtl:-scale-x-100">▸</span>
                 </span>
               </button>
             );
@@ -311,11 +327,12 @@ function Excluded({ ids, label, note, nodes, onOpen }) {
 
 // ---- Impact panel — reverse lineage: "what depends on this?" ------------------------------------
 function Impact({ ids, nodes, onOpen }) {
+  const { t } = useI18n();
   if (!ids || !ids.length) return null;
   return (
     <div className="rounded-xl border border-slate-200/70 bg-white">
       <p className="border-b border-slate-100 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
-        Impact — what depends on this ({ids.length})
+        {t('Impact — what depends on this ({n})', { n: ids.length })}
       </p>
       <div className="flex flex-wrap gap-2 p-3">
         {ids.map((id) => {
@@ -335,21 +352,22 @@ function Impact({ ids, nodes, onOpen }) {
 
 // ---- Audit footer — under what conditions this was explained -----------------------------------
 function Audit({ audit, context }) {
+  const { t } = useI18n();
   const a = audit || {};
   const c = context || {};
   const rows = [
-    ['Engine', a.engine_version || c.engine_version],
-    ['Snapshot', c.snapshot],
-    ['Window', a.window],
-    ['Currency', a.currency || c.currency],
-    ['Included records', a.included_records],
-    ['Basis', a.basis],
-    ['Generated', c.generated_at ? fmtDate(c.generated_at) : null],
+    [t('Engine'), a.engine_version || c.engine_version],
+    [t('Snapshot'), c.snapshot],
+    [t('Window'), a.window],
+    [t('Currency'), a.currency || c.currency],
+    [t('Included records'), a.included_records],
+    [t('Basis'), a.basis],
+    [t('Generated'), c.generated_at ? fmtDate(c.generated_at) : null],
   ].filter(([, v]) => v != null && v !== '');
   if (!rows.length) return null;
   return (
     <div className="rounded-xl border border-dashed border-slate-200 px-4 py-3 text-[11px] text-slate-500">
-      <p className="mb-1 font-semibold uppercase tracking-wide text-slate-400">Audit</p>
+      <p className="mb-1 font-semibold uppercase tracking-wide text-slate-400">{t('Audit')}</p>
       <div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
         {rows.map(([k, v]) => (
           <div key={k} className="flex justify-between gap-2"><span>{k}</span><span className="font-medium text-slate-600">{String(v)}</span></div>
@@ -368,7 +386,7 @@ function Lineage({ path, nodes, onJump }) {
         const last = i === path.length - 1;
         return (
           <span key={`${id}-${i}`} className="flex items-center gap-1">
-            {i > 0 && <span className="text-slate-300">←</span>}
+            {i > 0 && <span className="inline-block text-slate-300 rtl:-scale-x-100">←</span>}
             <button
               type="button"
               disabled={last}
@@ -386,6 +404,7 @@ function Lineage({ path, nodes, onJump }) {
 
 // ---- Recursive node view -----------------------------------------------------------------------
 function NodeView({ node, nodes, context, onOpen }) {
+  const { t } = useI18n();
   if (!node) return null;
   const type = node.type || node.kind;
   return (
@@ -395,7 +414,7 @@ function NodeView({ node, nodes, context, onOpen }) {
           <div className="min-w-0">
             <p className="font-display text-lg font-bold text-slate-900">{node.label}</p>
             {node.subtitle && <p className="text-xs text-slate-400">{node.subtitle}</p>}
-            {node.source_module && <p className="mt-1 text-[11px] text-slate-400">Source: {node.source_module}</p>}
+            {node.source_module && <p className="mt-1 text-[11px] text-slate-400">{t('Source: {module}', { module: node.source_module })}</p>}
             {(node.links?.length ? node.links : node.link ? [node.link] : []).length > 0 && (
               <div className="mt-2 flex flex-wrap gap-2">
                 {(node.links?.length ? node.links : [node.link]).map((l, i) => (
@@ -404,7 +423,7 @@ function NodeView({ node, nodes, context, onOpen }) {
                     to={l.to}
                     className="inline-flex items-center gap-1 rounded-lg bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100"
                   >
-                    {l.label} →
+                    {l.label} <span className="inline-block rtl:-scale-x-100">→</span>
                   </Link>
                 ))}
               </div>
@@ -412,14 +431,14 @@ function NodeView({ node, nodes, context, onOpen }) {
           </div>
           <div className="flex shrink-0 flex-col items-end gap-1.5">
             {node.value != null && (
-              <Badge tone={type === 'ratio' ? 'violet' : type === 'rule' ? 'amber' : 'indigo'} className="text-sm">{fmtVal(node.value, node.unit)}</Badge>
+              <Badge tone={type === 'ratio' ? 'violet' : type === 'rule' ? 'amber' : 'indigo'} className="text-sm">{fmtVal(node.value, node.unit, t)}</Badge>
             )}
             <ConfidenceBadge value={node.confidence} />
           </div>
         </div>
         {node.note && (
           <p className={`mt-2 rounded-lg px-3 py-2 text-xs ${node.excluded ? 'bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-600/20' : 'bg-slate-50 text-slate-500'}`}>
-            {node.excluded && <span className="font-semibold">Not counted in the total · </span>}
+            {node.excluded && <span className="font-semibold">{t('Not counted in the total ·')} </span>}
             {node.note}
           </p>
         )}
@@ -453,6 +472,7 @@ function NodeView({ node, nodes, context, onOpen }) {
 }
 
 function ExplainBody({ vehicleId, metric }) {
+  const { t } = useI18n();
   const [asOf, setAsOf] = useState(''); // '' = live; 'YYYY-MM-DD' = historical snapshot
   const [activeModule, setActiveModule] = useState(null);
 
@@ -512,17 +532,17 @@ function ExplainBody({ vehicleId, metric }) {
           <p className="text-xs text-slate-300">{data.vehicle.car || '—'}</p>
         </div>
         <label className="flex items-center gap-2 text-[11px] text-slate-300">
-          Snapshot
+          {t('Snapshot')}
           <input
             type="date"
             value={asOf}
             max={new Date().toISOString().slice(0, 10)}
             onChange={(e) => setAsOf(e.target.value)}
             className="rounded-md border-0 bg-slate-700 px-2 py-1 text-xs text-white [color-scheme:dark]"
-            title="Explain the value as of this date (blank = live)"
+            title={t('Explain the value as of this date (blank = live)')}
           />
           {asOf && (
-            <button type="button" onClick={() => setAsOf('')} className="rounded bg-slate-600 px-1.5 py-0.5 hover:bg-slate-500" title="Back to live">live</button>
+            <button type="button" onClick={() => setAsOf('')} className="rounded bg-slate-600 px-1.5 py-0.5 hover:bg-slate-500" title={t('Back to live')}>{t('live')}</button>
           )}
         </label>
       </div>
@@ -564,8 +584,9 @@ function ExplainBody({ vehicleId, metric }) {
  * tabs; change the snapshot date to explain a historical value. `metric` picks the initial root.
  */
 export default function FinancialBreakdownDrawer({ vehicleId, metric, onClose }) {
+  const { t } = useI18n();
   return (
-    <Drawer open={!!vehicleId} onClose={onClose} width="lg" eyebrow="Explainability" title="Where did this number come from?">
+    <Drawer open={!!vehicleId} onClose={onClose} width="lg" eyebrow={t('Explainability')} title={t('Where did this number come from?')}>
       {vehicleId && <ExplainBody vehicleId={vehicleId} metric={metric} />}
     </Drawer>
   );

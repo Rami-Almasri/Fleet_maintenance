@@ -12,10 +12,13 @@ import { useI18n } from '../../i18n/I18nContext';
 import Icon from '../../components/ui/Icon';
 import { Skeleton } from '../../components/ui/Skeleton';
 
-const fmtDate = (iso) => (iso ? new Date(iso).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
+// Gregorian calendar + Latin digits under Arabic — a bare locale would render Hijri.
+const fmtDate = (iso, lang) => (iso
+  ? new Date(iso).toLocaleDateString(lang === 'ar' ? 'ar-AE-u-ca-gregory-nu-latn' : undefined, { day: '2-digit', month: 'short', year: 'numeric' })
+  : '—');
 
 export default function GarageInvoiceQueue() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [onlyNeeds, setOnlyNeeds] = useState(false);
@@ -44,7 +47,7 @@ export default function GarageInvoiceQueue() {
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <Link to="/apps/reports" className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-400 hover:text-slate-600">
-              <Icon.ArrowRight className="h-3 w-3 rotate-180" /> Reports
+              <Icon.ArrowRight className="h-3 w-3 rotate-180 rtl:-scale-x-100" /> {t('Reports')}
             </Link>
             <h1 className="font-display text-2xl font-bold tracking-tight text-slate-900">{t('oversight.garage.title')}</h1>
             <p className="mt-1 max-w-2xl text-sm text-slate-500">{t('oversight.garage.subtitle')}</p>
@@ -91,11 +94,11 @@ export default function GarageInvoiceQueue() {
           <>
           <AuditAnalytics
             rows={rows}
-            title="Cars left the garage longest ago"
-            subtitle="How long each car has been out while its maintenance contract stayed open — the oldest are the most likely to be forgotten"
+            title={t('Cars left the garage longest ago')}
+            subtitle={t('How long each car has been out while its maintenance contract stayed open — the oldest are the most likely to be forgotten')}
             magnitude={(r) => r.days_since}
-            magnitudeLabel="Days out"
-            magnitudeFormat={(n) => `${Math.round(n)}d`}
+            magnitudeLabel={t('Days out')}
+            magnitudeFormat={(n) => t('{n}d', { n: Math.round(n) })}
             color="orange"
           />
           <div className="overflow-x-auto rounded-2xl border border-slate-200/60 bg-white shadow-soft">
@@ -121,7 +124,7 @@ export default function GarageInvoiceQueue() {
                       <span className="inline-flex items-center gap-1.5"><Icon.Wrench className="h-3.5 w-3.5 text-slate-300" />{r.garage || <span className="text-slate-300">—</span>}</span>
                     </td>
                     <td className="border-b border-slate-100 px-5 py-3.5">
-                      <p className="text-slate-500">{fmtDate(r.left_at)}</p>
+                      <p className="text-slate-500">{fmtDate(r.left_at, lang)}</p>
                       {r.days_since != null && <p className="text-[11px] text-slate-400">{t('oversight.garage.daysAgo', { n: r.days_since })}</p>}
                     </td>
                     <td className="border-b border-slate-100 px-5 py-3.5 text-center tabular-nums text-slate-600">{r.faults || 0}</td>
@@ -134,7 +137,7 @@ export default function GarageInvoiceQueue() {
                     </td>
                     <td className="border-b border-slate-100 px-5 py-3.5 text-end">
                       <Link to={`/maintenance-workflow/${r.ticket_id}`} className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-indigo-600 hover:bg-indigo-50">
-                        {t('oversight.garage.request')} <Icon.ArrowRight className="h-3 w-3" />
+                        {t('oversight.garage.request')} <Icon.ArrowRight className="h-3 w-3 rtl:-scale-x-100" />
                       </Link>
                     </td>
                   </tr>

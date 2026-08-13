@@ -42,6 +42,8 @@ const SEVERITY_FILL = {
 };
 const SEVERITY_DOT = { high: 'fill-rose-500', medium: 'fill-orange-500', low: 'fill-amber-500' };
 
+import { useI18n } from '../../i18n/I18nContext';
+
 function zoneClasses(state, isSelected, severity) {
   if (isSelected) return 'fill-indigo-200 stroke-indigo-500';
   switch (state) {
@@ -52,12 +54,13 @@ function zoneClasses(state, isSelected, severity) {
 }
 
 export default function VehicleDiagram({ zones = {}, selected = null, onSelect, className = '' }) {
+  const { t } = useI18n();
   return (
     <svg
       viewBox="0 0 260 500"
       className={`w-full max-w-[320px] select-none ${className}`}
       role="group"
-      aria-label="Vehicle inspection diagram"
+      aria-label={t('Vehicle inspection diagram')}
     >
       {/* soft ground shadow */}
       <ellipse cx="130" cy="250" rx="118" ry="244" className="fill-slate-50" />

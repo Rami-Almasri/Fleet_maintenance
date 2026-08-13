@@ -15,29 +15,35 @@ import BarChart from '../ui/BarChart';
 import PieChart from '../ui/PieChart';
 import Segmented from '../ui/Segmented';
 import { aedCompact, num } from '../../lib/format';
+import { useI18n } from '../../i18n/I18nContext';
 
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const monthNames = (t) => [
+  t('Jan'), t('Feb'), t('Mar'), t('Apr'), t('May'), t('Jun'),
+  t('Jul'), t('Aug'), t('Sep'), t('Oct'), t('Nov'), t('Dec'),
+];
 const WINDOW = 12;
 
 // Fault → the page's own red/green/grey key, kept identical so the charts and the
 // legend above them never tell different stories.
-const FAULT = {
-  renter: { label: 'Renter at fault', color: 'red' },
-  third_party: { label: 'Third party', color: 'emerald' },
-};
-const FAULT_UNKNOWN = { label: 'Not specified', color: 'slate' };
+const FAULT_COLOR = { renter: 'red', third_party: 'emerald' };
+const faultLabel = (k, t) => ({
+  renter: t('Renter at fault'),
+  third_party: t('Third party'),
+}[k] || t('Not specified'));
 
 export default function DamageAnalytics({ incidents = [] }) {
+  const { t } = useI18n();
   const [view, setView] = useState('count');
 
   const trend = useMemo(() => {
+    const months = monthNames(t);
     const now = new Date();
     const index = {};
     const buckets = [];
     for (let i = WINDOW - 1; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       index[`${d.getFullYear()}-${d.getMonth()}`] = buckets.length;
-      buckets.push({ label: MONTHS[d.getMonth()], count: 0, cost: 0 });
+      buckets.push({ label: months[d.getMonth()], count: 0, cost: 0 });
     }
     incidents.forEach((i) => {
       if (!i.date) return;
@@ -49,11 +55,11 @@ export default function DamageAnalytics({ incidents = [] }) {
       buckets[b].cost += Number(i.cost) || 0;
     });
     return buckets;
-  }, [incidents]);
+  }, [incidents, t]);
 
   const series = view === 'cost'
-    ? { key: 'cost', color: 'orange', valueLabel: 'Repair cost', format: aedCompact, subtitle: 'Damage repair cost per month, last 12 months' }
-    : { key: 'count', color: 'red', valueLabel: 'Incidents', format: (n) => num(Math.round(n)), subtitle: 'Damage and accident records per month, last 12 months' };
+    ? { key: 'cost', color: 'orange', valueLabel: t('Repair cost'), format: aedCompact, subtitle: t('Damage repair cost per month, last 12 months') }
+    : { key: 'count', color: 'red', valueLabel: t('Incidents'), format: (n) => num(Math.round(n)), subtitle: t('Damage and accident records per month, last 12 months') };
 
   const chartData = useMemo(
     () => trend.map((b) => ({ label: b.label, value: b[series.key], count: b.count, cost: b.cost })),
@@ -64,16 +70,17 @@ export default function DamageAnalytics({ incidents = [] }) {
   const faults = useMemo(() => {
     const totals = {};
     incidents.forEach((i) => {
-      const k = FAULT[i.fault] ? i.fault : 'unspecified';
+      const k = FAULT_COLOR[i.fault] ? i.fault : 'unspecified';
       totals[k] = (totals[k] || 0) + 1;
     });
     return Object.entries(totals)
-      .map(([k, value]) => {
-        const meta = FAULT[k] || FAULT_UNKNOWN;
-        return { label: meta.label, value, color: meta.color };
-      })
+      .map(([k, value]) => ({
+        label: faultLabel(k, t),
+        value,
+        color: FAULT_COLOR[k] || 'slate',
+      }))
       .sort((a, b) => b.value - a.value);
-  }, [incidents]);
+  }, [incidents, t]);
 
   const worst = useMemo(() => {
     const groups = new Map();
@@ -82,7 +89,7 @@ export default function DamageAnalytics({ incidents = [] }) {
       const key = id ?? i.plate ?? 'unknown';
       const g = groups.get(key) || {
         key,
-        label: i.plate || (id ? `#${id}` : 'Unknown car'),
+        label: i.plate || (id ? `#${id}` : t('Unknown car')),
         sub: i.car || undefined,
         to: id ? `/vehicles/${id}` : undefined,
         value: 0,
@@ -93,7 +100,7 @@ export default function DamageAnalytics({ incidents = [] }) {
       groups.set(key, g);
     });
     return [...groups.values()].sort((a, b) => b.value - a.value).slice(0, 10);
-  }, [incidents]);
+  }, [incidents, t]);
 
   if (!incidents.length) return null;
 
@@ -102,15 +109,15 @@ export default function DamageAnalytics({ incidents = [] }) {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <SectionCard
           className="lg:col-span-2"
-          title="Damage over time"
+          title={t('Damage over time')}
           subtitle={series.subtitle}
           actions={
             <Segmented
               value={view}
               onChange={setView}
               options={[
-                { key: 'count', label: 'Incidents' },
-                { key: 'cost', label: 'Cost' },
+                { key: 'count', label: t('Incidents') },
+                { key: 'cost', label: t('Cost') },
               ]}
             />
           }
@@ -124,18 +131,20 @@ export default function DamageAnalytics({ incidents = [] }) {
               yTicks={3}
               valueLabel={series.valueLabel}
               format={series.format}
-              tooltip={(d) => `${num(d.count)} record${d.count === 1 ? '' : 's'} · ${aedCompact(d.cost)}`}
+              tooltip={(d) => (d.count === 1
+                ? t('{n} record · {cost}', { n: num(d.count), cost: aedCompact(d.cost) })
+                : t('{n} records · {cost}', { n: num(d.count), cost: aedCompact(d.cost) }))}
             />
           ) : (
             <div className="flex h-[240px] items-center justify-center text-sm text-slate-400">
-              No damage recorded in the last 12 months.
+              {t('No damage recorded in the last 12 months.')}
             </div>
           )}
         </SectionCard>
 
         <SectionCard
-          title="Who's at fault"
-          subtitle="Liability split across these records"
+          title={t("Who's at fault")}
+          subtitle={t('Liability split across these records')}
           bodyClass="flex items-center justify-center p-5"
         >
           <PieChart segments={faults} size={150} />
@@ -143,8 +152,8 @@ export default function DamageAnalytics({ incidents = [] }) {
       </div>
 
       <SectionCard
-        title="Cars with the most damage"
-        subtitle="Incident count per car, with what the repairs cost"
+        title={t('Cars with the most damage')}
+        subtitle={t('Incident count per car, with what the repairs cost')}
         bodyClass="p-5"
       >
         <RankedBar
@@ -152,10 +161,12 @@ export default function DamageAnalytics({ incidents = [] }) {
           showRank
           color="red"
           format={(n) => num(Math.round(n))}
-          valueLabel="Incidents"
+          valueLabel={t('Incidents')}
           valueWidth={64}
-          tooltip={(r) => (r.cost > 0 ? `${aedCompact(r.cost)} in repairs` : 'No cost recorded')}
-          empty="No incidents in this filter."
+          tooltip={(r) => (r.cost > 0
+            ? t('{cost} in repairs', { cost: aedCompact(r.cost) })
+            : t('No cost recorded'))}
+          empty={t('No incidents in this filter.')}
         />
       </SectionCard>
     </div>

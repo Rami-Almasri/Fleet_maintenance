@@ -7,6 +7,7 @@ import Badge from '../../components/ui/Badge';
 import { Skeleton } from '../../components/ui/Skeleton';
 import { aed2, fmtDate, num } from '../../lib/format';
 import { SHOW_FINANCIALS } from '../../config/features';
+import { useI18n } from '../../i18n/I18nContext';
 
 /**
  * Tire Details — every tyre installed on this car (brand · DOT · tread depth · warranty), newest
@@ -34,6 +35,7 @@ const dotAgeYears = (dot) => {
 };
 
 export default function TireDetails({ vehicleId }) {
+  const { t } = useI18n();
   const { can } = usePermissions();
   const allowed = can('maintenance.view');
 
@@ -46,16 +48,16 @@ export default function TireDetails({ vehicleId }) {
 
   if (!allowed) return null;
 
-  const worn = items.filter((t) => t.tread_mm != null && t.tread_mm < 1.6).length;
+  const worn = items.filter((row) => row.tread_mm != null && row.tread_mm < 1.6).length;
 
   return (
     <SectionCard
-      title="Tire Details"
-      subtitle="Every tyre fitted to this car — brand, DOT age, tread depth & warranty — newest first."
+      title={t('Tire Details')}
+      subtitle={t('Every tyre fitted to this car — brand, DOT age, tread depth & warranty — newest first.')}
       actions={(
         <div className="flex items-center gap-2">
-          {worn > 0 && <Badge tone="red">{worn} below legal tread</Badge>}
-          <Badge tone="gray">{items.length} {items.length === 1 ? 'tyre' : 'tyres'}</Badge>
+          {worn > 0 && <Badge tone="red">{t('{n} below legal tread', { n: worn })}</Badge>}
+          <Badge tone="gray">{items.length === 1 ? t('1 tyre') : t('{n} tyres', { n: items.length })}</Badge>
         </div>
       )}
     >
@@ -64,67 +66,69 @@ export default function TireDetails({ vehicleId }) {
       ) : (
         <DataTable
           rows={items}
-          rowKey={(t) => t.id}
-          empty="No tyre records yet — captured when a tyre line is added to a maintenance ticket (category “tyres”)."
+          rowKey={(row) => row.id}
+          empty={t('No tyre records yet — captured when a tyre line is added to a maintenance ticket (category “tyres”).')}
           columns={[
             {
-              key: 'installed', header: 'Installed', cellClass: 'whitespace-nowrap',
-              render: (t) => (
+              key: 'installed', header: t('Installed'), cellClass: 'whitespace-nowrap',
+              render: (row) => (
                 <div>
-                  <span className="font-medium text-slate-800">{t.installed_on ? fmtDate(t.installed_on) : '—'}</span>
-                  {t.installed_odometer != null && <div className="text-xs text-slate-400">{num(t.installed_odometer)} km</div>}
+                  <span className="font-medium text-slate-800">{row.installed_on ? fmtDate(row.installed_on) : '—'}</span>
+                  {row.installed_odometer != null && <div className="text-xs text-slate-400">{num(row.installed_odometer)} km</div>}
                 </div>
               ),
             },
             {
-              key: 'brand', header: 'Brand / Item',
-              render: (t) => (
+              key: 'brand', header: t('Brand / Item'),
+              render: (row) => (
                 <div className="min-w-0">
-                  <span className="font-medium text-slate-800">{t.brand || t.description || '—'}</span>
+                  <span className="font-medium text-slate-800">{row.brand || row.description || '—'}</span>
                   <div className="text-xs text-slate-400">
-                    {t.quantity > 1 && <span>×{num(t.quantity)} </span>}
-                    {t.part_number && <span className="font-mono">{t.part_number}</span>}
+                    {row.quantity > 1 && <span>×{num(row.quantity)} </span>}
+                    {row.part_number && <span className="font-mono">{row.part_number}</span>}
                   </div>
                 </div>
               ),
             },
             {
-              key: 'dot', header: 'DOT', tooltip: 'Manufacture code (week + year). Age matters — rubber perishes around 6 years old regardless of tread.',
-              render: (t) => {
-                if (!t.dot) return <span className="text-slate-300">—</span>;
-                const age = dotAgeYears(t.dot);
+              key: 'dot', header: 'DOT', tooltip: t('Manufacture code (week + year). Age matters — rubber perishes around 6 years old regardless of tread.'),
+              render: (row) => {
+                if (!row.dot) return <span className="text-slate-300">—</span>;
+                const age = dotAgeYears(row.dot);
                 return (
                   <div>
-                    <span className="font-mono text-slate-700">{t.dot}</span>
+                    <span className="font-mono text-slate-700">{row.dot}</span>
                     {age != null && (
-                      <div className={`text-xs ${age >= 6 ? 'font-semibold text-red-500' : 'text-slate-400'}`}>{age.toFixed(1)} yr{age >= 6 ? ' · aged' : ''}</div>
+                      <div className={`text-xs ${age >= 6 ? 'font-semibold text-red-500' : 'text-slate-400'}`}>
+                        {age >= 6 ? t('{years} yr · aged', { years: age.toFixed(1) }) : t('{years} yr', { years: age.toFixed(1) })}
+                      </div>
                     )}
                   </div>
                 );
               },
             },
             {
-              key: 'tread', header: 'Tread', align: 'center',
-              tooltip: 'Remaining tread depth. Under 1.6 mm is below the legal minimum; under 3 mm, plan a replacement.',
-              render: (t) => (t.tread_mm == null
+              key: 'tread', header: t('Tread'), align: 'center',
+              tooltip: t('Remaining tread depth. Under 1.6 mm is below the legal minimum; under 3 mm, plan a replacement.'),
+              render: (row) => (row.tread_mm == null
                 ? <span className="text-slate-300">—</span>
-                : <Badge tone={treadTone(t.tread_mm)}>{t.tread_mm} mm</Badge>),
+                : <Badge tone={treadTone(row.tread_mm)}>{row.tread_mm} mm</Badge>),
             },
             {
-              key: 'warranty', header: 'Warranty',
-              render: (t) => {
-                if (!t.warranty_until) return <span className="text-slate-300">—</span>;
-                const active = new Date(t.warranty_until) >= new Date(new Date().toDateString());
+              key: 'warranty', header: t('Warranty'),
+              render: (row) => {
+                if (!row.warranty_until) return <span className="text-slate-300">—</span>;
+                const active = new Date(row.warranty_until) >= new Date(new Date().toDateString());
                 return active
-                  ? <Badge tone="green">until {fmtDate(t.warranty_until)}</Badge>
-                  : <span className="text-xs text-slate-400">expired {fmtDate(t.warranty_until)}</span>;
+                  ? <Badge tone="green">{t('until {date}', { date: fmtDate(row.warranty_until) })}</Badge>
+                  : <span className="text-xs text-slate-400">{t('expired {date}', { date: fmtDate(row.warranty_until) })}</span>;
               },
             },
-            { key: 'garage', header: 'Garage', cellClass: 'text-slate-500', render: (t) => t.garage || '—' },
+            { key: 'garage', header: t('Garage'), cellClass: 'text-slate-500', render: (row) => row.garage || '—' },
             ...(SHOW_FINANCIALS ? [{
-              key: 'cost', header: 'Cost', align: 'right',
+              key: 'cost', header: t('Cost'), align: 'right',
               cellClass: 'tabular-nums text-slate-600',
-              render: (t) => (Number(t.cost) > 0 ? aed2(t.cost) : '—'),
+              render: (row) => (Number(row.cost) > 0 ? aed2(row.cost) : '—'),
             }] : []),
           ]}
         />

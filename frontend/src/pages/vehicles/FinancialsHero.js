@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useI18n } from '../../i18n/I18nContext';
 import { useCountUp } from '../../components/ui/Gauge';
 import { ChartTooltip } from '../../components/ui/Tooltip';
 import { palette } from '../../components/ui/chartUtils';
@@ -17,16 +18,18 @@ import { aed, aed2, fmtDate } from '../../lib/format';
  */
 
 // Each cost bucket → its donut colour + where "the raw records" live (for the click-through).
-const SEGMENTS = [
-  { key: 'acquisition', label: 'Acquisition', color: 'slate', drill: 'purchase details' },
-  { key: 'maintenance', label: 'Maintenance', color: 'amber', drill: 'maintenance visits' },
-  { key: 'operating',   label: 'Operating',   color: 'cyan',  drill: 'contract history' },
+// Built from the translator so both the legend and the drill wording follow the active language.
+const buildSegments = (t) => [
+  { key: 'acquisition', label: t('Acquisition'), color: 'slate', drill: t('purchase details') },
+  { key: 'maintenance', label: t('Maintenance'), color: 'amber', drill: t('maintenance visits') },
+  { key: 'operating',   label: t('Operating'),   color: 'cyan',  drill: t('contract history') },
 ];
 
 let RID = 0; // unique gradient ids so multiple rings never collide
 
 // ── ROI ring — the gross-revenue-÷-cost multiplier as a filling arc (full = fully recovered) ──
 function RoiRing({ recovery }) {
+  const { t } = useI18n();
   const size = 176, stroke = 15;
   const r = (size - stroke) / 2;
   const circ = 2 * Math.PI * r;
@@ -60,7 +63,7 @@ function RoiRing({ recovery }) {
         <span className={`font-display text-4xl font-bold tracking-tight tabular-nums ${over ? 'text-emerald-600' : 'text-amber-600'}`}>
           {recovery != null ? `${display.toFixed(1)}×` : '—'}
         </span>
-        <span className="mt-0.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">earned back</span>
+        <span className="mt-0.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">{t('earned back')}</span>
       </div>
     </div>
   );
@@ -68,6 +71,7 @@ function RoiRing({ recovery }) {
 
 // ── Interactive cost-composition donut — hover tooltip, dim-others highlight, click to drill ──
 function CostDonut({ segments, total, onDrill }) {
+  const { t } = useI18n();
   const size = 208, stroke = 26;
   const r = (size - stroke) / 2;
   const circ = 2 * Math.PI * r;
@@ -96,7 +100,7 @@ function CostDonut({ segments, total, onDrill }) {
         <div>
           <div className="text-[10px] font-semibold uppercase tracking-wide text-white/60">{a.label}</div>
           <div className="mt-0.5 font-bold tabular-nums">{aed2(a.value)}</div>
-          <div className="tabular-nums text-white/70">{Math.round(a.frac * 100)}% · click for {a.drill}</div>
+          <div className="tabular-nums text-white/70">{t('{pct}% · click for {target}', { pct: Math.round(a.frac * 100), target: a.drill })}</div>
         </div>
       ),
     });
@@ -121,7 +125,12 @@ function CostDonut({ segments, total, onDrill }) {
                 strokeDashoffset={-circ * a.offset * grow}
                 opacity={dim ? 0.35 : 1}
                 role="button" tabIndex={0}
-                aria-label={`${a.label}: ${aed2(a.value)}, ${Math.round(a.frac * 100)} percent — view ${a.drill}`}
+                aria-label={t('{label}: {amount}, {pct} percent — view {target}', {
+                  label: a.label,
+                  amount: aed2(a.value),
+                  pct: Math.round(a.frac * 100),
+                  target: a.drill,
+                })}
                 onMouseMove={showTip(a)}
                 onMouseLeave={clear}
                 onClick={() => onDrill?.(a.key)}
@@ -132,7 +141,7 @@ function CostDonut({ segments, total, onDrill }) {
           })}
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Total cost</span>
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{t('Total cost')}</span>
           <span className="font-display text-2xl font-bold tracking-tight tabular-nums text-slate-900">{aed(display)}</span>
         </div>
       </div>
@@ -154,7 +163,11 @@ function CostDonut({ segments, total, onDrill }) {
               <span className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: pal.from }} />
               <span className="min-w-0 flex-1">
                 <span className="block text-sm font-medium text-slate-700">{a.label}</span>
-                <span className="block text-[11px] text-slate-400">{Math.round(a.frac * 100)}% · view {a.drill} →</span>
+                <span className="block text-[11px] text-slate-400">
+                  {t('{pct}% · view {target}', { pct: Math.round(a.frac * 100), target: a.drill })}
+                  {' '}
+                  <span className="inline-block rtl:-scale-x-100">→</span>
+                </span>
               </span>
               <span className="text-sm font-bold tabular-nums text-slate-900">{aed2(a.value)}</span>
             </button>
@@ -167,6 +180,7 @@ function CostDonut({ segments, total, onDrill }) {
 }
 
 export default function FinancialsHero({ vehicle, stats, onDrill }) {
+  const { t } = useI18n();
   const v = vehicle || {};
   const bridge = stats?.profit_bridge || {};
 
@@ -180,63 +194,64 @@ export default function FinancialsHero({ vehicle, stats, onDrill }) {
   const tco = amounts.acquisition + amounts.maintenance + amounts.operating;
   const gross = Number(bridge.gross_revenue || 0);
   const recovery = tco > 0 ? gross / tco : null;
-  const segments = SEGMENTS.map((s) => ({ ...s, value: amounts[s.key] }));
+  const segments = buildSegments(t).map((s) => ({ ...s, value: amounts[s.key] }));
 
   return (
     <section className="overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-card">
       <div className="border-b border-slate-100 px-6 py-4">
-        <h3 className="text-base font-semibold text-slate-900">Financial Performance</h3>
-        <p className="mt-0.5 text-xs text-slate-400">Lifetime revenue vs. every cost this car has incurred.</p>
+        <h3 className="text-base font-semibold text-slate-900">{t('Financial Performance')}</h3>
+        <p className="mt-0.5 text-xs text-slate-400">{t('Lifetime revenue vs. every cost this car has incurred.')}</p>
       </div>
 
       {tco <= 0 ? (
         <p className="px-6 py-12 text-center text-sm text-slate-400">
-          No ownership costs on file yet — add a purchase price (FASTER Asset sheet) or maintenance to build the picture.
+          {t('No ownership costs on file yet — add a purchase price (FASTER Asset sheet) or maintenance to build the picture.')}
         </p>
       ) : (
         <div className="space-y-6 p-6 lg:space-y-8 lg:p-8">
           {/* Polished KPI tiles — the design-system MetricCard (label + info tip + value + delta) */}
           <MetricGrid cols={3}>
             <MetricCard
-              label="Total Cost of Ownership"
+              label={t('Total Cost of Ownership')}
               value={aed(tco)}
               tone="indigo"
               icon={<Icon.Cash className="h-5 w-5" />}
-              tooltip="Acquisition + lifetime maintenance + operating. Excludes VAT, insurance, financing & depreciation."
-              hint="Acquisition + maintenance + operating"
+              tooltip={t('Acquisition + lifetime maintenance + operating. Excludes VAT, insurance, financing & depreciation.')}
+              hint={t('Acquisition + maintenance + operating')}
             />
             <MetricCard
-              label="Gross Revenue"
+              label={t('Gross Revenue')}
               value={aed(gross)}
               tone="emerald"
               icon={<Icon.Chart className="h-5 w-5" />}
-              tooltip="Lifetime rental revenue, reverse-engineered from OfficeManager billing via RealProfitService."
+              tooltip={t('Lifetime rental revenue, reverse-engineered from OfficeManager billing via RealProfitService.')}
               delta={recovery != null ? `${recovery.toFixed(1)}×` : undefined}
               trend={recovery != null && recovery >= 1 ? 'up' : 'down'}
-              hint="earned vs. total cost"
+              hint={t('earned vs. total cost')}
             />
             <MetricCard
-              label="Purchase Price"
+              label={t('Purchase Price')}
               value={amounts.acquisition > 0 ? aed(amounts.acquisition) : '—'}
               tone="slate"
               icon={<Icon.Invoice className="h-5 w-5" />}
-              tooltip="From the FASTER Asset sheet — the single source of truth for purchase price & date."
-              hint={v.purchase_date ? `Purchased ${fmtDate(v.purchase_date)}` : 'Purchase date not on file'}
+              tooltip={t('From the FASTER Asset sheet — the single source of truth for purchase price & date.')}
+              hint={v.purchase_date ? t('Purchased {date}', { date: fmtDate(v.purchase_date) }) : t('Purchase date not on file')}
             />
           </MetricGrid>
 
           {/* Visuals — ROI ring + interactive cost-composition donut */}
           <div className="grid gap-6 lg:grid-cols-[0.85fr_1.15fr] lg:gap-8">
             <div className="flex flex-col items-center justify-center gap-4 rounded-2xl bg-gradient-to-br from-emerald-50/70 via-white to-white p-6 ring-1 ring-emerald-100/70">
-              <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700/70">Return on investment</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700/70">{t('Return on investment')}</p>
               <RoiRing recovery={recovery} />
-              <p className="text-center text-xs text-slate-500">
-                Gross revenue is <span className={`font-bold ${recovery >= 1 ? 'text-emerald-600' : 'text-amber-600'}`}>{recovery != null ? `${recovery.toFixed(1)}×` : '—'}</span> the total cost
+              {/* One sentence, one key — Arabic puts the multiplier elsewhere in the clause. */}
+              <p className={`text-center text-xs font-medium ${recovery >= 1 ? 'text-emerald-600' : 'text-amber-600'}`}>
+                {t('Gross revenue is {multiple} the total cost', { multiple: recovery != null ? `${recovery.toFixed(1)}×` : '—' })}
               </p>
             </div>
 
             <div className="flex flex-col justify-center">
-              <p className="mb-4 text-xs font-semibold uppercase tracking-wide text-slate-400">Cost composition</p>
+              <p className="mb-4 text-xs font-semibold uppercase tracking-wide text-slate-400">{t('Cost composition')}</p>
               <CostDonut segments={segments} total={tco} onDrill={onDrill} />
             </div>
           </div>
@@ -245,7 +260,9 @@ export default function FinancialsHero({ vehicle, stats, onDrill }) {
 
       <div className="border-t border-slate-100 bg-slate-50/40 px-6 py-2.5">
         <p className="text-[11px] leading-relaxed text-slate-400">
-          <span className="font-semibold text-slate-500">Data origin</span> · Source: Ledger / Contracts via RealProfitService · purchase price from the FASTER Asset sheet. Excludes VAT, insurance, financing &amp; depreciation.
+          <span className="font-semibold text-slate-500">{t('Data origin')}</span>
+          {' · '}
+          {t('Source: Ledger / Contracts via RealProfitService · purchase price from the FASTER Asset sheet. Excludes VAT, insurance, financing & depreciation.')}
         </p>
       </div>
     </section>

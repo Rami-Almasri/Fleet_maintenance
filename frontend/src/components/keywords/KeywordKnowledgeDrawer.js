@@ -446,7 +446,7 @@ export default function KeywordKnowledgeDrawer({ keywordId, open, onClose, canMa
                       {r.status === 'success' && <span>+{r.terms_added} / ~{r.terms_updated}</span>}
                       {r.error && <span className="text-red-600">{r.error}</span>}
                       <span className="ms-auto text-slate-400">
-                        {r.by ? `${r.by} · ` : ''}{new Date(r.created_at).toLocaleString()}
+                        {r.by ? `${r.by} · ` : ''}{new Date(r.created_at).toLocaleString(lang === 'ar' ? 'ar-AE-u-ca-gregory-nu-latn' : undefined)}
                       </span>
                     </div>
                   ))}
@@ -495,8 +495,8 @@ function TermChip({ term, canManage, onEdit, onDelete, t }) {
       <span className="text-slate-400">{term.confidence}%</span>
       {canManage && (
         <span className="hidden gap-1 group-hover:inline-flex">
-          <button type="button" onClick={onEdit} className="text-slate-400 hover:text-indigo-600" aria-label="edit">✎</button>
-          <button type="button" onClick={onDelete} className="text-slate-400 hover:text-red-600" aria-label="delete">×</button>
+          <button type="button" onClick={onEdit} className="text-slate-400 hover:text-indigo-600" aria-label={t('Edit')}>✎</button>
+          <button type="button" onClick={onDelete} className="text-slate-400 hover:text-red-600" aria-label={t('Delete')}>×</button>
         </span>
       )}
     </span>

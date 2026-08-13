@@ -1,6 +1,7 @@
 import { Outlet, useLocation, useNavigate, Link } from 'react-router-dom';
 import { usePermissions } from '../hooks/usePermissions';
 import { pathBlockedForRoles } from '../config/access';
+import { useI18n } from '../i18n/I18nContext';
 
 /**
  * Route-level permission gate. Use as a layout route around pages that need a
@@ -21,6 +22,7 @@ import { pathBlockedForRoles } from '../config/access';
  * and top bar intact so the user can simply navigate somewhere they *can* go.
  */
 function Forbidden() {
+  const { t } = useI18n();
   const location = useLocation();
   const navigate = useNavigate();
   return (
@@ -32,10 +34,9 @@ function Forbidden() {
               <path d="M12 15v2m-6 4h12a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2zM8 11V7a4 4 0 1 1 8 0v4" />
             </svg>
           </div>
-          <h1 className="font-display text-lg font-semibold text-slate-900">You don’t have access to this page</h1>
+          <h1 className="font-display text-lg font-semibold text-slate-900">{t('You don’t have access to this page')}</h1>
           <p className="mt-1 max-w-sm text-sm text-slate-500">
-            Your account isn’t permitted to view <span className="font-medium text-slate-600">{location.pathname}</span>.
-            Contact an administrator if you think this is a mistake.
+            {t('Your account isn’t permitted to view {path}. Contact an administrator if you think this is a mistake.', { path: location.pathname })}
           </p>
           <div className="mt-5 flex items-center gap-3">
             <button
@@ -43,14 +44,14 @@ function Forbidden() {
               onClick={() => navigate(-1)}
               className="focus-ring-self inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
             >
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6" /></svg>
-              Go back
+              <svg className="h-4 w-4 rtl:-scale-x-100" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6" /></svg>
+              {t('Go back')}
             </button>
             <Link
               to="/notifications"
               className="text-sm font-semibold text-indigo-600 transition hover:text-indigo-700"
             >
-              Go to notifications
+              {t('Go to notifications')}
             </Link>
           </div>
         </div>

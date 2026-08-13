@@ -94,6 +94,16 @@ class OdometerChangeRequestController extends Controller
         'reinspect_odometer' => 'Re-Inspection',          // closing re-inspection reading
     ];
 
+    /**
+     * Human labels for the odometer_flags keys a WORKFLOW_STAGE deviation can be raised at — the three
+     * at-our-park spot-checks where the car is not supposed to have moved since the previous reading.
+     */
+    private const DEVIATION_STAGE_LABELS = [
+        'test_drive' => 'Inspector’s start-of-drive reading',
+        'dispatch'   => 'Driver collecting the car for the garage',
+        'reinspect'  => 'Final QA sign-off',
+    ];
+
     /** Flatten one ticket into its ordered stage-odometer trail (only the stages that were captured). */
     private function presentStages(\App\Models\Maintenance $t): array
     {
@@ -154,7 +164,19 @@ class OdometerChangeRequestController extends Controller
             $vehicle = $odometerRequest->vehicle;
             $before  = $vehicle?->odometer;
 
-            if ($vehicle) {
+            // A workflow-stage deviation was already accepted at capture — the reading is on the ticket and
+            // on the car. Approving it CONFIRMS the movement was real; re-writing the odometer here would be
+            // wrong, because the car may legitimately have travelled further since (a stale value would
+            // overwrite a newer one). So the decision is stamped and nothing is touched.
+            // ...unless the capture never reached the car. A BACKWARD test-drive reading is accepted and
+            // filed, but the forward-only heal leaves the odometer where it was — so for those rows
+            // approving is the act that actually corrects the mileage down. awaitsApplyToVehicle() tells
+            // the two apart and refuses to touch a car a later stage has already moved on.
+            // Decided BEFORE the write — afterwards the car sits at the requested value and the question
+            // answers itself "no".
+            $willApply = $vehicle && $odometerRequest->awaitsApplyToVehicle();
+
+            if ($willApply) {
                 $vehicle->update([
                     'odometer'           => $odometerRequest->requested_odometer,
                     'odometer_source'    => 'manual',
@@ -193,7 +215,7 @@ class OdometerChangeRequestController extends Controller
 
             return ResponseHelper::SuccessResponse(
                 $this->present($odometerRequest->fresh('vehicle')),
-                'Odometer change approved and applied',
+                $willApply ? 'Odometer change approved and applied' : 'Stage reading confirmed',
                 200
             );
         } catch (\Exception $e) {
@@ -201,7 +223,15 @@ class OdometerChangeRequestController extends Controller
         }
     }
 
-    /** Reject a pending request: the vehicle's odometer is left exactly as it was. */
+    /**
+     * Reject a pending request.
+     *
+     * For a MANUAL edit the reading was never applied, so rejecting is a no-op on the car — it simply stays
+     * as it was. For a WORKFLOW-STAGE deviation the reading WAS applied at capture, so "reject" means the
+     * supervisor is calling it a mis-read: the car is wound back to the reading it had before that stage
+     * (only if it still sits at the disputed value — if a later stage has since moved it on, winding back
+     * would corrupt a newer reading, so we leave it and the decision stands as a flag only).
+     */
     public function reject(Request $request, OdometerChangeRequest $odometerRequest)
     {
         try {
@@ -209,6 +239,40 @@ class OdometerChangeRequestController extends Controller
 
             if ($odometerRequest->status !== OdometerChangeRequest::STATUS_PENDING) {
                 return ResponseHelper::FailureResponse(null, 'This request has already been reviewed.', 409);
+            }
+
+            $vehicle = $odometerRequest->vehicle;
+            if ($odometerRequest->isAlreadyApplied()
+                && $vehicle
+                && $odometerRequest->previous_odometer !== null
+                && (int) $vehicle->odometer === (int) $odometerRequest->requested_odometer) {
+                $vehicle->update([
+                    'odometer'           => $odometerRequest->previous_odometer,
+                    'odometer_source'    => 'manual',
+                    'odometer_source_at' => now(),
+                ]);
+
+                try {
+                    app(VehicleLogService::class)->recordVehicle(
+                        $vehicle,
+                        \App\Models\VehicleLogEvent::EVENT_ODOMETER_CORRECTED,
+                        $request->user(),
+                        [
+                            'description' => 'Stage reading rejected — odometer wound back '
+                                . $odometerRequest->requested_odometer . ' → ' . $odometerRequest->previous_odometer . ' km',
+                            'meta' => [
+                                'from'    => $odometerRequest->requested_odometer,
+                                'to'      => $odometerRequest->previous_odometer,
+                                'reason'  => $data['note'] ?? 'Rejected as a mis-read stage capture',
+                                'request' => $odometerRequest->id,
+                                'ticket'  => $odometerRequest->maintenance_id,
+                                'stage'   => $odometerRequest->stage_key,
+                            ],
+                        ],
+                    );
+                } catch (\Throwable $e) {
+                    // the correction itself already landed; the event trail is a nice-to-have
+                }
             }
 
             $odometerRequest->update([
@@ -237,6 +301,18 @@ class OdometerChangeRequestController extends Controller
         return [
             'id'                 => $r->id,
             'vehicle_id'         => $r->vehicle_id,
+            // Where it came from — and therefore what a decision here actually does. A manual edit is HELD
+            // pending; a workflow-stage capture is ALREADY recorded and is being audited after the fact.
+            'source'             => $r->source,
+            'already_applied'    => $r->isAlreadyApplied(),
+            // ...but "came from a stage capture" no longer means "is on the car". A BACKWARD reading at
+            // "Needs Test Drive" is accepted and filed while the forward-only heal leaves the odometer
+            // untouched, so for those rows approving is what actually corrects the mileage. The board
+            // must word its buttons from THIS flag, not from the source alone.
+            'awaiting_apply'     => $r->awaitsApplyToVehicle(),
+            'maintenance_id'     => $r->maintenance_id,
+            'stage_key'          => $r->stage_key,
+            'stage_label'        => $r->stage_key ? (self::DEVIATION_STAGE_LABELS[$r->stage_key] ?? ucfirst(str_replace('_', ' ', $r->stage_key))) : null,
             'plate_no'           => $v?->plate_no,
             'vin'                => $v?->vin,
             'make'               => $v?->make,

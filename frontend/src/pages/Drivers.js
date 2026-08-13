@@ -13,6 +13,7 @@ import { Select } from '../components/ui/Field';
 import { usePageStat } from '../components/PageStat';
 import DriversAnalytics from '../components/analytics/DriversAnalytics';
 import { fmtDate, num, dayBadge } from '../lib/format';
+import { useI18n } from '../i18n/I18nContext';
 import DriverForm, { DRIVER_STATUSES, driverToForm, cleanPayload } from './drivers/DriverForm';
 
 const PAGE_SIZE = 15;
@@ -27,9 +28,12 @@ const daysToExpiry = (d) => {
 };
 
 export default function Drivers() {
+  const { t } = useI18n();
   const toast = useToast();
   const { can } = usePermissions();
   const canManage = can('drivers.manage');
+  // Enum VALUES stay English on the wire; only the words the user reads are translated.
+  const statusLabel = (s) => (s === 'active' ? t('Active') : s === 'suspended' ? t('Suspended') : s || '—');
 
   const fetcher = useCallback(async () => {
     const { data } = await api.get('/Driver');
@@ -65,9 +69,9 @@ export default function Drivers() {
   const activeCount = useMemo(() => list.filter((d) => d.status === 'active').length, [list]);
   usePageStat({
     percent: list.length ? (activeCount / list.length) * 100 : null,
-    label: 'Active',
+    label: t('Active'),
     color: 'emerald',
-    hint: `${activeCount} of ${list.length} drivers active`,
+    hint: t('{active} of {total} drivers active', { active: activeCount, total: list.length }),
   });
 
   const pageCount = Math.ceil(filtered.length / PAGE_SIZE) || 1;
@@ -97,10 +101,10 @@ export default function Drivers() {
       const payload = cleanPayload(form);
       if (editing) {
         await api.post(`/Driver/${editing.id}`, payload);
-        toast.success('Driver updated');
+        toast.success(t('Driver updated'));
       } else {
         await api.post('/Driver', payload);
-        toast.success('Driver created');
+        toast.success(t('Driver created'));
       }
       setModalOpen(false);
       reload();
@@ -108,9 +112,9 @@ export default function Drivers() {
       const res = err.response?.data;
       if (res?.errors) {
         setFormErrors(res.errors);
-        toast.error('Please fix the highlighted fields');
+        toast.error(t('Please fix the highlighted fields'));
       } else {
-        toast.error(res?.message || res?.msg || 'Could not save driver');
+        toast.error(res?.message || res?.msg || t('Could not save driver'));
       }
     } finally {
       setSaving(false);
@@ -121,11 +125,11 @@ export default function Drivers() {
     setDeleting(true);
     try {
       await api.delete(`/Driver/${toDelete.id}`);
-      toast.success('Driver deleted');
+      toast.success(t('Driver deleted'));
       setToDelete(null);
       reload();
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Could not delete driver');
+      toast.error(err.response?.data?.message || t('Could not delete driver'));
     } finally {
       setDeleting(false);
     }
@@ -135,15 +139,15 @@ export default function Drivers() {
     <div className="py-8">
       <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
         <PageHeader
-          title="Drivers"
-          subtitle={loading ? 'Loading…' : `${num(filtered.length)} of ${num(list.length)} drivers`}
+          title={t('Drivers')}
+          subtitle={loading ? t('Loading…') : t('{shown} of {total} drivers', { shown: num(filtered.length), total: num(list.length) })}
         >
           {canManage && (
             <Button onClick={openCreate}>
               <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M12 5v14M5 12h14" />
               </svg>
-              Add Driver
+              {t('Add Driver')}
             </Button>
           )}
         </PageHeader>
@@ -153,12 +157,12 @@ export default function Drivers() {
             className="flex-1"
             value={search}
             onChange={(v) => resetFilters(() => setSearch(v))}
-            placeholder="Search name, licence or phone…"
+            placeholder={t('Search name, licence or phone…')}
           />
           <Select className="sm:w-44" value={status} onChange={(e) => resetFilters(() => setStatus(e.target.value))}>
-            <option value="">All statuses</option>
+            <option value="">{t('All statuses')}</option>
             {DRIVER_STATUSES.map((s) => (
-              <option key={s} value={s}>{s}</option>
+              <option key={s} value={s}>{statusLabel(s)}</option>
             ))}
           </Select>
         </div>
@@ -175,12 +179,12 @@ export default function Drivers() {
             <table className="min-w-full border-separate border-spacing-0 text-sm stagger-rows">
               <thead className="bg-slate-50/90">
                 <tr className="text-start text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Name</th>
-                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Phone</th>
-                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Licence No.</th>
-                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Licence Expiry</th>
-                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">Status</th>
-                  {canManage && <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-end">Actions</th>}
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">{t('Name')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">{t('Phone')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">{t('Licence No.')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">{t('Licence Expiry')}</th>
+                  <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3">{t('Status')}</th>
+                  {canManage && <th className="whitespace-nowrap border-b border-slate-200 px-5 py-3 text-end">{t('Actions')}</th>}
                 </tr>
               </thead>
 
@@ -203,16 +207,16 @@ export default function Drivers() {
                           {d.license_expiry ? (
                             <span className="inline-flex items-center gap-2">
                               {fmtDate(d.license_expiry)}
-                              {exp && <Badge tone={exp.tone}>{days < 0 ? 'expired' : `${days}d`}</Badge>}
+                              {exp && <Badge tone={exp.tone}>{days < 0 ? t('expired') : `${days}d`}</Badge>}
                             </span>
                           ) : <span className="text-slate-300">—</span>}
                         </td>
-                        <td className="border-b border-slate-100 px-5 py-3.5"><Badge tone={STATUS_TONE[d.status] || 'gray'}>{d.status || '—'}</Badge></td>
+                        <td className="border-b border-slate-100 px-5 py-3.5"><Badge tone={STATUS_TONE[d.status] || 'gray'}>{statusLabel(d.status)}</Badge></td>
                         {canManage && (
                           <td className="border-b border-slate-100 px-5 py-3.5">
                             <div className="flex justify-end gap-2">
-                              <Button variant="secondary" size="sm" onClick={() => openEdit(d)}>Edit</Button>
-                              <Button variant="ghost" size="sm" className="text-red-600 hover:bg-red-50" onClick={() => setToDelete(d)}>Delete</Button>
+                              <Button variant="secondary" size="sm" onClick={() => openEdit(d)}>{t('Edit')}</Button>
+                              <Button variant="ghost" size="sm" className="text-red-600 hover:bg-red-50" onClick={() => setToDelete(d)}>{t('Delete')}</Button>
                             </div>
                           </td>
                         )}
@@ -224,7 +228,7 @@ export default function Drivers() {
             </table>
 
             {!loading && filtered.length === 0 && (
-              <EmptyState title="No drivers found" message={list.length === 0 ? 'Add your first driver to get started.' : 'Try a different search or filter.'} />
+              <EmptyState title={t('No drivers found')} message={list.length === 0 ? t('Add your first driver to get started.') : t('Try a different search or filter.')} />
             )}
           </div>
 
@@ -238,13 +242,13 @@ export default function Drivers() {
       <Modal
         open={modalOpen}
         onClose={() => !saving && setModalOpen(false)}
-        title={editing ? 'Edit Driver' : 'Add Driver'}
-        subtitle={editing ? editing.name : 'Enter the driver details'}
+        title={editing ? t('Edit Driver') : t('Add Driver')}
+        subtitle={editing ? editing.name : t('Enter the driver details')}
         size="lg"
         footer={
           <>
-            <Button variant="secondary" onClick={() => setModalOpen(false)} disabled={saving}>Cancel</Button>
-            <Button onClick={save} loading={saving}>{editing ? 'Save Changes' : 'Create Driver'}</Button>
+            <Button variant="secondary" onClick={() => setModalOpen(false)} disabled={saving}>{t('Cancel')}</Button>
+            <Button onClick={save} loading={saving}>{editing ? t('Save Changes') : t('Create Driver')}</Button>
           </>
         }
       >
@@ -257,9 +261,9 @@ export default function Drivers() {
         onClose={() => !deleting && setToDelete(null)}
         onConfirm={confirmDelete}
         loading={deleting}
-        title="Delete driver?"
-        confirmText="Delete"
-        message={toDelete ? `This will remove ${toDelete.name || 'this driver'}. This can be undone via the database (soft delete).` : ''}
+        title={t('Delete driver?')}
+        confirmText={t('Delete')}
+        message={toDelete ? t('This will remove {name}. This can be undone via the database (soft delete).', { name: toDelete.name || t('this driver') }) : ''}
       />
     </div>
   );

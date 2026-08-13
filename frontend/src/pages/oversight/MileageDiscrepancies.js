@@ -15,14 +15,20 @@ import { useI18n } from '../../i18n/I18nContext';
 import Icon from '../../components/ui/Icon';
 import { Skeleton } from '../../components/ui/Skeleton';
 
-const fmtKm = (n) => (n == null ? '—' : `${Number(n).toLocaleString()} km`);
-const fmtNum = (n) => (n == null ? '—' : Number(n).toLocaleString());
-const fmtDate = (iso) => (iso ? new Date(iso).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
-const fmtDateTime = (iso) => (iso ? new Date(iso).toLocaleString(undefined, { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—');
-const fmtTime = (iso) => (iso ? new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : '');
+// Numbers and dates stay Gregorian with Latin digits under Arabic — Hijri dates and Arabic-Indic
+// digits would be wrong here and would break the tabular-nums columns.
+const numLocale = (lang) => (lang === 'ar' ? 'ar-AE-u-nu-latn' : undefined);
+const dateLocale = (lang) => (lang === 'ar' ? 'ar-AE-u-ca-gregory-nu-latn' : undefined);
+
+const fmtKm = (n, lang) => (n == null ? '—' : `${Number(n).toLocaleString(numLocale(lang))} km`);
+const fmtNum = (n, lang) => (n == null ? '—' : Number(n).toLocaleString(numLocale(lang)));
+const fmtDate = (iso, lang) => (iso ? new Date(iso).toLocaleDateString(dateLocale(lang), { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
+const fmtDateTime = (iso, lang) => (iso ? new Date(iso).toLocaleString(dateLocale(lang), { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—');
+const fmtTime = (iso, lang) => (iso ? new Date(iso).toLocaleTimeString(dateLocale(lang), { hour: '2-digit', minute: '2-digit' }) : '');
 
 // The From → To node labels for each captured stage, so a single row reads as a workflow transition
 // (Inspection ↓ Test Drive) instead of one flat label. Falls back to the raw stage_label.
+// The English here is the phrase key; flowOf() resolves it through the translator.
 const STAGE_FLOW = {
   test_drive: { from: 'Inspection',   to: 'Test Drive' },
   report:     { from: 'Test Drive',   to: 'Diagnosis' },
@@ -95,14 +101,15 @@ function sourceOf(r) {
   }
 }
 
-function flowOf(r) {
-  return STAGE_FLOW[r.stage_key] || { from: null, to: r.stage_label };
+function flowOf(r, t) {
+  const flow = STAGE_FLOW[r.stage_key];
+  return flow ? { from: t(flow.from), to: t(flow.to) } : { from: null, to: r.stage_label };
 }
 
 const STATUS_OPTIONS = ['accepted', 'pending', 'reviewed', 'rejected'];
 
 export default function MileageDiscrepancies() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [lightbox, setLightbox] = useState(null);
@@ -182,7 +189,7 @@ export default function MileageDiscrepancies() {
         {/* Header */}
         <div>
           <Link to="/apps/reports" className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-400 hover:text-slate-600">
-            <Icon.ArrowRight className="h-3 w-3 rotate-180" /> Reports
+            <Icon.ArrowRight className="h-3 w-3 rotate-180 rtl:-scale-x-100" /> {t('Reports')}
           </Link>
           <h1 className="font-display text-2xl font-bold tracking-tight text-slate-900">{t('oversight.mileage.centerTitle')}</h1>
           <p className="mt-1 max-w-3xl text-sm text-slate-500">{t('oversight.mileage.subtitle')}</p>
@@ -197,16 +204,16 @@ export default function MileageDiscrepancies() {
           <>
             {/* KPI cards */}
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <Kpi icon="Flag" label={t('oversight.mileage.kpiFlagged')} value={fmtNum(kpis.flagged ?? data?.total)} />
-              <Kpi icon="XCircle" label={t('oversight.mileage.kpiBlocked')} value={fmtNum(kpis.blocked ?? data?.blocked)} tone={(kpis.blocked ?? data?.blocked) ? 'red' : 'slate'} />
+              <Kpi icon="Flag" label={t('oversight.mileage.kpiFlagged')} value={fmtNum(kpis.flagged ?? data?.total, lang)} />
+              <Kpi icon="XCircle" label={t('oversight.mileage.kpiBlocked')} value={fmtNum(kpis.blocked ?? data?.blocked, lang)} tone={(kpis.blocked ?? data?.blocked) ? 'red' : 'slate'} />
               <Kpi
                 icon="TrendUp"
                 label={t('oversight.mileage.kpiLargest')}
-                value={kpis.largest_jump ? `${kpis.largest_jump.delta > 0 ? '+' : ''}${fmtNum(kpis.largest_jump.delta)}` : '—'}
+                value={kpis.largest_jump ? `${kpis.largest_jump.delta > 0 ? '+' : ''}${fmtNum(kpis.largest_jump.delta, lang)}` : '—'}
                 sub={kpis.largest_jump?.plate_no}
                 tone={kpis.largest_jump && Math.abs(kpis.largest_jump.delta) > 100 ? 'amber' : 'slate'}
               />
-              <Kpi icon="Gauge" label={t('oversight.mileage.kpiAvg')} value={kpis.avg_deviation != null ? `${fmtNum(kpis.avg_deviation)} km` : '—'} />
+              <Kpi icon="Gauge" label={t('oversight.mileage.kpiAvg')} value={kpis.avg_deviation != null ? `${fmtNum(kpis.avg_deviation, lang)} km` : '—'} />
             </div>
 
             {/* Hotspots */}
@@ -252,7 +259,7 @@ export default function MileageDiscrepancies() {
                 <Select label={t('oversight.mileage.fVehicle')} value={fVehicle} onChange={setFVehicle}
                   options={[['all', t('oversight.mileage.allVehicles')], ...options.vehicles.map((v) => [v, v])]} />
                 <Select label={t('oversight.mileage.fStage')} value={fStage} onChange={setFStage}
-                  options={[['all', t('oversight.mileage.allStages')], ...options.stages.map((s) => [s, (STAGE_FLOW[s]?.to || s)])]} />
+                  options={[['all', t('oversight.mileage.allStages')], ...options.stages.map((s) => [s, (STAGE_FLOW[s] ? t(STAGE_FLOW[s].to) : s)])]} />
                 <Select label={t('oversight.mileage.fType')} value={fType} onChange={setFType}
                   options={[['all', t('oversight.mileage.allTypes')], ...options.types.map((k) => [k, t(`oversight.mileage.kind${k.charAt(0).toUpperCase()}${k.slice(1).replace(/_(\w)/g, (m, c) => c.toUpperCase())}`)])]} />
                 <Select label={t('oversight.mileage.fEnteredBy')} value={fPerson} onChange={setFPerson}
@@ -284,11 +291,11 @@ export default function MileageDiscrepancies() {
               <>
               <AuditAnalytics
                 rows={rows}
-                title="Cars with the largest odometer drift"
-                subtitle="Biggest single discrepancy per car — a large gap on one car is a reading error, the same car repeatedly is a process problem"
+                title={t('Cars with the largest odometer drift')}
+                subtitle={t('Biggest single discrepancy per car — a large gap on one car is a reading error, the same car repeatedly is a process problem')}
                 magnitude={(r) => r.delta}
-                magnitudeLabel="Largest gap"
-                magnitudeFormat={(n) => `${Math.round(n).toLocaleString()} km`}
+                magnitudeLabel={t('Largest gap')}
+                magnitudeFormat={(n) => `${Math.round(n).toLocaleString(numLocale(lang))} km`}
                 color="red"
               />
               <div className="overflow-x-auto rounded-2xl border border-slate-200/60 bg-white shadow-soft">
@@ -312,7 +319,7 @@ export default function MileageDiscrepancies() {
                       const reason = reasonOf(r);
                       const status = statusOf(r);
                       const source = sourceOf(r);
-                      const flow = flowOf(r);
+                      const flow = flowOf(r, t);
                       const RIco = Icon[reason.icon] || Icon.Info;
                       const SIco = Icon[source.icon] || Icon.Info;
                       return (
@@ -364,11 +371,11 @@ export default function MileageDiscrepancies() {
                               <>
                                 <p className="font-medium text-slate-700">{r.entered_by}</p>
                                 <p className="text-[11px] text-slate-400">
-                                  {r.entered_by_role || t('oversight.mileage.unknownRole')}{r.at ? ` · ${fmtTime(r.at)}` : ''}
+                                  {r.entered_by_role || t('oversight.mileage.unknownRole')}{r.at ? ` · ${fmtTime(r.at, lang)}` : ''}
                                 </p>
                               </>
                             ) : <span className="text-xs text-slate-300">{t('oversight.common.system')}</span>}
-                            <p className="text-[11px] text-slate-400">{fmtDate(r.at)}</p>
+                            <p className="text-[11px] text-slate-400">{fmtDate(r.at, lang)}</p>
                           </td>
                           {/* Status */}
                           <td className="border-b border-slate-100 px-4 py-3.5">
@@ -400,6 +407,7 @@ export default function MileageDiscrepancies() {
       {selected && (
         <InvestigationDrawer
           t={t}
+          lang={lang}
           row={selected}
           recurrence={perVehicle[selected.plate_no] || 1}
           onClose={() => setSelected(null)}
@@ -429,12 +437,12 @@ export default function MileageDiscrepancies() {
 }
 
 // ── Investigation drawer ──────────────────────────────────────────────────────────────────────────
-function InvestigationDrawer({ t, row, recurrence, onClose, onPhoto }) {
+function InvestigationDrawer({ t, lang, row, recurrence, onClose, onPhoto }) {
   const sev = SEVERITY[severityOf(row)];
   const reason = reasonOf(row);
   const status = statusOf(row);
   const source = sourceOf(row);
-  const flow = flowOf(row);
+  const flow = flowOf(row, t);
   const timeline = row.timeline || [];
   const activeKey = FLAG_TO_TIMELINE[row.stage_key];
 
@@ -490,7 +498,7 @@ function InvestigationDrawer({ t, row, recurrence, onClose, onPhoto }) {
               {row.entered_by && (
                 <Detail label={t('oversight.mileage.roleLabel')}>{row.entered_by_role || t('oversight.mileage.unknownRole')}</Detail>
               )}
-              <Detail label={t('oversight.mileage.approvalTime')}>{fmtDateTime(row.at)}</Detail>
+              <Detail label={t('oversight.mileage.approvalTime')}>{fmtDateTime(row.at, lang)}</Detail>
               {row.confirmed != null && (
                 <Detail label={t('oversight.mileage.confirmed')}>
                   <span className={row.confirmed ? 'text-emerald-600' : 'text-amber-600'}>
@@ -542,11 +550,11 @@ function InvestigationDrawer({ t, row, recurrence, onClose, onPhoto }) {
                       <div className={`flex-1 rounded-lg px-3 py-2 ${active ? 'bg-indigo-50 ring-1 ring-indigo-200' : ''}`}>
                         <div className="flex items-baseline justify-between gap-2">
                           <p className={`text-sm font-semibold ${active ? 'text-indigo-700' : 'text-slate-700'}`}>{s.label}</p>
-                          {s.at && <span className="shrink-0 text-[11px] text-slate-400">{fmtTime(s.at)}</span>}
+                          {s.at && <span className="shrink-0 text-[11px] text-slate-400">{fmtTime(s.at, lang)}</span>}
                         </div>
                         <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-slate-500">
                           {s.owner && <span>{s.owner}{s.role ? ` · ${s.role}` : ''}</span>}
-                          {s.odometer != null && <span className="font-mono font-semibold text-slate-600">{fmtKm(s.odometer)}</span>}
+                          {s.odometer != null && <span className="font-mono font-semibold text-slate-600">{fmtKm(s.odometer, lang)}</span>}
                         </div>
                         {active && <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-indigo-500">{t('oversight.mileage.thisReading')}</p>}
                       </div>
@@ -562,7 +570,7 @@ function InvestigationDrawer({ t, row, recurrence, onClose, onPhoto }) {
             to={`/maintenance-workflow/${row.ticket_id}`}
             className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-700"
           >
-            {t('oversight.mileage.openTicket')} <Icon.ArrowRight className="h-4 w-4" />
+            {t('oversight.mileage.openTicket')} <Icon.ArrowRight className="h-4 w-4 rtl:-scale-x-100" />
           </Link>
         </div>
       </div>
@@ -585,19 +593,19 @@ function Transition({ from, to, big }) {
 }
 
 function ReadingCompare({ r, compact }) {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const negative = r.delta != null && r.delta < 0;
   const blocked = r.outcome === 'blocked';
   if (compact) {
     return (
       <div className="text-end tabular-nums">
         <div className="flex items-center justify-end gap-1.5 text-xs text-slate-400">
-          <span>{fmtNum(r.previous)}</span>
-          <Icon.ArrowRight className="h-3 w-3" />
-          <span className={`font-semibold ${blocked ? 'text-red-600 line-through decoration-red-400' : 'text-slate-900'}`}>{fmtNum(r.reading)}</span>
+          <span>{fmtNum(r.previous, lang)}</span>
+          <Icon.ArrowRight className="h-3 w-3 rtl:-scale-x-100" />
+          <span className={`font-semibold ${blocked ? 'text-red-600 line-through decoration-red-400' : 'text-slate-900'}`}>{fmtNum(r.reading, lang)}</span>
         </div>
         <p className={`text-sm font-bold ${negative ? 'text-red-600' : 'text-slate-600'}`}>
-          {r.delta == null ? '—' : `${r.delta > 0 ? '+' : ''}${fmtNum(r.delta)} km`}
+          {r.delta == null ? '—' : `${r.delta > 0 ? '+' : ''}${fmtNum(r.delta, lang)} km`}
         </p>
       </div>
     );
@@ -606,17 +614,17 @@ function ReadingCompare({ r, compact }) {
     <div className="space-y-2 text-center">
       <div>
         <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{t('oversight.mileage.prevReading')}</p>
-        <p className="font-mono text-xl font-bold text-slate-500 tabular-nums">{fmtKm(r.previous)}</p>
+        <p className="font-mono text-xl font-bold text-slate-500 tabular-nums">{fmtKm(r.previous, lang)}</p>
       </div>
       <Icon.ArrowRight className="mx-auto h-4 w-4 rotate-90 text-slate-300" />
       <div>
         <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{t('oversight.mileage.enteredReading')}</p>
-        <p className={`font-mono text-2xl font-extrabold tabular-nums ${blocked ? 'text-red-600 line-through decoration-red-400' : 'text-slate-900'}`}>{fmtKm(r.reading)}</p>
+        <p className={`font-mono text-2xl font-extrabold tabular-nums ${blocked ? 'text-red-600 line-through decoration-red-400' : 'text-slate-900'}`}>{fmtKm(r.reading, lang)}</p>
       </div>
       <div className="mt-1 inline-block rounded-lg bg-slate-50 px-3 py-1 ring-1 ring-slate-200">
         <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{t('oversight.mileage.difference')}: </span>
         <span className={`text-sm font-bold tabular-nums ${negative ? 'text-red-600' : 'text-slate-700'}`}>
-          {r.delta == null ? '—' : `${r.delta > 0 ? '+' : ''}${fmtNum(r.delta)} km`}
+          {r.delta == null ? '—' : `${r.delta > 0 ? '+' : ''}${fmtNum(r.delta, lang)} km`}
         </span>
       </div>
     </div>

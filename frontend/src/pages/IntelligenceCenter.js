@@ -4,6 +4,7 @@ import useFetch from '../hooks/useFetch';
 import Badge from '../components/ui/Badge';
 import { Card, PageHeader, Spinner, ErrorState } from '../components/ui/Misc';
 import { num } from '../lib/format';
+import { useI18n } from '../i18n/I18nContext';
 
 /**
  * The Intelligence Center — what the platform knows, how sure it is, and what is stopping it.
@@ -58,27 +59,31 @@ function Meter({ value, className = '' }) {
 
 /** The one line at the top. Severity drives the colour; the text always names an action. */
 function Headline({ headline, alert, generatedAt, cached, onRefresh, busy }) {
+  const { t, lang } = useI18n();
   const tone = BANNER[headline?.severity] || BANNER.info;
+  const readAt = generatedAt
+    ? new Date(generatedAt).toLocaleString(lang === 'ar' ? 'ar-AE-u-ca-gregory-nu-latn' : undefined)
+    : '—';
   return (
     <div className={`rounded-xl border px-5 py-4 ${tone}`}>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide opacity-70">
-            {alert ? 'Action required' : 'Attention first'}
+            {alert ? t('Action required') : t('Attention first')}
           </p>
           <p className="mt-1 text-base font-semibold">{headline?.text}</p>
           {alert && <p className="mt-1 max-w-3xl text-sm opacity-90">{alert.detail}</p>}
         </div>
         <div className="text-end text-xs opacity-70">
-          <div>Read {generatedAt ? new Date(generatedAt).toLocaleString() : '—'}</div>
-          {cached && <div className="italic">from cache</div>}
+          <div>{t('Read {when}', { when: readAt })}</div>
+          {cached && <div className="italic">{t('from cache')}</div>}
           <button
             type="button"
             onClick={onRefresh}
             disabled={busy}
             className="mt-1 rounded-md border border-current/30 px-2 py-0.5 font-medium hover:bg-white/40 disabled:opacity-50"
           >
-            {busy ? 'Reading…' : 'Re-read now'}
+            {busy ? t('Reading…') : t('Re-read now')}
           </button>
         </div>
       </div>
@@ -93,8 +98,14 @@ function Headline({ headline, alert, generatedAt, cached, onRefresh, busy }) {
  * ready.
  */
 function Capability({ c }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const band = BAND[c.band] || BAND.watch;
+  // The five dimension names as a reader sees them, keyed by the identifier the backend sends.
+  const dimensionName = {
+    coverage: t('coverage'), volume: t('volume'), freshness: t('freshness'),
+    evaluation: t('evaluation'), trust: t('trust'),
+  };
 
   return (
     <Card className="overflow-hidden">
@@ -109,9 +120,9 @@ function Capability({ c }) {
                 <span className="font-semibold text-slate-800">{c.label}</span>
                 <Badge tone={band.tone}>{c.band}</Badge>
                 {c.quality === 'proxy'
-                  ? <Badge tone="amber" title="Reasoning from a stand-in, not a measurement">proxy</Badge>
-                  : <Badge tone="green">measured</Badge>}
-                {c.shipped && <Badge tone="blue">shipped</Badge>}
+                  ? <Badge tone="amber" title={t('Reasoning from a stand-in, not a measurement')}>{t('proxy')}</Badge>
+                  : <Badge tone="green">{t('measured')}</Badge>}
+                {c.shipped && <Badge tone="blue">{t('shipped')}</Badge>}
               </div>
               <p className="mt-0.5 text-sm text-slate-500">{c.attention}</p>
             </div>
@@ -125,9 +136,9 @@ function Capability({ c }) {
         {/* The five dimensions, always beside the total — the score is never the whole story. */}
         <div className="mt-3 grid grid-cols-5 gap-3">
           {Object.entries(c.dimensions || {}).map(([key, value]) => (
-            <div key={key} title={DIMENSION_MEANING[key]}>
+            <div key={key} title={DIMENSION_MEANING[key] ? t(DIMENSION_MEANING[key]) : undefined}>
               <div className="mb-1 flex items-baseline justify-between text-[11px] text-slate-400">
-                <span className={key === c.weakest ? 'font-semibold text-slate-600' : ''}>{key}</span>
+                <span className={key === c.weakest ? 'font-semibold text-slate-600' : ''}>{dimensionName[key] || key}</span>
                 <span className="tabular-nums">{pct(value)}</span>
               </div>
               <Meter value={value} />
@@ -140,41 +151,40 @@ function Capability({ c }) {
         <div className="border-t bg-slate-50/60 px-5 py-4 text-sm">
           {c.blocker && (
             <p className="mb-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-700">
-              <span className="font-semibold">Blocked by data, not by build.</span> {c.blocker}
+              <span className="font-semibold">{t('Blocked by data, not by build.')}</span> {c.blocker}
               <span className="mt-1 block text-xs text-slate-500">
-                Waiting will not fix this — the fleet’s record-keeping has to change first.
+                {t('Waiting will not fix this — the fleet’s record-keeping has to change first.')}
               </span>
             </p>
           )}
 
           <dl className="grid gap-x-8 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
-            <Fact label="Evidence counted">{c.evidence}</Fact>
-            <Fact label="Still needed">{c.remaining > 0 ? `${num(c.remaining)} more` : 'threshold met'}</Fact>
-            <Fact label="Arriving at">
-              {c.weekly_rate > 0 ? `${c.weekly_rate}/week` : 'nothing arriving'}
+            <Fact label={t('Evidence counted')}>{c.evidence}</Fact>
+            <Fact label={t('Still needed')}>{c.remaining > 0 ? t('{n} more', { n: num(c.remaining) }) : t('threshold met')}</Fact>
+            <Fact label={t('Arriving at')}>
+              {c.weekly_rate > 0 ? t('{n}/week', { n: c.weekly_rate }) : t('nothing arriving')}
               {/* Without this the rate reads as a habit when it is really one afternoon's import. */}
               {c.bulk_loaded && (
                 <span className="ms-1 text-amber-600">
-                  · {Math.round(c.single_day_share * 100)}% on one day
+                  {t('· {pct}% on one day', { pct: Math.round(c.single_day_share * 100) })}
                 </span>
               )}
             </Fact>
-            <Fact label="Coverage">{pct(c.coverage)}</Fact>
-            <Fact label="Median evidence age">
-              {c.median_age_days === null ? '—' : `${num(c.median_age_days)} days`}
-              {c.evidence_stale && <span className="ms-1 text-amber-600">· over a year old</span>}
+            <Fact label={t('Coverage')}>{pct(c.coverage)}</Fact>
+            <Fact label={t('Median evidence age')}>
+              {c.median_age_days === null ? '—' : t('{n} days', { n: num(c.median_age_days) })}
+              {c.evidence_stale && <span className="ms-1 text-amber-600">{t('· over a year old')}</span>}
             </Fact>
-            <Fact label="Observed between">{c.oldest_at || '—'} → {c.newest_at || '—'}
-              {c.feed_quiet && <span className="ms-1 text-amber-600">· feed quiet 30d+</span>}
+            <Fact label={t('Observed between')}>{c.oldest_at || '—'} <span className="inline-block rtl:-scale-x-100">→</span> {c.newest_at || '—'}
+              {c.feed_quiet && <span className="ms-1 text-amber-600">{t('· feed quiet 30d+')}</span>}
             </Fact>
-            <Fact label="Last evaluated">{c.last_evaluated_at || 'never'}</Fact>
-            <Fact label="Corpus last grew">{c.dataset_age_days === null ? '—' : `${num(c.dataset_age_days)} days ago`}</Fact>
+            <Fact label={t('Last evaluated')}>{c.last_evaluated_at || t('never')}</Fact>
+            <Fact label={t('Corpus last grew')}>{c.dataset_age_days === null ? '—' : t('{n} days ago', { n: num(c.dataset_age_days) })}</Fact>
           </dl>
 
           {c.reevaluation_reason && (
             <p className="mt-3 text-xs text-amber-700">
-              ↻ Re-evaluate: {c.reevaluation_reason}. The previous decision is not wrong — it answered a
-              question about a different corpus.
+              {t('↻ Re-evaluate: {reason}. The previous decision is not wrong — it answered a question about a different corpus.', { reason: c.reevaluation_reason })}
             </p>
           )}
         </div>
@@ -194,19 +204,20 @@ function Fact({ label, children }) {
 
 /** QC throughput — the shape behind the rate. 3/week reads the same as 24 then five silent weeks. */
 function Throughput({ qc }) {
+  const { t } = useI18n();
   const series = qc?.throughput || [];
   const peak = Math.max(1, ...series.map((w) => w.count));
 
   return (
     <Card className="p-5">
-      <h3 className="font-semibold text-slate-800">QC verdict throughput</h3>
+      <h3 className="font-semibold text-slate-800">{t('QC verdict throughput')}</h3>
       <p className="mt-0.5 text-sm text-slate-500">
-        The platform’s only ground truth. A verdict missed at close cannot be recovered later — the car has gone.
+        {t('The platform’s only ground truth. A verdict missed at close cannot be recovered later — the car has gone.')}
       </p>
 
       <div className="mt-4 flex items-end gap-1.5" style={{ height: 72 }}>
         {series.map((w) => (
-          <div key={w.week} className="flex flex-1 flex-col items-center gap-1" title={`${w.week}: ${w.count} verdicts (${w.conclusive} conclusive)`}>
+          <div key={w.week} className="flex flex-1 flex-col items-center gap-1" title={t('{week}: {count} verdicts ({conclusive} conclusive)', { week: w.week, count: w.count, conclusive: w.conclusive })}>
             <div className="flex w-full flex-1 items-end">
               <div
                 className={`w-full rounded-t ${w.count === 0 ? 'bg-slate-100' : 'bg-indigo-400'}`}
@@ -224,26 +235,27 @@ function Throughput({ qc }) {
           one that never reached a workshop has no repair outcome to judge. Counting those understated
           coverage and made a working gate look like it was leaking.
         */}
-        <Stat label="Closed & verifiable" value={num(qc?.closed)} hint="reached a garage, had faults to fix" />
-        <Stat label="With a verdict" value={`${num(qc?.with_verdict)} · ${pct(qc?.coverage)}`} />
-        <Stat label="Usable for statistics" value={num(qc?.conclusive)} hint="conclusive verdicts only" />
+        <Stat label={t('Closed & verifiable')} value={num(qc?.closed)} hint={t('reached a garage, had faults to fix')} />
+        <Stat label={t('With a verdict')} value={`${num(qc?.with_verdict)} · ${pct(qc?.coverage)}`} />
+        <Stat label={t('Usable for statistics')} value={num(qc?.conclusive)} hint={t('conclusive verdicts only')} />
         {/*
           Lifetime "lost" can never recover, so showing it in alarm colours forever teaches people to
           ignore it. The colour tracks whether the gap is STILL GROWING, which is the only part
           anyone can act on.
         */}
         <Stat
-          label={qc?.leaking ? 'Still leaking' : 'Evidence lost (historical)'}
+          label={qc?.leaking ? t('Still leaking') : t('Evidence lost (historical)')}
           value={qc?.leaking ? num(qc.lost_recently) : num(qc?.lost)}
-          hint={qc?.leaking ? 'closed unverified in 14 days' : 'pre-gate — the gap has stopped growing'}
+          hint={qc?.leaking ? t('closed unverified in 14 days') : t('pre-gate — the gap has stopped growing')}
           tone={qc?.leaking ? 'rose' : undefined}
         />
       </dl>
 
       {qc?.unverifiable > 0 && (
         <p className="mt-3 text-xs text-slate-500">
-          {num(qc.unverifiable)} inspection{qc.unverifiable === 1 ? '' : 's'} could not verify the repair. That counts as
-          covered — the inspector attended and answered honestly — but it is excluded from every statistic.
+          {qc.unverifiable === 1
+            ? t('1 inspection could not verify the repair. That counts as covered — the inspector attended and answered honestly — but it is excluded from every statistic.')
+            : t('{n} inspections could not verify the repair. That counts as covered — the inspector attended and answered honestly — but it is excluded from every statistic.', { n: num(qc.unverifiable) })}
         </p>
       )}
     </Card>
@@ -261,6 +273,7 @@ function Stat({ label, value, hint, tone }) {
 }
 
 export default function IntelligenceCenter() {
+  const { t } = useI18n();
   const [refreshing, setRefreshing] = useState(false);
 
   const fetcher = useCallback(async () => (await api.get('/intelligence/center')).data, []);
@@ -283,8 +296,8 @@ export default function IntelligenceCenter() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Intelligence Center"
-        subtitle="What the platform knows, how sure it is, and what is stopping it from knowing more."
+        title={t('Intelligence Center')}
+        subtitle={t('What the platform knows, how sure it is, and what is stopping it from knowing more.')}
       />
 
       {/*
@@ -294,14 +307,14 @@ export default function IntelligenceCenter() {
       */}
       {Object.keys(data.failed_sections || {}).length > 0 && (
         <div className="rounded-xl border border-rose-200 bg-rose-50 px-5 py-4 text-rose-900">
-          <p className="font-semibold">Part of this page could not be read.</p>
+          <p className="font-semibold">{t('Part of this page could not be read.')}</p>
           <ul className="mt-2 space-y-1 text-sm">
             {Object.entries(data.failed_sections).map(([key, message]) => (
               <li key={key}><span className="font-mono text-xs">{key}</span> — {message}</li>
             ))}
           </ul>
           <p className="mt-2 text-xs opacity-80">
-            The rest of the page is accurate. Nothing here is cached while a section is failing.
+            {t('The rest of the page is accurate. Nothing here is cached while a section is failing.')}
           </p>
         </div>
       )}
@@ -317,8 +330,8 @@ export default function IntelligenceCenter() {
 
       <section className="space-y-3">
         <SectionHead
-          title="Capability health"
-          note="Worst first. A blocker CAPS the score rather than averaging away — a capability that cannot work cannot be healthy."
+          title={t('Capability health')}
+          note={t('Worst first. A blocker CAPS the score rather than averaging away — a capability that cannot work cannot be healthy.')}
         />
         {(data.capabilities || []).map((c) => <Capability key={c.id} c={c} />)}
       </section>
@@ -348,14 +361,15 @@ function SectionHead({ title, note }) {
 }
 
 function DataQuality({ issues = [] }) {
+  const { t } = useI18n();
   return (
     <Card className="p-5">
-      <h3 className="font-semibold text-slate-800">Data quality</h3>
+      <h3 className="font-semibold text-slate-800">{t('Data quality')}</h3>
       <p className="mt-0.5 text-sm text-slate-500">
-        Problems no capability can work around. None of these is an engineering task.
+        {t('Problems no capability can work around. None of these is an engineering task.')}
       </p>
       {issues.length === 0 ? (
-        <p className="mt-4 text-sm text-slate-500">Nothing blocking — every input is arriving usable.</p>
+        <p className="mt-4 text-sm text-slate-500">{t('Nothing blocking — every input is arriving usable.')}</p>
       ) : (
         <ul className="mt-4 space-y-3">
           {issues.map((it) => (
@@ -365,7 +379,7 @@ function DataQuality({ issues = [] }) {
                 <Badge tone={ISSUE_TONE[it.severity] || 'slate'}>{num(it.count)}</Badge>
               </div>
               <p className="mt-1 text-sm text-slate-600">{it.detail}</p>
-              <p className="mt-1 text-xs text-slate-500"><span className="font-medium">Fix:</span> {it.remedy}</p>
+              <p className="mt-1 text-xs text-slate-500"><span className="font-medium">{t('Fix:')}</span> {it.remedy}</p>
             </li>
           ))}
         </ul>
@@ -376,9 +390,10 @@ function DataQuality({ issues = [] }) {
 
 /** Flags whose consequence is invisible everywhere else — which is the only reason they are here. */
 function Flags({ flags = [] }) {
+  const { t } = useI18n();
   return (
     <Card className="p-5">
-      <h3 className="font-semibold text-slate-800">Feature flags</h3>
+      <h3 className="font-semibold text-slate-800">{t('Feature flags')}</h3>
       <ul className="mt-3 space-y-3">
         {flags.map((f) => {
           const drifted = f.enabled !== f.expected;
@@ -386,13 +401,13 @@ function Flags({ flags = [] }) {
             <li key={f.key} className="rounded-lg border border-slate-200 p-3">
               <div className="flex items-center justify-between gap-3">
                 <span className="font-mono text-xs text-slate-700">{f.key}</span>
-                <Badge tone={f.enabled ? 'green' : 'slate'}>{f.enabled ? 'ON' : 'OFF'}</Badge>
+                <Badge tone={f.enabled ? 'green' : 'slate'}>{f.enabled ? t('ON') : t('OFF')}</Badge>
               </div>
               <p className="mt-1 text-sm text-slate-600">{f.label}</p>
               <p className="mt-1 text-xs text-slate-500">{f.impact}</p>
               {drifted && (
                 <p className="mt-1 text-xs font-medium text-amber-700">
-                  ⚠ Expected {f.expected ? 'ON' : 'OFF'} — this was changed deliberately, or it was changed and nobody said so.
+                  {t('⚠ Expected {state} — this was changed deliberately, or it was changed and nobody said so.', { state: f.expected ? t('ON') : t('OFF') })}
                 </p>
               )}
             </li>
@@ -406,12 +421,12 @@ function Flags({ flags = [] }) {
 const JOB_TONE = { ok: 'green', stale: 'red', unscheduled: 'red', 'never produced output': 'amber' };
 
 function Jobs({ jobs = [] }) {
+  const { t } = useI18n();
   return (
     <Card className="p-5">
-      <h3 className="font-semibold text-slate-800">Background jobs</h3>
+      <h3 className="font-semibold text-slate-800">{t('Background jobs')}</h3>
       <p className="mt-0.5 text-sm text-slate-500">
-        Judged by the trace each job leaves in the data, not by a run log — a scheduler that runs
-        perfectly and writes nothing is not healthy.
+        {t('Judged by the trace each job leaves in the data, not by a run log — a scheduler that runs perfectly and writes nothing is not healthy.')}
       </p>
       <ul className="mt-3 space-y-3">
         {jobs.map((j) => (
@@ -422,9 +437,13 @@ function Jobs({ jobs = [] }) {
             </div>
             <p className="mt-1 text-sm text-slate-600">{j.purpose}</p>
             <p className="mt-1 text-xs text-slate-500">
-              {j.registered ? `Runs ${j.scheduled}` : 'NOT in the scheduler — someone is running this by hand'}
+              {j.registered
+                ? t('Runs {schedule}', { schedule: j.scheduled })
+                : t('NOT in the scheduler — someone is running this by hand')}
               {' · '}
-              {j.last_effect_at ? `${j.evidence}: ${j.age_days}d ago` : `${j.evidence}: none yet`}
+              {j.last_effect_at
+                ? t('{evidence}: {days}d ago', { evidence: j.evidence, days: j.age_days })
+                : t('{evidence}: none yet', { evidence: j.evidence })}
             </p>
           </li>
         ))}
@@ -438,28 +457,28 @@ function Jobs({ jobs = [] }) {
  * here: it is the platform declining to trust better-looking evidence because it predicted worse.
  */
 function Promotions({ rows = [], versions }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(null);
 
   return (
     <Card className="p-5">
-      <h3 className="font-semibold text-slate-800">Promotion decisions</h3>
+      <h3 className="font-semibold text-slate-800">{t('Promotion decisions')}</h3>
       <p className="mt-0.5 text-sm text-slate-500">
-        Append-only. Promotion is evidence-driven, not calendar-driven — reaching the threshold buys the
-        right to run the comparison, not the promotion.
+        {t('Append-only. Promotion is evidence-driven, not calendar-driven — reaching the threshold buys the right to run the comparison, not the promotion.')}
       </p>
 
       {rows.length === 0 ? (
-        <p className="mt-4 text-sm text-slate-500">No comparison has ever run.</p>
+        <p className="mt-4 text-sm text-slate-500">{t('No comparison has ever run.')}</p>
       ) : (
         <div className="mt-4 overflow-x-auto">
           <table className="w-full min-w-[640px] text-sm">
             <thead className="text-start text-[11px] uppercase tracking-wide text-slate-400">
               <tr>
-                <th className="pb-2">When</th>
-                <th className="pb-2">Capability</th>
-                <th className="pb-2">Decision</th>
-                <th className="pb-2">Evidence</th>
-                <th className="pb-2">Reason</th>
+                <th className="pb-2">{t('When')}</th>
+                <th className="pb-2">{t('Capability')}</th>
+                <th className="pb-2">{t('Decision')}</th>
+                <th className="pb-2">{t('Evidence')}</th>
+                <th className="pb-2">{t('Reason')}</th>
                 <th className="pb-2" />
               </tr>
             </thead>
@@ -470,14 +489,14 @@ function Promotions({ rows = [], versions }) {
                     <td className="py-2 whitespace-nowrap text-slate-500">{(p.decided_at || '').slice(0, 10)}</td>
                     <td className="py-2 text-slate-700">{p.capability_id}</td>
                     <td className="py-2">
-                      <Badge tone={p.promoted ? 'green' : 'slate'}>{p.promoted ? 'promoted' : 'refused'}</Badge>
-                      {p.superseded && <div className="mt-1 text-[11px] text-amber-600">ground moved</div>}
+                      <Badge tone={p.promoted ? 'green' : 'slate'}>{p.promoted ? t('promoted') : t('refused')}</Badge>
+                      {p.superseded && <div className="mt-1 text-[11px] text-amber-600">{t('ground moved')}</div>}
                     </td>
                     <td className="py-2 tabular-nums text-slate-500">{num(p.evidence_count)}/{num(p.evidence_threshold)}</td>
                     <td className="py-2 text-slate-600">{p.reason}</td>
                     <td className="py-2 text-end">
                       <button type="button" onClick={() => setOpen(open === p.id ? null : p.id)} className="text-xs font-medium text-indigo-600">
-                        {open === p.id ? 'hide' : 'provenance'}
+                        {open === p.id ? t('hide') : t('provenance')}
                       </button>
                     </td>
                   </tr>
@@ -494,8 +513,7 @@ function Promotions({ rows = [], versions }) {
                         </dl>
                         {p.superseded && (
                           <p className="mt-2 text-xs text-amber-700">
-                            This decision was made on a different dataset or methodology. It is not wrong — it
-                            answered a question about a different corpus — but it should be re-run rather than trusted.
+                            {t('This decision was made on a different dataset or methodology. It is not wrong — it answered a question about a different corpus — but it should be re-run rather than trusted.')}
                           </p>
                         )}
                       </td>
@@ -510,9 +528,13 @@ function Promotions({ rows = [], versions }) {
 
       {versions && (
         <div className="mt-5 border-t pt-4">
-          <p className="text-[11px] uppercase tracking-wide text-slate-400">In force now</p>
+          <p className="text-[11px] uppercase tracking-wide text-slate-400">{t('In force now')}</p>
           <p className="mt-1 font-mono text-xs text-slate-600">
-            dataset {versions.dataset} · query layer {versions.query_layer} · backtest {versions.evaluation?.backtest_version}
+            {t('dataset {dataset} · query layer {queryLayer} · backtest {backtest}', {
+              dataset: versions.dataset,
+              queryLayer: versions.query_layer,
+              backtest: versions.evaluation?.backtest_version,
+            })}
           </p>
         </div>
       )}

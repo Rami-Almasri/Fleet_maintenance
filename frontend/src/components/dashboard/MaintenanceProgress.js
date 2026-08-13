@@ -12,6 +12,7 @@ import { fmtDate } from '../../lib/format';
 import { getMaintenanceProgress, useCheckpointVocab, resolveCheckpointTicket } from '../../lib/maintenanceCheckpoints';
 import CheckpointModal from '../maintenance/CheckpointModal';
 import DelayExplanation from '../maintenance/DelayExplanation';
+import { useI18n } from '../../i18n/I18nContext';
 
 // Roll-up chips, worst-first.
 const SUMMARY_CHIPS = [
@@ -32,10 +33,10 @@ function StatusChip({ status }) {
   );
 }
 
-function daysCell(r) {
-  if (r.overdue) return <span className="font-semibold text-red-600 tabular-nums">+{r.days_over}d overdue</span>;
-  if (r.eta_status === 'due_today') return <span className="font-semibold text-amber-600">Due today</span>;
-  if (r.expected_on) return <span className="tabular-nums text-slate-600">{r.days_left}d left</span>;
+function daysCell(r, t) {
+  if (r.overdue) return <span className="font-semibold text-red-600 tabular-nums">{t('+{n}d overdue', { n: r.days_over })}</span>;
+  if (r.eta_status === 'due_today') return <span className="font-semibold text-amber-600">{t('Due today')}</span>;
+  if (r.expected_on) return <span className="tabular-nums text-slate-600">{t('{n}d left', { n: r.days_left })}</span>;
   return <span className="text-slate-400">—</span>;
 }
 
@@ -80,9 +81,10 @@ function checkpointDelayDays(prev, next) {
 // The workshop's last update, clearly labelled: Previous → New ETA (+ delay days), the reason it moved,
 // and who filed it when — so the cell reads as information, not two dates jammed together.
 function LastCheckpointCell({ r }) {
+  const { t } = useI18n();
   const { statusLabel, delayReasonLabel } = useCheckpointVocab();
   const c = r.last_checkpoint;
-  if (!c) return <span className="text-amber-600">No update yet</span>;
+  if (!c) return <span className="text-amber-600">{t('No update yet')}</span>;
   const workshop = statusLabel(c.status);
   const reason = c.delay_reason === 'other' ? (c.delay_reason_other || null) : delayReasonLabel(c.delay_reason);
   const etaMoved = !!c.next_expected_date
@@ -93,31 +95,32 @@ function LastCheckpointCell({ r }) {
       {etaMoved ? (
         <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px]">
           {c.previous_expected_date && (
-            <span className="text-slate-500"><span className="text-slate-400">Prev</span> <span className="line-through decoration-slate-300">{fmtDate(c.previous_expected_date)}</span></span>
+            <span className="text-slate-500"><span className="text-slate-400">{t('Prev')}</span> <span className="line-through decoration-slate-300">{fmtDate(c.previous_expected_date)}</span></span>
           )}
-          <span aria-hidden className="text-amber-500">→</span>
-          <span className="font-semibold text-slate-700"><span className="text-slate-400">New</span> {fmtDate(c.next_expected_date)}</span>
+          <span aria-hidden className="text-amber-500 rtl:-scale-x-100">→</span>
+          <span className="font-semibold text-slate-700"><span className="text-slate-400">{t('New')}</span> {fmtDate(c.next_expected_date)}</span>
           {dd != null && dd > 0 && (
-            <span className="rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-bold text-red-600 ring-1 ring-red-200">+{dd}d</span>
+            <span className="rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-bold text-red-600 ring-1 ring-red-200">{t('+{n}d', { n: dd })}</span>
           )}
         </div>
       ) : (
-        <span className="text-[11px] text-slate-600">ETA confirmed {c.next_expected_date ? fmtDate(c.next_expected_date) : ''}</span>
+        <span className="text-[11px] text-slate-600">{t('ETA confirmed {date}', { date: c.next_expected_date ? fmtDate(c.next_expected_date) : '' })}</span>
       )}
       {etaMoved && (
         reason
-          ? <p className="mt-0.5 text-[11px] text-amber-700"><span className="font-semibold">Reason:</span> {reason}</p>
-          : <p className="mt-0.5 text-[11px] text-amber-600">No delay reason recorded</p>
+          ? <p className="mt-0.5 text-[11px] text-amber-700"><span className="font-semibold">{t('Reason:')}</span> {reason}</p>
+          : <p className="mt-0.5 text-[11px] text-amber-600">{t('No delay reason recorded')}</p>
       )}
-      {workshop && <p className="text-[11px] text-slate-500">Workshop: {workshop}</p>}
+      {workshop && <p className="text-[11px] text-slate-500">{t('Workshop: {status}', { status: workshop })}</p>}
       <p className="mt-0.5 text-[11px] text-slate-400">
-        {c.by ? `By ${c.by}` : ''}{r.last_checkpoint_at ? `${c.by ? ' · ' : ''}${fmtDate(r.last_checkpoint_at)}` : ''}
+        {c.by ? t('By {name}', { name: c.by }) : ''}{r.last_checkpoint_at ? `${c.by ? ' · ' : ''}${fmtDate(r.last_checkpoint_at)}` : ''}
       </p>
     </div>
   );
 }
 
 export default function MaintenanceProgress() {
+  const { t } = useI18n();
   const [data, setData] = useState({ summary: {}, items: [] });
   const [loading, setLoading] = useState(true);
   const [active, setActive] = useState(null); // { ticketId, label }
@@ -128,16 +131,16 @@ export default function MaintenanceProgress() {
   const openCheckpoint = async (r) => {
     const key = `${r.source}-${r.ticket_id ?? r.contract_id}`;
     if (r.ticket_id) {
-      setActive({ ticketId: r.ticket_id, label: r.plate || `Ticket #${r.ticket_id}`, sub: r.garage });
+      setActive({ ticketId: r.ticket_id, label: r.plate || t('Ticket #{id}', { id: r.ticket_id }), sub: r.garage });
       return;
     }
     setOpening(key);
     try {
       const ticketId = await resolveCheckpointTicket(r);
-      if (ticketId) setActive({ ticketId, label: r.plate || `Ticket #${ticketId}`, sub: r.garage });
-      else setToast('Could not open a checkpoint for this car.');
+      if (ticketId) setActive({ ticketId, label: r.plate || t('Ticket #{id}', { id: ticketId }), sub: r.garage });
+      else setToast(t('Could not open a checkpoint for this car.'));
     } catch (e) {
-      setToast('Could not open a checkpoint for this car.');
+      setToast(t('Could not open a checkpoint for this car.'));
     } finally {
       setOpening(null);
     }
@@ -159,14 +162,14 @@ export default function MaintenanceProgress() {
     <SectionCard
       title={
         <span className="flex items-center gap-1.5">
-          Maintenance Progress
-          <InfoTip content="The operational monitoring centre for every car currently in the workshop. Each car's progress status is derived automatically from its promised completion date — green while on schedule, amber when a checkpoint is due, red once it goes past its expected completion with no update. The responsible users (Waleed/Abdullah, or a ticket's assigned owners) are reminded automatically a day before the promised date and chased until they file an update." />
+          {t('Maintenance Progress')}
+          <InfoTip content={t("The operational monitoring centre for every car currently in the workshop. Each car's progress status is derived automatically from its promised completion date — green while on schedule, amber when a checkpoint is due, red once it goes past its expected completion with no update. The responsible users (Waleed/Abdullah, or a ticket's assigned owners) are reminded automatically a day before the promised date and chased until they file an update.")} />
         </span>
       }
-      subtitle="Cars in maintenance · checkpoint status, ETA & responsible owner"
+      subtitle={t('Cars in maintenance · checkpoint status, ETA & responsible owner')}
       actions={(
         <Link to="/maintenance-progress" className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-700">
-          Open full queue <span aria-hidden>→</span>
+          {t('Open full queue')} <span aria-hidden className="rtl:-scale-x-100">→</span>
         </Link>
       )}
     >
@@ -175,7 +178,7 @@ export default function MaintenanceProgress() {
         <div className="mb-3 flex flex-wrap gap-2">
           {SUMMARY_CHIPS.map((c) => (
             <span key={c.key} className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${c.cls}`}>
-              {c.label}
+              {t(c.label)}
               <span className="tabular-nums">{summary[c.key] ?? 0}</span>
             </span>
           ))}
@@ -187,19 +190,19 @@ export default function MaintenanceProgress() {
           {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-11 rounded-xl" />)}
         </div>
       ) : items.length === 0 ? (
-        <p className="py-8 text-center text-sm text-slate-400">No cars are in the workshop right now.</p>
+        <p className="py-8 text-center text-sm text-slate-400">{t('No cars are in the workshop right now.')}</p>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[820px] text-sm">
             <thead>
               <tr className="border-b border-slate-100 text-start text-xs font-semibold uppercase tracking-wide text-slate-400">
-                <th className="py-2 pe-3">Vehicle</th>
-                <th className="py-2 pe-3">Problem</th>
-                <th className="py-2 pe-3">Workshop</th>
-                <th className="py-2 pe-3">Progress</th>
-                <th className="py-2 pe-3">ETA</th>
-                <th className="py-2 pe-3">Last checkpoint</th>
-                <th className="py-2 pe-3">Responsible</th>
+                <th className="py-2 pe-3">{t('Vehicle')}</th>
+                <th className="py-2 pe-3">{t('Problem')}</th>
+                <th className="py-2 pe-3">{t('Workshop')}</th>
+                <th className="py-2 pe-3">{t('Progress')}</th>
+                <th className="py-2 pe-3">{t('ETA')}</th>
+                <th className="py-2 pe-3">{t('Last checkpoint')}</th>
+                <th className="py-2 pe-3">{t('Responsible')}</th>
                 <th className="py-2 pe-3" />
               </tr>
             </thead>
@@ -211,7 +214,7 @@ export default function MaintenanceProgress() {
                     <div className="flex items-center gap-2">
                       {r.vehicle_id
                         ? <Link to={`/vehicles/${r.vehicle_id}?tab=checkpoints`} className="font-semibold text-slate-800 hover:text-indigo-600">{r.plate || `#${r.vehicle_id}`}</Link>
-                        : <span className="font-semibold text-slate-800">Ticket #{r.ticket_id}</span>}
+                        : <span className="font-semibold text-slate-800">{t('Ticket #{id}', { id: r.ticket_id })}</span>}
                       <SourceBadge source={r.source} />
                     </div>
                     {r.car && <p className="text-[11px] text-slate-400">{r.car}</p>}
@@ -222,8 +225,8 @@ export default function MaintenanceProgress() {
                   <td className="py-2.5 pe-3 text-slate-600">{r.garage || <span className="text-slate-300">—</span>}</td>
                   <td className="py-2.5 pe-3"><StatusChip status={r.status} /></td>
                   <td className="py-2.5 pe-3">
-                    {daysCell(r)}
-                    {r.expected_on && <p className="text-[11px] text-slate-400">{fmtDate(r.expected_on)}{r.is_estimated ? ' (est.)' : ''}</p>}
+                    {daysCell(r, t)}
+                    {r.expected_on && <p className="text-[11px] text-slate-400">{fmtDate(r.expected_on)}{r.is_estimated ? ` ${t('(est.)')}` : ''}</p>}
                   </td>
                   <td className="py-2.5 pe-3">
                     <LastCheckpointCell r={r} />
@@ -241,7 +244,7 @@ export default function MaintenanceProgress() {
                       onClick={() => openCheckpoint(r)}
                       className="rounded-lg bg-indigo-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-60"
                     >
-                      Checkpoint
+                      {t('Checkpoint')}
                     </button>
                   </td>
                 </tr>
@@ -265,7 +268,7 @@ export default function MaintenanceProgress() {
         <CheckpointModal
           open={!!active}
           ticketId={active.ticketId}
-          title={`Checkpoint · ${active.label}`}
+          title={t('Checkpoint · {label}', { label: active.label })}
           subtitle={active.sub || undefined}
           onClose={() => setActive(null)}
           onDone={(msg) => { setToast(msg); load(); setTimeout(() => setToast(''), 3000); }}

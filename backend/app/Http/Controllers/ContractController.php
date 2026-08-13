@@ -9,6 +9,7 @@ use App\Http\Requests\StoreContractRequest;
 use App\Http\Requests\UpdateContractRequest;
 use App\Http\Resources\ContractResource;
 use App\Services\ContractService;
+use App\Services\MaintenanceVisitJourneyService;
 use Illuminate\Http\Request;
 
 class ContractController extends Controller
@@ -107,6 +108,31 @@ class ContractController extends Controller
             }
             $result = ContractResource::make($contract);
             return ResponseHelper::SuccessResponse($result, "Contract retrieved successfully", 200);
+        } catch (\Exception $e) {
+            return ResponseHelper::fromException($e);
+        }
+    }
+
+    /**
+     * THE VISIT JOURNEY — everything that happened to the car under this contract.
+     *
+     * A maintenance (type-'U') contract covers one workshop visit end to end: the inspection that opened
+     * it, every fault found on the test drive AND every extra the garage found on the lift, where each
+     * one was worked and how long it took, the odometer chain, and the event trail. Until now the
+     * contract page could show the dates and the money but not the story, even though every piece of it
+     * was already recorded elsewhere.
+     *
+     * Read-only. Answers for any contract — a rental contract simply comes back with no visits, which is
+     * the honest answer rather than an error.
+     */
+    public function journey(Contract $contract, MaintenanceVisitJourneyService $journey)
+    {
+        try {
+            return ResponseHelper::SuccessResponse(
+                $journey->forContract($contract),
+                'Contract journey retrieved successfully',
+                200
+            );
         } catch (\Exception $e) {
             return ResponseHelper::fromException($e);
         }

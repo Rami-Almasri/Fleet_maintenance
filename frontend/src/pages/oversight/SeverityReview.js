@@ -19,7 +19,8 @@ import { useToast } from '../../components/ui/Toast';
 import Icon from '../../components/ui/Icon';
 import { Skeleton } from '../../components/ui/Skeleton';
 
-const fmtDate = (iso) => (iso ? new Date(iso).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
+// Arabic keeps Gregorian dates and Latin digits so the audit trail stays comparable.
+const fmtDate = (iso, lang) => (iso ? new Date(iso).toLocaleDateString(lang === 'ar' ? 'ar-AE-u-ca-gregory-nu-latn' : undefined, { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
 
 const REASON_ICON = { keyword: 'Flag', breakdown: 'Alert', condition: 'Shield' };
 
@@ -31,7 +32,7 @@ const GRADE_TONE = {
 };
 
 export default function SeverityReview() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const { can } = usePermissions();
   const toast = useToast();
   const canDecide = can('maintenance.manage');
@@ -110,7 +111,7 @@ export default function SeverityReview() {
         {/* Header */}
         <div>
           <Link to="/apps/reports" className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-400 hover:text-slate-600">
-            <Icon.ArrowRight className="h-3 w-3 rotate-180" /> Reports
+            <Icon.ArrowRight className="h-3 w-3 rotate-180 rtl:-scale-x-100" /> {t('Reports')}
           </Link>
           <h1 className="font-display text-2xl font-bold tracking-tight text-slate-900">{t('oversight.severity.title')}</h1>
           <p className="mt-1 max-w-3xl text-sm text-slate-500">{t('oversight.severity.subtitle')}</p>
@@ -160,10 +161,16 @@ export default function SeverityReview() {
           </div>
         ) : (
           <>
-          <AuditAnalytics rows={filtered} title="Cars sent back for a second look most often" subtitle="Repeat appearances in the diagnostic-review queue — a car here often means the first grade keeps missing something" metricLabel="Reviews" color="purple" />
+          <AuditAnalytics
+            rows={filtered}
+            title={t('Cars sent back for a second look most often')}
+            subtitle={t('Repeat appearances in the diagnostic-review queue — a car here often means the first grade keeps missing something')}
+            metricLabel={t('Reviews')}
+            color="purple"
+          />
           <div className="space-y-4">
             {filtered.map((r) => (
-              <DecisionCard key={r.ticket_id} row={r} t={t} canDecide={canDecide} busy={busy === r.ticket_id} onDecide={decide} />
+              <DecisionCard key={r.ticket_id} row={r} t={t} lang={lang} canDecide={canDecide} busy={busy === r.ticket_id} onDecide={decide} />
             ))}
           </div>
           </>
@@ -173,7 +180,7 @@ export default function SeverityReview() {
   );
 }
 
-function DecisionCard({ row, t, canDecide, busy, onDecide }) {
+function DecisionCard({ row, t, lang, canDecide, busy, onDecide }) {
   const [pane, setPane] = useState(null); // 'upgrade' | 'keep' | null
   const [note, setNote] = useState('');
   const reviewed = row.decision !== 'pending';
@@ -194,7 +201,7 @@ function DecisionCard({ row, t, canDecide, busy, onDecide }) {
           </Link>
           {row.car && <p className="text-xs text-slate-400">{row.car}</p>}
           <p className="mt-0.5 text-[11px] text-slate-400">
-            {row.graded_by ? `${t('oversight.severity.gradedBy')}: ${row.graded_by} · ` : ''}{fmtDate(row.at)}
+            {row.graded_by ? `${t('oversight.severity.gradedBy')}: ${row.graded_by} · ` : ''}{fmtDate(row.at, lang)}
           </p>
 
           <div className="mt-3 flex items-center gap-3">

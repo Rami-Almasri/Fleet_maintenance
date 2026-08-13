@@ -195,7 +195,7 @@ export default function GarageInvoicePortal() {
             <p className="mb-1.5 text-sm font-medium text-slate-700">{t('garagePortal.receiptPhoto')}</p>
             {photoPreview ? (
               <div className="relative">
-                <img src={photoPreview} alt="receipt" className="max-h-56 w-full rounded-lg object-contain ring-1 ring-slate-200" />
+                <img src={photoPreview} alt={t('receipt')} className="max-h-56 w-full rounded-lg object-contain ring-1 ring-slate-200" />
                 <button onClick={() => { setPhoto(null); setPhotoPreview(''); }} className="mt-2 text-xs font-medium text-red-500">{t('garagePortal.removePhoto')}</button>
               </div>
             ) : (

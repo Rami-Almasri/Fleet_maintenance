@@ -10,6 +10,12 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import Icon from './Icon';
+import { useI18n } from '../../i18n/I18nContext';
+import { activeLang } from '../../i18n/translate';
+
+// Arabic must render Gregorian dates with Latin digits — the default 'ar' locale resolves to the
+// Hijri calendar and Arabic-Indic numerals, neither of which belongs in a fleet's date window.
+const calLocale = (lang) => (lang === 'ar' ? 'ar-AE-u-ca-gregory-nu-latn' : undefined);
 
 // ── date helpers (no external lib; all local-time, date-only) ───────────────────
 const pad = (n) => String(n).padStart(2, '0');
@@ -19,10 +25,17 @@ const startOfMonth = (d) => new Date(d.getFullYear(), d.getMonth(), 1);
 const addMonths = (d, n) => new Date(d.getFullYear(), d.getMonth() + n, 1);
 const addDays = (d, n) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
 const isoOf = (d) => (d ? toISO(d) : null);
-const fmtShort = (d) => d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+const fmtShort = (d) => d.toLocaleDateString(calLocale(activeLang()), { day: 'numeric', month: 'short', year: 'numeric' });
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-const DOW = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+// Weekday initials come from Intl rather than a hardcoded list: English still reads S M T W T F S,
+// and Arabic gets its own letters instead of seven ambiguous Latin ones. 2024-09-01 was a Sunday.
+const dowInitials = (lang) => {
+  const loc = calLocale(lang);
+  return Array.from({ length: 7 }, (_, i) =>
+    new Date(2024, 8, 1 + i).toLocaleDateString(loc, { weekday: 'narrow' }));
+};
 
+// English source text for the trailing-window presets; resolved through the catalog at render.
 const TRAILING = [
   { days: 0, label: 'All time' },
   { days: 30, label: 'Last 30 days' },
@@ -32,6 +45,7 @@ const TRAILING = [
 ];
 
 export default function DateRangePicker({ days, from, to, onChange }) {
+  const { t, lang } = useI18n();
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
   const panelRef = useRef(null);
@@ -88,21 +102,23 @@ export default function DateRangePicker({ days, from, to, onChange }) {
     return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
   }, [open]);
 
-  const activeTrailing = !usingRange ? TRAILING.find((t) => t.days === days) : null;
+  const activeTrailing = !usingRange ? TRAILING.find((w) => w.days === days) : null;
 
   const label = usingRange
-    ? (fromD && toD ? `${fmtShort(fromD)} – ${fmtShort(toD)}` : fromD ? `From ${fmtShort(fromD)}` : `Until ${fmtShort(toD)}`)
-    : (activeTrailing?.label ?? 'Custom');
+    ? (fromD && toD
+      ? `${fmtShort(fromD)} – ${fmtShort(toD)}`
+      : fromD ? t('From {date}', { date: fmtShort(fromD) }) : t('Until {date}', { date: fmtShort(toD) }))
+    : (activeTrailing ? t(activeTrailing.label) : t('Custom'));
 
   const applyTrailing = (d) => { onChange({ days: d, from: '', to: '' }); setOpen(false); };
   const applyRange = (a, b) => { onChange({ days: 0, from: isoOf(a) || '', to: isoOf(b) || '' }); };
 
   // Range presets (computed against today).
   const rangePresets = [
-    { key: 'wtd', label: 'Last 7 days', range: () => [addDays(today, -6), today] },
-    { key: 'mtd', label: 'This month', range: () => [startOfMonth(today), today] },
-    { key: 'lm', label: 'Last month', range: () => [startOfMonth(addMonths(today, -1)), addDays(startOfMonth(today), -1)] },
-    { key: 'ytd', label: 'Year to date', range: () => [new Date(today.getFullYear(), 0, 1), today] },
+    { key: 'wtd', label: t('Last 7 days'), range: () => [addDays(today, -6), today] },
+    { key: 'mtd', label: t('This month'), range: () => [startOfMonth(today), today] },
+    { key: 'lm', label: t('Last month'), range: () => [startOfMonth(addMonths(today, -1)), addDays(startOfMonth(today), -1)] },
+    { key: 'ytd', label: t('Year to date'), range: () => [new Date(today.getFullYear(), 0, 1), today] },
   ];
 
   const pickDay = (d) => {
@@ -135,7 +151,7 @@ export default function DateRangePicker({ days, from, to, onChange }) {
           <Icon.Calendar className="h-4 w-4" />
         </span>
         <span className="flex flex-col items-start leading-tight">
-          <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Time window</span>
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{t('Time window')}</span>
           <span className="tabular-nums">{label}</span>
         </span>
         <Icon.ChevronDown className={`h-4 w-4 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} />
@@ -151,9 +167,9 @@ export default function DateRangePicker({ days, from, to, onChange }) {
         >
           {/* Presets */}
           <div className="flex shrink-0 flex-col gap-0.5 border-b border-slate-100 bg-slate-50/70 p-2 sm:w-44 sm:border-b-0 sm:border-e">
-            <p className="px-2 pb-1 pt-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Quick ranges</p>
-            {TRAILING.map((t) => (
-              <PresetRow key={t.days} active={!usingRange && days === t.days} onClick={() => applyTrailing(t.days)}>{t.label}</PresetRow>
+            <p className="px-2 pb-1 pt-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">{t('Quick ranges')}</p>
+            {TRAILING.map((w) => (
+              <PresetRow key={w.days} active={!usingRange && days === w.days} onClick={() => applyTrailing(w.days)}>{t(w.label)}</PresetRow>
             ))}
             <div className="my-1 h-px bg-slate-200/70" />
             {rangePresets.map((p) => {
@@ -170,22 +186,22 @@ export default function DateRangePicker({ days, from, to, onChange }) {
           {/* Calendar */}
           <div className="flex-1 p-3.5">
             <div className="mb-2 flex items-center justify-between">
-              <button onClick={() => setView((v) => addMonths(v, -1))} className="grid h-8 w-8 place-items-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-700" aria-label="Previous month">
-                <Icon.ChevronDown className="h-4 w-4 rotate-90" />
+              <button onClick={() => setView((v) => addMonths(v, -1))} className="grid h-8 w-8 place-items-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-700" aria-label={t('Previous month')}>
+                <Icon.ChevronDown className="h-4 w-4 rotate-90 rtl:-scale-x-100" />
               </button>
               <div className="flex flex-1 justify-around px-2 text-sm font-semibold text-slate-800">
-                <span>{MONTHS[view.getMonth()]} {view.getFullYear()}</span>
-                <span className="hidden sm:inline">{MONTHS[addMonths(view, 1).getMonth()]} {addMonths(view, 1).getFullYear()}</span>
+                <span>{t(MONTHS[view.getMonth()])} {view.getFullYear()}</span>
+                <span className="hidden sm:inline">{t(MONTHS[addMonths(view, 1).getMonth()])} {addMonths(view, 1).getFullYear()}</span>
               </div>
-              <button onClick={() => setView((v) => addMonths(v, 1))} className="grid h-8 w-8 place-items-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-700" aria-label="Next month">
-                <Icon.ChevronDown className="h-4 w-4 -rotate-90" />
+              <button onClick={() => setView((v) => addMonths(v, 1))} className="grid h-8 w-8 place-items-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-700" aria-label={t('Next month')}>
+                <Icon.ChevronDown className="h-4 w-4 -rotate-90 rtl:-scale-x-100" />
               </button>
             </div>
 
             <div className="flex gap-6">
-              <MonthGrid month={view} today={today} draftFrom={draftFrom} draftTo={draftTo} hover={hover} onPick={pickDay} onHover={setHover} />
+              <MonthGrid month={view} today={today} lang={lang} draftFrom={draftFrom} draftTo={draftTo} hover={hover} onPick={pickDay} onHover={setHover} />
               <div className="hidden sm:block">
-                <MonthGrid month={addMonths(view, 1)} today={today} draftFrom={draftFrom} draftTo={draftTo} hover={hover} onPick={pickDay} onHover={setHover} />
+                <MonthGrid month={addMonths(view, 1)} today={today} lang={lang} draftFrom={draftFrom} draftTo={draftTo} hover={hover} onPick={pickDay} onHover={setHover} />
               </div>
             </div>
 
@@ -195,13 +211,15 @@ export default function DateRangePicker({ days, from, to, onChange }) {
                 {draftFrom ? (
                   <span className="tabular-nums">
                     <span className="font-semibold text-slate-700">{fmtShort(draftFrom)}</span>
-                    {draftTo ? <> <span className="text-slate-400">→</span> <span className="font-semibold text-slate-700">{fmtShort(draftTo)}</span></> : <span className="text-slate-400"> → pick an end date</span>}
+                    {draftTo
+                      ? <> <span className="inline-block text-slate-400 rtl:-scale-x-100">→</span> <span className="font-semibold text-slate-700">{fmtShort(draftTo)}</span></>
+                      : <span className="text-slate-400"> <span className="inline-block rtl:-scale-x-100">→</span> {t('pick an end date')}</span>}
                   </span>
-                ) : <span className="text-slate-400">Select a start date</span>}
+                ) : <span className="text-slate-400">{t('Select a start date')}</span>}
               </span>
               <div className="flex items-center gap-1.5">
-                <button onClick={clearAll} className="rounded-lg px-2.5 py-1.5 text-xs font-medium text-slate-500 transition hover:bg-slate-100 hover:text-slate-700">Clear</button>
-                <button onClick={() => setOpen(false)} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-indigo-700">Done</button>
+                <button onClick={clearAll} className="rounded-lg px-2.5 py-1.5 text-xs font-medium text-slate-500 transition hover:bg-slate-100 hover:text-slate-700">{t('Clear')}</button>
+                <button onClick={() => setOpen(false)} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-indigo-700">{t('Done')}</button>
               </div>
             </div>
           </div>
@@ -224,7 +242,8 @@ function PresetRow({ active, onClick, children }) {
   );
 }
 
-function MonthGrid({ month, today, draftFrom, draftTo, hover, onPick, onHover }) {
+function MonthGrid({ month, today, lang, draftFrom, draftTo, hover, onPick, onHover }) {
+  const dow = useMemo(() => dowInitials(lang), [lang]);
   const first = startOfMonth(month);
   const gridStart = addDays(first, -first.getDay()); // back up to Sunday
   const cells = Array.from({ length: 42 }, (_, i) => addDays(gridStart, i));
@@ -236,7 +255,7 @@ function MonthGrid({ month, today, draftFrom, draftTo, hover, onPick, onHover })
   return (
     <div className="w-[15.75rem]">
       <div className="mb-1 grid grid-cols-7">
-        {DOW.map((d, i) => <div key={i} className="grid h-7 place-items-center text-[11px] font-semibold text-slate-400">{d}</div>)}
+        {dow.map((d, i) => <div key={i} className="grid h-7 place-items-center text-[11px] font-semibold text-slate-400">{d}</div>)}
       </div>
       <div className="grid grid-cols-7 gap-y-1">
         {cells.map((d, i) => {

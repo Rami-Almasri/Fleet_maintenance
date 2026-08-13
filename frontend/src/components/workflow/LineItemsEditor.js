@@ -198,7 +198,7 @@ export default function LineItemsEditor({
                 {/* Identity — what the part is. */}
                 <div className="grid grid-cols-12 gap-2">
                   <div className="col-span-12 sm:col-span-8">
-                    <Input label={t('workflow.lineItem.partName')} value={r.description} onChange={(e) => update(r._k, { description: e.target.value })} placeholder="e.g. Front brake pads" />
+                    <Input label={t('workflow.lineItem.partName')} value={r.description} onChange={(e) => update(r._k, { description: e.target.value })} placeholder={t('e.g. Front brake pads')} />
                   </div>
                   <div className="col-span-12 sm:col-span-4">
                     <Input label={t('workflow.lineItem.partNumber')} value={r.part_number} onChange={(e) => update(r._k, { part_number: e.target.value })} placeholder="OEM / SKU" />
@@ -262,10 +262,10 @@ export default function LineItemsEditor({
                     </div>
                     <div className="grid grid-cols-12 gap-2">
                       <div className="col-span-12 sm:col-span-5">
-                        <Input label={t('workflow.lineItem.tireBrand')} value={r.tire_brand || ''} onChange={(e) => update(r._k, { tire_brand: e.target.value })} placeholder="e.g. Michelin" />
+                        <Input label={t('workflow.lineItem.tireBrand')} value={r.tire_brand || ''} onChange={(e) => update(r._k, { tire_brand: e.target.value })} placeholder={t('e.g. Michelin')} />
                       </div>
                       <div className="col-span-6 sm:col-span-4">
-                        <Input label={t('workflow.lineItem.tireDot')} value={r.tire_dot || ''} onChange={(e) => update(r._k, { tire_dot: e.target.value })} placeholder="e.g. DOT 3223" />
+                        <Input label={t('workflow.lineItem.tireDot')} value={r.tire_dot || ''} onChange={(e) => update(r._k, { tire_dot: e.target.value })} placeholder={t('e.g. DOT 3223')} />
                       </div>
                       <div className="col-span-6 sm:col-span-3">
                         <Input label={t('workflow.lineItem.tireTread')} type="number" min="0" step="0.1" value={r.tire_tread_mm ?? ''} onChange={(e) => update(r._k, { tire_tread_mm: e.target.value })} placeholder="mm" />
@@ -310,7 +310,7 @@ export default function LineItemsEditor({
                 <div className="mb-2"><FindingLink row={r} /></div>
                 <div className="grid grid-cols-12 items-end gap-2">
                 <div className="col-span-12 sm:col-span-6">
-                  <Input label={t('workflow.lineItem.laborDesc')} value={r.description} onChange={(e) => update(r._k, { description: e.target.value })} placeholder="e.g. Front brake job" />
+                  <Input label={t('workflow.lineItem.laborDesc')} value={r.description} onChange={(e) => update(r._k, { description: e.target.value })} placeholder={t('e.g. Front brake job')} />
                 </div>
                 <div className="col-span-6 sm:col-span-2">
                   <Input label={t('workflow.lineItem.hours')} type="number" min="0" step="0.5" value={r.quantity} onChange={(e) => setLaborHours(r, e.target.value)} placeholder="0" />

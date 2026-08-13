@@ -68,9 +68,10 @@ const PART_STATUS = {
 
 // The parts ordered/fitted for one fault — so opening the fault shows what it needed at a glance.
 function FaultParts({ parts }) {
+  const { t } = useI18n();
   return (
     <div className="mt-1 ms-3 border-s border-slate-200 ps-2.5">
-      <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Parts</p>
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{t('Parts')}</p>
       <ul className="mt-0.5 space-y-0.5">
         {parts.map((p) => {
           const st = PART_STATUS[p.status] || { dot: 'bg-slate-300', label: p.status };
@@ -81,7 +82,7 @@ function FaultParts({ parts }) {
                 : <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${st.dot}`} />}
               <span className={st.muted ? 'text-slate-400 line-through' : 'font-medium text-slate-700'}>{p.part_name}</span>
               {p.quantity > 1 && <span className="text-slate-400">×{Math.round(p.quantity)}</span>}
-              <span className="text-slate-400">· {st.label}</span>
+              <span className="text-slate-400">· {PART_STATUS[p.status] ? t(st.label) : st.label}</span>
             </li>
           );
         })}
@@ -93,7 +94,7 @@ function FaultParts({ parts }) {
 export default function FindingsList({ findings = [], tasks = [], compact = false, paused = false, showPending = false }) {
   const { t } = useI18n();
   if (!findings.length) {
-    return compact ? null : <p className="text-xs text-slate-400">No findings recorded yet.</p>;
+    return compact ? null : <p className="text-xs text-slate-400">{t('No findings recorded yet.')}</p>;
   }
 
   // Symptom → its fault-task, so each finding can show its live fix status. `is_incorrect` faults are
@@ -158,7 +159,14 @@ export default function FindingsList({ findings = [], tasks = [], compact = fals
                     title={f.by ? `Added by ${f.by}` : undefined}
                     className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs ring-1 ${meta.chip}`}
                   >
-                    {f.text}
+                    {/* WHAT IS WRONG, HOW MANY, AND WHERE — one sentence, built server-side by the
+                        single fault formatter (MaintenanceTaskResource.display), so this chip, the
+                        board card, the audit trail and the API all word the same fault identically.
+                        A fault with no count and no location renders exactly its own text, which is
+                        byte-for-byte what this chip showed before any of this existed. The fallback
+                        covers a finding not yet promoted to a fault task (no `display` to read). */}
+                    {task?.display || f.text}
+                    {!task?.display && Number(f.quantity) > 1 && <span className="font-semibold opacity-80">· ×{f.quantity}</span>}
                     {/* Diagnosed root cause (Symptom → Root-Cause) — the structured "why" behind the symptom. */}
                     {f.root_cause && <span className="font-medium opacity-80">→ {f.root_cause}</span>}
                     {/* Which garage DISCOVERED it — stamped when a garage-identified finding is added, so the
@@ -184,7 +192,7 @@ export default function FindingsList({ findings = [], tasks = [], compact = fals
                         · 🚗 {custody}
                       </span>
                     )}
-                    {/* Actual mechanic hours entered at Mark Fixed (summed across attempts). */}
+                    {/* Actual mechanic hours entered on the Mark ready screen (summed across attempts). */}
                     {laborHours != null && Number(laborHours) > 0 && (
                       <span className="font-semibold opacity-80" title={t('workflow.task.laborChipTip')}>
                         · 🔧 {Number(laborHours)}h
