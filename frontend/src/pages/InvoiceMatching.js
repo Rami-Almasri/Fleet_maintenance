@@ -523,7 +523,7 @@ const MILESTONES = [
 // a visit opens when the first fault arrives and closes when the last one leaves. The gap between one
 // visit closing and the next opening is the move itself — the time the car was neither here nor there,
 // which is precisely the time that goes missing when only the last garage is counted.
-function buildGarageVisits(tasks = []) {
+function buildGarageVisits(tasks = [], ticket = null) {
   const stints = [];
   tasks.forEach((task) => {
     (task.assignments || []).forEach((a) => {
@@ -591,19 +591,40 @@ function buildGarageVisits(tasks = []) {
   });
 
   visits.sort((a, b) => a.from - b.from);
+
+  // The ticket's own transit stamps for the CURRENT leg: the car was collected (dispatched_at) and
+  // checked in at the destination (repair_started_at). Single columns, so they only ever describe the
+  // latest move — but for that one move they are the real measurement.
+  const legOut = ticket?.stage_timing?.dispatched_at ? new Date(ticket.stage_timing.dispatched_at).getTime() : null;
+  const legIn = ticket?.stage_timing?.repair_started_at ? new Date(ticket.stage_timing.repair_started_at).getTime() : null;
+
   return visits.map((v, i) => {
     const prev = visits[i - 1];
-    // THE MOVE = the previous garage releasing the car → this garage confirming it arrived. It is only a
-    // real measurement when this visit has a stamped arrival; without one, release and "assign" are
-    // written in the same transaction and the gap is a structural zero, not a fast delivery. So it stays
-    // null and nothing pretends to know.
-    const transferSeconds = (prev && !v.fromDispatch) ? Math.max(0, (v.from - prev.to) / 1000) : null;
+    let transferSeconds = null;
+    let transferSource = null;
+
+    if (prev) {
+      // On a PLANNED transfer the ledger re-points the faults at the arrival check-in, so the old stint
+      // closes and the new one opens in the same instant: a zero here means "recorded as one moment",
+      // not "delivered instantly". Only a positive gap is a measurement.
+      const gap = (v.from - prev.to) / 1000;
+      if (gap > 0) {
+        transferSeconds = gap;
+        transferSource = 'stints';
+      } else if (i === visits.length - 1 && legOut && legIn && legIn > legOut && v.from >= legIn) {
+        // …and for the most recent move the ticket DID record the drive: collected → checked in.
+        transferSeconds = (legIn - legOut) / 1000;
+        transferSource = 'ticket';
+      }
+    }
+
     return {
       ...v,
       seconds: Math.max(0, (v.to - v.from) / 1000),
       transferSeconds,
-      // There WAS a move (a previous visit exists) but we cannot time it.
-      transferUnmeasured: !!prev && v.fromDispatch,
+      transferSource,
+      // There WAS a move, but nothing on record times it.
+      transferUnmeasured: !!prev && transferSeconds === null,
     };
   });
 }
@@ -695,7 +716,7 @@ function TimePanel({ ticket, checkpoints, checkpointsLoading, canSeeCheckpoints 
   const slowest = steps.reduce((worst, s) => (s.gapSeconds != null && (!worst || s.gapSeconds > worst.gapSeconds) ? s : worst), null);
 
   // Every garage the car actually sat in, and every move between them.
-  const visits = useMemo(() => buildGarageVisits(ticket.tasks || []), [ticket]);
+  const visits = useMemo(() => buildGarageVisits(ticket.tasks || [], ticket), [ticket]);
   const inGarages = visits.reduce((a, v) => a + v.seconds, 0);
   const inTransfer = visits.reduce((a, v) => a + (v.transferSeconds || 0), 0);
   // Only claim a move duration when every move on this ticket carries a stamped arrival.
@@ -846,11 +867,18 @@ function TimePanel({ ticket, checkpoints, checkpointsLoading, canSeeCheckpoints 
                     <Icon.Truck className="h-3.5 w-3.5" />
                     <span className="font-medium">{t('Transferred')}</span>
                     {v.transferSeconds != null ? (
-                      <span className="rounded-full bg-amber-50 px-1.5 py-0.5 font-semibold tabular-nums">
-                        {fmtDuration(v.transferSeconds)}
-                      </span>
+                      <>
+                        <span className="rounded-full bg-amber-50 px-1.5 py-0.5 font-semibold tabular-nums">
+                          {fmtDuration(v.transferSeconds)}
+                        </span>
+                        {/* Which record timed the drive — the stint ledger, or the ticket's own
+                            collected → checked-in stamps (which only cover the latest move). */}
+                        <span className="text-slate-300">
+                          {v.transferSource === 'ticket' ? t('collected → checked in') : t('left → arrived')}
+                        </span>
+                      </>
                     ) : (
-                      <span className="text-slate-400">{t('move not timed — no arrival recorded')}</span>
+                      <span className="text-slate-400">{t('recorded as one moment — the drive is not timed')}</span>
                     )}
                     {visits[i - 1]?.reason && <span className="text-slate-400">· {visits[i - 1].reason}</span>}
                   </div>
